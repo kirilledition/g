@@ -2250,10 +2250,10 @@ def run_logged_command(
     if timeout_seconds is not None:
         logger.debug("Timeout for %s set to %.1fs", name, float(timeout_seconds))
     start_time = time.perf_counter()
-    command_stdout = ""
-    command_stderr = ""
+    command_stdout: str = ""
+    command_stderr: str = ""
     status = "success"
-    notes = None
+    notes: str | None = None
     timeout_reached = False
     try:
         completed_process = subprocess.run(

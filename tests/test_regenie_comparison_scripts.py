@@ -104,8 +104,8 @@ def test_run_logged_command_marks_timeout_as_failed(
     assert result.status == "failed"
     assert result.notes is not None
     assert "timed out" in result.notes
-    assert "partial output" == Path(result.stdout_log_path).read_text(encoding="utf-8")
-    assert "partial error" == Path(result.stderr_log_path).read_text(encoding="utf-8")
+    assert Path(result.stdout_log_path).read_text(encoding="utf-8") == "partial output"
+    assert Path(result.stderr_log_path).read_text(encoding="utf-8") == "partial error"
 
 
 def test_bgen_reader_benchmark_parses_sweep_lists() -> None:
@@ -2417,7 +2417,9 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
     assert len(results["sampling_profiles"]) == 7
 
 
-def test_deep_profile_deep_profiles_continue_after_timed_out_profiler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_deep_profile_deep_profiles_continue_after_timed_out_profiler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline_paths = baseline_benchmark.build_baseline_paths()
     candidate = deep_profile.Step2Candidate(
         trait_type="binary",

@@ -183,19 +183,10 @@ fn interface_minimal_paths(fixture: &FixtureDirectory, stem: &str) -> (String, S
     let bgen_path = fixture.write_file(&format!("{stem}-input.bgen"), "bgen");
     let phenotype_path = fixture.write_file(&format!("{stem}-phenotypes.tsv"), "FID IID trait\n0 0 1.0\n");
     let pred_path = fixture.write_file(&format!("{stem}-predictions.list"), "trait predictions.bin\n");
-    (
-        bgen_path.display().to_string(),
-        phenotype_path.display().to_string(),
-        pred_path.display().to_string(),
-    )
+    (bgen_path.display().to_string(), phenotype_path.display().to_string(), pred_path.display().to_string())
 }
 
-fn build_minimal_regenie_options(
-    bgen_path: &str,
-    pheno_path: &str,
-    pred_path: &str,
-    output_path: &str,
-) -> Table {
+fn build_minimal_regenie_options(bgen_path: &str, pheno_path: &str, pred_path: &str, output_path: &str) -> Table {
     let mut trait_options = Table::new();
     trait_options.insert("step".into(), Value::Integer(2));
     trait_options.insert("qt".into(), Value::Boolean(true));
@@ -1629,10 +1620,8 @@ fn from_options_reports_conflicting_phenotype_column_specifications() {
     let fixture = FixtureDirectory::new("interface-option-conflict");
     let (bgen_path, phenotype_path, pred_path) = interface_minimal_paths(&fixture, "option-conflict");
     let mut options = build_minimal_regenie_options(&bgen_path, &phenotype_path, &pred_path, "out");
-    let input_layer = options
-        .get_mut("input")
-        .and_then(Value::as_table_mut)
-        .expect("options should include an input layer");
+    let input_layer =
+        options.get_mut("input").and_then(Value::as_table_mut).expect("options should include an input layer");
     input_layer.insert("phenoColList".into(), Value::String("trait".to_string()));
     let error = from_options(&options).expect_err("phenoCol and phenoColList should conflict");
     assert!(error.to_string().contains("Use only one of pheno_columns, pheno_col, or pheno_col_list."));
@@ -1642,13 +1631,11 @@ fn from_options_reports_conflicting_phenotype_column_specifications() {
 fn validate_config_for_run_reports_nonexistent_file_paths() {
     let fixture = FixtureDirectory::new("interface-run-validation");
     let (bgen_path, phenotype_path, _pred_path) = interface_minimal_paths(&fixture, "validate");
-    let mut options =
-        build_minimal_regenie_options(&bgen_path, &phenotype_path, "valid_predictions.list", "out");
-    let input_layer = options
-        .get_mut("input")
-        .and_then(Value::as_table_mut)
-        .expect("options should include an input layer");
-    input_layer.insert("pred".into(), Value::String(fixture.path.join("missing-predictions.list").display().to_string()));
+    let mut options = build_minimal_regenie_options(&bgen_path, &phenotype_path, "valid_predictions.list", "out");
+    let input_layer =
+        options.get_mut("input").and_then(Value::as_table_mut).expect("options should include an input layer");
+    input_layer
+        .insert("pred".into(), Value::String(fixture.path.join("missing-predictions.list").display().to_string()));
     let config = from_options(&options).expect("options should parse before runtime path validation");
     let path_error = validate_config_for_run(&config).expect_err("missing --pred path should fail");
     assert!(path_error.to_string().contains("--pred path does not exist"));
@@ -1659,10 +1646,8 @@ fn from_toml_path_round_trip_preserves_resolved_runtime_values() {
     let fixture = FixtureDirectory::new("interface-toml-roundtrip");
     let (bgen_path, phenotype_path, pred_path) = interface_minimal_paths(&fixture, "toml");
     let output_path = fixture.path.join("toml-output").display().to_string();
-    let config = from_options(
-        &build_minimal_regenie_options(&bgen_path, &phenotype_path, &pred_path, &output_path),
-    )
-    .expect("options should build a resolved config");
+    let config = from_options(&build_minimal_regenie_options(&bgen_path, &phenotype_path, &pred_path, &output_path))
+        .expect("options should build a resolved config");
     let output_toml = dumps_toml(&config).expect("resolved config should serialize");
     let roundtrip_path = fixture.write_file("resolved.toml", &output_toml);
     let roundtrip = from_toml_path(&roundtrip_path).expect("roundtrip toml should parse");

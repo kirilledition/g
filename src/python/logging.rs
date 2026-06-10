@@ -192,7 +192,15 @@ impl TelemetryEventCapState {
 
     fn mark_exceeded(&self) {
         if !self.exceeded.swap(true, Ordering::AcqRel) && self.lossy {
-            eprintln!("{}", self.cap_exceeded_drop_message());
+            tracing::warn!(
+                target: "g.logging",
+                g_event = "native_telemetry_event_cap_exceeded",
+                event_cap = self.event_cap.unwrap_or(0),
+                lossy = self.lossy,
+                path = %self.path.display(),
+                message = %self.cap_exceeded_drop_message(),
+                "Tracing writer reached event cap and started dropping events."
+            );
         }
     }
 
@@ -350,6 +358,32 @@ impl TelemetryWriterCounterSnapshot {
         counters.set_item("finish_flush_duration_seconds", self.finish_flush_duration_seconds)?;
         Ok(counters)
     }
+}
+
+#[pyfunction]
+pub fn emit_diagnostic_event(level: &str, event: &str, message: &str, fields_json: Option<String>) -> PyResult<()> {
+    let fields_json = fields_json.unwrap_or_else(|| "{}".to_string());
+    match level {
+        "error" => {
+            tracing::error!(target: "g.python.diagnostic", g_event = event, g_fields = %fields_json, "{}", message);
+        }
+        "warn" | "warning" => {
+            tracing::warn!(target: "g.python.diagnostic", g_event = event, g_fields = %fields_json, "{}", message);
+        }
+        "info" => {
+            tracing::info!(target: "g.python.diagnostic", g_event = event, g_fields = %fields_json, "{}", message);
+        }
+        "debug" => {
+            tracing::debug!(target: "g.python.diagnostic", g_event = event, g_fields = %fields_json, "{}", message);
+        }
+        "trace" => {
+            tracing::trace!(target: "g.python.diagnostic", g_event = event, g_fields = %fields_json, "{}", message);
+        }
+        other_level => {
+            return Err(PyValueError::new_err(format!("Unsupported diagnostic event level: {other_level}")));
+        }
+    }
+    Ok(())
 }
 
 #[pyfunction]

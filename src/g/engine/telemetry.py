@@ -221,7 +221,7 @@ def resolve_telemetry_stream_file(
     if telemetry_mode == types.TelemetryMode.OFF:
         return None
     if log_file is not None and trace_file is not None and not paths_refer_to_same_file(log_file, trace_file):
-        message = "log_file and trace_file both configure the unified telemetry stream; use one path."
+        message = "g-log-file and g-trace-file both configure the unified telemetry stream; use one path."
         raise ValueError(message)
     if log_file is not None:
         return log_file

@@ -35,7 +35,16 @@ impl CliOutcomeData {
 pub fn dispatch_cli(args: &[String], direct_regenie: bool) -> CliOutcomeData {
     match dispatch_cli_result(args, direct_regenie) {
         Ok(outcome) => outcome,
-        Err(error) => CliOutcomeData::output(1, String::new(), format!("Error: {}\n", error.message())),
+        Err(error) => {
+            tracing::warn!(
+                target: "g.interface.cli",
+                g_event = "cli_dispatch_failed",
+                command_args = args.join(" "),
+                error = error.message(),
+                "Native CLI dispatch failed before runtime startup."
+            );
+            CliOutcomeData::output(1, String::new(), format!("Error: {}\n", error.message()))
+        }
     }
 }
 

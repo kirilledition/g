@@ -228,6 +228,9 @@ def initialize_logging(
     telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
     log_file = diagnostics_config.log_file if telemetry_stream_file is None else None
     trace_file = diagnostics_config.trace_file if telemetry_stream_file is None else telemetry_stream_file
+    trace_filter = diagnostics_config.trace_filter
+    if telemetry_stream_file is not None and diagnostics_config.telemetry != types.TelemetryMode.TRACE:
+        trace_filter = diagnostics_config.log_filter
     trace_event_cap = (
         diagnostics_config.trace_event_cap if diagnostics_config.telemetry == types.TelemetryMode.TRACE else None
     )
@@ -240,7 +243,7 @@ def initialize_logging(
         include_source_location=diagnostics_config.include_source_location,
         include_span_events=diagnostics_config.include_span_events,
         trace_file=trace_file,
-        trace_filter=diagnostics_config.trace_filter,
+        trace_filter=trace_filter,
         trace_event_cap=trace_event_cap,
     )
     initialized_logging = _core.initialize_logging(
@@ -252,7 +255,7 @@ def initialize_logging(
         include_source_location=diagnostics_config.include_source_location,
         include_span_events=diagnostics_config.include_span_events,
         trace_file=None if trace_file is None else str(trace_file),
-        trace_filter=diagnostics_config.trace_filter,
+        trace_filter=trace_filter,
         trace_event_cap=trace_event_cap,
     )
     if initialized_logging is False:
@@ -265,14 +268,19 @@ def initialize_logging(
         CONFIGURED_LOGGING_RUNTIME_POLICY = runtime_policy
 
 
-def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
+def regenie(
+    regenie_config: config.RegenieConfig,
+    *,
+    run_telemetry_session: telemetry.TelemetrySession | None = None,
+    close_telemetry_session_on_exit: bool = True,
+) -> RunArtifacts:
     """Run the shared REGENIE-compatible config path."""
     config.validate_config_for_run(regenie_config)
-    telemetry_session = telemetry.build_telemetry_session(regenie_config)
-    initialize_logging(regenie_config.g_diagnostics, telemetry_session.paths)
+    active_telemetry_session = run_telemetry_session or telemetry.build_telemetry_session(regenie_config)
+    initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
     association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
     phenotype_count = len(regenie_config.input.pheno_columns)
-    telemetry_session.log_event(
+    active_telemetry_session.log_event(
         "run_started",
         association_mode=association_mode.value,
         trait_type=regenie_config.trait.trait_type.value,
@@ -282,10 +290,10 @@ def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
     logger.info("Starting REGENIE run.")
     configure_runtime(regenie_config.g_compute, regenie_config.trait)
     try:
-        artifacts = run_validated_regenie_config(regenie_config, telemetry_session=telemetry_session)
+        artifacts = run_validated_regenie_config(regenie_config, telemetry_session=active_telemetry_session)
     except shutdown.GracefulShutdownRequested as shutdown_request:
         interrupted_event = run_events.build_run_interrupted_event(shutdown_request)
-        telemetry_session.log_event(
+        active_telemetry_session.log_event(
             "run_failed",
             level="warn",
             **run_events.run_interrupted_telemetry_fields(interrupted_event),
@@ -294,18 +302,22 @@ def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
         raise
     except Exception as error:
         failed_event = run_events.build_run_failed_event(error)
-        telemetry_session.log_event("run_failed", level="error", **run_events.run_failed_telemetry_fields(failed_event))
+        active_telemetry_session.log_event(
+            "run_failed",
+            level="error",
+            **run_events.run_failed_telemetry_fields(failed_event),
+        )
         logger.exception("REGENIE run failed.")
         raise
     else:
         artifacts = run_events.attach_run_metadata(
             artifacts,
-            run_id=telemetry_session.run_id,
+            run_id=active_telemetry_session.run_id,
             association_mode=association_mode,
             phenotype_count=phenotype_count,
         )
         completed_event = run_events.build_run_completed_event(artifacts)
-        telemetry_session.log_event(
+        active_telemetry_session.log_event(
             "run_completed",
             level="info",
             **run_events.run_completed_telemetry_fields(completed_event),
@@ -313,7 +325,8 @@ def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
         logger.info("Finished REGENIE run.")
         return artifacts
     finally:
-        telemetry.close_telemetry_session(telemetry_session)
+        if close_telemetry_session_on_exit:
+            telemetry.close_telemetry_session(active_telemetry_session)
 
 
 def run_validated_regenie_config(

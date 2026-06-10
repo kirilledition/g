@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import typing
+import unittest.mock
 
 import pytest
 
-from g import types
+from g import runner, types
 from g.engine import telemetry
 from g.interface import config
 
@@ -110,6 +111,79 @@ def test_telemetry_stream_uses_log_file_or_trace_file_alias() -> None:
     assert (
         telemetry.resolve_telemetry_paths(trace_file_config).stream_file == trace_file_config.g_diagnostics.trace_file
     )
+
+
+def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeCoreModule:
+        def initialize_logging(self, **keyword_arguments: object) -> bool:
+            calls.append(keyword_arguments)
+            return True
+
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "g-telemetry": "profile",
+            "g-log-filter": "g=info",
+            "g-trace-filter": "g.native.bgen=trace",
+            "g-log-file": str(tmp_path / "events.jsonl"),
+        }
+    )
+    telemetry_paths = telemetry.resolve_telemetry_paths(regenie_config)
+
+    with (
+        unittest.mock.patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        unittest.mock.patch("g.runner._core", FakeCoreModule()),
+    ):
+        runner.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
+
+    assert calls[0]["trace_file"] == str(telemetry_paths.stream_file)
+    assert calls[0]["trace_filter"] == "g=info"
+    assert calls[0]["trace_event_cap"] is None
+
+
+def test_initialize_logging_uses_trace_filter_for_trace_unified_stream(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeCoreModule:
+        def initialize_logging(self, **keyword_arguments: object) -> bool:
+            calls.append(keyword_arguments)
+            return True
+
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "g-telemetry": "trace",
+            "g-log-filter": "g=debug",
+            "g-trace-filter": "g.native.bgen=trace,g.output=debug",
+            "g-trace-event-cap": 17,
+            "g-log-file": str(tmp_path / "events.jsonl"),
+        }
+    )
+    telemetry_paths = telemetry.resolve_telemetry_paths(regenie_config)
+
+    with (
+        unittest.mock.patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        unittest.mock.patch("g.runner._core", FakeCoreModule()),
+    ):
+        runner.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
+
+    assert calls[0]["trace_file"] == str(telemetry_paths.stream_file)
+    assert calls[0]["trace_filter"] == "g.native.bgen=trace,g.output=debug"
+    assert calls[0]["trace_event_cap"] == 17
 
 
 def test_telemetry_stream_rejects_different_log_and_trace_files() -> None:
