@@ -2311,15 +2311,6 @@ def run_logged_command(
     )
 
 
-def subprocess_output_text(value: str | bytes | None) -> str:
-    """Normalize subprocess captured output to text."""
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value
-
-
 def permission_blocked_profiler_note(*, stdout: str, stderr: str) -> str | None:
     """Return an actionable note for known profiler permission failures."""
     combined_output = f"{stderr}\n{stdout}"

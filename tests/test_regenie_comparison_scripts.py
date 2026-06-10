@@ -1388,9 +1388,10 @@ def test_fresh_process_benchmark_summary_tracks_startup_fields() -> None:
 
 
 def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
+    packaged_configuration = binary_hot_benchmark.config.load_packaged_config()
     arguments = binary_hot_benchmark.build_arguments_from_overrides()
     assert arguments.device == "gpu"
-    assert arguments.chunk_size == binary_hot_benchmark.config.load_packaged_config().trait.bsize
+    assert arguments.chunk_size == packaged_configuration.trait.bsize
     assert arguments.output_writer_thread_count == 8
     assert arguments.trusted_no_missing_diploid is True
     assert arguments.assume_trusted_validated is False
@@ -1413,7 +1414,9 @@ def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
     assert configuration.expected_variant_count == binary_hot_benchmark.DEFAULT_VARIANT_COUNT
     assert configuration.stage_timing_mode == binary_hot_benchmark.StageTimingMode.EXACT
     assert [benchmark_case.name for benchmark_case in benchmark_cases] == [
-        "traits1_variant_major_default_batch1024_capacity2048"
+        "traits1_variant_major_default"
+        f"_batch{packaged_configuration.g_compute.firth_batch_size}"
+        f"_capacity{packaged_configuration.g_compute.firth_candidate_capacity}"
     ]
     assert benchmark_cases[0].phenotype_columns == ("phenotype_binary",)
     assert benchmark_cases[0].gpu_genotype_format == binary_hot_benchmark.types.GpuGenotypeFormat.DOSAGE
@@ -1753,7 +1756,9 @@ def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
     assert summary["headline"]["hot_same_process_no_final_seconds"] == 7.25
     assert summary["headline"]["hot_same_process_finalized_seconds"] == 7.85
     assert summary["metadata"]["configuration"]["trusted_no_missing_diploid"] is True
-    assert summary["metadata"]["configuration"]["firth_candidate_capacities"] == [2048]
+    assert summary["metadata"]["configuration"]["firth_candidate_capacities"] == list(
+        configuration.firth_candidate_capacities
+    )
     assert summary["headline_by_case"][benchmark_case.name]["hot_same_process_finalized_seconds"] == 7.85
     diagnostics = summary["binary_diagnostics_by_case"][benchmark_case.name]["hot_same_process_no_final"]
     assert diagnostics["available"] is True
