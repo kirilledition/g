@@ -29,6 +29,7 @@ import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
 import tooling.configuration as tooling_configuration
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
+from tooling.common import jax_cache as tooling_jax_cache
 from tooling.common import logging as tooling_logging
 from tooling.common import paths as tooling_paths
 
@@ -1868,7 +1869,7 @@ def resolve_profile_jax_cache_directory(candidate: Step2Candidate, cache_directo
     if cache_directory is None:
         return None
     if candidate.device != "gpu":
-        return cache_directory
+        return tooling_jax_cache.resolve_cpu_feature_aware_cache_directory(cache_directory)
     job_identifier = os.environ.get("SLURM_JOB_ID") or str(os.getpid())
     gpu_cache_parent = os.environ.get("G_PROFILE_GPU_JAX_CACHE_PARENT", GPU_JAX_CACHE_PARENT_DEFAULT)
     return Path(gpu_cache_parent) / job_identifier / cache_directory.name
@@ -2218,6 +2219,15 @@ def build_application_output_run_directory(output_prefix: Path) -> Path:
     return output_prefix.with_name(f"{output_prefix.name}.g")
 
 
+def subprocess_output_text(output: str | bytes | None) -> str:
+    """Return subprocess output as text for logs and diagnostics."""
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output
+
+
 def run_logged_command(
     *,
     name: str,
@@ -2254,18 +2264,17 @@ def run_logged_command(
             env=environment,
             timeout=timeout_seconds,
         )
-        command_stdout = completed_process.stdout or ""
-        command_stderr = completed_process.stderr or ""
+        command_stdout = subprocess_output_text(completed_process.stdout)
+        command_stderr = subprocess_output_text(completed_process.stderr)
         status = "success" if completed_process.returncode == 0 else "failed"
         if completed_process.returncode != 0:
-            notes = completed_process.stderr.strip() or completed_process.stdout.strip()
+            notes = command_stderr.strip() or command_stdout.strip()
     except subprocess.TimeoutExpired as error:
         timeout_reached = True
-        command_stdout = error.stdout or ""
-        command_stderr = error.stderr or ""
+        command_stdout = subprocess_output_text(error.stdout)
+        command_stderr = subprocess_output_text(error.stderr)
         notes = (
-            f"{name} timed out after {float(timeout_seconds or 0):.3f}s with no completion "
-            f"(limit={timeout_seconds}s)."
+            f"{name} timed out after {float(timeout_seconds or 0):.3f}s with no completion (limit={timeout_seconds}s)."
         )
         status = "failed"
     wall_time_seconds = time.perf_counter() - start_time

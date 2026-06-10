@@ -60,6 +60,13 @@ Use the current packaged defaults first. Override only with measurements.
 
 Current default values are in `src/g/config.default.toml`.
 
+Project profiling recipes isolate CPU JAX caches by host and CPU feature
+fingerprint under `/tmp/g-jax-cpu-profile-cache` by default. This avoids reusing
+CPU AOT artifacts across SLURM nodes when profile outputs are stored on shared
+filesystems. GPU profile caches remain node-local under `/tmp/g-jax-profile-cache`
+or `/tmp/g-jax-binary-hot-cache` unless `G_PROFILE_GPU_JAX_CACHE_PARENT` is
+overridden.
+
 ## CPU Runs
 
 CPU runs exercise native BGEN decode, sample alignment, output writing, and JAX

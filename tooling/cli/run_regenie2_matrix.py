@@ -19,6 +19,7 @@ import hydra
 import tooling.configuration as tooling_configuration
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
+from tooling.common import jax_cache as tooling_jax_cache
 from tooling.common import logging as tooling_logging
 from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
@@ -339,6 +340,13 @@ def append_boolean_flag(
         command_arguments.append(disabled_flag)
 
 
+def resolve_jax_cache_directory_for_mode(arguments: MatrixArguments, mode: ExecutionMode) -> Path:
+    """Resolve the persistent JAX cache directory for one matrix execution mode."""
+    if mode == ExecutionMode.CPU:
+        return tooling_jax_cache.resolve_cpu_feature_aware_cache_directory(arguments.jax_cache_directory / "cpu")
+    return arguments.jax_cache_directory / "gpu"
+
+
 def build_trait_arguments(arguments: MatrixArguments, trait: TraitKind) -> list[str]:
     """Build trait-specific g regenie arguments."""
     if trait == TraitKind.BINARY:
@@ -473,10 +481,11 @@ def build_run_command(arguments: MatrixArguments, spec: RunSpec) -> list[str]:
         disabled_flag="--no-g-jax-persistent-cache",
     )
     if persistent_cache_enabled:
+        cache_directory = resolve_jax_cache_directory_for_mode(arguments, spec.mode)
         command_arguments.extend(
             [
                 "--g-jax-cache-dir",
-                str(arguments.jax_cache_directory / "gpu"),
+                str(cache_directory),
                 "--g-jax-persistent-cache-min-entry-size-bytes",
                 str(arguments.jax_persistent_cache_min_entry_size_bytes),
                 "--g-jax-persistent-cache-min-compile-time-seconds",

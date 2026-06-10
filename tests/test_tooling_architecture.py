@@ -13,9 +13,13 @@ import tooling.cli.profile_regenie2_deep as deep_profile
 import tooling.cli.run_regenie2_matrix as regenie2_matrix
 import tooling.configuration as tooling_configuration
 import tooling.regenie.bgen_reader as regenie_bgen_reader
+from tooling.common import jax_cache as tooling_jax_cache
 from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
+
+if typing.TYPE_CHECKING:
+    import pytest
 
 
 class ReportMode(enum.StrEnum):
@@ -197,6 +201,77 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
     assert off_arguments.stage_timing_mode == deep_profile.ProfileStageTimingMode.OFF
 
 
+def test_cpu_feature_aware_jax_cache_directory_uses_host_and_features(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cpuinfo_path = tmp_path / "cpuinfo"
+    cpuinfo_path.write_text(
+        "\n".join(
+            (
+                "processor   : 0",
+                "vendor_id   : GenuineIntel",
+                "cpu family  : 6",
+                "model       : 143",
+                "model name  : Test CPU",
+                "stepping    : 8",
+                "flags       : avx512f avx2 sse4_2",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    cache_parent = tmp_path / "cpu-cache"
+    monkeypatch.setenv("G_PROFILE_CPU_JAX_CACHE_PARENT", str(cache_parent))
+    monkeypatch.setattr(tooling_jax_cache.socket, "gethostname", lambda: "cantor/node")
+
+    cache_directory = tooling_jax_cache.resolve_cpu_feature_aware_cache_directory(
+        Path("/mnt/beegfs/profiles/current/jax_cache"),
+        cpuinfo_path=cpuinfo_path,
+    )
+
+    assert cache_directory.parent.parent == cache_parent / "host-cantor-node"
+    assert cache_directory.parent.name == f"features-{tooling_jax_cache.cpu_feature_fingerprint(cpuinfo_path)}"
+    assert cache_directory.name.startswith("jax_cache-")
+
+
+def test_deep_profile_resolves_cpu_cache_by_node_features_and_keeps_gpu_job_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_cpu_feature_fingerprint(cpuinfo_path: Path = Path("/proc/cpuinfo")) -> str:
+        del cpuinfo_path
+        return "abc123"
+
+    monkeypatch.setenv("G_PROFILE_CPU_JAX_CACHE_PARENT", str(tmp_path / "cpu-cache"))
+    monkeypatch.setenv("G_PROFILE_GPU_JAX_CACHE_PARENT", str(tmp_path / "gpu-cache"))
+    monkeypatch.setenv("SLURM_JOB_ID", "12345")
+    monkeypatch.setattr(tooling_jax_cache.socket, "gethostname", lambda: "cantor")
+    monkeypatch.setattr(tooling_jax_cache, "cpu_feature_fingerprint", fake_cpu_feature_fingerprint)
+    cpu_candidate = deep_profile.Step2Candidate(
+        trait_type="binary",
+        device="cpu",
+        chunk_size=8192,
+        staging_depth=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+        output_writer_thread_count=4,
+        output_writer_queue_depth=8,
+        bgen_decode_tile_variant_count=128,
+        rayon_thread_count=2,
+        firth_batch_size=64,
+    )
+    gpu_candidate = dataclasses.replace(cpu_candidate, device="gpu")
+    base_cache_directory = tmp_path / "profile" / "jax_cache"
+
+    cpu_cache_directory = deep_profile.resolve_profile_jax_cache_directory(cpu_candidate, base_cache_directory)
+    gpu_cache_directory = deep_profile.resolve_profile_jax_cache_directory(gpu_candidate, base_cache_directory)
+
+    assert cpu_cache_directory is not None
+    assert cpu_cache_directory.parent.parent == tmp_path / "cpu-cache" / "host-cantor"
+    assert cpu_cache_directory.parent.name == "features-abc123"
+    assert cpu_cache_directory.name.startswith("jax_cache-")
+    assert gpu_cache_directory == tmp_path / "gpu-cache" / "12345" / "jax_cache"
+
+
 def test_deep_profile_smoke_overrides_profiler_timeouts(tmp_path: Path) -> None:
     base_arguments = deep_profile.build_arguments_from_overrides(
         [
@@ -359,6 +434,37 @@ def test_hydra_tooling_config_converts_to_tool_arguments() -> None:
     )
     assert "--g-variant-limit" in chr22_run_specs[0].command_arguments
     assert "1000" in chr22_run_specs[0].command_arguments
+
+
+def test_matrix_cpu_persistent_cache_uses_feature_aware_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_cpu_feature_fingerprint(cpuinfo_path: Path = Path("/proc/cpuinfo")) -> str:
+        del cpuinfo_path
+        return "abc123"
+
+    monkeypatch.setenv("G_PROFILE_CPU_JAX_CACHE_PARENT", str(tmp_path / "cpu-cache"))
+    monkeypatch.setattr(tooling_jax_cache.socket, "gethostname", lambda: "cantor")
+    monkeypatch.setattr(tooling_jax_cache, "cpu_feature_fingerprint", fake_cpu_feature_fingerprint)
+    arguments = regenie2_matrix.build_arguments_from_overrides(
+        [
+            "tool.dry_run=true",
+            f"tool.output_dir={tmp_path / 'matrix'}",
+            "tool.cpu_jax_persistent_cache=true",
+            f"tool.jax_cache_dir={tmp_path / 'shared-jax-cache'}",
+        ]
+    )
+    run_specs = regenie2_matrix.build_run_specs(arguments)
+    cpu_arguments = run_specs[0].command_arguments
+    gpu_arguments = run_specs[1].command_arguments
+
+    cpu_cache_directory = Path(cpu_arguments[cpu_arguments.index("--g-jax-cache-dir") + 1])
+    gpu_cache_directory = Path(gpu_arguments[gpu_arguments.index("--g-jax-cache-dir") + 1])
+
+    assert cpu_cache_directory.parent.parent == tmp_path / "cpu-cache" / "host-cantor"
+    assert cpu_cache_directory.parent.name == "features-abc123"
+    assert cpu_cache_directory.name.startswith("cpu-")
+    assert gpu_cache_directory == tmp_path / "shared-jax-cache" / "gpu"
 
 
 def test_path_resolution_honors_data_directory_environment(tmp_path: Path) -> None:
