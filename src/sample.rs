@@ -89,7 +89,17 @@ struct TabularColumnSelection {
     family_identifier_value_index: Option<usize>,
     individual_identifier_value_index: usize,
     data_value_indices: Vec<usize>,
-    value_column_indices: Vec<usize>,
+    selected_columns: Vec<SelectedTabularColumn>,
+}
+
+struct TabularColumnDefinition<'column> {
+    column_name: &'column str,
+    column_index: usize,
+}
+
+struct SelectedTabularColumn {
+    column_name: String,
+    column_index: usize,
 }
 
 struct SampleFileReader<R: BufRead> {
@@ -102,6 +112,7 @@ struct StreamingTabularReader<R: Read> {
     path_text: String,
     source_label: &'static str,
     reader: csv::Reader<R>,
+    current_line_number: usize,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -515,11 +526,15 @@ fn open_sample_file_reader(sample_path: &Path) -> Result<SampleFileReader<BufRea
     Ok(SampleFileReader::new(sample_path.display().to_string(), BufReader::new(sample_file)))
 }
 
-// Phenotype and covariate tables intentionally use tab-only parsing.
-fn open_tsv_table_reader(table_path: &Path) -> Result<StreamingTabularReader<File>, String> {
-    open_tabular_reader(table_path, "table", b'\t')
+fn open_phenotype_table_reader(table_path: &Path) -> Result<StreamingTabularReader<File>, String> {
+    open_tabular_reader(table_path, "phenotype table", b'\t')
 }
 
+fn open_covariate_table_reader(table_path: &Path) -> Result<StreamingTabularReader<File>, String> {
+    open_tabular_reader(table_path, "covariate table", b'\t')
+}
+
+// Phenotype and covariate tables intentionally use tab-only parsing.
 fn open_tabular_reader(
     table_path: &Path,
     source_label: &'static str,
@@ -534,10 +549,13 @@ fn read_tabular_header<R: Read>(
     reader: &mut StreamingTabularReader<R>,
     table_path: &Path,
 ) -> Result<Vec<String>, String> {
-    let headers =
-        record_to_strings(&reader.read_required_record(format!("Table '{}' is empty.", table_path.display()))?);
+    let headers = record_to_strings(&reader.read_required_record(format!(
+        "{} '{}' is empty.",
+        reader.display_source_label(),
+        table_path.display()
+    ))?);
     if headers.is_empty() {
-        return Err(format!("Table '{}' must contain a header row.", table_path.display()));
+        return Err(format!("{} '{}' must contain a header row.", reader.display_source_label(), table_path.display()));
     }
     Ok(headers)
 }
@@ -577,7 +595,7 @@ impl<R: Read> StreamingTabularReader<R> {
             .has_headers(false)
             .trim(csv::Trim::All)
             .from_reader(source);
-        Self { path_text, source_label, reader }
+        Self { path_text, source_label, reader, current_line_number: 0 }
     }
 
     fn read_required_record(&mut self, empty_error_message: String) -> Result<csv::StringRecord, String> {
@@ -594,11 +612,36 @@ impl<R: Read> StreamingTabularReader<R> {
             if !has_record {
                 return Ok(None);
             }
+            self.current_line_number += 1;
             if !is_empty_tabular_record(&record) {
                 return Ok(Some(record));
             }
             record.clear();
         }
+    }
+
+    fn display_source_label(&self) -> &'static str {
+        match self.source_label {
+            "phenotype table" => "Phenotype table",
+            "covariate table" => "Covariate table",
+            _ => "Table",
+        }
+    }
+
+    fn missing_selected_column_error(
+        &self,
+        selected_column: &SelectedTabularColumn,
+        record: &csv::StringRecord,
+    ) -> String {
+        format!(
+            "{} '{}' line {} is missing selected column '{}' at column index {}; row has {} fields.",
+            self.display_source_label(),
+            self.path_text,
+            self.current_line_number,
+            selected_column.column_name,
+            selected_column.column_index,
+            record.len()
+        )
     }
 }
 
@@ -628,36 +671,53 @@ impl TabularColumnSelection {
     fn new(
         family_identifier_column_index: Option<usize>,
         individual_identifier_column_index: usize,
-        data_column_indices: &[usize],
+        data_column_definitions: &[TabularColumnDefinition<'_>],
     ) -> Self {
-        let mut value_column_indices = Vec::with_capacity(data_column_indices.len() + 2);
+        let mut selected_columns = Vec::with_capacity(data_column_definitions.len() + 2);
         let family_identifier_value_index = family_identifier_column_index
-            .map(|column_index| push_selected_column(&mut value_column_indices, column_index));
+            .map(|column_index| push_selected_column(&mut selected_columns, "FID", column_index));
         let individual_identifier_value_index =
-            push_selected_column(&mut value_column_indices, individual_identifier_column_index);
-        let data_value_indices = data_column_indices
+            push_selected_column(&mut selected_columns, "IID", individual_identifier_column_index);
+        let data_value_indices = data_column_definitions
             .iter()
-            .map(|column_index| push_selected_column(&mut value_column_indices, *column_index))
+            .map(|column_definition| {
+                push_selected_column(
+                    &mut selected_columns,
+                    column_definition.column_name,
+                    column_definition.column_index,
+                )
+            })
             .collect();
-        Self {
-            family_identifier_value_index,
-            individual_identifier_value_index,
-            data_value_indices,
-            value_column_indices,
+        Self { family_identifier_value_index, individual_identifier_value_index, data_value_indices, selected_columns }
+    }
+
+    fn validate_record<R: Read>(
+        &self,
+        reader: &StreamingTabularReader<R>,
+        record: &csv::StringRecord,
+    ) -> Result<(), String> {
+        for selected_column in &self.selected_columns {
+            if selected_column.column_index >= record.len() {
+                return Err(reader.missing_selected_column_error(selected_column, record));
+            }
         }
+        Ok(())
     }
 
     fn record_value<'record>(&self, record: &'record csv::StringRecord, selected_value_index: usize) -> &'record str {
-        self.value_column_indices
-            .get(selected_value_index)
-            .and_then(|column_index| record.get(*column_index))
-            .unwrap_or("")
+        let selected_column =
+            self.selected_columns.get(selected_value_index).expect("selected tabular value index should exist");
+        record.get(selected_column.column_index).expect("selected tabular column should be validated before access")
     }
 }
 
-fn push_selected_column(value_column_indices: &mut Vec<usize>, column_index: usize) -> usize {
-    let selected_value_index = value_column_indices.len();
-    value_column_indices.push(column_index);
+fn push_selected_column(
+    selected_columns: &mut Vec<SelectedTabularColumn>,
+    column_name: &str,
+    column_index: usize,
+) -> usize {
+    let selected_value_index = selected_columns.len();
+    selected_columns.push(SelectedTabularColumn { column_name: column_name.to_string(), column_index });
     selected_value_index
 }
 
@@ -717,21 +777,25 @@ fn read_single_phenotype_table(
     sample_row_indices_by_key: &HashMap<SampleKey, usize>,
     sample_count: usize,
 ) -> Result<SinglePhenotypeTable, String> {
-    let mut reader = open_tsv_table_reader(phenotype_path)?;
+    let mut reader = open_phenotype_table_reader(phenotype_path)?;
     let headers = read_tabular_header(&mut reader, phenotype_path)?;
     let phenotype_path_text = phenotype_path.display().to_string();
-    let family_identifier_index = column_index(&headers, "FID");
-    if sample_key_mode == SampleKeyMode::FidIid {
-        required_column_index(&headers, "FID", &phenotype_path_text)?;
-    }
+    let family_identifier_index = if sample_key_mode == SampleKeyMode::FidIid {
+        Some(required_column_index(&headers, "FID", &phenotype_path_text)?)
+    } else {
+        None
+    };
     let individual_identifier_index = required_column_index(&headers, "IID", &phenotype_path_text)?;
     let phenotype_index = required_column_index(&headers, phenotype_name, &phenotype_path_text)?;
+    let phenotype_column_definition =
+        [TabularColumnDefinition { column_name: phenotype_name, column_index: phenotype_index }];
     let selection =
-        TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &[phenotype_index]);
+        TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &phenotype_column_definition);
     let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
     let mut phenotype_values = vec![0.0; sample_count];
     let mut phenotype_mask = vec![false; sample_count];
     while let Some(record) = reader.read_next_record()? {
+        selection.validate_record(&reader, &record)?;
         let individual_identifier = selection.record_value(&record, selection.individual_identifier_value_index);
         if individual_identifier.is_empty() {
             continue;
@@ -769,25 +833,38 @@ fn read_multi_phenotype_table(
     sample_row_indices_by_key: &HashMap<SampleKey, usize>,
     sample_count: usize,
 ) -> Result<MultiPhenotypeTable, String> {
-    let mut reader = open_tsv_table_reader(phenotype_path)?;
+    let mut reader = open_phenotype_table_reader(phenotype_path)?;
     let headers = read_tabular_header(&mut reader, phenotype_path)?;
     let phenotype_path_text = phenotype_path.display().to_string();
-    let family_identifier_index = column_index(&headers, "FID");
-    if sample_key_mode == SampleKeyMode::FidIid {
-        required_column_index(&headers, "FID", &phenotype_path_text)?;
-    }
+    let family_identifier_index = if sample_key_mode == SampleKeyMode::FidIid {
+        Some(required_column_index(&headers, "FID", &phenotype_path_text)?)
+    } else {
+        None
+    };
     let individual_identifier_index = required_column_index(&headers, "IID", &phenotype_path_text)?;
     let phenotype_indices = phenotype_names
         .iter()
         .map(|phenotype_name| required_column_index(&headers, phenotype_name, &phenotype_path_text))
         .collect::<Result<Vec<_>, _>>()?;
-    let selection =
-        TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &phenotype_indices);
+    let phenotype_column_definitions = phenotype_names
+        .iter()
+        .zip(phenotype_indices.iter())
+        .map(|(phenotype_name, phenotype_index)| TabularColumnDefinition {
+            column_name: phenotype_name.as_str(),
+            column_index: *phenotype_index,
+        })
+        .collect::<Vec<_>>();
+    let selection = TabularColumnSelection::new(
+        family_identifier_index,
+        individual_identifier_index,
+        &phenotype_column_definitions,
+    );
     let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
     let phenotype_count = phenotype_names.len();
     let mut phenotype_values = vec![0.0; phenotype_count * sample_count];
     let mut phenotype_masks = vec![false; phenotype_count * sample_count];
     while let Some(record) = reader.read_next_record()? {
+        selection.validate_record(&reader, &record)?;
         let individual_identifier = selection.record_value(&record, selection.individual_identifier_value_index);
         if individual_identifier.is_empty() {
             continue;
@@ -859,13 +936,14 @@ fn read_covariate_table(
     parse_candidate_mask: &[bool],
     sample_count: usize,
 ) -> Result<CovariateTable, String> {
-    let mut reader = open_tsv_table_reader(covariate_path)?;
+    let mut reader = open_covariate_table_reader(covariate_path)?;
     let headers = read_tabular_header(&mut reader, covariate_path)?;
     let covariate_path_text = covariate_path.display().to_string();
-    let family_identifier_index = column_index(&headers, "FID");
-    if sample_key_mode == SampleKeyMode::FidIid {
-        required_column_index(&headers, "FID", &covariate_path_text)?;
-    }
+    let family_identifier_index = if sample_key_mode == SampleKeyMode::FidIid {
+        Some(required_column_index(&headers, "FID", &covariate_path_text)?)
+    } else {
+        None
+    };
     let individual_identifier_index = required_column_index(&headers, "IID", &covariate_path_text)?;
     let selected_covariate_names = select_covariate_names(&headers, requested_covariate_names, &covariate_path_text)?;
     let covariate_indices: Vec<usize> = selected_covariate_names
@@ -875,13 +953,25 @@ fn read_covariate_table(
                 .ok_or_else(|| format!("Covariate column '{covariate_name}' was not found."))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let selection =
-        TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &covariate_indices);
+    let covariate_column_definitions = selected_covariate_names
+        .iter()
+        .zip(covariate_indices.iter())
+        .map(|(covariate_name, covariate_index)| TabularColumnDefinition {
+            column_name: covariate_name.as_str(),
+            column_index: *covariate_index,
+        })
+        .collect::<Vec<_>>();
+    let selection = TabularColumnSelection::new(
+        family_identifier_index,
+        individual_identifier_index,
+        &covariate_column_definitions,
+    );
     let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
     let selected_covariate_count = selected_covariate_names.len();
     let mut covariate_values = vec![0.0; sample_count * selected_covariate_count];
     let mut covariate_mask = vec![false; sample_count];
     while let Some(record) = reader.read_next_record()? {
+        selection.validate_record(&reader, &record)?;
         let individual_identifier = selection.record_value(&record, selection.individual_identifier_value_index);
         if individual_identifier.is_empty() {
             continue;
@@ -1402,6 +1492,100 @@ mod tests {
         assert_eq!(aligned.phenotype_column_count, 1);
         assert_eq!(aligned.phenotype_matrix_values, vec![10.0, 20.0]);
         assert_eq!(aligned.covariate_matrix_values, vec![1.0]);
+    }
+
+    #[test]
+    fn rejects_short_single_phenotype_selected_row() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file("short-phenotypes.tsv", "FID\tIID\ttrait\nF1\tI1\n");
+        let inputs = AlignmentInputs {
+            sample_indices: vec![0],
+            family_identifiers: strings(&["F1"]),
+            individual_identifiers: strings(&["I1"]),
+            phenotype_path: phenotype_path.clone(),
+            phenotype_name: "trait".to_string(),
+            covariate_path: None,
+            covariate_names: None,
+            is_binary_trait: false,
+            sample_key_mode: SampleKeyMode::FidIid,
+        };
+
+        let error = align_sample_data(inputs).expect_err("short selected phenotype row should fail");
+
+        assert!(error.contains(&format!(
+            "Phenotype table '{phenotype_path}' line 2 is missing selected column 'trait' at column index 2; row has 2 fields."
+        )));
+    }
+
+    #[test]
+    fn rejects_short_selected_covariate_row() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file("phenotypes.tsv", "FID\tIID\ttrait\nF1\tI1\t1\n");
+        let covariate_path = fixture.write_file("short-covariates.tsv", "FID\tIID\tage\tsex\nF1\tI1\t40\n");
+        let inputs = AlignmentInputs {
+            sample_indices: vec![0],
+            family_identifiers: strings(&["F1"]),
+            individual_identifiers: strings(&["I1"]),
+            phenotype_path,
+            phenotype_name: "trait".to_string(),
+            covariate_path: Some(covariate_path.clone()),
+            covariate_names: Some(strings(&["sex"])),
+            is_binary_trait: false,
+            sample_key_mode: SampleKeyMode::FidIid,
+        };
+
+        let error = align_sample_data(inputs).expect_err("short selected covariate row should fail");
+
+        assert!(error.contains(&format!(
+            "Covariate table '{covariate_path}' line 2 is missing selected column 'sex' at column index 3; row has 3 fields."
+        )));
+    }
+
+    #[test]
+    fn rejects_short_multi_phenotype_selected_row() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file("short-multi.tsv", "FID\tIID\ttrait_a\ttrait_b\nF1\tI1\t10\n");
+        let inputs = MultiAlignmentInputs {
+            sample_indices: vec![0],
+            family_identifiers: strings(&["F1"]),
+            individual_identifiers: strings(&["I1"]),
+            phenotype_path: phenotype_path.clone(),
+            phenotype_names: strings(&["trait_a", "trait_b"]),
+            covariate_path: None,
+            covariate_names: None,
+            is_binary_trait: false,
+            sample_key_mode: SampleKeyMode::FidIid,
+        };
+
+        let error = align_multi_sample_data(inputs).expect_err("short selected multi-phenotype row should fail");
+
+        assert!(error.contains(&format!(
+            "Phenotype table '{phenotype_path}' line 2 is missing selected column 'trait_b' at column index 3; row has 3 fields."
+        )));
+    }
+
+    #[test]
+    fn accepts_explicit_empty_selected_fields_as_missing_values() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file("phenotypes.tsv", "FID\tIID\ttrait\nF1\tI1\t\nF2\tI2\t2\nF3\tI3\t3\n");
+        let covariate_path = fixture.write_file("covariates.tsv", "FID\tIID\tage\nF2\tI2\t\nF3\tI3\t50\n");
+        let inputs = AlignmentInputs {
+            sample_indices: vec![0, 1, 2],
+            family_identifiers: strings(&["F1", "F2", "F3"]),
+            individual_identifiers: strings(&["I1", "I2", "I3"]),
+            phenotype_path,
+            phenotype_name: "trait".to_string(),
+            covariate_path: Some(covariate_path),
+            covariate_names: Some(strings(&["age"])),
+            is_binary_trait: false,
+            sample_key_mode: SampleKeyMode::FidIid,
+        };
+
+        let aligned = align_sample_data(inputs).expect("explicit empty selected fields should remain missing values");
+
+        assert_eq!(aligned.sample_indices, vec![2]);
+        assert_eq!(aligned.phenotype_vector, vec![3.0]);
+        assert_eq!(aligned.covariate_matrix_values, vec![1.0, 50.0]);
     }
 
     #[test]
