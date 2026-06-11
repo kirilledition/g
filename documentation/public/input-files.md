@@ -116,6 +116,12 @@ requested phenotypes:
 - `complete-case`: all requested phenotypes share one intersection of complete
   phenotype and covariate rows.
 
+Every phenotype run manifest records the selected mode, the aligned sample count,
+the sample-set fingerprint, the covariate-design fingerprint, and the prediction
+alignment fingerprint used for that phenotype. Resume treats these fields as
+result-affecting, so a per-phenotype output cannot be resumed as complete-case
+output or vice versa.
+
 This is a statistical choice, not only an execution strategy:
 
 - Use `per-phenotype` when you want each trait to be analyzed on its own largest

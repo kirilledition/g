@@ -432,8 +432,14 @@ def build_pipeline_manifest_header(
     sample_count: int,
     variant_count: int,
     multi_phenotype_sample_mode: output.MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+    phenotype_compute_group: execution_plan.PhenotypeComputeGroup | None = None,
 ) -> dict[str, typing.Any]:
     """Build the current manifest header for one output run."""
+    phenotype_compute_group_id = (
+        None
+        if phenotype_compute_group is None
+        else execution_plan.build_phenotype_compute_group_id(phenotype_compute_group)
+    )
     return output.build_current_run_manifest_header(
         association_mode=context.association_mode,
         association_backend_kind=context.backend_plan.backend_kind,
@@ -460,6 +466,16 @@ def build_pipeline_manifest_header(
         score_dtype=context.score_dtype,
         firth_dtype=context.firth_dtype,
         multi_phenotype_sample_mode=multi_phenotype_sample_mode,
+        phenotype_compute_group_id=phenotype_compute_group_id,
+        sample_set_fingerprint=None
+        if phenotype_compute_group is None
+        else phenotype_compute_group.sample_set_fingerprint,
+        covariate_design_fingerprint=(
+            None if phenotype_compute_group is None else phenotype_compute_group.covariate_design_fingerprint
+        ),
+        prediction_alignment_fingerprint=(
+            None if phenotype_compute_group is None else phenotype_compute_group.prediction_alignment_fingerprint
+        ),
         output_format=context.writer_settings.output_format,
         finalize_parquet=context.writer_settings.finalize_parquet,
         writer_thread_count=context.writer_settings.writer_thread_count,
@@ -595,6 +611,52 @@ def log_sample_alignment_completed(
     if phenotype_group_count is not None:
         telemetry_fields["phenotype_group_count"] = phenotype_group_count
     context.telemetry_session.log_event("sample_alignment_completed", **telemetry_fields)
+
+
+def log_multi_phenotype_sample_summary(
+    *,
+    context: Regenie2PipelineContext,
+    sample_mode: types.MultiPhenotypeSampleMode,
+    sample_counts: tuple[int, ...],
+    sample_set_fingerprints: tuple[str | None, ...],
+    phenotype_group_count: int,
+) -> None:
+    """Emit a user-visible summary of multi-phenotype sample semantics."""
+    sample_counts_differ = len(set(sample_counts)) > 1
+    observed_sample_set_fingerprints = {
+        sample_set_fingerprint
+        for sample_set_fingerprint in sample_set_fingerprints
+        if sample_set_fingerprint is not None
+    }
+    shared_sample_set = len(observed_sample_set_fingerprints) == 1 and len(sample_set_fingerprints) > 0
+    if sample_mode == types.MultiPhenotypeSampleMode.COMPLETE_CASE:
+        logger.info(
+            "Analyzed %s phenotypes in complete-case sample mode; one shared sample set was used.",
+            len(sample_counts),
+        )
+    else:
+        sample_count_summary = (
+            "sample counts differ across phenotypes"
+            if sample_counts_differ
+            else "sample counts do not differ across phenotypes"
+        )
+        logger.info(
+            "Analyzed %s phenotypes in per-phenotype sample mode; %s.",
+            len(sample_counts),
+            sample_count_summary,
+        )
+    if context.telemetry_session is None:
+        return
+    context.telemetry_session.log_event(
+        "multi_phenotype_sample_summary",
+        association_mode=context.association_mode.value,
+        multi_phenotype_sample_mode=sample_mode.value,
+        phenotype_count=len(sample_counts),
+        phenotype_group_count=phenotype_group_count,
+        sample_counts=list(sample_counts),
+        sample_counts_differ=sample_counts_differ,
+        shared_sample_set=shared_sample_set,
+    )
 
 
 def log_prediction_source_loaded(
@@ -793,6 +855,12 @@ def run_single_trait_bgen_pipeline(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
+    resolved_compute_group = native_dispatch.build_resolved_single_phenotype_compute_group(
+        phenotype_name=phenotype_name,
+        run_input=run_input,
+        prediction_list_path=context.prediction_list_path,
+        alignment_config=context.alignment_config,
+    )
     run_single_trait_preflight(
         context=context,
         run_input=run_input,
@@ -807,6 +875,7 @@ def run_single_trait_bgen_pipeline(
         covariate_names=tuple(run_input.native_aligned_sample_data.covariate_names),
         sample_count=int(run_input.sample_indices.shape[0]),
         variant_count=int(engine.variant_count),
+        phenotype_compute_group=resolved_compute_group,
     )
     initialized_outputs = initialize_pipeline_output_runs(
         output_run_paths_by_trait=(output_run_paths,),
@@ -1349,6 +1418,15 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         sample_count=int(run_input.sample_indices.shape[0]),
         covariate_count=len(run_input.native_multi_aligned_sample_data.covariate_names),
     )
+    log_multi_phenotype_sample_summary(
+        context=context,
+        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        sample_counts=tuple(int(run_input.sample_indices.shape[0]) for _ in resolved_compute_group.phenotype_names),
+        sample_set_fingerprints=tuple(
+            resolved_compute_group.sample_set_fingerprint for _ in resolved_compute_group.phenotype_names
+        ),
+        phenotype_group_count=1,
+    )
     prediction_start_time = time.perf_counter()
     logger.debug("Loading REGENIE prediction source for multi-phenotype pipeline.")
     prediction_source = native_dispatch.build_multi_regenie_prediction_source(
@@ -1377,7 +1455,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         resume=resume,
         resume_mode=resume_mode,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-        output_sample_mode=output.MultiPhenotypeSampleMode.COMPLETE_CASE_INTERSECTION,
+        output_sample_mode=output.MultiPhenotypeSampleMode.COMPLETE_CASE,
     )
 
 
@@ -1427,6 +1505,23 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     log_sample_alignment_completed(
         context=context,
         phenotype_count=len(phenotype_names),
+        phenotype_group_count=len(grouped_run_inputs),
+    )
+    grouped_sample_counts = tuple(
+        int(grouped_run_input.run_input.sample_indices.shape[0])
+        for grouped_run_input in grouped_run_inputs
+        for _ in grouped_run_input.compute_group.phenotype_names
+    )
+    grouped_sample_set_fingerprints = tuple(
+        grouped_run_input.compute_group.sample_set_fingerprint
+        for grouped_run_input in grouped_run_inputs
+        for _ in grouped_run_input.compute_group.phenotype_names
+    )
+    log_multi_phenotype_sample_summary(
+        context=context,
+        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        sample_counts=grouped_sample_counts,
+        sample_set_fingerprints=grouped_sample_set_fingerprints,
         phenotype_group_count=len(grouped_run_inputs),
     )
     validate_grouped_per_phenotype_resume_compatibility(
@@ -1479,7 +1574,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             resume=resume,
             resume_mode=resume_mode,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            output_sample_mode=output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+            output_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         )
         for phenotype_index, final_parquet_path in zip(
             compute_group.phenotype_indices,
@@ -1523,7 +1618,8 @@ def validate_grouped_per_phenotype_resume_compatibility(
                     covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
                     sample_count=int(run_input.sample_indices.shape[0]),
                     variant_count=int(engine.variant_count),
-                    multi_phenotype_sample_mode=output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+                    multi_phenotype_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+                    phenotype_compute_group=compute_group,
                 )
             )
     validate_pipeline_resume_compatibility(
@@ -1643,7 +1739,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
             resume=resume,
             resume_mode=resume_mode,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            output_sample_mode=output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+            output_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         )
         for grouped_run_input in grouped_run_inputs
     )
@@ -1739,6 +1835,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
             sample_count=int(run_input.sample_indices.shape[0]),
             variant_count=int(engine.variant_count),
             multi_phenotype_sample_mode=output_sample_mode,
+            phenotype_compute_group=compute_group,
         )
         for phenotype_name in compute_group.phenotype_names
     )

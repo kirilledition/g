@@ -77,6 +77,21 @@ class NativeBgenRunInput:
         """Return no multi-trait native alignment handle for single-trait runs."""
         return None
 
+    @property
+    def family_identifiers(self) -> tuple[str, ...]:
+        """Expose family identifiers lazily for diagnostics and tests."""
+        return tuple(self.native_aligned_sample_data.family_identifiers)
+
+    @property
+    def individual_identifiers(self) -> tuple[str, ...]:
+        """Expose individual identifiers lazily for diagnostics and tests."""
+        return tuple(self.native_aligned_sample_data.individual_identifiers)
+
+    @property
+    def covariate_names(self) -> tuple[str, ...]:
+        """Expose covariate names lazily for diagnostics and tests."""
+        return tuple(self.native_aligned_sample_data.covariate_names)
+
 
 @dataclass(frozen=True)
 class NativeBgenMultiRunInput:
@@ -113,6 +128,11 @@ class NativeBgenMultiRunInput:
     def individual_identifiers(self) -> tuple[str, ...]:
         """Expose individual identifiers lazily for diagnostics and tests."""
         return tuple(self.native_multi_aligned_sample_data.individual_identifiers)
+
+    @property
+    def covariate_names(self) -> tuple[str, ...]:
+        """Expose covariate names lazily for diagnostics and tests."""
+        return tuple(self.native_multi_aligned_sample_data.covariate_names)
 
 
 @dataclass(frozen=True)
@@ -255,6 +275,31 @@ def build_resolved_phenotype_compute_group(
     )
 
 
+def build_resolved_single_phenotype_compute_group(
+    *,
+    phenotype_name: str,
+    run_input: NativeBgenRunInput,
+    prediction_list_path: Path,
+    alignment_config: SampleAlignmentConfigProtocol | None,
+) -> execution_plan.PhenotypeComputeGroup:
+    """Build the alignment-resolved single-phenotype compute group."""
+    sample_set_fingerprint = fingerprint_sample_set(run_input)
+    return execution_plan.PhenotypeComputeGroup(
+        group_mode=types.PhenotypeComputeGroupMode.SINGLE_PHENOTYPE,
+        phenotype_indices=(0,),
+        phenotype_names=(phenotype_name,),
+        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        sample_set_fingerprint=sample_set_fingerprint,
+        covariate_design_fingerprint=fingerprint_covariate_design(run_input),
+        prediction_alignment_fingerprint=fingerprint_prediction_alignment(
+            prediction_list_path=prediction_list_path,
+            phenotype_names=(phenotype_name,),
+            sample_set_fingerprint=sample_set_fingerprint,
+            alignment_config=alignment_config,
+        ),
+    )
+
+
 def build_resolved_complete_case_phenotype_compute_group(
     *,
     run_input: NativeBgenMultiRunInput,
@@ -309,7 +354,7 @@ def build_planned_phenotype_names_by_index(
     return planned_names_by_index
 
 
-def fingerprint_sample_set(run_input: NativeBgenMultiRunInput) -> str:
+def fingerprint_sample_set(run_input: NativeBgenRunInput | NativeBgenMultiRunInput) -> str:
     """Build a stable fingerprint for the aligned sample set."""
     fingerprint_hash = hashlib.sha256()
     update_fingerprint(fingerprint_hash, "sample-set-v1")
@@ -319,13 +364,11 @@ def fingerprint_sample_set(run_input: NativeBgenMultiRunInput) -> str:
     return fingerprint_hash.hexdigest()
 
 
-def fingerprint_covariate_design(run_input: NativeBgenMultiRunInput) -> str:
+def fingerprint_covariate_design(run_input: NativeBgenRunInput | NativeBgenMultiRunInput) -> str:
     """Build a stable fingerprint for the aligned covariate design."""
     fingerprint_hash = hashlib.sha256()
     update_fingerprint(fingerprint_hash, "covariate-design-v1")
-    update_string_sequence_fingerprint(
-        fingerprint_hash, tuple(run_input.native_multi_aligned_sample_data.covariate_names)
-    )
+    update_string_sequence_fingerprint(fingerprint_hash, run_input.covariate_names)
     update_array_fingerprint(fingerprint_hash, run_input.covariate_matrix)
     return fingerprint_hash.hexdigest()
 

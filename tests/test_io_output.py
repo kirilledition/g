@@ -180,6 +180,11 @@ def build_test_header(
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    multi_phenotype_sample_mode: output.MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+    phenotype_compute_group_id: str | None = None,
+    sample_set_fingerprint: str | None = None,
+    covariate_design_fingerprint: str | None = None,
+    prediction_alignment_fingerprint: str | None = None,
 ) -> dict[str, typing.Any]:
     bgen_path = tmp_path / "study.bgen"
     sample_path = tmp_path / "study.sample"
@@ -209,6 +214,11 @@ def build_test_header(
         gpu_genotype_format=gpu_genotype_format,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
+        multi_phenotype_sample_mode=multi_phenotype_sample_mode,
+        phenotype_compute_group_id=phenotype_compute_group_id,
+        sample_set_fingerprint=sample_set_fingerprint,
+        covariate_design_fingerprint=covariate_design_fingerprint,
+        prediction_alignment_fingerprint=prediction_alignment_fingerprint,
         output_format=output_format,
         bgen_decode_tile_variant_count=64,
         trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
@@ -268,6 +278,28 @@ def test_current_run_manifest_records_gpu_genotype_format(tmp_path: Path) -> Non
         "device": "cpu",
         "genotype_format": "packed8",
     }
+
+
+def test_current_run_manifest_records_sample_set_contract(tmp_path: Path) -> None:
+    current_header = build_test_header(
+        tmp_path,
+        multi_phenotype_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        phenotype_compute_group_id="group-fingerprint",
+        sample_set_fingerprint="sample-fingerprint",
+        covariate_design_fingerprint="covariate-fingerprint",
+        prediction_alignment_fingerprint="prediction-fingerprint",
+    )
+
+    assert current_header["multi_phenotype_sample_mode"] == "per-phenotype"
+    assert current_header["phenotype_compute_group_id"] == "group-fingerprint"
+    assert current_header["sample_set_fingerprint"] == "sample-fingerprint"
+    assert current_header["covariate_design_fingerprint"] == "covariate-fingerprint"
+    assert current_header["prediction_alignment_fingerprint"] == "prediction-fingerprint"
+    assert current_header["execution_plan"]["multi_phenotype_sample_mode"] == "per-phenotype"
+    assert current_header["execution_plan"]["phenotype_compute_group_id"] == "group-fingerprint"
+    assert current_header["execution_plan"]["sample_set_fingerprint"] == "sample-fingerprint"
+    assert current_header["execution_plan"]["covariate_design_fingerprint"] == "covariate-fingerprint"
+    assert current_header["execution_plan"]["prediction_alignment_fingerprint"] == "prediction-fingerprint"
 
 
 def initialize_test_output_run(
@@ -1074,7 +1106,11 @@ def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConf
         ("gpu_genotype_format", "packed8"),
         ("score_dtype", "float64"),
         ("firth_dtype", "float32"),
-        ("multi_phenotype_sample_mode", "complete_case_intersection"),
+        ("multi_phenotype_sample_mode", "complete-case"),
+        ("phenotype_compute_group_id", "different-group"),
+        ("sample_set_fingerprint", "different-sample-set"),
+        ("covariate_design_fingerprint", "different-covariate-design"),
+        ("prediction_alignment_fingerprint", "different-prediction-alignment"),
         (
             "output_writer",
             {
@@ -1116,6 +1152,37 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
         initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
 
+def test_initialize_output_run_rejects_per_phenotype_complete_case_resume(tmp_path: Path) -> None:
+    current_header = build_test_header(
+        tmp_path,
+        multi_phenotype_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        phenotype_compute_group_id="per-phenotype-group",
+        sample_set_fingerprint="per-phenotype-samples",
+    )
+    manifest_header = copy.deepcopy(current_header)
+    manifest_header["multi_phenotype_sample_mode"] = "complete-case"
+    manifest_header["phenotype_compute_group_id"] = "complete-case-group"
+    manifest_header["sample_set_fingerprint"] = "complete-case-samples"
+    manifest_header["execution_plan"]["multi_phenotype_sample_mode"] = "complete-case"
+    manifest_header["execution_plan"]["phenotype_compute_group_id"] = "complete-case-group"
+    manifest_header["execution_plan"]["sample_set_fingerprint"] = "complete-case-samples"
+    manifest_header["execution_plan_hash"] = output.build_execution_plan_hash(manifest_header["execution_plan"])
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output-sample-mode",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    resumed_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output-sample-mode",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+    )
+
+    with pytest.raises(ValueError, match="multi_phenotype_sample_mode"):
+        initialize_test_output_run(resumed_output_run, current_header, resume=True)
+
+
 @pytest.mark.parametrize(
     ("nested_field_name", "replacement_value"),
     [
@@ -1144,6 +1211,11 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
         ("gpu_genotype_format", "packed8"),
         ("score_dtype", "float64"),
         ("firth_dtype", "float32"),
+        ("multi_phenotype_sample_mode", "complete-case"),
+        ("phenotype_compute_group_id", "different-group"),
+        ("sample_set_fingerprint", "different-sample-set"),
+        ("covariate_design_fingerprint", "different-covariate-design"),
+        ("prediction_alignment_fingerprint", "different-prediction-alignment"),
         ("chunk_size", 4),
     ],
 )

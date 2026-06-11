@@ -22,7 +22,7 @@ CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.parquet$")
 REGENIE_PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.regenie$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
-RUN_MANIFEST_SCHEMA_VERSION = 7
+RUN_MANIFEST_SCHEMA_VERSION = 8
 OUTPUT_SCHEMA_VERSION = 1
 JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
@@ -32,8 +32,9 @@ RESULT_STATISTIC_OUTPUT_DTYPE = "float32"
 class MultiPhenotypeSampleMode(enum.StrEnum):
     """Sample inclusion policy for one output run."""
 
-    SINGLE_PHENOTYPE = "single_phenotype"
-    COMPLETE_CASE_INTERSECTION = "complete_case_intersection"
+    SINGLE_PHENOTYPE = "single-phenotype"
+    PER_PHENOTYPE = "per-phenotype"
+    COMPLETE_CASE = "complete-case"
 
 
 @dataclass(frozen=True)
@@ -247,6 +248,10 @@ def build_current_run_manifest_header(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     multi_phenotype_sample_mode: MultiPhenotypeSampleMode = MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+    phenotype_compute_group_id: str | None = None,
+    sample_set_fingerprint: str | None = None,
+    covariate_design_fingerprint: str | None = None,
+    prediction_alignment_fingerprint: str | None = None,
     output_format: types.OutputFormat,
     finalize_parquet: bool,
     writer_thread_count: int,
@@ -309,6 +314,10 @@ def build_current_run_manifest_header(
             "score_dtype": score_dtype,
             "firth_dtype": firth_dtype,
             "multi_phenotype_sample_mode": multi_phenotype_sample_mode,
+            "phenotype_compute_group_id": phenotype_compute_group_id,
+            "sample_set_fingerprint": sample_set_fingerprint,
+            "covariate_design_fingerprint": covariate_design_fingerprint,
+            "prediction_alignment_fingerprint": prediction_alignment_fingerprint,
             "output_writer": output_writer_manifest,
             "resume_policy": RESUME_POLICY,
         }
@@ -340,6 +349,10 @@ def build_current_run_manifest_header(
         "score_dtype": score_dtype.value,
         "firth_dtype": firth_dtype.value,
         "multi_phenotype_sample_mode": multi_phenotype_sample_mode.value,
+        "phenotype_compute_group_id": phenotype_compute_group_id,
+        "sample_set_fingerprint": sample_set_fingerprint,
+        "covariate_design_fingerprint": covariate_design_fingerprint,
+        "prediction_alignment_fingerprint": prediction_alignment_fingerprint,
         "output_writer": output_writer_manifest,
         "resume_policy": RESUME_POLICY,
         "execution_plan": execution_plan,

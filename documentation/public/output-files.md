@@ -157,5 +157,10 @@ Common files:
 Use `--log_dir`, `--log_file`, `--stage_timings_json`, and
 `--profile_summary_json` to route diagnostics explicitly.
 
+For multi-phenotype runs, telemetry includes a
+`multi_phenotype_sample_summary` event with the selected sample mode,
+per-phenotype sample counts, whether sample counts differ, and whether all
+phenotypes used one shared sample set.
+
 Successful CLI runs print the generated run directory and any final dataset,
 final Parquet, or final REGENIE text path returned by the engine.

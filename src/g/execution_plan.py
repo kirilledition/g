@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import typing
 from dataclasses import dataclass
@@ -133,6 +135,25 @@ class PhenotypeComputeGroup:
     sample_set_fingerprint: str | None = None
     covariate_design_fingerprint: str | None = None
     prediction_alignment_fingerprint: str | None = None
+
+
+def build_phenotype_compute_group_id(phenotype_compute_group: PhenotypeComputeGroup) -> str:
+    """Build a deterministic identifier for a resolved phenotype compute group."""
+    group_payload = {
+        "group_mode": phenotype_compute_group.group_mode.value,
+        "phenotype_indices": phenotype_compute_group.phenotype_indices,
+        "phenotype_names": phenotype_compute_group.phenotype_names,
+        "sample_mode": phenotype_compute_group.sample_mode.value,
+        "sample_set_fingerprint": phenotype_compute_group.sample_set_fingerprint,
+        "covariate_design_fingerprint": phenotype_compute_group.covariate_design_fingerprint,
+        "prediction_alignment_fingerprint": phenotype_compute_group.prediction_alignment_fingerprint,
+    }
+    group_payload_bytes = json.dumps(
+        group_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(group_payload_bytes).hexdigest()
 
 
 @dataclass(frozen=True)

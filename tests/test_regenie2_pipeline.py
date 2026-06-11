@@ -4112,6 +4112,28 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
         True,
         True,
     )
+    expected_compute_group = native_dispatch.build_resolved_complete_case_phenotype_compute_group(
+        run_input=run_input,
+        prediction_list_path=Path("pred.list"),
+        planned_compute_groups=planned_compute_groups,
+        alignment_config=None,
+    )
+    assert tuple(call.kwargs["multi_phenotype_sample_mode"] for call in mock_build_header.call_args_list) == (
+        output.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        output.MultiPhenotypeSampleMode.COMPLETE_CASE,
+    )
+    assert tuple(call.kwargs["sample_set_fingerprint"] for call in mock_build_header.call_args_list) == (
+        expected_compute_group.sample_set_fingerprint,
+        expected_compute_group.sample_set_fingerprint,
+    )
+    assert tuple(call.kwargs["covariate_design_fingerprint"] for call in mock_build_header.call_args_list) == (
+        expected_compute_group.covariate_design_fingerprint,
+        expected_compute_group.covariate_design_fingerprint,
+    )
+    assert tuple(call.kwargs["prediction_alignment_fingerprint"] for call in mock_build_header.call_args_list) == (
+        expected_compute_group.prediction_alignment_fingerprint,
+        expected_compute_group.prediction_alignment_fingerprint,
+    )
 
 
 def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
@@ -4211,8 +4233,20 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
     assert committed_chunk_identifiers == []
     assert mock_run_multi_preflight.call_args.kwargs["run_input"].phenotype_names == ("trait_a", "trait_b")
     assert tuple(call.kwargs["multi_phenotype_sample_mode"] for call in mock_build_header.call_args_list) == (
-        output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
-        output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+        output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+    )
+    assert tuple(call.kwargs["sample_set_fingerprint"] for call in mock_build_header.call_args_list) == (
+        grouped_run_inputs[0].compute_group.sample_set_fingerprint,
+        grouped_run_inputs[0].compute_group.sample_set_fingerprint,
+    )
+    assert tuple(call.kwargs["covariate_design_fingerprint"] for call in mock_build_header.call_args_list) == (
+        grouped_run_inputs[0].compute_group.covariate_design_fingerprint,
+        grouped_run_inputs[0].compute_group.covariate_design_fingerprint,
+    )
+    assert tuple(call.kwargs["prediction_alignment_fingerprint"] for call in mock_build_header.call_args_list) == (
+        grouped_run_inputs[0].compute_group.prediction_alignment_fingerprint,
+        grouped_run_inputs[0].compute_group.prediction_alignment_fingerprint,
     )
 
 
@@ -4399,6 +4433,7 @@ def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
 def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignments() -> None:
     FakeRunEngine.instances.clear()
     writer_sessions = [FakeWriterSession(), FakeWriterSession()]
+    telemetry_session = RecordingTelemetrySession()
     run_inputs = (
         build_native_run_input_with_alignment(
             phenotype_name="trait_a",
@@ -4408,9 +4443,9 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
         ),
         build_native_run_input_with_alignment(
             phenotype_name="trait_b",
-            sample_indices=(1, 2, 3),
-            phenotype_values=(3.0, 4.0, 5.0),
-            covariate_values=((1.0, 50.0), (1.0, 60.0), (1.0, 70.0)),
+            sample_indices=(1, 2),
+            phenotype_values=(3.0, 4.0),
+            covariate_values=((1.0, 50.0), (1.0, 60.0)),
         ),
     )
     grouped_run_inputs = (
@@ -4443,7 +4478,7 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
         patch(
             "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
-        ),
+        ) as mock_build_header,
         patch(
             "g.engine.regenie2_pipeline.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
@@ -4475,6 +4510,7 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
             sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+            telemetry_session=typing.cast("typing.Any", telemetry_session),
         )
 
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
@@ -4482,12 +4518,35 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
     assert engine.validation_count == 1
     assert len(engine.run_call_arguments) == 1
     sample_indices, callback, committed_chunk_identifiers = engine.run_call_arguments[0]
-    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1, 2, 3], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1, 2], dtype=np.int64))
     assert isinstance(callback, callbacks.GroupedMultiPhenotypeFanoutCallback)
     np.testing.assert_array_equal(callback.group_fanouts[0].sample_position_array, np.asarray([0, 1, 2]))
-    np.testing.assert_array_equal(callback.group_fanouts[1].sample_position_array, np.asarray([1, 2, 3]))
+    np.testing.assert_array_equal(callback.group_fanouts[1].sample_position_array, np.asarray([1, 2]))
     assert committed_chunk_identifiers == []
     assert mock_run_multi_preflight.call_count == 2
+    assert tuple(call.kwargs["sample_count"] for call in mock_build_header.call_args_list) == (3, 2)
+    assert tuple(call.kwargs["sample_set_fingerprint"] for call in mock_build_header.call_args_list) == (
+        grouped_run_inputs[0].compute_group.sample_set_fingerprint,
+        grouped_run_inputs[1].compute_group.sample_set_fingerprint,
+    )
+    assert tuple(call.kwargs["multi_phenotype_sample_mode"] for call in mock_build_header.call_args_list) == (
+        output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+    )
+    summary_events = [
+        fields for event_name, fields in telemetry_session.events if event_name == "multi_phenotype_sample_summary"
+    ]
+    assert summary_events == [
+        {
+            "association_mode": "regenie2_linear",
+            "multi_phenotype_sample_mode": "per-phenotype",
+            "phenotype_count": 2,
+            "phenotype_group_count": 2,
+            "sample_counts": [3, 2],
+            "sample_counts_differ": True,
+            "shared_sample_set": False,
+        }
+    ]
 
 
 def test_grouped_per_phenotype_pipeline_keeps_multi_pass_when_union_not_cheaper() -> None:

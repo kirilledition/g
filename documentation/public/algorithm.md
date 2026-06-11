@@ -670,13 +670,17 @@ Multiple phenotypes can be requested with repeated `--phenoCol` flags or
 `--multi_phenotype_sample_mode per-phenotype` is the default. Each phenotype
 keeps its own complete-case sample set. `g` may group phenotypes that happen to
 share compatible aligned samples, but the statistical semantics match separate
-single-phenotype runs.
+single-phenotype runs. Grouped or union BGEN delivery is an execution
+optimization only; each phenotype manifest still records that phenotype's own
+sample count and sample-set fingerprint.
 
 `--multi_phenotype_sample_mode complete-case` builds one shared complete-case
 intersection across all requested phenotypes. This can reuse genotype decode and
 device transfer work across traits, but it is not equivalent to per-phenotype
 analysis when missingness differs across phenotypes. It changes `sampleCount`,
 the covariate projection, LOCO alignment, and all downstream statistics.
+Complete-case manifests record the shared sample-set fingerprint for every
+phenotype output in the run.
 
 ## Parameter Effects
 
