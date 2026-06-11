@@ -73,7 +73,8 @@ def normalize_python_options(raw_options: typing.Mapping[str, typing.Any]) -> di
                 message = f"Unknown g regenie option: {option_name}"
             raise ValueError(message)
         if option_value is None:
-            continue
+            message = f"Option {option_name} does not accept None; omit the key to leave it unset."
+            raise ValueError(message)
         section_name, section_option_name = option_target
         section_options = normalized_options.setdefault(section_name, {})
         if not isinstance(section_options, dict):
@@ -114,7 +115,14 @@ def split_name_list(value: str | None) -> tuple[str, ...]:
     """Split a comma-delimited REGENIE name list."""
     if value is None:
         return ()
-    return tuple(name.strip() for name in value.split(",") if name.strip())
+    names: list[str] = []
+    for zero_based_index, raw_name in enumerate(value.split(",")):
+        name = raw_name.strip()
+        if not name:
+            message = f"Name list contains an empty entry at position {zero_based_index + 1}."
+            raise ValueError(message)
+        names.append(name)
+    return tuple(names)
 
 
 def optional_string(value: object | None) -> str | None:

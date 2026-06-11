@@ -212,6 +212,98 @@ def test_python_options_reject_undocumented_flat_aliases(option_name: str) -> No
         config.RegenieConfig.from_options(raw_options)
 
 
+@pytest.mark.parametrize(
+    ("option_name", "option_value"),
+    [
+        ("phenoCol", ""),
+        ("phenoColList", ""),
+        ("covarCol", ""),
+        ("covarColList", ""),
+        ("phenoColList", "trait_a,,trait_b"),
+        ("covarColList", "age,,sex"),
+        ("phenoColList", ["trait_a", "", "trait_b"]),
+        ("covarCol", ["age", " ", "sex"]),
+    ],
+)
+def test_python_options_reject_empty_selected_column_values(option_name: str, option_value: object) -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options[option_name] = option_value
+
+    with pytest.raises(ValueError, match="empty entry"):
+        config.RegenieConfig.from_options(raw_options)
+
+
+def test_python_options_reject_nested_empty_selected_column_values() -> None:
+    raw_options: dict[str, object] = {
+        "input": {
+            "bgen": "dataset.bgen",
+            "pheno_file": "phenotype.tsv",
+            "pheno_columns": ["trait_a", "", "trait_b"],
+            "pred": "predictions.list",
+        },
+        "trait": {"step": 2, "qt": True},
+        "output": {"out": "results/output"},
+    }
+
+    with pytest.raises(ValueError, match="empty entry"):
+        config.RegenieConfig.from_options(raw_options)
+
+
+def test_python_options_reject_empty_selected_column_lists() -> None:
+    raw_options: dict[str, object] = {
+        "input": {
+            "bgen": "dataset.bgen",
+            "pheno_file": "phenotype.tsv",
+            "pheno_columns": [],
+            "pred": "predictions.list",
+        },
+        "trait": {"step": 2, "qt": True},
+        "output": {"out": "results/output"},
+    }
+
+    with pytest.raises(ValueError, match="at least one name"):
+        config.RegenieConfig.from_options(raw_options)
+
+
+def test_python_options_reject_nested_none_values() -> None:
+    raw_options: dict[str, object] = {
+        "input": {
+            "bgen": "dataset.bgen",
+            "pheno_file": None,
+            "pheno_col": "trait",
+            "pred": "predictions.list",
+        },
+        "trait": {"step": 2, "qt": True},
+        "output": {"out": "results/output"},
+    }
+
+    with pytest.raises(ValueError, match="do not accept None"):
+        config.RegenieConfig.from_options(raw_options)
+
+
+def test_python_options_accept_pathlike_values() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options["bgen"] = Path("dataset.bgen")
+    raw_options["phenoFile"] = Path("phenotype.tsv")
+    raw_options["pred"] = Path("predictions.list")
+    raw_options["out"] = Path("results/output")
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.input.bgen == Path("dataset.bgen")
+    assert regenie_config.input.pheno_file == Path("phenotype.tsv")
+    assert regenie_config.input.pred == Path("predictions.list")
+    assert regenie_config.g_output.out == Path("results/output")
+
+
+def test_python_options_reject_unsupported_object_values() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options["out"] = object()
+
+    with pytest.raises(TypeError, match="Unsupported Python option value type"):
+        config.RegenieConfig.from_options(raw_options)
+
+
 def test_public_docs_do_not_reference_legacy_g_dash_flags() -> None:
     documentation_root = Path(__file__).resolve().parents[1] / "documentation" / "public"
     offenders: list[str] = []
@@ -518,11 +610,11 @@ def test_unsupported_regenie_options_are_unknown(option_name: str) -> None:
     [
         ({"step": 1}, "--step 1 is recognized"),
         ({"step": 3}, "requires --step 2"),
-        ({"bgen": None}, "Exactly one genotype source"),
-        ({"phenoFile": None}, "--phenoFile is required"),
-        ({"phenoCol": None}, "At least one --phenoCol"),
-        ({"pred": None}, "--pred is required"),
-        ({"out": None}, "--out is required"),
+        ({"bgen": None}, "Option bgen does not accept None"),
+        ({"phenoFile": None}, "Option phenoFile does not accept None"),
+        ({"phenoCol": None}, "Option phenoCol does not accept None"),
+        ({"pred": None}, "Option pred does not accept None"),
+        ({"out": None}, "Option out does not accept None"),
         ({"bsize": 0}, "trait.bsize"),
         ({"threads": 0}, "trait.threads"),
         ({"result_in_flight_limit": 0}, "compute.result_in_flight_limit"),
@@ -683,24 +775,13 @@ def test_quantitative_trait_rejects_explicit_binary_only_options(option_name: st
         config.RegenieConfig.from_options(raw_options)
 
 
-def test_quantitative_trait_ignores_none_binary_only_python_options() -> None:
+@pytest.mark.parametrize("option_name", ["firth", "approx", "firth_se", "pThresh"])
+def test_python_options_reject_none_binary_only_options(option_name: str) -> None:
     raw_options = build_valid_quantitative_options()
-    raw_options.update(
-        {
-            "firth": None,
-            "approx": None,
-            "firth_se": None,
-            "pThresh": None,
-        }
-    )
+    raw_options[option_name] = None
 
-    regenie_config = config.RegenieConfig.from_options(raw_options)
-
-    assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
-    assert "firth" not in regenie_config.explicit_options
-    assert "approx" not in regenie_config.explicit_options
-    assert "firth-se" not in regenie_config.explicit_options
-    assert "pThresh" not in regenie_config.explicit_options
+    with pytest.raises(ValueError, match=f"Option {option_name} does not accept None"):
+        config.RegenieConfig.from_options(raw_options)
 
 
 def test_trait_flags_are_mutually_exclusive_within_one_layer() -> None:

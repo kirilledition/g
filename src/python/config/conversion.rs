@@ -1,3 +1,4 @@
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyMapping, PyModule, PyString, PyTuple};
 use toml::{Table, Value};
@@ -10,54 +11,69 @@ pub(super) fn toml_table_from_py_mapping(raw_options: &Bound<'_, PyAny>) -> PyRe
         let item = item?;
         let tuple = item.cast::<PyTuple>()?;
         let key = tuple.get_item(0)?.extract::<String>()?;
-        if let Some(value) = toml_value_from_py_any(&tuple.get_item(1)?)? {
-            option_table.insert(key, value);
-        }
+        let value = toml_value_from_py_any(&tuple.get_item(1)?)?;
+        option_table.insert(key, value);
     }
     Ok(option_table)
 }
 
-fn toml_value_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
+fn toml_value_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     if value.is_none() {
-        return Ok(None);
+        return Err(PyValueError::new_err("Python option values do not accept None; omit the key to leave it unset."));
     }
     if value.is_instance_of::<PyBool>() {
-        return Ok(Some(Value::Boolean(value.extract::<bool>()?)));
+        return Ok(Value::Boolean(value.extract::<bool>()?));
     }
     if value.cast::<PyMapping>().is_ok() {
-        return toml_table_from_py_mapping(value).map(Value::Table).map(Some);
+        return toml_table_from_py_mapping(value).map(Value::Table);
     }
     if let Ok(list) = value.cast::<PyList>() {
-        return toml_array_from_py_iter(list.as_any()).map(Value::Array).map(Some);
+        return toml_array_from_py_iter(list.as_any()).map(Value::Array);
     }
     if let Ok(tuple) = value.cast::<PyTuple>() {
-        return toml_array_from_py_iter(tuple.as_any()).map(Value::Array).map(Some);
+        return toml_array_from_py_iter(tuple.as_any()).map(Value::Array);
     }
     if value.is_instance_of::<PyInt>() {
-        return Ok(Some(Value::Integer(value.extract::<i64>()?)));
+        return Ok(Value::Integer(value.extract::<i64>()?));
     }
     if value.is_instance_of::<PyFloat>() {
-        return Ok(Some(Value::Float(value.extract::<f64>()?)));
+        return Ok(Value::Float(value.extract::<f64>()?));
     }
     if value.is_instance_of::<PyString>() {
-        return Ok(Some(Value::String(value.extract::<String>()?)));
+        return Ok(Value::String(value.extract::<String>()?));
     }
     if let Ok(enum_value) = value.getattr("value")
         && let Ok(enum_text) = enum_value.extract::<String>()
     {
-        return Ok(Some(Value::String(enum_text)));
+        return Ok(Value::String(enum_text));
     }
-    Ok(Some(Value::String(py_string(value)?)))
+    if let Some(path_text) = py_path_string(value)? {
+        return Ok(Value::String(path_text));
+    }
+    let type_name = value.get_type().name()?.to_string_lossy().into_owned();
+    Err(PyTypeError::new_err(format!(
+        "Unsupported Python option value type '{type_name}'. Accepted values are None-free bool, int, float, str, pathlib/os.PathLike, enum values with string .value, mappings, lists, and tuples."
+    )))
 }
 
 fn toml_array_from_py_iter(value: &Bound<'_, PyAny>) -> PyResult<Vec<Value>> {
     let mut values = Vec::new();
     for item in value.try_iter()? {
-        if let Some(toml_value) = toml_value_from_py_any(&item?)? {
-            values.push(toml_value);
-        }
+        values.push(toml_value_from_py_any(&item?)?);
     }
     Ok(values)
+}
+
+fn py_path_string(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    let Ok(file_system_path_method) = value.getattr("__fspath__") else {
+        return Ok(None);
+    };
+    let path_value = file_system_path_method.call0()?;
+    if let Ok(path_text) = path_value.extract::<String>() {
+        return Ok(Some(path_text));
+    }
+    let type_name = path_value.get_type().name()?.to_string_lossy().into_owned();
+    Err(PyTypeError::new_err(format!("__fspath__ returned unsupported type '{type_name}'; expected str.")))
 }
 
 fn py_string(value: &Bound<'_, PyAny>) -> PyResult<String> {

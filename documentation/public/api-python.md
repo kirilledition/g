@@ -74,6 +74,10 @@ Legacy flat aliases such as `g-device`, `g-output-format`, and `g-log-file` are
 not accepted. For the complete option surface, see [CLI](cli.md) and
 [Configuration](configuration.md).
 
+Option values are strict: omit a key to leave it unset. `None`, empty selected
+column names, empty comma-list entries, and arbitrary Python objects are rejected
+during config construction.
+
 ## Return Value
 
 `api.regenie(...)` returns `g.runner.RunArtifacts`, exposed as

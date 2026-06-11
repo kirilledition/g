@@ -276,12 +276,23 @@ impl NameList {
         self.0
     }
 
-    fn from_text(raw_value: &str) -> Self {
-        Self(raw_value.split(',').map(str::trim).filter(|name| !name.is_empty()).map(ToOwned::to_owned).collect())
+    fn from_text(raw_value: &str) -> Result<Self, String> {
+        Self::from_values(raw_value.split(',').map(ToOwned::to_owned).collect())
     }
 
-    pub(crate) fn from_values(values: Vec<String>) -> Self {
-        Self(values.into_iter().map(|name| name.trim().to_string()).filter(|name| !name.is_empty()).collect())
+    pub(crate) fn from_values(values: Vec<String>) -> Result<Self, String> {
+        let mut normalized_values = Vec::with_capacity(values.len());
+        for (zero_based_index, value) in values.into_iter().enumerate() {
+            let normalized_value = value.trim();
+            if normalized_value.is_empty() {
+                return Err(format!("name list contains an empty entry at position {}.", zero_based_index + 1));
+            }
+            normalized_values.push(normalized_value.to_string());
+        }
+        if normalized_values.is_empty() {
+            return Err("name list must contain at least one name.".to_string());
+        }
+        Ok(Self(normalized_values))
     }
 }
 
@@ -289,7 +300,7 @@ impl FromStr for NameList {
     type Err = String;
 
     fn from_str(raw_value: &str) -> Result<Self, Self::Err> {
-        Ok(Self::from_text(raw_value))
+        Self::from_text(raw_value)
     }
 }
 
@@ -324,14 +335,14 @@ impl<'de> Visitor<'de> for NameListVisitor {
     where
         ErrorType: de::Error,
     {
-        Ok(NameList::from_text(value))
+        NameList::from_text(value).map_err(de::Error::custom)
     }
 
     fn visit_string<ErrorType>(self, value: String) -> Result<Self::Value, ErrorType>
     where
         ErrorType: de::Error,
     {
-        Ok(NameList::from_text(&value))
+        NameList::from_text(&value).map_err(de::Error::custom)
     }
 
     fn visit_seq<SequenceAccess>(self, mut sequence: SequenceAccess) -> Result<Self::Value, SequenceAccess::Error>
@@ -342,6 +353,42 @@ impl<'de> Visitor<'de> for NameListVisitor {
         while let Some(value) = sequence.next_element::<String>()? {
             values.push(value);
         }
-        Ok(NameList::from_values(values))
+        NameList::from_values(values).map_err(de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::NameList;
+
+    #[test]
+    fn name_list_trims_valid_names() {
+        let names = NameList::from_str(" trait_a , trait_b ").expect("valid names should parse");
+
+        assert_eq!(names.into_vec(), vec!["trait_a".to_string(), "trait_b".to_string()]);
+    }
+
+    #[test]
+    fn name_list_rejects_empty_text_tokens() {
+        let error = NameList::from_str("trait_a,,trait_b").expect_err("empty comma token should fail");
+
+        assert!(error.contains("empty entry at position 2"));
+    }
+
+    #[test]
+    fn name_list_rejects_empty_sequence_entries() {
+        let error = NameList::from_values(vec!["trait_a".to_string(), " ".to_string(), "trait_b".to_string()])
+            .expect_err("empty sequence entry should fail");
+
+        assert!(error.contains("empty entry at position 2"));
+    }
+
+    #[test]
+    fn name_list_rejects_empty_sequences() {
+        let error = NameList::from_values(Vec::new()).expect_err("empty sequence should fail");
+
+        assert!(error.contains("at least one name"));
     }
 }

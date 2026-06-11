@@ -10,7 +10,7 @@ use super::parser::RegenieCli;
 impl RegenieCli {
     pub(crate) fn into_config_layer(self) -> ConfigResult<ConfigLayer> {
         let partial_config = PartialConfig {
-            input: self.input_config(),
+            input: self.input_config()?,
             trait_config: self.trait_config()?,
             binary: self.binary_config()?,
             compute: self.compute_config()?,
@@ -21,20 +21,20 @@ impl RegenieCli {
         Ok(ConfigLayer::from_partial_config(partial_config))
     }
 
-    fn input_config(&self) -> PartialInputConfig {
-        PartialInputConfig {
+    fn input_config(&self) -> ConfigResult<PartialInputConfig> {
+        Ok(PartialInputConfig {
             bgen: self.input.bgen.clone(),
             sample: self.input.sample.clone(),
             pheno_file: self.input.pheno_file.clone(),
-            pheno_columns: repeated_name_list(&self.input.pheno_col),
+            pheno_columns: repeated_name_list("phenoCol", &self.input.pheno_col)?,
             pheno_col: None,
             pheno_col_list: self.input.pheno_col_list.clone(),
             covar_file: self.input.covar_file.clone(),
-            covar_columns: repeated_name_list(&self.input.covar_col),
+            covar_columns: repeated_name_list("covarCol", &self.input.covar_col)?,
             covar_col: None,
             covar_col_list: self.input.covar_col_list.clone(),
             pred: self.input.pred.clone(),
-        }
+        })
     }
 
     fn trait_config(&self) -> ConfigResult<PartialTraitConfig> {
@@ -183,8 +183,13 @@ impl RegenieCli {
     }
 }
 
-fn repeated_name_list(values: &[String]) -> Option<NameList> {
-    (!values.is_empty()).then(|| NameList::from_values(values.to_vec()))
+fn repeated_name_list(option_name: &str, values: &[String]) -> ConfigResult<Option<NameList>> {
+    if values.is_empty() {
+        return Ok(None);
+    }
+    NameList::from_values(values.to_vec())
+        .map(Some)
+        .map_err(|error| ConfigError::new(format!("--{option_name}: {error}")))
 }
 
 fn optional_flag(option_name: &str, positive_value: bool, negative_value: bool) -> ConfigResult<Option<bool>> {
