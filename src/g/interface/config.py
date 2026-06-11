@@ -20,128 +20,30 @@ GOutputConfig = g._core.GOutputConfig
 GDiagnosticsConfig = g._core.GDiagnosticsConfig
 RegenieConfig = g._core.RegenieConfig
 
-FLAT_OPTION_SECTIONS: dict[str, tuple[str, str]] = {
-    "bgen": ("input", "bgen"),
-    "sample": ("input", "sample"),
-    "phenoFile": ("input", "phenoFile"),
-    "phenoCol": ("input", "phenoCol"),
-    "phenoColList": ("input", "phenoColList"),
-    "covarFile": ("input", "covarFile"),
-    "covarCol": ("input", "covarCol"),
-    "covarColList": ("input", "covarColList"),
-    "pred": ("input", "pred"),
-    "step": ("trait", "step"),
-    "trait_type": ("trait", "trait_type"),
-    "qt": ("trait", "qt"),
-    "bt": ("trait", "bt"),
-    "bsize": ("trait", "bsize"),
-    "threads": ("trait", "threads"),
-    "firth": ("binary", "firth"),
-    "approx": ("binary", "approx"),
-    "pThresh": ("binary", "pThresh"),
-    "firth-se": ("binary", "firth-se"),
-    "firth_se": ("binary", "firth-se"),
-    "out": ("output", "out"),
-    "format": ("output", "format"),
-    "output_run_directory": ("output", "output_run_directory"),
-    "g-output-format": ("output", "format"),
-    "g-output-run-directory": ("output", "output_run_directory"),
-    "g-writer-threads": ("output", "writer_threads"),
-    "g-writer-queue-depth": ("output", "writer_queue_depth"),
-    "g-output-chunks-per-arrow-file": ("output", "chunks_per_arrow_file"),
-    "g-output-arrow-compression": ("output", "arrow_compression"),
-    "g-output-parquet-compression": ("output", "parquet_compression"),
-    "g-resume": ("output", "resume"),
-    "g-resume-mode": ("output", "resume_mode"),
-    "g-finalize-parquet": ("output", "finalize_parquet"),
-    "g-device": ("compute", "device"),
-    "g-staging-depth": ("compute", "staging_depth"),
-    "g-result-in-flight-limit": ("compute", "result_in_flight_limit"),
-    "g-dosage-buffer-limit": ("compute", "dosage_buffer_limit"),
-    "g-variant-limit": ("compute", "variant_limit"),
-    "g-trusted-no-missing-diploid": ("compute", "trusted_no_missing_diploid"),
-    "g-trusted-bgen-validation-mode": ("compute", "trusted_bgen_validation_mode"),
-    "g-sample-key-mode": ("compute", "sample_key_mode"),
-    "g-multi-phenotype-sample-mode": ("compute", "multi_phenotype_sample_mode"),
-    "g-firth-batch-size": ("compute", "firth_batch_size"),
-    "g-firth-candidate-capacity": ("compute", "firth_candidate_capacity"),
-    "g-binary-null-maximum-iterations": ("compute", "binary_null_maximum_iterations"),
-    "g-binary-null-coefficient-tolerance": ("compute", "binary_null_coefficient_tolerance"),
-    "g-null-logistic-nonconvergence": ("compute", "null_logistic_nonconvergence_policy"),
-    "g-binary-minimum-probability": ("compute", "binary_minimum_probability"),
-    "g-binary-minimum-variance": ("compute", "binary_minimum_variance"),
-    "g-binary-relative-variance-tolerance": ("compute", "binary_relative_variance_tolerance"),
-    "g-linear-minimum-variance": ("compute", "linear_minimum_variance"),
-    "g-linear-relative-variance-tolerance": ("compute", "linear_relative_variance_tolerance"),
-    "g-firth-maximum-iterations": ("compute", "firth_maximum_iterations"),
-    "g-firth-gradient-tolerance": ("compute", "firth_gradient_tolerance"),
-    "g-firth-coefficient-tolerance": ("compute", "firth_coefficient_tolerance"),
-    "g-firth-likelihood-tolerance": ("compute", "firth_likelihood_tolerance"),
-    "g-firth-maximum-step-size": ("compute", "firth_maximum_step_size"),
-    "g-firth-pseudo-maximum-iterations": ("compute", "firth_pseudo_maximum_iterations"),
-    "g-firth-pseudo-inner-maximum-iterations": ("compute", "firth_pseudo_inner_maximum_iterations"),
-    "g-firth-newton-raphson-zero-start-iterations": ("compute", "firth_newton_raphson_zero_start_iterations"),
-    "g-firth-line-search-maximum-attempts": ("compute", "firth_line_search_maximum_attempts"),
-    "g-firth-step-halving-maximum-attempts": ("compute", "firth_step_halving_maximum_attempts"),
-    "g-firth-initial-response-scale": ("compute", "firth_initial_response_scale"),
-    "g-firth-sparse-carrier-dosage-threshold": ("compute", "firth_sparse_carrier_dosage_threshold"),
-    "g-firth-step-halving-scale": ("compute", "firth_step_halving_scale"),
-    "g-null-firth-maximum-iterations": ("compute", "null_firth_maximum_iterations"),
-    "g-null-firth-gradient-tolerance": ("compute", "null_firth_gradient_tolerance"),
-    "g-null-firth-maximum-step-size": ("compute", "null_firth_maximum_step_size"),
-    "g-null-firth-fallback-iteration-multiplier": ("compute", "null_firth_fallback_iteration_multiplier"),
-    "g-null-firth-fallback-step-divisor": ("compute", "null_firth_fallback_step_divisor"),
-    "g-null-firth-line-search-maximum-attempts": ("compute", "null_firth_line_search_maximum_attempts"),
-    "g-null-firth-step-halving-scale": ("compute", "null_firth_step_halving_scale"),
-    "g-use-block-firth-math": ("compute", "use_block_firth_math"),
-    "g-bgen-decode-tile-variant-count": ("compute", "bgen_decode_tile_variant_count"),
-    "g-gpu-genotype-format": ("compute", "gpu_genotype_format"),
-    "g-score-dtype": ("compute", "score_dtype"),
-    "g-firth-dtype": ("compute", "firth_dtype"),
-    "g-jax-cache-dir": ("compute", "jax_cache_dir"),
-    "g-jax-matmul-precision": ("compute", "jax_matmul_precision"),
-    "g-jax-persistent-cache": ("compute", "jax_persistent_cache"),
-    "g-jax-persistent-cache-min-entry-size-bytes": ("compute", "jax_persistent_cache_min_entry_size_bytes"),
-    "g-jax-persistent-cache-min-compile-time-seconds": ("compute", "jax_persistent_cache_min_compile_time_seconds"),
-    "g-jax-xla-autotune-cache": ("compute", "jax_xla_autotune_cache"),
-    "g-jax-transfer-guard": ("compute", "jax_transfer_guard"),
-    "g-telemetry": ("diagnostics", "telemetry"),
-    "g-log-dir": ("diagnostics", "log_dir"),
-    "g-stage-timings-json": ("diagnostics", "stage_timings_json"),
-    "g-log-filter": ("diagnostics", "log_filter"),
-    "g-log-file": ("diagnostics", "log_file"),
-    "g-log-stderr": ("diagnostics", "log_stderr"),
-    "g-progress-interval-seconds": ("diagnostics", "progress_interval_seconds"),
-    "g-progress-interval-chunks": ("diagnostics", "progress_interval_chunks"),
-    "g-profile-summary-json": ("diagnostics", "profile_summary_json"),
-    "g-trace-file": ("diagnostics", "trace_file"),
-    "g-trace-filter": ("diagnostics", "trace_filter"),
-    "g-trace-event-cap": ("diagnostics", "trace_event_cap"),
-    "g-log-queue-size": ("diagnostics", "log_queue_size"),
-    "g-log-lossy": ("diagnostics", "log_lossy"),
-    "g-include-source-location": ("diagnostics", "include_source_location"),
-    "g-include-span-events": ("diagnostics", "include_span_events"),
-}
 
-BOOLEAN_PYTHON_OPTIONS = {
-    "qt",
-    "bt",
-    "firth",
-    "approx",
-    "firth-se",
-    "firth_se",
-    "g-trusted-no-missing-diploid",
-    "g-use-block-firth-math",
-    "g-jax-persistent-cache",
-    "g-jax-xla-autotune-cache",
-    "g-jax-transfer-guard",
-    "g-resume",
-    "g-finalize-parquet",
-    "g-log-stderr",
-    "g-log-lossy",
-    "g-include-source-location",
-    "g-include-span-events",
-}
+def build_flat_option_sections() -> dict[str, tuple[str, str]]:
+    """Build Python flat-option targets from Rust-owned metadata."""
+    flat_option_sections: dict[str, tuple[str, str]] = {}
+    for option_metadata in g._core.config_option_schema():
+        section_name = option_metadata["section"]
+        toml_name = option_metadata["toml_name"]
+        for python_name in option_metadata["flat_python_names"]:
+            flat_option_sections[python_name] = (section_name, toml_name)
+    return flat_option_sections
+
+
+def build_boolean_python_options() -> frozenset[str]:
+    """Build boolean Python flat-option names from Rust-owned metadata."""
+    boolean_option_names: set[str] = set()
+    for option_metadata in g._core.config_option_schema():
+        if option_metadata["value_kind"] != "boolean":
+            continue
+        boolean_option_names.update(option_metadata["flat_python_names"])
+    return frozenset(boolean_option_names)
+
+
+FLAT_OPTION_SECTIONS: dict[str, tuple[str, str]] = build_flat_option_sections()
+BOOLEAN_PYTHON_OPTIONS: frozenset[str] = build_boolean_python_options()
 
 BOOLEAN_TRUE_VALUES = frozenset(("1", "true", "yes", "on"))
 BOOLEAN_FALSE_VALUES = frozenset(("0", "false", "no", "off"))
@@ -223,11 +125,12 @@ def optional_string(value: object | None) -> str | None:
 
 
 def normalize_option_name(option_name: str) -> str:
-    """Normalize legacy Python option aliases to CLI-style names."""
-    legacy_option_names = {
-        "g_null_logistic_nonconvergence_policy": "g-null-logistic-nonconvergence",
-    }
-    return legacy_option_names.get(option_name, option_name)
+    """Return a Python option name unchanged.
+
+    Deprecated compatibility helper; native Rust metadata is the source of
+    supported option aliases.
+    """
+    return option_name
 
 
 def normalize_trait_type(
@@ -253,32 +156,11 @@ def flatten_toml_mapping(raw_mapping: typing.Mapping[str, typing.Any]) -> dict[s
     """Flatten TOML-shaped config mappings into Python option names."""
     flattened_options: dict[str, typing.Any] = {}
     for key, value in raw_mapping.items():
-        if key == "g" and isinstance(value, collections.abc.Mapping):
-            flatten_g_section(value, flattened_options)
-        elif isinstance(value, collections.abc.Mapping):
+        if isinstance(value, collections.abc.Mapping):
             flatten_mapping_section(prefix=key, raw_mapping=value, flattened_options=flattened_options)
         else:
             flattened_options[key] = value
     return flattened_options
-
-
-def flatten_g_section(
-    raw_mapping: typing.Mapping[str, typing.Any],
-    flattened_options: dict[str, typing.Any],
-) -> None:
-    """Flatten a `[g.*]` TOML section into `g-*` Python options."""
-    for key, value in raw_mapping.items():
-        if key == "compute" and isinstance(value, collections.abc.Mapping):
-            for option_name, option_value in value.items():
-                flattened_options[f"g-{option_name.replace('_', '-')}"] = option_value
-        elif key == "output" and isinstance(value, collections.abc.Mapping):
-            for option_name, option_value in value.items():
-                flattened_options[f"g-output-{option_name.replace('_', '-')}"] = option_value
-        elif key == "diagnostics" and isinstance(value, collections.abc.Mapping):
-            for option_name, option_value in value.items():
-                flattened_options[f"g-{option_name.replace('_', '-')}"] = option_value
-        else:
-            flattened_options[f"g.{key}"] = value
 
 
 def flatten_mapping_section(
@@ -302,7 +184,11 @@ def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
 
 
 def explicit_options(config: RegenieConfig) -> frozenset[str]:
-    """Return explicit legacy option names when available."""
+    """Return explicit Python option names.
+
+    Deprecated compatibility property. The Rust frontend tracks native
+    provenance for validation, but Python does not expose per-option provenance.
+    """
     del config
     return frozenset()
 

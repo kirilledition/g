@@ -1597,14 +1597,7 @@ fn dispatch_cli_resolves_a_valid_regenie_command() {
 
 #[test]
 fn dispatch_cli_rejects_removed_g_prefixed_runtime_flags() {
-    let outcome = dispatch_cli(
-        &[
-            "regenie".to_string(),
-            "--g-device".to_string(),
-            "cpu".to_string(),
-        ],
-        false,
-    );
+    let outcome = dispatch_cli(&["regenie".to_string(), "--g-device".to_string(), "cpu".to_string()], false);
     assert_eq!(outcome.exit_code, 1);
     assert!(outcome.stderr.contains("unexpected argument '--g-device'"));
     assert!(outcome.stderr.contains("--device"));

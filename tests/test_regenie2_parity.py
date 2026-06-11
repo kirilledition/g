@@ -92,11 +92,11 @@ def regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie
             "covarCol": ("age", "sex"),
             "pred": BASELINE_DIRECTORY / "regenie_step1_qt_pred.list",
             "bsize": 512,
-            "g-device": types.Device.CPU.value,
-            "g-variant-limit": PARITY_VARIANT_LIMIT,
-            "g-staging-depth": 1,
-            "g-output-run-directory": output_directory / "regenie2_parity",
-            "g-output-format": types.OutputFormat.PARQUET.value,
+            "device": types.Device.CPU.value,
+            "variant_limit": PARITY_VARIANT_LIMIT,
+            "staging_depth": 1,
+            "output_run_directory": output_directory / "regenie2_parity",
+            "format": types.OutputFormat.PARQUET.value,
         }
     )
 

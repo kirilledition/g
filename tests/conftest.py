@@ -12,7 +12,7 @@ COMPUTE_CONFIG = config.RegenieConfig.from_options(
         "phenoCol": "trait",
         "pred": "predictions.list",
         "out": "results/output",
-        "g-jax-persistent-cache": False,
+        "jax_persistent_cache": False,
     }
 ).g_compute
 jax_setup.configure_jax_runtime(jax_runtime.build_jax_runtime_policy(COMPUTE_CONFIG))

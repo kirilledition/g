@@ -3,7 +3,7 @@ use std::path::Path;
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use pyo3::types::{PyDict, PyList, PyModule};
 
 use crate::interface::{
     self, BinaryConfigData, CliOutcomeData, GComputeConfigData, GDiagnosticsConfigData, GOutputConfigData,
@@ -750,6 +750,23 @@ fn load_packaged_config() -> PyResult<RegenieConfig> {
 }
 
 #[pyfunction]
+fn config_option_schema(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let entries = PyList::empty(py);
+    for metadata in interface::config_option_metadata() {
+        let entry = PyDict::new(py);
+        entry.set_item("section", metadata.section)?;
+        entry.set_item("toml_name", metadata.toml_name)?;
+        entry.set_item("accepted_toml_names", metadata.accepted_toml_names)?;
+        entry.set_item("cli_long_name", metadata.cli_long_name)?;
+        entry.set_item("negative_cli_long_name", metadata.negative_cli_long_name)?;
+        entry.set_item("flat_python_names", metadata.flat_python_names)?;
+        entry.set_item("value_kind", metadata.value_kind.as_str())?;
+        entries.append(entry)?;
+    }
+    Ok(entries.into_any().unbind())
+}
+
+#[pyfunction]
 fn dumps_config_toml(config: &RegenieConfig) -> PyResult<String> {
     interface::dumps_toml(config.data()).map_err(|error| config_error_to_py("dumps_toml", error))
 }
@@ -792,6 +809,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(config_from_options, module)?)?;
     module.add_function(wrap_pyfunction!(config_from_toml, module)?)?;
     module.add_function(wrap_pyfunction!(load_packaged_config, module)?)?;
+    module.add_function(wrap_pyfunction!(config_option_schema, module)?)?;
     module.add_function(wrap_pyfunction!(dumps_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(write_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config, module)?)?;

@@ -50,8 +50,7 @@ First checks after install:
 
 ```bash
 uv run g --help
-uv run g config init
-uv run g config explain bgen
+uv run g regenie --help
 ```
 
 ## GPU Install From Source

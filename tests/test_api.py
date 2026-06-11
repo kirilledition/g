@@ -44,7 +44,7 @@ def build_minimal_config() -> config.RegenieConfig:
             "covarColList": "age,sex",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-output-format": "parquet",
+            "format": "parquet",
         }
     )
 
@@ -144,8 +144,8 @@ def test_regenie_config_from_options_maps_regenie_names() -> None:
             "firth": True,
             "approx": True,
             "pThresh": 0.01,
-            "g-device": "gpu",
-            "g-output-format": "arrow",
+            "device": "gpu",
+            "format": "arrow",
         }
     )
 
@@ -153,7 +153,7 @@ def test_regenie_config_from_options_maps_regenie_names() -> None:
     assert regenie_config.input.pheno_columns == ("trait_a", "trait_b")
     assert regenie_config.input.covar_columns == ("age", "sex")
     assert regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
-    assert regenie_config.binary.p_threshold == 0.01
+    assert regenie_config.binary.p_threshold == pytest.approx(0.01)
     assert regenie_config.g_compute.device == types.Device.GPU
     assert regenie_config.g_output.format == types.OutputFormat.ARROW
 
@@ -233,30 +233,30 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
     assert kernel_config.firth_candidate.batch_size == 7
     assert kernel_config.firth_candidate.candidate_capacity == 11
     assert kernel_config.null_logistic.maximum_iterations == 13
-    assert kernel_config.null_logistic.coefficient_tolerance == 1.0e-5
-    assert kernel_config.numerical.minimum_probability == 1.0e-7
-    assert kernel_config.numerical.minimum_variance == 1.0e-9
-    assert kernel_config.numerical.relative_variance_tolerance == 2.0e-6
+    assert kernel_config.null_logistic.coefficient_tolerance == pytest.approx(1.0e-5)
+    assert kernel_config.numerical.minimum_probability == pytest.approx(1.0e-7)
+    assert kernel_config.numerical.minimum_variance == pytest.approx(1.0e-9)
+    assert kernel_config.numerical.relative_variance_tolerance == pytest.approx(2.0e-6)
     assert kernel_config.approximate_firth.maximum_iterations == 17
-    assert kernel_config.approximate_firth.gradient_tolerance == 2.0e-5
-    assert kernel_config.approximate_firth.coefficient_tolerance == 3.0e-5
-    assert kernel_config.approximate_firth.likelihood_tolerance == 4.0e-5
-    assert kernel_config.approximate_firth.maximum_step_size == 6.0
+    assert kernel_config.approximate_firth.gradient_tolerance == pytest.approx(2.0e-5)
+    assert kernel_config.approximate_firth.coefficient_tolerance == pytest.approx(3.0e-5)
+    assert kernel_config.approximate_firth.likelihood_tolerance == pytest.approx(4.0e-5)
+    assert kernel_config.approximate_firth.maximum_step_size == pytest.approx(6.0)
     assert kernel_config.approximate_firth.pseudo_maximum_iterations == 19
     assert kernel_config.approximate_firth.pseudo_inner_maximum_iterations == 23
     assert kernel_config.approximate_firth.newton_raphson_zero_start_iterations == 29
     assert kernel_config.approximate_firth.line_search_maximum_attempts == 31
     assert kernel_config.approximate_firth.step_halving_maximum_attempts == 37
-    assert kernel_config.approximate_firth.initial_response_scale == 4.5
-    assert kernel_config.approximate_firth.sparse_carrier_dosage_threshold == 1.0e-3
-    assert kernel_config.approximate_firth.step_halving_scale == 0.25
+    assert kernel_config.approximate_firth.initial_response_scale == pytest.approx(4.5)
+    assert kernel_config.approximate_firth.sparse_carrier_dosage_threshold == pytest.approx(1.0e-3)
+    assert kernel_config.approximate_firth.step_halving_scale == pytest.approx(0.25)
     assert kernel_config.null_firth.maximum_iterations == 41
-    assert kernel_config.null_firth.gradient_tolerance == 5.0e-5
-    assert kernel_config.null_firth.maximum_step_size == 7.0
+    assert kernel_config.null_firth.gradient_tolerance == pytest.approx(5.0e-5)
+    assert kernel_config.null_firth.maximum_step_size == pytest.approx(7.0)
     assert kernel_config.null_firth.fallback_iteration_multiplier == 43
-    assert kernel_config.null_firth.fallback_step_divisor == 11.0
+    assert kernel_config.null_firth.fallback_step_divisor == pytest.approx(11.0)
     assert kernel_config.null_firth.line_search_maximum_attempts == 47
-    assert kernel_config.null_firth.step_halving_scale == 0.125
+    assert kernel_config.null_firth.step_halving_scale == pytest.approx(0.125)
     assert kernel_config.approximate_firth.use_block_math is True
 
 
@@ -344,8 +344,8 @@ def test_regenie_completion_event_includes_user_visible_artifacts(tmp_path: Path
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": str(tmp_path / "output"),
-            "g-output-format": "parquet",
-            "g-log-file": str(event_stream_path),
+            "format": "parquet",
+            "log_file": str(event_stream_path),
         }
     )
 
@@ -359,6 +359,7 @@ def test_regenie_completion_event_includes_user_visible_artifacts(tmp_path: Path
         ),
         patch("g.runner.run_regenie2_linear_bgen_pipeline", return_value=final_parquet),
         patch("g.runner.extend_run_manifest"),
+        patch("g.interface.config.validate_config_for_run"),
         patch("g.interface.config.write_toml"),
     ):
         artifacts = api.regenie(regenie_config)
@@ -402,7 +403,7 @@ def test_regenie_graceful_shutdown_event_preserves_signal_exit(tmp_path: Path) -
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": str(tmp_path / "output"),
-            "g-log-file": str(event_stream_path),
+            "log_file": str(event_stream_path),
         }
     )
     shutdown_request = shutdown_module.GracefulShutdownRequested(
@@ -419,6 +420,7 @@ def test_regenie_graceful_shutdown_event_preserves_signal_exit(tmp_path: Path) -
         ),
         patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=shutdown_request),
         patch("g.runner.extend_run_manifest"),
+        patch("g.interface.config.validate_config_for_run"),
         patch("g.interface.config.write_toml"),
         pytest.raises(shutdown_module.GracefulShutdownRequested),
     ):
@@ -558,6 +560,7 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
         patch("g.execution_plan.output.prepare_output_run", side_effect=record_prepare_output_run),
         patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=record_pipeline),
         patch("g.runner.extend_run_manifest"),
+        patch("g.interface.config.validate_config_for_run"),
         patch("g.interface.config.write_toml"),
     ):
         api.regenie(build_minimal_config())
@@ -966,7 +969,7 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-jax-cache-dir": str(tmp_path / "jax-cache"),
+            "jax_cache_dir": str(tmp_path / "jax-cache"),
         }
     )
     incompatible_config = config.RegenieConfig.from_options(
@@ -979,7 +982,7 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-jax-cache-dir": str(tmp_path / "other-jax-cache"),
+            "jax_cache_dir": str(tmp_path / "other-jax-cache"),
         }
     )
     with (
@@ -995,6 +998,7 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
         patch("g.runner.initialize_logging"),
         patch("g.runner.configure_runtime"),
         patch("g.runner.extend_run_manifest"),
+        patch("g.interface.config.validate_config_for_run"),
         patch("g.interface.config.write_toml"),
         patch("g.runner.importlib.import_module", side_effect=import_module),
     ):
@@ -1025,36 +1029,36 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
             "out": "results/output",
             "firth": True,
             "approx": True,
-            "g-output-format": "parquet",
-            "g-firth-batch-size": 7,
-            "g-firth-candidate-capacity": 11,
-            "g-binary-null-maximum-iterations": 13,
-            "g-binary-null-coefficient-tolerance": 1.0e-5,
-            "g-null-logistic-nonconvergence": "warn",
-            "g-binary-minimum-probability": 1.0e-7,
-            "g-binary-minimum-variance": 1.0e-9,
-            "g-binary-relative-variance-tolerance": 2.0e-6,
-            "g-firth-maximum-iterations": 17,
-            "g-firth-gradient-tolerance": 2.0e-5,
-            "g-firth-coefficient-tolerance": 3.0e-5,
-            "g-firth-likelihood-tolerance": 4.0e-5,
-            "g-firth-maximum-step-size": 6.0,
-            "g-firth-pseudo-maximum-iterations": 19,
-            "g-firth-pseudo-inner-maximum-iterations": 23,
-            "g-firth-newton-raphson-zero-start-iterations": 29,
-            "g-firth-line-search-maximum-attempts": 31,
-            "g-firth-step-halving-maximum-attempts": 37,
-            "g-firth-initial-response-scale": 4.5,
-            "g-firth-sparse-carrier-dosage-threshold": 1.0e-3,
-            "g-firth-step-halving-scale": 0.25,
-            "g-null-firth-maximum-iterations": 41,
-            "g-null-firth-gradient-tolerance": 5.0e-5,
-            "g-null-firth-maximum-step-size": 7.0,
-            "g-null-firth-fallback-iteration-multiplier": 43,
-            "g-null-firth-fallback-step-divisor": 11.0,
-            "g-null-firth-line-search-maximum-attempts": 47,
-            "g-null-firth-step-halving-scale": 0.125,
-            "g-use-block-firth-math": True,
+            "format": "parquet",
+            "firth_batch_size": 7,
+            "firth_candidate_capacity": 11,
+            "binary_null_maximum_iterations": 13,
+            "binary_null_coefficient_tolerance": 1.0e-5,
+            "null_logistic_nonconvergence_policy": "warn",
+            "binary_minimum_probability": 1.0e-7,
+            "binary_minimum_variance": 1.0e-9,
+            "binary_relative_variance_tolerance": 2.0e-6,
+            "firth_maximum_iterations": 17,
+            "firth_gradient_tolerance": 2.0e-5,
+            "firth_coefficient_tolerance": 3.0e-5,
+            "firth_likelihood_tolerance": 4.0e-5,
+            "firth_maximum_step_size": 6.0,
+            "firth_pseudo_maximum_iterations": 19,
+            "firth_pseudo_inner_maximum_iterations": 23,
+            "firth_newton_raphson_zero_start_iterations": 29,
+            "firth_line_search_maximum_attempts": 31,
+            "firth_step_halving_maximum_attempts": 37,
+            "firth_initial_response_scale": 4.5,
+            "firth_sparse_carrier_dosage_threshold": 1.0e-3,
+            "firth_step_halving_scale": 0.25,
+            "null_firth_maximum_iterations": 41,
+            "null_firth_gradient_tolerance": 5.0e-5,
+            "null_firth_maximum_step_size": 7.0,
+            "null_firth_fallback_iteration_multiplier": 43,
+            "null_firth_fallback_step_divisor": 11.0,
+            "null_firth_line_search_maximum_attempts": 47,
+            "null_firth_step_halving_scale": 0.125,
+            "use_block_firth_math": True,
         }
     )
 
@@ -1066,6 +1070,7 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
         ),
         patch("g.runner.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
         patch("g.runner.extend_run_manifest"),
+        patch("g.interface.config.validate_config_for_run"),
         patch("g.interface.config.write_toml"),
     ):
         mock_binary_pipeline.return_value = Path("results/output.g/trait.regenie2_binary.run/final.parquet")
@@ -1075,30 +1080,30 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
     assert kernel_config.firth_candidate.batch_size == 7
     assert kernel_config.firth_candidate.candidate_capacity == 11
     assert kernel_config.null_logistic.maximum_iterations == 13
-    assert kernel_config.null_logistic.coefficient_tolerance == 1.0e-5
-    assert kernel_config.numerical.minimum_probability == 1.0e-7
-    assert kernel_config.numerical.minimum_variance == 1.0e-9
-    assert kernel_config.numerical.relative_variance_tolerance == 2.0e-6
+    assert kernel_config.null_logistic.coefficient_tolerance == pytest.approx(1.0e-5)
+    assert kernel_config.numerical.minimum_probability == pytest.approx(1.0e-7)
+    assert kernel_config.numerical.minimum_variance == pytest.approx(1.0e-9)
+    assert kernel_config.numerical.relative_variance_tolerance == pytest.approx(2.0e-6)
     assert kernel_config.approximate_firth.maximum_iterations == 17
-    assert kernel_config.approximate_firth.gradient_tolerance == 2.0e-5
-    assert kernel_config.approximate_firth.coefficient_tolerance == 3.0e-5
-    assert kernel_config.approximate_firth.likelihood_tolerance == 4.0e-5
-    assert kernel_config.approximate_firth.maximum_step_size == 6.0
+    assert kernel_config.approximate_firth.gradient_tolerance == pytest.approx(2.0e-5)
+    assert kernel_config.approximate_firth.coefficient_tolerance == pytest.approx(3.0e-5)
+    assert kernel_config.approximate_firth.likelihood_tolerance == pytest.approx(4.0e-5)
+    assert kernel_config.approximate_firth.maximum_step_size == pytest.approx(6.0)
     assert kernel_config.approximate_firth.pseudo_maximum_iterations == 19
     assert kernel_config.approximate_firth.pseudo_inner_maximum_iterations == 23
     assert kernel_config.approximate_firth.newton_raphson_zero_start_iterations == 29
     assert kernel_config.approximate_firth.line_search_maximum_attempts == 31
     assert kernel_config.approximate_firth.step_halving_maximum_attempts == 37
-    assert kernel_config.approximate_firth.initial_response_scale == 4.5
-    assert kernel_config.approximate_firth.sparse_carrier_dosage_threshold == 1.0e-3
-    assert kernel_config.approximate_firth.step_halving_scale == 0.25
+    assert kernel_config.approximate_firth.initial_response_scale == pytest.approx(4.5)
+    assert kernel_config.approximate_firth.sparse_carrier_dosage_threshold == pytest.approx(1.0e-3)
+    assert kernel_config.approximate_firth.step_halving_scale == pytest.approx(0.25)
     assert kernel_config.null_firth.maximum_iterations == 41
-    assert kernel_config.null_firth.gradient_tolerance == 5.0e-5
-    assert kernel_config.null_firth.maximum_step_size == 7.0
+    assert kernel_config.null_firth.gradient_tolerance == pytest.approx(5.0e-5)
+    assert kernel_config.null_firth.maximum_step_size == pytest.approx(7.0)
     assert kernel_config.null_firth.fallback_iteration_multiplier == 43
-    assert kernel_config.null_firth.fallback_step_divisor == 11.0
+    assert kernel_config.null_firth.fallback_step_divisor == pytest.approx(11.0)
     assert kernel_config.null_firth.line_search_maximum_attempts == 47
-    assert kernel_config.null_firth.step_halving_scale == 0.125
+    assert kernel_config.null_firth.step_halving_scale == pytest.approx(0.125)
     assert kernel_config.approximate_firth.use_block_math is True
     assert (
         mock_binary_pipeline.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
@@ -1143,10 +1148,10 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
             "out": "results/output",
             "firth": True,
             "approx": True,
-            "g-firth-batch-size": 5,
-            "g-result-in-flight-limit": 7,
-            "g-dosage-buffer-limit": 8,
-            "g-null-logistic-nonconvergence": "warn",
+            "firth_batch_size": 5,
+            "result_in_flight_limit": 7,
+            "dosage_buffer_limit": 8,
+            "null_logistic_nonconvergence_policy": "warn",
         }
     )
     run_paths = output.OutputRunPaths(Path("run"), Path("run/chunks"))
@@ -1189,8 +1194,8 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
             "out": "results/output",
             "firth": True,
             "approx": True,
-            "g-firth-batch-size": 5,
-            "g-null-logistic-nonconvergence": "warn",
+            "firth_batch_size": 5,
+            "null_logistic_nonconvergence_policy": "warn",
         }
     )
     run_paths = (
@@ -1294,9 +1299,9 @@ def test_multi_phenotype_plan_dispatch_forwards_packed8_genotype_format() -> Non
             "phenoColList": "one,two",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-device": "gpu",
-            "g-gpu-genotype-format": "packed8",
-            "g-multi-phenotype-sample-mode": "complete-case",
+            "device": "gpu",
+            "gpu_genotype_format": "packed8",
+            "multi_phenotype_sample_mode": "complete-case",
         }
     )
     run_paths = (
@@ -1341,7 +1346,7 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
             "phenoColList": "one,two",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-multi-phenotype-sample-mode": "complete-case",
+            "multi_phenotype_sample_mode": "complete-case",
         }
     )
     run_paths = (

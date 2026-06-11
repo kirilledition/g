@@ -56,23 +56,23 @@ artifacts = api.regenie.from_options(
 
 ## Option Names
 
-`from_options()` accepts canonical REGENIE names such as `phenoFile` and
-`pThresh`, plus native configuration sections such as
+`from_options()` accepts the public `g regenie` long option names without the
+leading `--`, such as `phenoFile`, `pThresh`, `device`, `writer_threads`, and
+`log_file`. It also accepts native configuration sections such as
 `{"compute": {"device": "gpu"}}`.
 
 The same validation applies as the CLI:
 
 - unknown options fail;
-- recognized unsupported options fail when active;
+- unsupported REGENIE options that are outside the current `g` surface fail as
+  unknown options;
 - `--qt` and `--bt` semantics are preserved;
-- `trait_type` is a Python-only convenience alias for selecting quantitative or
-  binary mode.
+- `trait_type` can be supplied as a flat Python option or inside the `trait`
+  section to select quantitative or binary mode.
 
-For the complete option surface, see [CLI](cli.md) and use:
-
-```bash
-uv run g config explain
-```
+Legacy flat aliases such as `g-device`, `g-output-format`, and `g-log-file` are
+not accepted. For the complete option surface, see [CLI](cli.md) and
+[Configuration](configuration.md).
 
 ## Return Value
 

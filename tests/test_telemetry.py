@@ -47,8 +47,8 @@ def test_trace_telemetry_paths_default_profile_summary_without_exact_stage_timin
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-telemetry": "trace",
-            "g-log-dir": "telemetry",
+            "telemetry": "trace",
+            "log_dir": "telemetry",
         }
     )
 
@@ -70,9 +70,9 @@ def test_explicit_stage_timings_path_enables_exact_stage_output() -> None:
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-telemetry": "profile",
-            "g-log-dir": "telemetry",
-            "g-stage-timings-json": "exact/stage-timings.json",
+            "telemetry": "profile",
+            "log_dir": "telemetry",
+            "stage_timings_json": "exact/stage-timings.json",
         }
     )
 
@@ -91,7 +91,7 @@ def test_telemetry_stream_uses_log_file_or_trace_file_alias() -> None:
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-log-file": "logs/events.jsonl",
+            "log_file": "logs/events.jsonl",
         }
     )
     trace_file_config = config.RegenieConfig.from_options(
@@ -103,7 +103,7 @@ def test_telemetry_stream_uses_log_file_or_trace_file_alias() -> None:
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-trace-file": "logs/trace-events.jsonl",
+            "trace_file": "logs/trace-events.jsonl",
         }
     )
 
@@ -130,10 +130,10 @@ def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path:
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-telemetry": "profile",
-            "g-log-filter": "g=info",
-            "g-trace-filter": "g.native.bgen=trace",
-            "g-log-file": str(tmp_path / "events.jsonl"),
+            "telemetry": "profile",
+            "log_filter": "g=info",
+            "trace_filter": "g.native.bgen=trace",
+            "log_file": str(tmp_path / "events.jsonl"),
         }
     )
     telemetry_paths = telemetry.resolve_telemetry_paths(regenie_config)
@@ -166,11 +166,11 @@ def test_initialize_logging_uses_trace_filter_for_trace_unified_stream(tmp_path:
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-telemetry": "trace",
-            "g-log-filter": "g=debug",
-            "g-trace-filter": "g.native.bgen=trace,g.output=debug",
-            "g-trace-event-cap": 17,
-            "g-log-file": str(tmp_path / "events.jsonl"),
+            "telemetry": "trace",
+            "log_filter": "g=debug",
+            "trace_filter": "g.native.bgen=trace,g.output=debug",
+            "trace_event_cap": 17,
+            "log_file": str(tmp_path / "events.jsonl"),
         }
     )
     telemetry_paths = telemetry.resolve_telemetry_paths(regenie_config)
@@ -196,12 +196,12 @@ def test_telemetry_stream_rejects_different_log_and_trace_files() -> None:
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-log-file": "logs/events.jsonl",
-            "g-trace-file": "logs/trace-events.jsonl",
+            "log_file": "logs/events.jsonl",
+            "trace_file": "logs/trace-events.jsonl",
         }
     )
 
-    with pytest.raises(ValueError, match="g-log-file and g-trace-file both configure"):
+    with pytest.raises(ValueError, match="log_file and trace_file both configure"):
         telemetry.resolve_telemetry_paths(regenie_config)
 
 
@@ -408,8 +408,8 @@ def test_log_file_replaces_default_telemetry_stream() -> None:
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-log-dir": "telemetry",
-            "g-log-file": "telemetry/rust.jsonl",
+            "log_dir": "telemetry",
+            "log_file": "telemetry/rust.jsonl",
         }
     )
 

@@ -18,7 +18,7 @@ release line exists.
 | Multiple phenotypes | Supported with per-phenotype semantics by default. |
 | Output formats | Arrow, Parquet dataset parts, optional finalized Parquet, and REGENIE Step 2-style text. |
 | GPU execution | Supported through JAX when the environment exposes a compatible accelerator. |
-| TOML config | Supported through `--config` and `g config`. |
+| TOML config | Supported through `--config`. |
 | Python API | Supported as a small execution wrapper; see [Python API](api-python.md). |
 
 ## Not Implemented
@@ -26,16 +26,16 @@ release line exists.
 | Area | Behavior |
 | --- | --- |
 | REGENIE Step 1 | Not implemented. Use upstream `regenie` and pass `--pred`. |
-| PLINK BED input | `--bed` is recognized and rejected. |
-| PLINK2 PGEN input | `--pgen` is recognized and rejected. |
-| Sample/variant filters | `--keep`, `--remove`, `--extract`, and `--exclude` are recognized and rejected. |
-| Categorical covariates | `--catCovarList` is recognized and rejected. |
-| SPA fallback | `--spa` is recognized and rejected. |
+| PLINK BED input | `--bed` is outside the current option surface and fails as unknown. |
+| PLINK2 PGEN input | `--pgen` is outside the current option surface and fails as unknown. |
+| Sample/variant filters | `--keep`, `--remove`, `--extract`, and `--exclude` fail as unknown. |
+| Categorical covariates | `--catCovarList` fails as unknown. |
+| SPA fallback | `--spa` fails as unknown. |
 | Exact Firth without `--approx` | Recognized and rejected. |
-| Alternative tests and time-to-event traits | `--test` and `--t2e` are recognized and rejected. |
+| Alternative tests and time-to-event traits | `--test` and `--t2e` fail as unknown. |
 
-Recognized unsupported flags fail loudly so REGENIE command migration does not
-silently drop scientific intent.
+Unsupported flags fail loudly so REGENIE command migration does not silently
+drop scientific intent.
 
 ## REGENIE Command Migration
 
@@ -60,8 +60,8 @@ Important migration limits:
 Until the project declares a stable release:
 
 - CLI and TOML behavior in the current checkout is authoritative.
-- Defaults can change; use `src/g/config.default.toml` and `g config init` for
-  the exact current values.
+- Defaults can change; use `src/interface/config.default.toml` for the exact
+  current values.
 - Output schema changes are guarded by manifest/schema versions but may still
   evolve.
 - Performance assumptions are workload-dependent and should be re-measured on

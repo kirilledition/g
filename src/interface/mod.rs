@@ -3,6 +3,7 @@ use std::fmt;
 mod cli;
 mod defaults;
 mod domain;
+mod options;
 mod overlay;
 mod partial;
 mod resolved;
@@ -12,6 +13,7 @@ mod validation;
 
 pub use cli::{CliOutcomeData, dispatch_cli};
 pub use defaults::load_packaged_config_data;
+pub use options::{ConfigOptionMetadata, ConfigOptionValueKind, config_option_metadata};
 pub use resolved::{
     BinaryConfigData, GComputeConfigData, GDiagnosticsConfigData, GOutputConfigData, InputConfigData,
     RegenieConfigData, TraitConfigData,

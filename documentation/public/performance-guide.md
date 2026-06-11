@@ -58,7 +58,7 @@ Use the current packaged defaults first. Override only with measurements.
 | `--jax_persistent_cache` and `--jax_cache_dir` | JAX compilation cache behavior. |
 | `--telemetry` | Progress, profile, and trace modes. Profile/trace can perturb timing. |
 
-Current default values are in `src/g/config.default.toml`.
+Current default values are in `src/interface/config.default.toml`.
 
 Project profiling recipes isolate CPU JAX caches by host and CPU feature
 fingerprint under `/tmp/g-jax-cpu-profile-cache` by default. This avoids reusing

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
+import g._core
 from g import types
 from g.interface import config
 
@@ -55,64 +57,64 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "bsize": 4096,
         "threads": 2,
         "out": "results/output",
-        "g-device": "cpu",
-        "g-staging-depth": 2,
-        "g-result-in-flight-limit": 5,
-        "g-dosage-buffer-limit": 6,
-        "g-variant-limit": 100,
-        "g-trusted-no-missing-diploid": True,
-        "g-trusted-bgen-validation-mode": "assume_validated",
-        "g-sample-key-mode": "iid",
-        "g-multi-phenotype-sample-mode": "complete-case",
-        "g-output-format": "arrow",
-        "g-writer-threads": 2,
-        "g-writer-queue-depth": 3,
-        "g-output-chunks-per-arrow-file": 2,
-        "g-output-arrow-compression": "none",
-        "g-output-parquet-compression": "zstd",
-        "g-firth-batch-size": 8,
-        "g-firth-candidate-capacity": 16,
-        "g-binary-null-maximum-iterations": 25,
-        "g-binary-null-coefficient-tolerance": 1.0e-5,
-        "g-null-logistic-nonconvergence": "warn",
-        "g-binary-minimum-probability": 1.0e-7,
-        "g-binary-minimum-variance": 1.0e-9,
-        "g-binary-relative-variance-tolerance": 2.0e-6,
-        "g-linear-minimum-variance": 3.0e-9,
-        "g-linear-relative-variance-tolerance": 4.0e-6,
-        "g-firth-maximum-iterations": 30,
-        "g-firth-gradient-tolerance": 1.0e-5,
-        "g-firth-coefficient-tolerance": 1.0e-5,
-        "g-firth-likelihood-tolerance": 1.0e-5,
-        "g-firth-maximum-step-size": 4.0,
-        "g-use-block-firth-math": True,
-        "g-bgen-decode-tile-variant-count": 32,
-        "g-gpu-genotype-format": "dosage",
-        "g-score-dtype": "float64",
-        "g-firth-dtype": "float64",
-        "g-jax-cache-dir": "cache/jax",
-        "g-jax-matmul-precision": "highest",
-        "g-jax-persistent-cache": False,
-        "g-jax-persistent-cache-min-entry-size-bytes": 1024,
-        "g-jax-persistent-cache-min-compile-time-seconds": 1,
-        "g-jax-xla-autotune-cache": True,
-        "g-jax-transfer-guard": True,
-        "g-telemetry": "trace",
-        "g-log-dir": "logs",
-        "g-stage-timings-json": "timings.json",
-        "g-log-filter": "g=debug",
-        "g-log-file": "logs/g.jsonl",
-        "g-log-stderr": False,
-        "g-progress-interval-seconds": 1.5,
-        "g-progress-interval-chunks": 4,
-        "g-profile-summary-json": "logs/profile.summary.json",
-        "g-trace-file": "logs/trace.jsonl",
-        "g-trace-filter": "g=trace",
-        "g-trace-event-cap": 2048,
-        "g-log-queue-size": 1024,
-        "g-log-lossy": False,
-        "g-include-source-location": True,
-        "g-include-span-events": True,
+        "device": "cpu",
+        "staging_depth": 2,
+        "result_in_flight_limit": 5,
+        "dosage_buffer_limit": 6,
+        "variant_limit": 100,
+        "trusted_no_missing_diploid": True,
+        "trusted_bgen_validation_mode": "assume_validated",
+        "sample_key_mode": "iid",
+        "multi_phenotype_sample_mode": "complete-case",
+        "format": "arrow",
+        "writer_threads": 2,
+        "writer_queue_depth": 3,
+        "chunks_per_arrow_file": 2,
+        "arrow_compression": "none",
+        "parquet_compression": "zstd",
+        "firth_batch_size": 8,
+        "firth_candidate_capacity": 16,
+        "binary_null_maximum_iterations": 25,
+        "binary_null_coefficient_tolerance": 1.0e-5,
+        "null_logistic_nonconvergence_policy": "warn",
+        "binary_minimum_probability": 1.0e-7,
+        "binary_minimum_variance": 1.0e-9,
+        "binary_relative_variance_tolerance": 2.0e-6,
+        "linear_minimum_variance": 3.0e-9,
+        "linear_relative_variance_tolerance": 4.0e-6,
+        "firth_maximum_iterations": 30,
+        "firth_gradient_tolerance": 1.0e-5,
+        "firth_coefficient_tolerance": 1.0e-5,
+        "firth_likelihood_tolerance": 1.0e-5,
+        "firth_maximum_step_size": 4.0,
+        "use_block_firth_math": True,
+        "bgen_decode_tile_variant_count": 32,
+        "gpu_genotype_format": "dosage",
+        "score_dtype": "float64",
+        "firth_dtype": "float64",
+        "jax_cache_dir": "cache/jax",
+        "jax_matmul_precision": "highest",
+        "jax_persistent_cache": False,
+        "jax_persistent_cache_min_entry_size_bytes": 1024,
+        "jax_persistent_cache_min_compile_time_seconds": 1,
+        "jax_xla_autotune_cache": True,
+        "jax_transfer_guard": True,
+        "telemetry": "trace",
+        "log_dir": "logs",
+        "stage_timings_json": "timings.json",
+        "log_filter": "g=debug",
+        "log_file": "logs/g.jsonl",
+        "log_stderr": False,
+        "progress_interval_seconds": 1.5,
+        "progress_interval_chunks": 4,
+        "profile_summary_json": "logs/profile.summary.json",
+        "trace_file": "logs/trace.jsonl",
+        "trace_filter": "g=trace",
+        "trace_event_cap": 2048,
+        "log_queue_size": 1024,
+        "log_lossy": False,
+        "include_source_location": True,
+        "include_span_events": True,
     }
 
     regenie_config = config.RegenieConfig.from_options(raw_options)
@@ -182,6 +184,44 @@ def test_python_options_merge_flat_options_with_native_sections() -> None:
     assert regenie_config.g_output.writer_threads == 1
     assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_compute.variant_limit == 100
+
+
+def test_python_flat_option_schema_is_owned_by_native_metadata() -> None:
+    expected_flat_option_sections: dict[str, tuple[str, str]] = {}
+    expected_boolean_option_names: set[str] = set()
+    for option_metadata in g._core.config_option_schema():
+        for python_name in option_metadata["flat_python_names"]:
+            assert not python_name.startswith(("g-", "g_"))
+            expected_flat_option_sections[python_name] = (option_metadata["section"], option_metadata["toml_name"])
+            if option_metadata["value_kind"] == "boolean":
+                expected_boolean_option_names.add(python_name)
+
+    assert expected_flat_option_sections == config.FLAT_OPTION_SECTIONS
+    assert frozenset(expected_boolean_option_names) == config.BOOLEAN_PYTHON_OPTIONS
+    assert config.FLAT_OPTION_SECTIONS["device"] == ("compute", "device")
+    assert config.FLAT_OPTION_SECTIONS["phenoCol"] == ("input", "pheno_col")
+    assert "g-device" not in config.FLAT_OPTION_SECTIONS
+
+
+@pytest.mark.parametrize("option_name", ["g-device", "g_device", "g-output-format", "g_output_format", "pheno_file"])
+def test_python_options_reject_undocumented_flat_aliases(option_name: str) -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options[option_name] = "ignored"
+
+    with pytest.raises(ValueError, match=f"Unknown g regenie option: {re.escape(option_name)}"):
+        config.RegenieConfig.from_options(raw_options)
+
+
+def test_public_docs_do_not_reference_legacy_g_dash_flags() -> None:
+    documentation_root = Path(__file__).resolve().parents[1] / "documentation" / "public"
+    offenders: list[str] = []
+    for documentation_path in documentation_root.rglob("*.md"):
+        documentation_text = documentation_path.read_text(encoding="utf-8")
+        for match in re.finditer(r"--g-[A-Za-z0-9_-]+", documentation_text):
+            relative_path = documentation_path.relative_to(documentation_root.parent.parent)
+            offenders.append(f"{relative_path}:{match.group(0)}")
+
+    assert offenders == []
 
 
 @pytest.mark.skip(reason="Outdated Python option metadata test; Rust config API is not settled.")
@@ -322,12 +362,11 @@ def test_user_toml_overrides_packaged_defaults(tmp_path: Path) -> None:
                 "bsize = 2048",
                 "[output]",
                 'out = "results/output"',
+                'format = "arrow"',
                 "[compute]",
                 'device = "gpu"',
-                "[output]",
-                'format = "arrow"',
                 "[diagnostics]",
-                'log-filter = "g=debug"',
+                'log_filter = "g=debug"',
             ]
         ),
         encoding="utf-8",
@@ -343,7 +382,7 @@ def test_user_toml_overrides_packaged_defaults(tmp_path: Path) -> None:
 
 def test_python_options_accept_regenie_text_output_format() -> None:
     raw_options = build_valid_quantitative_options()
-    raw_options["g-output-format"] = "regenie"
+    raw_options["format"] = "regenie"
 
     regenie_config = config.RegenieConfig.from_options(raw_options)
 
@@ -386,18 +425,18 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
             "out": "results/output",
             "firth": True,
             "approx": True,
-            "g-output-format": "arrow",
-            "g-output-arrow-compression": "none",
-            "g-output-parquet-compression": "zstd",
-            "g-firth-batch-size": 8,
-            "g-null-logistic-nonconvergence": "warn",
-            "g-score-dtype": "float64",
-            "g-firth-dtype": "float64",
-            "g-jax-persistent-cache": False,
-            "g-stage-timings-json": "timings.json",
-            "g-log-filter": "g=trace",
-            "g-log-file": "logs/g.jsonl",
-            "g-log-stderr": False,
+            "format": "arrow",
+            "arrow_compression": "none",
+            "parquet_compression": "zstd",
+            "firth_batch_size": 8,
+            "null_logistic_nonconvergence_policy": "warn",
+            "score_dtype": "float64",
+            "firth_dtype": "float64",
+            "jax_persistent_cache": False,
+            "stage_timings_json": "timings.json",
+            "log_filter": "g=trace",
+            "log_file": "logs/g.jsonl",
+            "log_stderr": False,
         }
     )
     config_path = tmp_path / "effective_config.toml"
@@ -424,7 +463,7 @@ def test_logging_options_ignore_environment(monkeypatch: pytest.MonkeyPatch) -> 
             "phenoCol": "trait",
             "pred": "predictions.list",
             "out": "results/output",
-            "g-log-filter": "g=debug",
+            "log_filter": "g=debug",
         }
     )
 
@@ -486,18 +525,18 @@ def test_unsupported_regenie_options_are_unknown(option_name: str) -> None:
         ({"out": None}, "--out is required"),
         ({"bsize": 0}, "trait.bsize"),
         ({"threads": 0}, "trait.threads"),
-        ({"g-result-in-flight-limit": 0}, "compute.result_in_flight_limit"),
-        ({"g-dosage-buffer-limit": 0}, "compute.dosage_buffer_limit"),
-        ({"g-variant-limit": 0}, "compute.variant_limit"),
-        ({"g-linear-minimum-variance": 0.0}, "compute.linear_minimum_variance"),
+        ({"result_in_flight_limit": 0}, "compute.result_in_flight_limit"),
+        ({"dosage_buffer_limit": 0}, "compute.dosage_buffer_limit"),
+        ({"variant_limit": 0}, "compute.variant_limit"),
+        ({"linear_minimum_variance": 0.0}, "compute.linear_minimum_variance"),
         (
-            {"g-linear-relative-variance-tolerance": 0.0},
+            {"linear_relative_variance_tolerance": 0.0},
             "compute.linear_relative_variance_tolerance",
         ),
-        ({"g-writer-threads": 0}, "output.writer_threads"),
-        ({"g-writer-queue-depth": 0}, "output.writer_queue_depth"),
-        ({"g-output-chunks-per-arrow-file": 0}, "output.chunks_per_arrow_file"),
-        ({"g-trace-event-cap": -1}, "diagnostics.trace_event_cap"),
+        ({"writer_threads": 0}, "output.writer_threads"),
+        ({"writer_queue_depth": 0}, "output.writer_queue_depth"),
+        ({"chunks_per_arrow_file": 0}, "output.chunks_per_arrow_file"),
+        ({"trace_event_cap": -1}, "diagnostics.trace_event_cap"),
     ],
 )
 def test_config_validation_rejects_required_and_positive_option_errors(
@@ -513,7 +552,7 @@ def test_config_validation_rejects_required_and_positive_option_errors(
 
 def test_trace_event_cap_zero_disables_cap_in_config() -> None:
     raw_options = build_valid_quantitative_options()
-    raw_options["g-trace-event-cap"] = 0
+    raw_options["trace_event_cap"] = 0
 
     regenie_config = config.RegenieConfig.from_options(raw_options)
 
@@ -523,7 +562,7 @@ def test_trace_event_cap_zero_disables_cap_in_config() -> None:
 @pytest.mark.parametrize(
     ("mutated_options", "error_match"),
     [
-        ({"pThresh": 1.0}, "binary.pThresh"),
+        ({"pThresh": 1.0}, "binary.p_threshold"),
         ({"firth": True, "approx": False}, "Exact --firth is not implemented"),
         ({"firth": False, "approx": True}, "--approx requires --firth"),
     ],
@@ -552,7 +591,7 @@ def test_binary_config_validation_rejects_invalid_fallback_combinations(
 @pytest.mark.parametrize(
     ("mutated_options", "error_match"),
     [
-        ({"g-firth-dtype": "float32"}, "--firth_dtype currently supports float64 only"),
+        ({"firth_dtype": "float32"}, "--firth_dtype currently supports float64 only"),
     ],
 )
 def test_config_validation_rejects_invalid_dtype_policy(
@@ -569,7 +608,7 @@ def test_config_validation_rejects_invalid_dtype_policy(
 @pytest.mark.parametrize(
     ("mutated_options", "error_match"),
     [
-        ({"g-gpu-genotype-format": "packed8", "g-device": "cpu"}, "--gpu_genotype_format=packed8 requires"),
+        ({"gpu_genotype_format": "packed8", "device": "cpu"}, "--gpu_genotype_format=packed8 requires"),
     ],
 )
 def test_config_validation_rejects_unsupported_packed8_uses(
@@ -584,7 +623,7 @@ def test_config_validation_rejects_unsupported_packed8_uses(
         "phenoCol": "trait",
         "pred": "predictions.list",
         "out": "results/output",
-        "g-device": "gpu",
+        "device": "gpu",
     }
     raw_options.update(mutated_options)
 
@@ -594,7 +633,7 @@ def test_config_validation_rejects_unsupported_packed8_uses(
 
 def test_config_validation_accepts_quantitative_single_phenotype_packed8_gpu() -> None:
     raw_options = build_valid_quantitative_options()
-    raw_options.update({"g-gpu-genotype-format": "packed8", "g-device": "gpu"})
+    raw_options.update({"gpu_genotype_format": "packed8", "device": "gpu"})
 
     regenie_config = config.RegenieConfig.from_options(raw_options)
 
@@ -606,8 +645,8 @@ def test_config_validation_accepts_quantitative_multi_phenotype_packed8_gpu() ->
     raw_options = build_valid_quantitative_options()
     raw_options.update(
         {
-            "g-gpu-genotype-format": "packed8",
-            "g-device": "gpu",
+            "gpu_genotype_format": "packed8",
+            "device": "gpu",
             "phenoCol": ("first", "second"),
         }
     )
@@ -672,7 +711,6 @@ def test_trait_flags_are_mutually_exclusive_within_one_layer() -> None:
         config.RegenieConfig.from_options(raw_options)
 
 
-@pytest.mark.skip(reason="Outdated Python trait_type alias test; Rust frontend accepts REGENIE --qt/--bt names only.")
 def test_python_trait_type_alias_selects_binary_trait() -> None:
     raw_options = build_valid_quantitative_options()
     raw_options.pop("qt")
@@ -685,7 +723,7 @@ def test_python_trait_type_alias_selects_binary_trait() -> None:
 
 def test_python_boolean_string_options_are_parsed_strictly() -> None:
     raw_options = build_valid_quantitative_options()
-    raw_options.update({"g-jax-persistent-cache": "false", "g-jax-transfer-guard": "on"})
+    raw_options.update({"jax_persistent_cache": "false", "jax_transfer_guard": "on"})
 
     regenie_config = config.RegenieConfig.from_options(raw_options)
 
@@ -695,7 +733,7 @@ def test_python_boolean_string_options_are_parsed_strictly() -> None:
 
 def test_python_boolean_string_options_reject_ambiguous_values() -> None:
     raw_options = build_valid_quantitative_options()
-    raw_options["g-jax-persistent-cache"] = "maybe"
+    raw_options["jax_persistent_cache"] = "maybe"
 
     with pytest.raises(ValueError, match="Boolean option value must be a bool"):
         config.RegenieConfig.from_options(raw_options)
@@ -732,7 +770,7 @@ def test_staging_depth_must_be_positive() -> None:
         "phenoCol": "trait",
         "pred": "predictions.list",
         "out": "results/output",
-        "g-staging-depth": 0,
+        "staging_depth": 0,
     }
 
     with pytest.raises(ValueError, match=r"compute\.staging_depth"):
@@ -761,12 +799,14 @@ def test_config_helper_normalizers_cover_optional_and_trait_alias_paths() -> Non
     assert config.optional_string(123) == "123"
     assert config.optional_string(None) is None
     assert config.normalize_option_name("trait_type") == "trait_type"
-    assert config.normalize_option_name("g_null_logistic_nonconvergence_policy") == ("g-null-logistic-nonconvergence")
+    assert config.normalize_option_name("g_null_logistic_nonconvergence_policy") == (
+        "null_logistic_nonconvergence_policy"
+    )
     with pytest.raises(ValueError, match="--qt and --bt are mutually exclusive"):
         config.normalize_trait_type(qt=True, bt=True)
 
 
-def test_flatten_toml_mapping_preserves_unknown_sections_and_g_scalars() -> None:
+def test_flatten_toml_mapping_preserves_unknown_nested_sections() -> None:
     flattened_options = config.flatten_toml_mapping(
         {
             "unknown": {"nested": "value"},
@@ -780,9 +820,9 @@ def test_flatten_toml_mapping_preserves_unknown_sections_and_g_scalars() -> None
     )
 
     assert flattened_options["unknown.nested"] == "value"
-    assert flattened_options["g-device"] == "gpu"
-    assert flattened_options["g-output-format"] == "arrow"
-    assert flattened_options["g-log-file"] == "logs/g.jsonl"
+    assert flattened_options["g.compute.device"] == "gpu"
+    assert flattened_options["g.output.format"] == "arrow"
+    assert flattened_options["g.diagnostics.log-file"] == "logs/g.jsonl"
     assert flattened_options["g.scalar"] is True
 
 
