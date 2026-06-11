@@ -86,6 +86,12 @@ Binary phenotypes use REGENIE-style coding:
 | `2` | Case, recoded to `1`. |
 
 Missing tokens include empty string, `NA`, `NaN`, `nan`, and `-9`.
+Rows must still physically contain each selected field: `IID`, `FID` when
+`--sample_key_mode fid_iid` is used, selected phenotype columns, and selected
+covariate columns. A structurally short row that ends before one of those
+columns fails instead of being treated as missing. Use an explicit empty field
+with the delimiter present, such as a trailing tab for the final selected
+column, when the intended value is missing.
 
 Categorical covariates through `--catCovarList` are recognized but not
 implemented.
