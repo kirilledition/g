@@ -27,6 +27,9 @@ OUTPUT_SCHEMA_VERSION = 1
 JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
 RESULT_STATISTIC_OUTPUT_DTYPE = "float32"
+FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM = "sha256"
+FILE_FINGERPRINT_METADATA_ONLY = "metadata-only"
+FILE_FINGERPRINT_HASH_CHUNK_SIZE_BYTES = 1024 * 1024
 
 
 class MultiPhenotypeSampleMode(enum.StrEnum):
@@ -119,15 +122,32 @@ def write_run_manifest(output_run_paths: OutputRunPaths, manifest: dict[str, typ
     )
 
 
-def build_file_fingerprint(path: Path | None) -> dict[str, typing.Any] | None:
+def build_file_content_sha256(path: Path) -> str:
+    """Build a streaming SHA-256 content hash for a local input file."""
+    fingerprint_hash = hashlib.sha256()
+    with path.open("rb") as input_file:
+        while True:
+            input_chunk = input_file.read(FILE_FINGERPRINT_HASH_CHUNK_SIZE_BYTES)
+            if not input_chunk:
+                break
+            fingerprint_hash.update(input_chunk)
+    return fingerprint_hash.hexdigest()
+
+
+def build_file_fingerprint(path: Path | None, *, include_content_hash: bool = False) -> dict[str, typing.Any] | None:
     """Build a lightweight immutable fingerprint for an input file."""
     if path is None:
         return None
     path_stat = path.stat()
+    content_hash_algorithm = (
+        FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM if include_content_hash else FILE_FINGERPRINT_METADATA_ONLY
+    )
     return {
         "path": str(path.resolve()),
         "size": path_stat.st_size,
         "mtime_ns": path_stat.st_mtime_ns,
+        "content_hash_algorithm": content_hash_algorithm,
+        "content_sha256": build_file_content_sha256(path) if include_content_hash else None,
     }
 
 
@@ -262,10 +282,10 @@ def build_current_run_manifest_header(
 ) -> dict[str, typing.Any]:
     """Build immutable run manifest fields from the current execution plan."""
     bgen_fingerprint = build_file_fingerprint(bgen_path)
-    sample_fingerprint = build_file_fingerprint(sample_path)
-    phenotype_file_fingerprint = build_file_fingerprint(phenotype_path)
-    covariate_file_fingerprint = build_file_fingerprint(covariate_path)
-    prediction_list_fingerprint = build_file_fingerprint(prediction_list_path)
+    sample_fingerprint = build_file_fingerprint(sample_path, include_content_hash=True)
+    phenotype_file_fingerprint = build_file_fingerprint(phenotype_path, include_content_hash=True)
+    covariate_file_fingerprint = build_file_fingerprint(covariate_path, include_content_hash=True)
+    prediction_list_fingerprint = build_file_fingerprint(prediction_list_path, include_content_hash=True)
     binary_correction_plan_manifest = build_binary_correction_plan_manifest(binary_correction_plan)
     output_writer_manifest = build_output_writer_manifest(
         output_format=output_format,

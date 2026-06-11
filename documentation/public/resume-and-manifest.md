@@ -38,6 +38,12 @@ optional TOML file, and explicit CLI overrides.
 The manifest is the resume authority. It is intentionally stricter than a file
 name check.
 
+File fingerprints include resolved path, file size, and `mtime_ns`. Smaller
+control files also include a SHA-256 content hash: sample, phenotype, covariate,
+and prediction-list files. BGEN input fingerprints are metadata-only to avoid
+hashing large genotype files during normal startup; their manifest field records
+that metadata-only policy explicitly.
+
 ## Starting A New Run
 
 Without `--resume`, `g` refuses to reuse a non-empty output run directory:
@@ -80,6 +86,8 @@ all selected phenotype output runs pass compatibility checks.
 Common mismatch causes:
 
 - changed BGEN, sample, phenotype, covariate, or prediction-list file;
+- changed sample, phenotype, covariate, or prediction-list content even when
+  path, size, and `mtime_ns` are preserved;
 - changed phenotype or covariate columns;
 - changed trait mode, binary correction plan, or Firth settings;
 - changed selected association backend;

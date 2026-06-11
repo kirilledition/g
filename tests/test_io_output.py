@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import json
+import os
 import typing
 from pathlib import Path
 
@@ -58,6 +60,7 @@ STEP2_OUTPUT_SCHEMA_FIELDS: tuple[tuple[str, pa.DataType], ...] = (
 STEP2_SCHEMA_COLUMN_NAMES = tuple(column_name for column_name, _ in STEP2_OUTPUT_SCHEMA_FIELDS)
 TEST_DATA_DIRECTORY = Path(__file__).resolve().parent / "data" / "bgen"
 HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
+DEFAULT_TEST_INPUT_PATH: typing.Final[object] = object()
 
 
 class NativeChunkWritingCallback:
@@ -175,6 +178,8 @@ def build_test_header(
     *,
     association_mode: AssociationMode = AssociationMode.REGENIE2_LINEAR,
     association_backend_kind: types.AssociationBackendKind = types.AssociationBackendKind.JAX_DOSAGE,
+    sample_path: Path | None | object = DEFAULT_TEST_INPUT_PATH,
+    covariate_path: Path | None | object = DEFAULT_TEST_INPUT_PATH,
     binary_kernel_config: typing.Any | None = None,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
@@ -185,22 +190,41 @@ def build_test_header(
     sample_set_fingerprint: str | None = None,
     covariate_design_fingerprint: str | None = None,
     prediction_alignment_fingerprint: str | None = None,
+    write_input_files: bool = True,
 ) -> dict[str, typing.Any]:
     bgen_path = tmp_path / "study.bgen"
-    sample_path = tmp_path / "study.sample"
+    resolved_sample_path = (
+        tmp_path / "study.sample" if sample_path is DEFAULT_TEST_INPUT_PATH else typing.cast("Path | None", sample_path)
+    )
     phenotype_path = tmp_path / "phenotypes.tsv"
-    covariate_path = tmp_path / "covariates.tsv"
+    resolved_covariate_path = (
+        tmp_path / "covariates.tsv"
+        if covariate_path is DEFAULT_TEST_INPUT_PATH
+        else typing.cast("Path | None", covariate_path)
+    )
     prediction_list_path = tmp_path / "predictions.list"
-    for input_path in (bgen_path, sample_path, phenotype_path, covariate_path, prediction_list_path):
-        input_path.write_text(input_path.name, encoding="utf-8")
+    if write_input_files:
+        input_paths = [
+            input_path
+            for input_path in (
+                bgen_path,
+                resolved_sample_path,
+                phenotype_path,
+                resolved_covariate_path,
+                prediction_list_path,
+            )
+            if input_path is not None
+        ]
+        for input_path in input_paths:
+            input_path.write_text(input_path.name, encoding="utf-8")
     return output.build_current_run_manifest_header(
         association_mode=association_mode,
         association_backend_kind=association_backend_kind,
         bgen_path=bgen_path,
-        sample_path=sample_path,
+        sample_path=resolved_sample_path,
         phenotype_path=phenotype_path,
         phenotype_name="trait",
-        covariate_path=covariate_path,
+        covariate_path=resolved_covariate_path,
         covariate_names=("intercept", "age", "sex"),
         prediction_list_path=prediction_list_path,
         sample_count=4,
@@ -280,6 +304,30 @@ def test_current_run_manifest_records_gpu_genotype_format(tmp_path: Path) -> Non
     }
 
 
+def test_current_run_manifest_hashes_small_control_files(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path)
+
+    assert current_header["bgen"]["content_hash_algorithm"] == "metadata-only"
+    assert current_header["bgen"]["content_sha256"] is None
+    assert current_header["execution_plan"]["bgen"]["content_hash_algorithm"] == "metadata-only"
+    assert current_header["execution_plan"]["bgen"]["content_sha256"] is None
+    for manifest_field_name in ("sample", "phenotype_file", "covariate_file", "prediction_list"):
+        input_path = Path(current_header[manifest_field_name]["path"])
+        expected_hash = hashlib.sha256(input_path.read_bytes()).hexdigest()
+        assert current_header[manifest_field_name]["content_hash_algorithm"] == "sha256"
+        assert current_header[manifest_field_name]["content_sha256"] == expected_hash
+        assert current_header["execution_plan"][manifest_field_name]["content_sha256"] == expected_hash
+
+
+def test_current_run_manifest_allows_optional_unhashed_inputs(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, sample_path=None, covariate_path=None)
+
+    assert current_header["sample"] is None
+    assert current_header["covariate_file"] is None
+    assert current_header["execution_plan"]["sample"] is None
+    assert current_header["execution_plan"]["covariate_file"] is None
+
+
 def test_current_run_manifest_records_sample_set_contract(tmp_path: Path) -> None:
     current_header = build_test_header(
         tmp_path,
@@ -300,6 +348,68 @@ def test_current_run_manifest_records_sample_set_contract(tmp_path: Path) -> Non
     assert current_header["execution_plan"]["sample_set_fingerprint"] == "sample-fingerprint"
     assert current_header["execution_plan"]["covariate_design_fingerprint"] == "covariate-fingerprint"
     assert current_header["execution_plan"]["prediction_alignment_fingerprint"] == "prediction-fingerprint"
+
+
+def replace_file_text_preserving_size_and_mtime(path: Path, replacement_text: str) -> None:
+    """Replace file text while preserving byte length and mtime."""
+    original_stat = path.stat()
+    original_length = len(path.read_bytes())
+    replacement_bytes = replacement_text.encode("utf-8")
+    assert len(replacement_bytes) == original_length
+    path.write_bytes(replacement_bytes)
+    os.utime(path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+
+@pytest.mark.parametrize(
+    ("manifest_field_name", "file_name", "replacement_text"),
+    [
+        ("sample", "study.sample", "STUDY.sample"),
+        ("phenotype_file", "phenotypes.tsv", "PHENOTYPES.tsv"),
+        ("covariate_file", "covariates.tsv", "COVARIATES.tsv"),
+        ("prediction_list", "predictions.list", "PREDICTIONS.list"),
+    ],
+)
+def test_fast_resume_rejects_control_file_content_change_with_preserved_metadata(
+    tmp_path: Path,
+    manifest_field_name: str,
+    file_name: str,
+    replacement_text: str,
+) -> None:
+    manifest_header = build_test_header(tmp_path)
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / f"output-{manifest_field_name}-content",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+
+    replace_file_text_preserving_size_and_mtime(tmp_path / file_name, replacement_text)
+    current_header = build_test_header(tmp_path, write_input_files=False)
+    assert current_header[manifest_field_name]["size"] == manifest_header[manifest_field_name]["size"]
+    assert current_header[manifest_field_name]["mtime_ns"] == manifest_header[manifest_field_name]["mtime_ns"]
+    assert (
+        current_header[manifest_field_name]["content_sha256"] != manifest_header[manifest_field_name]["content_sha256"]
+    )
+    assert current_header["execution_plan_hash"] != manifest_header["execution_plan_hash"]
+
+    resumed_output_run = output.prepare_output_run(
+        output_root=tmp_path / f"output-{manifest_field_name}-content",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+    )
+    with pytest.raises(ValueError, match=rf"{manifest_field_name}\.content_sha256"):
+        initialize_test_output_run(resumed_output_run, current_header, resume=True)
+
+
+def test_bgen_content_change_with_preserved_metadata_keeps_metadata_only_fingerprint(tmp_path: Path) -> None:
+    manifest_header = build_test_header(tmp_path)
+
+    replace_file_text_preserving_size_and_mtime(tmp_path / "study.bgen", "STUDY.bgen")
+    current_header = build_test_header(tmp_path, write_input_files=False)
+
+    assert current_header["bgen"] == manifest_header["bgen"]
+    assert current_header["execution_plan"]["bgen"] == manifest_header["execution_plan"]["bgen"]
+    assert current_header["execution_plan_hash"] == manifest_header["execution_plan_hash"]
 
 
 def initialize_test_output_run(
