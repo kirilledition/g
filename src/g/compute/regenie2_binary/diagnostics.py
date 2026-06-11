@@ -21,6 +21,7 @@ class BinaryChunkDiagnostics:
     """Diagnostic counts for one binary association chunk.
 
     Attributes:
+        score_only_count: Variants that retained score-test statistics without correction.
         score_test_candidate_count: Variants selected for any score-test fallback label.
         firth_candidate_count: Variants with a nonzero Firth iteration count.
         firth_iteration_min: Minimum Firth iteration count among attempted candidates.
@@ -43,6 +44,7 @@ class BinaryChunkDiagnostics:
 
     """
 
+    score_only_count: jax.Array
     score_test_candidate_count: jax.Array
     firth_candidate_count: jax.Array
     firth_iteration_min: jax.Array
@@ -70,13 +72,14 @@ def count_binary_chunk_diagnostics(
     """Count diagnostic categories for one binary result chunk."""
     empty_integer_array = jnp.zeros_like(result.extra_code, dtype=jnp.int32)
     empty_boolean_array = jnp.zeros_like(result.extra_code, dtype=jnp.bool_)
-    firth_iteration_count = getattr(result, "firth_iteration_count", empty_integer_array)
-    firth_failure_code = getattr(result, "firth_failure_code", empty_integer_array)
-    firth_correction_code = getattr(result, "firth_correction_code", empty_integer_array)
-    firth_sparse_correction_mask = getattr(result, "firth_sparse_correction_mask", empty_boolean_array)
-    pseudo_firth_iteration_count = getattr(result, "pseudo_firth_iteration_count", empty_integer_array)
-    nr_zero_start_iteration_count = getattr(result, "nr_zero_start_iteration_count", empty_integer_array)
-    nr_warm_start_iteration_count = getattr(result, "nr_warm_start_iteration_count", empty_integer_array)
+    extra_code = jnp.ravel(result.extra_code)
+    firth_iteration_count = jnp.ravel(getattr(result, "firth_iteration_count", empty_integer_array))
+    firth_failure_code = jnp.ravel(getattr(result, "firth_failure_code", empty_integer_array))
+    firth_correction_code = jnp.ravel(getattr(result, "firth_correction_code", empty_integer_array))
+    firth_sparse_correction_mask = jnp.ravel(getattr(result, "firth_sparse_correction_mask", empty_boolean_array))
+    pseudo_firth_iteration_count = jnp.ravel(getattr(result, "pseudo_firth_iteration_count", empty_integer_array))
+    nr_zero_start_iteration_count = jnp.ravel(getattr(result, "nr_zero_start_iteration_count", empty_integer_array))
+    nr_warm_start_iteration_count = jnp.ravel(getattr(result, "nr_warm_start_iteration_count", empty_integer_array))
     firth_attempt_mask = firth_iteration_count > 0
     firth_candidate_count = jnp.sum(firth_attempt_mask, dtype=jnp.int32)
     finite_iteration_count = jnp.where(firth_attempt_mask, firth_iteration_count, jnp.asarray(0, dtype=jnp.int32))
@@ -85,10 +88,11 @@ def count_binary_chunk_diagnostics(
     )
     median_iteration_index = jnp.maximum((firth_candidate_count - 1) // 2, 0)
     return BinaryChunkDiagnostics(
+        score_only_count=jnp.sum(extra_code == types.BinaryExtraCode.SCORE.value, dtype=jnp.int32),
         score_test_candidate_count=jnp.sum(
-            (result.extra_code == types.BinaryExtraCode.FIRTH.value)
-            | (result.extra_code == types.BinaryExtraCode.SPA.value)
-            | (result.extra_code == types.BinaryExtraCode.TEST_FAIL.value),
+            (extra_code == types.BinaryExtraCode.FIRTH.value)
+            | (extra_code == types.BinaryExtraCode.SPA.value)
+            | (extra_code == types.BinaryExtraCode.TEST_FAIL.value),
             dtype=jnp.int32,
         ),
         firth_candidate_count=firth_candidate_count,
@@ -104,11 +108,11 @@ def count_binary_chunk_diagnostics(
         ),
         firth_iteration_max=jnp.max(finite_iteration_count),
         firth_converged_count=jnp.sum(
-            (result.extra_code == types.BinaryExtraCode.FIRTH.value) & firth_attempt_mask,
+            (extra_code == types.BinaryExtraCode.FIRTH.value) & firth_attempt_mask,
             dtype=jnp.int32,
         ),
         firth_failed_count=jnp.sum(
-            (result.extra_code == types.BinaryExtraCode.TEST_FAIL.value) & firth_attempt_mask,
+            (extra_code == types.BinaryExtraCode.TEST_FAIL.value) & firth_attempt_mask,
             dtype=jnp.int32,
         ),
         firth_numerical_failure_count=jnp.sum(
@@ -145,3 +149,30 @@ def count_binary_chunk_diagnostics(
         sparse_correction_count=jnp.sum(firth_sparse_correction_mask & firth_attempt_mask, dtype=jnp.int32),
         dense_correction_count=jnp.sum((~firth_sparse_correction_mask) & firth_attempt_mask, dtype=jnp.int32),
     )
+
+
+def binary_chunk_diagnostics_to_mapping(diagnostics: BinaryChunkDiagnostics) -> dict[str, int | float]:
+    """Materialize binary chunk diagnostics as JSON-ready counters."""
+    diagnostics_on_host = jax.device_get(diagnostics)
+    return {
+        "score_only_count": int(diagnostics_on_host.score_only_count),
+        "score_test_candidate_count": int(diagnostics_on_host.score_test_candidate_count),
+        "firth_candidate_count": int(diagnostics_on_host.firth_candidate_count),
+        "firth_iteration_min": int(diagnostics_on_host.firth_iteration_min),
+        "firth_iteration_median": float(diagnostics_on_host.firth_iteration_median),
+        "firth_iteration_max": int(diagnostics_on_host.firth_iteration_max),
+        "firth_converged_count": int(diagnostics_on_host.firth_converged_count),
+        "firth_failed_count": int(diagnostics_on_host.firth_failed_count),
+        "firth_numerical_failure_count": int(diagnostics_on_host.firth_numerical_failure_count),
+        "firth_max_iteration_failure_count": int(diagnostics_on_host.firth_max_iteration_failure_count),
+        "firth_invalid_statistic_failure_count": int(diagnostics_on_host.firth_invalid_statistic_failure_count),
+        "firth_step_halving_failure_count": int(diagnostics_on_host.firth_step_halving_failure_count),
+        "pseudo_firth_attempt_count": int(diagnostics_on_host.pseudo_firth_attempt_count),
+        "pseudo_firth_success_count": int(diagnostics_on_host.pseudo_firth_success_count),
+        "nr_zero_start_attempt_count": int(diagnostics_on_host.nr_zero_start_attempt_count),
+        "nr_zero_start_success_count": int(diagnostics_on_host.nr_zero_start_success_count),
+        "nr_warm_start_attempt_count": int(diagnostics_on_host.nr_warm_start_attempt_count),
+        "nr_warm_start_success_count": int(diagnostics_on_host.nr_warm_start_success_count),
+        "sparse_correction_count": int(diagnostics_on_host.sparse_correction_count),
+        "dense_correction_count": int(diagnostics_on_host.dense_correction_count),
+    }

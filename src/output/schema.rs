@@ -1,6 +1,6 @@
 use std::sync::{Arc, OnceLock};
 
-use arrow::array::{Array, ArrayRef, Int32Array, StringBuilder, new_null_array};
+use arrow::array::{Array, ArrayRef, Int32Array, StringArray, StringBuilder, new_null_array};
 use arrow::datatypes::{DataType, Field, Schema};
 
 pub(crate) const CHUNK_COMMITS_METADATA_KEY: &str = "g.output.chunk_commits";
@@ -57,6 +57,74 @@ pub(crate) fn build_null_extra_string_array(row_count: usize) -> ArrayRef {
     new_null_array(&DataType::Utf8, row_count)
 }
 
+pub(crate) fn build_correction_method_array(
+    extra_code: Option<ArrayRef>,
+    row_count: usize,
+) -> Result<ArrayRef, String> {
+    build_correction_label_array(
+        extra_code,
+        row_count,
+        "correction method",
+        |extra_code_value| match extra_code_value {
+            0 => Some("score"),
+            1 => Some("firth_approximate"),
+            2 => Some("spa"),
+            3 => Some("firth_approximate"),
+            _ => None,
+        },
+        "score",
+    )
+}
+
+pub(crate) fn build_correction_status_array(
+    extra_code: Option<ArrayRef>,
+    row_count: usize,
+) -> Result<ArrayRef, String> {
+    build_correction_label_array(
+        extra_code,
+        row_count,
+        "correction status",
+        |extra_code_value| match extra_code_value {
+            0..=2 => Some("success"),
+            3 => Some("failed"),
+            _ => None,
+        },
+        "success",
+    )
+}
+
+fn build_correction_label_array(
+    extra_code: Option<ArrayRef>,
+    row_count: usize,
+    label_kind: &str,
+    label_for_code: impl Fn(i32) -> Option<&'static str>,
+    default_label: &'static str,
+) -> Result<ArrayRef, String> {
+    let Some(extra_code_array) = extra_code else {
+        return Ok(Arc::new(StringArray::from(vec![default_label; row_count])));
+    };
+    let extra_code_values = extra_code_array
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .ok_or_else(|| format!("REGENIE step 2 {label_kind} code must be an int32 array."))?;
+    if extra_code_values.len() != row_count {
+        return Err(format!("REGENIE step 2 {label_kind} row count does not match metadata row count."));
+    }
+    let mut label_builder = StringBuilder::with_capacity(row_count, row_count * default_label.len());
+    for row_index in 0..extra_code_values.len() {
+        if extra_code_values.is_null(row_index) {
+            label_builder.append_value(default_label);
+            continue;
+        }
+        let extra_code_value = extra_code_values.value(row_index);
+        let Some(label) = label_for_code(extra_code_value) else {
+            return Err(format!("Unsupported REGENIE step 2 extra code: {extra_code_value}"));
+        };
+        label_builder.append_value(label);
+    }
+    Ok(Arc::new(label_builder.finish()))
+}
+
 pub(crate) fn get_regenie_step2_final_schema() -> &'static Arc<Schema> {
     static REGENIE_STEP2_FINAL_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
     REGENIE_STEP2_FINAL_SCHEMA.get_or_init(|| Arc::new(build_regenie_step2_final_schema()))
@@ -78,6 +146,8 @@ fn build_regenie_step2_chunk_schema() -> Schema {
         Field::new("CHISQ", DataType::Float32, true),
         Field::new("LOG10P", DataType::Float32, true),
         Field::new("EXTRA", DataType::Utf8, true),
+        Field::new("CORRECTION_METHOD", DataType::Utf8, true),
+        Field::new("CORRECTION_STATUS", DataType::Utf8, true),
     ])
 }
 
@@ -97,6 +167,8 @@ fn build_regenie_step2_final_schema() -> Schema {
         Field::new("CHISQ", DataType::Float32, true),
         Field::new("LOG10P", DataType::Float32, true),
         Field::new("EXTRA", DataType::Utf8, true),
+        Field::new("CORRECTION_METHOD", DataType::Utf8, true),
+        Field::new("CORRECTION_STATUS", DataType::Utf8, true),
     ])
 }
 
@@ -106,7 +178,10 @@ mod tests {
 
     use arrow::array::{Array, ArrayRef, Float32Array, Int32Array, StringArray};
 
-    use super::{build_extra_string_array, get_regenie_step2_chunk_schema, get_regenie_step2_final_schema};
+    use super::{
+        build_correction_method_array, build_correction_status_array, build_extra_string_array,
+        get_regenie_step2_chunk_schema, get_regenie_step2_final_schema,
+    };
 
     #[test]
     fn extra_string_array_maps_nulls_supported_codes_and_errors() {
@@ -174,8 +249,38 @@ mod tests {
     }
 
     #[test]
+    fn correction_arrays_map_supported_extra_codes_and_defaults() {
+        let extra_code_array =
+            Some(Arc::new(Int32Array::from(vec![Some(0), Some(1), Some(2), Some(3), None])) as ArrayRef);
+
+        let correction_method_array =
+            build_correction_method_array(extra_code_array.as_ref().map(Arc::clone), 5).expect("methods should map");
+        let correction_method_values =
+            correction_method_array.as_any().downcast_ref::<StringArray>().expect("methods should be strings");
+        assert_eq!(
+            (0..correction_method_values.len()).map(|index| correction_method_values.value(index)).collect::<Vec<_>>(),
+            vec!["score", "firth_approximate", "spa", "firth_approximate", "score"]
+        );
+
+        let correction_status_array = build_correction_status_array(extra_code_array, 5).expect("statuses should map");
+        let correction_status_values =
+            correction_status_array.as_any().downcast_ref::<StringArray>().expect("statuses should be strings");
+        assert_eq!(
+            (0..correction_status_values.len()).map(|index| correction_status_values.value(index)).collect::<Vec<_>>(),
+            vec!["success", "success", "success", "failed", "success"]
+        );
+
+        let default_method_array =
+            build_correction_method_array(None, 2).expect("missing extra code should default to score");
+        let default_method_values =
+            default_method_array.as_any().downcast_ref::<StringArray>().expect("default methods should be strings");
+        assert_eq!(default_method_values.value(0), "score");
+        assert_eq!(default_method_values.value(1), "score");
+    }
+
+    #[test]
     fn schema_singletons_have_expected_final_columns() {
-        assert_eq!(get_regenie_step2_chunk_schema().fields().len(), 14);
-        assert_eq!(get_regenie_step2_final_schema().fields().len(), 14);
+        assert_eq!(get_regenie_step2_chunk_schema().fields().len(), 16);
+        assert_eq!(get_regenie_step2_final_schema().fields().len(), 16);
     }
 }

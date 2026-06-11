@@ -113,9 +113,23 @@ Arrow, Parquet, and REGENIE text outputs use the same public association fields:
 | `SE` | `Float32` | Yes | effect size standard error | Standard error for `BETA`. |
 | `CHISQ` | `Float32` | Yes | chi-squared statistic | Score statistic (or equivalent Step 2 metric). |
 | `LOG10P` | `Float32` | Yes | -log10(p) | Association significance. |
-| `EXTRA` | `Utf8` | Yes | - | Text diagnostics (`TEST_FAIL` for failed diagnostics, null/NA otherwise). |
+| `EXTRA` | `Utf8` | Yes | - | Sparse REGENIE-compatible diagnostics (`TEST_FAIL` for failed diagnostics, null/NA otherwise). |
+| `CORRECTION_METHOD` | `Utf8` | Yes | - | Diagnostic correction method label. |
+| `CORRECTION_STATUS` | `Utf8` | Yes | - | Diagnostic correction status label. |
 
 The contract also applies to both `association_mode`s (`regenie2_linear`, `regenie2_binary`) and both output families (`arrow`, `parquet`).
+
+Current correction method/status pairs are:
+
+| `CORRECTION_METHOD` | `CORRECTION_STATUS` | Meaning |
+| --- | --- | --- |
+| `score` | `success` | Score-test row with no fallback correction applied. |
+| `firth_approximate` | `success` | Successful approximate-Firth fallback row. |
+| `spa` | `success` | Successful SPA-corrected row when that diagnostic path is present. |
+| `firth_approximate` | `failed` | Approximate-Firth fallback failed; `EXTRA` is `TEST_FAIL`. |
+
+The `firth_approximate` label describes the current experimental correction
+diagnostic path. It does not imply exact Firth support.
 
 Current schema properties:
 

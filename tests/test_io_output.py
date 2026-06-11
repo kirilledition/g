@@ -37,6 +37,8 @@ EXPECTED_FINAL_COLUMNS = [
     "CHISQ",
     "LOG10P",
     "EXTRA",
+    "CORRECTION_METHOD",
+    "CORRECTION_STATUS",
 ]
 EXPECTED_CHUNK_COLUMNS = [
     *EXPECTED_FINAL_COLUMNS,
@@ -56,6 +58,8 @@ STEP2_OUTPUT_SCHEMA_FIELDS: tuple[tuple[str, pa.DataType], ...] = (
     ("CHISQ", pa.float32()),
     ("LOG10P", pa.float32()),
     ("EXTRA", pa.string()),
+    ("CORRECTION_METHOD", pa.string()),
+    ("CORRECTION_STATUS", pa.string()),
 )
 STEP2_SCHEMA_COLUMN_NAMES = tuple(column_name for column_name, _ in STEP2_OUTPUT_SCHEMA_FIELDS)
 TEST_DATA_DIRECTORY = Path(__file__).resolve().parent / "data" / "bgen"
@@ -633,6 +637,8 @@ def test_native_writer_uses_shared_schema_and_null_placeholders(tmp_path: Path) 
     assert frame.get_column("TEST").to_list() == ["ADD", "ADD", "ADD", "ADD"]
     assert frame.get_column("INFO").to_list() == [1.0, 1.0, 1.0, 1.0]
     assert frame.get_column("EXTRA").to_list() == [None, None, None, None]
+    assert frame.get_column("CORRECTION_METHOD").to_list() == ["score", "score", "score", "score"]
+    assert frame.get_column("CORRECTION_STATUS").to_list() == ["success", "success", "success", "success"]
 
 
 def test_native_writer_writes_parquet_dataset_parts_with_footer_metadata(tmp_path: Path) -> None:
@@ -649,6 +655,8 @@ def test_native_writer_writes_parquet_dataset_parts_with_footer_metadata(tmp_pat
     frame = pl.read_parquet(part_paths[0])
     assert frame.columns == EXPECTED_FINAL_COLUMNS
     assert frame.get_column("TEST").to_list() == ["ADD", "ADD", "ADD", "ADD"]
+    assert frame.get_column("CORRECTION_METHOD").to_list() == ["score", "score", "score", "score"]
+    assert frame.get_column("CORRECTION_STATUS").to_list() == ["success", "success", "success", "success"]
     parquet_metadata = pq.ParquetFile(part_paths[0]).metadata.metadata
     assert parquet_metadata is not None
     chunk_commits = json.loads(parquet_metadata[b"g.output.chunk_commits"])
@@ -702,6 +710,8 @@ def test_native_writer_writes_regenie_text_parts_and_final_output(tmp_path: Path
     assert {row[11] for row in part_rows} == {"10"}
     assert {row[12] for row in part_rows} == {"5"}
     assert {row[13] for row in part_rows} == {"NA"}
+    assert {row[14] for row in part_rows} == {"score"}
+    assert {row[15] for row in part_rows} == {"success"}
 
     final_regenie_path = prepared_output_run.output_run_paths.run_directory / "final.regenie"
     assert final_regenie_path.exists()
@@ -757,6 +767,8 @@ def test_native_binary_writer_writes_regenie_text_extra_labels(tmp_path: Path) -
     final_rows = [line.split("\t") for line in final_regenie_path.read_text(encoding="utf-8").splitlines()[1:]]
     assert len(final_rows) == 4
     assert {row[13] for row in final_rows} == {"TEST_FAIL"}
+    assert {row[14] for row in final_rows} == {"firth_approximate"}
+    assert {row[15] for row in final_rows} == {"failed"}
 
 
 def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Path) -> None:
@@ -803,6 +815,13 @@ def test_native_binary_writer_maps_successful_correction_extra_code_to_null(tmp_
     frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
     assert frame.get_column("EXTRA").to_list() == [None, None, None, None]
+    assert frame.get_column("CORRECTION_METHOD").to_list() == [
+        "firth_approximate",
+        "firth_approximate",
+        "firth_approximate",
+        "firth_approximate",
+    ]
+    assert frame.get_column("CORRECTION_STATUS").to_list() == ["success", "success", "success", "success"]
 
 
 def test_native_binary_writer_maps_test_fail_extra_code_to_label(tmp_path: Path) -> None:
@@ -814,6 +833,13 @@ def test_native_binary_writer_maps_test_fail_extra_code_to_label(tmp_path: Path)
     frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
     assert frame.get_column("EXTRA").to_list() == ["TEST_FAIL", "TEST_FAIL", "TEST_FAIL", "TEST_FAIL"]
+    assert frame.get_column("CORRECTION_METHOD").to_list() == [
+        "firth_approximate",
+        "firth_approximate",
+        "firth_approximate",
+        "firth_approximate",
+    ]
+    assert frame.get_column("CORRECTION_STATUS").to_list() == ["failed", "failed", "failed", "failed"]
 
 
 def test_public_native_writer_copies_numpy_arrays_before_enqueue(tmp_path: Path) -> None:
@@ -867,6 +893,8 @@ def test_public_native_writer_copies_numpy_arrays_before_enqueue(tmp_path: Path)
     np.testing.assert_allclose(frame.get_column("CHISQ").to_numpy(), np.full(row_count, 8.0, dtype=np.float32))
     np.testing.assert_allclose(frame.get_column("LOG10P").to_numpy(), np.full(row_count, 3.0, dtype=np.float32))
     assert frame.get_column("EXTRA").to_list() == ["TEST_FAIL"] * row_count
+    assert frame.get_column("CORRECTION_METHOD").to_list() == ["firth_approximate"] * row_count
+    assert frame.get_column("CORRECTION_STATUS").to_list() == ["failed"] * row_count
 
 
 def test_public_multi_native_writer_copies_numpy_rows_before_enqueue(tmp_path: Path) -> None:
@@ -951,6 +979,10 @@ def test_public_multi_native_writer_copies_numpy_rows_before_enqueue(tmp_path: P
     np.testing.assert_allclose(second_frame.get_column("SE").to_numpy(), np.full(row_count, 0.05, dtype=np.float32))
     assert first_frame.get_column("EXTRA").to_list() == ["TEST_FAIL"] * row_count
     assert second_frame.get_column("EXTRA").to_list() == [None] * row_count
+    assert first_frame.get_column("CORRECTION_METHOD").to_list() == ["firth_approximate"] * row_count
+    assert first_frame.get_column("CORRECTION_STATUS").to_list() == ["failed"] * row_count
+    assert second_frame.get_column("CORRECTION_METHOD").to_list() == ["firth_approximate"] * row_count
+    assert second_frame.get_column("CORRECTION_STATUS").to_list() == ["success"] * row_count
 
 
 def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_path: Path) -> None:
@@ -1485,6 +1517,8 @@ def test_chunk_arrow_schema_is_shared_between_linear_and_binary(tmp_path: Path) 
     assert linear_schema.names == EXPECTED_CHUNK_COLUMNS
     assert linear_schema.field("INFO").nullable
     assert linear_schema.field("EXTRA").nullable
+    assert linear_schema.field("CORRECTION_METHOD").nullable
+    assert linear_schema.field("CORRECTION_STATUS").nullable
 
 
 @pytest.mark.parametrize(
@@ -1567,10 +1601,19 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
     parquet_frame = pl.read_parquet(parquet_path)
     assert parquet_frame.columns == EXPECTED_FINAL_COLUMNS
     assert parquet_frame.get_column("EXTRA").to_list() == [None, None, None, None]
+    assert parquet_frame.get_column("CORRECTION_METHOD").to_list() == [
+        "firth_approximate",
+        "firth_approximate",
+        "firth_approximate",
+        "firth_approximate",
+    ]
+    assert parquet_frame.get_column("CORRECTION_STATUS").to_list() == ["success", "success", "success", "success"]
     parquet_schema = pq.ParquetFile(parquet_path).schema_arrow
     assert parquet_schema.names == EXPECTED_FINAL_COLUMNS
     assert parquet_schema.field("INFO").nullable
     assert parquet_schema.field("EXTRA").nullable
+    assert parquet_schema.field("CORRECTION_METHOD").nullable
+    assert parquet_schema.field("CORRECTION_STATUS").nullable
     parquet_metadata = pq.ParquetFile(parquet_path).metadata.metadata
     assert parquet_metadata is not None
     assert parquet_metadata[b"g.output.schema_version"] == b"1"

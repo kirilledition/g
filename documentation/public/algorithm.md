@@ -22,6 +22,10 @@ Recognized REGENIE options outside this surface, such as `--bed`, `--pgen`,
 `--spa`, categorical covariates, and exact Firth without `--approx`, fail
 clearly instead of being ignored.
 
+Approximate-Firth result labels are current experimental correction diagnostics.
+They describe which fallback path produced a row and do not imply exact Firth
+support.
+
 ## Algorithm Flow
 
 ```mermaid
@@ -484,6 +488,12 @@ traits, and separation-prone binary models.[^source-firth]
    to the configured iteration and line-search limits.
 5. Use the penalized likelihood-ratio statistic for the corrected row.
 
+Successful corrected rows are labeled
+`CORRECTION_METHOD = firth_approximate` and
+`CORRECTION_STATUS = success`. Failed approximate-Firth candidates are labeled
+`CORRECTION_METHOD = firth_approximate`,
+`CORRECTION_STATUS = failed`, and `EXTRA = TEST_FAIL`.
+
 The scalar approximate path uses a one-parameter Firth model after genotype
 residualization:
 
@@ -745,10 +755,13 @@ treat it as a bug or a reproducibility finding.
 | `CHISQ` | One-degree-of-freedom chi-squared statistic. |
 | `LOG10P` | Negative base-ten logarithm of the chi-squared tail probability. Larger means stronger evidence. |
 | `EXTRA` | Null/`NA` for ordinary successful rows; `TEST_FAIL` when the statistic or correction failed. |
+| `CORRECTION_METHOD` | Diagnostic method label: `score`, `firth_approximate`, or `spa`. |
+| `CORRECTION_STATUS` | Diagnostic status label: `success` or `failed`. |
 
-Binary successful Firth rows are not currently labeled separately in the public
-`EXTRA` field; the run manifest, telemetry, and binary diagnostics are the
-places to inspect correction-plan behavior.
+`EXTRA` stays sparse for REGENIE-compatible parsing. Use
+`CORRECTION_METHOD` and `CORRECTION_STATUS` to distinguish score-only rows,
+successful approximate-Firth rows, SPA-corrected rows when present, and failed
+approximate-Firth candidates.
 
 ## What to Expect Operationally
 

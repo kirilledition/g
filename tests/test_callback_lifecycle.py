@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import typing
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
 from g.engine import callbacks, native_dispatch
 
 
@@ -291,3 +293,61 @@ def test_native_callback_runner_records_progress_and_chromosome_events() -> None
     assert len(telemetry_session.logged_progress) == 2
     assert telemetry_session.logged_progress[0]["chromosome"] == "chr1"
     assert telemetry_session.logged_progress[1]["chromosome"] == "chr2"
+
+
+def test_native_callback_runner_emits_binary_correction_summary() -> None:
+    telemetry_session = ProgressTrackingTelemetrySession()
+    callback = ProgressTrackingCallbackRunner(telemetry_session=telemetry_session)
+    diagnostics = regenie2_binary_diagnostics.BinaryChunkDiagnostics(
+        score_only_count=jnp.asarray(3, dtype=jnp.int32),
+        score_test_candidate_count=jnp.asarray(2, dtype=jnp.int32),
+        firth_candidate_count=jnp.asarray(2, dtype=jnp.int32),
+        firth_iteration_min=jnp.asarray(1, dtype=jnp.int32),
+        firth_iteration_median=jnp.asarray(2, dtype=jnp.float32),
+        firth_iteration_max=jnp.asarray(3, dtype=jnp.int32),
+        firth_converged_count=jnp.asarray(1, dtype=jnp.int32),
+        firth_failed_count=jnp.asarray(1, dtype=jnp.int32),
+        firth_numerical_failure_count=jnp.asarray(0, dtype=jnp.int32),
+        firth_max_iteration_failure_count=jnp.asarray(1, dtype=jnp.int32),
+        firth_invalid_statistic_failure_count=jnp.asarray(0, dtype=jnp.int32),
+        firth_step_halving_failure_count=jnp.asarray(0, dtype=jnp.int32),
+        pseudo_firth_attempt_count=jnp.asarray(1, dtype=jnp.int32),
+        pseudo_firth_success_count=jnp.asarray(1, dtype=jnp.int32),
+        nr_zero_start_attempt_count=jnp.asarray(1, dtype=jnp.int32),
+        nr_zero_start_success_count=jnp.asarray(0, dtype=jnp.int32),
+        nr_warm_start_attempt_count=jnp.asarray(0, dtype=jnp.int32),
+        nr_warm_start_success_count=jnp.asarray(0, dtype=jnp.int32),
+        sparse_correction_count=jnp.asarray(1, dtype=jnp.int32),
+        dense_correction_count=jnp.asarray(1, dtype=jnp.int32),
+    )
+
+    callback.record_binary_correction_diagnostics(diagnostics)
+    callback.record_binary_null_model_failure_count(2)
+    callback.finish()
+
+    assert telemetry_session.logged_events == [
+        (
+            "binary_correction_summary",
+            {
+                "chunk_count": 1,
+                "score_only_count": 3,
+                "score_test_candidate_count": 2,
+                "firth_attempted_count": 2,
+                "firth_success_count": 1,
+                "firth_failed_count": 1,
+                "firth_numerical_failure_count": 0,
+                "firth_max_iteration_failure_count": 1,
+                "firth_invalid_statistic_failure_count": 0,
+                "firth_step_halving_failure_count": 0,
+                "pseudo_firth_attempt_count": 1,
+                "pseudo_firth_success_count": 1,
+                "nr_zero_start_attempt_count": 1,
+                "nr_zero_start_success_count": 0,
+                "nr_warm_start_attempt_count": 0,
+                "nr_warm_start_success_count": 0,
+                "sparse_correction_count": 1,
+                "dense_correction_count": 1,
+                "null_model_failure_count": 2,
+            },
+        )
+    ]

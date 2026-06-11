@@ -39,6 +39,7 @@ write_regenie2_multi_native_chunk_with_optional_timing = writers.write_regenie2_
 block_until_ready = diagnostics.block_until_ready
 enforce_null_logistic_nonconvergence_policy = diagnostics.enforce_null_logistic_nonconvergence_policy
 collect_binary_chunk_diagnostics_if_needed = diagnostics.collect_binary_chunk_diagnostics_if_needed
+record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
 get_metadata_chromosome = shared.get_metadata_chromosome
 
 
@@ -185,6 +186,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
             policy=self.null_logistic_nonconvergence_policy,
         )
+        null_logistic_converged = bool(jax.device_get(self.current_chromosome_state.null_logistic_converged))
+        self.record_binary_null_model_failure_count(0 if null_logistic_converged else 1)
         if self.stage_timing_recorder is not None:
             self.stage_timing_recorder.add_null_logistic_diagnostics(
                 {
@@ -503,6 +506,11 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                         extra_code=multi_work_item.extra_code,
                         stage_timing_recorder=self.stage_timing_recorder,
                     )
+                    record_binary_chunk_diagnostics_from_count(
+                        stage_timing_recorder=self.stage_timing_recorder,
+                        diagnostics=multi_work_item.binary_chunk_diagnostics,
+                    )
+                    self.record_binary_correction_diagnostics(multi_work_item.binary_chunk_diagnostics)
                 finally:
                     self.release_result_work_item_buffer(multi_work_item)
         except Exception as error:  # noqa: BLE001
@@ -564,6 +572,10 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result=result,
                 host_dosage_buffer=host_dosage_buffer,
                 release_in_flight_slot=True,
+                binary_chunk_diagnostics=collect_binary_chunk_diagnostics_if_needed(
+                    stage_timing_recorder=self.stage_timing_recorder,
+                    result=result,
+                ),
             )
         except Exception:
             if host_dosage_buffer is not None:
@@ -651,6 +663,10 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result=result,
                 host_dosage_buffer=host_dosage_buffer,
                 release_in_flight_slot=True,
+                binary_chunk_diagnostics=collect_binary_chunk_diagnostics_if_needed(
+                    stage_timing_recorder=self.stage_timing_recorder,
+                    result=result,
+                ),
             )
         except Exception:
             if host_dosage_buffer is not None:
@@ -738,6 +754,10 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result=result,
                 host_dosage_buffer=host_packed_buffer,
                 release_in_flight_slot=True,
+                binary_chunk_diagnostics=collect_binary_chunk_diagnostics_if_needed(
+                    stage_timing_recorder=self.stage_timing_recorder,
+                    result=result,
+                ),
             )
         except Exception:
             if host_packed_buffer is not None:
@@ -766,9 +786,10 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             policy=self.null_logistic_nonconvergence_policy,
             phenotype_names=self.run_input.phenotype_names,
         )
+        convergence_flags = jax.device_get(self.current_chromosome_state.null_logistic_converged)
+        self.record_binary_null_model_failure_count(int((~convergence_flags).sum()))
         if self.stage_timing_recorder is not None:
             iteration_counts = jax.device_get(self.current_chromosome_state.null_logistic_iteration_count)
-            convergence_flags = jax.device_get(self.current_chromosome_state.null_logistic_converged)
             for trait_index, phenotype_name in enumerate(self.run_input.phenotype_names):
                 self.stage_timing_recorder.add_null_logistic_diagnostics(
                     {
@@ -790,6 +811,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         result: regenie2_binary.Regenie2MultiBinaryScoreChunkResult | regenie2_binary.Regenie2MultiBinaryChunkResult,
         host_dosage_buffer: HostGenotypeBuffer | None = None,
         release_in_flight_slot: bool = False,
+        binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None = None,
     ) -> None:
         """Enqueue a multi-binary result for materialization and writing."""
         self.put_result_write_item(
@@ -805,6 +827,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     extra_code=result.extra_code,
                     host_dosage_buffer=host_dosage_buffer,
                     release_in_flight_slot=release_in_flight_slot,
+                    binary_chunk_diagnostics=binary_chunk_diagnostics,
                 ),
             )
         )

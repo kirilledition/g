@@ -282,21 +282,38 @@ Production events should be bounded by run, chromosome, chunk, or writer batch.
 They should contain identifiers, counts, durations measured without device
 synchronization, and high-level status.
 
-For binary Firth diagnostics, prefer aggregate chunk summaries:
+Binary correction diagnostics are emitted as one run-level
+`binary_correction_summary` event. It aggregates score-only rows, score-test
+candidates, approximate-Firth attempts, successes, failures, null-model
+failures, and branch/failure diagnostics:
 
 ```json
 {
-  "event": "firth_chunk_summary",
-  "candidate_count": 122,
-  "converged_count": 119,
-  "failed_count": 3,
-  "iteration_min": 4,
-  "iteration_median": 11,
-  "iteration_max": 41
+  "event": "binary_correction_summary",
+  "chunk_count": 8,
+  "score_only_count": 100000,
+  "score_test_candidate_count": 122,
+  "firth_attempted_count": 122,
+  "firth_success_count": 119,
+  "firth_failed_count": 3,
+  "firth_numerical_failure_count": 1,
+  "firth_max_iteration_failure_count": 1,
+  "firth_invalid_statistic_failure_count": 0,
+  "firth_step_halving_failure_count": 1,
+  "pseudo_firth_attempt_count": 80,
+  "pseudo_firth_success_count": 78,
+  "nr_zero_start_attempt_count": 44,
+  "nr_zero_start_success_count": 39,
+  "nr_warm_start_attempt_count": 5,
+  "nr_warm_start_success_count": 2,
+  "sparse_correction_count": 40,
+  "dense_correction_count": 82,
+  "null_model_failure_count": 0
 }
 ```
 
-Do not emit one event per candidate iteration in production mode.
+Do not emit one event per candidate or per candidate iteration in production
+mode.
 
 ## Follow-Up Tracking
 

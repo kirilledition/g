@@ -60,6 +60,7 @@ def test_binary_chunk_diagnostics_report_zeroes_without_firth_candidates() -> No
 
     diagnostics = regenie2_binary_diagnostics.count_binary_chunk_diagnostics(result)
 
+    assert int(diagnostics.score_only_count) == 2
     assert int(diagnostics.score_test_candidate_count) == 0
     assert int(diagnostics.firth_candidate_count) == 0
     assert int(diagnostics.firth_iteration_min) == 0
@@ -91,6 +92,7 @@ def test_binary_chunk_diagnostics_accept_score_result_without_firth_arrays() -> 
 
     diagnostics = regenie2_binary_diagnostics.count_binary_chunk_diagnostics(result)
 
+    assert int(diagnostics.score_only_count) == 1
     assert int(diagnostics.score_test_candidate_count) == 2
     assert int(diagnostics.firth_candidate_count) == 0
     assert int(diagnostics.firth_converged_count) == 0
@@ -144,6 +146,7 @@ def test_binary_chunk_diagnostics_count_all_failure_categories() -> None:
 
     diagnostics = regenie2_binary_diagnostics.count_binary_chunk_diagnostics(result)
 
+    assert int(diagnostics.score_only_count) == 0
     assert int(diagnostics.score_test_candidate_count) == 6
     assert int(diagnostics.firth_candidate_count) == 5
     assert int(diagnostics.firth_iteration_min) == 2
@@ -170,3 +173,8 @@ def test_binary_chunk_diagnostics_count_all_failure_categories() -> None:
     assert int(diagnostics.nr_warm_start_success_count) == 0
     assert int(diagnostics.sparse_correction_count) == 2
     assert int(diagnostics.dense_correction_count) == 3
+
+    diagnostics_mapping = regenie2_binary_diagnostics.binary_chunk_diagnostics_to_mapping(diagnostics)
+    assert diagnostics_mapping["score_only_count"] == 0
+    assert diagnostics_mapping["firth_candidate_count"] == 5
+    assert diagnostics_mapping["firth_failed_count"] == 4

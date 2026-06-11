@@ -74,30 +74,7 @@ def record_binary_chunk_diagnostics_from_count(
     if not timing.should_collect_exact_stage_timings(stage_timing_recorder):
         return
     assert stage_timing_recorder is not None
-    diagnostics_on_host = jax.device_get(diagnostics)
-    stage_timing_recorder.add_binary_chunk_diagnostics(
-        {
-            "score_test_candidate_count": int(diagnostics_on_host.score_test_candidate_count),
-            "firth_candidate_count": int(diagnostics_on_host.firth_candidate_count),
-            "firth_iteration_min": int(diagnostics_on_host.firth_iteration_min),
-            "firth_iteration_median": float(diagnostics_on_host.firth_iteration_median),
-            "firth_iteration_max": int(diagnostics_on_host.firth_iteration_max),
-            "firth_converged_count": int(diagnostics_on_host.firth_converged_count),
-            "firth_failed_count": int(diagnostics_on_host.firth_failed_count),
-            "firth_numerical_failure_count": int(diagnostics_on_host.firth_numerical_failure_count),
-            "firth_max_iteration_failure_count": int(diagnostics_on_host.firth_max_iteration_failure_count),
-            "firth_invalid_statistic_failure_count": int(diagnostics_on_host.firth_invalid_statistic_failure_count),
-            "firth_step_halving_failure_count": int(diagnostics_on_host.firth_step_halving_failure_count),
-            "pseudo_firth_attempt_count": int(diagnostics_on_host.pseudo_firth_attempt_count),
-            "pseudo_firth_success_count": int(diagnostics_on_host.pseudo_firth_success_count),
-            "nr_zero_start_attempt_count": int(diagnostics_on_host.nr_zero_start_attempt_count),
-            "nr_zero_start_success_count": int(diagnostics_on_host.nr_zero_start_success_count),
-            "nr_warm_start_attempt_count": int(diagnostics_on_host.nr_warm_start_attempt_count),
-            "nr_warm_start_success_count": int(diagnostics_on_host.nr_warm_start_success_count),
-            "sparse_correction_count": int(diagnostics_on_host.sparse_correction_count),
-            "dense_correction_count": int(diagnostics_on_host.dense_correction_count),
-        }
-    )
+    stage_timing_recorder.add_binary_chunk_diagnostics(regenie2_binary.binary_chunk_diagnostics_to_mapping(diagnostics))
 
 
 def collect_binary_chunk_diagnostics_if_needed(
@@ -105,9 +82,8 @@ def collect_binary_chunk_diagnostics_if_needed(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     result: regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult,
 ) -> regenie2_binary.BinaryChunkDiagnostics | None:
-    """Collect binary chunk diagnostics only when exact stage timings are enabled."""
-    if not timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        return None
+    """Collect binary chunk diagnostics for summary telemetry and optional exact timings."""
+    del stage_timing_recorder
     return regenie2_binary.count_binary_chunk_diagnostics(result)
 
 

@@ -488,6 +488,7 @@ fn count_regenie_text_rows(chunk_file_path: &Path) -> Result<i64, OutputWriterEr
     }
     let mut row_count = 0_i64;
     let mut row_line = String::new();
+    let expected_column_count = writer::REGENIE_STEP2_TEXT_HEADER.trim_end_matches('\n').split('\t').count();
     loop {
         row_line.clear();
         let read_byte_count = input_reader.read_line(&mut row_line).map_err(OutputWriterError::runtime)?;
@@ -495,7 +496,7 @@ fn count_regenie_text_rows(chunk_file_path: &Path) -> Result<i64, OutputWriterEr
             break;
         }
         let row = row_line.trim_end_matches(['\r', '\n']);
-        if row.split('\t').count() != 14 {
+        if row.split('\t').count() != expected_column_count {
             return Err(OutputWriterError::InvalidInput(format!(
                 "Strict resume REGENIE text part has a row with an unexpected column count: {}",
                 chunk_file_path.display()
@@ -746,7 +747,7 @@ mod tests {
         std::fs::write(
             &part_file_path,
             format!(
-                "{}22\t100\tvariant0\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA\n22\t102\tvariant2\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL\n22\t103\tvariant3\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA\n",
+                "{}22\t100\tvariant0\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA\tscore\tsuccess\n22\t102\tvariant2\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL\tfirth_approximate\tfailed\n22\t103\tvariant3\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA\tscore\tsuccess\n",
                 output_writer::REGENIE_STEP2_TEXT_HEADER
             ),
         )

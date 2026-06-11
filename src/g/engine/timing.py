@@ -466,6 +466,7 @@ def build_binary_chunk_summary(binary_chunk_diagnostics: tuple[dict[str, int | f
         return {"chunk_count": 0}
     summary: dict[str, int | float] = {"chunk_count": len(binary_chunk_diagnostics)}
     sum_keys = (
+        "score_only_count",
         "score_test_candidate_count",
         "firth_candidate_count",
         "firth_converged_count",

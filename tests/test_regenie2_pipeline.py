@@ -506,6 +506,7 @@ def test_binary_chunk_diagnostics_are_detailed_only_for_exact_timing() -> None:
     aggregate_recorder = timing.StageTimingRecorder()
     exact_recorder = timing.StageTimingRecorder(exact_stage_timings=True)
     diagnostics = SimpleNamespace(
+        score_only_count=1,
         score_test_candidate_count=2,
         firth_candidate_count=1,
         firth_iteration_min=1,
@@ -535,6 +536,7 @@ def test_binary_chunk_diagnostics_are_detailed_only_for_exact_timing() -> None:
     assert aggregate_recorder.snapshot().binary_chunk_diagnostics == ()
     assert exact_recorder.snapshot().binary_chunk_diagnostics == (
         {
+            "score_only_count": 1,
             "score_test_candidate_count": 2,
             "firth_candidate_count": 1,
             "firth_iteration_min": 1,
@@ -558,7 +560,7 @@ def test_binary_chunk_diagnostics_are_detailed_only_for_exact_timing() -> None:
     )
 
 
-def test_binary_compute_preprocessed_chunk_defers_diagnostics_until_worker_consumption() -> None:
+def test_binary_compute_preprocessed_chunk_collects_summary_diagnostics_for_worker_consumption() -> None:
     callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
@@ -591,7 +593,7 @@ def test_binary_compute_preprocessed_chunk_defers_diagnostics_until_worker_consu
             return_value=result,
         ) as _,
         patch.object(callback, "enqueue_binary_result_for_write") as mock_enqueue,
-        patch("g.compute.regenie2_binary.api.count_binary_chunk_diagnostics") as mock_count,
+        patch("g.compute.regenie2_binary.api.count_binary_chunk_diagnostics", return_value=object()) as mock_count,
     ):
         callback.compute_preprocessed_chunk(
             variant_metadata=variant_metadata,
@@ -599,12 +601,12 @@ def test_binary_compute_preprocessed_chunk_defers_diagnostics_until_worker_consu
             chunk_stats=chunk_stats,
         )
 
-    mock_count.assert_not_called()
+    mock_count.assert_called_once_with(result)
     mock_enqueue.assert_called_once()
-    assert mock_enqueue.call_args.kwargs["binary_chunk_diagnostics"] is None
+    assert mock_enqueue.call_args.kwargs["binary_chunk_diagnostics"] is not None
 
 
-def test_binary_compute_preprocessed_chunk_collects_diagnostics_only_for_exact_timing() -> None:
+def test_binary_compute_preprocessed_chunk_collects_diagnostics_with_exact_timing() -> None:
     callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
@@ -627,7 +629,7 @@ def test_binary_compute_preprocessed_chunk_collects_diagnostics_only_for_exact_t
         valid_mask=jnp.asarray([True, True]),
     )
     variant_metadata = build_native_metadata()
-    diagnostics = SimpleNamespace(score_test_candidate_count=2, firth_candidate_count=0, firth_iteration_min=0)
+    diagnostics = SimpleNamespace(score_only_count=2, score_test_candidate_count=0, firth_candidate_count=0)
     with (
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
@@ -686,6 +688,28 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
             "g.engine.callbacks.runtime.write_regenie2_native_chunk_with_optional_timing",
         ) as mock_write,
         patch("g.engine.callbacks.runtime.record_binary_chunk_diagnostics_from_count") as mock_record,
+        patch(
+            "g.engine.callbacks.runtime.binary_chunk_diagnostics_to_mapping",
+            return_value={
+                "score_only_count": 1,
+                "score_test_candidate_count": 2,
+                "firth_candidate_count": 0,
+                "firth_converged_count": 0,
+                "firth_failed_count": 0,
+                "firth_numerical_failure_count": 0,
+                "firth_max_iteration_failure_count": 0,
+                "firth_invalid_statistic_failure_count": 0,
+                "firth_step_halving_failure_count": 0,
+                "pseudo_firth_attempt_count": 0,
+                "pseudo_firth_success_count": 0,
+                "nr_zero_start_attempt_count": 0,
+                "nr_zero_start_success_count": 0,
+                "nr_warm_start_attempt_count": 0,
+                "nr_warm_start_success_count": 0,
+                "sparse_correction_count": 0,
+                "dense_correction_count": 0,
+            },
+        ) as mock_mapping,
     ):
         callback.consume_result_write_items()
 
@@ -694,6 +718,9 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
         stage_timing_recorder=None,
         diagnostics=diagnostics,
     )
+    mock_mapping.assert_called_once_with(diagnostics)
+    assert callback.binary_correction_summary["score_only_count"] == 1
+    assert callback.binary_correction_summary["score_test_candidate_count"] == 2
 
 
 class FakeRunEngine:

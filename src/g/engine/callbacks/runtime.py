@@ -17,6 +17,7 @@ import g.engine.callbacks.shared as shared
 import g.engine.callbacks.transfers as transfers
 import g.engine.callbacks.writers as writers
 from g import _core
+from g.compute.regenie2_binary import api as regenie2_binary
 from g.engine import telemetry, timing
 
 if typing.TYPE_CHECKING:
@@ -41,7 +42,30 @@ NativeBgenWorkerShutdownError = shared.NativeBgenWorkerShutdownError
 record_stage_duration_with_optional_chunk = transfers.record_stage_duration_with_optional_chunk
 write_regenie2_native_chunk_with_optional_timing = writers.write_regenie2_native_chunk_with_optional_timing
 record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
+binary_chunk_diagnostics_to_mapping = regenie2_binary.binary_chunk_diagnostics_to_mapping
 get_metadata_chromosome = shared.get_metadata_chromosome
+
+
+BINARY_CORRECTION_SUMMARY_KEYS = (
+    "score_only_count",
+    "score_test_candidate_count",
+    "firth_attempted_count",
+    "firth_success_count",
+    "firth_failed_count",
+    "firth_numerical_failure_count",
+    "firth_max_iteration_failure_count",
+    "firth_invalid_statistic_failure_count",
+    "firth_step_halving_failure_count",
+    "pseudo_firth_attempt_count",
+    "pseudo_firth_success_count",
+    "nr_zero_start_attempt_count",
+    "nr_zero_start_success_count",
+    "nr_warm_start_attempt_count",
+    "nr_warm_start_success_count",
+    "sparse_correction_count",
+    "dense_correction_count",
+    "null_model_failure_count",
+)
 
 
 def require_current_chromosome_state[ChromosomeStateType](
@@ -107,6 +131,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.dosage_buffer_identifiers: set[int] = set()
         self.worker_error: BaseException | None = None
         self.result_worker_error: BaseException | None = None
+        self.binary_correction_summary: dict[str, int] = dict.fromkeys(BINARY_CORRECTION_SUMMARY_KEYS, 0)
+        self.binary_correction_summary_chunk_count = 0
         self.worker_thread = threading.Thread(
             target=self.consume_dosage_chunks,
             name=worker_name,
@@ -427,6 +453,74 @@ class NativeBgenCallbackRunner(abc.ABC):
             variant_count=variant_stop_index - variant_start_index,
         )
 
+    def record_binary_null_model_failure_count(self, failure_count: int) -> None:
+        """Accumulate binary null-model failures for run-level telemetry."""
+        self.binary_correction_summary["null_model_failure_count"] += failure_count
+
+    def record_binary_correction_diagnostics(
+        self,
+        binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None,
+    ) -> None:
+        """Accumulate binary correction diagnostics for run-level telemetry."""
+        if binary_chunk_diagnostics is None:
+            return
+        diagnostics_mapping = binary_chunk_diagnostics_to_mapping(binary_chunk_diagnostics)
+        self.binary_correction_summary_chunk_count += 1
+        self.binary_correction_summary["score_only_count"] += int(diagnostics_mapping["score_only_count"])
+        self.binary_correction_summary["score_test_candidate_count"] += int(
+            diagnostics_mapping["score_test_candidate_count"]
+        )
+        self.binary_correction_summary["firth_attempted_count"] += int(diagnostics_mapping["firth_candidate_count"])
+        self.binary_correction_summary["firth_success_count"] += int(diagnostics_mapping["firth_converged_count"])
+        self.binary_correction_summary["firth_failed_count"] += int(diagnostics_mapping["firth_failed_count"])
+        self.binary_correction_summary["firth_numerical_failure_count"] += int(
+            diagnostics_mapping["firth_numerical_failure_count"]
+        )
+        self.binary_correction_summary["firth_max_iteration_failure_count"] += int(
+            diagnostics_mapping["firth_max_iteration_failure_count"]
+        )
+        self.binary_correction_summary["firth_invalid_statistic_failure_count"] += int(
+            diagnostics_mapping["firth_invalid_statistic_failure_count"]
+        )
+        self.binary_correction_summary["firth_step_halving_failure_count"] += int(
+            diagnostics_mapping["firth_step_halving_failure_count"]
+        )
+        self.binary_correction_summary["pseudo_firth_attempt_count"] += int(
+            diagnostics_mapping["pseudo_firth_attempt_count"]
+        )
+        self.binary_correction_summary["pseudo_firth_success_count"] += int(
+            diagnostics_mapping["pseudo_firth_success_count"]
+        )
+        self.binary_correction_summary["nr_zero_start_attempt_count"] += int(
+            diagnostics_mapping["nr_zero_start_attempt_count"]
+        )
+        self.binary_correction_summary["nr_zero_start_success_count"] += int(
+            diagnostics_mapping["nr_zero_start_success_count"]
+        )
+        self.binary_correction_summary["nr_warm_start_attempt_count"] += int(
+            diagnostics_mapping["nr_warm_start_attempt_count"]
+        )
+        self.binary_correction_summary["nr_warm_start_success_count"] += int(
+            diagnostics_mapping["nr_warm_start_success_count"]
+        )
+        self.binary_correction_summary["sparse_correction_count"] += int(diagnostics_mapping["sparse_correction_count"])
+        self.binary_correction_summary["dense_correction_count"] += int(diagnostics_mapping["dense_correction_count"])
+
+    def emit_binary_correction_summary(self) -> None:
+        """Emit aggregate binary correction diagnostics when a binary run produced them."""
+        if self.telemetry_session is None:
+            return
+        if (
+            self.binary_correction_summary_chunk_count == 0
+            and self.binary_correction_summary["null_model_failure_count"] == 0
+        ):
+            return
+        self.telemetry_session.log_event(
+            "binary_correction_summary",
+            chunk_count=self.binary_correction_summary_chunk_count,
+            **self.binary_correction_summary,
+        )
+
     def consume_result_write_items(self) -> None:
         """Materialize computed JAX results and write them in order."""
         try:
@@ -459,6 +553,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                         stage_timing_recorder=self.stage_timing_recorder,
                         diagnostics=work_item.binary_chunk_diagnostics,
                     )
+                    self.record_binary_correction_diagnostics(work_item.binary_chunk_diagnostics)
                 finally:
                     self.release_result_work_item_buffer(work_item)
         except Exception as error:  # noqa: BLE001
@@ -599,6 +694,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 processed_chunk_count=self.processed_chunk_count,
             )
             self.current_progress_chromosome = None
+        self.emit_binary_correction_summary()
 
     def abort(self) -> None:
         """Stop the worker after an upstream failure."""

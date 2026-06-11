@@ -378,7 +378,8 @@ fn validate_regenie_text_header(header_line: &str, chunk_file_path: &Path) -> Re
 
 fn validate_regenie_text_row(row_line: &str, chunk_file_path: &Path) -> Result<(), OutputWriterError> {
     let row = row_line.trim_end_matches(['\r', '\n']);
-    if row.split('\t').count() == 14 {
+    let expected_column_count = writer::REGENIE_STEP2_TEXT_HEADER.trim_end_matches('\n').split('\t').count();
+    if row.split('\t').count() == expected_column_count {
         return Ok(());
     }
     Err(OutputWriterError::InvalidInput(format!(
@@ -527,6 +528,8 @@ fn build_regenie_step2_parquet_writer_properties() -> WriterProperties {
         .set_column_dictionary_enabled(ColumnPath::from("N"), true)
         .set_column_dictionary_enabled(ColumnPath::from("TEST"), true)
         .set_column_dictionary_enabled(ColumnPath::from("EXTRA"), true)
+        .set_column_dictionary_enabled(ColumnPath::from("CORRECTION_METHOD"), true)
+        .set_column_dictionary_enabled(ColumnPath::from("CORRECTION_STATUS"), true)
         .build()
 }
 
@@ -564,8 +567,22 @@ fn prepare_chunk_batch_for_final_writer(batch: RecordBatch) -> Result<RecordBatc
 
 fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> Result<RecordBatch, OutputWriterError> {
     let final_column_names = [
-        "CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "A1FREQ", "INFO", "N", "TEST", "BETA", "SE", "CHISQ", "LOG10P",
+        "CHROM",
+        "GENPOS",
+        "ID",
+        "ALLELE0",
+        "ALLELE1",
+        "A1FREQ",
+        "INFO",
+        "N",
+        "TEST",
+        "BETA",
+        "SE",
+        "CHISQ",
+        "LOG10P",
         "EXTRA",
+        "CORRECTION_METHOD",
+        "CORRECTION_STATUS",
     ];
     let projected_columns = final_column_names
         .iter()
@@ -687,6 +704,8 @@ mod tests {
         let chi_squared_array: ArrayRef = Arc::new(Float32Array::from(vec![10.0_f32]));
         let log10_p_value_array: ArrayRef = Arc::new(Float32Array::from(vec![5.0_f32]));
         let extra_array: ArrayRef = Arc::new(StringArray::from(vec![None::<&str>]));
+        let correction_method_array: ArrayRef = Arc::new(StringArray::from(vec!["score"]));
+        let correction_status_array: ArrayRef = Arc::new(StringArray::from(vec!["success"]));
         let columns = vec![
             chromosome_array,
             position_array,
@@ -702,6 +721,8 @@ mod tests {
             chi_squared_array,
             log10_p_value_array,
             extra_array,
+            correction_method_array,
+            correction_status_array,
         ];
         let batch = RecordBatch::try_new(Arc::clone(schema::get_regenie_step2_final_schema()), columns.clone())
             .expect("ordered final batch should build");
@@ -712,6 +733,7 @@ mod tests {
         assert_eq!(prepared_batch.schema().fields(), schema::get_regenie_step2_final_schema().fields());
         assert!(Arc::ptr_eq(prepared_batch.column(0), &columns[0]));
         assert!(Arc::ptr_eq(prepared_batch.column(13), &columns[13]));
+        assert!(Arc::ptr_eq(prepared_batch.column(15), &columns[15]));
     }
 
     #[test]
@@ -724,7 +746,7 @@ mod tests {
         std::fs::write(
             &first_part_path,
             format!(
-                "{}22\t100\tvariant0\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA\n",
+                "{}22\t100\tvariant0\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA\tscore\tsuccess\n",
                 output_writer::REGENIE_STEP2_TEXT_HEADER
             ),
         )
@@ -732,7 +754,7 @@ mod tests {
         std::fs::write(
             &second_part_path,
             format!(
-                "{}22\t102\tvariant2\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL\n",
+                "{}22\t102\tvariant2\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL\tfirth_approximate\tfailed\n",
                 output_writer::REGENIE_STEP2_TEXT_HEADER
             ),
         )
@@ -765,9 +787,12 @@ mod tests {
         assert_eq!(final_lines.len(), 3);
         assert_eq!(
             final_lines[0],
-            "CHROM\tGENPOS\tID\tALLELE0\tALLELE1\tA1FREQ\tINFO\tN\tTEST\tBETA\tSE\tCHISQ\tLOG10P\tEXTRA"
+            "CHROM\tGENPOS\tID\tALLELE0\tALLELE1\tA1FREQ\tINFO\tN\tTEST\tBETA\tSE\tCHISQ\tLOG10P\tEXTRA\tCORRECTION_METHOD\tCORRECTION_STATUS"
         );
-        assert_eq!(final_lines[2], "22\t102\tvariant2\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL");
+        assert_eq!(
+            final_lines[2],
+            "22\t102\tvariant2\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL\tfirth_approximate\tfailed"
+        );
         let manifest_text =
             std::fs::read_to_string(run_directory.join("run_manifest.json")).expect("manifest should be readable");
         let manifest = serde_json::from_str::<serde_json::Value>(&manifest_text).expect("manifest should parse");

@@ -24,8 +24,7 @@ use crate::output::manifest;
 use crate::output::schema;
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
-pub(crate) const REGENIE_STEP2_TEXT_HEADER: &str =
-    "CHROM\tGENPOS\tID\tALLELE0\tALLELE1\tA1FREQ\tINFO\tN\tTEST\tBETA\tSE\tCHISQ\tLOG10P\tEXTRA\n";
+pub(crate) const REGENIE_STEP2_TEXT_HEADER: &str = "CHROM\tGENPOS\tID\tALLELE0\tALLELE1\tA1FREQ\tINFO\tN\tTEST\tBETA\tSE\tCHISQ\tLOG10P\tEXTRA\tCORRECTION_METHOD\tCORRECTION_STATUS\n";
 const REGENIE_STEP2_TEXT_MISSING_VALUE: &str = "NA";
 
 #[derive(Debug, Error)]
@@ -409,10 +408,14 @@ fn build_regenie_step2_record_batch(
     let result_array_build_seconds = result_array_build_start_time.elapsed().as_secs_f64();
 
     let extra_array_build_start_time = Instant::now();
-    let extra_array = match chunk_job.extra_code {
-        Some(extra_code) => schema::build_extra_string_array(Some(extra_code), row_count)?,
+    let extra_code_array = chunk_job.extra_code;
+    let extra_array = match extra_code_array.as_ref() {
+        Some(extra_code) => schema::build_extra_string_array(Some(Arc::clone(extra_code)), row_count)?,
         None => array_cache.null_extra_array(row_count),
     };
+    let correction_method_array =
+        schema::build_correction_method_array(extra_code_array.as_ref().map(Arc::clone), row_count)?;
+    let correction_status_array = schema::build_correction_status_array(extra_code_array, row_count)?;
     let extra_array_build_seconds = extra_array_build_start_time.elapsed().as_secs_f64();
 
     let columns: Vec<ArrayRef> = vec![
@@ -430,6 +433,8 @@ fn build_regenie_step2_record_batch(
         chi_squared_array,
         log10_p_value_array,
         extra_array,
+        correction_method_array,
+        correction_status_array,
     ];
     let arrow_array_memory_bytes = columns.iter().fold(0_u64, |total, column| {
         total.saturating_add(u64::try_from(column.get_array_memory_size()).unwrap_or(u64::MAX))
@@ -624,6 +629,8 @@ fn write_regenie_step2_text_record_batch(
     let chi_squared_array = required_float32_column(record_batch, "CHISQ")?;
     let log10_p_value_array = required_float32_column(record_batch, "LOG10P")?;
     let extra_array = required_string_column(record_batch, "EXTRA")?;
+    let correction_method_array = required_string_column(record_batch, "CORRECTION_METHOD")?;
+    let correction_status_array = required_string_column(record_batch, "CORRECTION_STATUS")?;
     for row_index in 0..record_batch.num_rows() {
         write_regenie_text_string_value(output_writer, chromosome_array, row_index, "CHROM")?;
         output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
@@ -652,6 +659,10 @@ fn write_regenie_step2_text_record_batch(
         write_regenie_text_float32_value(output_writer, log10_p_value_array, row_index)?;
         output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
         write_regenie_text_string_value(output_writer, extra_array, row_index, "EXTRA")?;
+        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        write_regenie_text_string_value(output_writer, correction_method_array, row_index, "CORRECTION_METHOD")?;
+        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        write_regenie_text_string_value(output_writer, correction_status_array, row_index, "CORRECTION_STATUS")?;
         output_writer.write_all(b"\n").map_err(|error| error.to_string())?;
     }
     Ok(())
@@ -779,6 +790,8 @@ fn build_regenie_step2_parquet_writer_properties(parquet_compression: &str) -> R
         .set_column_dictionary_enabled(ColumnPath::from("N"), true)
         .set_column_dictionary_enabled(ColumnPath::from("TEST"), true)
         .set_column_dictionary_enabled(ColumnPath::from("EXTRA"), true)
+        .set_column_dictionary_enabled(ColumnPath::from("CORRECTION_METHOD"), true)
+        .set_column_dictionary_enabled(ColumnPath::from("CORRECTION_STATUS"), true)
         .build())
 }
 
@@ -891,10 +904,24 @@ mod tests {
     fn linear_record_batch_uses_shared_schema_and_null_extra() {
         let record_batch = build_test_record_batch(build_test_chunk(0, None));
 
-        assert_eq!(record_batch.schema().fields().len(), 14);
+        assert_eq!(record_batch.schema().fields().len(), 16);
         assert!(record_batch.schema().field_with_name("chunk_identifier").is_err());
         assert!(record_batch.schema().field_with_name("INFO").expect("INFO field should exist").is_nullable());
         assert!(record_batch.schema().field_with_name("EXTRA").expect("EXTRA field should exist").is_nullable());
+        assert!(
+            record_batch
+                .schema()
+                .field_with_name("CORRECTION_METHOD")
+                .expect("CORRECTION_METHOD field should exist")
+                .is_nullable()
+        );
+        assert!(
+            record_batch
+                .schema()
+                .field_with_name("CORRECTION_STATUS")
+                .expect("CORRECTION_STATUS field should exist")
+                .is_nullable()
+        );
         assert_eq!(record_batch.num_rows(), 1);
         let info_array = record_batch
             .column_by_name("INFO")
@@ -904,6 +931,20 @@ mod tests {
             .expect("INFO column should be a float32 array");
         assert!((info_array.value(0) - 0.9).abs() < f32::EPSILON);
         assert_eq!(record_batch.column_by_name("EXTRA").expect("EXTRA column should exist").null_count(), 1);
+        let correction_method_array = record_batch
+            .column_by_name("CORRECTION_METHOD")
+            .expect("CORRECTION_METHOD column should exist")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("CORRECTION_METHOD column should be a string array");
+        let correction_status_array = record_batch
+            .column_by_name("CORRECTION_STATUS")
+            .expect("CORRECTION_STATUS column should exist")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("CORRECTION_STATUS column should be a string array");
+        assert_eq!(correction_method_array.value(0), "score");
+        assert_eq!(correction_status_array.value(0), "success");
     }
 
     #[test]
@@ -954,6 +995,20 @@ mod tests {
 
         assert_eq!(linear_record_batch.schema().fields(), binary_record_batch.schema().fields());
         assert_eq!(binary_record_batch.column_by_name("EXTRA").expect("EXTRA column should exist").null_count(), 1);
+        let correction_method_array = binary_record_batch
+            .column_by_name("CORRECTION_METHOD")
+            .expect("CORRECTION_METHOD column should exist")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("CORRECTION_METHOD column should be a string array");
+        let correction_status_array = binary_record_batch
+            .column_by_name("CORRECTION_STATUS")
+            .expect("CORRECTION_STATUS column should exist")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("CORRECTION_STATUS column should be a string array");
+        assert_eq!(correction_method_array.value(0), "firth_approximate");
+        assert_eq!(correction_status_array.value(0), "success");
     }
 
     #[test]
@@ -1019,7 +1074,7 @@ mod tests {
                 .expect("Parquet reader should build")
                 .schema()
                 .clone();
-        assert_eq!(parquet_schema.fields().len(), 14);
+        assert_eq!(parquet_schema.fields().len(), 16);
         assert!(parquet_schema.field_with_name("chunk_identifier").is_err());
 
         let parquet_file = File::open(part_file_path).expect("Parquet part should open");
@@ -1065,10 +1120,16 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             part_lines[0],
-            "CHROM\tGENPOS\tID\tALLELE0\tALLELE1\tA1FREQ\tINFO\tN\tTEST\tBETA\tSE\tCHISQ\tLOG10P\tEXTRA"
+            "CHROM\tGENPOS\tID\tALLELE0\tALLELE1\tA1FREQ\tINFO\tN\tTEST\tBETA\tSE\tCHISQ\tLOG10P\tEXTRA\tCORRECTION_METHOD\tCORRECTION_STATUS"
         );
-        assert_eq!(part_lines[1], "22\t100\tvariant0\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL");
-        assert_eq!(part_lines[2], "22\t101\tvariant1\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA");
+        assert_eq!(
+            part_lines[1],
+            "22\t100\tvariant0\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL\tfirth_approximate\tfailed"
+        );
+        assert_eq!(
+            part_lines[2],
+            "22\t101\tvariant1\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA\tfirth_approximate\tsuccess"
+        );
 
         let sidecar_text = std::fs::read_to_string(build_regenie_text_metadata_sidecar_path(&part_file_path))
             .expect("REGENIE text sidecar should be readable");
