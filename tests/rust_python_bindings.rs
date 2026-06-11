@@ -476,6 +476,7 @@ writer = _core.OutputWriterSession(
     1,
     1,
     "arrow",
+    "float32",
     False,
     1,
     "none",
@@ -511,6 +512,7 @@ for multi_run_directory in multi_run_directories:
             1,
             1,
             "arrow",
+            "float32",
             False,
             1,
             "none",
@@ -582,6 +584,7 @@ interrupted_writer = _core.OutputWriterSession(
     1,
     1,
     "arrow",
+    "float32",
     False,
     1,
     "none",
@@ -602,6 +605,7 @@ abort_writer = _core.OutputWriterSession(
     1,
     1,
     "arrow",
+    "float32",
     False,
     1,
     "none",
@@ -611,7 +615,7 @@ abort_writer = _core.OutputWriterSession(
 abort_writer.abort()
 
 try:
-    _core.OutputWriterSession(run_directory, chunks_directory, "regenie2_linear", 0, 1, "arrow", False, 1, "none", "none", False)
+    _core.OutputWriterSession(run_directory, chunks_directory, "regenie2_linear", 0, 1, "arrow", "float32", False, 1, "none", "none", False)
     raise AssertionError("invalid writer thread count should fail")
 except ValueError:
     pass

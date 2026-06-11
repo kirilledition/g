@@ -4,10 +4,55 @@ use arrow::array::{Array, ArrayRef, Int32Array, StringArray, StringBuilder, new_
 use arrow::datatypes::{DataType, Field, Schema};
 
 pub(crate) const CHUNK_COMMITS_METADATA_KEY: &str = "g.output.chunk_commits";
+pub(crate) const OUTPUT_SCHEMA_VERSION: &str = "2";
 
-pub(crate) fn get_regenie_step2_chunk_schema() -> &'static Arc<Schema> {
-    static REGENIE_STEP2_CHUNK_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
-    REGENIE_STEP2_CHUNK_SCHEMA.get_or_init(|| Arc::new(build_regenie_step2_chunk_schema()))
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OutputStatisticDtype {
+    Float32,
+    Float64,
+}
+
+impl OutputStatisticDtype {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "float32" => Ok(Self::Float32),
+            "float64" => Ok(Self::Float64),
+            unsupported_value => {
+                Err(format!("Output statistic dtype must be 'float32' or 'float64', observed '{unsupported_value}'."))
+            }
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Float32 => "float32",
+            Self::Float64 => "float64",
+        }
+    }
+
+    fn arrow_data_type(self) -> DataType {
+        match self {
+            Self::Float32 => DataType::Float32,
+            Self::Float64 => DataType::Float64,
+        }
+    }
+}
+
+impl Default for OutputStatisticDtype {
+    fn default() -> Self {
+        Self::Float32
+    }
+}
+
+pub(crate) fn get_regenie_step2_chunk_schema(output_statistic_dtype: OutputStatisticDtype) -> &'static Arc<Schema> {
+    static REGENIE_STEP2_CHUNK_FLOAT32_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
+    static REGENIE_STEP2_CHUNK_FLOAT64_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
+    match output_statistic_dtype {
+        OutputStatisticDtype::Float32 => REGENIE_STEP2_CHUNK_FLOAT32_SCHEMA
+            .get_or_init(|| Arc::new(build_regenie_step2_chunk_schema(output_statistic_dtype))),
+        OutputStatisticDtype::Float64 => REGENIE_STEP2_CHUNK_FLOAT64_SCHEMA
+            .get_or_init(|| Arc::new(build_regenie_step2_chunk_schema(output_statistic_dtype))),
+    }
 }
 
 pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: usize) -> Result<ArrayRef, String> {
@@ -125,12 +170,44 @@ fn build_correction_label_array(
     Ok(Arc::new(label_builder.finish()))
 }
 
-pub(crate) fn get_regenie_step2_final_schema() -> &'static Arc<Schema> {
-    static REGENIE_STEP2_FINAL_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
-    REGENIE_STEP2_FINAL_SCHEMA.get_or_init(|| Arc::new(build_regenie_step2_final_schema()))
+pub(crate) fn get_regenie_step2_final_schema(output_statistic_dtype: OutputStatisticDtype) -> &'static Arc<Schema> {
+    static REGENIE_STEP2_FINAL_FLOAT32_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
+    static REGENIE_STEP2_FINAL_FLOAT64_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
+    match output_statistic_dtype {
+        OutputStatisticDtype::Float32 => REGENIE_STEP2_FINAL_FLOAT32_SCHEMA
+            .get_or_init(|| Arc::new(build_regenie_step2_final_schema(output_statistic_dtype))),
+        OutputStatisticDtype::Float64 => REGENIE_STEP2_FINAL_FLOAT64_SCHEMA
+            .get_or_init(|| Arc::new(build_regenie_step2_final_schema(output_statistic_dtype))),
+    }
 }
 
-fn build_regenie_step2_chunk_schema() -> Schema {
+pub(crate) fn output_statistic_dtype_from_schema(schema: &Schema) -> Result<OutputStatisticDtype, String> {
+    let statistic_column_names = ["BETA", "SE", "CHISQ", "LOG10P"];
+    let mut observed_dtype: Option<OutputStatisticDtype> = None;
+    for column_name in statistic_column_names {
+        let field = schema.field_with_name(column_name).map_err(|error| error.to_string())?;
+        let column_dtype = match field.data_type() {
+            DataType::Float32 => OutputStatisticDtype::Float32,
+            DataType::Float64 => OutputStatisticDtype::Float64,
+            data_type => {
+                return Err(format!(
+                    "REGENIE step 2 public statistic column {column_name} must be Float32 or Float64, observed {data_type}.",
+                ));
+            }
+        };
+        if let Some(previous_dtype) = observed_dtype {
+            if previous_dtype != column_dtype {
+                return Err("REGENIE step 2 public statistic columns must use one common dtype.".to_string());
+            }
+        } else {
+            observed_dtype = Some(column_dtype);
+        }
+    }
+    observed_dtype.ok_or_else(|| "REGENIE step 2 public statistic columns are missing.".to_string())
+}
+
+fn build_regenie_step2_chunk_schema(output_statistic_dtype: OutputStatisticDtype) -> Schema {
+    let statistic_data_type = output_statistic_dtype.arrow_data_type();
     Schema::new(vec![
         Field::new("CHROM", DataType::Utf8, true),
         Field::new("GENPOS", DataType::Int64, true),
@@ -141,17 +218,18 @@ fn build_regenie_step2_chunk_schema() -> Schema {
         Field::new("INFO", DataType::Float32, true),
         Field::new("N", DataType::Int32, true),
         Field::new("TEST", DataType::Utf8, true),
-        Field::new("BETA", DataType::Float32, true),
-        Field::new("SE", DataType::Float32, true),
-        Field::new("CHISQ", DataType::Float32, true),
-        Field::new("LOG10P", DataType::Float32, true),
+        Field::new("BETA", statistic_data_type.clone(), true),
+        Field::new("SE", statistic_data_type.clone(), true),
+        Field::new("CHISQ", statistic_data_type.clone(), true),
+        Field::new("LOG10P", statistic_data_type, true),
         Field::new("EXTRA", DataType::Utf8, true),
         Field::new("CORRECTION_METHOD", DataType::Utf8, true),
         Field::new("CORRECTION_STATUS", DataType::Utf8, true),
     ])
 }
 
-fn build_regenie_step2_final_schema() -> Schema {
+fn build_regenie_step2_final_schema(output_statistic_dtype: OutputStatisticDtype) -> Schema {
+    let statistic_data_type = output_statistic_dtype.arrow_data_type();
     Schema::new(vec![
         Field::new("CHROM", DataType::Utf8, true),
         Field::new("GENPOS", DataType::Int64, true),
@@ -162,10 +240,10 @@ fn build_regenie_step2_final_schema() -> Schema {
         Field::new("INFO", DataType::Float32, true),
         Field::new("N", DataType::Int32, true),
         Field::new("TEST", DataType::Utf8, true),
-        Field::new("BETA", DataType::Float32, true),
-        Field::new("SE", DataType::Float32, true),
-        Field::new("CHISQ", DataType::Float32, true),
-        Field::new("LOG10P", DataType::Float32, true),
+        Field::new("BETA", statistic_data_type.clone(), true),
+        Field::new("SE", statistic_data_type.clone(), true),
+        Field::new("CHISQ", statistic_data_type.clone(), true),
+        Field::new("LOG10P", statistic_data_type, true),
         Field::new("EXTRA", DataType::Utf8, true),
         Field::new("CORRECTION_METHOD", DataType::Utf8, true),
         Field::new("CORRECTION_STATUS", DataType::Utf8, true),
@@ -177,10 +255,11 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::array::{Array, ArrayRef, Float32Array, Int32Array, StringArray};
+    use arrow::datatypes::DataType;
 
     use super::{
-        build_correction_method_array, build_correction_status_array, build_extra_string_array,
-        get_regenie_step2_chunk_schema, get_regenie_step2_final_schema,
+        OutputStatisticDtype, build_correction_method_array, build_correction_status_array, build_extra_string_array,
+        get_regenie_step2_chunk_schema, get_regenie_step2_final_schema, output_statistic_dtype_from_schema,
     };
 
     #[test]
@@ -280,7 +359,30 @@ mod tests {
 
     #[test]
     fn schema_singletons_have_expected_final_columns() {
-        assert_eq!(get_regenie_step2_chunk_schema().fields().len(), 16);
-        assert_eq!(get_regenie_step2_final_schema().fields().len(), 16);
+        let float32_chunk_schema = get_regenie_step2_chunk_schema(OutputStatisticDtype::Float32);
+        let float64_chunk_schema = get_regenie_step2_chunk_schema(OutputStatisticDtype::Float64);
+        let float32_final_schema = get_regenie_step2_final_schema(OutputStatisticDtype::Float32);
+        let float64_final_schema = get_regenie_step2_final_schema(OutputStatisticDtype::Float64);
+
+        assert_eq!(float32_chunk_schema.fields().len(), 16);
+        assert_eq!(float64_chunk_schema.fields().len(), 16);
+        assert_eq!(float32_final_schema.fields().len(), 16);
+        assert_eq!(float64_final_schema.fields().len(), 16);
+        assert_eq!(
+            float32_chunk_schema.field_with_name("BETA").expect("BETA should exist").data_type(),
+            &DataType::Float32
+        );
+        assert_eq!(
+            float64_chunk_schema.field_with_name("BETA").expect("BETA should exist").data_type(),
+            &DataType::Float64
+        );
+        assert_eq!(
+            output_statistic_dtype_from_schema(float32_final_schema.as_ref()).expect("float32 dtype should infer"),
+            OutputStatisticDtype::Float32,
+        );
+        assert_eq!(
+            output_statistic_dtype_from_schema(float64_final_schema.as_ref()).expect("float64 dtype should infer"),
+            OutputStatisticDtype::Float64,
+        );
     }
 }

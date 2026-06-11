@@ -16,6 +16,7 @@ use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
+use serde_json::Value;
 
 use crate::output::manifest;
 use crate::output::schema;
@@ -97,6 +98,38 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     association_mode: &str,
     output_format: OutputFileFormat,
 ) -> Result<RegenieStep2FinalizationTiming, OutputWriterError> {
+    write_final_parquet_from_chunk_files_with_optional_dtype(
+        chunks_directory,
+        final_parquet_path,
+        association_mode,
+        output_format,
+        None,
+    )
+}
+
+pub(crate) fn write_final_parquet_from_chunk_files_with_timing_for_dtype(
+    chunks_directory: &Path,
+    final_parquet_path: &Path,
+    association_mode: &str,
+    output_format: OutputFileFormat,
+    output_statistic_dtype: schema::OutputStatisticDtype,
+) -> Result<RegenieStep2FinalizationTiming, OutputWriterError> {
+    write_final_parquet_from_chunk_files_with_optional_dtype(
+        chunks_directory,
+        final_parquet_path,
+        association_mode,
+        output_format,
+        Some(output_statistic_dtype),
+    )
+}
+
+fn write_final_parquet_from_chunk_files_with_optional_dtype(
+    chunks_directory: &Path,
+    final_parquet_path: &Path,
+    association_mode: &str,
+    output_format: OutputFileFormat,
+    output_statistic_dtype_override: Option<schema::OutputStatisticDtype>,
+) -> Result<RegenieStep2FinalizationTiming, OutputWriterError> {
     let total_start_time = Instant::now();
     if association_mode != "regenie2_linear" && association_mode != "regenie2_binary" {
         return Err(OutputWriterError::InvalidInput(format!(
@@ -121,7 +154,11 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     let output_file = File::create(final_parquet_path).map_err(OutputWriterError::runtime)?;
     let parquet_file_create_seconds = parquet_file_create_start_time.elapsed().as_secs_f64();
 
-    let final_schema = Arc::clone(schema::get_regenie_step2_final_schema());
+    let output_statistic_dtype = match output_statistic_dtype_override {
+        Some(output_statistic_dtype) => output_statistic_dtype,
+        None => read_output_statistic_dtype_from_manifest(run_directory)?,
+    };
+    let final_schema = Arc::clone(schema::get_regenie_step2_final_schema(output_statistic_dtype));
     let parquet_writer_init_start_time = Instant::now();
     let mut parquet_writer =
         ArrowWriter::try_new(output_file, final_schema, Some(writer_properties)).map_err(OutputWriterError::runtime)?;
@@ -545,7 +582,7 @@ fn append_output_footer_metadata(
     row_count: usize,
 ) {
     let metadata_values = [
-        ("g.output.schema_version", "1".to_string()),
+        ("g.output.schema_version", schema::OUTPUT_SCHEMA_VERSION.to_string()),
         ("g.output.association_mode", association_mode.to_string()),
         ("g.output.chunk_file_count", chunk_file_count.to_string()),
         ("g.output.row_count", row_count.to_string()),
@@ -557,15 +594,20 @@ fn append_output_footer_metadata(
 }
 
 fn prepare_chunk_batch_for_final_writer(batch: RecordBatch) -> Result<RecordBatch, OutputWriterError> {
-    let final_schema = schema::get_regenie_step2_final_schema();
+    let output_statistic_dtype =
+        schema::output_statistic_dtype_from_schema(batch.schema().as_ref()).map_err(OutputWriterError::InvalidInput)?;
+    let final_schema = schema::get_regenie_step2_final_schema(output_statistic_dtype);
     if batch.schema().fields() == final_schema.fields() {
         return RecordBatch::try_new(Arc::clone(final_schema), batch.columns().to_vec())
             .map_err(OutputWriterError::runtime);
     }
-    project_chunk_batch_to_final_batch(batch)
+    project_chunk_batch_to_final_batch(batch, output_statistic_dtype)
 }
 
-fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> Result<RecordBatch, OutputWriterError> {
+fn project_chunk_batch_to_final_batch(
+    batch: RecordBatch,
+    output_statistic_dtype: schema::OutputStatisticDtype,
+) -> Result<RecordBatch, OutputWriterError> {
     let final_column_names = [
         "CHROM",
         "GENPOS",
@@ -591,8 +633,23 @@ fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> Result<RecordBatch,
         .ok_or_else(|| {
             OutputWriterError::Runtime("Rust output writer could not project chunk batch to final schema.".to_string())
         })?;
-    RecordBatch::try_new(Arc::clone(schema::get_regenie_step2_final_schema()), projected_columns)
+    RecordBatch::try_new(Arc::clone(schema::get_regenie_step2_final_schema(output_statistic_dtype)), projected_columns)
         .map_err(OutputWriterError::runtime)
+}
+
+fn read_output_statistic_dtype_from_manifest(
+    run_directory: &Path,
+) -> Result<schema::OutputStatisticDtype, OutputWriterError> {
+    let Some(manifest_json) = manifest::load_run_manifest_json(run_directory)? else {
+        return Ok(schema::OutputStatisticDtype::default());
+    };
+    let manifest_value = serde_json::from_str::<Value>(&manifest_json).map_err(OutputWriterError::runtime)?;
+    let output_statistic_dtype_text = manifest_value
+        .pointer("/output_writer/result_statistic_dtype")
+        .or_else(|| manifest_value.pointer("/execution_plan/output_writer/result_statistic_dtype"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| schema::OutputStatisticDtype::default().as_str());
+    schema::OutputStatisticDtype::parse(output_statistic_dtype_text).map_err(OutputWriterError::InvalidInput)
 }
 
 #[cfg(test)]
@@ -640,7 +697,7 @@ mod tests {
         let batch = RecordBatch::try_new(schema, vec![Arc::new(StringArray::from(vec!["22"]))])
             .expect("record batch should build");
 
-        let error = project_chunk_batch_to_final_batch(batch)
+        let error = project_chunk_batch_to_final_batch(batch, schema::OutputStatisticDtype::Float32)
             .expect_err("missing final columns should fail projection")
             .to_string();
         assert!(error.contains("project chunk batch"));
@@ -724,13 +781,19 @@ mod tests {
             correction_method_array,
             correction_status_array,
         ];
-        let batch = RecordBatch::try_new(Arc::clone(schema::get_regenie_step2_final_schema()), columns.clone())
-            .expect("ordered final batch should build");
+        let batch = RecordBatch::try_new(
+            Arc::clone(schema::get_regenie_step2_final_schema(schema::OutputStatisticDtype::Float32)),
+            columns.clone(),
+        )
+        .expect("ordered final batch should build");
 
         let prepared_batch =
             prepare_chunk_batch_for_final_writer(batch).expect("ordered final batch should be prepared");
 
-        assert_eq!(prepared_batch.schema().fields(), schema::get_regenie_step2_final_schema().fields());
+        assert_eq!(
+            prepared_batch.schema().fields(),
+            schema::get_regenie_step2_final_schema(schema::OutputStatisticDtype::Float32).fields(),
+        );
         assert!(Arc::ptr_eq(prepared_batch.column(0), &columns[0]));
         assert!(Arc::ptr_eq(prepared_batch.column(13), &columns[13]));
         assert!(Arc::ptr_eq(prepared_batch.column(15), &columns[15]));

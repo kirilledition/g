@@ -95,8 +95,10 @@ schema fields, not local mathematical symbols.
 | `nullProbabilityVector` | Fitted binary null probabilities. |
 | `bernoulliVarianceVector` | Per-sample binary variance under the fitted logistic null. |
 
-The public result fields are written as `float32` in the current output schema,
-even when an internal kernel uses a wider dtype for parity-sensitive work.
+The public result fields are written as `float32` by default, even when an
+internal kernel uses a wider dtype for parity-sensitive work. Set
+`[output].output_statistic_dtype = "float64"` when persisted public statistics
+must retain float64 precision.
 
 ## Quantitative Step 2
 
@@ -707,7 +709,7 @@ Statistical parameters:
 | `--firth --approx` | Yes, for binary | Replaces selected score-test rows with approximate Firth-corrected rows. |
 | `--pThresh` | Yes, for binary Firth | Sets the score-test p-value threshold for Firth candidates. |
 | `--firth-se` | Yes, for reported `SE` only | Recomputes successful Firth `SE` as `abs(BETA) / sqrt(CHISQ)`. |
-| `--score_dtype` | Can | Changes score-test compute precision. Public statistics still write as `float32`. |
+| `--score_dtype` | Can | Changes score-test compute precision. Persisted public statistic precision is controlled separately by `--output_statistic_dtype`. |
 
 Numerical policy parameters:
 

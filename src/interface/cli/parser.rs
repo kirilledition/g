@@ -134,6 +134,8 @@ pub(crate) struct OutputCli {
     pub(crate) arrow_compression: Option<ArrowCompressionValue>,
     #[arg(long = "parquet_compression", help_heading = "Output")]
     pub(crate) parquet_compression: Option<ParquetCompressionValue>,
+    #[arg(long = "output_statistic_dtype", help_heading = "Output")]
+    pub(crate) output_statistic_dtype: Option<FloatingPointDtypeValue>,
     #[arg(long = "resume", action = ArgAction::SetTrue, help_heading = "Output")]
     pub(crate) resume: bool,
     #[arg(long = "no-resume", hide = true, action = ArgAction::SetTrue, help_heading = "Output")]

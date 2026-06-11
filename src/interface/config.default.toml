@@ -69,6 +69,10 @@ writer_queue_depth = 16
 chunks_per_arrow_file = 16
 arrow_compression = "zstd"
 parquet_compression = "none"
+# Public BETA/SE/CHISQ/LOG10P output columns default to float32 for compact
+# REGENIE-style output. Use float64 for parity/debugging runs that need to
+# preserve high-precision compute results in Arrow/Parquet outputs.
+output_statistic_dtype = "float32"
 resume = false
 resume_mode = "fast"
 finalize_parquet = false

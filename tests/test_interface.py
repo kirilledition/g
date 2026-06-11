@@ -72,6 +72,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "chunks_per_arrow_file": 2,
         "arrow_compression": "none",
         "parquet_compression": "zstd",
+        "output_statistic_dtype": "float64",
         "firth_batch_size": 8,
         "firth_candidate_capacity": 16,
         "binary_null_maximum_iterations": 25,
@@ -144,6 +145,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_output.chunks_per_arrow_file == 2
     assert regenie_config.g_output.arrow_compression == types.ArrowCompression.NONE
     assert regenie_config.g_output.parquet_compression == types.ParquetCompression.ZSTD
+    assert regenie_config.g_output.output_statistic_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_diagnostics.telemetry == types.TelemetryMode.TRACE
     assert regenie_config.g_diagnostics.log_dir == Path("logs")
     assert regenie_config.g_diagnostics.stage_timings_json == Path("timings.json")
@@ -435,6 +437,7 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
+    assert regenie_config.g_output.output_statistic_dtype == types.FloatingPointDtype.FLOAT32
     assert regenie_config.g_diagnostics.log_filter == packaged_config.g_diagnostics.log_filter
     assert "pThresh" not in regenie_config.explicit_options
     assert "firth" not in regenie_config.explicit_options
@@ -520,6 +523,7 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
             "format": "arrow",
             "arrow_compression": "none",
             "parquet_compression": "zstd",
+            "output_statistic_dtype": "float64",
             "firth_batch_size": 8,
             "null_logistic_nonconvergence_policy": "warn",
             "score_dtype": "float64",
@@ -834,6 +838,7 @@ def test_output_tuning_defaults_come_from_packaged_default_config() -> None:
     assert regenie_config.g_output.writer_queue_depth == packaged_config.g_output.writer_queue_depth
     assert regenie_config.g_output.chunks_per_arrow_file == packaged_config.g_output.chunks_per_arrow_file
     assert regenie_config.g_output.parquet_compression == packaged_config.g_output.parquet_compression
+    assert regenie_config.g_output.output_statistic_dtype == packaged_config.g_output.output_statistic_dtype
     assert regenie_config.g_output.finalize_parquet is False
 
 

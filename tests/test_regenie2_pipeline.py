@@ -220,10 +220,19 @@ def test_require_current_chromosome_state_raises_clear_error_when_missing() -> N
 def test_cast_statistic_array_for_native_writer_uses_public_float32_schema() -> None:
     precise_values = np.asarray([1.0, 1.0 + 2.0**-30], dtype=np.float64)
 
-    writer_values = callbacks.cast_statistic_array_for_native_writer(precise_values)
+    writer_values = callbacks.cast_statistic_array_for_native_writer(precise_values, types.FloatingPointDtype.FLOAT32)
 
     assert writer_values.dtype == np.float32
     np.testing.assert_array_equal(writer_values, precise_values.astype(np.float32))
+
+
+def test_cast_statistic_array_for_native_writer_preserves_public_float64_schema() -> None:
+    precise_values = np.asarray([1.0, 1.0 + 2.0**-30], dtype=np.float64)
+
+    writer_values = callbacks.cast_statistic_array_for_native_writer(precise_values, types.FloatingPointDtype.FLOAT64)
+
+    assert writer_values.dtype == np.float64
+    np.testing.assert_array_equal(writer_values, precise_values)
 
 
 def test_write_regenie2_native_chunk_downcasts_float64_statistics_before_writing() -> None:
@@ -241,6 +250,7 @@ def test_write_regenie2_native_chunk_downcasts_float64_statistics_before_writing
         log10_p_value=typing.cast("typing.Any", precise_values + 3.0),
         extra_code=typing.cast("typing.Any", extra_code),
         stage_timing_recorder=None,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
     )
 
     written_chunk = writer_session.native_chunks[0]
@@ -325,6 +335,7 @@ def test_write_regenie2_native_chunk_records_per_chunk_output_timing() -> None:
         log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
         extra_code=None,
         stage_timing_recorder=stage_timing_recorder,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
     )
 
     snapshot = stage_timing_recorder.snapshot()
@@ -363,6 +374,7 @@ def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_ext
         log10_p_value=jnp.asarray([[3.1, 3.2], [3.3, 3.4]], dtype=jnp.float32),
         extra_code=extra_code,
         stage_timing_recorder=None,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
     )
 
     assert len(writer_sessions[0].native_chunks) == 1
@@ -412,6 +424,7 @@ def test_write_regenie2_multi_native_chunk_materializes_only_active_trait_rows(
             dtype=jnp.int32,
         ),
         stage_timing_recorder=None,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
     )
 
     assert materialized_shapes == [(1, 2), (1, 2), (1, 2), (1, 2), (1, 2)]
@@ -458,6 +471,7 @@ def test_write_regenie2_multi_native_chunk_skips_device_get_when_all_traits_comm
             dtype=jnp.int32,
         ),
         stage_timing_recorder=None,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
     )
 
     assert not writer_sessions[0].native_chunks

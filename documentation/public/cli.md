@@ -73,6 +73,7 @@ requires these run-specific inputs:
 | `--bsize` | `[trait]` | Variants per processing block. |
 | `--threads` | `[trait]` | Requested native CPU thread count. |
 | `--out` | `[output]` | Output prefix. |
+| `--output_statistic_dtype` | `[output]` | Public statistic column dtype (`float32` default, `float64` optional). |
 | `--firth` / hidden `--no-firth` | `[binary]` | Binary Firth fallback switch. |
 | `--approx` / hidden `--no-approx` | `[binary]` | Approximate Firth fallback switch. |
 | `--pThresh` | `[binary]` | Score-test p-value threshold for binary fallback candidates. |

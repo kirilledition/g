@@ -67,6 +67,7 @@ impl RegenieCli {
             chunks_per_arrow_file: self.output.chunks_per_arrow_file,
             arrow_compression: self.output.arrow_compression,
             parquet_compression: self.output.parquet_compression,
+            output_statistic_dtype: self.output.output_statistic_dtype,
             resume: optional_flag("resume", self.output.resume, self.output.no_resume)?,
             resume_mode: self.output.resume_mode,
             finalize_parquet: optional_flag(

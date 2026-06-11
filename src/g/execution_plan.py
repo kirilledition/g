@@ -79,6 +79,7 @@ class OutputPlan:
         chunks_per_arrow_file: Number of engine chunks grouped into one output file.
         arrow_compression: Arrow IPC compression codec.
         parquet_compression: Parquet dataset part compression codec.
+        output_statistic_dtype: Persisted dtype for public statistic columns.
 
     """
 
@@ -93,6 +94,7 @@ class OutputPlan:
     chunks_per_arrow_file: int
     arrow_compression: types.ArrowCompression
     parquet_compression: types.ParquetCompression
+    output_statistic_dtype: types.FloatingPointDtype
 
 
 @dataclass(frozen=True)
@@ -378,6 +380,7 @@ def build_output_plan(
         chunks_per_arrow_file=regenie_config.g_output.chunks_per_arrow_file,
         arrow_compression=regenie_config.g_output.arrow_compression,
         parquet_compression=regenie_config.g_output.parquet_compression,
+        output_statistic_dtype=regenie_config.g_output.output_statistic_dtype,
     )
 
 

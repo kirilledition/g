@@ -216,6 +216,13 @@ const CONFIG_OPTION_METADATA: &[ConfigOptionMetadata] = &[
     ),
     option_metadata!(
         section: "output",
+        toml: "output_statistic_dtype",
+        cli: Some("output_statistic_dtype"),
+        python: ["output_statistic_dtype"],
+        kind: StringEnum,
+    ),
+    option_metadata!(
+        section: "output",
         toml: "resume",
         cli: Some("resume"),
         python: ["resume"],

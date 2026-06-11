@@ -23,10 +23,10 @@ PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.parquet$")
 REGENIE_PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.regenie$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
 RUN_MANIFEST_SCHEMA_VERSION = 8
-OUTPUT_SCHEMA_VERSION = 1
+OUTPUT_SCHEMA_VERSION = 2
 JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
-RESULT_STATISTIC_OUTPUT_DTYPE = "float32"
+DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE = types.FloatingPointDtype.FLOAT32
 FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM = "sha256"
 FILE_FINGERPRINT_METADATA_ONLY = "metadata-only"
 FILE_FINGERPRINT_HASH_CHUNK_SIZE_BYTES = 1024 * 1024
@@ -227,6 +227,7 @@ def build_output_writer_manifest(
     chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression,
     parquet_compression: types.ParquetCompression,
+    output_statistic_dtype: types.FloatingPointDtype,
 ) -> dict[str, typing.Any]:
     """Build manifest fields for output materialization and writer settings."""
     return {
@@ -237,7 +238,7 @@ def build_output_writer_manifest(
         "chunks_per_arrow_file": chunks_per_arrow_file,
         "arrow_compression": arrow_compression.value,
         "parquet_compression": parquet_compression.value,
-        "result_statistic_dtype": RESULT_STATISTIC_OUTPUT_DTYPE,
+        "result_statistic_dtype": output_statistic_dtype.value,
     }
 
 
@@ -279,6 +280,7 @@ def build_current_run_manifest_header(
     chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression,
     parquet_compression: types.ParquetCompression,
+    output_statistic_dtype: types.FloatingPointDtype = DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE,
 ) -> dict[str, typing.Any]:
     """Build immutable run manifest fields from the current execution plan."""
     bgen_fingerprint = build_file_fingerprint(bgen_path)
@@ -295,6 +297,7 @@ def build_current_run_manifest_header(
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
         parquet_compression=parquet_compression,
+        output_statistic_dtype=output_statistic_dtype,
     )
     jax_policy_manifest = build_jax_policy_manifest(
         device=jax_device,
@@ -497,6 +500,7 @@ def create_output_writer_session(
     chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression,
     parquet_compression: types.ParquetCompression,
+    output_statistic_dtype: types.FloatingPointDtype = DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE,
     collect_stage_timings: bool = False,
 ) -> typing.Any:
     """Create one native Rust output writer session."""
@@ -511,6 +515,7 @@ def create_output_writer_session(
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression.value,
         parquet_compression=parquet_compression.value,
+        output_statistic_dtype=output_statistic_dtype.value,
         collect_stage_timings=collect_stage_timings,
     )
 

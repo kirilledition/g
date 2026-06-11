@@ -194,6 +194,7 @@ impl PartialOutputConfig {
         overlay_option!(self, override_config, chunks_per_arrow_file);
         overlay_option!(self, override_config, arrow_compression);
         overlay_option!(self, override_config, parquet_compression);
+        overlay_option!(self, override_config, output_statistic_dtype);
         overlay_option!(self, override_config, resume);
         overlay_option!(self, override_config, resume_mode);
         overlay_option!(self, override_config, finalize_parquet);

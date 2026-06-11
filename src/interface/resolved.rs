@@ -194,6 +194,7 @@ pub struct GOutputConfigData {
     pub chunks_per_arrow_file: NonZeroU32,
     pub arrow_compression: ArrowCompressionValue,
     pub parquet_compression: ParquetCompressionValue,
+    pub output_statistic_dtype: FloatingPointDtypeValue,
     pub resume: bool,
     pub resume_mode: ResumeModeValue,
     pub finalize_parquet: bool,

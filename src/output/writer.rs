@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use arrow::array::{Array, ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray};
+use arrow::array::{Array, ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::Schema;
 use arrow::ipc::CompressionType;
 use arrow::ipc::writer::{FileWriter, IpcWriteOptions};
@@ -22,6 +22,7 @@ use thiserror::Error;
 use crate::output::NativeChunkHandle;
 use crate::output::manifest;
 use crate::output::schema;
+use crate::output::schema::OutputStatisticDtype;
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 pub(crate) const REGENIE_STEP2_TEXT_HEADER: &str = "CHROM\tGENPOS\tID\tALLELE0\tALLELE1\tA1FREQ\tINFO\tN\tTEST\tBETA\tSE\tCHISQ\tLOG10P\tEXTRA\tCORRECTION_METHOD\tCORRECTION_STATUS\n";
@@ -141,6 +142,7 @@ pub(crate) fn write_regenie_step2_chunk_job(
     chunks_directory: &Path,
     job: RegenieStep2ChunkWriteBatch,
     output_format: OutputFileFormat,
+    output_statistic_dtype: OutputStatisticDtype,
     arrow_compression: &str,
     parquet_compression: &str,
 ) -> Result<RegenieStep2ChunkWriteResult, String> {
@@ -165,7 +167,7 @@ pub(crate) fn write_regenie_step2_chunk_job(
     let chunk_commits = build_run_manifest_chunk_commits(&job, output_format, compression)?;
 
     let schema_metadata_build_start_time = Instant::now();
-    let chunk_schema = build_regenie_step2_chunk_file_schema(&chunk_commits)?;
+    let chunk_schema = build_regenie_step2_chunk_file_schema(&chunk_commits, output_statistic_dtype)?;
     let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming {
         schema_metadata_build_seconds: schema_metadata_build_start_time.elapsed().as_secs_f64(),
         ..RegenieStep2RecordBatchBuildTiming::default()
@@ -252,10 +254,13 @@ fn build_run_manifest_chunk_commits(
 
 fn build_regenie_step2_chunk_file_schema(
     chunk_commits: &[manifest::RunManifestChunkCommit],
+    output_statistic_dtype: OutputStatisticDtype,
 ) -> Result<Arc<Schema>, String> {
     let mut metadata = HashMap::new();
     metadata.insert(schema::CHUNK_COMMITS_METADATA_KEY.to_string(), build_chunk_commit_metadata_text(chunk_commits)?);
-    Ok(Arc::new(schema::get_regenie_step2_chunk_schema().as_ref().clone().with_metadata(metadata)))
+    Ok(Arc::new(
+        schema::get_regenie_step2_chunk_schema(output_statistic_dtype).as_ref().clone().with_metadata(metadata),
+    ))
 }
 
 fn build_chunk_commit_metadata_text(chunk_commits: &[manifest::RunManifestChunkCommit]) -> Result<String, String> {
@@ -624,10 +629,10 @@ fn write_regenie_step2_text_record_batch(
     let info_score_array = required_float32_column(record_batch, "INFO")?;
     let observation_count_array = required_int32_column(record_batch, "N")?;
     let test_array = required_string_column(record_batch, "TEST")?;
-    let beta_array = required_float32_column(record_batch, "BETA")?;
-    let standard_error_array = required_float32_column(record_batch, "SE")?;
-    let chi_squared_array = required_float32_column(record_batch, "CHISQ")?;
-    let log10_p_value_array = required_float32_column(record_batch, "LOG10P")?;
+    let beta_array = required_statistic_column(record_batch, "BETA")?;
+    let standard_error_array = required_statistic_column(record_batch, "SE")?;
+    let chi_squared_array = required_statistic_column(record_batch, "CHISQ")?;
+    let log10_p_value_array = required_statistic_column(record_batch, "LOG10P")?;
     let extra_array = required_string_column(record_batch, "EXTRA")?;
     let correction_method_array = required_string_column(record_batch, "CORRECTION_METHOD")?;
     let correction_status_array = required_string_column(record_batch, "CORRECTION_STATUS")?;
@@ -650,13 +655,13 @@ fn write_regenie_step2_text_record_batch(
         output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
         write_regenie_text_string_value(output_writer, test_array, row_index, "TEST")?;
         output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
-        write_regenie_text_float32_value(output_writer, beta_array, row_index)?;
+        write_regenie_text_statistic_value(output_writer, beta_array, row_index)?;
         output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
-        write_regenie_text_float32_value(output_writer, standard_error_array, row_index)?;
+        write_regenie_text_statistic_value(output_writer, standard_error_array, row_index)?;
         output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
-        write_regenie_text_float32_value(output_writer, chi_squared_array, row_index)?;
+        write_regenie_text_statistic_value(output_writer, chi_squared_array, row_index)?;
         output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
-        write_regenie_text_float32_value(output_writer, log10_p_value_array, row_index)?;
+        write_regenie_text_statistic_value(output_writer, log10_p_value_array, row_index)?;
         output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
         write_regenie_text_string_value(output_writer, extra_array, row_index, "EXTRA")?;
         output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
@@ -680,6 +685,28 @@ fn required_float32_column<'a>(record_batch: &'a RecordBatch, column_name: &str)
         .column_by_name(column_name)
         .and_then(|column| column.as_any().downcast_ref::<Float32Array>())
         .ok_or_else(|| format!("REGENIE text writer could not read float32 column {column_name}."))
+}
+
+#[derive(Clone, Copy)]
+enum StatisticColumnRef<'a> {
+    Float32(&'a Float32Array),
+    Float64(&'a Float64Array),
+}
+
+fn required_statistic_column<'a>(
+    record_batch: &'a RecordBatch,
+    column_name: &str,
+) -> Result<StatisticColumnRef<'a>, String> {
+    let Some(column) = record_batch.column_by_name(column_name) else {
+        return Err(format!("REGENIE text writer could not read statistic column {column_name}."));
+    };
+    if let Some(float32_column) = column.as_any().downcast_ref::<Float32Array>() {
+        return Ok(StatisticColumnRef::Float32(float32_column));
+    }
+    if let Some(float64_column) = column.as_any().downcast_ref::<Float64Array>() {
+        return Ok(StatisticColumnRef::Float64(float64_column));
+    }
+    Err(format!("REGENIE text writer could not read float32/float64 statistic column {column_name}."))
 }
 
 fn required_int32_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> Result<&'a Int32Array, String> {
@@ -715,6 +742,36 @@ fn write_regenie_text_string_value(
 fn write_regenie_text_float32_value(
     output_writer: &mut BufWriter<File>,
     array: &Float32Array,
+    row_index: usize,
+) -> Result<(), String> {
+    if array.is_null(row_index) {
+        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(|error| error.to_string());
+    }
+    let value = array.value(row_index);
+    if !value.is_finite() {
+        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(|error| error.to_string());
+    }
+    write!(output_writer, "{value}").map_err(|error| error.to_string())
+}
+
+fn write_regenie_text_statistic_value(
+    output_writer: &mut BufWriter<File>,
+    array: StatisticColumnRef<'_>,
+    row_index: usize,
+) -> Result<(), String> {
+    match array {
+        StatisticColumnRef::Float32(float32_array) => {
+            write_regenie_text_float32_value(output_writer, float32_array, row_index)
+        }
+        StatisticColumnRef::Float64(float64_array) => {
+            write_regenie_text_float64_value(output_writer, float64_array, row_index)
+        }
+    }
+}
+
+fn write_regenie_text_float64_value(
+    output_writer: &mut BufWriter<File>,
+    array: &Float64Array,
     row_index: usize,
 ) -> Result<(), String> {
     if array.is_null(row_index) {
@@ -875,7 +932,8 @@ mod tests {
         let write_batch = build_test_batch(chunks);
         let chunk_commits = build_run_manifest_chunk_commits(&write_batch, OutputFileFormat::Arrow, "none")
             .expect("chunk commits should build");
-        let chunk_schema = build_regenie_step2_chunk_file_schema(&chunk_commits).expect("chunk schema should build");
+        let chunk_schema = build_regenie_step2_chunk_file_schema(&chunk_commits, OutputStatisticDtype::Float32)
+            .expect("chunk schema should build");
         build_regenie_step2_record_batches(write_batch, chunk_schema)
             .expect("record batches should build")
             .record_batches
@@ -1020,6 +1078,7 @@ mod tests {
             &chunks_directory,
             build_test_batch(vec![build_test_chunk(0, Some(vec![1])), build_test_chunk(1, Some(vec![2]))]),
             OutputFileFormat::Arrow,
+            OutputStatisticDtype::Float32,
             "none",
             "none",
         )
@@ -1058,9 +1117,15 @@ mod tests {
             chunk_file_name: build_part_file_name(0, 1),
             chunks: vec![build_test_chunk(0, Some(vec![1])), build_test_chunk(1, Some(vec![2]))],
         };
-        let write_result =
-            write_regenie_step2_chunk_job(&parts_directory, write_batch, OutputFileFormat::Parquet, "none", "none")
-                .expect("Parquet part should write");
+        let write_result = write_regenie_step2_chunk_job(
+            &parts_directory,
+            write_batch,
+            OutputFileFormat::Parquet,
+            OutputStatisticDtype::Float32,
+            "none",
+            "none",
+        )
+        .expect("Parquet part should write");
 
         assert_eq!(write_result.chunk_commits.len(), 2);
         assert_eq!(write_result.chunk_commits[0].output_format, "parquet");
@@ -1102,9 +1167,15 @@ mod tests {
             chunk_file_name: build_regenie_text_part_file_name(0, 1),
             chunks: vec![build_test_chunk(0, Some(vec![3])), build_test_chunk(1, Some(vec![1]))],
         };
-        let write_result =
-            write_regenie_step2_chunk_job(&regenie_directory, write_batch, OutputFileFormat::Regenie, "none", "none")
-                .expect("REGENIE text part should write");
+        let write_result = write_regenie_step2_chunk_job(
+            &regenie_directory,
+            write_batch,
+            OutputFileFormat::Regenie,
+            OutputStatisticDtype::Float32,
+            "none",
+            "none",
+        )
+        .expect("REGENIE text part should write");
 
         assert_eq!(write_result.chunk_commits.len(), 2);
         assert_eq!(write_result.chunk_commits[0].output_format, "regenie");
@@ -1148,6 +1219,7 @@ mod tests {
             &chunks_directory,
             build_test_batch(vec![build_test_chunk(0, Some(vec![1])), build_test_chunk(1, Some(vec![0]))]),
             OutputFileFormat::Arrow,
+            OutputStatisticDtype::Float32,
             "zstd",
             "none",
         )
@@ -1173,7 +1245,7 @@ mod tests {
         let metadata_value = |key: &str| {
             key_value_metadata.iter().find(|entry| entry.key == key).and_then(|entry| entry.value.as_deref())
         };
-        assert_eq!(metadata_value("g.output.schema_version"), Some("1"));
+        assert_eq!(metadata_value("g.output.schema_version"), Some(schema::OUTPUT_SCHEMA_VERSION));
         assert_eq!(metadata_value("g.output.association_mode"), Some("regenie2_binary"));
         assert_eq!(metadata_value("g.output.chunk_file_count"), Some("1"));
         assert_eq!(metadata_value("g.output.row_count"), Some("2"));

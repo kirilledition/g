@@ -62,6 +62,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
+        output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -87,6 +88,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
+            output_statistic_dtype=output_statistic_dtype,
         )
 
     def compute_preprocessed_chunk(
@@ -448,6 +450,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
+        output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -474,6 +477,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
+            output_statistic_dtype=output_statistic_dtype,
         )
 
     def consume_result_write_items(self) -> None:
@@ -505,6 +509,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                         log10_p_value=multi_work_item.log10_p_value,
                         extra_code=multi_work_item.extra_code,
                         stage_timing_recorder=self.stage_timing_recorder,
+                        output_statistic_dtype=self.output_statistic_dtype,
                     )
                     record_binary_chunk_diagnostics_from_count(
                         stage_timing_recorder=self.stage_timing_recorder,

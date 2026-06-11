@@ -54,9 +54,10 @@ bugs until input alignment has been verified.
 
 ## Numerical Expectations
 
-Result statistics are public `float32` outputs. Some internal kernels can use
-wider dtypes for parity-sensitive work. When validating a numerical change,
-record:
+Result statistics are public `float32` outputs by default. Some internal kernels
+can use wider dtypes for parity-sensitive work, and parity runs can set
+`[output].output_statistic_dtype = "float64"` to persist wider public statistics.
+When validating a numerical change, record:
 
 - command and commit;
 - input paths and phenotype/covariate columns;

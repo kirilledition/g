@@ -96,7 +96,7 @@ BED, or PGEN support.
 
 Arrow, Parquet, and REGENIE text outputs use the same public association fields:
 
-### Current Schema Contract (v1)
+### Current Schema Contract (v2)
 
 | Column | Arrow / Parquet type | Nullable | Unit | Meaning |
 | --- | --- | --- | --- | --- |
@@ -109,10 +109,10 @@ Arrow, Parquet, and REGENIE text outputs use the same public association fields:
 | `INFO` | `Float32` | Yes | INFO score | Observed dosage INFO score. |
 | `N` | `Int32` | Yes | sample count | Number of observed genotypes used in statistics. |
 | `TEST` | `Utf8` | Yes | - | Test label (`ADD` for current Step 2 outputs). |
-| `BETA` | `Float32` | Yes | effect size | Estimated effect for `ALLELE1`. |
-| `SE` | `Float32` | Yes | effect size standard error | Standard error for `BETA`. |
-| `CHISQ` | `Float32` | Yes | chi-squared statistic | Score statistic (or equivalent Step 2 metric). |
-| `LOG10P` | `Float32` | Yes | -log10(p) | Association significance. |
+| `BETA` | `Float32` default, `Float64` when requested | Yes | effect size | Estimated effect for `ALLELE1`. |
+| `SE` | `Float32` default, `Float64` when requested | Yes | effect size standard error | Standard error for `BETA`. |
+| `CHISQ` | `Float32` default, `Float64` when requested | Yes | chi-squared statistic | Score statistic (or equivalent Step 2 metric). |
+| `LOG10P` | `Float32` default, `Float64` when requested | Yes | -log10(p) | Association significance. |
 | `EXTRA` | `Utf8` | Yes | - | Sparse REGENIE-compatible diagnostics (`TEST_FAIL` for failed diagnostics, null/NA otherwise). |
 | `CORRECTION_METHOD` | `Utf8` | Yes | - | Diagnostic correction method label. |
 | `CORRECTION_STATUS` | `Utf8` | Yes | - | Diagnostic correction status label. |
@@ -133,24 +133,27 @@ diagnostic path. It does not imply exact Firth support.
 
 Current schema properties:
 
-- `output_schema_version`: `1`
-- Writer-level final Parquet metadata key `g.output.schema_version`: `1`
+- `output_schema_version`: `2`
+- Writer-level final Parquet metadata key `g.output.schema_version`: `2`
 - Column order is part of the contract for stable downstream parsing.
-- For `v1`, `TEST` is set to `ADD` for current Step 2 runs in both linear and binary modes; additional labels are reserved for future semantic changes.
+- For `v2`, `TEST` is set to `ADD` for current Step 2 runs in both linear and binary modes; additional labels are reserved for future semantic changes.
+- `[output].output_statistic_dtype` controls the Arrow/Parquet dtype for `BETA`, `SE`, `CHISQ`, and `LOG10P`. The default is `float32`; set `output_statistic_dtype = "float64"` for parity/debugging runs that need wider persisted public statistics. `A1FREQ` and `INFO` remain `Float32`.
 
 Compatibility policy:
 
 - **Additive-safe evolution only for contract extension**: new columns may only be appended
   and must be clearly documented. Existing columns are fixed in name, order, and type
-  within version `1`.
-- **Breaking change is not allowed under version `1`**: any change in existing
+  within version `2`.
+- **Breaking change is not allowed under version `2`**: any change in existing
   column name, type, or nullability must bump `output_schema_version`.
 - **Future semantic changes** (e.g. new `TEST` labels or extra diagnostics payloads)
   must be recorded in a new version policy and in this document before release.
 - **Column ordering**: adding columns is only compatible when new fields are appended at the end. Reordering or deletion is a breaking change and requires a schema version bump.
 
-Public result statistics are written as `float32` in the current output schema,
-even when an internal kernel uses wider precision for parity-sensitive work.
+Public result statistics are written as `float32` by default, even when an
+internal kernel uses wider precision for parity-sensitive work. Request
+`[output].output_statistic_dtype = "float64"` to preserve wider public
+statistics in Arrow/Parquet outputs.
 
 ## Telemetry And Logs
 

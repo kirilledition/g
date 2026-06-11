@@ -16,7 +16,7 @@ import g.engine.callbacks.diagnostics as diagnostics
 import g.engine.callbacks.shared as shared
 import g.engine.callbacks.transfers as transfers
 import g.engine.callbacks.writers as writers
-from g import _core
+from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.engine import telemetry, timing
 
@@ -95,6 +95,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         dosage_buffer_limit: int | None = None,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
+        output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     ) -> None:
         """Initialize shared native callback state."""
         if staging_depth <= 0:
@@ -109,6 +110,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.processed_chunk_count = 0
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
+        self.output_statistic_dtype = output_statistic_dtype
         self.current_progress_chromosome: str | None = None
         self.dosage_queue_depth = staging_depth
         self.result_queue_depth = staging_depth
@@ -548,6 +550,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                         log10_p_value=work_item.log10_p_value,
                         extra_code=work_item.extra_code,
                         stage_timing_recorder=self.stage_timing_recorder,
+                        output_statistic_dtype=self.output_statistic_dtype,
                     )
                     record_binary_chunk_diagnostics_from_count(
                         stage_timing_recorder=self.stage_timing_recorder,

@@ -93,8 +93,8 @@ Common mismatch causes:
 - changed selected association backend;
 - changed sample-key mode, multi-phenotype sample mode, aligned sample set,
   covariate design, or prediction alignment;
-- changed chunk size, variant limit, output format, writer grouping, or schema
-  version;
+- changed chunk size, variant limit, output format, public statistic output dtype,
+  writer grouping, or schema version;
 - changed JAX precision/dtype or trusted BGEN policy.
 
 Resume is not a way to combine different analyses into one output directory.

@@ -3,11 +3,12 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use arrow::array::{ArrayRef, Float32Array, Int32Array, Int64Array, StringArray};
+use arrow::array::{ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array, StringArray};
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use serde_json::json;
 
 use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
+use crate::output::OutputStatisticDtype;
 use crate::output::finalization;
 use crate::output::manifest;
 use crate::output::writer::{
@@ -91,6 +92,7 @@ struct OutputWriterConfig {
     chunks_directory: PathBuf,
     association_mode: String,
     output_format: OutputFileFormat,
+    output_statistic_dtype: OutputStatisticDtype,
     finalize_parquet: bool,
     chunks_per_arrow_file: usize,
     arrow_compression: String,
@@ -345,6 +347,7 @@ impl OutputWriterSession {
         writer_thread_count: usize,
         writer_queue_depth: usize,
         output_format: &str,
+        output_statistic_dtype: &str,
         finalize_parquet: bool,
         chunks_per_arrow_file: usize,
         arrow_compression: String,
@@ -362,6 +365,8 @@ impl OutputWriterSession {
             chunks_directory: PathBuf::from(chunks_directory),
             association_mode,
             output_format: OutputFileFormat::parse(output_format).map_err(OutputWriterError::InvalidInput)?,
+            output_statistic_dtype: OutputStatisticDtype::parse(output_statistic_dtype)
+                .map_err(OutputWriterError::InvalidInput)?,
             finalize_parquet,
             chunks_per_arrow_file,
             arrow_compression,
@@ -437,11 +442,12 @@ impl OutputWriterSession {
             return Ok(None);
         }
         let final_parquet_path = self.config.run_directory.join("final.parquet");
-        let finalization_timing = finalization::write_final_parquet_from_chunk_files_with_timing(
+        let finalization_timing = finalization::write_final_parquet_from_chunk_files_with_timing_for_dtype(
             &self.config.chunks_directory,
             &final_parquet_path,
             &self.config.association_mode,
             self.config.output_format,
+            self.config.output_statistic_dtype,
         )?;
         self.record_stage_timing(|stage_timings| stage_timings.add_finalization_timing(finalization_timing))?;
         self.record_finish_timing(finish_start_time)?;
@@ -617,6 +623,10 @@ impl OutputWriterSession {
             log10_p_value.len(),
         ];
         validate_column_lengths(row_count, observed_lengths.as_slice())?;
+        validate_statistic_array_type("BETA", &beta, self.config.output_statistic_dtype)?;
+        validate_statistic_array_type("SE", &standard_error, self.config.output_statistic_dtype)?;
+        validate_statistic_array_type("CHISQ", &chi_squared, self.config.output_statistic_dtype)?;
+        validate_statistic_array_type("LOG10P", &log10_p_value, self.config.output_statistic_dtype)?;
         if let Some(extra_code_values) = extra_code.as_ref() {
             validate_column_lengths(row_count, &[extra_code_values.len()])?;
         }
@@ -829,6 +839,24 @@ fn validate_column_lengths(expected_row_count: usize, observed_lengths: &[usize]
     ))
 }
 
+fn validate_statistic_array_type(
+    column_name: &str,
+    array: &ArrayRef,
+    output_statistic_dtype: OutputStatisticDtype,
+) -> Result<(), OutputWriterError> {
+    let type_matches = match output_statistic_dtype {
+        OutputStatisticDtype::Float32 => array.as_any().is::<Float32Array>(),
+        OutputStatisticDtype::Float64 => array.as_any().is::<Float64Array>(),
+    };
+    if type_matches {
+        return Ok(());
+    }
+    Err(OutputWriterError::InvalidInput(format!(
+        "Rust output writer column {column_name} must be {} for the configured output statistic dtype.",
+        output_statistic_dtype.as_str(),
+    )))
+}
+
 fn start_optional_timing(collect_stage_timings: bool) -> Option<Instant> {
     collect_stage_timings.then(Instant::now)
 }
@@ -945,6 +973,7 @@ fn run_output_write_task(output_write_task: OutputWriteTask) {
         &output_write_task.config.chunks_directory,
         output_write_task.write_batch,
         output_write_task.config.output_format,
+        output_write_task.config.output_statistic_dtype,
         &output_write_task.config.arrow_compression,
         &output_write_task.config.parquet_compression,
     );
@@ -1028,6 +1057,7 @@ mod tests {
             1,
             1,
             "arrow",
+            "float32",
             false,
             1,
             "none".to_string(),

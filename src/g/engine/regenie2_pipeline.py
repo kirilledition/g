@@ -60,6 +60,7 @@ class OutputWriterSettings:
         arrow_compression: Arrow IPC compression codec.
         parquet_compression: Parquet finalization compression codec.
         output_format: Chunk output format.
+        output_statistic_dtype: Persisted dtype for public statistic columns.
 
     """
 
@@ -70,6 +71,7 @@ class OutputWriterSettings:
     arrow_compression: types.ArrowCompression
     parquet_compression: types.ParquetCompression
     output_format: types.OutputFormat
+    output_statistic_dtype: types.FloatingPointDtype
 
 
 @dataclass(frozen=True)
@@ -203,6 +205,7 @@ def build_output_writer_settings(
     arrow_compression: types.ArrowCompression,
     parquet_compression: types.ParquetCompression,
     output_format: types.OutputFormat,
+    output_statistic_dtype: types.FloatingPointDtype = output.DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE,
 ) -> OutputWriterSettings:
     """Build output writer settings from public pipeline arguments."""
     return OutputWriterSettings(
@@ -213,6 +216,7 @@ def build_output_writer_settings(
         arrow_compression=arrow_compression,
         parquet_compression=parquet_compression,
         output_format=output_format,
+        output_statistic_dtype=output_statistic_dtype,
     )
 
 
@@ -483,6 +487,7 @@ def build_pipeline_manifest_header(
         chunks_per_arrow_file=context.writer_settings.chunks_per_arrow_file,
         arrow_compression=context.writer_settings.arrow_compression,
         parquet_compression=context.writer_settings.parquet_compression,
+        output_statistic_dtype=context.writer_settings.output_statistic_dtype,
     )
 
 
@@ -577,6 +582,7 @@ def create_pipeline_writer_sessions(
             chunks_per_arrow_file=context.writer_settings.chunks_per_arrow_file,
             arrow_compression=context.writer_settings.arrow_compression,
             parquet_compression=context.writer_settings.parquet_compression,
+            output_statistic_dtype=context.writer_settings.output_statistic_dtype,
             collect_stage_timings=timing.should_collect_exact_stage_timings(context.stage_timing_recorder),
         )
         for output_run_paths in output_run_paths_by_trait
@@ -805,6 +811,7 @@ def build_single_trait_callback(
             score_dtype=context.score_dtype,
             stage_timing_recorder=context.stage_timing_recorder,
             telemetry_session=context.telemetry_session,
+            output_statistic_dtype=context.writer_settings.output_statistic_dtype,
         )
     return callback_linear.LinearRegenie2PipelineCallback(
         run_input=run_input,
@@ -817,6 +824,7 @@ def build_single_trait_callback(
         linear_numerical_config=require_linear_numerical_config(context.linear_numerical_config),
         stage_timing_recorder=context.stage_timing_recorder,
         telemetry_session=context.telemetry_session,
+        output_statistic_dtype=context.writer_settings.output_statistic_dtype,
     )
 
 
@@ -943,6 +951,7 @@ def run_regenie2_linear_bgen_pipeline(
     firth_dtype: types.FloatingPointDtype,
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    output_statistic_dtype: types.FloatingPointDtype = output.DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     telemetry_session: telemetry.TelemetrySession | None = None,
@@ -958,6 +967,7 @@ def run_regenie2_linear_bgen_pipeline(
         arrow_compression=arrow_compression,
         parquet_compression=parquet_compression,
         output_format=output_format,
+        output_statistic_dtype=output_statistic_dtype,
     )
     context = build_regenie2_pipeline_context(
         association_mode=types.AssociationMode.REGENIE2_LINEAR,
@@ -1031,6 +1041,7 @@ def run_regenie2_binary_bgen_pipeline(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    output_statistic_dtype: types.FloatingPointDtype = output.DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
@@ -1052,6 +1063,7 @@ def run_regenie2_binary_bgen_pipeline(
         arrow_compression=arrow_compression,
         parquet_compression=parquet_compression,
         output_format=output_format,
+        output_statistic_dtype=output_statistic_dtype,
     )
     context = build_regenie2_pipeline_context(
         association_mode=types.AssociationMode.REGENIE2_BINARY,
@@ -1126,6 +1138,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     firth_dtype: types.FloatingPointDtype,
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    output_statistic_dtype: types.FloatingPointDtype = output.DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     telemetry_session: telemetry.TelemetrySession | None = None,
@@ -1165,6 +1178,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
         output_format=output_format,
+        output_statistic_dtype=output_statistic_dtype,
         gpu_genotype_format=gpu_genotype_format,
         correction_plan=types.BinaryCorrectionPlan(),
         kernel_config=None,
@@ -1211,6 +1225,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    output_statistic_dtype: types.FloatingPointDtype = output.DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
@@ -1256,6 +1271,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
         output_format=output_format,
+        output_statistic_dtype=output_statistic_dtype,
         gpu_genotype_format=gpu_genotype_format,
         correction_plan=correction_plan,
         kernel_config=resolved_kernel_config,
@@ -1301,6 +1317,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     output_format: types.OutputFormat,
+    output_statistic_dtype: types.FloatingPointDtype,
     gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
@@ -1333,6 +1350,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         arrow_compression=arrow_compression,
         parquet_compression=parquet_compression,
         output_format=output_format,
+        output_statistic_dtype=output_statistic_dtype,
     )
     context = build_regenie2_pipeline_context(
         association_mode=association_mode,
@@ -1869,6 +1887,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
             score_dtype=context.score_dtype,
             stage_timing_recorder=context.stage_timing_recorder,
             telemetry_session=context.telemetry_session,
+            output_statistic_dtype=context.writer_settings.output_statistic_dtype,
         )
     else:
         callback = callback_linear.MultiLinearRegenie2PipelineCallback(
@@ -1883,6 +1902,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
             linear_numerical_config=require_linear_numerical_config(context.linear_numerical_config),
             stage_timing_recorder=context.stage_timing_recorder,
             telemetry_session=context.telemetry_session,
+            output_statistic_dtype=context.writer_settings.output_statistic_dtype,
         )
     return PreparedMultiPhenotypeGroupDelivery(
         compute_group=compute_group,

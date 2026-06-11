@@ -12,13 +12,14 @@ import numpy.typing as npt
 
 import g.engine.callbacks.diagnostics as diagnostics
 import g.engine.callbacks.shared as shared
-from g import _core
+from g import _core, types
 from g.engine import timing
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
 HostOrDeviceFloatArray = shared.HostOrDeviceFloatArray
 LinearChunkStatsArrays = shared.LinearChunkStatsArrays
 BinaryChunkStatsArrays = shared.BinaryChunkStatsArrays
+PublicStatisticArray = npt.NDArray[np.float32] | npt.NDArray[np.float64]
 block_until_ready = diagnostics.block_until_ready
 get_metadata_chromosome = shared.get_metadata_chromosome
 
@@ -167,9 +168,34 @@ def record_stage_duration_with_optional_chunk(
     )
 
 
-def narrow_public_statistic_array_on_device(array: jax.Array) -> jax.Array:
-    """Narrow public result statistics to the native writer dtype before host transfer."""
-    return jnp.asarray(array, dtype=jnp.float32)
+def resolve_public_statistic_jax_dtype(output_statistic_dtype: types.FloatingPointDtype) -> typing.Any:
+    """Resolve the configured public statistic dtype for JAX materialization."""
+    if output_statistic_dtype == types.FloatingPointDtype.FLOAT32:
+        return jnp.float32
+    if output_statistic_dtype == types.FloatingPointDtype.FLOAT64:
+        return jnp.float64
+    message = f"Unsupported public statistic output dtype: {output_statistic_dtype!s}"
+    raise ValueError(message)
+
+
+def resolve_public_statistic_numpy_dtype(
+    output_statistic_dtype: types.FloatingPointDtype,
+) -> type[np.float32] | type[np.float64]:
+    """Resolve the configured public statistic dtype for NumPy host arrays."""
+    if output_statistic_dtype == types.FloatingPointDtype.FLOAT32:
+        return np.float32
+    if output_statistic_dtype == types.FloatingPointDtype.FLOAT64:
+        return np.float64
+    message = f"Unsupported public statistic output dtype: {output_statistic_dtype!s}"
+    raise ValueError(message)
+
+
+def narrow_public_statistic_array_on_device(
+    array: jax.Array,
+    output_statistic_dtype: types.FloatingPointDtype,
+) -> jax.Array:
+    """Cast public result statistics to the configured native writer dtype before host transfer."""
+    return jnp.asarray(array, dtype=resolve_public_statistic_jax_dtype(output_statistic_dtype))
 
 
 def select_active_trait_rows_on_device(
@@ -185,9 +211,15 @@ def select_active_trait_rows_on_device(
     return jnp.take(array, active_trait_index_array, axis=0)
 
 
-def cast_statistic_array_for_native_writer(array: object) -> npt.NDArray[np.float32]:
-    """Cast computed statistics to the public native writer schema dtype."""
-    return np.asarray(array, dtype=np.float32)
+def cast_statistic_array_for_native_writer(
+    array: object,
+    output_statistic_dtype: types.FloatingPointDtype,
+) -> PublicStatisticArray:
+    """Cast computed statistics to the configured public native writer schema dtype."""
+    return typing.cast(
+        "PublicStatisticArray",
+        np.asarray(array, dtype=resolve_public_statistic_numpy_dtype(output_statistic_dtype)),
+    )
 
 
 def get_chunk_stats_compute_arrays(

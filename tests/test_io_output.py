@@ -43,25 +43,33 @@ EXPECTED_FINAL_COLUMNS = [
 EXPECTED_CHUNK_COLUMNS = [
     *EXPECTED_FINAL_COLUMNS,
 ]
-STEP2_OUTPUT_SCHEMA_FIELDS: tuple[tuple[str, pa.DataType], ...] = (
-    ("CHROM", pa.string()),
-    ("GENPOS", pa.int64()),
-    ("ID", pa.string()),
-    ("ALLELE0", pa.string()),
-    ("ALLELE1", pa.string()),
-    ("A1FREQ", pa.float32()),
-    ("INFO", pa.float32()),
-    ("N", pa.int32()),
-    ("TEST", pa.string()),
-    ("BETA", pa.float32()),
-    ("SE", pa.float32()),
-    ("CHISQ", pa.float32()),
-    ("LOG10P", pa.float32()),
-    ("EXTRA", pa.string()),
-    ("CORRECTION_METHOD", pa.string()),
-    ("CORRECTION_STATUS", pa.string()),
-)
-STEP2_SCHEMA_COLUMN_NAMES = tuple(column_name for column_name, _ in STEP2_OUTPUT_SCHEMA_FIELDS)
+
+
+def build_step2_output_schema_fields(
+    statistic_dtype: pa.DataType = pa.float32(),
+) -> tuple[tuple[str, pa.DataType], ...]:
+    """Build expected Step 2 output fields for the configured public statistic dtype."""
+    return (
+        ("CHROM", pa.string()),
+        ("GENPOS", pa.int64()),
+        ("ID", pa.string()),
+        ("ALLELE0", pa.string()),
+        ("ALLELE1", pa.string()),
+        ("A1FREQ", pa.float32()),
+        ("INFO", pa.float32()),
+        ("N", pa.int32()),
+        ("TEST", pa.string()),
+        ("BETA", statistic_dtype),
+        ("SE", statistic_dtype),
+        ("CHISQ", statistic_dtype),
+        ("LOG10P", statistic_dtype),
+        ("EXTRA", pa.string()),
+        ("CORRECTION_METHOD", pa.string()),
+        ("CORRECTION_STATUS", pa.string()),
+    )
+
+
+STEP2_SCHEMA_COLUMN_NAMES = tuple(column_name for column_name, _ in build_step2_output_schema_fields())
 TEST_DATA_DIRECTORY = Path(__file__).resolve().parent / "data" / "bgen"
 HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
 DEFAULT_TEST_INPUT_PATH: typing.Final[object] = object()
@@ -70,9 +78,15 @@ DEFAULT_TEST_INPUT_PATH: typing.Final[object] = object()
 class NativeChunkWritingCallback:
     """Callback that writes deterministic association values for native chunks."""
 
-    def __init__(self, writer_session: typing.Any, extra_code_value: int | None = None) -> None:
+    def __init__(
+        self,
+        writer_session: typing.Any,
+        extra_code_value: int | None = None,
+        output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    ) -> None:
         self.writer_session = writer_session
         self.extra_code_value = extra_code_value
+        self.output_statistic_dtype = output_statistic_dtype
         self.free_buffers: list[np.ndarray] = []
 
     def acquire_variant_major_dosage_buffer(self, variant_count: int, sample_count: int) -> np.ndarray:
@@ -92,13 +106,21 @@ class NativeChunkWritingCallback:
         extra_code = (
             np.full(variant_count, self.extra_code_value, dtype=np.int32) if self.extra_code_value is not None else None
         )
-        self.writer_session.write_regenie2_native_chunk(
+        statistic_numpy_dtype = (
+            np.float64 if self.output_statistic_dtype == types.FloatingPointDtype.FLOAT64 else np.float32
+        )
+        write_chunk_method = (
+            self.writer_session.write_regenie2_native_chunk_f64
+            if self.output_statistic_dtype == types.FloatingPointDtype.FLOAT64
+            else self.writer_session.write_regenie2_native_chunk
+        )
+        write_chunk_method(
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=np.full(variant_count, 0.1, dtype=np.float32),
-            standard_error=np.full(variant_count, 0.01, dtype=np.float32),
-            chi_squared=np.full(variant_count, 10.0, dtype=np.float32),
-            log10_p_value=np.full(variant_count, 5.0, dtype=np.float32),
+            beta=np.full(variant_count, 0.1, dtype=statistic_numpy_dtype),
+            standard_error=np.full(variant_count, 0.01, dtype=statistic_numpy_dtype),
+            chi_squared=np.full(variant_count, 10.0, dtype=statistic_numpy_dtype),
+            log10_p_value=np.full(variant_count, 5.0, dtype=statistic_numpy_dtype),
             extra_code=extra_code,
         )
         self.free_buffers.append(genotype_matrix)
@@ -138,10 +160,10 @@ class NativeChunkCaptureCallback:
         return self.chunk_stats
 
 
-def assert_step2_output_schema_contract(schema: pa.Schema) -> None:
+def assert_step2_output_schema_contract(schema: pa.Schema, statistic_dtype: pa.DataType = pa.float32()) -> None:
     """Assert the public Step 2 output schema contract for association outputs."""
     assert schema.names == list(STEP2_SCHEMA_COLUMN_NAMES)
-    for column_name, expected_data_type in STEP2_OUTPUT_SCHEMA_FIELDS:
+    for column_name, expected_data_type in build_step2_output_schema_fields(statistic_dtype):
         actual_field = schema.field(column_name)
         assert actual_field.type == expected_data_type
         assert actual_field.nullable is True
@@ -153,6 +175,7 @@ def write_native_chunks(
     *,
     output_format: types.OutputFormat = types.OutputFormat.ARROW,
     extra_code_value: int | None = None,
+    output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> None:
     if output_format == types.OutputFormat.REGENIE and not output.get_run_manifest_path(output_run_paths).exists():
         output.write_run_manifest(output_run_paths, {"committed_chunks": []})
@@ -166,8 +189,9 @@ def write_native_chunks(
         chunks_per_arrow_file=16,
         arrow_compression=types.ArrowCompression.ZSTD,
         parquet_compression=types.ParquetCompression.NONE,
+        output_statistic_dtype=output_statistic_dtype,
     )
-    callback = NativeChunkWritingCallback(writer_session, extra_code_value)
+    callback = NativeChunkWritingCallback(writer_session, extra_code_value, output_statistic_dtype)
     try:
         engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
         engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback)
@@ -188,6 +212,7 @@ def build_test_header(
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
+    output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     multi_phenotype_sample_mode: output.MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
     phenotype_compute_group_id: str | None = None,
@@ -257,6 +282,7 @@ def build_test_header(
         chunks_per_arrow_file=16,
         arrow_compression=types.ArrowCompression.ZSTD,
         parquet_compression=types.ParquetCompression.NONE,
+        output_statistic_dtype=output_statistic_dtype,
     )
 
 
@@ -278,11 +304,15 @@ def test_current_run_manifest_records_dtype_policy(tmp_path: Path) -> None:
 
 def test_current_run_manifest_records_result_statistic_output_dtype(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
+    float64_header = build_test_header(tmp_path, output_statistic_dtype=types.FloatingPointDtype.FLOAT64)
 
     assert current_header["output_writer"]["result_statistic_dtype"] == "float32"
     assert current_header["execution_plan"]["output_writer"]["result_statistic_dtype"] == "float32"
     assert current_header["output_writer"]["parquet_compression"] == "none"
     assert current_header["execution_plan"]["output_writer"]["parquet_compression"] == "none"
+    assert float64_header["output_writer"]["result_statistic_dtype"] == "float64"
+    assert float64_header["execution_plan"]["output_writer"]["result_statistic_dtype"] == "float64"
+    assert float64_header["execution_plan_hash"] != current_header["execution_plan_hash"]
 
 
 def test_current_run_manifest_records_gpu_genotype_format(tmp_path: Path) -> None:
@@ -633,6 +663,7 @@ def test_native_writer_uses_shared_schema_and_null_placeholders(tmp_path: Path) 
     frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
     chunk_schema = pyarrow.ipc.open_file(output.iter_sorted_chunk_file_paths(tmp_path)[0]).schema
+    assert_step2_output_schema_contract(chunk_schema)
     assert b"g.output.chunk_commits" in (chunk_schema.metadata or {})
     assert frame.get_column("TEST").to_list() == ["ADD", "ADD", "ADD", "ADD"]
     assert frame.get_column("INFO").to_list() == [1.0, 1.0, 1.0, 1.0]
@@ -654,6 +685,7 @@ def test_native_writer_writes_parquet_dataset_parts_with_footer_metadata(tmp_pat
     assert not (tmp_path / "final.parquet").exists()
     frame = pl.read_parquet(part_paths[0])
     assert frame.columns == EXPECTED_FINAL_COLUMNS
+    assert_step2_output_schema_contract(pq.ParquetFile(part_paths[0]).schema_arrow)
     assert frame.get_column("TEST").to_list() == ["ADD", "ADD", "ADD", "ADD"]
     assert frame.get_column("CORRECTION_METHOD").to_list() == ["score", "score", "score", "score"]
     assert frame.get_column("CORRECTION_STATUS").to_list() == ["success", "success", "success", "success"]
@@ -897,6 +929,56 @@ def test_public_native_writer_copies_numpy_arrays_before_enqueue(tmp_path: Path)
     assert frame.get_column("CORRECTION_STATUS").to_list() == ["failed"] * row_count
 
 
+def test_public_native_writer_preserves_float64_output_statistics(tmp_path: Path) -> None:
+    capture_callback = NativeChunkCaptureCallback()
+    engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
+    engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), capture_callback)
+    metadata = capture_callback.require_metadata()
+    chunk_stats = capture_callback.require_chunk_stats()
+    row_count = metadata.variant_stop_index - metadata.variant_start_index
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
+    writer_session = output.create_output_writer_session(
+        output_run_paths,
+        AssociationMode.REGENIE2_BINARY,
+        writer_thread_count=1,
+        writer_queue_depth=1,
+        finalize_parquet=False,
+        output_format=types.OutputFormat.ARROW,
+        chunks_per_arrow_file=16,
+        arrow_compression=types.ArrowCompression.ZSTD,
+        parquet_compression=types.ParquetCompression.NONE,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT64,
+    )
+    high_precision_beta = np.nextafter(np.float64(0.125), np.float64(1.0))
+    beta = np.full(row_count, high_precision_beta, dtype=np.float64)
+    standard_error = np.full(row_count, np.nextafter(np.float64(0.025), np.float64(1.0)), dtype=np.float64)
+    chi_squared = np.full(row_count, np.nextafter(np.float64(8.0), np.float64(9.0)), dtype=np.float64)
+    log10_p_value = np.full(row_count, np.nextafter(np.float64(3.0), np.float64(4.0)), dtype=np.float64)
+    try:
+        writer_session.write_regenie2_native_chunk_f64(
+            metadata=metadata,
+            chunk_stats=chunk_stats,
+            beta=beta,
+            standard_error=standard_error,
+            chi_squared=chi_squared,
+            log10_p_value=log10_p_value,
+            extra_code=None,
+        )
+        writer_session.finish()
+    except Exception:
+        with contextlib.suppress(Exception):
+            writer_session.abort()
+        raise
+
+    chunk_path = output.iter_sorted_chunk_file_paths(tmp_path)[0]
+    assert_step2_output_schema_contract(pyarrow.ipc.open_file(chunk_path).schema, pa.float64())
+    frame = pl.read_ipc(chunk_path)
+    observed_beta = frame.get_column("BETA").to_numpy()
+    assert observed_beta.dtype == np.float64
+    np.testing.assert_array_equal(observed_beta, beta)
+    assert np.float32(observed_beta[0]) != observed_beta[0]
+
+
 def test_public_multi_native_writer_copies_numpy_rows_before_enqueue(tmp_path: Path) -> None:
     capture_callback = NativeChunkCaptureCallback()
     engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
@@ -983,6 +1065,77 @@ def test_public_multi_native_writer_copies_numpy_rows_before_enqueue(tmp_path: P
     assert first_frame.get_column("CORRECTION_STATUS").to_list() == ["failed"] * row_count
     assert second_frame.get_column("CORRECTION_METHOD").to_list() == ["firth_approximate"] * row_count
     assert second_frame.get_column("CORRECTION_STATUS").to_list() == ["success"] * row_count
+
+
+def test_public_multi_native_writer_preserves_float64_output_statistics(tmp_path: Path) -> None:
+    capture_callback = NativeChunkCaptureCallback()
+    engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
+    engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), capture_callback)
+    metadata = capture_callback.require_metadata()
+    chunk_stats = capture_callback.require_chunk_stats()
+    row_count = metadata.variant_stop_index - metadata.variant_start_index
+    writer_sessions = []
+    writer_run_paths = [
+        output.OutputRunPaths(tmp_path / "trait-zero-f64", tmp_path / "trait-zero-f64"),
+        output.OutputRunPaths(tmp_path / "trait-one-f64", tmp_path / "trait-one-f64"),
+    ]
+    for output_run_paths in writer_run_paths:
+        output_run_paths.chunks_directory.mkdir()
+        writer_sessions.append(
+            output.create_output_writer_session(
+                output_run_paths,
+                AssociationMode.REGENIE2_BINARY,
+                writer_thread_count=1,
+                writer_queue_depth=1,
+                finalize_parquet=False,
+                output_format=types.OutputFormat.ARROW,
+                chunks_per_arrow_file=16,
+                arrow_compression=types.ArrowCompression.ZSTD,
+                parquet_compression=types.ParquetCompression.NONE,
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT64,
+            )
+        )
+
+    beta = np.ascontiguousarray(
+        np.stack(
+            [
+                np.full(row_count, np.nextafter(np.float64(0.25), np.float64(1.0)), dtype=np.float64),
+                np.full(row_count, np.nextafter(np.float64(0.5), np.float64(1.0)), dtype=np.float64),
+            ],
+            axis=0,
+        )
+    )
+    standard_error = np.full((2, row_count), np.nextafter(np.float64(0.05), np.float64(1.0)), dtype=np.float64)
+    chi_squared = np.full((2, row_count), np.nextafter(np.float64(6.0), np.float64(7.0)), dtype=np.float64)
+    log10_p_value = np.full((2, row_count), np.nextafter(np.float64(2.0), np.float64(3.0)), dtype=np.float64)
+    try:
+        _core.write_regenie2_multi_native_chunk_f64(
+            writer_sessions=writer_sessions,
+            active_trait_indices=[0, 1],
+            metadata=metadata,
+            chunk_stats=chunk_stats,
+            beta=beta,
+            standard_error=standard_error,
+            chi_squared=chi_squared,
+            log10_p_value=log10_p_value,
+            extra_code=None,
+        )
+        for writer_session in writer_sessions:
+            writer_session.finish()
+    except Exception:
+        for writer_session in writer_sessions:
+            with contextlib.suppress(Exception):
+                writer_session.abort()
+        raise
+
+    first_chunk_path = output.iter_sorted_chunk_file_paths(writer_run_paths[0].chunks_directory)[0]
+    second_chunk_path = output.iter_sorted_chunk_file_paths(writer_run_paths[1].chunks_directory)[0]
+    assert_step2_output_schema_contract(pyarrow.ipc.open_file(first_chunk_path).schema, pa.float64())
+    assert_step2_output_schema_contract(pyarrow.ipc.open_file(second_chunk_path).schema, pa.float64())
+    first_beta = pl.read_ipc(first_chunk_path).get_column("BETA").to_numpy()
+    second_beta = pl.read_ipc(second_chunk_path).get_column("BETA").to_numpy()
+    np.testing.assert_array_equal(first_beta, beta[0])
+    np.testing.assert_array_equal(second_beta, beta[1])
 
 
 def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_path: Path) -> None:
@@ -1233,7 +1386,7 @@ def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConf
         ("trusted_no_missing_diploid", True),
         ("trusted_bgen_validation_mode", "assume_validated"),
         ("sample_key_mode", "fid_iid"),
-        ("output_schema_version", 2),
+        ("output_schema_version", 1),
         (
             "association_backend",
             {
@@ -1294,6 +1447,29 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
         initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
 
+def test_initialize_output_run_rejects_output_statistic_dtype_resume(tmp_path: Path) -> None:
+    manifest_header = build_test_header(tmp_path, output_statistic_dtype=types.FloatingPointDtype.FLOAT64)
+    current_header = build_test_header(
+        tmp_path,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+        write_input_files=False,
+    )
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output-statistic-dtype",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    resumed_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output-statistic-dtype",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+    )
+
+    with pytest.raises(ValueError, match=r"output_writer\.result_statistic_dtype"):
+        initialize_test_output_run(resumed_output_run, current_header, resume=True)
+
+
 def test_initialize_output_run_rejects_per_phenotype_complete_case_resume(tmp_path: Path) -> None:
     current_header = build_test_header(
         tmp_path,
@@ -1338,7 +1514,7 @@ def test_initialize_output_run_rejects_per_phenotype_complete_case_resume(tmp_pa
         ),
         ("binary_kernel_config", output.normalize_execution_plan_value(build_test_binary_kernel_config())),
         ("sample_key_mode", "fid_iid"),
-        ("output_schema_version", 2),
+        ("output_schema_version", 1),
         (
             "association_backend",
             {
@@ -1529,11 +1705,20 @@ def test_chunk_arrow_schema_is_shared_between_linear_and_binary(tmp_path: Path) 
     ),
 )
 @pytest.mark.parametrize("output_format", (types.OutputFormat.ARROW, types.OutputFormat.PARQUET))
+@pytest.mark.parametrize(
+    ("output_statistic_dtype", "expected_statistic_schema_dtype"),
+    (
+        (types.FloatingPointDtype.FLOAT32, pa.float32()),
+        (types.FloatingPointDtype.FLOAT64, pa.float64()),
+    ),
+)
 def test_regenie2_step2_output_schema_contract(
     tmp_path: Path,
     association_mode: AssociationMode,
     extra_code_value: int | None,
     output_format: types.OutputFormat,
+    output_statistic_dtype: types.FloatingPointDtype,
+    expected_statistic_schema_dtype: pa.DataType,
 ) -> None:
     """Assert stable schema contract for Step 2 final and intermediate outputs."""
     run_directory = tmp_path / f"{association_mode.value}-{output_format.value}"
@@ -1541,6 +1726,7 @@ def test_regenie2_step2_output_schema_contract(
         tmp_path,
         association_mode=association_mode,
         output_format=output_format,
+        output_statistic_dtype=output_statistic_dtype,
     )
     prepared_output_run = output.prepare_output_run(
         output_root=run_directory,
@@ -1556,6 +1742,7 @@ def test_regenie2_step2_output_schema_contract(
         association_mode,
         output_format=output_format,
         extra_code_value=extra_code_value,
+        output_statistic_dtype=output_statistic_dtype,
     )
 
     for chunk_path in output.iter_sorted_chunk_file_paths(output_run_paths.chunks_directory):
@@ -1563,7 +1750,7 @@ def test_regenie2_step2_output_schema_contract(
             chunk_schema = pyarrow.ipc.open_file(chunk_path).schema
         else:
             chunk_schema = pq.ParquetFile(chunk_path).schema_arrow
-        assert_step2_output_schema_contract(chunk_schema)
+        assert_step2_output_schema_contract(chunk_schema, expected_statistic_schema_dtype)
 
     final_parquet_path = output.finalize_chunks_to_parquet(
         output_run_paths,
@@ -1571,7 +1758,7 @@ def test_regenie2_step2_output_schema_contract(
         output_format=output_format,
     )
     final_parquet_schema = pq.ParquetFile(final_parquet_path).schema_arrow
-    assert_step2_output_schema_contract(final_parquet_schema)
+    assert_step2_output_schema_contract(final_parquet_schema, expected_statistic_schema_dtype)
 
 
 def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Path) -> None:
@@ -1616,7 +1803,7 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
     assert parquet_schema.field("CORRECTION_STATUS").nullable
     parquet_metadata = pq.ParquetFile(parquet_path).metadata.metadata
     assert parquet_metadata is not None
-    assert parquet_metadata[b"g.output.schema_version"] == b"1"
+    assert parquet_metadata[b"g.output.schema_version"] == b"2"
     assert parquet_metadata[b"g.output.association_mode"] == b"regenie2_binary"
     assert parquet_metadata[b"g.output.chunk_file_count"] == b"1"
     assert parquet_metadata[b"g.output.row_count"] == b"4"

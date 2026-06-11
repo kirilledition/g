@@ -426,7 +426,7 @@ fn inspect_parquet_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFil
 fn inspect_regenie_text_chunk_file_commits(
     chunk_file_path: &Path,
 ) -> Result<ChunkFileCommitObservation, OutputWriterError> {
-    let schema = Arc::clone(schema::get_regenie_step2_final_schema());
+    let schema = Arc::clone(schema::get_regenie_step2_final_schema(schema::OutputStatisticDtype::Float32));
     let chunk_file_name = chunk_file_path
         .file_name()
         .and_then(|file_name| file_name.to_str())

@@ -152,6 +152,7 @@ def test_regenie_config_from_options_maps_regenie_names() -> None:
             "pThresh": 0.01,
             "device": "gpu",
             "format": "arrow",
+            "output_statistic_dtype": "float64",
         }
     )
 
@@ -162,6 +163,7 @@ def test_regenie_config_from_options_maps_regenie_names() -> None:
     assert regenie_config.binary.p_threshold == pytest.approx(0.01)
     assert regenie_config.g_compute.device == types.Device.GPU
     assert regenie_config.g_output.format == types.OutputFormat.ARROW
+    assert regenie_config.g_output.output_statistic_dtype == types.FloatingPointDtype.FLOAT64
 
 
 def test_execution_plan_uses_safe_phenotype_output_directories() -> None:
@@ -327,6 +329,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert mock_pipeline.call_args.kwargs["chunks_per_arrow_file"] == 16
     assert mock_pipeline.call_args.kwargs["arrow_compression"] == types.ArrowCompression.ZSTD
     assert mock_pipeline.call_args.kwargs["parquet_compression"] == types.ParquetCompression.NONE
+    assert mock_pipeline.call_args.kwargs["output_statistic_dtype"] == types.FloatingPointDtype.FLOAT32
     assert mock_pipeline.call_args.kwargs["finalize_parquet"] is False
     mock_extend_run_manifest.assert_called_once()
     mock_write_toml.assert_called_once()
@@ -1503,4 +1506,5 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
     assert manifest["command"]["phenotype"] == "trait"
     assert manifest["bgen"] == {"path": "/inputs/dataset.bgen", "size": 1, "mtime_ns": 2}
     assert manifest["runtime"]["parquet_compression"] == "none"
+    assert manifest["runtime"]["output_statistic_dtype"] == "float32"
     assert "input_fingerprints" not in manifest

@@ -113,7 +113,7 @@ out = "/path/to/output/g_binary_firth_regenie2"
 | `[trait]` | Step, quantitative/binary mode, block size, and thread request. |
 | `[binary]` | Binary fallback flags, Firth mode, and p-value threshold. |
 | `[compute]` | Engine runtime, sample semantics, BGEN validation, JAX, numerical, and approximate-Firth tuning. |
-| `[output]` | Output prefix, chunk format, writer settings, Parquet finalization, and resume controls. |
+| `[output]` | Output prefix, chunk format, public statistic dtype, writer settings, Parquet finalization, and resume controls. |
 | `[diagnostics]` | Telemetry, logging, progress, profile, and trace controls. |
 | `[metadata]` | Optional metadata accepted by the TOML parser but not treated as a `g regenie` option. |
 
@@ -156,6 +156,7 @@ Runtime CLI flags map directly to the sectioned snake_case TOML surface:
 | `--multi_phenotype_sample_mode complete-case` | `[compute] multi_phenotype_sample_mode = "complete-case"` |
 | `--jax_cache_dir PATH` | `[compute] jax_cache_dir = "PATH"` |
 | `--format parquet` | `[output] format = "parquet"` |
+| `--output_statistic_dtype float64` | `[output] output_statistic_dtype = "float64"`; default is `"float32"` |
 | `--writer_threads N` | `[output] writer_threads = N` |
 | `--chunks_per_arrow_file N` | `[output] chunks_per_arrow_file = N` |
 | `--resume` | `[output] resume = true` |

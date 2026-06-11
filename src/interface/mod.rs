@@ -23,7 +23,7 @@ pub use toml::{dumps_toml, from_options, from_toml_path, write_toml};
 pub use validation::validate_config;
 
 const DEFAULT_CONFIG_TOML: &str = include_str!("config.default.toml");
-const OPTION_SCHEMA_VERSION: i64 = 1;
+const OPTION_SCHEMA_VERSION: i64 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigError {

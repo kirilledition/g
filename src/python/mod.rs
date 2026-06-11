@@ -34,7 +34,7 @@ use output::{
     finalize_output_run_chunks, initialize_output_run, load_run_manifest_json, prepare_output_run,
     read_manifest_committed_chunk_identifiers, repair_strict_manifest_chunk_commits, resolve_output_run_paths,
     scan_committed_chunk_identifiers, validate_run_manifest_compatibility, validate_strict_manifest_chunks,
-    write_regenie2_multi_native_chunk, write_run_manifest_json,
+    write_regenie2_multi_native_chunk, write_regenie2_multi_native_chunk_f64, write_run_manifest_json,
 };
 
 type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
@@ -1630,6 +1630,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_run_manifest_compatibility, module)?)?;
     module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
+    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_f64, module)?)?;
     module.add_function(wrap_pyfunction!(write_run_manifest_json, module)?)?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;

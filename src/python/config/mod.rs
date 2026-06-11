@@ -530,6 +530,11 @@ impl GOutputConfig {
     }
 
     #[getter]
+    fn output_statistic_dtype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        enum_value(py, "FloatingPointDtype", self.data.output_statistic_dtype.as_str())
+    }
+
+    #[getter]
     fn resume(&self) -> bool {
         self.data.resume
     }

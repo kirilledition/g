@@ -9,7 +9,7 @@ import jax
 
 import g.engine.callbacks.shared as shared
 import g.engine.callbacks.transfers as transfers
-from g import _core
+from g import _core, types
 
 if typing.TYPE_CHECKING:
     from g.engine import timing
@@ -33,18 +33,19 @@ def write_regenie2_native_chunk_with_optional_timing(
     log10_p_value: jax.Array,
     extra_code: jax.Array | None,
     stage_timing_recorder: timing.StageTimingRecorder | None,
+    output_statistic_dtype: types.FloatingPointDtype,
 ) -> None:
     """Write one native-metadata REGENIE chunk while timing JAX result materialization.
 
-    The native Arrow/Parquet schema stores public result statistics as float32.
-    Any higher-precision internal arrays are narrowed immediately before the
+    The native Arrow/Parquet schema stores public result statistics with the
+    configured output dtype. Internal arrays are cast immediately before the
     Rust writer call.
     """
     materialization_start_time = time.perf_counter()
-    beta_device_array = narrow_public_statistic_array_on_device(beta)
-    standard_error_device_array = narrow_public_statistic_array_on_device(standard_error)
-    chi_squared_device_array = narrow_public_statistic_array_on_device(chi_squared)
-    log10_p_value_device_array = narrow_public_statistic_array_on_device(log10_p_value)
+    beta_device_array = narrow_public_statistic_array_on_device(beta, output_statistic_dtype)
+    standard_error_device_array = narrow_public_statistic_array_on_device(standard_error, output_statistic_dtype)
+    chi_squared_device_array = narrow_public_statistic_array_on_device(chi_squared, output_statistic_dtype)
+    log10_p_value_device_array = narrow_public_statistic_array_on_device(log10_p_value, output_statistic_dtype)
     record_transfer_metadata_for_array(
         stage_timing_recorder=stage_timing_recorder,
         transfer_name="device_to_host_materialization",
@@ -93,13 +94,20 @@ def write_regenie2_native_chunk_with_optional_timing(
     )
 
     write_start_time = time.perf_counter()
-    writer_session.write_regenie2_native_chunk(
+    write_chunk_method_name = "write_regenie2_native_chunk"
+    if output_statistic_dtype == types.FloatingPointDtype.FLOAT64 and isinstance(
+        writer_session,
+        _core.OutputWriterSession,
+    ):
+        write_chunk_method_name = "write_regenie2_native_chunk_f64"
+    write_chunk_method = getattr(writer_session, write_chunk_method_name)
+    write_chunk_method(
         metadata=metadata,
         chunk_stats=chunk_stats,
-        beta=cast_statistic_array_for_native_writer(host_values["beta"]),
-        standard_error=cast_statistic_array_for_native_writer(host_values["standard_error"]),
-        chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"]),
-        log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"]),
+        beta=cast_statistic_array_for_native_writer(host_values["beta"], output_statistic_dtype),
+        standard_error=cast_statistic_array_for_native_writer(host_values["standard_error"], output_statistic_dtype),
+        chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"], output_statistic_dtype),
+        log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"], output_statistic_dtype),
         extra_code=host_values["extra_code"],
     )
     record_stage_duration_with_optional_chunk(
@@ -128,6 +136,7 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
     log10_p_value: jax.Array,
     extra_code: jax.Array | None,
     stage_timing_recorder: timing.StageTimingRecorder | None,
+    output_statistic_dtype: types.FloatingPointDtype,
 ) -> None:
     """Materialize one multi-trait result once and write missing per-trait slices."""
     chunk_identifier = int(metadata.variant_start_index)
@@ -168,28 +177,32 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             beta,
             active_trait_indices=active_trait_indices,
             total_trait_count=total_trait_count,
-        )
+        ),
+        output_statistic_dtype,
     )
     standard_error_device_array = narrow_public_statistic_array_on_device(
         select_active_trait_rows_on_device(
             standard_error,
             active_trait_indices=active_trait_indices,
             total_trait_count=total_trait_count,
-        )
+        ),
+        output_statistic_dtype,
     )
     chi_squared_device_array = narrow_public_statistic_array_on_device(
         select_active_trait_rows_on_device(
             chi_squared,
             active_trait_indices=active_trait_indices,
             total_trait_count=total_trait_count,
-        )
+        ),
+        output_statistic_dtype,
     )
     log10_p_value_device_array = narrow_public_statistic_array_on_device(
         select_active_trait_rows_on_device(
             log10_p_value,
             active_trait_indices=active_trait_indices,
             total_trait_count=total_trait_count,
-        )
+        ),
+        output_statistic_dtype,
     )
     record_transfer_metadata_for_array(
         stage_timing_recorder=stage_timing_recorder,
@@ -240,15 +253,22 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
 
     write_start_time = time.perf_counter()
     if all(isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions):
-        _core.write_regenie2_multi_native_chunk(
+        write_multi_chunk = (
+            _core.write_regenie2_multi_native_chunk_f64
+            if output_statistic_dtype == types.FloatingPointDtype.FLOAT64
+            else _core.write_regenie2_multi_native_chunk
+        )
+        write_multi_chunk(
             writer_sessions=list(active_writer_sessions),
             active_trait_indices=list(range(len(active_writer_sessions))),
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=cast_statistic_array_for_native_writer(host_values["beta"]),
-            standard_error=cast_statistic_array_for_native_writer(host_values["standard_error"]),
-            chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"]),
-            log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"]),
+            beta=cast_statistic_array_for_native_writer(host_values["beta"], output_statistic_dtype),
+            standard_error=cast_statistic_array_for_native_writer(
+                host_values["standard_error"], output_statistic_dtype
+            ),
+            chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"], output_statistic_dtype),
+            log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"], output_statistic_dtype),
             extra_code=host_values["extra_code"],
         )
         record_stage_duration_with_optional_chunk(
@@ -272,10 +292,21 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
         writer_session.write_regenie2_native_chunk(
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=cast_statistic_array_for_native_writer(host_values["beta"][compact_trait_index]),
-            standard_error=cast_statistic_array_for_native_writer(host_values["standard_error"][compact_trait_index]),
-            chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"][compact_trait_index]),
-            log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"][compact_trait_index]),
+            beta=cast_statistic_array_for_native_writer(
+                host_values["beta"][compact_trait_index], output_statistic_dtype
+            ),
+            standard_error=cast_statistic_array_for_native_writer(
+                host_values["standard_error"][compact_trait_index],
+                output_statistic_dtype,
+            ),
+            chi_squared=cast_statistic_array_for_native_writer(
+                host_values["chi_squared"][compact_trait_index],
+                output_statistic_dtype,
+            ),
+            log10_p_value=cast_statistic_array_for_native_writer(
+                host_values["log10_p_value"][compact_trait_index],
+                output_statistic_dtype,
+            ),
             extra_code=extra_code_slice,
         )
         record_stage_duration_with_optional_chunk(

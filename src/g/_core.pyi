@@ -168,6 +168,8 @@ class GOutputConfig:
     @property
     def parquet_compression(self) -> g.types.ParquetCompression: ...
     @property
+    def output_statistic_dtype(self) -> g.types.FloatingPointDtype: ...
+    @property
     def resume(self) -> bool: ...
     @property
     def resume_mode(self) -> g.types.ResumeMode: ...
@@ -464,6 +466,7 @@ class OutputWriterSession:
         writer_thread_count: int,
         writer_queue_depth: int,
         output_format: g.types.OutputFormat | str,
+        output_statistic_dtype: g.types.FloatingPointDtype | str,
         finalize_parquet: bool,
         chunks_per_arrow_file: int,
         arrow_compression: g.types.ArrowCompression | str,
@@ -479,6 +482,17 @@ class OutputWriterSession:
         standard_error: npt.NDArray[np.float32],
         chi_squared: npt.NDArray[np.float32],
         log10_p_value: npt.NDArray[np.float32],
+        extra_code: npt.NDArray[np.int32] | None = None,
+    ) -> None: ...
+    def write_regenie2_native_chunk_f64(
+        self,
+        *,
+        metadata: VariantMetadata,
+        chunk_stats: ChunkStats,
+        beta: npt.NDArray[np.float64],
+        standard_error: npt.NDArray[np.float64],
+        chi_squared: npt.NDArray[np.float64],
+        log10_p_value: npt.NDArray[np.float64],
         extra_code: npt.NDArray[np.int32] | None = None,
     ) -> None: ...
     def finish(self) -> str | None: ...
@@ -513,6 +527,18 @@ def write_regenie2_multi_native_chunk(
     standard_error: npt.NDArray[np.float32],
     chi_squared: npt.NDArray[np.float32],
     log10_p_value: npt.NDArray[np.float32],
+    extra_code: npt.NDArray[np.int32] | None = None,
+) -> None: ...
+def write_regenie2_multi_native_chunk_f64(
+    *,
+    writer_sessions: list[OutputWriterSession],
+    active_trait_indices: list[int],
+    metadata: VariantMetadata,
+    chunk_stats: ChunkStats,
+    beta: npt.NDArray[np.float64],
+    standard_error: npt.NDArray[np.float64],
+    chi_squared: npt.NDArray[np.float64],
+    log10_p_value: npt.NDArray[np.float64],
     extra_code: npt.NDArray[np.int32] | None = None,
 ) -> None: ...
 def summarize_variant_major_dosage_chunk_stats(

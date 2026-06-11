@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, PrimitiveArray};
-use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Int32Type};
+use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64Type, Int32Type};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -65,6 +65,7 @@ impl OutputWriterSession {
         writer_thread_count: usize,
         writer_queue_depth: usize,
         output_format: String,
+        output_statistic_dtype: String,
         finalize_parquet: bool,
         chunks_per_arrow_file: usize,
         arrow_compression: String,
@@ -78,6 +79,7 @@ impl OutputWriterSession {
             writer_thread_count,
             writer_queue_depth,
             &output_format,
+            &output_statistic_dtype,
             finalize_parquet,
             chunks_per_arrow_file,
             arrow_compression,
@@ -127,6 +129,47 @@ impl OutputWriterSession {
                 extra_code_array,
             )
             .map_err(|error| output_writer_error_to_py(error, "write_regenie2_native_chunk"))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
+    fn write_regenie2_native_chunk_f64(
+        &self,
+        metadata: PyRef<'_, PyVariantMetadata>,
+        chunk_stats: PyRef<'_, PyChunkStats>,
+        beta: PyReadonlyArray1<'_, f64>,
+        standard_error: PyReadonlyArray1<'_, f64>,
+        chi_squared: PyReadonlyArray1<'_, f64>,
+        log10_p_value: PyReadonlyArray1<'_, f64>,
+        extra_code: Option<PyReadonlyArray1<'_, i32>>,
+    ) -> PyResult<()> {
+        let chunk_handle = build_native_chunk_handle_from_python(&metadata, &chunk_stats)?;
+        let beta_slice = beta.as_slice()?;
+        let standard_error_slice = standard_error.as_slice()?;
+        let chi_squared_slice = chi_squared.as_slice()?;
+        let log10_p_value_slice = log10_p_value.as_slice()?;
+        let extra_code_slice = extra_code.as_ref().map(|array| array.as_slice()).transpose()?;
+        let beta_array = build_copied_arrow_array::<f64, Float64Type>(beta_slice);
+        let standard_error_array = build_copied_arrow_array::<f64, Float64Type>(standard_error_slice);
+        let chi_squared_array = build_copied_arrow_array::<f64, Float64Type>(chi_squared_slice);
+        let log10_p_value_array = build_copied_arrow_array::<f64, Float64Type>(log10_p_value_slice);
+        let extra_code_array = match (extra_code.as_ref(), extra_code_slice) {
+            (None, None) => None,
+            (Some(_), Some(extra_code_slice_values)) => {
+                Some(build_copied_arrow_array::<i32, Int32Type>(extra_code_slice_values))
+            }
+            _ => return Err(PyRuntimeError::new_err("Extra code array state was inconsistent.")),
+        };
+        self.inner
+            .write_regenie2_native_chunk_handle_arrays(
+                chunk_handle,
+                beta_array,
+                standard_error_array,
+                chi_squared_array,
+                log10_p_value_array,
+                extra_code_array,
+            )
+            .map_err(|error| output_writer_error_to_py(error, "write_regenie2_native_chunk_f64"))
     }
 
     fn finish(&self, py: Python<'_>) -> PyResult<Option<String>> {
@@ -229,6 +272,93 @@ pub(crate) fn write_regenie2_multi_native_chunk(
                 extra_code_array,
             )
             .map_err(|error| output_writer_error_to_py(error, "write_regenie2_multi_native_chunk"))?;
+    }
+    Ok(())
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
+#[pyo3(signature = (
+    writer_sessions,
+    active_trait_indices,
+    metadata,
+    chunk_stats,
+    beta,
+    standard_error,
+    chi_squared,
+    log10_p_value,
+    extra_code=None,
+))]
+pub(crate) fn write_regenie2_multi_native_chunk_f64(
+    writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
+    active_trait_indices: Vec<usize>,
+    metadata: PyRef<'_, PyVariantMetadata>,
+    chunk_stats: PyRef<'_, PyChunkStats>,
+    beta: PyReadonlyArray2<'_, f64>,
+    standard_error: PyReadonlyArray2<'_, f64>,
+    chi_squared: PyReadonlyArray2<'_, f64>,
+    log10_p_value: PyReadonlyArray2<'_, f64>,
+    extra_code: Option<PyReadonlyArray2<'_, i32>>,
+) -> PyResult<()> {
+    let chunk_handle = build_native_chunk_handle_from_python(&metadata, &chunk_stats)?;
+    let trait_count = writer_sessions.len();
+    let row_count = chunk_handle.row_count();
+    validate_trait_major_shape("beta", beta.as_array().shape(), trait_count, row_count)?;
+    validate_trait_major_shape("standard_error", standard_error.as_array().shape(), trait_count, row_count)?;
+    validate_trait_major_shape("chi_squared", chi_squared.as_array().shape(), trait_count, row_count)?;
+    validate_trait_major_shape("log10_p_value", log10_p_value.as_array().shape(), trait_count, row_count)?;
+    if let Some(extra_code_array) = extra_code.as_ref() {
+        validate_trait_major_shape("extra_code", extra_code_array.as_array().shape(), trait_count, row_count)?;
+    }
+
+    let beta_values = beta.as_array();
+    let standard_error_values = standard_error.as_array();
+    let chi_squared_values = chi_squared.as_array();
+    let log10_p_value_values = log10_p_value.as_array();
+    let extra_code_values = extra_code.as_ref().map(PyReadonlyArray2::as_array);
+    for trait_index in active_trait_indices {
+        if trait_index >= writer_sessions.len() {
+            return Err(PyValueError::new_err("Active trait index is out of bounds for writer sessions."));
+        }
+        let beta_row = beta_values.row(trait_index);
+        let standard_error_row = standard_error_values.row(trait_index);
+        let chi_squared_row = chi_squared_values.row(trait_index);
+        let log10_p_value_row = log10_p_value_values.row(trait_index);
+        let beta_slice = beta_row.as_slice().ok_or_else(|| PyValueError::new_err("beta row is not contiguous."))?;
+        let standard_error_slice = standard_error_row
+            .as_slice()
+            .ok_or_else(|| PyValueError::new_err("standard_error row is not contiguous."))?;
+        let chi_squared_slice =
+            chi_squared_row.as_slice().ok_or_else(|| PyValueError::new_err("chi_squared row is not contiguous."))?;
+        let log10_p_value_slice = log10_p_value_row
+            .as_slice()
+            .ok_or_else(|| PyValueError::new_err("log10_p_value row is not contiguous."))?;
+        let extra_code_row = extra_code_values.as_ref().map(|extra_code_array| extra_code_array.row(trait_index));
+        let extra_code_slice = match extra_code_row.as_ref() {
+            None => None,
+            Some(extra_code_array_row) => Some(
+                extra_code_array_row
+                    .as_slice()
+                    .ok_or_else(|| PyValueError::new_err("extra_code row is not contiguous."))?,
+            ),
+        };
+        let beta_array = build_copied_arrow_array::<f64, Float64Type>(beta_slice);
+        let standard_error_array = build_copied_arrow_array::<f64, Float64Type>(standard_error_slice);
+        let chi_squared_array = build_copied_arrow_array::<f64, Float64Type>(chi_squared_slice);
+        let log10_p_value_array = build_copied_arrow_array::<f64, Float64Type>(log10_p_value_slice);
+        let extra_code_array = extra_code_slice.map(build_copied_arrow_array::<i32, Int32Type>);
+        writer_sessions[trait_index]
+            .inner
+            .write_regenie2_native_chunk_handle_arrays(
+                chunk_handle.clone(),
+                beta_array,
+                standard_error_array,
+                chi_squared_array,
+                log10_p_value_array,
+                extra_code_array,
+            )
+            .map_err(|error| output_writer_error_to_py(error, "write_regenie2_multi_native_chunk_f64"))?;
     }
     Ok(())
 }
