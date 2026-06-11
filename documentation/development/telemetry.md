@@ -71,8 +71,9 @@ for both terminal rendering and the JSONL diagnostics stream. `g regenie`
 success and graceful-interruption messages are derived from these typed
 lifecycle events.
 
-Native frontend diagnostics are also included as structured tracing events.
-`g.cli` mirrors user-facing native stdout/stderr text and
+Native frontend diagnostics are also included as structured tracing events for
+run paths after diagnostics are initialized. `g.cli` prints user-facing native
+stdout/stderr text exactly once, and mirrors bounded stdout/stderr previews plus
 run-completion/interruption rendering lines through the native tracing bridge:
 
 - `native_cli_stdout`
@@ -80,8 +81,11 @@ run-completion/interruption rendering lines through the native tracing bridge:
 - `native_cli_completed_line`
 - `native_cli_interrupted_line`
 
-These events are emitted before the CLI prints the same text on stdout/stderr,
-so current CLI behavior is preserved while the JSONL stream remains durable.
+Help, parser-error, and validation-error paths that do not produce a run
+configuration only print the native stdout/stderr text. They do not import the
+Python runner, telemetry, shutdown handlers, or JAX runtime setup modules.
+Native stdout/stderr diagnostics include character and byte counts, a bounded
+preview, and truncation metadata instead of unbounded full payloads.
 
 `run_completed` includes the user-visible output artifacts needed by operators
 and diagnostic tools:

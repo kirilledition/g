@@ -273,11 +273,13 @@ def regenie(
     *,
     run_telemetry_session: telemetry.TelemetrySession | None = None,
     close_telemetry_session_on_exit: bool = True,
+    initialize_logging_on_entry: bool = True,
 ) -> RunArtifacts:
     """Run the shared REGENIE-compatible config path."""
     config.validate_config_for_run(regenie_config)
     active_telemetry_session = run_telemetry_session or telemetry.build_telemetry_session(regenie_config)
-    initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
+    if initialize_logging_on_entry:
+        initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
     association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
     phenotype_count = len(regenie_config.input.pheno_columns)
     active_telemetry_session.log_event(
