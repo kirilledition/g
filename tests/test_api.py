@@ -20,6 +20,18 @@ from g.io import output
 from g.io.output import OutputRunPaths, PreparedOutputRun
 
 
+def complete_mock_output_initialization(
+    keyword_arguments: dict[str, object],
+    phenotype_names: tuple[str, ...] = ("trait",),
+) -> None:
+    """Invoke the runner callback exposed to mocked engine pipelines."""
+    output_initialized_callback = typing.cast(
+        "typing.Callable[[tuple[str, ...]], None]",
+        keyword_arguments["output_initialized_callback"],
+    )
+    output_initialized_callback(phenotype_names)
+
+
 def build_minimal_config() -> config.RegenieConfig:
     return config.RegenieConfig.from_options(
         {
@@ -277,17 +289,21 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
         run_directory=Path("results/output.g/trait.regenie2_linear.run"),
         chunks_directory=Path("results/output.g/trait.regenie2_linear.run/parts"),
     )
+
+    def complete_pipeline(**keyword_arguments: object) -> None:
+        complete_mock_output_initialization(keyword_arguments)
+
     with (
+        patch("g.interface.config.validate_config_for_run"),
         patch("g.runner.configure_runtime_before_jax_import") as mock_configure_runtime_before_jax_import,
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest={"committed_chunks": []}),
         ) as mock_prepare_output_run,
-        patch("g.runner.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
+        patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=complete_pipeline) as mock_pipeline,
         patch("g.runner.extend_run_manifest") as mock_extend_run_manifest,
         patch("g.interface.config.write_toml") as mock_write_toml,
     ):
-        mock_pipeline.return_value = None
         artifacts = api.regenie(build_minimal_config())
 
     assert artifacts.output_run_directory == Path("results/output.g/trait.regenie2_linear.run")
@@ -421,7 +437,7 @@ def test_regenie_graceful_shutdown_event_preserves_signal_exit(tmp_path: Path) -
     assert "error_message" not in failed_payload
 
 
-def test_regenie_writes_run_start_metadata_before_pipeline_failure() -> None:
+def test_regenie_does_not_write_run_start_metadata_before_output_initialization_failure() -> None:
     run_paths = OutputRunPaths(
         run_directory=Path("results/output.g/trait.regenie2_linear.run"),
         chunks_directory=Path("results/output.g/trait.regenie2_linear.run/chunks"),
@@ -445,6 +461,7 @@ def test_regenie_writes_run_start_metadata_before_pipeline_failure() -> None:
         raise RuntimeError(message)
 
     with (
+        patch("g.interface.config.validate_config_for_run"),
         patch("g.runner.configure_runtime_before_jax_import"),
         patch(
             "g.execution_plan.output.prepare_output_run",
@@ -457,7 +474,48 @@ def test_regenie_writes_run_start_metadata_before_pipeline_failure() -> None:
     ):
         api.regenie(build_minimal_config())
 
-    assert call_order == ["effective_config", "manifest", "pipeline"]
+    assert call_order == ["pipeline"]
+
+
+def test_regenie_writes_run_start_metadata_after_output_initialization() -> None:
+    run_paths = OutputRunPaths(
+        run_directory=Path("results/output.g/trait.regenie2_linear.run"),
+        chunks_directory=Path("results/output.g/trait.regenie2_linear.run/chunks"),
+    )
+    call_order: list[str] = []
+
+    def record_write_toml(*args: object, **kwargs: object) -> None:
+        del args
+        del kwargs
+        call_order.append("effective_config")
+
+    def record_extend_run_manifest(*args: object, **kwargs: object) -> None:
+        del args
+        del kwargs
+        call_order.append("manifest")
+
+    def fail_after_output_initialization(**keyword_arguments: object) -> Path:
+        call_order.append("pipeline")
+        complete_mock_output_initialization(keyword_arguments)
+        call_order.append("after_initialization")
+        message = "pipeline failed after initialization"
+        raise RuntimeError(message)
+
+    with (
+        patch("g.interface.config.validate_config_for_run"),
+        patch("g.runner.configure_runtime_before_jax_import"),
+        patch(
+            "g.execution_plan.output.prepare_output_run",
+            return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
+        ),
+        patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=fail_after_output_initialization),
+        patch("g.runner.extend_run_manifest", side_effect=record_extend_run_manifest),
+        patch("g.interface.config.write_toml", side_effect=record_write_toml),
+        pytest.raises(RuntimeError, match="pipeline failed after initialization"),
+    ):
+        api.regenie(build_minimal_config())
+
+    assert call_order == ["pipeline", "effective_config", "manifest", "after_initialization"]
 
 
 def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
@@ -1105,6 +1163,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
             plan=plan,
             phenotype_run_plan=plan.phenotype_run_plans[0],
             stage_timing_recorder=None,
+            output_initialized_callback=lambda phenotype_names: None,
         )
 
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is plan.kernel_config.binary_kernel_config
@@ -1153,6 +1212,7 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
         runner.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=None,
+            output_initialized_callback=lambda phenotype_names: None,
         )
 
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is plan.kernel_config.binary_kernel_config
@@ -1210,7 +1270,7 @@ def test_default_multi_phenotype_plan_dispatches_grouped_multi_phenotype_run() -
         patch("g.runner.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
     ):
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
-        runner.dispatch_execution_plan(plan=plan, stage_timing_recorder=None)
+        runner.dispatch_execution_plan(regenie_config=regenie_config, plan=plan, stage_timing_recorder=None)
 
     mock_multi_pipeline.assert_called_once()
     assert mock_multi_pipeline.call_args.kwargs["sample_mode"] == types.MultiPhenotypeSampleMode.PER_PHENOTYPE
@@ -1258,6 +1318,7 @@ def test_multi_phenotype_plan_dispatch_forwards_packed8_genotype_format() -> Non
         runner.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=None,
+            output_initialized_callback=lambda phenotype_names: None,
         )
 
     assert mock_multi_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
@@ -1304,6 +1365,7 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
         runner.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=None,
+            output_initialized_callback=lambda phenotype_names: None,
         )
 
     assert mock_pipeline.call_args.kwargs["existing_manifests_by_phenotype"] == existing_manifests

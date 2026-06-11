@@ -365,15 +365,10 @@ def run_validated_regenie_config(
                 device=plan.kernel_config.device.value,
             )
         logger.info("Prepared REGENIE execution plan for %s phenotype(s).", len(plan.phenotype_run_plans))
-        logger.debug("Writing execution plan start metadata.")
-        write_execution_plan_start_metadata(
-            regenie_config=regenie_config,
-            plan=plan,
-            telemetry_session=telemetry_session,
-        )
         record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
         logger.debug("Dispatching REGENIE execution plan.")
         final_output_paths = dispatch_execution_plan(
+            regenie_config=regenie_config,
             plan=plan,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
@@ -398,17 +393,24 @@ def run_validated_regenie_config(
 
 def dispatch_execution_plan(
     *,
+    regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
     stage_timing_recorder: typing.Any,
     telemetry_session: telemetry.TelemetrySession | None = None,
 ) -> tuple[Path | None, ...]:
     """Dispatch an execution plan to the native engine layer."""
+    output_initialized_callback = build_output_initialized_metadata_callback(
+        regenie_config=regenie_config,
+        plan=plan,
+        telemetry_session=telemetry_session,
+    )
     if len(plan.phenotype_run_plans) > 1:
         logger.debug("Dispatching multi-phenotype native engine pipeline.")
         return dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
+            output_initialized_callback=output_initialized_callback,
         )
     logger.debug("Dispatching single-phenotype native engine pipeline.")
     return (
@@ -417,6 +419,7 @@ def dispatch_execution_plan(
             phenotype_run_plan=plan.phenotype_run_plans[0],
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
+            output_initialized_callback=output_initialized_callback,
         ),
     )
 
@@ -426,6 +429,7 @@ def build_common_engine_arguments(
     plan: execution_plan.RegenieExecutionPlan,
     stage_timing_recorder: typing.Any,
     telemetry_session: telemetry.TelemetrySession | None,
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> dict[str, typing.Any]:
     """Build arguments shared by single- and multi-phenotype native wrappers."""
     return {
@@ -458,6 +462,7 @@ def build_common_engine_arguments(
         "stage_timing_recorder": stage_timing_recorder,
         "telemetry_session": telemetry_session,
         "alignment_config": plan.kernel_config.alignment_config,
+        "output_initialized_callback": output_initialized_callback,
     }
 
 
@@ -467,12 +472,14 @@ def dispatch_one_phenotype_engine_pipeline(
     phenotype_run_plan: execution_plan.PhenotypeRunPlan,
     stage_timing_recorder: typing.Any,
     telemetry_session: telemetry.TelemetrySession | None = None,
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None = None,
 ) -> Path | None:
     """Dispatch one phenotype to the native linear or binary pipeline."""
     common_arguments = build_common_engine_arguments(
         plan=plan,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
+        output_initialized_callback=output_initialized_callback,
     )
     common_arguments.update(
         {
@@ -519,12 +526,14 @@ def dispatch_multi_phenotype_engine_pipeline(
     plan: execution_plan.RegenieExecutionPlan,
     stage_timing_recorder: typing.Any,
     telemetry_session: telemetry.TelemetrySession | None = None,
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None = None,
 ) -> tuple[Path | None, ...]:
     """Dispatch multiple phenotypes to the shared native pipeline."""
     common_arguments = build_common_engine_arguments(
         plan=plan,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
+        output_initialized_callback=output_initialized_callback,
     )
     common_arguments.update(
         {
@@ -568,6 +577,34 @@ def dispatch_multi_phenotype_engine_pipeline(
     return final_output_paths
 
 
+def build_output_initialized_metadata_callback(
+    *,
+    regenie_config: config.RegenieConfig,
+    plan: execution_plan.RegenieExecutionPlan,
+    telemetry_session: telemetry.TelemetrySession | None,
+) -> typing.Callable[[tuple[str, ...]], None]:
+    """Build an idempotent writer for metadata after output compatibility passes."""
+    phenotype_run_plans_by_name = {
+        phenotype_run_plan.phenotype_name: phenotype_run_plan for phenotype_run_plan in plan.phenotype_run_plans
+    }
+    written_phenotype_names: set[str] = set()
+
+    def write_initialized_metadata(phenotype_names: tuple[str, ...]) -> None:
+        for phenotype_name in phenotype_names:
+            if phenotype_name in written_phenotype_names:
+                continue
+            phenotype_run_plan = phenotype_run_plans_by_name[phenotype_name]
+            write_run_start_metadata(
+                regenie_config=regenie_config,
+                plan=plan,
+                phenotype_run_plan=phenotype_run_plan,
+                telemetry_session=telemetry_session,
+            )
+            written_phenotype_names.add(phenotype_name)
+
+    return write_initialized_metadata
+
+
 def log_writer_finished(
     *,
     telemetry_session: telemetry.TelemetrySession | None,
@@ -584,22 +621,6 @@ def log_writer_finished(
         phenotype=phenotype,
         final_output_path=None if final_output_path is None else str(final_output_path),
     )
-
-
-def write_execution_plan_start_metadata(
-    *,
-    regenie_config: config.RegenieConfig,
-    plan: execution_plan.RegenieExecutionPlan,
-    telemetry_session: telemetry.TelemetrySession | None = None,
-) -> None:
-    """Write per-phenotype metadata before native engine execution starts."""
-    for phenotype_run_plan in plan.phenotype_run_plans:
-        write_run_start_metadata(
-            regenie_config=regenie_config,
-            plan=plan,
-            phenotype_run_plan=phenotype_run_plan,
-            telemetry_session=telemetry_session,
-        )
 
 
 def write_run_start_metadata(

@@ -61,6 +61,12 @@ def build_default_pipeline_runtime_options() -> PipelineRuntimeOptions:
     )
 
 
+def write_test_run_manifest(output_run_paths: output.OutputRunPaths, header: dict[str, object]) -> bytes:
+    """Write a minimal run manifest and return its bytes."""
+    output.write_run_manifest(output_run_paths, {**header, "committed_chunks": []})
+    return output.get_run_manifest_path(output_run_paths).read_bytes()
+
+
 def test_build_phenotype_compute_groups_distinguishes_sample_modes() -> None:
     per_phenotype_groups = execution_plan.build_phenotype_compute_groups(
         phenotype_names=("trait_a", "trait_b"),
@@ -3169,10 +3175,11 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
+            output_initialized_callback=lambda phenotype_names: preparation_order.append("metadata"),
         )
 
     assert final_path == Path("results/final.parquet")
-    assert preparation_order == ["preflight", "manifest", "writer"]
+    assert preparation_order == ["preflight", "manifest", "metadata", "writer"]
     assert writer_session.finished is True
     engine = FakeRunEngine.instances[0]
     assert engine.bgen_path == "study.bgen"
@@ -3244,6 +3251,41 @@ def test_single_trait_preflight_failure_does_not_initialize_output_or_writer(tmp
     mock_initialize_output_run.assert_not_called()
     mock_create_writer_session.assert_not_called()
     assert not output.get_run_manifest_path(output_run_paths).exists()
+
+
+def test_multi_resume_manifest_mismatch_does_not_partially_initialize_outputs(tmp_path: Path) -> None:
+    first_output_run_paths = output.OutputRunPaths(tmp_path / "one.run", tmp_path / "one.run/chunks")
+    second_output_run_paths = output.OutputRunPaths(tmp_path / "two.run", tmp_path / "two.run/chunks")
+    first_output_run_paths.chunks_directory.mkdir(parents=True)
+    second_output_run_paths.chunks_directory.mkdir(parents=True)
+    first_header = {"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION, "phenotype_name": "one", "chunk_size": 32}
+    second_manifest_header = {
+        "schema_version": output.RUN_MANIFEST_SCHEMA_VERSION,
+        "phenotype_name": "two",
+        "chunk_size": 32,
+    }
+    second_current_header = {
+        "schema_version": output.RUN_MANIFEST_SCHEMA_VERSION,
+        "phenotype_name": "two",
+        "chunk_size": 64,
+    }
+    first_manifest_bytes = write_test_run_manifest(first_output_run_paths, first_header)
+    second_manifest_bytes = write_test_run_manifest(second_output_run_paths, second_manifest_header)
+
+    with pytest.raises(ValueError, match="chunk_size"):
+        regenie2_pipeline.initialize_pipeline_output_runs(
+            output_run_paths_by_trait=(first_output_run_paths, second_output_run_paths),
+            existing_manifests_by_trait=(
+                {**first_header, "committed_chunks": []},
+                {**second_manifest_header, "committed_chunks": []},
+            ),
+            current_headers_by_trait=(first_header, second_current_header),
+            resume=True,
+            resume_mode=types.ResumeMode.FAST,
+        )
+
+    assert output.get_run_manifest_path(first_output_run_paths).read_bytes() == first_manifest_bytes
+    assert output.get_run_manifest_path(second_output_run_paths).read_bytes() == second_manifest_bytes
 
 
 def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() -> None:
@@ -3728,10 +3770,11 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
             sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+            output_initialized_callback=lambda phenotype_names: preparation_order.append("metadata"),
         )
 
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
-    assert preparation_order == ["preflight", "manifest", "manifest", "writer", "writer"]
+    assert preparation_order == ["preflight", "manifest", "manifest", "metadata", "writer", "writer"]
     assert len(FakeRunEngine.instances) == 1
     engine = FakeRunEngine.instances[0]
     assert engine.run_method == "variant_major_buffered"

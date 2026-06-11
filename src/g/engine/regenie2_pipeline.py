@@ -101,6 +101,8 @@ class Regenie2PipelineContext:
         telemetry_session: Optional telemetry sink.
         alignment_config: Optional sample alignment settings.
         phenotype_compute_groups: Planned phenotype compute groups.
+        output_initialized_callback: Callback invoked after output manifests
+            validate successfully for one or more phenotypes.
 
     """
 
@@ -128,6 +130,7 @@ class Regenie2PipelineContext:
     telemetry_session: telemetry.TelemetrySession | None
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...]
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
 
     @property
     def uses_packed8_genotypes(self) -> bool:
@@ -238,6 +241,7 @@ def build_regenie2_pipeline_context(
     telemetry_session: telemetry.TelemetrySession | None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] = (),
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None = None,
 ) -> Regenie2PipelineContext:
     """Build a resolved lifecycle context for a REGENIE step 2 run."""
     resolved_stage_timing_recorder: timing.StageTimingRecorder | None
@@ -275,6 +279,7 @@ def build_regenie2_pipeline_context(
         telemetry_session=telemetry_session,
         alignment_config=alignment_config,
         phenotype_compute_groups=phenotype_compute_groups,
+        output_initialized_callback=output_initialized_callback,
     )
 
 
@@ -474,6 +479,13 @@ def initialize_pipeline_output_runs(
     resume_mode: types.ResumeMode,
 ) -> InitializedPipelineOutputs:
     """Validate/write output manifests and return committed chunk sets."""
+    if resume:
+        validate_pipeline_resume_compatibility(
+            output_run_paths_by_trait=output_run_paths_by_trait,
+            existing_manifests_by_trait=existing_manifests_by_trait,
+            current_headers_by_trait=current_headers_by_trait,
+            resume_mode=resume_mode,
+        )
     initialized_output_runs = tuple(
         output.initialize_output_run(
             output_run_paths=output_run_paths,
@@ -495,6 +507,39 @@ def initialize_pipeline_output_runs(
             for initialized_output_run in initialized_output_runs
         )
     )
+
+
+def validate_pipeline_resume_compatibility(
+    *,
+    output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
+    existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
+    current_headers_by_trait: tuple[dict[str, typing.Any], ...],
+    resume_mode: types.ResumeMode,
+) -> None:
+    """Validate all resume manifests before any output run is mutated."""
+    for output_run_paths, existing_manifest, current_header in zip(
+        output_run_paths_by_trait,
+        existing_manifests_by_trait,
+        current_headers_by_trait,
+        strict=True,
+    ):
+        if existing_manifest is None:
+            message = "Resume requires run_manifest.json."
+            raise ValueError(message)
+        output.validate_manifest_compatibility(existing_manifest, current_header)
+        if resume_mode == types.ResumeMode.STRICT:
+            output.repair_strict_manifest_chunk_commits(output_run_paths, existing_manifest)
+
+
+def notify_output_runs_initialized(
+    *,
+    context: Regenie2PipelineContext,
+    phenotype_names: tuple[str, ...],
+) -> None:
+    """Notify the runner that manifest compatibility has passed."""
+    if context.output_initialized_callback is None:
+        return
+    context.output_initialized_callback(phenotype_names)
 
 
 def create_pipeline_writer_sessions(
@@ -770,6 +815,7 @@ def run_single_trait_bgen_pipeline(
         resume=resume,
         resume_mode=resume_mode,
     )
+    notify_output_runs_initialized(context=context, phenotype_names=(phenotype_name,))
     writer_sessions = create_pipeline_writer_sessions(
         context=context,
         output_run_paths_by_trait=(output_run_paths,),
@@ -832,6 +878,7 @@ def run_regenie2_linear_bgen_pipeline(
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     telemetry_session: telemetry.TelemetrySession | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
     writer_settings = build_output_writer_settings(
@@ -867,6 +914,7 @@ def run_regenie2_linear_bgen_pipeline(
         telemetry_session=telemetry_session,
         alignment_config=alignment_config,
         phenotype_compute_groups=build_single_phenotype_compute_groups(phenotype_name),
+        output_initialized_callback=output_initialized_callback,
     )
     return run_single_trait_bgen_pipeline(
         context=context,
@@ -923,6 +971,7 @@ def run_regenie2_binary_bgen_pipeline(
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     telemetry_session: telemetry.TelemetrySession | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
     resolved_kernel_config = require_binary_kernel_config(kernel_config)
@@ -959,6 +1008,7 @@ def run_regenie2_binary_bgen_pipeline(
         telemetry_session=telemetry_session,
         alignment_config=alignment_config,
         phenotype_compute_groups=build_single_phenotype_compute_groups(phenotype_name),
+        output_initialized_callback=output_initialized_callback,
     )
     return run_single_trait_bgen_pipeline(
         context=context,
@@ -1013,6 +1063,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
     sample_mode: types.MultiPhenotypeSampleMode | None = None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None = None,
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None = None,
 ) -> tuple[Path | None, ...]:
     """Run the complete-case native BGEN pipeline once for multiple quantitative phenotypes."""
     return run_regenie2_multi_phenotype_bgen_pipeline(
@@ -1055,6 +1106,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         alignment_config=alignment_config,
         sample_mode=sample_mode,
         phenotype_compute_groups=phenotype_compute_groups,
+        output_initialized_callback=output_initialized_callback,
         association_mode=types.AssociationMode.REGENIE2_LINEAR,
     )
 
@@ -1101,6 +1153,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
     sample_mode: types.MultiPhenotypeSampleMode | None = None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None = None,
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None = None,
 ) -> tuple[Path | None, ...]:
     """Run the complete-case native BGEN pipeline once for multiple binary phenotypes."""
     resolved_kernel_config = require_binary_kernel_config(kernel_config)
@@ -1143,6 +1196,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
         alignment_config=alignment_config,
         sample_mode=sample_mode,
         phenotype_compute_groups=phenotype_compute_groups,
+        output_initialized_callback=output_initialized_callback,
         association_mode=types.AssociationMode.REGENIE2_BINARY,
     )
 
@@ -1189,6 +1243,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
     association_mode: types.AssociationMode,
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None = None,
 ) -> tuple[Path | None, ...]:
     """Shared implementation for multi-phenotype BGEN pipelines."""
     resolved_compute_groups = resolve_multi_phenotype_compute_groups(
@@ -1234,6 +1289,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         telemetry_session=telemetry_session,
         alignment_config=alignment_config,
         phenotype_compute_groups=resolved_compute_groups,
+        output_initialized_callback=output_initialized_callback,
     )
     if sample_mode == types.MultiPhenotypeSampleMode.PER_PHENOTYPE:
         return run_regenie2_grouped_per_phenotype_bgen_pipeline(
@@ -1373,6 +1429,15 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         phenotype_count=len(phenotype_names),
         phenotype_group_count=len(grouped_run_inputs),
     )
+    validate_grouped_per_phenotype_resume_compatibility(
+        context=context,
+        engine=engine,
+        grouped_run_inputs=grouped_run_inputs,
+        output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+        existing_manifests=existing_manifests,
+        resume=resume,
+        resume_mode=resume_mode,
+    )
 
     if should_use_union_grouped_bgen_delivery(context=context, grouped_run_inputs=grouped_run_inputs):
         return run_prepared_grouped_per_phenotype_union_bgen_pipeline(
@@ -1423,6 +1488,50 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         ):
             final_parquet_paths_by_index[phenotype_index] = final_parquet_path
     return tuple(final_parquet_paths_by_index)
+
+
+def validate_grouped_per_phenotype_resume_compatibility(
+    *,
+    context: Regenie2PipelineContext,
+    engine: _core.Regenie2RunEngine,
+    grouped_run_inputs: tuple[native_dispatch.NativeBgenGroupedRunInput, ...],
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    existing_manifests: tuple[dict[str, typing.Any] | None, ...],
+    resume: bool,
+    resume_mode: types.ResumeMode,
+) -> None:
+    """Validate all grouped per-phenotype manifests before initializing any group."""
+    if not resume:
+        return
+    selected_output_run_paths: list[output.OutputRunPaths] = []
+    selected_existing_manifests: list[dict[str, typing.Any] | None] = []
+    selected_current_headers: list[dict[str, typing.Any]] = []
+    for grouped_run_input in grouped_run_inputs:
+        compute_group = grouped_run_input.compute_group
+        run_input = grouped_run_input.run_input
+        for phenotype_index, phenotype_name in zip(
+            compute_group.phenotype_indices,
+            compute_group.phenotype_names,
+            strict=True,
+        ):
+            selected_output_run_paths.append(output_run_paths_by_phenotype[phenotype_index])
+            selected_existing_manifests.append(existing_manifests[phenotype_index])
+            selected_current_headers.append(
+                build_pipeline_manifest_header(
+                    context=context,
+                    phenotype_name=phenotype_name,
+                    covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
+                    sample_count=int(run_input.sample_indices.shape[0]),
+                    variant_count=int(engine.variant_count),
+                    multi_phenotype_sample_mode=output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+                )
+            )
+    validate_pipeline_resume_compatibility(
+        output_run_paths_by_trait=tuple(selected_output_run_paths),
+        existing_manifests_by_trait=tuple(selected_existing_manifests),
+        current_headers_by_trait=tuple(selected_current_headers),
+        resume_mode=resume_mode,
+    )
 
 
 def build_union_sample_indices(
@@ -1640,6 +1749,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         resume=resume,
         resume_mode=resume_mode,
     )
+    notify_output_runs_initialized(context=context, phenotype_names=compute_group.phenotype_names)
     committed_chunk_identifier_sets = initialized_outputs.committed_chunk_identifier_sets
     writer_sessions = create_pipeline_writer_sessions(
         context=context,

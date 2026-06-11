@@ -70,6 +70,10 @@ current requested run against manifest fields that affect results or output
 interpretation. A mismatch fails with a message naming the first incompatible
 manifest field.
 
+Incompatible resume attempts are non-mutating: `run_manifest.json` remains
+unchanged and `effective_config.toml` is not newly created or overwritten until
+all selected phenotype output runs pass compatibility checks.
+
 Common mismatch causes:
 
 - changed BGEN, sample, phenotype, covariate, or prediction-list file;
