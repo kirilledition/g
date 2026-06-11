@@ -467,8 +467,10 @@ def test_matrix_cpu_persistent_cache_uses_feature_aware_directory(
     cpu_arguments = run_specs[0].command_arguments
     gpu_arguments = run_specs[1].command_arguments
 
-    cpu_cache_directory = Path(cpu_arguments[cpu_arguments.index("--g-jax-cache-dir") + 1])
-    gpu_cache_directory = Path(gpu_arguments[gpu_arguments.index("--g-jax-cache-dir") + 1])
+    assert "--g-jax-cache-dir" not in cpu_arguments
+    assert "--g-jax-cache-dir" not in gpu_arguments
+    cpu_cache_directory = Path(cpu_arguments[cpu_arguments.index("--jax_cache_dir") + 1])
+    gpu_cache_directory = Path(gpu_arguments[gpu_arguments.index("--jax_cache_dir") + 1])
 
     assert cpu_cache_directory.parent.parent == tmp_path / "cpu-cache" / "host-cantor"
     assert cpu_cache_directory.parent.name == "features-abc123"

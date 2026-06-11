@@ -160,6 +160,30 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_diagnostics.include_span_events is True
 
 
+def test_python_options_merge_flat_options_with_native_sections() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options.update(
+        {
+            "compute": {
+                "device": "cpu",
+                "variant_limit": 100,
+            },
+            "output": {
+                "format": "parquet",
+                "writer_threads": 1,
+            },
+        }
+    )
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.g_output.out == Path("results/output")
+    assert regenie_config.g_output.format == types.OutputFormat.PARQUET
+    assert regenie_config.g_output.writer_threads == 1
+    assert regenie_config.g_compute.device == types.Device.CPU
+    assert regenie_config.g_compute.variant_limit == 100
+
+
 @pytest.mark.skip(reason="Outdated Python option metadata test; Rust config API is not settled.")
 def test_every_supported_option_has_explain_metadata() -> None:
     pass

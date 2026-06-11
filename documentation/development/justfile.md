@@ -820,6 +820,68 @@ just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
   `tool.workload_keys=[binary_cpu]`, `tool.workload_keys=[quantitative_gpu]`,
   or `tool.workload_keys=[quantitative_cpu]` to split the campaign.
 
+### `profile-chr10-gpu-binary-deep-dry-run *overrides`
+
+- Inputs: repository config only (no workloads executed).
+- Output: `profile_plan.json`, `profile_plan.md`, `artifact_manifest.json`
+  showing the exact plan for the g regenie GPU binary path on chr10 with every
+  profiler enabled.
+- Use when: inspecting what the full extensive profiling suite would do
+  (memray, scalene, nsight-systems, nsight-compute, py-spy, linux perf,
+  cProfile, JAX trace + device memory, Rust Criterion, etc.) without running
+  anything. Uses `dataset=chr10_local` + `workload_keys=[binary_gpu]` +
+  `include_regenie_baseline=false` + all `enable_*` profilers turned on.
+
+```bash
+just profile-chr10-gpu-binary-deep-dry-run tool.output_dir=data/profiles/chr10_gpu_binary_plan
+```
+
+### `profile-chr10-gpu-binary-deep-smoke *overrides`
+
+- Inputs: data (chr10 fixtures via the main checkout or
+  `GWAS_ENGINE_DATA_DIR`), GPU deps, perf extension, optional overrides.
+- Output: reduced smoke artifacts under the requested (or default) profile dir.
+- Use when: quickly validating the harness, command construction, and
+  artifact layout for the chr10 GPU binary full-suite case. Nsight Compute is
+  disabled in smoke for speed; a small `variant_limit` is applied.
+
+```bash
+just profile-chr10-gpu-binary-deep-smoke tool.output_dir=data/profiles/chr10_gpu_binary_smoke
+```
+
+### `profile-chr10-gpu-binary-deep *overrides`
+
+- Inputs: data, baseline tools, installed perf extension, GPU access, and
+  optional overrides.
+- Output: full deep-profile campaign artifacts (including per-profiler
+  captures) for the g regenie `--step 2 --bt --device gpu` (Firth/approx)
+  binary path on the chr10 1KG workload.
+- Use when: running the extensive multi-tool profiling suite on the current
+  (GPU-capable) host. All supported profilers are forced on; the landau
+  budget grid and `binary_gpu` only workload are used by default.
+
+### `profile-chr10-gpu-binary-deep-landau *overrides`
+
+- Inputs: data (chr10 + baselines_chr10 via explicit
+  `GWAS_ENGINE_DATA_DIR`), baseline tools, SLURM GPU access (landau).
+- Output: one long SLURM job on `landau` that executes the complete profiling
+  suite (memray allocations, scalene, nsys CUDA timelines, ncu kernel reports,
+  py-spy, linux perf, cProfile, JAX traces/memory, criterion, logging
+  perturbation, stage timings, cold/warm diagnostics, artifact manifest, etc.)
+  against the production `g regenie` GPU binary code path on real chr10 data.
+- Use when: this is the primary command requested for "run the full profiling
+  suite on g regenie gpu binary on chr10". The recipe automatically performs
+  the prerequisite `install-*` steps for GPU, perf, profiling tools, and
+  nsight inside the job. Defaults to a 12 h time limit with the standard
+  bounded landau grid. Artifacts appear under `data/profiles/...` inside the
+  main checkout (or an explicit `tool.output_dir`).
+
+```bash
+export GWAS_ENGINE_SLURM_TIME=12:00:00
+just profile-chr10-gpu-binary-deep-landau \
+  tool.output_dir=data/profiles/chr10_gpu_binary_full_$(date -u +%Y%m%dT%H%M%SZ)
+```
+
 ## Formatting, Linting, Type Checking, And Tests
 
 ### `format`

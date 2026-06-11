@@ -1542,6 +1542,7 @@ fn dispatch_cli_resolves_a_valid_regenie_command() {
     let fixture = FixtureDirectory::new("interface-dispatch");
     let (bgen_path, phenotype_path, pred_path) = interface_minimal_paths(&fixture, "dispatch");
     let output_path = fixture.path.join("run-output").display().to_string();
+    let jax_cache_path = fixture.path.join("jax-cache").display().to_string();
 
     let outcome = dispatch_cli(
         &[
@@ -1557,6 +1558,10 @@ fn dispatch_cli_resolves_a_valid_regenie_command() {
             pred_path.clone(),
             "--out".to_string(),
             output_path.clone(),
+            "--device".to_string(),
+            "cpu".to_string(),
+            "--jax_cache_dir".to_string(),
+            jax_cache_path.clone(),
         ],
         false,
     );
@@ -1568,6 +1573,8 @@ fn dispatch_cli_resolves_a_valid_regenie_command() {
     assert_eq!(config.input.pheno_columns, vec!["trait".to_string()]);
     assert_eq!(config.input.pred.as_ref(), Some(&pred_path));
     assert_eq!(config.g_output.out.as_ref(), Some(&output_path));
+    assert_eq!(format!("{:?}", config.g_compute.device), "Cpu");
+    assert_eq!(config.g_compute.jax_cache_dir.as_ref(), Some(&jax_cache_path));
 
     let direct_outcome = dispatch_cli(
         &[
@@ -1586,6 +1593,21 @@ fn dispatch_cli_resolves_a_valid_regenie_command() {
         true,
     );
     assert_eq!(direct_outcome.exit_code, 0);
+}
+
+#[test]
+fn dispatch_cli_rejects_removed_g_prefixed_runtime_flags() {
+    let outcome = dispatch_cli(
+        &[
+            "regenie".to_string(),
+            "--g-device".to_string(),
+            "cpu".to_string(),
+        ],
+        false,
+    );
+    assert_eq!(outcome.exit_code, 1);
+    assert!(outcome.stderr.contains("unexpected argument '--g-device'"));
+    assert!(outcome.stderr.contains("--device"));
 }
 
 #[test]

@@ -459,7 +459,7 @@ The full run writes:
 
 ### Profile JAX Cache Locations
 
-The deep profile harness always passes an explicit `--g-jax-cache-dir` to each
+The deep profile harness always passes an explicit `--jax_cache_dir` to each
 `g` child process, but the effective persistent-cache location is selected by
 device:
 
@@ -501,6 +501,23 @@ just profile-app-full-dry-run \
   tool.baseline_dir=baselines_chr10 \
   tool.linear_prediction_list=baselines_chr10/regenie_step1_qt_pred.list
 ```
+
+For the complete extensive profiling suite focused on the production
+`g regenie --step 2 --bt --device gpu` (binary Firth/approx) path using the
+real chr10 1KG workload, use the dedicated Justfile targets. These force the
+`binary_gpu` workload only and enable memray, scalene, nsight-systems,
+nsight-compute, py-spy, linux perf, cProfile, JAX trace/memory, and Rust
+Criterion:
+
+```bash
+just profile-chr10-gpu-binary-deep-dry-run tool.output_dir=...
+just profile-chr10-gpu-binary-deep-landau tool.output_dir=...
+```
+
+The `-landau` variant is the primary command that submits the full suite as a
+single long SLURM job on the `landau` GPU node. It also ensures the optional
+profiler and nsight tools are installed inside the job. See
+`documentation/development/justfile.md` for full descriptions.
 
 Useful overrides:
 

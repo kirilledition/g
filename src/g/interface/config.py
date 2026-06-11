@@ -156,7 +156,14 @@ def normalize_python_options(raw_options: typing.Mapping[str, typing.Any]) -> di
         option_target = FLAT_OPTION_SECTIONS.get(option_name)
         if option_target is None:
             if option_name in NATIVE_CONFIG_SECTION_NAMES:
-                normalized_options[option_name] = option_value
+                if isinstance(option_value, collections.abc.Mapping):
+                    section_options = normalized_options.setdefault(option_name, {})
+                    if isinstance(section_options, dict):
+                        section_options.update(option_value)
+                    else:
+                        normalized_options[option_name] = dict(option_value)
+                else:
+                    normalized_options[option_name] = option_value
                 continue
             if isinstance(option_value, collections.abc.Mapping):
                 message = f"Unknown g regenie option: {flatten_unknown_option_name(option_name, option_value)}"

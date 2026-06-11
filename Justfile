@@ -708,6 +708,34 @@ profile-app-full-landau *overrides:
     export GWAS_ENGINE_SLURM_GPUS_PER_TASK="${GWAS_ENGINE_SLURM_GPUS_PER_TASK:-1}"
     exec just slurm-gpu-run '. tooling/server/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} {{ overrides }}'
 
+# --- Focused chr10 GPU binary full profiling suite (memray + scalene + nsight + py-spy + perf + cProfile + JAX + criterion) ---
+
+# Dry-run (plan only) the extensive profiling campaign for g regenie --step 2 --bt --device gpu on chr10.
+# Uses the full set of profilers and the chr10 1KG workload via the deep harness.
+profile-chr10-gpu-binary-deep-dry-run *overrides:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu dataset=chr10_local tool.chromosome_label=chr10 tool.bed_prefix=1kg_chr10_full tool.baseline_dir=baselines_chr10 tool.linear_prediction_list=baselines_chr10/regenie_step1_qt_pred.list tool.binary_prediction_list=baselines_chr10/regenie_step1_pred.list tool.workload_keys=[binary_gpu] tool.include_regenie_baseline=false tool.dry_run=true tool.enable_jax_trace=true tool.enable_jax_memory_profile=true tool.enable_python_cprofile=true tool.enable_py_spy=true tool.enable_scalene=true tool.enable_memray=true tool.enable_linux_perf=true tool.enable_nsight_systems=true tool.enable_nsight_compute=true {{ overrides }}
+
+# Smoke test of the chr10 GPU binary full-suite profiler (small variant cap, reduced trials, nsight compute disabled for speed).
+profile-chr10-gpu-binary-deep-smoke *overrides: install-gpu-dependencies install-perf-extension
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu dataset=chr10_local tool.chromosome_label=chr10 tool.bed_prefix=1kg_chr10_full tool.baseline_dir=baselines_chr10 tool.linear_prediction_list=baselines_chr10/regenie_step1_qt_pred.list tool.binary_prediction_list=baselines_chr10/regenie_step1_pred.list tool.workload_keys=[binary_gpu] tool.include_regenie_baseline=false tool.enable_rust_criterion=false tool.smoke=true tool.variant_limit=2000 tool.enable_nsight_compute=false {{ overrides }}
+
+# Run the full extensive profiling suite locally (GPU host required). Enables every supported profiler for the g regenie GPU binary path on chr10.
+profile-chr10-gpu-binary-deep *overrides: install-gpu-dependencies install-perf-extension
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu dataset=chr10_local tool.chromosome_label=chr10 tool.bed_prefix=1kg_chr10_full tool.baseline_dir=baselines_chr10 tool.linear_prediction_list=baselines_chr10/regenie_step1_qt_pred.list tool.binary_prediction_list=baselines_chr10/regenie_step1_pred.list tool.workload_keys=[binary_gpu] tool.include_regenie_baseline=false tool.enable_jax_trace=true tool.enable_jax_memory_profile=true tool.enable_python_cprofile=true tool.enable_py_spy=true tool.enable_scalene=true tool.enable_memray=true tool.enable_linux_perf=true tool.enable_nsight_systems=true tool.enable_nsight_compute=true {{ deep_profile_landau_budget_overrides }} {{ overrides }}
+
+# Submit one long landau SLURM job that runs the full profiling suite (memray, scalene, nsight systems + compute, py-spy, linux perf, cProfile, JAX traces, criterion, etc.)
+# on the g regenie GPU binary path using real chr10 data. This is the primary command for "run the full profiling suite on g regenie gpu binary on chr10".
+# The pre-command installs the optional profilers and nsight tools into the job environment. Data fixtures are resolved via explicit GWAS_ENGINE_DATA_DIR because the main worktree owns the large gitignored inputs.
+profile-chr10-gpu-binary-deep-landau *overrides:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . tooling/server/server_env.sh
+    export GWAS_ENGINE_SLURM_TIME="${GWAS_ENGINE_SLURM_TIME:-12:00:00}"
+    export GWAS_ENGINE_SLURM_CPUS_PER_TASK="${GWAS_ENGINE_SLURM_CPUS_PER_TASK:-8}"
+    export GWAS_ENGINE_SLURM_MEMORY="${GWAS_ENGINE_SLURM_MEMORY:-64G}"
+    export GWAS_ENGINE_SLURM_GPUS_PER_TASK="${GWAS_ENGINE_SLURM_GPUS_PER_TASK:-1}"
+    exec just slurm-gpu-run 'GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data . tooling/server/server_env.sh && just install-gpu-dependencies && just install-perf-extension && just install-profiling-tools && just install-nsight-tools && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu dataset=chr10_local tool.chromosome_label=chr10 tool.bed_prefix=1kg_chr10_full tool.baseline_dir=baselines_chr10 tool.linear_prediction_list=baselines_chr10/regenie_step1_qt_pred.list tool.binary_prediction_list=baselines_chr10/regenie_step1_pred.list tool.workload_keys=[binary_gpu] tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} tool.enable_jax_trace=true tool.enable_jax_memory_profile=true tool.enable_python_cprofile=true tool.enable_py_spy=true tool.enable_scalene=true tool.enable_memray=true tool.enable_linux_perf=true tool.enable_nsight_systems=true tool.enable_nsight_compute=true {{ overrides }}'
+
 # Format code
 format:
     {{ server_env }} && uv run ruff format .
