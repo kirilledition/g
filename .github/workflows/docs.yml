@@ -61,11 +61,11 @@ jobs:
 
       - name: Configure GitHub Pages
         if: github.event_name == 'push'
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload documentation artifact
         if: github.event_name == 'push'
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: documentation_rendered_website
 
@@ -81,4 +81,4 @@ jobs:
     steps:
       - name: Deploy GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
