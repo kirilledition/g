@@ -146,9 +146,14 @@ def test_run_args_bridges_completion_events(
         run_id=None,
     )
     outcome = python_types.SimpleNamespace(stdout="", stderr="", exit_code=0, config=run_config)
+    runtime_policy = python_types.SimpleNamespace()
     with (
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
         unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(
+            runner_module, "build_runtime_policy", return_value=runtime_policy
+        ) as build_runtime_policy_mock,
+        unittest.mock.patch.object(runner_module, "require_compatible_runtime_policy") as runtime_preflight_mock,
         unittest.mock.patch.object(runner_module, "initialize_logging") as initialize_logging_mock,
         unittest.mock.patch.object(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
@@ -161,6 +166,8 @@ def test_run_args_bridges_completion_events(
     output = capsys.readouterr()
     assert exit_code == 0
     assert "Success. Chunked run saved to output.run" in output.out
+    build_runtime_policy_mock.assert_called_once_with(run_config, telemetry_session.paths)
+    runtime_preflight_mock.assert_called_once_with(runtime_policy)
     initialize_logging_mock.assert_called_once_with(run_config.g_diagnostics, telemetry_session.paths)
     regenie_mock.assert_called_once_with(
         run_config,
@@ -187,9 +194,14 @@ def test_run_args_bridges_interruption_events(
         shutdown.ShutdownSignal(number=2, name="SIGINT", exit_code=130)
     )
     outcome = python_types.SimpleNamespace(stdout="", stderr="", exit_code=0, config=run_config)
+    runtime_policy = python_types.SimpleNamespace()
     with (
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
         unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(
+            runner_module, "build_runtime_policy", return_value=runtime_policy
+        ) as build_runtime_policy_mock,
+        unittest.mock.patch.object(runner_module, "require_compatible_runtime_policy") as runtime_preflight_mock,
         unittest.mock.patch.object(runner_module, "initialize_logging") as initialize_logging_mock,
         unittest.mock.patch.object(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
@@ -202,6 +214,8 @@ def test_run_args_bridges_interruption_events(
     output = capsys.readouterr()
     assert exit_code == 130
     assert "Interrupted by SIGINT. Flushed queued chunks and saved committed output for --resume." in output.err
+    build_runtime_policy_mock.assert_called_once_with(run_config, telemetry_session.paths)
+    runtime_preflight_mock.assert_called_once_with(runtime_policy)
     initialize_logging_mock.assert_called_once_with(run_config.g_diagnostics, telemetry_session.paths)
     regenie_mock.assert_called_once_with(
         run_config,
@@ -222,10 +236,15 @@ def test_run_args_closes_telemetry_when_logging_initialization_fails() -> None:
     run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
     telemetry_session = FakeTelemetrySession()
     outcome = python_types.SimpleNamespace(stdout="", stderr="", exit_code=0, config=run_config)
+    runtime_policy = python_types.SimpleNamespace()
 
     with (
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
         unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(
+            runner_module, "build_runtime_policy", return_value=runtime_policy
+        ) as build_runtime_policy_mock,
+        unittest.mock.patch.object(runner_module, "require_compatible_runtime_policy") as runtime_preflight_mock,
         unittest.mock.patch.object(runner_module, "initialize_logging", side_effect=RuntimeError("logging failed")),
         unittest.mock.patch.object(runner_module, "regenie") as regenie_mock,
         pytest.raises(RuntimeError, match="logging failed"),
@@ -233,5 +252,7 @@ def test_run_args_closes_telemetry_when_logging_initialization_fails() -> None:
         cli.run_args(["regenie"])
 
     regenie_mock.assert_not_called()
+    build_runtime_policy_mock.assert_called_once_with(run_config, telemetry_session.paths)
+    runtime_preflight_mock.assert_called_once_with(runtime_policy)
     assert telemetry_session.logged_events == ["telemetry_session_closed"]
     assert telemetry_session.closed is True

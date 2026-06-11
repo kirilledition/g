@@ -12,7 +12,9 @@ def __getattr__(name: str) -> typing.Any:
         cli = importlib.import_module("g.cli")
         return cli.main
     if name in {
+        "RuntimeState",
         "RunArtifacts",
+        "describe_runtime_state",
         "regenie",
     }:
         api = importlib.import_module("g.api")
@@ -43,8 +45,10 @@ __all__ = [
     "OutputFormat",
     "RegenieTraitType",
     "RunArtifacts",
+    "RuntimeState",
     "SampleIdentifierSource",
     "SampleKeyMode",
+    "describe_runtime_state",
     "main",
     "regenie",
 ]

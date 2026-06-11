@@ -29,6 +29,8 @@ def run_args(arguments: typing.Sequence[str], *, direct_regenie: bool = False) -
 
     run_telemetry_session = telemetry.build_telemetry_session(outcome.config)
     try:
+        runtime_policy = runner.build_runtime_policy(outcome.config, run_telemetry_session.paths)
+        runner.require_compatible_runtime_policy(runtime_policy)
         runner.initialize_logging(outcome.config.g_diagnostics, run_telemetry_session.paths)
         print_native_cli_output(outcome)
         log_native_cli_output(outcome)

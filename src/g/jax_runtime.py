@@ -231,6 +231,22 @@ def require_compatible_jax_runtime_policy(compute_config: config.GComputeConfig)
 
     """
     requested_policy = build_jax_runtime_policy(compute_config)
+    return require_compatible_jax_runtime_policy_value(requested_policy)
+
+
+def require_compatible_jax_runtime_policy_value(requested_policy: JaxRuntimePolicy) -> JaxRuntimePolicy:
+    """Return the requested policy or raise when it conflicts with the configured policy.
+
+    Args:
+        requested_policy: Requested process-global JAX runtime policy.
+
+    Returns:
+        Requested JAX runtime policy.
+
+    Raises:
+        RuntimeError: If a previous run configured incompatible process-global JAX settings.
+
+    """
     if CONFIGURED_JAX_RUNTIME_POLICY is None or requested_policy == CONFIGURED_JAX_RUNTIME_POLICY:
         return requested_policy
     message = (

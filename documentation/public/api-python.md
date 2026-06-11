@@ -100,4 +100,10 @@ policy before execution. Repeated calls in the same process should reuse
 compatible runtime settings. Start a new process if you need incompatible
 logging, JAX, or thread-pool settings across runs.
 
+Use `g.describe_runtime_state()` or `g.api.describe_runtime_state()` to inspect
+the logging, Rayon, and JAX runtime policy already configured in the current
+Python process. A run that requests incompatible process-global settings fails
+before output-run preparation begins and reports the setting that requires a
+fresh Python process.
+
 For batching-related performance guidance, see [Performance Guide](performance-guide.md).

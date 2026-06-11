@@ -32,21 +32,25 @@ def complete_mock_output_initialization(
     output_initialized_callback(phenotype_names)
 
 
+def build_minimal_options(**overrides: object) -> dict[str, object]:
+    raw_options: dict[str, object] = {
+        "step": 2,
+        "qt": True,
+        "bgen": "dataset.bgen",
+        "sample": "dataset.sample",
+        "phenoFile": "phenotype.tsv",
+        "phenoCol": "trait",
+        "covarColList": "age,sex",
+        "pred": "predictions.list",
+        "out": "results/output",
+        "format": "parquet",
+    }
+    raw_options.update(overrides)
+    return raw_options
+
+
 def build_minimal_config() -> config.RegenieConfig:
-    return config.RegenieConfig.from_options(
-        {
-            "step": 2,
-            "qt": True,
-            "bgen": "dataset.bgen",
-            "sample": "dataset.sample",
-            "phenoFile": "phenotype.tsv",
-            "phenoCol": "trait",
-            "covarColList": "age,sex",
-            "pred": "predictions.list",
-            "out": "results/output",
-            "format": "parquet",
-        }
-    )
+    return config.RegenieConfig.from_options(build_minimal_options())
 
 
 def build_compute_config(**overrides: object) -> config.GComputeConfig:
@@ -87,6 +91,8 @@ def test_public_package_exposes_only_new_regenie_interface() -> None:
 def test_public_package_lazy_exports_cli_and_type_symbols() -> None:
     assert g.main is cli_module.main
     assert g.RunArtifacts is api.RunArtifacts
+    assert g.RuntimeState is api.RuntimeState
+    assert g.describe_runtime_state is api.describe_runtime_state
     assert g.OutputFormat is types.OutputFormat
     assert g.ArrayMemoryOrder is types.ArrayMemoryOrder
 
@@ -350,6 +356,7 @@ def test_regenie_completion_event_includes_user_visible_artifacts(tmp_path: Path
     )
 
     with (
+        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
         patch("g.runner.initialize_logging"),
         patch("g.runner.configure_runtime"),
         patch("g.runner.configure_runtime_before_jax_import"),
@@ -411,6 +418,7 @@ def test_regenie_graceful_shutdown_event_preserves_signal_exit(tmp_path: Path) -
     )
 
     with (
+        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
         patch("g.runner.initialize_logging"),
         patch("g.runner.configure_runtime"),
         patch("g.runner.configure_runtime_before_jax_import"),
@@ -717,7 +725,7 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
     with (
         patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy),
         patch("g.runner._core", FakeCoreModule()),
-        pytest.raises(RuntimeError, match="Logging is process-global"),
+        pytest.raises(RuntimeError, match="Logging runtime policy is process-global"),
     ):
         runner.initialize_logging(diagnostics_config)
 
@@ -779,7 +787,7 @@ def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -
     with (
         patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4),
         patch("g.runner._core", FakeCoreModule()),
-        pytest.raises(RuntimeError, match="already configured with 4 thread\\(s\\)"),
+        pytest.raises(RuntimeError, match="Rayon --threads is process-global"),
     ):
         runner.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
@@ -1010,6 +1018,95 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
 
     assert call_order.count(f"setup:{tmp_path / 'jax-cache'}") == 1
     assert f"setup:{tmp_path / 'other-jax-cache'}" not in call_order
+
+
+def test_describe_runtime_state_reports_process_global_state() -> None:
+    regenie_config = config.RegenieConfig.from_options(
+        build_minimal_options(telemetry="off", log_filter="g=debug", threads=4)
+    )
+    telemetry_paths = telemetry_module.resolve_telemetry_paths(regenie_config)
+    runtime_policy = runner.build_runtime_policy(regenie_config, telemetry_paths)
+
+    with (
+        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", runtime_policy.logging_policy),
+        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", runtime_policy.rayon_thread_count),
+        patch("g.jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY", runtime_policy.jax_policy),
+    ):
+        runtime_state = api.describe_runtime_state()
+
+    assert runtime_state == api.RuntimeState(
+        logging_policy=runtime_policy.logging_policy,
+        rayon_thread_count=4,
+        jax_policy=runtime_policy.jax_policy,
+    )
+    assert runtime_state.logging_policy is not None
+    assert "log-filter=g=debug" in runner.describe_logging_runtime_policy(runtime_state.logging_policy)
+
+
+def test_regenie_rejects_incompatible_logging_policy_before_output_prepare(tmp_path: Path) -> None:
+    configured_config = config.RegenieConfig.from_options(
+        build_minimal_options(telemetry="off", log_filter="g=info", out=str(tmp_path / "first"))
+    )
+    requested_config = config.RegenieConfig.from_options(
+        build_minimal_options(telemetry="off", log_filter="g=debug", out=str(tmp_path / "second"))
+    )
+    configured_policy = runner.build_runtime_policy(
+        configured_config,
+        telemetry_module.resolve_telemetry_paths(configured_config),
+    )
+
+    with (
+        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy.logging_policy),
+        patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
+        patch("g.runner.initialize_logging") as initialize_logging_mock,
+        patch("g.interface.config.validate_config_for_run"),
+        pytest.raises(RuntimeError, match=r"Logging runtime policy is process-global.*fresh Python process"),
+    ):
+        api.regenie(requested_config)
+
+    prepare_output_run_mock.assert_not_called()
+    initialize_logging_mock.assert_not_called()
+
+
+def test_regenie_rejects_incompatible_rayon_policy_before_output_prepare() -> None:
+    requested_config = config.RegenieConfig.from_options(build_minimal_options(telemetry="off", threads=8))
+
+    with (
+        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4),
+        patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
+        patch("g.runner.initialize_logging") as initialize_logging_mock,
+        patch("g.interface.config.validate_config_for_run"),
+        pytest.raises(RuntimeError, match=r"Rayon --threads is process-global.*fresh Python process"),
+    ):
+        api.regenie(requested_config)
+
+    prepare_output_run_mock.assert_not_called()
+    initialize_logging_mock.assert_not_called()
+
+
+def test_regenie_rejects_incompatible_jax_policy_before_output_prepare(tmp_path: Path) -> None:
+    configured_config = config.RegenieConfig.from_options(
+        build_minimal_options(telemetry="off", jax_cache_dir=str(tmp_path / "first-cache"))
+    )
+    requested_config = config.RegenieConfig.from_options(
+        build_minimal_options(telemetry="off", jax_cache_dir=str(tmp_path / "second-cache"))
+    )
+    configured_jax_policy = jax_runtime.build_jax_runtime_policy(configured_config.g_compute)
+
+    with (
+        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None),
+        patch("g.jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY", configured_jax_policy),
+        patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
+        patch("g.runner.initialize_logging") as initialize_logging_mock,
+        patch("g.interface.config.validate_config_for_run"),
+        pytest.raises(RuntimeError, match=r"JAX runtime is already configured.*fresh Python process"),
+    ):
+        api.regenie(requested_config)
+
+    prepare_output_run_mock.assert_not_called()
+    initialize_logging_mock.assert_not_called()
 
 
 def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_config() -> None:

@@ -52,6 +52,38 @@ class LoggingRuntimePolicy:
     trace_event_cap: int | None
 
 
+@dataclass(frozen=True)
+class RuntimePolicy:
+    """Process-global runtime choices requested by one run.
+
+    Attributes:
+        logging_policy: Requested logging and tracing sink policy.
+        rayon_thread_count: Requested Rayon thread count, or None when unset.
+        jax_policy: Requested JAX runtime policy.
+
+    """
+
+    logging_policy: LoggingRuntimePolicy
+    rayon_thread_count: int | None
+    jax_policy: jax_runtime.JaxRuntimePolicy
+
+
+@dataclass(frozen=True)
+class RuntimeState:
+    """Process-global runtime choices already configured in this Python process.
+
+    Attributes:
+        logging_policy: Configured logging and tracing sink policy.
+        rayon_thread_count: Configured Rayon thread count.
+        jax_policy: Configured JAX runtime policy.
+
+    """
+
+    logging_policy: LoggingRuntimePolicy | None
+    rayon_thread_count: int | None
+    jax_policy: jax_runtime.JaxRuntimePolicy | None
+
+
 CONFIGURED_LOGGING_RUNTIME_POLICY: LoggingRuntimePolicy | None = None
 CONFIGURED_RAYON_THREAD_COUNT: int | None = None
 
@@ -118,6 +150,107 @@ def configure_runtime_before_jax_import(
 def configure_jax_runtime(compute_config: config.GComputeConfig) -> jax_runtime.JaxRuntimeSetupReport | None:
     """Configure JAX lazily."""
     return configure_runtime_before_jax_import(compute_config)
+
+
+def build_logging_runtime_policy(
+    diagnostics_config: config.GDiagnosticsConfig,
+    telemetry_paths: telemetry.TelemetryPaths | None = None,
+) -> LoggingRuntimePolicy:
+    """Build the process-global logging policy requested by a run."""
+    telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
+    log_file = diagnostics_config.log_file if telemetry_stream_file is None else None
+    trace_file = diagnostics_config.trace_file if telemetry_stream_file is None else telemetry_stream_file
+    trace_filter = diagnostics_config.trace_filter
+    if telemetry_stream_file is not None and diagnostics_config.telemetry != types.TelemetryMode.TRACE:
+        trace_filter = diagnostics_config.log_filter
+    trace_event_cap = (
+        diagnostics_config.trace_event_cap if diagnostics_config.telemetry == types.TelemetryMode.TRACE else None
+    )
+    return LoggingRuntimePolicy(
+        log_filter=diagnostics_config.log_filter,
+        log_file=log_file,
+        log_stderr=diagnostics_config.log_stderr,
+        log_queue_size=diagnostics_config.log_queue_size,
+        log_lossy=diagnostics_config.log_lossy,
+        include_source_location=diagnostics_config.include_source_location,
+        include_span_events=diagnostics_config.include_span_events,
+        trace_file=trace_file,
+        trace_filter=trace_filter,
+        trace_event_cap=trace_event_cap,
+    )
+
+
+def build_runtime_policy(
+    regenie_config: config.RegenieConfig,
+    telemetry_paths: telemetry.TelemetryPaths,
+) -> RuntimePolicy:
+    """Build the process-global runtime policy requested by a run."""
+    return RuntimePolicy(
+        logging_policy=build_logging_runtime_policy(regenie_config.g_diagnostics, telemetry_paths),
+        rayon_thread_count=regenie_config.trait.threads,
+        jax_policy=jax_runtime.build_jax_runtime_policy(regenie_config.g_compute),
+    )
+
+
+def describe_logging_runtime_policy(policy: LoggingRuntimePolicy) -> str:
+    """Format a logging runtime policy for concise errors."""
+    log_file = "<none>" if policy.log_file is None else str(policy.log_file)
+    trace_file = "<none>" if policy.trace_file is None else str(policy.trace_file)
+    trace_event_cap = "<none>" if policy.trace_event_cap is None else str(policy.trace_event_cap)
+    return (
+        f"log-filter={policy.log_filter}, "
+        f"log-file={log_file}, "
+        f"log-stderr={policy.log_stderr}, "
+        f"log-queue-size={policy.log_queue_size}, "
+        f"log-lossy={policy.log_lossy}, "
+        f"include-source-location={policy.include_source_location}, "
+        f"include-span-events={policy.include_span_events}, "
+        f"trace-file={trace_file}, "
+        f"trace-filter={policy.trace_filter}, "
+        f"trace-event-cap={trace_event_cap}"
+    )
+
+
+def require_compatible_logging_runtime_policy(logging_policy: LoggingRuntimePolicy) -> None:
+    """Raise when a run requests incompatible process-global logging settings."""
+    if CONFIGURED_LOGGING_RUNTIME_POLICY is None or logging_policy == CONFIGURED_LOGGING_RUNTIME_POLICY:
+        return
+    message = (
+        "Logging runtime policy is process-global for this Python process. "
+        f"Configured policy: {describe_logging_runtime_policy(CONFIGURED_LOGGING_RUNTIME_POLICY)}. "
+        f"Requested policy: {describe_logging_runtime_policy(logging_policy)}. "
+        "Start a fresh Python process for incompatible logging settings."
+    )
+    raise RuntimeError(message)
+
+
+def require_compatible_rayon_thread_count(thread_count: int | None) -> None:
+    """Raise when a run requests an incompatible process-global Rayon thread count."""
+    if thread_count is None or CONFIGURED_RAYON_THREAD_COUNT is None or thread_count == CONFIGURED_RAYON_THREAD_COUNT:
+        return
+    message = (
+        "Rayon --threads is process-global for this Python process. "
+        f"Configured thread count: {CONFIGURED_RAYON_THREAD_COUNT}. "
+        f"Requested thread count: {thread_count}. "
+        "Start a fresh Python process for incompatible Rayon settings."
+    )
+    raise RuntimeError(message)
+
+
+def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> None:
+    """Raise when a run conflicts with process-global runtime state."""
+    require_compatible_logging_runtime_policy(runtime_policy.logging_policy)
+    require_compatible_rayon_thread_count(runtime_policy.rayon_thread_count)
+    jax_runtime.require_compatible_jax_runtime_policy_value(runtime_policy.jax_policy)
+
+
+def describe_runtime_state() -> RuntimeState:
+    """Return the process-global runtime state known to this Python process."""
+    return RuntimeState(
+        logging_policy=CONFIGURED_LOGGING_RUNTIME_POLICY,
+        rayon_thread_count=CONFIGURED_RAYON_THREAD_COUNT,
+        jax_policy=jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY,
+    )
 
 
 def build_stage_timing_recorder(stage_timing_path: Path | None, *, force: bool = False) -> typing.Any:
@@ -187,12 +320,7 @@ def configure_rayon_thread_pool(core_module: typing.Any, thread_count: int) -> N
     global CONFIGURED_RAYON_THREAD_COUNT
     if thread_count == CONFIGURED_RAYON_THREAD_COUNT:
         return
-    if CONFIGURED_RAYON_THREAD_COUNT is not None:
-        message = (
-            "Rayon global thread pool is already configured with "
-            f"{CONFIGURED_RAYON_THREAD_COUNT} thread(s); cannot apply requested --threads={thread_count}."
-        )
-        raise RuntimeError(message)
+    require_compatible_rayon_thread_count(thread_count)
     try:
         core_module.configure_rayon_global_thread_pool(thread_count)
     except RuntimeError as error:
@@ -225,47 +353,25 @@ def initialize_logging(
 ) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""
     global CONFIGURED_LOGGING_RUNTIME_POLICY
-    telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
-    log_file = diagnostics_config.log_file if telemetry_stream_file is None else None
-    trace_file = diagnostics_config.trace_file if telemetry_stream_file is None else telemetry_stream_file
-    trace_filter = diagnostics_config.trace_filter
-    if telemetry_stream_file is not None and diagnostics_config.telemetry != types.TelemetryMode.TRACE:
-        trace_filter = diagnostics_config.log_filter
-    trace_event_cap = (
-        diagnostics_config.trace_event_cap if diagnostics_config.telemetry == types.TelemetryMode.TRACE else None
-    )
-    runtime_policy = LoggingRuntimePolicy(
-        log_filter=diagnostics_config.log_filter,
-        log_file=log_file,
-        log_stderr=diagnostics_config.log_stderr,
-        log_queue_size=diagnostics_config.log_queue_size,
-        log_lossy=diagnostics_config.log_lossy,
-        include_source_location=diagnostics_config.include_source_location,
-        include_span_events=diagnostics_config.include_span_events,
-        trace_file=trace_file,
-        trace_filter=trace_filter,
-        trace_event_cap=trace_event_cap,
-    )
+    logging_policy = build_logging_runtime_policy(diagnostics_config, telemetry_paths)
+    require_compatible_logging_runtime_policy(logging_policy)
     initialized_logging = _core.initialize_logging(
-        log_filter=diagnostics_config.log_filter,
-        log_file=None if log_file is None else str(log_file),
-        log_stderr=diagnostics_config.log_stderr,
-        log_queue_size=diagnostics_config.log_queue_size,
-        log_lossy=diagnostics_config.log_lossy,
-        include_source_location=diagnostics_config.include_source_location,
-        include_span_events=diagnostics_config.include_span_events,
-        trace_file=None if trace_file is None else str(trace_file),
-        trace_filter=trace_filter,
-        trace_event_cap=trace_event_cap,
+        log_filter=logging_policy.log_filter,
+        log_file=None if logging_policy.log_file is None else str(logging_policy.log_file),
+        log_stderr=logging_policy.log_stderr,
+        log_queue_size=logging_policy.log_queue_size,
+        log_lossy=logging_policy.log_lossy,
+        include_source_location=logging_policy.include_source_location,
+        include_span_events=logging_policy.include_span_events,
+        trace_file=None if logging_policy.trace_file is None else str(logging_policy.trace_file),
+        trace_filter=logging_policy.trace_filter,
+        trace_event_cap=logging_policy.trace_event_cap,
     )
     if initialized_logging is False:
-        if CONFIGURED_LOGGING_RUNTIME_POLICY is not None and runtime_policy != CONFIGURED_LOGGING_RUNTIME_POLICY:
-            message = "Logging is process-global; start a new process or reuse the first run's logging configuration."
-            raise RuntimeError(message)
-        CONFIGURED_LOGGING_RUNTIME_POLICY = runtime_policy
+        CONFIGURED_LOGGING_RUNTIME_POLICY = logging_policy
         return
     if initialized_logging is True:
-        CONFIGURED_LOGGING_RUNTIME_POLICY = runtime_policy
+        CONFIGURED_LOGGING_RUNTIME_POLICY = logging_policy
 
 
 def regenie(
@@ -278,6 +384,8 @@ def regenie(
     """Run the shared REGENIE-compatible config path."""
     config.validate_config_for_run(regenie_config)
     active_telemetry_session = run_telemetry_session or telemetry.build_telemetry_session(regenie_config)
+    runtime_policy = build_runtime_policy(regenie_config, active_telemetry_session.paths)
+    require_compatible_runtime_policy(runtime_policy)
     if initialize_logging_on_entry:
         initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
     association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)

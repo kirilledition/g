@@ -176,6 +176,11 @@ branch.
 | Resume | `--resume`, `--resume_mode` | Manifest-backed restart behavior. |
 | Diagnostics | `--telemetry`, `--log_dir`, `--log_file`, `--trace_event_cap`, `--log_lossy` | Progress, profile, trace, and logging controls. |
 
+Logging sinks, `--threads`, and JAX runtime settings are process-global inside
+one Python process. Single CLI invocations are isolated by their process. Python
+callers that run multiple jobs in one process must reuse compatible settings or
+start a fresh process when `g` reports an incompatible runtime policy.
+
 ## Recognized But Unsupported Options
 
 `uv run g regenie --help` is the authoritative list of supported flags on this
