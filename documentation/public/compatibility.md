@@ -11,7 +11,7 @@ release line exists.
 | --- | --- |
 | REGENIE Step 2 quantitative traits | Supported with `--step 2 --qt`. |
 | REGENIE Step 2 binary score test | Supported with `--step 2 --bt`. |
-| Binary approximate Firth fallback | Supported with `--bt --firth --approx`; parity and performance remain sensitive. |
+| Binary approximate Firth fallback | Experimental with `--bt --firth --approx`; not production-stable until upstream golden parity is added. |
 | BGEN 1.2 input | Supported. |
 | Oxford `.sample` files | Supported. |
 | Embedded BGEN sample identifiers | Supported when compatible with sample-key mode. |
@@ -52,6 +52,8 @@ Important migration limits:
 - Keep BGEN Step 2 inputs; BED/PGEN Step 2 inputs are not accepted.
 - Compare equivalent statistical modes only. A binary score-only `g` run should
   not be compared to upstream REGENIE output that used approximate Firth.
+- Treat `--bt --firth --approx` as experimental until the pre-release parity
+  suite includes an upstream golden approximate-Firth fixture.
 - REGENIE text output is selected with `--format regenie`; Arrow and
   Parquet are the performance-oriented defaults for this engine.
 

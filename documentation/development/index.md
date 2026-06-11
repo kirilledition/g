@@ -73,6 +73,7 @@ configuration, GitHub Pages settings, and documentation workflow behavior.
 | Native BGEN, sample, output, and manifest boundaries | [Native I/O](native-io.md) |
 | JAX quantitative, binary, and Firth kernels | [Compute Kernels](compute-kernels.md) |
 | Testing, correctness, and parity expectations | [Testing and Parity](testing-and-parity.md) |
+| Pre-release REGENIE Step 2 parity gate | [REGENIE Parity Suite](regenie-parity-suite.md) |
 | Benchmark taxonomy and protocols | [Benchmarking](benchmarking.md) |
 | Telemetry and logging architecture | [Telemetry](telemetry.md) |
 | Development tooling | [Tooling](tooling.md) |

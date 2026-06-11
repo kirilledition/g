@@ -41,6 +41,7 @@ nav = [
     "development/configuration-frontend.md",
     "development/telemetry.md",
     "development/testing-and-parity.md",
+    "development/regenie-parity-suite.md",
     "development/benchmarking.md",
     "development/native-io.md",
     "development/compute-kernels.md",

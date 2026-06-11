@@ -4,17 +4,21 @@ import dataclasses
 import os
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import pytest
 
+import tests.parity.harness
 from g import api, types
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIRECTORY = Path(os.environ.get("GWAS_ENGINE_DATA_DIR", str(REPOSITORY_ROOT / "data")))
 BASELINE_DIRECTORY = DATA_DIRECTORY / "baselines"
-PHENOTYPE_NAME = "phenotype_continuous"
+QUANTITATIVE_PHENOTYPE_NAME = "phenotype_continuous"
+BINARY_PHENOTYPE_NAME = "phenotype_binary"
 PARITY_VARIANT_LIMIT = 1024
+PARITY_METADATA = tests.parity.harness.load_golden_metadata()
+QUANTITATIVE_WORKFLOW = PARITY_METADATA.workflow_by_identifier("quantitative_single_bgen_loco")
+BINARY_SCORE_WORKFLOW = PARITY_METADATA.workflow_by_identifier("binary_score_only")
 
 pytestmark = pytest.mark.phase0_data
 
@@ -27,46 +31,33 @@ class Regenie2ParityResults:
     baseline_results: pl.DataFrame
 
 
-def read_whitespace_table(table_path: Path) -> pl.DataFrame:
-    """Read a whitespace-delimited table into a Polars frame."""
-    table_lines = [line.strip() for line in table_path.read_text().splitlines() if line.strip()]
-    if not table_lines:
-        raise ValueError(f"Results table is empty: {table_path}")
-    header_columns = table_lines[0].split()
-    rows: list[dict[str, str]] = []
-    for line in table_lines[1:]:
-        values = line.split()
-        if len(values) != len(header_columns):
-            raise ValueError(
-                f"Unexpected column count in {table_path}: expected {len(header_columns)}, got {len(values)}"
-            )
-        rows.append(dict(zip(header_columns, values, strict=True)))
-    return pl.DataFrame(rows)
+def build_statistic_tolerance_parameters(
+    workflow: tests.parity.harness.GoldenWorkflow,
+) -> list[object]:
+    """Build stable pytest parameters from the checked-in parity metadata."""
+    return [
+        pytest.param(tolerance, id=tolerance.observed_column)
+        for tolerance in workflow.tolerances
+    ]
 
 
-def load_regenie_baseline_results(variant_limit: int) -> pl.DataFrame:
+def load_regenie_baseline_results(baseline_path: Path, workflow: tests.parity.harness.GoldenWorkflow) -> pl.DataFrame:
     """Load and normalize the saved REGENIE baseline output."""
-    baseline_frame = read_whitespace_table(BASELINE_DIRECTORY / "regenie_step2_qt_phenotype_continuous.regenie").head(
-        variant_limit
-    )
-    return baseline_frame.rename(
-        {
-            "BETA": "baseline_beta",
-            "SE": "baseline_standard_error",
-            "CHISQ": "baseline_chi_squared",
-            "LOG10P": "baseline_log10_p_value",
-        },
-    ).with_columns(
-        pl.col("baseline_beta").cast(pl.Float64),
-        pl.col("baseline_standard_error").cast(pl.Float64),
-        pl.col("baseline_chi_squared").cast(pl.Float64),
-        pl.col("baseline_log10_p_value").cast(pl.Float64),
+    baseline_frame = tests.parity.harness.read_regenie_table(baseline_path).head(PARITY_VARIANT_LIMIT)
+    baseline_rename_mapping = {
+        tolerance.observed_column: tolerance.baseline_column
+        for tolerance in workflow.tolerances
+        if tolerance.observed_column != tolerance.baseline_column
+    }
+    baseline_statistic_columns = [tolerance.baseline_column for tolerance in workflow.tolerances]
+    return baseline_frame.rename(baseline_rename_mapping).with_columns(
+        pl.col(statistic_column).cast(pl.Float64) for statistic_column in baseline_statistic_columns
     )
 
 
 @pytest.fixture(scope="module")
-def regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie2ParityResults:
-    """Run one capped REGENIE step 2 scan and align it to the baseline output."""
+def quantitative_regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie2ParityResults:
+    """Run one capped quantitative REGENIE step 2 scan and align it to the baseline output."""
     required_paths = [
         DATA_DIRECTORY / "1kg_chr22_full.bgen",
         DATA_DIRECTORY / "1kg_chr22_full.sample",
@@ -86,7 +77,7 @@ def regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie
             "bgen": DATA_DIRECTORY / "1kg_chr22_full.bgen",
             "sample": DATA_DIRECTORY / "1kg_chr22_full.sample",
             "phenoFile": DATA_DIRECTORY / "pheno_cont.txt",
-            "phenoCol": PHENOTYPE_NAME,
+            "phenoCol": QUANTITATIVE_PHENOTYPE_NAME,
             "out": output_directory / "regenie2_parity",
             "covarFile": DATA_DIRECTORY / "covariates.txt",
             "covarCol": ("age", "sex"),
@@ -97,12 +88,66 @@ def regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie
             "staging_depth": 1,
             "output_run_directory": output_directory / "regenie2_parity",
             "format": types.OutputFormat.PARQUET.value,
+            "finalize_parquet": True,
         }
     )
 
     assert artifacts.final_parquet is not None
     observed_results = pl.read_parquet(artifacts.final_parquet)
-    baseline_results = load_regenie_baseline_results(PARITY_VARIANT_LIMIT)
+    baseline_results = load_regenie_baseline_results(
+        BASELINE_DIRECTORY / "regenie_step2_qt_phenotype_continuous.regenie",
+        QUANTITATIVE_WORKFLOW,
+    )
+
+    return Regenie2ParityResults(
+        observed_results=observed_results,
+        baseline_results=baseline_results,
+    )
+
+
+@pytest.fixture(scope="module")
+def binary_score_regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie2ParityResults:
+    """Run one capped binary score-only REGENIE step 2 scan and align it to the baseline output."""
+    required_paths = [
+        DATA_DIRECTORY / "1kg_chr22_full.bgen",
+        DATA_DIRECTORY / "1kg_chr22_full.sample",
+        DATA_DIRECTORY / "pheno_bin.txt",
+        DATA_DIRECTORY / "covariates.txt",
+        BASELINE_DIRECTORY / "regenie_step1_pred.list",
+        BASELINE_DIRECTORY / "regenie_step2_score_only_phenotype_binary.regenie",
+    ]
+    if not all(path.exists() for path in required_paths):
+        pytest.skip("REGENIE phase-0 binary score-only baseline data is not available.")
+
+    output_directory = tmp_path_factory.mktemp("regenie2-binary-score-parity")
+    artifacts = api.regenie.from_options(
+        {
+            "step": 2,
+            "bt": True,
+            "bgen": DATA_DIRECTORY / "1kg_chr22_full.bgen",
+            "sample": DATA_DIRECTORY / "1kg_chr22_full.sample",
+            "phenoFile": DATA_DIRECTORY / "pheno_bin.txt",
+            "phenoCol": BINARY_PHENOTYPE_NAME,
+            "out": output_directory / "regenie2_binary_score_parity",
+            "covarFile": DATA_DIRECTORY / "covariates.txt",
+            "covarCol": ("age", "sex"),
+            "pred": BASELINE_DIRECTORY / "regenie_step1_pred.list",
+            "bsize": 512,
+            "device": types.Device.CPU.value,
+            "variant_limit": PARITY_VARIANT_LIMIT,
+            "staging_depth": 1,
+            "output_run_directory": output_directory / "regenie2_binary_score_parity",
+            "format": types.OutputFormat.PARQUET.value,
+            "finalize_parquet": True,
+        }
+    )
+
+    assert artifacts.final_parquet is not None
+    observed_results = pl.read_parquet(artifacts.final_parquet)
+    baseline_results = load_regenie_baseline_results(
+        BASELINE_DIRECTORY / "regenie_step2_score_only_phenotype_binary.regenie",
+        BINARY_SCORE_WORKFLOW,
+    )
 
     return Regenie2ParityResults(
         observed_results=observed_results,
@@ -111,45 +156,51 @@ def regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie
 
 
 @pytest.mark.parametrize(
-    ("observed_column", "baseline_column", "absolute_tolerance"),
-    [
-        ("BETA", "baseline_beta", 1.0e-3),
-        ("SE", "baseline_standard_error", 1.0e-3),
-        ("CHISQ", "baseline_chi_squared", 1.5e-2),
-        ("LOG10P", "baseline_log10_p_value", 1.5e-2),
-    ],
+    "tolerance",
+    build_statistic_tolerance_parameters(QUANTITATIVE_WORKFLOW),
 )
-def test_regenie2_linear_matches_regenie_baseline_statistics(
-    regenie2_parity_results: Regenie2ParityResults,
-    observed_column: str,
-    baseline_column: str,
-    absolute_tolerance: float,
+def test_regenie2_quantitative_linear_matches_regenie_baseline_statistics(
+    quantitative_regenie2_parity_results: Regenie2ParityResults,
+    tolerance: tests.parity.harness.StatisticTolerance,
 ) -> None:
-    """Validate association statistics match REGENIE within tolerance."""
-    merged_results = regenie2_parity_results.observed_results.join(
-        regenie2_parity_results.baseline_results.select("ID", baseline_column),
-        on="ID",
-        how="inner",
+    """Validate quantitative association statistics match REGENIE within tolerance."""
+    tests.parity.harness.assert_statistic_columns_match(
+        quantitative_regenie2_parity_results.observed_results,
+        quantitative_regenie2_parity_results.baseline_results,
+        join_column="ID",
+        tolerance=tolerance,
+        expected_row_count=PARITY_VARIANT_LIMIT,
     )
 
-    assert merged_results.height == PARITY_VARIANT_LIMIT
-    np.testing.assert_allclose(
-        merged_results.get_column(observed_column).to_numpy(),
-        merged_results.get_column(baseline_column).to_numpy(),
-        atol=absolute_tolerance,
+
+@pytest.mark.parametrize(
+    "tolerance",
+    build_statistic_tolerance_parameters(BINARY_SCORE_WORKFLOW),
+)
+def test_regenie2_binary_score_only_matches_regenie_baseline_statistics(
+    binary_score_regenie2_parity_results: Regenie2ParityResults,
+    tolerance: tests.parity.harness.StatisticTolerance,
+) -> None:
+    """Validate binary score-only association statistics match REGENIE within tolerance."""
+    tests.parity.harness.assert_statistic_columns_match(
+        binary_score_regenie2_parity_results.observed_results,
+        binary_score_regenie2_parity_results.baseline_results,
+        join_column="ID",
+        tolerance=tolerance,
+        expected_row_count=PARITY_VARIANT_LIMIT,
     )
 
 
 def test_regenie2_linear_api_produces_valid_output(
-    regenie2_parity_results: Regenie2ParityResults,
+    quantitative_regenie2_parity_results: Regenie2ParityResults,
 ) -> None:
     """Validate the end-to-end API output shape and validity columns."""
-    observed_results = regenie2_parity_results.observed_results
+    observed_results = quantitative_regenie2_parity_results.observed_results
 
     assert observed_results.height == PARITY_VARIANT_LIMIT
     assert observed_results.get_column("ID").n_unique() == PARITY_VARIANT_LIMIT
     assert (observed_results.get_column("N") > 0).all()
-    assert np.isfinite(observed_results.get_column("BETA").to_numpy()).all()
-    assert np.isfinite(observed_results.get_column("SE").to_numpy()).all()
-    assert np.isfinite(observed_results.get_column("CHISQ").to_numpy()).all()
-    assert np.isfinite(observed_results.get_column("LOG10P").to_numpy()).all()
+    assert observed_results.get_column("BETA").is_finite().all()
+    assert observed_results.get_column("SE").is_finite().all()
+    assert observed_results.get_column("CHISQ").is_finite().all()
+    assert observed_results.get_column("LOG10P").is_finite().all()

@@ -1,0 +1,267 @@
+{
+  "schema_version": 1,
+  "regenie_reference": {
+    "name": "upstream REGENIE",
+    "version": "v4.1",
+    "download_url": "https://github.com/rgcgithub/regenie/releases/tag/v4.1"
+  },
+  "workflows": [
+    {
+      "identifier": "quantitative_single_bgen_loco",
+      "title": "Quantitative single phenotype, BGEN, covariates, LOCO predictions",
+      "status": "external_golden",
+      "description": "Phase-0 1KG chromosome 22 quantitative Step 2 comparison against upstream REGENIE output.",
+      "regenie_version": "v4.1",
+      "regenie_commands": [
+        "regenie --step 1 --bed data/1kg_chr22_full --phenoFile data/pheno_cont.txt --covarFile data/covariates.txt --qt --force-step1 --bsize 1000 --out data/baselines/regenie_step1_qt",
+        "regenie --step 2 --bgen data/1kg_chr22_full.bgen --sample data/1kg_chr22_full.sample --ref-first --phenoFile data/pheno_cont.txt --covarFile data/covariates.txt --qt --bsize 400 --pred data/baselines/regenie_step1_qt_pred.list --out data/baselines/regenie_step2_qt"
+      ],
+      "expected_output_path": "data/baselines/regenie_step2_qt_phenotype_continuous.regenie",
+      "g_command_options": {
+        "step": 2,
+        "qt": true,
+        "bgen": "data/1kg_chr22_full.bgen",
+        "sample": "data/1kg_chr22_full.sample",
+        "phenoFile": "data/pheno_cont.txt",
+        "phenoCol": "phenotype_continuous",
+        "covarFile": "data/covariates.txt",
+        "covarCol": ["age", "sex"],
+        "pred": "data/baselines/regenie_step1_qt_pred.list",
+        "bsize": 512,
+        "device": "cpu",
+        "variant_limit": 1024,
+        "format": "parquet",
+        "finalize_parquet": true
+      },
+      "validation_nodes": [
+        "tests/test_regenie2_parity.py::test_regenie2_quantitative_linear_matches_regenie_baseline_statistics",
+        "tests/test_regenie2_linear.py::TestComputeRegenie2LinearChunk::test_loco_predictions_with_covariate_signal_residualize_null_mse"
+      ],
+      "documentation_paths": [
+        "documentation/development/regenie-parity-suite.md"
+      ],
+      "tolerances": [
+        {
+          "observed_column": "BETA",
+          "baseline_column": "baseline_beta",
+          "absolute_tolerance": 0.001
+        },
+        {
+          "observed_column": "SE",
+          "baseline_column": "baseline_standard_error",
+          "absolute_tolerance": 0.001
+        },
+        {
+          "observed_column": "CHISQ",
+          "baseline_column": "baseline_chi_squared",
+          "absolute_tolerance": 0.015
+        },
+        {
+          "observed_column": "LOG10P",
+          "baseline_column": "baseline_log10_p_value",
+          "absolute_tolerance": 0.015
+        }
+      ]
+    },
+    {
+      "identifier": "quantitative_multi_per_phenotype",
+      "title": "Quantitative multiple phenotypes, per-phenotype sample mode",
+      "status": "contract",
+      "description": "Contract coverage for independent per-phenotype sample sets and grouped compatible alignments.",
+      "regenie_version": null,
+      "regenie_commands": [],
+      "expected_output_path": null,
+      "g_command_options": {
+        "step": 2,
+        "qt": true,
+        "multi_phenotype_sample_mode": "per-phenotype"
+      },
+      "validation_nodes": [
+        "tests/test_regenie2_pipeline.py::test_build_phenotype_compute_groups_distinguishes_sample_modes",
+        "tests/test_regenie2_pipeline.py::test_grouped_per_phenotype_pipeline_batches_identical_alignments",
+        "tests/test_regenie2_pipeline.py::test_grouped_per_phenotype_pipeline_splits_different_alignments",
+        "tests/test_regenie2_pipeline.py::test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignments",
+        "tests/test_tabular.py::test_native_grouped_alignment_batches_traits_with_identical_sample_sets"
+      ],
+      "documentation_paths": [
+        "documentation/public/input-files.md",
+        "documentation/development/regenie-parity-suite.md"
+      ],
+      "tolerances": []
+    },
+    {
+      "identifier": "quantitative_multi_complete_case",
+      "title": "Quantitative multiple phenotypes, complete-case sample mode",
+      "status": "contract",
+      "description": "Contract coverage for shared complete-case intersections and manifest fingerprints.",
+      "regenie_version": null,
+      "regenie_commands": [],
+      "expected_output_path": null,
+      "g_command_options": {
+        "step": 2,
+        "qt": true,
+        "multi_phenotype_sample_mode": "complete-case"
+      },
+      "validation_nodes": [
+        "tests/test_regenie2_pipeline.py::test_build_phenotype_compute_groups_distinguishes_sample_modes",
+        "tests/test_regenie2_pipeline.py::test_complete_case_compute_group_resolution_adds_alignment_fingerprints",
+        "tests/test_regenie2_pipeline.py::test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifests",
+        "tests/test_tabular.py::test_native_multi_alignment_is_explicit_complete_case_trait_major_matrix"
+      ],
+      "documentation_paths": [
+        "documentation/public/input-files.md",
+        "documentation/development/regenie-parity-suite.md"
+      ],
+      "tolerances": []
+    },
+    {
+      "identifier": "binary_score_only",
+      "title": "Binary score-only",
+      "status": "external_golden",
+      "description": "Phase-0 1KG chromosome 22 binary score-only Step 2 comparison against upstream REGENIE output.",
+      "regenie_version": "v4.1",
+      "regenie_commands": [
+        "regenie --step 1 --bed data/1kg_chr22_full --phenoFile data/pheno_bin.txt --covarFile data/covariates.txt --bt --cc12 --force-step1 --bsize 1000 --out data/baselines/regenie_step1",
+        "regenie --step 2 --bgen data/1kg_chr22_full.bgen --sample data/1kg_chr22_full.sample --ref-first --phenoFile data/pheno_bin.txt --covarFile data/covariates.txt --bt --cc12 --bsize 400 --pred data/baselines/regenie_step1_pred.list --out data/baselines/regenie_step2_score_only"
+      ],
+      "expected_output_path": "data/baselines/regenie_step2_score_only_phenotype_binary.regenie",
+      "g_command_options": {
+        "step": 2,
+        "bt": true,
+        "bgen": "data/1kg_chr22_full.bgen",
+        "sample": "data/1kg_chr22_full.sample",
+        "phenoFile": "data/pheno_bin.txt",
+        "phenoCol": "phenotype_binary",
+        "covarFile": "data/covariates.txt",
+        "covarCol": ["age", "sex"],
+        "pred": "data/baselines/regenie_step1_pred.list",
+        "bsize": 512,
+        "device": "cpu",
+        "variant_limit": 1024,
+        "format": "parquet",
+        "finalize_parquet": true
+      },
+      "validation_nodes": [
+        "tests/test_regenie2_parity.py::test_regenie2_binary_score_only_matches_regenie_baseline_statistics",
+        "tests/test_regenie2_binary.py::test_score_only_plan_produces_no_fallback_candidates",
+        "tests/test_regenie2_binary.py::test_variant_major_score_only_bt_matches_sample_major_with_covariates_loco_and_edge_genotypes",
+        "tests/test_regenie2_pipeline.py::test_binary_score_only_variant_major_callback_uses_jitted_variant_major_score_compute"
+      ],
+      "documentation_paths": [
+        "documentation/development/regenie-parity-suite.md"
+      ],
+      "tolerances": [
+        {
+          "observed_column": "BETA",
+          "baseline_column": "baseline_beta",
+          "absolute_tolerance": 0.001
+        },
+        {
+          "observed_column": "SE",
+          "baseline_column": "baseline_standard_error",
+          "absolute_tolerance": 0.001
+        },
+        {
+          "observed_column": "CHISQ",
+          "baseline_column": "baseline_chi_squared",
+          "absolute_tolerance": 0.02
+        },
+        {
+          "observed_column": "LOG10P",
+          "baseline_column": "baseline_log10_p_value",
+          "absolute_tolerance": 0.02
+        }
+      ]
+    },
+    {
+      "identifier": "binary_approximate_firth",
+      "title": "Binary --firth --approx",
+      "status": "experimental",
+      "description": "Internal approximate-Firth contracts exist, but this mode is not production-stable until an upstream golden fixture is added.",
+      "regenie_version": null,
+      "regenie_commands": [
+        "regenie --step 2 --bgen data/1kg_chr22_full.bgen --sample data/1kg_chr22_full.sample --ref-first --phenoFile data/pheno_bin.txt --covarFile data/covariates.txt --bt --cc12 --firth --approx --bsize 400 --pred data/baselines/regenie_step1_pred.list --out data/baselines/regenie_step2"
+      ],
+      "expected_output_path": null,
+      "g_command_options": {
+        "step": 2,
+        "bt": true,
+        "firth": true,
+        "approx": true
+      },
+      "validation_nodes": [
+        "tests/test_regenie2_binary.py::test_variant_major_approximate_firth_matches_sample_major_with_covariates_loco_and_edge_genotypes",
+        "tests/test_regenie2_binary.py::test_firth_candidate_max_iteration_failure_is_labelled",
+        "tests/test_regenie2_binary_diagnostics.py::test_binary_chunk_diagnostics_count_all_failure_categories",
+        "tests/test_api.py::test_normalize_binary_correction_config_maps_approximate_firth"
+      ],
+      "documentation_paths": [
+        "documentation/public/compatibility.md",
+        "documentation/development/regenie-parity-suite.md"
+      ],
+      "tolerances": []
+    },
+    {
+      "identifier": "missing_sample_filtering",
+      "title": "Missing phenotype/covariate values sample filtering",
+      "status": "contract",
+      "description": "Contract coverage for REGENIE-style missing phenotype/covariate exclusion before association testing.",
+      "regenie_version": null,
+      "regenie_commands": [],
+      "expected_output_path": null,
+      "g_command_options": {},
+      "validation_nodes": [
+        "tests/test_tabular.py::test_native_alignment_matches_iid_only_and_sorts_by_sample_order",
+        "tests/test_tabular.py::test_native_multi_alignment_is_explicit_complete_case_trait_major_matrix",
+        "tests/test_tabular.py::test_native_grouped_alignment_batches_traits_with_identical_sample_sets"
+      ],
+      "documentation_paths": [
+        "documentation/public/input-files.md",
+        "documentation/development/regenie-parity-suite.md"
+      ],
+      "tolerances": []
+    },
+    {
+      "identifier": "variant_missingness_imputation",
+      "title": "Variant-level missingness and imputation behavior",
+      "status": "contract",
+      "description": "Native BGEN decode and kernel contracts for missing-dosage imputation and native dosage summary propagation.",
+      "regenie_version": null,
+      "regenie_commands": [],
+      "expected_output_path": null,
+      "g_command_options": {},
+      "validation_nodes": [
+        "src/genotype/bgen/decode.rs::tests::variant_major_decode_covers_eight_bit_identity_subset_and_imputation_paths",
+        "tests/test_regenie2_linear.py::TestComputeRegenie2LinearChunk::test_variant_major_kernel_matches_sample_major_with_native_square_sums",
+        "tests/test_regenie2_binary.py::test_variant_major_score_only_bt_matches_sample_major_with_covariates_loco_and_edge_genotypes"
+      ],
+      "documentation_paths": [
+        "documentation/public/algorithm.md",
+        "documentation/development/regenie-parity-suite.md"
+      ],
+      "tolerances": []
+    },
+    {
+      "identifier": "resume_clean_equivalence",
+      "title": "Resume after interruption equals clean run",
+      "status": "contract",
+      "description": "Manifest and writer contracts ensuring compatible resume reuses only committed chunks and rewrites partial chunks.",
+      "regenie_version": null,
+      "regenie_commands": [],
+      "expected_output_path": null,
+      "g_command_options": {
+        "resume": true
+      },
+      "validation_nodes": [
+        "tests/test_io_output.py::test_initialize_output_run_compatible_resume_preserves_committed_chunks",
+        "tests/test_io_output.py::test_prepare_output_run_strict_resume_validates_manifest_chunks",
+        "tests/test_regenie2_pipeline.py::test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes"
+      ],
+      "documentation_paths": [
+        "documentation/public/resume-and-manifest.md",
+        "documentation/development/regenie-parity-suite.md"
+      ],
+      "tolerances": []
+    }
+  ]
+}

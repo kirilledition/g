@@ -40,6 +40,11 @@ change crosses module boundaries.
 
 ## REGENIE Parity Rules
 
+The pre-release Step 2 parity gate is documented in
+[REGENIE Parity Suite](regenie-parity-suite.md). Its machine-readable coverage
+matrix lives in `tests/parity/golden_metadata.json`, and the lightweight harness
+checks live under `tests/parity/`.
+
 Parity checks must compare equivalent statistical modes:
 
 - quantitative Step 2 to quantitative Step 2;
