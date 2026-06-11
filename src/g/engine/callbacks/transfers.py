@@ -70,6 +70,8 @@ def put_genotype_matrix_on_device(
     array_role: str = "genotype_matrix",
 ) -> jax.Array:
     """Transfer a genotype chunk to the active JAX device with optional timing."""
+    if stage_timing_recorder is None:
+        return typing.cast("jax.Array", jax.device_put(genotype_matrix))
     start_time = time.perf_counter()
     genotype_device_array = jax.device_put(genotype_matrix)
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
@@ -97,6 +99,8 @@ def put_chunk_array_on_device(
     array_role: str = "chunk_array",
 ) -> jax.Array:
     """Transfer one chunk-scoped array to the active JAX device with timing."""
+    if stage_timing_recorder is None:
+        return typing.cast("jax.Array", jax.device_put(array))
     start_time = time.perf_counter()
     device_array = jax.device_put(array)
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
@@ -124,6 +128,8 @@ def block_compute_result_for_timing(
     chunk_metadata: typing.Any | None = None,
 ) -> None:
     """Synchronize chunk compute only when detailed stage timings are enabled."""
+    if stage_timing_recorder is None:
+        return
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
         block_until_ready(result_ready_value)
     record_stage_duration_with_optional_chunk(

@@ -314,6 +314,15 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed dosage chunk for JAX association."""
+        if self.stage_timing_recorder is None:
+            self.put_dosage_work_item(
+                PreprocessedDosageChunkWorkItem(
+                    metadata=metadata,
+                    genotype_matrix=genotype_matrix,
+                    chunk_stats=chunk_stats,
+                )
+            )
+            return
         native_delivery_start_time = time.perf_counter()
         try:
             self.put_dosage_work_item(
@@ -333,6 +342,15 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed variant-major dosage chunk for JAX association."""
+        if self.stage_timing_recorder is None:
+            self.put_dosage_work_item(
+                PreprocessedVariantMajorDosageChunkWorkItem(
+                    metadata=metadata,
+                    genotype_matrix_by_variant=genotype_matrix_by_variant,
+                    chunk_stats=chunk_stats,
+                )
+            )
+            return
         native_delivery_start_time = time.perf_counter()
         try:
             self.put_dosage_work_item(
@@ -352,6 +370,15 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed packed8 chunk for JAX association."""
+        if self.stage_timing_recorder is None:
+            self.put_dosage_work_item(
+                PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
+                    metadata=metadata,
+                    packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+                    chunk_stats=chunk_stats,
+                )
+            )
+            return
         native_delivery_start_time = time.perf_counter()
         try:
             self.put_dosage_work_item(
@@ -367,6 +394,9 @@ class NativeBgenCallbackRunner(abc.ABC):
     def consume_dosage_chunks(self) -> None:
         """Consume queued dosage chunks and run JAX work in order."""
         try:
+            if self.stage_timing_recorder is None:
+                self.consume_dosage_chunks_without_timing()
+                return
             while True:
                 get_start_time = time.perf_counter()
                 work_item = self.dosage_queue.get()
@@ -381,50 +411,53 @@ class NativeBgenCallbackRunner(abc.ABC):
                     blocked=True,
                 )
                 python_callback_start_time = time.perf_counter()
-                if isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
-                    try:
-                        self.compute_preprocessed_variant_major_packed8_chunk(
-                            variant_metadata=work_item.metadata,
-                            packed_probability_pairs_by_variant=work_item.packed_probability_pairs_by_variant,
-                            chunk_stats=work_item.chunk_stats,
-                        )
-                        self.processed_chunk_count += 1
-                        self.record_progress(work_item.metadata)
-                    finally:
-                        self.record_chunk_stage_duration(
-                            work_item.metadata, "python_callback", python_callback_start_time
-                        )
-                    continue
-                if isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
-                    try:
-                        self.compute_preprocessed_variant_major_chunk(
-                            variant_metadata=work_item.metadata,
-                            genotype_matrix_by_variant=work_item.genotype_matrix_by_variant,
-                            chunk_stats=work_item.chunk_stats,
-                        )
-                        self.processed_chunk_count += 1
-                        self.record_progress(work_item.metadata)
-                    finally:
-                        self.record_chunk_stage_duration(
-                            work_item.metadata, "python_callback", python_callback_start_time
-                        )
-                    continue
-                if isinstance(work_item, PreprocessedDosageChunkWorkItem):
-                    try:
-                        self.compute_preprocessed_chunk(
-                            variant_metadata=work_item.metadata,
-                            genotype_matrix=work_item.genotype_matrix,
-                            chunk_stats=work_item.chunk_stats,
-                        )
-                        self.processed_chunk_count += 1
-                        self.record_progress(work_item.metadata)
-                    finally:
-                        self.record_chunk_stage_duration(
-                            work_item.metadata, "python_callback", python_callback_start_time
-                        )
-                    continue
+                try:
+                    self.process_dosage_work_item(work_item)
+                finally:
+                    self.record_chunk_stage_duration(work_item.metadata, "python_callback", python_callback_start_time)
         except Exception as error:  # noqa: BLE001
             self.worker_error = error
+
+    def consume_dosage_chunks_without_timing(self) -> None:
+        """Consume queued dosage chunks without diagnostic timing overhead."""
+        while True:
+            work_item = self.dosage_queue.get()
+            if work_item is None:
+                return
+            self.process_dosage_work_item(work_item)
+
+    def process_dosage_work_item(
+        self,
+        work_item: (
+            PreprocessedDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+        ),
+    ) -> None:
+        """Run one preprocessed dosage work item."""
+        if isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
+            self.compute_preprocessed_variant_major_packed8_chunk(
+                variant_metadata=work_item.metadata,
+                packed_probability_pairs_by_variant=work_item.packed_probability_pairs_by_variant,
+                chunk_stats=work_item.chunk_stats,
+            )
+        elif isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
+            self.compute_preprocessed_variant_major_chunk(
+                variant_metadata=work_item.metadata,
+                genotype_matrix_by_variant=work_item.genotype_matrix_by_variant,
+                chunk_stats=work_item.chunk_stats,
+            )
+        elif isinstance(work_item, PreprocessedDosageChunkWorkItem):
+            self.compute_preprocessed_chunk(
+                variant_metadata=work_item.metadata,
+                genotype_matrix=work_item.genotype_matrix,
+                chunk_stats=work_item.chunk_stats,
+            )
+        else:
+            message = f"Unsupported preprocessed dosage work item: {type(work_item).__name__}"
+            raise TypeError(message)
+        self.processed_chunk_count += 1
+        self.record_progress(work_item.metadata)
 
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""
@@ -465,6 +498,8 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Accumulate binary correction diagnostics for run-level telemetry."""
         if binary_chunk_diagnostics is None:
+            return
+        if self.telemetry_session is None:
             return
         diagnostics_mapping = binary_chunk_diagnostics_to_mapping(binary_chunk_diagnostics)
         self.binary_correction_summary_chunk_count += 1
@@ -526,6 +561,9 @@ class NativeBgenCallbackRunner(abc.ABC):
     def consume_result_write_items(self) -> None:
         """Materialize computed JAX results and write them in order."""
         try:
+            if self.stage_timing_recorder is None:
+                self.consume_result_write_items_without_timing()
+                return
             while True:
                 get_start_time = time.perf_counter()
                 work_item = self.result_queue.get()
@@ -539,28 +577,43 @@ class NativeBgenCallbackRunner(abc.ABC):
                     start_time=get_start_time,
                     blocked=True,
                 )
-                try:
-                    write_regenie2_native_chunk_with_optional_timing(
-                        writer_session=typing.cast("typing.Any", self).writer_session,
-                        metadata=work_item.metadata,
-                        chunk_stats=work_item.chunk_stats,
-                        beta=work_item.beta,
-                        standard_error=work_item.standard_error,
-                        chi_squared=work_item.chi_squared,
-                        log10_p_value=work_item.log10_p_value,
-                        extra_code=work_item.extra_code,
-                        stage_timing_recorder=self.stage_timing_recorder,
-                        output_statistic_dtype=self.output_statistic_dtype,
-                    )
-                    record_binary_chunk_diagnostics_from_count(
-                        stage_timing_recorder=self.stage_timing_recorder,
-                        diagnostics=work_item.binary_chunk_diagnostics,
-                    )
-                    self.record_binary_correction_diagnostics(work_item.binary_chunk_diagnostics)
-                finally:
-                    self.release_result_work_item_buffer(work_item)
+                self.process_result_write_item(work_item)
         except Exception as error:  # noqa: BLE001
             self.result_worker_error = error
+
+    def consume_result_write_items_without_timing(self) -> None:
+        """Consume result write items without diagnostic queue timing overhead."""
+        while True:
+            work_item = self.result_queue.get()
+            if work_item is None:
+                return
+            self.process_result_write_item(work_item)
+
+    def process_result_write_item(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+    ) -> None:
+        """Materialize and write one computed result work item."""
+        try:
+            write_regenie2_native_chunk_with_optional_timing(
+                writer_session=typing.cast("typing.Any", self).writer_session,
+                metadata=work_item.metadata,
+                chunk_stats=work_item.chunk_stats,
+                beta=work_item.beta,
+                standard_error=work_item.standard_error,
+                chi_squared=work_item.chi_squared,
+                log10_p_value=work_item.log10_p_value,
+                extra_code=work_item.extra_code,
+                stage_timing_recorder=self.stage_timing_recorder,
+                output_statistic_dtype=self.output_statistic_dtype,
+            )
+            record_binary_chunk_diagnostics_from_count(
+                stage_timing_recorder=self.stage_timing_recorder,
+                diagnostics=work_item.binary_chunk_diagnostics,
+            )
+            self.record_binary_correction_diagnostics(work_item.binary_chunk_diagnostics)
+        finally:
+            self.release_result_work_item_buffer(work_item)
 
     def put_dosage_work_item(
         self,
@@ -573,6 +626,14 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Put work into the bounded worker queue while surfacing worker errors."""
         self.start()
+        if self.stage_timing_recorder is None:
+            while True:
+                self.raise_worker_error_if_present()
+                try:
+                    self.dosage_queue.put(work_item, timeout=0.1)
+                    return
+                except queue.Full:
+                    continue
         while True:
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
@@ -613,6 +674,14 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Put a computed result into the bounded materialization/write queue."""
         self.start()
+        if self.stage_timing_recorder is None:
+            while True:
+                self.raise_worker_error_if_present()
+                try:
+                    self.result_queue.put(work_item, timeout=0.1)
+                    return
+                except queue.Full:
+                    continue
         while True:
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
@@ -640,6 +709,13 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def acquire_result_in_flight_slot(self) -> None:
         """Reserve capacity for one chunk of pending GPU result work."""
+        if self.stage_timing_recorder is None:
+            while True:
+                self.raise_worker_error_if_present()
+                if self.result_in_flight_slots.acquire(timeout=0.1):
+                    with self.result_in_flight_slot_lock:
+                        self.result_in_flight_slot_count += 1
+                    return
         while True:
             self.raise_worker_error_if_present()
             acquire_start_time = time.perf_counter()
@@ -876,16 +952,19 @@ class NativeBgenCallbackRunner(abc.ABC):
             if self.dosage_buffer_count < self.dosage_buffer_limit:
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
             with contextlib.suppress(queue.Empty):
-                buffer_wait_start_time = time.perf_counter()
-                dosage_buffer = self.free_dosage_buffers.get(timeout=0.1)
-                self.record_queue_stage_duration(
-                    queue_name="dosage_buffer_pool",
-                    operation_name="consumer_wait",
-                    stage_name="dosage_buffer_pool_consumer_wait",
-                    observed_queue=self.free_dosage_buffers,
-                    start_time=buffer_wait_start_time,
-                    blocked=True,
-                )
+                if self.stage_timing_recorder is None:
+                    dosage_buffer = self.free_dosage_buffers.get(timeout=0.1)
+                else:
+                    buffer_wait_start_time = time.perf_counter()
+                    dosage_buffer = self.free_dosage_buffers.get(timeout=0.1)
+                    self.record_queue_stage_duration(
+                        queue_name="dosage_buffer_pool",
+                        operation_name="consumer_wait",
+                        stage_name="dosage_buffer_pool_consumer_wait",
+                        observed_queue=self.free_dosage_buffers,
+                        start_time=buffer_wait_start_time,
+                        blocked=True,
+                    )
                 reused_dosage_buffer = self._acquire_reused_dosage_buffer(
                     dosage_buffer,
                     expected_shape=expected_shape,

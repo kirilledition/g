@@ -397,6 +397,9 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def consume_result_write_items(self) -> None:
         """Materialize computed multi-trait JAX results and write each trait in order."""
         try:
+            if self.stage_timing_recorder is None:
+                self.consume_result_write_items_without_timing()
+                return
             while True:
                 get_start_time = time.perf_counter()
                 work_item = self.result_queue.get()
@@ -411,24 +414,37 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     blocked=True,
                 )
                 multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
-                try:
-                    write_regenie2_multi_native_chunk_with_optional_timing(
-                        writer_sessions=self.writer_sessions,
-                        committed_chunk_identifier_sets=self.committed_chunk_identifier_sets,
-                        metadata=multi_work_item.metadata,
-                        chunk_stats=multi_work_item.chunk_stats,
-                        beta=multi_work_item.beta,
-                        standard_error=multi_work_item.standard_error,
-                        chi_squared=multi_work_item.chi_squared,
-                        log10_p_value=multi_work_item.log10_p_value,
-                        extra_code=multi_work_item.extra_code,
-                        stage_timing_recorder=self.stage_timing_recorder,
-                        output_statistic_dtype=self.output_statistic_dtype,
-                    )
-                finally:
-                    self.release_result_work_item_buffer(multi_work_item)
+                self.process_multi_result_write_item(multi_work_item)
         except Exception as error:  # noqa: BLE001
             self.result_worker_error = error
+
+    def consume_result_write_items_without_timing(self) -> None:
+        """Consume multi-trait result write items without diagnostic queue timing."""
+        while True:
+            work_item = self.result_queue.get()
+            if work_item is None:
+                return
+            multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
+            self.process_multi_result_write_item(multi_work_item)
+
+    def process_multi_result_write_item(self, multi_work_item: Regenie2MultiResultWriteWorkItem) -> None:
+        """Materialize and write one multi-trait linear result work item."""
+        try:
+            write_regenie2_multi_native_chunk_with_optional_timing(
+                writer_sessions=self.writer_sessions,
+                committed_chunk_identifier_sets=self.committed_chunk_identifier_sets,
+                metadata=multi_work_item.metadata,
+                chunk_stats=multi_work_item.chunk_stats,
+                beta=multi_work_item.beta,
+                standard_error=multi_work_item.standard_error,
+                chi_squared=multi_work_item.chi_squared,
+                log10_p_value=multi_work_item.log10_p_value,
+                extra_code=multi_work_item.extra_code,
+                stage_timing_recorder=self.stage_timing_recorder,
+                output_statistic_dtype=self.output_statistic_dtype,
+            )
+        finally:
+            self.release_result_work_item_buffer(multi_work_item)
 
     def compute_preprocessed_chunk(
         self,

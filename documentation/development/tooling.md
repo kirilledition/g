@@ -33,6 +33,7 @@ tooling/
   cli/
     benchmark.py
     benchmark_bgen_reader.py
+    benchmark_callback_overhead.py
     benchmark_output_stages.py
     benchmark_regenie2_binary_hot.py
     data.py
@@ -52,6 +53,7 @@ tooling/
     sweeps.py
   configs/
     benchmark_bgen_reader.yaml
+    benchmark_callback_overhead.yaml
     benchmark_output_stages.yaml
     benchmark_regenie2_binary_hot.yaml
     config.yaml
@@ -90,6 +92,7 @@ execution and pass Hydra overrides:
 
 ```bash
 uv run --no-sync python -m tooling.cli.benchmark_bgen_reader
+uv run --no-sync python -m tooling.cli.benchmark_callback_overhead tool.chunk_count=1000
 uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot machine=landau_gpu tool.variant_limit=1000
 uv run --no-sync python -m tooling.cli.data tool.name=fetch
 uv run --no-sync python -m tooling.cli.benchmark tool.name=regenie_comparison tool.cpu_only=true
@@ -938,6 +941,55 @@ GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
   telemetry.json_summary_path=data/profiles/bgen_reader_smoke.json \
   telemetry.markdown_summary_path=data/profiles/bgen_reader_smoke.md
 ```
+
+### Callback Overhead Microbenchmark
+
+Use this benchmark when profiling Python callback handoff between the native
+BGEN reader and JAX without measuring BGEN decode. It runs a concrete
+`NativeBgenCallbackRunner` over synthetic chunks and reports JSON trial rows plus
+an aggregate summary.
+
+```bash
+uv run --no-sync python -m tooling.cli.benchmark_callback_overhead \
+  tool.chunk_count=10000 \
+  tool.trials=5 \
+  'tool.stage_timing_modes=[off,aggregate]' \
+  'tool.workload_modes=[queue_only,host_to_device]' \
+  telemetry.json_summary_path=data/profiles/callback_overhead.json
+```
+
+SLURM recipes:
+
+```bash
+just slurm-benchmark-callback-overhead-cpu \
+  tool.chunk_count=1000 \
+  tool.trials=1 \
+  'tool.stage_timing_modes=[off,aggregate]' \
+  'tool.workload_modes=[queue_only,host_to_device]'
+
+just slurm-benchmark-callback-overhead-gpu \
+  tool.chunk_count=1000 \
+  tool.trials=1 \
+  'tool.stage_timing_modes=[off,aggregate]' \
+  'tool.workload_modes=[queue_only,host_to_device]'
+```
+
+Modes:
+
+- `tool.workload_modes=[queue_only]` measures Python queue delivery and callback
+  dispatch without JAX transfer.
+- `tool.workload_modes=[host_to_device]` additionally calls the production
+  `put_genotype_matrix_on_device` helper for each chunk and synchronizes the
+  last transfer by default.
+- `tool.stage_timing_modes=[off]` matches the normal production path with no
+  timing recorder.
+- `tool.stage_timing_modes=[aggregate]` collects stage and queue totals without
+  exact transfer blocking.
+- `tool.stage_timing_modes=[exact]` is available for diagnostic parity with
+  end-to-end stage timing JSON, but it perturbs transfer/compute timing most.
+
+The GPU recipe installs the `gpu` dependency group inside the SLURM allocation
+before running so the `cuda` JAX backend is available.
 
 ### Compare Safe And Trusted BGEN Paths
 

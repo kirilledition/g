@@ -180,6 +180,16 @@ class FakeWriterSession:
         self.aborted = True
 
 
+class FailingPerfCounterClock:
+    """Clock double that fails when default writer paths collect timings."""
+
+    @staticmethod
+    def perf_counter() -> float:
+        """Fail when no-recorder code attempts wall-time profiling."""
+        message = "perf_counter should not be called without a timing recorder"
+        raise AssertionError(message)
+
+
 class RecordingTelemetrySession:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, object]]] = []
@@ -351,7 +361,10 @@ def test_write_regenie2_native_chunk_records_per_chunk_output_timing() -> None:
     assert all(chunk_timing.variant_count == 2 for chunk_timing in snapshot.chunk_stage_timings)
 
 
-def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_extra_code() -> None:
+def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_extra_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(callbacks.writers, "time", FailingPerfCounterClock)
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
     metadata = build_native_metadata()
     chunk_stats = typing.cast("typing.Any", SimpleNamespace())
@@ -450,6 +463,7 @@ def test_write_regenie2_multi_native_chunk_skips_device_get_when_all_traits_comm
         raise AssertionError("device_get should not run when all trait chunks are committed")
 
     monkeypatch.setattr(callbacks.jax, "device_get", fail_device_get)
+    monkeypatch.setattr(callbacks.writers, "time", FailingPerfCounterClock)
 
     callbacks.write_regenie2_multi_native_chunk_with_optional_timing(
         writer_sessions=writer_sessions,

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import time
 import typing
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from g import types
 from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
 from g.engine import callbacks, native_dispatch
 
@@ -156,6 +158,53 @@ class LifecycleCallbackRunner(callbacks.NativeBgenCallbackRunner):
         del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
 
 
+class FailingPerfCounterClock:
+    """Clock double that fails when the default path collects profiling timings."""
+
+    @staticmethod
+    def perf_counter() -> float:
+        """Fail when a default-path code path attempts wall-time profiling."""
+        message = "perf_counter should not be called without a timing recorder"
+        raise AssertionError(message)
+
+    @staticmethod
+    def monotonic() -> float:
+        """Delegate monotonic time for worker shutdown loops."""
+        return time.monotonic()
+
+
+class CapturingWriterSession:
+    """Writer double that captures one native result chunk."""
+
+    def __init__(self) -> None:
+        """Initialize captured chunk storage."""
+        self.written_chunks: list[dict[str, typing.Any]] = []
+
+    def write_regenie2_native_chunk(
+        self,
+        *,
+        metadata: object,
+        chunk_stats: object,
+        beta: object,
+        standard_error: object,
+        chi_squared: object,
+        log10_p_value: object,
+        extra_code: object,
+    ) -> None:
+        """Capture written arrays for assertion."""
+        self.written_chunks.append(
+            {
+                "metadata": metadata,
+                "chunk_stats": chunk_stats,
+                "beta": beta,
+                "standard_error": standard_error,
+                "chi_squared": chi_squared,
+                "log10_p_value": log10_p_value,
+                "extra_code": extra_code,
+            }
+        )
+
+
 class StartTrackingCallback:
     """Callback double that records explicit lifecycle ordering."""
 
@@ -268,6 +317,70 @@ def test_native_callback_runner_finish_propagates_worker_error() -> None:
         callback.finish()
 
 
+def test_native_callback_runner_default_queue_path_does_not_collect_timing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not collect queue or callback timings unless a recorder is configured."""
+    monkeypatch.setattr(callbacks.runtime, "time", FailingPerfCounterClock)
+    callback = LifecycleCallbackRunner()
+
+    callback.compute_preprocessed_dosage_chunk(
+        metadata=ChunkMetadata("chr1", 0, 1),
+        genotype_matrix=np.asarray([[0.0]], dtype=np.float32),
+        chunk_stats=typing.cast("typing.Any", np.asarray([0], dtype=np.float32)),
+    )
+    callback.finish()
+
+    assert callback.processed_chunk_count == 1
+
+
+def test_default_transfer_path_does_not_block_for_timing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not synchronize host-to-device transfer timings without a recorder."""
+
+    def fail_block_until_ready(result_ready_value: object) -> None:
+        del result_ready_value
+        message = "block_until_ready should not be called without exact timings"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(callbacks.transfers, "time", FailingPerfCounterClock)
+    monkeypatch.setattr(callbacks.transfers, "block_until_ready", fail_block_until_ready)
+    source_array = np.asarray([[1.0, 2.0]], dtype=np.float32)
+
+    device_array = callbacks.put_chunk_array_on_device(
+        source_array,
+        stage_timing_recorder=None,
+        chunk_metadata=ChunkMetadata("chr1", 0, 1),
+    )
+
+    np.testing.assert_array_equal(np.asarray(device_array), source_array)
+
+
+def test_default_writer_path_preserves_values_without_timing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Materialize output values unchanged without default timing probes."""
+    monkeypatch.setattr(callbacks.writers, "time", FailingPerfCounterClock)
+    writer_session = CapturingWriterSession()
+
+    callbacks.write_regenie2_native_chunk_with_optional_timing(
+        writer_session=writer_session,
+        metadata=typing.cast("typing.Any", ChunkMetadata("chr1", 0, 2)),
+        chunk_stats=typing.cast("typing.Any", object()),
+        beta=jnp.asarray([1.25, -2.5], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.5, 1.5], dtype=jnp.float32),
+        chi_squared=jnp.asarray([4.0, 9.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([2.0, 3.0], dtype=jnp.float32),
+        extra_code=None,
+        stage_timing_recorder=None,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+    )
+
+    written_chunk = writer_session.written_chunks[0]
+    np.testing.assert_array_equal(written_chunk["beta"], np.asarray([1.25, -2.5], dtype=np.float32))
+    np.testing.assert_array_equal(written_chunk["standard_error"], np.asarray([0.5, 1.5], dtype=np.float32))
+    np.testing.assert_array_equal(written_chunk["chi_squared"], np.asarray([4.0, 9.0], dtype=np.float32))
+    np.testing.assert_array_equal(written_chunk["log10_p_value"], np.asarray([2.0, 3.0], dtype=np.float32))
+    assert written_chunk["extra_code"] is None
+
+
 def test_native_callback_runner_records_progress_and_chromosome_events() -> None:
     """Record progression events for a full callback lifecycle."""
     telemetry_session = ProgressTrackingTelemetrySession()
@@ -351,3 +464,47 @@ def test_native_callback_runner_emits_binary_correction_summary() -> None:
             },
         )
     ]
+
+
+def test_binary_correction_summary_skips_materialization_without_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not device-get binary diagnostics when no telemetry session consumes them."""
+
+    def fail_binary_chunk_diagnostics_to_mapping(binary_chunk_diagnostics: object) -> dict[str, int | float]:
+        del binary_chunk_diagnostics
+        message = "binary diagnostics should not materialize without telemetry"
+        raise AssertionError(message)
+
+    callback = LifecycleCallbackRunner()
+    diagnostics = regenie2_binary_diagnostics.BinaryChunkDiagnostics(
+        score_only_count=jnp.asarray(3, dtype=jnp.int32),
+        score_test_candidate_count=jnp.asarray(2, dtype=jnp.int32),
+        firth_candidate_count=jnp.asarray(2, dtype=jnp.int32),
+        firth_iteration_min=jnp.asarray(1, dtype=jnp.int32),
+        firth_iteration_median=jnp.asarray(2, dtype=jnp.float32),
+        firth_iteration_max=jnp.asarray(3, dtype=jnp.int32),
+        firth_converged_count=jnp.asarray(1, dtype=jnp.int32),
+        firth_failed_count=jnp.asarray(1, dtype=jnp.int32),
+        firth_numerical_failure_count=jnp.asarray(0, dtype=jnp.int32),
+        firth_max_iteration_failure_count=jnp.asarray(1, dtype=jnp.int32),
+        firth_invalid_statistic_failure_count=jnp.asarray(0, dtype=jnp.int32),
+        firth_step_halving_failure_count=jnp.asarray(0, dtype=jnp.int32),
+        pseudo_firth_attempt_count=jnp.asarray(1, dtype=jnp.int32),
+        pseudo_firth_success_count=jnp.asarray(1, dtype=jnp.int32),
+        nr_zero_start_attempt_count=jnp.asarray(1, dtype=jnp.int32),
+        nr_zero_start_success_count=jnp.asarray(0, dtype=jnp.int32),
+        nr_warm_start_attempt_count=jnp.asarray(0, dtype=jnp.int32),
+        nr_warm_start_success_count=jnp.asarray(0, dtype=jnp.int32),
+        sparse_correction_count=jnp.asarray(1, dtype=jnp.int32),
+        dense_correction_count=jnp.asarray(1, dtype=jnp.int32),
+    )
+    monkeypatch.setattr(
+        callbacks.runtime,
+        "binary_chunk_diagnostics_to_mapping",
+        fail_binary_chunk_diagnostics_to_mapping,
+    )
+
+    callback.record_binary_correction_diagnostics(diagnostics)
+
+    assert callback.binary_correction_summary_chunk_count == 0

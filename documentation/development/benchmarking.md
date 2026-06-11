@@ -13,6 +13,7 @@ Public tuning guidance lives in [Performance Guide](../public/performance-guide.
 | --- | --- | --- |
 | Smoke | Verify a benchmark harness and output schema quickly. | `just perf-smoke`, smoke variants of benchmark recipes. |
 | BGEN reader | Isolate native decode, sample selection, trusted paths, and Rayon effects. | `tooling.cli.benchmark_bgen_reader`, `just benchmark-bgen-reader`. |
+| Callback overhead | Isolate Python callback queue handoff and optional host-to-device transfer without BGEN decode. | `tooling.cli.benchmark_callback_overhead`, `just benchmark-callback-overhead`. |
 | Output stages | Isolate writer threads, queue depth, compression, grouping, and finalization. | `tooling.cli.benchmark_output_stages`, `just benchmark-output-stages-*`. |
 | Binary hot path | Measure binary Step 2 score/Firth runtime without full campaign overhead. | `tooling.cli.benchmark_regenie2_binary_hot`. |
 | Matrix comparisons | Compare CPU/GPU/cache combinations for standard workloads. | `tooling.cli.run_regenie2_matrix`. |
@@ -88,6 +89,38 @@ Separate these effects before proposing an optimization:
 
 For startup findings, include a same-process or multi-phenotype measurement
 before optimizing import/runtime boundaries.
+
+For native BGEN to JAX callback findings, start with the callback-overhead
+microbenchmark before running an end-to-end BGEN profile:
+
+```bash
+just benchmark-callback-overhead \
+  tool.chunk_count=10000 \
+  tool.trials=5 \
+  'tool.stage_timing_modes=[off,aggregate]' \
+  'tool.workload_modes=[queue_only,host_to_device]'
+```
+
+Use SLURM for CPU/GPU evidence:
+
+```bash
+just slurm-benchmark-callback-overhead-cpu \
+  tool.chunk_count=1000 \
+  tool.trials=1 \
+  'tool.stage_timing_modes=[off,aggregate]' \
+  'tool.workload_modes=[queue_only,host_to_device]'
+
+just slurm-benchmark-callback-overhead-gpu \
+  tool.chunk_count=1000 \
+  tool.trials=1 \
+  'tool.stage_timing_modes=[off,aggregate]' \
+  'tool.workload_modes=[queue_only,host_to_device]'
+```
+
+`tool.stage_timing_modes=[off]` represents the production default when no stage
+timing JSON path or forced recorder is configured. `aggregate` and `exact` are
+diagnostic modes; they intentionally perturb the hot path by collecting queue,
+stage, transfer, and optional blocking observations.
 
 ## Performance Discovery
 

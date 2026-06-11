@@ -94,6 +94,47 @@ Keep profile, benchmark, and trace artifacts under ignored paths such as
    import-boundary cleanup unless a future profile remains slow after this
    amortization.
 
+   GLA-92 measured native BGEN callback handoff on 2026-06-12. The top three
+   pre-release bottlenecks were:
+
+   - Default no-recorder callback delivery still paid diagnostic timing
+     scaffolding: `native_delivery`, bounded queue put/get, callback dispatch,
+     and writer materialization paths called `perf_counter` or transfer
+     metadata helpers even when no stage timing recorder existed.
+   - Stage timing collection is intentionally expensive and must remain opt-in:
+     the same 10k no-op callback benchmark took 0.273551s with timing off
+     before the change versus 0.546594s with aggregate timing enabled.
+   - The host/device and binary-result side paths can dominate small chunks:
+     transfer metadata and binary diagnostic summaries materialized data even
+     when the consuming recorder or telemetry session was absent.
+
+   The implemented change keeps exact/aggregate timing behavior unchanged but
+   adds no-recorder fast paths for callback queueing, worker consumption,
+   host-to-device transfer helpers, output writer timing metadata, and binary
+   telemetry summaries. The comparable CPU no-op benchmark improved from
+   0.273551s to 0.239686s for 10k chunks with timing off. A temporary
+   pre-change GPU worktree comparison on `landau` improved the queue-only
+   timing-off case from 0.015694s to 0.015254s for 1k chunks; host-to-device
+   results were noisy and should be treated as profiling evidence, not a
+   claimed speedup.
+
+   Representative post-change SLURM microbenchmarks:
+
+   - CPU queue-only timing off: 0.029596s for 1k chunks; aggregate timing:
+     0.054915s.
+   - CPU host-to-device timing off: 0.087803s for 1k chunks; aggregate timing:
+     0.133750s with 0.087072s in `host_to_device_transfer`.
+   - GPU queue-only timing off: 0.018510s for 1k chunks; aggregate timing:
+     0.072656s.
+   - GPU host-to-device timing off: 0.321054s for 1k chunks; aggregate timing:
+     0.194872s with 0.145171s in `host_to_device_transfer`.
+
+   End-to-end validation used binary-hot GPU smoke with exact stage timing on a
+   100-variant BGEN slice. The warm same-process no-final trial wrote
+   `stage_timings/traits1_variant_major_default_batch2048_capacity16384/warm_same_process_no_final.json`
+   and took 90.888877s including first-run GPU compilation; the hot same-process
+   no-final trial took 0.394637s.
+
 4. Propose the smallest plausible change.
    Describe one implementation direction, the files likely to change, expected
    benefit, and known risks. Do not bundle adjacent cleanup or broader rewrites.

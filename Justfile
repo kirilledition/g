@@ -599,6 +599,14 @@ slurm-regenie2-chr22-matrix *overrides:
 benchmark-bgen-reader *overrides: install-perf-extension
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_bgen_reader {{ overrides }}
 
+# Benchmark Python callback overhead without BGEN decode work
+benchmark-callback-overhead *overrides:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_callback_overhead {{ overrides }}
+
+# Benchmark Python callback overhead on the configured GPU machine profile
+benchmark-callback-overhead-gpu *overrides: install-gpu-dependencies
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_callback_overhead machine=landau_gpu {{ overrides }}
+
 # Benchmark REGENIE step 2 in fresh Python processes
 benchmark-regenie2-linear-fresh-gpu: install-perf-extension
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=linear_startup machine=landau_gpu tool.device=gpu
@@ -622,6 +630,14 @@ benchmark-regenie2-binary-hot-gpu-smoke *overrides: install-perf-extension
 # Submit binary hot benchmark to the configured GPU node
 slurm-benchmark-regenie2-binary-hot-gpu *overrides:
     {{ server_env }} && just slurm-gpu-just benchmark-regenie2-binary-hot-gpu {{ overrides }}
+
+# Submit callback overhead microbenchmark to the configured CPU node
+slurm-benchmark-callback-overhead-cpu *overrides:
+    {{ server_env }} && just slurm-cpu-just benchmark-callback-overhead {{ overrides }}
+
+# Submit callback overhead microbenchmark to the configured GPU node
+slurm-benchmark-callback-overhead-gpu *overrides:
+    {{ server_env }} && just slurm-gpu-just benchmark-callback-overhead-gpu {{ overrides }}
 
 # Run the login-node-safe performance harness smoke benchmark
 perf-smoke *arguments:

@@ -41,42 +41,43 @@ def write_regenie2_native_chunk_with_optional_timing(
     configured output dtype. Internal arrays are cast immediately before the
     Rust writer call.
     """
-    materialization_start_time = time.perf_counter()
+    materialization_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
     beta_device_array = narrow_public_statistic_array_on_device(beta, output_statistic_dtype)
     standard_error_device_array = narrow_public_statistic_array_on_device(standard_error, output_statistic_dtype)
     chi_squared_device_array = narrow_public_statistic_array_on_device(chi_squared, output_statistic_dtype)
     log10_p_value_device_array = narrow_public_statistic_array_on_device(log10_p_value, output_statistic_dtype)
-    record_transfer_metadata_for_array(
-        stage_timing_recorder=stage_timing_recorder,
-        transfer_name="device_to_host_materialization",
-        array_role="beta",
-        array=beta_device_array,
-    )
-    record_transfer_metadata_for_array(
-        stage_timing_recorder=stage_timing_recorder,
-        transfer_name="device_to_host_materialization",
-        array_role="standard_error",
-        array=standard_error_device_array,
-    )
-    record_transfer_metadata_for_array(
-        stage_timing_recorder=stage_timing_recorder,
-        transfer_name="device_to_host_materialization",
-        array_role="chi_squared",
-        array=chi_squared_device_array,
-    )
-    record_transfer_metadata_for_array(
-        stage_timing_recorder=stage_timing_recorder,
-        transfer_name="device_to_host_materialization",
-        array_role="log10_p_value",
-        array=log10_p_value_device_array,
-    )
-    if extra_code is not None:
+    if stage_timing_recorder is not None:
         record_transfer_metadata_for_array(
             stage_timing_recorder=stage_timing_recorder,
             transfer_name="device_to_host_materialization",
-            array_role="extra_code",
-            array=extra_code,
+            array_role="beta",
+            array=beta_device_array,
         )
+        record_transfer_metadata_for_array(
+            stage_timing_recorder=stage_timing_recorder,
+            transfer_name="device_to_host_materialization",
+            array_role="standard_error",
+            array=standard_error_device_array,
+        )
+        record_transfer_metadata_for_array(
+            stage_timing_recorder=stage_timing_recorder,
+            transfer_name="device_to_host_materialization",
+            array_role="chi_squared",
+            array=chi_squared_device_array,
+        )
+        record_transfer_metadata_for_array(
+            stage_timing_recorder=stage_timing_recorder,
+            transfer_name="device_to_host_materialization",
+            array_role="log10_p_value",
+            array=log10_p_value_device_array,
+        )
+        if extra_code is not None:
+            record_transfer_metadata_for_array(
+                stage_timing_recorder=stage_timing_recorder,
+                transfer_name="device_to_host_materialization",
+                array_role="extra_code",
+                array=extra_code,
+            )
     host_values = jax.device_get(
         {
             "beta": beta_device_array,
@@ -86,14 +87,15 @@ def write_regenie2_native_chunk_with_optional_timing(
             "extra_code": extra_code,
         }
     )
-    record_stage_duration_with_optional_chunk(
-        stage_timing_recorder=stage_timing_recorder,
-        stage_name="device_to_host_materialization",
-        start_time=materialization_start_time,
-        chunk_metadata=metadata,
-    )
+    if stage_timing_recorder is not None:
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=stage_timing_recorder,
+            stage_name="device_to_host_materialization",
+            start_time=materialization_start_time,
+            chunk_metadata=metadata,
+        )
 
-    write_start_time = time.perf_counter()
+    write_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
     write_chunk_method_name = "write_regenie2_native_chunk"
     if output_statistic_dtype == types.FloatingPointDtype.FLOAT64 and isinstance(
         writer_session,
@@ -110,18 +112,19 @@ def write_regenie2_native_chunk_with_optional_timing(
         log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"], output_statistic_dtype),
         extra_code=host_values["extra_code"],
     )
-    record_stage_duration_with_optional_chunk(
-        stage_timing_recorder=stage_timing_recorder,
-        stage_name="output_write",
-        start_time=write_start_time,
-        chunk_metadata=metadata,
-    )
-    record_stage_duration_with_optional_chunk(
-        stage_timing_recorder=stage_timing_recorder,
-        stage_name="single_trait_output_write",
-        start_time=write_start_time,
-        chunk_metadata=metadata,
-    )
+    if stage_timing_recorder is not None:
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=stage_timing_recorder,
+            stage_name="output_write",
+            start_time=write_start_time,
+            chunk_metadata=metadata,
+        )
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=stage_timing_recorder,
+            stage_name="single_trait_output_write",
+            start_time=write_start_time,
+            chunk_metadata=metadata,
+        )
 
 
 def write_regenie2_multi_native_chunk_with_optional_timing(
@@ -146,19 +149,20 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
         if chunk_identifier not in committed_chunk_identifier_sets[trait_index]
     )
     if not active_trait_indices:
-        write_start_time = time.perf_counter()
-        record_stage_duration_with_optional_chunk(
-            stage_timing_recorder=stage_timing_recorder,
-            stage_name="output_write",
-            start_time=write_start_time,
-            chunk_metadata=metadata,
-        )
-        record_stage_duration_with_optional_chunk(
-            stage_timing_recorder=stage_timing_recorder,
-            stage_name="multi_trait_output_write_total",
-            start_time=write_start_time,
-            chunk_metadata=metadata,
-        )
+        if stage_timing_recorder is not None:
+            write_start_time = time.perf_counter()
+            record_stage_duration_with_optional_chunk(
+                stage_timing_recorder=stage_timing_recorder,
+                stage_name="output_write",
+                start_time=write_start_time,
+                chunk_metadata=metadata,
+            )
+            record_stage_duration_with_optional_chunk(
+                stage_timing_recorder=stage_timing_recorder,
+                stage_name="multi_trait_output_write_total",
+                start_time=write_start_time,
+                chunk_metadata=metadata,
+            )
         return
 
     active_writer_sessions = tuple(writer_sessions[trait_index] for trait_index in active_trait_indices)
@@ -171,7 +175,7 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             total_trait_count=total_trait_count,
         )
 
-    materialization_start_time = time.perf_counter()
+    materialization_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
     beta_device_array = narrow_public_statistic_array_on_device(
         select_active_trait_rows_on_device(
             beta,
@@ -204,37 +208,38 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
         ),
         output_statistic_dtype,
     )
-    record_transfer_metadata_for_array(
-        stage_timing_recorder=stage_timing_recorder,
-        transfer_name="device_to_host_materialization",
-        array_role="beta",
-        array=beta_device_array,
-    )
-    record_transfer_metadata_for_array(
-        stage_timing_recorder=stage_timing_recorder,
-        transfer_name="device_to_host_materialization",
-        array_role="standard_error",
-        array=standard_error_device_array,
-    )
-    record_transfer_metadata_for_array(
-        stage_timing_recorder=stage_timing_recorder,
-        transfer_name="device_to_host_materialization",
-        array_role="chi_squared",
-        array=chi_squared_device_array,
-    )
-    record_transfer_metadata_for_array(
-        stage_timing_recorder=stage_timing_recorder,
-        transfer_name="device_to_host_materialization",
-        array_role="log10_p_value",
-        array=log10_p_value_device_array,
-    )
-    if active_extra_code is not None:
+    if stage_timing_recorder is not None:
         record_transfer_metadata_for_array(
             stage_timing_recorder=stage_timing_recorder,
             transfer_name="device_to_host_materialization",
-            array_role="extra_code",
-            array=active_extra_code,
+            array_role="beta",
+            array=beta_device_array,
         )
+        record_transfer_metadata_for_array(
+            stage_timing_recorder=stage_timing_recorder,
+            transfer_name="device_to_host_materialization",
+            array_role="standard_error",
+            array=standard_error_device_array,
+        )
+        record_transfer_metadata_for_array(
+            stage_timing_recorder=stage_timing_recorder,
+            transfer_name="device_to_host_materialization",
+            array_role="chi_squared",
+            array=chi_squared_device_array,
+        )
+        record_transfer_metadata_for_array(
+            stage_timing_recorder=stage_timing_recorder,
+            transfer_name="device_to_host_materialization",
+            array_role="log10_p_value",
+            array=log10_p_value_device_array,
+        )
+        if active_extra_code is not None:
+            record_transfer_metadata_for_array(
+                stage_timing_recorder=stage_timing_recorder,
+                transfer_name="device_to_host_materialization",
+                array_role="extra_code",
+                array=active_extra_code,
+            )
     host_values = jax.device_get(
         {
             "beta": beta_device_array,
@@ -244,14 +249,15 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             "extra_code": active_extra_code,
         }
     )
-    record_stage_duration_with_optional_chunk(
-        stage_timing_recorder=stage_timing_recorder,
-        stage_name="device_to_host_materialization",
-        start_time=materialization_start_time,
-        chunk_metadata=metadata,
-    )
+    if stage_timing_recorder is not None:
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=stage_timing_recorder,
+            stage_name="device_to_host_materialization",
+            start_time=materialization_start_time,
+            chunk_metadata=metadata,
+        )
 
-    write_start_time = time.perf_counter()
+    write_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
     if all(isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions):
         write_multi_chunk = (
             _core.write_regenie2_multi_native_chunk_f64
@@ -271,21 +277,22 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"], output_statistic_dtype),
             extra_code=host_values["extra_code"],
         )
-        record_stage_duration_with_optional_chunk(
-            stage_timing_recorder=stage_timing_recorder,
-            stage_name="output_write",
-            start_time=write_start_time,
-            chunk_metadata=metadata,
-        )
-        record_stage_duration_with_optional_chunk(
-            stage_timing_recorder=stage_timing_recorder,
-            stage_name="multi_trait_output_write_total",
-            start_time=write_start_time,
-            chunk_metadata=metadata,
-        )
+        if stage_timing_recorder is not None:
+            record_stage_duration_with_optional_chunk(
+                stage_timing_recorder=stage_timing_recorder,
+                stage_name="output_write",
+                start_time=write_start_time,
+                chunk_metadata=metadata,
+            )
+            record_stage_duration_with_optional_chunk(
+                stage_timing_recorder=stage_timing_recorder,
+                stage_name="multi_trait_output_write_total",
+                start_time=write_start_time,
+                chunk_metadata=metadata,
+            )
         return
     for compact_trait_index, writer_session in enumerate(active_writer_sessions):
-        per_trait_write_start_time = time.perf_counter()
+        per_trait_write_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
         extra_code_slice = None
         if host_values["extra_code"] is not None:
             extra_code_slice = host_values["extra_code"][compact_trait_index]
@@ -309,24 +316,26 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             ),
             extra_code=extra_code_slice,
         )
+        if stage_timing_recorder is not None:
+            record_stage_duration_with_optional_chunk(
+                stage_timing_recorder=stage_timing_recorder,
+                stage_name="multi_trait_output_write_per_trait",
+                start_time=per_trait_write_start_time,
+                chunk_metadata=metadata,
+            )
+    if stage_timing_recorder is not None:
         record_stage_duration_with_optional_chunk(
             stage_timing_recorder=stage_timing_recorder,
-            stage_name="multi_trait_output_write_per_trait",
-            start_time=per_trait_write_start_time,
+            stage_name="output_write",
+            start_time=write_start_time,
             chunk_metadata=metadata,
         )
-    record_stage_duration_with_optional_chunk(
-        stage_timing_recorder=stage_timing_recorder,
-        stage_name="output_write",
-        start_time=write_start_time,
-        chunk_metadata=metadata,
-    )
-    record_stage_duration_with_optional_chunk(
-        stage_timing_recorder=stage_timing_recorder,
-        stage_name="multi_trait_output_write_total",
-        start_time=write_start_time,
-        chunk_metadata=metadata,
-    )
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=stage_timing_recorder,
+            stage_name="multi_trait_output_write_total",
+            start_time=write_start_time,
+            chunk_metadata=metadata,
+        )
 
 
 __all__ = [
