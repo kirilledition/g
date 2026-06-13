@@ -6,7 +6,6 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 
-use arrow::array::{Array, Int64Array};
 use arrow::datatypes::Schema;
 use arrow::ipc::reader::FileReader as ArrowFileReader;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -277,11 +276,13 @@ fn inspect_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitO
         .and_then(|file_name| file_name.to_str())
         .ok_or_else(|| OutputWriterError::Runtime("Rust output writer chunk file name is not UTF-8.".to_string()))?
         .to_string();
-    let chunk_commits = if let Some(chunk_commits) = read_schema_chunk_commits(schema.as_ref())? {
-        inspect_metadata_chunk_file_commits(file_reader, chunk_commits, &chunk_file_name)?
-    } else {
-        inspect_legacy_chunk_file_commits(file_reader, &chunk_file_name)?
+    let Some(chunk_commits) = read_schema_chunk_commits(schema.as_ref())? else {
+        return Err(OutputWriterError::InvalidInput(format!(
+            "Strict resume Arrow chunk is missing chunk commit metadata: {}",
+            chunk_file_path.display()
+        )));
     };
+    let chunk_commits = inspect_metadata_chunk_file_commits(file_reader, chunk_commits, &chunk_file_name)?;
     Ok(ChunkFileCommitObservation { schema, chunk_commits })
 }
 
@@ -319,56 +320,6 @@ fn inspect_metadata_chunk_file_commits(
         });
     }
     Ok(manifest_commits)
-}
-
-fn inspect_legacy_chunk_file_commits(
-    file_reader: ArrowFileReader<File>,
-    chunk_file_name: &str,
-) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
-    let mut observations = BTreeMap::<i64, ChunkCommitObservation>::new();
-    for maybe_batch in file_reader {
-        let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
-        let chunk_identifier_array = read_int64_column(&batch, "chunk_identifier")?;
-        let variant_start_array = read_int64_column(&batch, "variant_start_index")?;
-        let variant_stop_array = read_int64_column(&batch, "variant_stop_index")?;
-        for row_index in 0..chunk_identifier_array.len() {
-            if chunk_identifier_array.is_null(row_index) {
-                continue;
-            }
-            let chunk_identifier = chunk_identifier_array.value(row_index);
-            let variant_start_index = read_required_int64_value(variant_start_array, row_index, "variant_start_index")?;
-            let variant_stop_index = read_required_int64_value(variant_stop_array, row_index, "variant_stop_index")?;
-            observations
-                .entry(chunk_identifier)
-                .and_modify(|observation| {
-                    observation.variant_start_index = observation.variant_start_index.min(variant_start_index);
-                    observation.variant_stop_index = observation.variant_stop_index.max(variant_stop_index);
-                    observation.row_count += 1;
-                })
-                .or_insert(ChunkCommitObservation {
-                    chunk_identifier,
-                    output_format: "arrow".to_string(),
-                    compression: "none".to_string(),
-                    variant_start_index,
-                    variant_stop_index,
-                    row_count: 1,
-                });
-        }
-    }
-    observations
-        .into_values()
-        .map(|chunk_commit| {
-            Ok(manifest::RunManifestChunkCommit {
-                chunk_identifier: chunk_commit.chunk_identifier,
-                output_format: chunk_commit.output_format,
-                compression: chunk_commit.compression,
-                variant_start_index: chunk_commit.variant_start_index,
-                variant_stop_index: chunk_commit.variant_stop_index,
-                row_count: usize::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
-                chunk_file_name: chunk_file_name.to_string(),
-            })
-        })
-        .collect()
 }
 
 fn inspect_parquet_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitObservation, OutputWriterError> {
@@ -515,17 +466,6 @@ fn read_parquet_arrow_schema(chunk_file_path: &Path) -> Result<Arc<Schema>, Outp
     Ok(parquet_reader.schema().clone())
 }
 
-fn read_required_int64_value(
-    column: &Int64Array,
-    row_index: usize,
-    column_name: &str,
-) -> Result<i64, OutputWriterError> {
-    if column.is_null(row_index) {
-        return Err(OutputWriterError::Runtime(format!("Rust output writer found null {column_name} in Arrow chunk.")));
-    }
-    Ok(column.value(row_index))
-}
-
 fn read_schema_chunk_commits(chunk_schema: &Schema) -> Result<Option<Vec<ChunkCommitObservation>>, OutputWriterError> {
     let Some(chunk_commits_text) = chunk_schema.metadata().get(schema::CHUNK_COMMITS_METADATA_KEY) else {
         return Ok(None);
@@ -554,15 +494,6 @@ fn read_chunk_commit_observations_text(
         });
     }
     Ok(chunk_commits)
-}
-
-fn read_int64_column<'a>(
-    batch: &'a arrow::record_batch::RecordBatch,
-    column_name: &str,
-) -> Result<&'a Int64Array, OutputWriterError> {
-    batch.column_by_name(column_name).and_then(|column| column.as_any().downcast_ref::<Int64Array>()).ok_or_else(|| {
-        OutputWriterError::Runtime(format!("Rust output writer could not read {column_name} from Arrow chunk."))
-    })
 }
 
 #[cfg(test)]
@@ -624,7 +555,7 @@ mod tests {
         writer.close().expect("Parquet writer should close");
     }
 
-    fn required_resume_schema(extra_field: Option<Field>) -> Arc<Schema> {
+    fn required_resume_schema_with_commits(extra_field: Option<Field>, chunk_commits_json: &str) -> Arc<Schema> {
         let mut fields = vec![
             Field::new("chunk_identifier", DataType::Int64, false),
             Field::new("variant_start_index", DataType::Int64, false),
@@ -633,15 +564,13 @@ mod tests {
         if let Some(field) = extra_field {
             fields.push(field);
         }
-        Arc::new(Schema::new(fields))
-    }
-
-    fn nullable_resume_schema() -> Arc<Schema> {
-        Arc::new(Schema::new(vec![
-            Field::new("chunk_identifier", DataType::Int64, true),
-            Field::new("variant_start_index", DataType::Int64, true),
-            Field::new("variant_stop_index", DataType::Int64, true),
-        ]))
+        Arc::new(
+            Schema::new(fields).with_metadata(
+                [(output_schema::CHUNK_COMMITS_METADATA_KEY.to_string(), chunk_commits_json.to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+        )
     }
 
     fn schema_metadata_with_commits(chunk_commits_json: &str) -> Arc<Schema> {
@@ -686,9 +615,12 @@ mod tests {
     }
 
     #[test]
-    fn scan_reads_single_chunk_identifier_from_arrow_contents() {
+    fn scan_reads_single_chunk_identifier_from_arrow_metadata() {
         let directory_path = create_test_directory();
-        let schema = required_resume_schema(None);
+        let schema = required_resume_schema_with_commits(
+            None,
+            r#"[{"chunk_identifier":3,"variant_start_index":3,"variant_stop_index":4,"row_count":1}]"#,
+        );
         write_arrow_file(
             &directory_path.join("chunk_000000007.arrow"),
             &schema,
@@ -699,7 +631,8 @@ mod tests {
             ],
         );
 
-        let committed_identifiers = scan_committed_chunk_identifiers(&directory_path).expect("Arrow chunk should scan");
+        let committed_identifiers =
+            scan_committed_chunk_identifiers(&directory_path).expect("metadata-backed Arrow chunk should scan");
 
         assert_eq!(committed_identifiers, vec![3]);
 
@@ -820,9 +753,10 @@ mod tests {
     }
 
     #[test]
-    fn scan_rejects_range_chunk_arrow_without_chunk_identifier_column() {
+    fn scan_rejects_arrow_metadata_without_chunk_identifier() {
         let directory_path = create_test_directory();
-        let schema = Arc::new(Schema::new(vec![Field::new("not_chunk_identifier", DataType::Int64, false)]));
+        let schema =
+            schema_metadata_with_commits(r#"[{"variant_start_index":0,"variant_stop_index":1,"row_count":1}]"#);
         write_arrow_file(
             &directory_path.join("chunk_0_1.arrow"),
             &schema,
@@ -830,7 +764,7 @@ mod tests {
         );
 
         let error = scan_committed_chunk_identifiers(&directory_path)
-            .expect_err("range chunk without chunk_identifier column should fail")
+            .expect_err("Arrow metadata without chunk_identifier should fail")
             .to_string();
         assert!(error.contains("chunk_identifier"));
 
@@ -866,7 +800,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_manifest_rejects_missing_columns_and_schema_mismatches() {
+    fn strict_manifest_rejects_missing_arrow_metadata_and_schema_mismatches() {
         let directory_path = create_test_directory();
         let missing_column_schema = Arc::new(Schema::new(vec![Field::new("chunk_identifier", DataType::Int64, false)]));
         write_arrow_file(
@@ -876,11 +810,14 @@ mod tests {
         );
         let missing_column_manifest = r#"{"committed_chunks":[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":1,"chunk_file_name":"chunk_0_0.arrow"}]}"#;
         let missing_column_error = validate_strict_manifest_chunks(&directory_path, missing_column_manifest)
-            .expect_err("missing variant_start_index should fail")
+            .expect_err("missing Arrow commit metadata should fail")
             .to_string();
-        assert!(missing_column_error.contains("variant_start_index"));
+        assert!(missing_column_error.contains("missing chunk commit metadata"));
 
-        let schema = required_resume_schema(None);
+        let schema = required_resume_schema_with_commits(
+            None,
+            r#"[{"chunk_identifier":1,"variant_start_index":1,"variant_stop_index":2,"row_count":1}]"#,
+        );
         write_arrow_file(
             &directory_path.join("chunk_1_1.arrow"),
             &schema,
@@ -890,7 +827,10 @@ mod tests {
                 Arc::new(Int64Array::from(vec![2])) as ArrayRef,
             ],
         );
-        let extra_schema = required_resume_schema(Some(Field::new("extra", DataType::Float32, false)));
+        let extra_schema = required_resume_schema_with_commits(
+            Some(Field::new("extra", DataType::Float32, false)),
+            r#"[{"chunk_identifier":2,"variant_start_index":2,"variant_stop_index":3,"row_count":1}]"#,
+        );
         write_arrow_file(
             &directory_path.join("chunk_2_2.arrow"),
             &extra_schema,
@@ -995,7 +935,10 @@ mod tests {
     #[test]
     fn repair_strict_manifest_rejects_scanned_schema_mismatches_and_metadata_batch_mismatches() {
         let schema_mismatch_directory_path = create_test_directory();
-        let schema = required_resume_schema(None);
+        let schema = required_resume_schema_with_commits(
+            None,
+            r#"[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":1}]"#,
+        );
         write_arrow_file(
             &schema_mismatch_directory_path.join("chunk_0.arrow"),
             &schema,
@@ -1005,7 +948,10 @@ mod tests {
                 Arc::new(Int64Array::from(vec![1])) as ArrayRef,
             ],
         );
-        let extra_schema = required_resume_schema(Some(Field::new("extra", DataType::Float32, false)));
+        let extra_schema = required_resume_schema_with_commits(
+            Some(Field::new("extra", DataType::Float32, false)),
+            r#"[{"chunk_identifier":1,"variant_start_index":1,"variant_stop_index":2,"row_count":1}]"#,
+        );
         write_arrow_file(
             &schema_mismatch_directory_path.join("chunk_1.arrow"),
             &extra_schema,
@@ -1067,68 +1013,28 @@ mod tests {
     }
 
     #[test]
-    fn repair_strict_manifest_reads_legacy_arrow_commits_and_rejects_null_required_values() {
+    fn strict_resume_rejects_arrow_chunks_without_commit_metadata() {
         let directory_path = create_test_directory();
-        let schema = nullable_resume_schema();
+        let schema = Arc::new(Schema::new(vec![Field::new("chunk_identifier", DataType::Int64, false)]));
         write_arrow_file(
-            &directory_path.join("chunk_legacy.arrow"),
+            &directory_path.join("chunk_without_metadata.arrow"),
             &schema,
-            vec![
-                Arc::new(Int64Array::from(vec![Some(0), Some(0), None, Some(2)])) as ArrayRef,
-                Arc::new(Int64Array::from(vec![Some(0), Some(1), Some(9), Some(2)])) as ArrayRef,
-                Arc::new(Int64Array::from(vec![Some(1), Some(2), Some(10), Some(4)])) as ArrayRef,
-            ],
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
         );
 
-        let repaired_commits = repair_strict_manifest_chunk_commits(&directory_path, r#"{"committed_chunks":[]}"#)
-            .expect("legacy chunks should repair from contents");
-
-        assert_eq!(
-            repaired_commits
-                .iter()
-                .map(|chunk_commit| {
-                    (
-                        chunk_commit.chunk_identifier,
-                        chunk_commit.variant_start_index,
-                        chunk_commit.variant_stop_index,
-                        chunk_commit.row_count,
-                    )
-                })
-                .collect::<Vec<_>>(),
-            vec![(0, 0, 2, 2), (2, 2, 4, 1)],
-        );
-        let partial_manifest = r#"{"committed_chunks":[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":2,"row_count":2,"chunk_file_name":"chunk_legacy.arrow"}]}"#;
-        let partial_manifest_error = validate_strict_manifest_chunks(&directory_path, partial_manifest)
-            .expect_err("legacy manifest should reject a partial grouped file")
-            .to_string();
-        assert!(partial_manifest_error.contains("commit set"));
-
-        let manifest = r#"{"committed_chunks":[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":2,"row_count":2,"chunk_file_name":"chunk_legacy.arrow"},{"chunk_identifier":2,"variant_start_index":2,"variant_stop_index":4,"row_count":1,"chunk_file_name":"chunk_legacy.arrow"}]}"#;
-        assert_eq!(
-            validate_strict_manifest_chunks(&directory_path, manifest)
-                .expect("legacy manifest should validate complete grouped file"),
-            vec![0, 2],
-        );
-
-        let null_required_directory_path = create_test_directory();
-        write_arrow_file(
-            &null_required_directory_path.join("chunk_null.arrow"),
-            &schema,
-            vec![
-                Arc::new(Int64Array::from(vec![Some(0)])) as ArrayRef,
-                Arc::new(Int64Array::from(vec![None])) as ArrayRef,
-                Arc::new(Int64Array::from(vec![Some(1)])) as ArrayRef,
-            ],
+        assert!(
+            scan_committed_chunk_identifiers(&directory_path)
+                .expect_err("metadata-free Arrow chunks should fail")
+                .to_string()
+                .contains("missing chunk commit metadata")
         );
         assert!(
-            repair_strict_manifest_chunk_commits(&null_required_directory_path, r#"{"committed_chunks":[]}"#)
-                .expect_err("null variant_start_index should fail")
+            repair_strict_manifest_chunk_commits(&directory_path, r#"{"committed_chunks":[]}"#)
+                .expect_err("metadata-free Arrow chunks should fail")
                 .to_string()
-                .contains("null variant_start_index")
+                .contains("missing chunk commit metadata")
         );
-
         std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
-        std::fs::remove_dir_all(null_required_directory_path).expect("resume test directory should be removed");
     }
 
     #[test]

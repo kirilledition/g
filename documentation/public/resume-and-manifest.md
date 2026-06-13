@@ -72,6 +72,11 @@ Use `fast` for normal interruption recovery. Use `strict` after manual file
 movement, storage failures, or any situation where the manifest and chunk files
 might disagree.
 
+Strict resume requires current chunk commit metadata in every chunk file. Arrow
+IPC chunks must carry the `g.output.chunk_commits` schema metadata written by
+the native writer; metadata-free Arrow chunks are rejected instead of being
+reconstructed from data columns.
+
 ## Compatibility Checks
 
 Resume first requires an existing `run_manifest.json`. It then compares the

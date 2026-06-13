@@ -78,6 +78,10 @@ Resume modes:
 - `fast` trusts manifest committed chunks after compatibility validation;
 - `strict` reconciles manifest chunk commits with files on disk.
 
+Strict resume reads chunk commit metadata from Arrow schema metadata, Parquet
+footer metadata, or REGENIE text sidecars. Do not add metadata-free Arrow
+fallbacks; pre-release output formats are allowed to require current metadata.
+
 Compatibility validation must fail loudly on mismatched result-affecting inputs
 or output schema assumptions.
 

@@ -11,23 +11,24 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::genotype::bgen::{BgenError, ReaderProfileSnapshot, set_bgen_decode_tile_variant_count};
-use crate::genotype::common::{
-    ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunkStats, GenotypeError, VariantMetadataColumns,
-};
+use crate::genotype::common::{ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunkStats, VariantMetadataColumns};
 use crate::genotype::planner;
 use crate::genotype::preprocess;
 use crate::pipeline::Regenie2RunEngineCore;
-use crate::regenie::{MultiPredictionSource as NativeMultiPredictionSource, PredictionError, PredictionSource};
+use crate::regenie::{MultiPredictionSource as NativeMultiPredictionSource, PredictionSource};
 use crate::sample::{
     AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, GroupedAlignedSampleData, MultiAlignedSampleData,
     MultiAlignmentInputs, SampleKeyMode,
 };
 
 mod config;
+mod errors;
 mod logging;
 mod output;
+mod profile;
+mod runtime;
 
+use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
 use logging::{NativeTelemetrySession, emit_diagnostic_event, initialize_logging, shutdown_logging};
 use output::{
     NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
@@ -36,6 +37,8 @@ use output::{
     scan_committed_chunk_identifiers, validate_run_manifest_compatibility, validate_strict_manifest_chunks,
     write_regenie2_multi_native_chunk, write_regenie2_multi_native_chunk_f64, write_run_manifest_json,
 };
+use profile::build_profile_snapshot_dict;
+use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool};
 
 type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
 
@@ -1441,105 +1444,6 @@ fn parse_sample_key_mode(sample_key_mode: &str) -> PyResult<SampleKeyMode> {
     }
 }
 
-fn convert_bgen_error(operation: &str, error: BgenError) -> PyErr {
-    let (error_class, message) = match &error {
-        BgenError::InvalidFormat(message) | BgenError::UnsupportedFormat(message) | BgenError::Range(message) => {
-            ("bgen_input", message.clone())
-        }
-        BgenError::Io(io_error) => ("bgen_io", io_error.to_string()),
-    };
-    tracing::warn!(
-        target: "g.python",
-        g_event = "native_boundary_error",
-        subsystem = "bgen",
-        operation = operation,
-        error_class = error_class,
-        error_message = %message,
-        "Converting Rust BGEN error to Python."
-    );
-    match error {
-        BgenError::InvalidFormat(message) | BgenError::UnsupportedFormat(message) | BgenError::Range(message) => {
-            PyValueError::new_err(message)
-        }
-        BgenError::Io(io_error) => PyRuntimeError::new_err(io_error.to_string()),
-    }
-}
-
-fn convert_genotype_error(operation: &str, error: GenotypeError) -> PyErr {
-    let (error_class, message) = match &error {
-        GenotypeError::InvalidInput(message) => ("genotype_input", message.clone()),
-        GenotypeError::Reader(message) => ("genotype_reader", message.clone()),
-    };
-    tracing::warn!(
-        target: "g.python",
-        g_event = "native_boundary_error",
-        subsystem = "genotype",
-        operation = operation,
-        error_class = error_class,
-        error_message = %message,
-        "Converting Rust genotype error to Python."
-    );
-    match error {
-        GenotypeError::InvalidInput(message) => PyValueError::new_err(message),
-        GenotypeError::Reader(message) => PyRuntimeError::new_err(message),
-    }
-}
-
-fn convert_prediction_error(operation: &str, error: &PredictionError) -> PyErr {
-    let error_message = match error {
-        PredictionError::PredictionListNotFound(path) => {
-            let message = format!("Prediction list file not found: {}", path.display());
-            tracing::warn!(
-                target: "g.python",
-                g_event = "native_boundary_error",
-                subsystem = "prediction",
-                operation = operation,
-                error_class = "prediction_list_not_found",
-                error_message = %message,
-                "Converting Rust prediction error to Python."
-            );
-            return pyo3::exceptions::PyFileNotFoundError::new_err(message);
-        }
-        PredictionError::LocoFileNotFound(path) => {
-            let message = format!("LOCO file not found: {}", path.display());
-            tracing::warn!(
-                target: "g.python",
-                g_event = "native_boundary_error",
-                subsystem = "prediction",
-                operation = operation,
-                error_class = "loco_file_not_found",
-                error_message = %message,
-                "Converting Rust prediction error to Python."
-            );
-            return pyo3::exceptions::PyFileNotFoundError::new_err(message);
-        }
-        PredictionError::Io(io_error) => {
-            let message = io_error.to_string();
-            tracing::warn!(
-                target: "g.python",
-                g_event = "native_boundary_error",
-                subsystem = "prediction",
-                operation = operation,
-                error_class = "prediction_io",
-                error_message = %message,
-                "Converting Rust prediction error to Python."
-            );
-            return PyRuntimeError::new_err(message);
-        }
-        other_error => other_error.to_string(),
-    };
-    tracing::warn!(
-        target: "g.python",
-        g_event = "native_boundary_error",
-        subsystem = "prediction",
-        operation = operation,
-        error_class = "prediction_error",
-        error_message = %error_message,
-        "Converting Rust prediction error to Python."
-    );
-    PyValueError::new_err(error_message)
-}
-
 fn build_committed_identifier_set(committed_chunk_identifiers: Option<Vec<usize>>) -> BTreeSet<usize> {
     committed_chunk_identifiers.unwrap_or_default().into_iter().collect()
 }
@@ -1552,49 +1456,6 @@ fn convert_variant_metadata_columns_to_tuple(variant_metadata: VariantMetadataCo
         variant_metadata.allele_one,
         variant_metadata.allele_two,
     )
-}
-
-fn build_profile_snapshot_dict(profile_snapshot: &ReaderProfileSnapshot) -> HashMap<String, u64> {
-    HashMap::from([
-        ("sample_selection_prepare_ns".to_string(), profile_snapshot.sample_selection_prepare_ns),
-        ("sample_selection_prepare_count".to_string(), profile_snapshot.sample_selection_prepare_count),
-        ("compressed_block_fetch_ns".to_string(), profile_snapshot.compressed_block_fetch_ns),
-        ("compressed_block_fetch_count".to_string(), profile_snapshot.compressed_block_fetch_count),
-        ("compressed_byte_count".to_string(), profile_snapshot.compressed_byte_count),
-        ("decompression_ns".to_string(), profile_snapshot.decompression_ns),
-        ("decompression_count".to_string(), profile_snapshot.decompression_count),
-        ("uncompressed_byte_count".to_string(), profile_snapshot.uncompressed_byte_count),
-        ("zlib_stream_count".to_string(), profile_snapshot.zlib_stream_count),
-        ("probability_decode_ns".to_string(), profile_snapshot.probability_decode_ns),
-        ("probability_decode_count".to_string(), profile_snapshot.probability_decode_count),
-        ("variant_decode_count".to_string(), profile_snapshot.variant_decode_count),
-        ("output_write_ns".to_string(), profile_snapshot.output_write_ns),
-        ("output_write_count".to_string(), profile_snapshot.output_write_count),
-        ("output_byte_count".to_string(), profile_snapshot.output_byte_count),
-        ("decode_tile_count".to_string(), profile_snapshot.decode_tile_count),
-        ("selected_sample_count".to_string(), profile_snapshot.selected_sample_count),
-        ("metadata_slice_ns".to_string(), profile_snapshot.metadata_slice_ns),
-        ("metadata_slice_count".to_string(), profile_snapshot.metadata_slice_count),
-    ])
-}
-
-#[pyfunction]
-#[allow(clippy::missing_errors_doc)]
-fn configure_bgen_decode_tile_variant_count(tile_variant_count: usize) -> PyResult<()> {
-    set_bgen_decode_tile_variant_count(tile_variant_count)
-        .map_err(|error| convert_bgen_error("configure_bgen_decode_tile_variant_count", error))
-}
-
-#[pyfunction]
-#[allow(clippy::missing_errors_doc)]
-fn configure_rayon_global_thread_pool(thread_count: usize) -> PyResult<()> {
-    if thread_count == 0 {
-        return Err(PyValueError::new_err("Rayon thread count must be positive."));
-    }
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(thread_count)
-        .build_global()
-        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 #[allow(clippy::missing_errors_doc)]

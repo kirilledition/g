@@ -6,8 +6,9 @@ use arrow::datatypes::{DataType, Field, Schema};
 pub(crate) const CHUNK_COMMITS_METADATA_KEY: &str = "g.output.chunk_commits";
 pub(crate) const OUTPUT_SCHEMA_VERSION: &str = "2";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum OutputStatisticDtype {
+    #[default]
     Float32,
     Float64,
 }
@@ -35,12 +36,6 @@ impl OutputStatisticDtype {
             Self::Float32 => DataType::Float32,
             Self::Float64 => DataType::Float64,
         }
-    }
-}
-
-impl Default for OutputStatisticDtype {
-    fn default() -> Self {
-        Self::Float32
     }
 }
 
@@ -112,9 +107,8 @@ pub(crate) fn build_correction_method_array(
         "correction method",
         |extra_code_value| match extra_code_value {
             0 => Some("score"),
-            1 => Some("firth_approximate"),
+            1 | 3 => Some("firth_approximate"),
             2 => Some("spa"),
-            3 => Some("firth_approximate"),
             _ => None,
         },
         "score",
