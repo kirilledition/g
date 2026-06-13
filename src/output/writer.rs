@@ -7,8 +7,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use arrow::array::{Array, ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray};
-use arrow::datatypes::Schema;
+use arrow::array::{
+    Array, ArrayRef, DictionaryArray, Float32Array, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray,
+    UInt8Array,
+};
+use arrow::datatypes::{DataType, Field, Schema, UInt8Type};
 use arrow::ipc::CompressionType;
 use arrow::ipc::writer::{FileWriter, IpcWriteOptions};
 use parquet::arrow::ArrowWriter;
@@ -27,6 +30,11 @@ use crate::output::schema::OutputStatisticDtype;
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 pub(crate) const REGENIE_STEP2_TEXT_HEADER: &str = "CHROM\tGENPOS\tID\tALLELE0\tALLELE1\tA1FREQ\tINFO\tN\tTEST\tBETA\tSE\tCHISQ\tLOG10P\tEXTRA\tCORRECTION_METHOD\tCORRECTION_STATUS\n";
 const REGENIE_STEP2_TEXT_MISSING_VALUE: &str = "NA";
+const CORRECTION_METHOD_SCORE_KEY: u8 = 0;
+const CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY: u8 = 1;
+const CORRECTION_METHOD_SPA_KEY: u8 = 2;
+const CORRECTION_STATUS_SUCCESS_KEY: u8 = 0;
+const CORRECTION_STATUS_FAILED_KEY: u8 = 1;
 
 #[derive(Debug, Error)]
 pub enum OutputWriterError {
@@ -82,6 +90,12 @@ impl OutputFileFormat {
             Self::Regenie => "regenie",
         }
     }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum RegenieStep2CorrectionArrayEncoding {
+    String,
+    Dictionary,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -263,6 +277,23 @@ fn build_regenie_step2_chunk_file_schema(
     ))
 }
 
+fn build_regenie_step2_parquet_record_batch_schema(chunk_schema: &Schema) -> Arc<Schema> {
+    let fields = chunk_schema
+        .fields()
+        .iter()
+        .map(|field| {
+            let data_type = match field.name().as_str() {
+                "CORRECTION_METHOD" | "CORRECTION_STATUS" => {
+                    DataType::Dictionary(Box::new(DataType::UInt8), Box::new(DataType::Utf8))
+                }
+                _ => field.data_type().clone(),
+            };
+            Field::new(field.name().clone(), data_type, field.is_nullable()).with_metadata(field.metadata().clone())
+        })
+        .collect::<Vec<_>>();
+    Arc::new(Schema::new_with_metadata(fields, chunk_schema.metadata().clone()))
+}
+
 fn build_chunk_commit_metadata_text(chunk_commits: &[manifest::RunManifestChunkCommit]) -> Result<String, String> {
     let chunk_commit_values = chunk_commits
         .iter()
@@ -329,8 +360,12 @@ fn build_regenie_step2_record_batches(
         .chunks
         .into_iter()
         .map(|chunk_job| {
-            let record_batch_build_result =
-                build_regenie_step2_record_batch(chunk_job, Arc::clone(&chunk_schema), &mut array_cache)?;
+            let record_batch_build_result = build_regenie_step2_record_batch(
+                chunk_job,
+                Arc::clone(&chunk_schema),
+                &mut array_cache,
+                RegenieStep2CorrectionArrayEncoding::String,
+            )?;
             timing.add(record_batch_build_result.timing);
             Ok(record_batch_build_result.record_batch)
         })
@@ -360,6 +395,20 @@ struct RegenieStep2ChunkStreamWriteResult {
 struct RegenieStep2RecordBatchArrayCache {
     null_extra_arrays_by_row_count: HashMap<usize, ArrayRef>,
     test_arrays_by_row_count: HashMap<usize, ArrayRef>,
+    constant_correction_dictionary_arrays: HashMap<CorrectionDictionaryArrayCacheKey, ArrayRef>,
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct CorrectionDictionaryArrayCacheKey {
+    row_count: usize,
+    dictionary_kind: CorrectionDictionaryKind,
+    dictionary_key: u8,
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+enum CorrectionDictionaryKind {
+    Method,
+    Status,
 }
 
 impl RegenieStep2RecordBatchArrayCache {
@@ -378,12 +427,27 @@ impl RegenieStep2RecordBatchArrayCache {
                 .or_insert_with(|| Arc::new(StringArray::from(vec!["ADD"; row_count]))),
         )
     }
+
+    fn constant_correction_dictionary_array(
+        &mut self,
+        cache_key: CorrectionDictionaryArrayCacheKey,
+        dictionary_values: ArrayRef,
+    ) -> Result<ArrayRef, String> {
+        if let Some(cached_array) = self.constant_correction_dictionary_arrays.get(&cache_key) {
+            return Ok(Arc::clone(cached_array));
+        }
+        let dictionary_array =
+            build_uint8_dictionary_array(vec![cache_key.dictionary_key; cache_key.row_count], dictionary_values)?;
+        self.constant_correction_dictionary_arrays.insert(cache_key, Arc::clone(&dictionary_array));
+        Ok(dictionary_array)
+    }
 }
 
 fn build_regenie_step2_record_batch(
     chunk_job: RegenieStep2ChunkJob,
     chunk_schema: Arc<Schema>,
     array_cache: &mut RegenieStep2RecordBatchArrayCache,
+    correction_array_encoding: RegenieStep2CorrectionArrayEncoding,
 ) -> Result<RegenieStep2SingleRecordBatchBuildResult, String> {
     let row_count = chunk_job.chunk_handle.row_count();
     let metadata_array_build_start_time = Instant::now();
@@ -418,9 +482,20 @@ fn build_regenie_step2_record_batch(
         Some(extra_code) => schema::build_extra_string_array(Some(Arc::clone(extra_code)), row_count)?,
         None => array_cache.null_extra_array(row_count),
     };
-    let correction_method_array =
-        schema::build_correction_method_array(extra_code_array.as_ref().map(Arc::clone), row_count)?;
-    let correction_status_array = schema::build_correction_status_array(extra_code_array, row_count)?;
+    let (correction_method_array, correction_status_array) = match correction_array_encoding {
+        RegenieStep2CorrectionArrayEncoding::String => (
+            schema::build_correction_method_array(extra_code_array.as_ref().map(Arc::clone), row_count)?,
+            schema::build_correction_status_array(extra_code_array, row_count)?,
+        ),
+        RegenieStep2CorrectionArrayEncoding::Dictionary => (
+            build_correction_method_dictionary_array(
+                extra_code_array.as_ref().map(Arc::clone),
+                row_count,
+                array_cache,
+            )?,
+            build_correction_status_dictionary_array(extra_code_array, row_count, array_cache)?,
+        ),
+    };
     let extra_array_build_seconds = extra_array_build_start_time.elapsed().as_secs_f64();
 
     let columns: Vec<ArrayRef> = vec![
@@ -462,6 +537,118 @@ fn build_regenie_step2_record_batch(
     })
 }
 
+fn build_correction_method_dictionary_array(
+    extra_code: Option<ArrayRef>,
+    row_count: usize,
+    array_cache: &mut RegenieStep2RecordBatchArrayCache,
+) -> Result<ArrayRef, String> {
+    build_correction_dictionary_array(
+        extra_code,
+        row_count,
+        array_cache,
+        CorrectionDictionaryKind::Method,
+        build_correction_method_dictionary_values(),
+        "correction method",
+        |extra_code_value| match extra_code_value {
+            0 => Some(CORRECTION_METHOD_SCORE_KEY),
+            1 => Some(CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY),
+            2 => Some(CORRECTION_METHOD_SPA_KEY),
+            3 => Some(CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY),
+            _ => None,
+        },
+    )
+}
+
+fn build_correction_status_dictionary_array(
+    extra_code: Option<ArrayRef>,
+    row_count: usize,
+    array_cache: &mut RegenieStep2RecordBatchArrayCache,
+) -> Result<ArrayRef, String> {
+    build_correction_dictionary_array(
+        extra_code,
+        row_count,
+        array_cache,
+        CorrectionDictionaryKind::Status,
+        build_correction_status_dictionary_values(),
+        "correction status",
+        |extra_code_value| match extra_code_value {
+            0..=2 => Some(CORRECTION_STATUS_SUCCESS_KEY),
+            3 => Some(CORRECTION_STATUS_FAILED_KEY),
+            _ => None,
+        },
+    )
+}
+
+fn build_correction_dictionary_array(
+    extra_code: Option<ArrayRef>,
+    row_count: usize,
+    array_cache: &mut RegenieStep2RecordBatchArrayCache,
+    dictionary_kind: CorrectionDictionaryKind,
+    dictionary_values: ArrayRef,
+    label_kind: &str,
+    key_for_code: impl Fn(i32) -> Option<u8>,
+) -> Result<ArrayRef, String> {
+    let Some(extra_code_array) = extra_code else {
+        return array_cache.constant_correction_dictionary_array(
+            CorrectionDictionaryArrayCacheKey { row_count, dictionary_kind, dictionary_key: 0 },
+            dictionary_values,
+        );
+    };
+    let extra_code_values = extra_code_array
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .ok_or_else(|| format!("REGENIE step 2 {label_kind} code must be an int32 array."))?;
+    if extra_code_values.len() != row_count {
+        return Err(format!("REGENIE step 2 {label_kind} row count does not match metadata row count."));
+    }
+
+    let mut dictionary_keys = Vec::with_capacity(row_count);
+    let mut first_dictionary_key: Option<u8> = None;
+    let mut all_keys_same = true;
+    for row_index in 0..extra_code_values.len() {
+        let dictionary_key = if extra_code_values.is_null(row_index) {
+            0
+        } else {
+            let extra_code_value = extra_code_values.value(row_index);
+            key_for_code(extra_code_value)
+                .ok_or_else(|| format!("Unsupported REGENIE step 2 extra code: {extra_code_value}"))?
+        };
+        if let Some(previous_dictionary_key) = first_dictionary_key {
+            all_keys_same &= previous_dictionary_key == dictionary_key;
+        } else {
+            first_dictionary_key = Some(dictionary_key);
+        }
+        dictionary_keys.push(dictionary_key);
+    }
+
+    if all_keys_same {
+        return array_cache.constant_correction_dictionary_array(
+            CorrectionDictionaryArrayCacheKey {
+                row_count,
+                dictionary_kind,
+                dictionary_key: first_dictionary_key.unwrap_or(0),
+            },
+            dictionary_values,
+        );
+    }
+    build_uint8_dictionary_array(dictionary_keys, dictionary_values)
+}
+
+fn build_correction_method_dictionary_values() -> ArrayRef {
+    Arc::new(StringArray::from_iter_values(["score", "firth_approximate", "spa"]))
+}
+
+fn build_correction_status_dictionary_values() -> ArrayRef {
+    Arc::new(StringArray::from_iter_values(["success", "failed"]))
+}
+
+fn build_uint8_dictionary_array(dictionary_keys: Vec<u8>, dictionary_values: ArrayRef) -> Result<ArrayRef, String> {
+    let key_array = UInt8Array::from(dictionary_keys);
+    DictionaryArray::<UInt8Type>::try_new(key_array, dictionary_values)
+        .map(|dictionary_array| Arc::new(dictionary_array) as ArrayRef)
+        .map_err(|error| error.to_string())
+}
+
 struct RegenieStep2ArrowFileWriteTiming {
     file_create: f64,
     writer_init: f64,
@@ -497,8 +684,12 @@ fn write_regenie_step2_chunks_to_arrow_file(
     let mut batch_write = 0.0;
     for chunk_job in chunks {
         let record_batch_build_start_time = Instant::now();
-        let record_batch_build_result =
-            build_regenie_step2_record_batch(chunk_job, Arc::clone(&chunk_schema), &mut array_cache)?;
+        let record_batch_build_result = build_regenie_step2_record_batch(
+            chunk_job,
+            Arc::clone(&chunk_schema),
+            &mut array_cache,
+            RegenieStep2CorrectionArrayEncoding::String,
+        )?;
         record_batch_build_seconds += record_batch_build_start_time.elapsed().as_secs_f64();
         record_batch_build_timing.add(record_batch_build_result.timing);
 
@@ -545,11 +736,16 @@ fn write_regenie_step2_chunks_to_parquet_file(
     let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming::default();
     let mut record_batch_build_seconds = 0.0;
     let mut array_cache = RegenieStep2RecordBatchArrayCache::default();
+    let parquet_record_batch_schema = build_regenie_step2_parquet_record_batch_schema(&chunk_schema);
     let mut batch_write = 0.0;
     for chunk_job in chunks {
         let record_batch_build_start_time = Instant::now();
-        let record_batch_build_result =
-            build_regenie_step2_record_batch(chunk_job, Arc::clone(&chunk_schema), &mut array_cache)?;
+        let record_batch_build_result = build_regenie_step2_record_batch(
+            chunk_job,
+            Arc::clone(&parquet_record_batch_schema),
+            &mut array_cache,
+            RegenieStep2CorrectionArrayEncoding::Dictionary,
+        )?;
         record_batch_build_seconds += record_batch_build_start_time.elapsed().as_secs_f64();
         record_batch_build_timing.add(record_batch_build_result.timing);
 
@@ -592,8 +788,12 @@ fn write_regenie_step2_chunks_to_regenie_text_file(
     let mut batch_write = 0.0;
     for chunk_job in chunks {
         let record_batch_build_start_time = Instant::now();
-        let record_batch_build_result =
-            build_regenie_step2_record_batch(chunk_job, Arc::clone(&chunk_schema), &mut array_cache)?;
+        let record_batch_build_result = build_regenie_step2_record_batch(
+            chunk_job,
+            Arc::clone(&chunk_schema),
+            &mut array_cache,
+            RegenieStep2CorrectionArrayEncoding::String,
+        )?;
         record_batch_build_seconds += record_batch_build_start_time.elapsed().as_secs_f64();
         record_batch_build_timing.add(record_batch_build_result.timing);
 
@@ -1070,6 +1270,83 @@ mod tests {
     }
 
     #[test]
+    fn parquet_record_batch_dictionary_encodes_correction_columns_with_public_file_schema() {
+        let write_batch = build_test_batch(vec![build_test_chunk(0, Some(vec![1]))]);
+        let chunk_commits = build_run_manifest_chunk_commits(&write_batch, OutputFileFormat::Parquet, "none")
+            .expect("chunk commits should build");
+        let public_chunk_schema = build_regenie_step2_chunk_file_schema(&chunk_commits, OutputStatisticDtype::Float32)
+            .expect("public chunk schema should build");
+        let parquet_record_batch_schema = build_regenie_step2_parquet_record_batch_schema(public_chunk_schema.as_ref());
+
+        assert_eq!(
+            public_chunk_schema
+                .field_with_name("CORRECTION_METHOD")
+                .expect("public method field should exist")
+                .data_type(),
+            &DataType::Utf8
+        );
+        assert_eq!(
+            public_chunk_schema
+                .field_with_name("CORRECTION_STATUS")
+                .expect("public status field should exist")
+                .data_type(),
+            &DataType::Utf8
+        );
+        assert_eq!(
+            parquet_record_batch_schema
+                .field_with_name("CORRECTION_METHOD")
+                .expect("Parquet method field should exist")
+                .data_type(),
+            &DataType::Dictionary(Box::new(DataType::UInt8), Box::new(DataType::Utf8))
+        );
+        assert_eq!(
+            parquet_record_batch_schema
+                .field_with_name("CORRECTION_STATUS")
+                .expect("Parquet status field should exist")
+                .data_type(),
+            &DataType::Dictionary(Box::new(DataType::UInt8), Box::new(DataType::Utf8))
+        );
+
+        let mut array_cache = RegenieStep2RecordBatchArrayCache::default();
+        let record_batch_build_result = build_regenie_step2_record_batch(
+            build_test_chunk(0, Some(vec![1])),
+            parquet_record_batch_schema,
+            &mut array_cache,
+            RegenieStep2CorrectionArrayEncoding::Dictionary,
+        )
+        .expect("Parquet record batch should build");
+        let correction_method_array = record_batch_build_result
+            .record_batch
+            .column_by_name("CORRECTION_METHOD")
+            .expect("CORRECTION_METHOD column should exist")
+            .as_any()
+            .downcast_ref::<DictionaryArray<UInt8Type>>()
+            .expect("CORRECTION_METHOD column should be dictionary encoded");
+        let correction_status_array = record_batch_build_result
+            .record_batch
+            .column_by_name("CORRECTION_STATUS")
+            .expect("CORRECTION_STATUS column should exist")
+            .as_any()
+            .downcast_ref::<DictionaryArray<UInt8Type>>()
+            .expect("CORRECTION_STATUS column should be dictionary encoded");
+
+        assert_eq!(correction_method_array.keys().value(0), CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY);
+        assert_eq!(correction_status_array.keys().value(0), CORRECTION_STATUS_SUCCESS_KEY);
+        let method_values = correction_method_array
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("method dictionary values should be strings");
+        let status_values = correction_status_array
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("status dictionary values should be strings");
+        assert_eq!(method_values.value(usize::from(correction_method_array.keys().value(0))), "firth_approximate");
+        assert_eq!(status_values.value(usize::from(correction_status_array.keys().value(0))), "success");
+    }
+
+    #[test]
     fn grouped_arrow_file_writes_one_batch_per_compute_chunk_with_metadata_commits() {
         let run_directory = create_test_directory();
         let chunks_directory = run_directory.join("chunks");
@@ -1141,6 +1418,20 @@ mod tests {
                 .clone();
         assert_eq!(parquet_schema.fields().len(), 16);
         assert!(parquet_schema.field_with_name("chunk_identifier").is_err());
+        assert_eq!(
+            parquet_schema
+                .field_with_name("CORRECTION_METHOD")
+                .expect("CORRECTION_METHOD field should exist")
+                .data_type(),
+            &DataType::Utf8
+        );
+        assert_eq!(
+            parquet_schema
+                .field_with_name("CORRECTION_STATUS")
+                .expect("CORRECTION_STATUS field should exist")
+                .data_type(),
+            &DataType::Utf8
+        );
 
         let parquet_file = File::open(part_file_path).expect("Parquet part should open");
         let parquet_reader = SerializedFileReader::new(parquet_file).expect("Parquet reader should open");

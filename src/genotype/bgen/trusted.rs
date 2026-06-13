@@ -222,7 +222,6 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
             validate_sample_ploidy_and_missingness,
             thread_scratch,
         )?;
-        let variant_profile_snapshot = variant_decode_result.profile_snapshot;
         tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.selected_dosage_total;
         tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
         tile_stats.observation_count[tile_variant_index] = variant_decode_result.selected_observation_count;
@@ -231,22 +230,13 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
         tile_stats.homozygous_reference_count[tile_variant_index] = variant_decode_result.homozygous_reference_count;
         tile_stats.heterozygous_count[tile_variant_index] = variant_decode_result.heterozygous_count;
         tile_stats.homozygous_alternate_count[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
-        thread_local_profile_snapshot.compressed_block_fetch_ns += variant_profile_snapshot.compressed_block_fetch_ns;
-        thread_local_profile_snapshot.compressed_block_fetch_count +=
-            variant_profile_snapshot.compressed_block_fetch_count;
-        thread_local_profile_snapshot.compressed_byte_count += variant_profile_snapshot.compressed_byte_count;
-        thread_local_profile_snapshot.decompression_ns += variant_profile_snapshot.decompression_ns;
-        thread_local_profile_snapshot.decompression_count += variant_profile_snapshot.decompression_count;
-        thread_local_profile_snapshot.uncompressed_byte_count += variant_profile_snapshot.uncompressed_byte_count;
-        thread_local_profile_snapshot.zlib_stream_count += variant_profile_snapshot.zlib_stream_count;
-        thread_local_profile_snapshot.probability_decode_ns += variant_profile_snapshot.probability_decode_ns;
-        thread_local_profile_snapshot.probability_decode_count += variant_profile_snapshot.probability_decode_count;
-        thread_local_profile_snapshot.variant_decode_count += variant_profile_snapshot.variant_decode_count;
-        thread_local_profile_snapshot.output_write_ns += variant_profile_snapshot.output_write_ns;
-        thread_local_profile_snapshot.output_write_count += variant_profile_snapshot.output_write_count;
-        thread_local_profile_snapshot.output_byte_count += variant_profile_snapshot.output_byte_count;
+        if profiling_enabled {
+            thread_local_profile_snapshot.merge_from(&variant_decode_result.profile_snapshot);
+        }
     }
-    thread_local_profile_snapshot.decode_tile_count += 1;
+    if profiling_enabled {
+        thread_local_profile_snapshot.decode_tile_count += 1;
+    }
     Ok(VariantMajorTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, has_missing_values: false })
 }
 
@@ -281,7 +271,6 @@ pub(super) fn decode_trusted_variant_major_packed8_probability_pair_tile(
             validate_sample_ploidy_and_missingness,
             thread_scratch,
         )?;
-        let variant_profile_snapshot = variant_decode_result.profile_snapshot;
         tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.selected_dosage_total;
         tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
         tile_stats.observation_count[tile_variant_index] = variant_decode_result.selected_observation_count;
@@ -290,22 +279,13 @@ pub(super) fn decode_trusted_variant_major_packed8_probability_pair_tile(
         tile_stats.homozygous_reference_count[tile_variant_index] = variant_decode_result.homozygous_reference_count;
         tile_stats.heterozygous_count[tile_variant_index] = variant_decode_result.heterozygous_count;
         tile_stats.homozygous_alternate_count[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
-        thread_local_profile_snapshot.compressed_block_fetch_ns += variant_profile_snapshot.compressed_block_fetch_ns;
-        thread_local_profile_snapshot.compressed_block_fetch_count +=
-            variant_profile_snapshot.compressed_block_fetch_count;
-        thread_local_profile_snapshot.compressed_byte_count += variant_profile_snapshot.compressed_byte_count;
-        thread_local_profile_snapshot.decompression_ns += variant_profile_snapshot.decompression_ns;
-        thread_local_profile_snapshot.decompression_count += variant_profile_snapshot.decompression_count;
-        thread_local_profile_snapshot.uncompressed_byte_count += variant_profile_snapshot.uncompressed_byte_count;
-        thread_local_profile_snapshot.zlib_stream_count += variant_profile_snapshot.zlib_stream_count;
-        thread_local_profile_snapshot.probability_decode_ns += variant_profile_snapshot.probability_decode_ns;
-        thread_local_profile_snapshot.probability_decode_count += variant_profile_snapshot.probability_decode_count;
-        thread_local_profile_snapshot.variant_decode_count += variant_profile_snapshot.variant_decode_count;
-        thread_local_profile_snapshot.output_write_ns += variant_profile_snapshot.output_write_ns;
-        thread_local_profile_snapshot.output_write_count += variant_profile_snapshot.output_write_count;
-        thread_local_profile_snapshot.output_byte_count += variant_profile_snapshot.output_byte_count;
+        if profiling_enabled {
+            thread_local_profile_snapshot.merge_from(&variant_decode_result.profile_snapshot);
+        }
     }
-    thread_local_profile_snapshot.decode_tile_count += 1;
+    if profiling_enabled {
+        thread_local_profile_snapshot.decode_tile_count += 1;
+    }
     Ok(VariantMajorTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, has_missing_values: false })
 }
 
@@ -397,7 +377,9 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
         thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
         thread_local_profile_snapshot.probability_decode_count += 1;
     }
-    thread_local_profile_snapshot.variant_decode_count += 1;
+    if profiling_enabled {
+        thread_local_profile_snapshot.variant_decode_count += 1;
+    }
     Ok(VariantDecodeResult {
         profile_snapshot: thread_local_profile_snapshot,
         selected_dosage_total: decode_summary.selected_dosage_total,
@@ -531,7 +513,9 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
         thread_local_profile_snapshot.probability_decode_count += 1;
     }
-    thread_local_profile_snapshot.variant_decode_count += 1;
+    if profiling_enabled {
+        thread_local_profile_snapshot.variant_decode_count += 1;
+    }
     Ok(VariantDecodeResult {
         profile_snapshot: thread_local_profile_snapshot,
         selected_dosage_total,
@@ -822,6 +806,44 @@ mod tests {
         assert!((output[2] - dosage_lookup[usize::from(255_u8)]).abs() < f32::EPSILON);
         assert!((output[3] - dosage_lookup[0]).abs() < f32::EPSILON);
         assert_eq!(nonzero_count.len(), 2);
+
+        let mut disabled_output = vec![f32::NAN; 4];
+        let mut disabled_dosage_sum = vec![0.0_f32; 2];
+        let mut disabled_dosage_square_sum = vec![0.0_f32; 2];
+        let mut disabled_observation_count = vec![0_i32; 2];
+        let mut disabled_zero_count = vec![0_i32; 2];
+        let mut disabled_nonzero_count = vec![0_i32; 2];
+        let mut disabled_homozygous_reference_count = vec![0_i32; 2];
+        let mut disabled_heterozygous_count = vec![0_i32; 2];
+        let mut disabled_homozygous_alternate_count = vec![0_i32; 2];
+        let mut disabled_tile_stats = VariantMajorTileStatsMut {
+            dosage_sum: &mut disabled_dosage_sum,
+            dosage_square_sum: &mut disabled_dosage_square_sum,
+            observation_count: &mut disabled_observation_count,
+            zero_count: &mut disabled_zero_count,
+            nonzero_count: &mut disabled_nonzero_count,
+            homozygous_reference_count: &mut disabled_homozygous_reference_count,
+            heterozygous_count: &mut disabled_heterozygous_count,
+            homozygous_alternate_count: &mut disabled_homozygous_alternate_count,
+        };
+        let disabled_result = decode_trusted_variant_major_dosage_tile(
+            &mmap,
+            CompressionType::None,
+            3,
+            &sample_selection,
+            &variant_records,
+            disabled_output.as_mut_ptr() as usize,
+            2,
+            0,
+            false,
+            true,
+            &mut disabled_tile_stats,
+            &mut thread_scratch,
+        )
+        .expect("trusted variant-major tile should decode without profiling");
+        assert_eq!(disabled_result.profile_snapshot, ThreadLocalProfileSnapshot::default());
+        assert_eq!(disabled_observation_count, vec![2, 2]);
+        assert_eq!(disabled_output, output);
     }
 
     #[test]

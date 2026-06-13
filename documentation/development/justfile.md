@@ -392,14 +392,14 @@ GWAS_ENGINE_REGENIE_BGEN_PATH=/path/to/bgen \
 - Inputs: binary phenotype, covariates, BGEN/sample files, and binary step 1
   predictions.
 - Output: binary REGENIE step 2 GPU output under
-  `data/regenie2_binary_chr22_gpu`.
+  `data/regenie2_binary_chr22_gpu.g/trait_0001_phenotype_binary.regenie2_binary.run`.
 - Use when: running a full chr22 binary GPU step 2 workload.
 
 ### `regenie2-binary-gpu-smoke`
 
 - Inputs: same as `regenie2-binary-gpu`.
 - Output: 1,000-variant smoke output under
-  `data/regenie2_binary_chr22_gpu_smoke`.
+  `data/regenie2_binary_chr22_gpu_smoke.g/trait_0001_phenotype_binary.regenie2_binary.run`.
 - Use when: checking binary GPU step 2 behavior quickly.
 
 ### `slurm-regenie2-binary-gpu`

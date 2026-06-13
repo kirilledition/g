@@ -1064,11 +1064,13 @@ impl Regenie2RunEngine {
             .engine
             .plan_chunks(&committed_identifier_set)
             .map_err(|error| convert_genotype_error("plan_chunks", error))?;
+        let acquire_dosage_buffer_method = callback.getattr("acquire_variant_major_dosage_buffer")?;
+        let compute_dosage_chunk_method = callback.getattr("compute_preprocessed_variant_major_dosage_chunk")?;
         for chunk_spec in &chunk_specs {
             py.check_signals()?;
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
-            let output_array_object = callback
-                .call_method1("acquire_variant_major_dosage_buffer", (selected_variant_count, selected_sample_count))?;
+            let output_array_object =
+                acquire_dosage_buffer_method.call1((selected_variant_count, selected_sample_count))?;
             let stats = {
                 let mut output_array = output_array_object.extract::<PyReadwriteArray2<'_, f32>>()?;
                 let output_shape = output_array.shape();
@@ -1113,10 +1115,7 @@ impl Regenie2RunEngine {
                 py,
                 VariantMetadata::new(chunk_spec.variant_start_index, chunk_spec.variant_stop_index, metadata_columns),
             )?;
-            callback.call_method1(
-                "compute_preprocessed_variant_major_dosage_chunk",
-                (metadata, output_array_object, stats),
-            )?;
+            compute_dosage_chunk_method.call1((metadata, output_array_object, stats))?;
         }
         Ok(chunk_specs.len())
     }
@@ -1133,13 +1132,14 @@ impl Regenie2RunEngine {
             .engine
             .plan_chunks(&committed_identifier_set)
             .map_err(|error| convert_genotype_error("plan_chunks", error))?;
+        let acquire_packed_buffer_method = callback.getattr("acquire_variant_major_packed8_probability_pair_buffer")?;
+        let compute_packed_chunk_method =
+            callback.getattr("compute_preprocessed_variant_major_packed8_probability_pair_chunk")?;
         for chunk_spec in &chunk_specs {
             py.check_signals()?;
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
-            let output_array_object = callback.call_method1(
-                "acquire_variant_major_packed8_probability_pair_buffer",
-                (selected_variant_count, selected_sample_count),
-            )?;
+            let output_array_object =
+                acquire_packed_buffer_method.call1((selected_variant_count, selected_sample_count))?;
             let stats = {
                 let mut output_array = output_array_object.extract::<PyReadwriteArray3<'_, u8>>()?;
                 let output_shape = output_array.shape();
@@ -1189,10 +1189,7 @@ impl Regenie2RunEngine {
                 py,
                 VariantMetadata::new(chunk_spec.variant_start_index, chunk_spec.variant_stop_index, metadata_columns),
             )?;
-            callback.call_method1(
-                "compute_preprocessed_variant_major_packed8_probability_pair_chunk",
-                (metadata, output_array_object, stats),
-            )?;
+            compute_packed_chunk_method.call1((metadata, output_array_object, stats))?;
         }
         Ok(chunk_specs.len())
     }

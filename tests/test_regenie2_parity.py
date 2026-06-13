@@ -35,10 +35,7 @@ def build_statistic_tolerance_parameters(
     workflow: tests.parity.harness.GoldenWorkflow,
 ) -> list[object]:
     """Build stable pytest parameters from the checked-in parity metadata."""
-    return [
-        pytest.param(tolerance, id=tolerance.observed_column)
-        for tolerance in workflow.tolerances
-    ]
+    return [pytest.param(tolerance, id=tolerance.observed_column) for tolerance in workflow.tolerances]
 
 
 def load_regenie_baseline_results(baseline_path: Path, workflow: tests.parity.harness.GoldenWorkflow) -> pl.DataFrame:

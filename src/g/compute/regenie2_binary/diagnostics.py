@@ -67,7 +67,12 @@ class BinaryChunkDiagnostics:
 
 
 def count_binary_chunk_diagnostics(
-    result: regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult,
+    result: (
+        regenie2_binary_result.Regenie2BinaryScoreChunkResult
+        | regenie2_binary_result.Regenie2BinaryChunkResult
+        | regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult
+        | regenie2_binary_result.Regenie2MultiBinaryChunkResult
+    ),
 ) -> BinaryChunkDiagnostics:
     """Count diagnostic categories for one binary result chunk."""
     empty_integer_array = jnp.zeros_like(result.extra_code, dtype=jnp.int32)

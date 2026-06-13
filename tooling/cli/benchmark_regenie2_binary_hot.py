@@ -898,19 +898,16 @@ def run_regenie2_api_call(
     )
 
 
-def count_parquet_rows_and_info(final_parquet_path: Path) -> dict[str, int]:
-    """Count rows and non-null INFO values in a finalized Parquet artifact."""
-    frame = typing.cast(
-        "pl.DataFrame",
-        (
-            pl.scan_parquet(final_parquet_path)
-            .select(
-                pl.len().alias("row_count"),
-                pl.col("INFO").is_not_null().sum().alias("info_non_null_count"),
-            )
-            .collect()
-        ),
-    )
+def count_parquet_rows_and_info(parquet_paths: list[Path]) -> dict[str, int] | None:
+    """Count rows and non-null INFO values in finalized Parquet artifact files."""
+    if not parquet_paths:
+        return None
+    scans = [pl.scan_parquet(parquet_path) for parquet_path in parquet_paths]
+    combined_scan = scans[0] if len(scans) == 1 else pl.concat(scans)
+    frame = combined_scan.select(
+        pl.len().alias("row_count"),
+        pl.col("INFO").is_not_null().sum().alias("info_non_null_count"),
+    ).collect()
     return {
         "row_count": int(frame.item(row=0, column="row_count")),
         "info_non_null_count": int(frame.item(row=0, column="info_non_null_count")),
@@ -966,18 +963,31 @@ def measure_output_metrics(artifacts: api.RunArtifacts) -> OutputMetrics:
         )
     output_run_directory = artifacts.output_run_directory
     final_parquet_path = artifacts.final_parquet
+    final_dataset_path = artifacts.final_dataset
+    if final_dataset_path is None and output_run_directory is not None:
+        candidate_final_dataset_path = output_run_directory / "parts"
+        if candidate_final_dataset_path.is_dir():
+            final_dataset_path = candidate_final_dataset_path
     chunk_file_paths = (
         sorted((output_run_directory / "chunks").glob("chunk_*.arrow")) if output_run_directory is not None else []
     )
     chunk_bytes = sum(chunk_file_path.stat().st_size for chunk_file_path in chunk_file_paths)
-    final_parquet_bytes = final_parquet_path.stat().st_size if final_parquet_path is not None else None
-    if final_parquet_path is not None:
-        row_metrics = count_parquet_rows_and_info(final_parquet_path)
+    final_parquet_file_paths = (
+        [final_parquet_path]
+        if final_parquet_path is not None
+        else sorted(final_dataset_path.glob("*.parquet"))
+        if final_dataset_path is not None
+        else []
+    )
+    final_output_path = final_parquet_path or final_dataset_path
+    final_parquet_bytes = sum(parquet_path.stat().st_size for parquet_path in final_parquet_file_paths) or None
+    if final_parquet_file_paths:
+        row_metrics = count_parquet_rows_and_info(final_parquet_file_paths)
     else:
         row_metrics = count_chunk_rows_and_info(chunk_file_paths)
     return OutputMetrics(
         output_run_directory=(str(output_run_directory) if output_run_directory is not None else None),
-        final_parquet=(str(final_parquet_path) if final_parquet_path is not None else None),
+        final_parquet=(str(final_output_path) if final_output_path is not None else None),
         output_row_count=(row_metrics["row_count"] if row_metrics is not None else None),
         info_non_null_count=(row_metrics["info_non_null_count"] if row_metrics is not None else None),
         chunk_file_count=len(chunk_file_paths),

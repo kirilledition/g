@@ -554,18 +554,18 @@ slurm-regenie2-binary-gpu-smoke:
 verify-regenie2-binary-gpu-output:
     #!/usr/bin/env bash
     set -euo pipefail
-    run_directory="{{ data_dir }}/regenie2_binary_chr22_gpu.regenie2_binary.run"
+    run_directory="{{ data_dir }}/regenie2_binary_chr22_gpu.g/trait_0001_phenotype_binary.regenie2_binary.run"
     test -d "${run_directory}/parts"
-    find "${run_directory}/parts" -type f -name '*.parquet' | grep -q .
+    fd --no-ignore --type f --extension parquet . "${run_directory}/parts" | grep -q .
     echo "Binary REGENIE step 2 GPU output is present."
 
 # Verify binary REGENIE step 2 GPU smoke output artifacts
 verify-regenie2-binary-gpu-smoke-output:
     #!/usr/bin/env bash
     set -euo pipefail
-    run_directory="{{ data_dir }}/regenie2_binary_chr22_gpu_smoke.regenie2_binary.run"
+    run_directory="{{ data_dir }}/regenie2_binary_chr22_gpu_smoke.g/trait_0001_phenotype_binary.regenie2_binary.run"
     test -d "${run_directory}/parts"
-    find "${run_directory}/parts" -type f -name '*.parquet' | grep -q .
+    fd --no-ignore --type f --extension parquet . "${run_directory}/parts" | grep -q .
     echo "Binary REGENIE step 2 GPU smoke output is present."
 
 # Run CPU/GPU JAX runtime probe

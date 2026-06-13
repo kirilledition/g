@@ -1647,6 +1647,27 @@ def test_binary_hot_output_metrics_aggregate_multi_phenotype_artifacts(tmp_path:
     assert output_metrics.chunk_bytes > 0
 
 
+def test_binary_hot_output_metrics_count_partitioned_final_dataset(tmp_path: Path) -> None:
+    run_directory = tmp_path / "trait.regenie2_binary.run"
+    final_dataset_directory = run_directory / "parts"
+    final_dataset_directory.mkdir(parents=True)
+    first_part_path = final_dataset_directory / "part_000.parquet"
+    second_part_path = final_dataset_directory / "part_001.parquet"
+    pl.DataFrame({"INFO": [0.9, None], "BETA": [0.1, 0.2]}).write_parquet(first_part_path)
+    pl.DataFrame({"INFO": [0.7], "BETA": [0.3]}).write_parquet(second_part_path)
+
+    output_metrics = binary_hot_benchmark.measure_output_metrics(
+        binary_hot_benchmark.api.RunArtifacts(output_run_directory=run_directory)
+    )
+
+    assert output_metrics.output_run_directory == str(run_directory)
+    assert output_metrics.final_parquet == str(final_dataset_directory)
+    assert output_metrics.output_row_count == 3
+    assert output_metrics.info_non_null_count == 2
+    assert output_metrics.chunk_file_count == 0
+    assert output_metrics.final_parquet_bytes == first_part_path.stat().st_size + second_part_path.stat().st_size
+
+
 def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
     arguments = binary_hot_benchmark.build_arguments_from_overrides(
         [

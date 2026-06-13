@@ -52,7 +52,12 @@ def enforce_null_logistic_nonconvergence_policy(
 def record_binary_chunk_diagnostics(
     *,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    result: regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult,
+    result: (
+        regenie2_binary.Regenie2BinaryScoreChunkResult
+        | regenie2_binary.Regenie2BinaryChunkResult
+        | regenie2_binary.Regenie2MultiBinaryScoreChunkResult
+        | regenie2_binary.Regenie2MultiBinaryChunkResult
+    ),
 ) -> None:
     """Record binary candidate and Firth diagnostics for one chunk."""
     if not timing.should_collect_exact_stage_timings(stage_timing_recorder):
@@ -80,7 +85,12 @@ def record_binary_chunk_diagnostics_from_count(
 def collect_binary_chunk_diagnostics_if_needed(
     *,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    result: regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult,
+    result: (
+        regenie2_binary.Regenie2BinaryScoreChunkResult
+        | regenie2_binary.Regenie2BinaryChunkResult
+        | regenie2_binary.Regenie2MultiBinaryScoreChunkResult
+        | regenie2_binary.Regenie2MultiBinaryChunkResult
+    ),
 ) -> regenie2_binary.BinaryChunkDiagnostics | None:
     """Collect binary chunk diagnostics for summary telemetry and optional exact timings."""
     del stage_timing_recorder
