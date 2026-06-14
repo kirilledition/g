@@ -37,7 +37,6 @@ gpu = ["jax[cuda12]>=0.10.1"]
 
 [project.scripts]
 g = "g:main"
-g-regenie = "g.cli:regenie_main"
 
 [build-system]
 requires = ["maturin>=1.13.3,<2.0"]

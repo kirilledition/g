@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Current Rust frontend CLI reference | `g`, `g regenie`, and `g-regenie` in this checkout | Public interface |
+| Current Rust frontend CLI reference | `g` and `g regenie` in this checkout | Public interface |
 
 The Rust frontend owns CLI parsing for this branch. Use this page for behavior
 and compatibility rules, then use live command help for the exact option list in
@@ -11,7 +11,6 @@ the checked-out commit:
 ```bash
 uv run g --help
 uv run g regenie --help
-uv run g-regenie --help
 ```
 
 This experimental Rust CLI/config branch does not expose the previous
@@ -25,18 +24,13 @@ and merge behavior, see [Configuration](configuration.md).
 ```text
 g [OPTIONS] COMMAND [ARGS]...
 g regenie [--config PATH] [REGENIE-style options] [g runtime options]
-g-regenie [--config PATH] [REGENIE-style options] [g runtime options]
 ```
-
-`g-regenie` is the direct executable form of `g regenie`; it accepts the same
-scan options and exists for REGENIE-style command replacement.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
 | `g regenie` | Run a REGENIE-compatible Step 2 association scan. |
-| `g-regenie` | Direct executable alias for `g regenie`. |
 
 ## Required Scan Inputs
 
@@ -197,7 +191,7 @@ For the supported compatibility surface, see [Compatibility](compatibility.md).
 
 | Situation | Expected result |
 | --- | --- |
-| `g --help`, `g regenie --help`, `g-regenie --help` | Exit `0` and print help. |
+| `g --help`, `g regenie --help` | Exit `0` and print help. |
 | Missing command, invalid option, invalid value, or validation error | Non-zero usage/error exit; invalid root usage exits `2`. |
 | Successful `g regenie` run | Exit `0` and print generated artifact paths. |
 | First SIGINT or SIGTERM during `g regenie` | Flush queued chunks for resume, print an interruption message, and exit with `128 + signal_number` such as `130` for SIGINT. |

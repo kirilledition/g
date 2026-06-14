@@ -15,9 +15,9 @@ if typing.TYPE_CHECKING:
 NATIVE_CLI_OUTPUT_LOG_LIMIT = 4096
 
 
-def run_args(arguments: typing.Sequence[str], *, direct_regenie: bool) -> int:
+def run_args(arguments: typing.Sequence[str]) -> int:
     """Run CLI arguments through the Rust frontend."""
-    outcome = g._core.dispatch_cli(list(arguments), direct_regenie)
+    outcome = g._core.dispatch_cli(list(arguments))
     if outcome.config is None:
         print_native_cli_output(outcome)
         return outcome.exit_code
@@ -146,11 +146,6 @@ def log_completed_lines(run_events_module: typing.Any, completed_event: run_even
         )
 
 
-def regenie_main() -> None:
-    """Run the direct g-regenie executable."""
-    raise SystemExit(run_args(sys.argv[1:], direct_regenie=True))
-
-
 def main() -> None:
     """Run the GWAS CLI."""
-    raise SystemExit(run_args(sys.argv[1:], direct_regenie=False))
+    raise SystemExit(run_args(sys.argv[1:]))

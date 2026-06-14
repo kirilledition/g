@@ -84,7 +84,7 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
                 contextlib.redirect_stdout(stdout_buffer),
                 contextlib.redirect_stderr(stderr_buffer),
             ):
-                actual_exit_code = g.cli.run_args(arguments, direct_regenie=False)
+                actual_exit_code = g.cli.run_args(arguments)
             if actual_exit_code != expected_exit_code:
                 raise AssertionError((actual_exit_code, expected_exit_code))
             if stdout_buffer.getvalue() != expected_stdout:
@@ -169,7 +169,7 @@ def test_run_args_bridges_completion_events(
         unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts) as regenie_mock,
         unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
     ):
-        exit_code = cli.run_args(["regenie"], direct_regenie=False)
+        exit_code = cli.run_args(["regenie"])
 
     output = capsys.readouterr()
     assert exit_code == 0
@@ -218,7 +218,7 @@ def test_run_args_bridges_interruption_events(
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=shutdown_request) as regenie_mock,
         unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
     ):
-        exit_code = cli.run_args(["regenie"], direct_regenie=False)
+        exit_code = cli.run_args(["regenie"])
 
     output = capsys.readouterr()
     assert exit_code == 130
@@ -259,7 +259,7 @@ def test_run_args_closes_telemetry_when_logging_initialization_fails() -> None:
         unittest.mock.patch.object(runner_execution, "regenie") as regenie_mock,
         pytest.raises(RuntimeError, match="logging failed"),
     ):
-        cli.run_args(["regenie"], direct_regenie=False)
+        cli.run_args(["regenie"])
 
     regenie_mock.assert_not_called()
     build_runtime_policy_mock.assert_called_once_with(run_config, telemetry_session.paths)

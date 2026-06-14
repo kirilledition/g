@@ -1532,17 +1532,17 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
 
 #[test]
 fn dispatch_cli_root_and_unknown_command_coverage() {
-    let root = dispatch_cli(&[], false);
+    let root = dispatch_cli(&[]);
     assert_eq!(root.exit_code, 2);
     assert!(root.stdout.contains("Usage: g <COMMAND> [OPTIONS]"));
     assert!(root.stderr.is_empty());
 
-    let help = dispatch_cli(&["--help".to_string()], false);
+    let help = dispatch_cli(&["--help".to_string()]);
     assert_eq!(help.exit_code, 0);
     assert!(help.stdout.contains("Commands:"));
     assert!(help.stderr.is_empty());
 
-    let unknown = dispatch_cli(&["status".to_string()], false);
+    let unknown = dispatch_cli(&["status".to_string()]);
     assert_eq!(unknown.exit_code, 2);
     assert_eq!(unknown.stderr, "No such command: status\n");
 }
@@ -1554,27 +1554,24 @@ fn dispatch_cli_resolves_a_valid_regenie_command() {
     let output_path = fixture.path.join("run-output").display().to_string();
     let jax_cache_path = fixture.path.join("jax-cache").display().to_string();
 
-    let outcome = dispatch_cli(
-        &[
-            "regenie".to_string(),
-            "--qt".to_string(),
-            "--bgen".to_string(),
-            bgen_path.clone(),
-            "--phenoFile".to_string(),
-            phenotype_path.clone(),
-            "--phenoCol".to_string(),
-            "trait".to_string(),
-            "--pred".to_string(),
-            pred_path.clone(),
-            "--out".to_string(),
-            output_path.clone(),
-            "--device".to_string(),
-            "cpu".to_string(),
-            "--jax_cache_dir".to_string(),
-            jax_cache_path.clone(),
-        ],
-        false,
-    );
+    let outcome = dispatch_cli(&[
+        "regenie".to_string(),
+        "--qt".to_string(),
+        "--bgen".to_string(),
+        bgen_path.clone(),
+        "--phenoFile".to_string(),
+        phenotype_path.clone(),
+        "--phenoCol".to_string(),
+        "trait".to_string(),
+        "--pred".to_string(),
+        pred_path.clone(),
+        "--out".to_string(),
+        output_path.clone(),
+        "--device".to_string(),
+        "cpu".to_string(),
+        "--jax_cache_dir".to_string(),
+        jax_cache_path.clone(),
+    ]);
     assert_eq!(outcome.exit_code, 0);
     assert!(outcome.stderr.is_empty());
     let config = outcome.config.expect("dispatch should return a resolved config");
@@ -1585,29 +1582,11 @@ fn dispatch_cli_resolves_a_valid_regenie_command() {
     assert_eq!(config.g_output.out.as_ref(), Some(&output_path));
     assert_eq!(format!("{:?}", config.g_compute.device), "Cpu");
     assert_eq!(config.g_compute.jax_cache_dir.as_ref(), Some(&jax_cache_path));
-
-    let direct_outcome = dispatch_cli(
-        &[
-            "--qt".to_string(),
-            "--bgen".to_string(),
-            bgen_path,
-            "--phenoFile".to_string(),
-            phenotype_path,
-            "--phenoCol".to_string(),
-            "trait".to_string(),
-            "--pred".to_string(),
-            pred_path,
-            "--out".to_string(),
-            fixture.path.join("direct-run-output").display().to_string(),
-        ],
-        true,
-    );
-    assert_eq!(direct_outcome.exit_code, 0);
 }
 
 #[test]
 fn dispatch_cli_rejects_removed_g_prefixed_runtime_flags() {
-    let outcome = dispatch_cli(&["regenie".to_string(), "--g-device".to_string(), "cpu".to_string()], false);
+    let outcome = dispatch_cli(&["regenie".to_string(), "--g-device".to_string(), "cpu".to_string()]);
     assert_eq!(outcome.exit_code, 1);
     assert!(outcome.stderr.contains("unexpected argument '--g-device'"));
     assert!(outcome.stderr.contains("--device"));
@@ -1617,25 +1596,22 @@ fn dispatch_cli_rejects_removed_g_prefixed_runtime_flags() {
 fn dispatch_cli_rejects_conflicting_binary_flags() {
     let fixture = FixtureDirectory::new("interface-conflict");
     let (bgen_path, phenotype_path, pred_path) = interface_minimal_paths(&fixture, "conflicting");
-    let outcome = dispatch_cli(
-        &[
-            "regenie".to_string(),
-            "--qt".to_string(),
-            "--bgen".to_string(),
-            bgen_path,
-            "--phenoFile".to_string(),
-            phenotype_path,
-            "--phenoCol".to_string(),
-            "trait".to_string(),
-            "--pred".to_string(),
-            pred_path,
-            "--out".to_string(),
-            fixture.path.join("out").display().to_string(),
-            "--firth".to_string(),
-            "--no-firth".to_string(),
-        ],
-        false,
-    );
+    let outcome = dispatch_cli(&[
+        "regenie".to_string(),
+        "--qt".to_string(),
+        "--bgen".to_string(),
+        bgen_path,
+        "--phenoFile".to_string(),
+        phenotype_path,
+        "--phenoCol".to_string(),
+        "trait".to_string(),
+        "--pred".to_string(),
+        pred_path,
+        "--out".to_string(),
+        fixture.path.join("out").display().to_string(),
+        "--firth".to_string(),
+        "--no-firth".to_string(),
+    ]);
     assert_eq!(outcome.exit_code, 1);
     assert!(outcome.stderr.contains("--firth and --no-firth cannot be used together"));
 }

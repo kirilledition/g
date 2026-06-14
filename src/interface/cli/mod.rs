@@ -32,8 +32,8 @@ impl CliOutcomeData {
 }
 
 #[must_use]
-pub fn dispatch_cli(args: &[String], direct_regenie: bool) -> CliOutcomeData {
-    match dispatch_cli_result(args, direct_regenie) {
+pub fn dispatch_cli(args: &[String]) -> CliOutcomeData {
+    match dispatch_cli_result(args) {
         Ok(outcome) => outcome,
         Err(error) => {
             tracing::warn!(
@@ -48,10 +48,7 @@ pub fn dispatch_cli(args: &[String], direct_regenie: bool) -> CliOutcomeData {
     }
 }
 
-fn dispatch_cli_result(args: &[String], direct_regenie: bool) -> ConfigResult<CliOutcomeData> {
-    if direct_regenie {
-        return dispatch_regenie_command(args, "g-regenie");
-    }
+fn dispatch_cli_result(args: &[String]) -> ConfigResult<CliOutcomeData> {
     if args.is_empty() {
         return Ok(CliOutcomeData::output(2, root_help("g"), String::new()));
     }

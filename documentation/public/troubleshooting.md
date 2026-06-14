@@ -9,7 +9,6 @@ Run these before debugging a full GWAS command:
 ```bash
 uv run g --help
 uv run g regenie --help
-uv run g-regenie --help
 ```
 
 This experimental Rust CLI/config branch does not expose the previous

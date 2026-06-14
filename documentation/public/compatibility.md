@@ -39,11 +39,10 @@ drop scientific intent.
 
 ## REGENIE Command Migration
 
-Supported commands are intentionally close to REGENIE Step 2:
+The supported command is intentionally close to REGENIE Step 2:
 
 ```bash
 g regenie --step 2 --qt --bgen ... --phenoFile ... --phenoCol ... --pred ... --out ...
-g-regenie --step 2 --bt --bgen ... --phenoFile ... --phenoCol ... --pred ... --out ...
 ```
 
 Important migration limits:

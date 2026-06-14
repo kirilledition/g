@@ -798,8 +798,8 @@ fn validate_regenie_config_for_run(config: &RegenieConfig) -> PyResult<()> {
 
 #[pyfunction]
 #[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python list arguments into owned Vec values.")]
-fn dispatch_cli(args: Vec<String>, direct_regenie: bool) -> CliOutcome {
-    CliOutcome::new(interface::dispatch_cli(&args, direct_regenie))
+fn dispatch_cli(args: Vec<String>) -> CliOutcome {
+    CliOutcome::new(interface::dispatch_cli(&args))
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {

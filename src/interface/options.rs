@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn option_metadata_covers_visible_regenie_cli_flags() {
-        let help = interface::dispatch_cli(&["regenie".to_string(), "--help".to_string()], false).stdout;
+        let help = interface::dispatch_cli(&["regenie".to_string(), "--help".to_string()]).stdout;
         let mut help_flags = extract_long_flags(&help);
         help_flags.remove("help");
         let metadata_flags =
