@@ -87,13 +87,6 @@ CONFIGURED_LOGGING_RUNTIME_POLICY: LoggingRuntimePolicy | None = None
 CONFIGURED_RAYON_THREAD_COUNT: int | None = None
 
 
-# These lazy boundaries intentionally keep JAX and JAX-decorated pipeline modules out
-# of API/CLI startup until the run's process-global runtime policy is applied.
-def load_regenie2_pipeline_module_after_jax_runtime_setup() -> typing.Any:
-    """Load the JAX-heavy REGENIE pipeline after runtime policy is configured."""
-    return importlib.import_module("g.engine.regenie2_pipeline")
-
-
 def record_jax_runtime_diagnostic_event(
     diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
     *,
@@ -249,38 +242,26 @@ def describe_runtime_state() -> RuntimeState:
 
 def run_regenie2_linear_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
     """Run the linear native pipeline after JAX runtime setup."""
-    return typing.cast(
-        "Path | None",
-        load_regenie2_pipeline_module_after_jax_runtime_setup().run_regenie2_linear_bgen_pipeline(**kwargs),
-    )
+    single_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.single_trait")
+    return single_trait_pipeline_module.run_regenie2_linear_bgen_pipeline(**kwargs)
 
 
 def run_regenie2_binary_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
     """Run the binary native pipeline after JAX runtime setup."""
-    return typing.cast(
-        "Path | None",
-        load_regenie2_pipeline_module_after_jax_runtime_setup().run_regenie2_binary_bgen_pipeline(**kwargs),
-    )
+    single_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.single_trait")
+    return single_trait_pipeline_module.run_regenie2_binary_bgen_pipeline(**kwargs)
 
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
     """Run the multi-phenotype linear native pipeline after JAX runtime setup."""
-    return typing.cast(
-        "tuple[Path | None, ...]",
-        load_regenie2_pipeline_module_after_jax_runtime_setup().run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            **kwargs
-        ),
-    )
+    multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
+    return multi_trait_pipeline_module.run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs)
 
 
 def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
     """Run the multi-phenotype binary native pipeline after JAX runtime setup."""
-    return typing.cast(
-        "tuple[Path | None, ...]",
-        load_regenie2_pipeline_module_after_jax_runtime_setup().run_regenie2_multi_phenotype_binary_bgen_pipeline(
-            **kwargs
-        ),
-    )
+    multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
+    return multi_trait_pipeline_module.run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs)
 
 
 def configure_rayon_thread_pool(core_module: typing.Any, thread_count: int) -> None:
