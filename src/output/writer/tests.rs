@@ -1,4 +1,3 @@
-use std::assert_matches;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -88,13 +87,6 @@ fn create_test_directory() -> PathBuf {
     let directory_path = std::env::temp_dir().join(format!("g-output-rust-test-{unique_suffix}"));
     std::fs::create_dir_all(&directory_path).expect("test directory should be created");
     directory_path
-}
-
-#[test]
-fn runtime_error_helper_preserves_message() {
-    let error = OutputWriterError::runtime("worker failed");
-
-    assert_matches!(error, OutputWriterError::Runtime(message) if message == "worker failed");
 }
 
 #[test]

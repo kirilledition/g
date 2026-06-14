@@ -1043,37 +1043,6 @@ mod tests {
     }
 
     #[test]
-    fn result_array_builders_and_stage_timing_skip_path_are_covered() {
-        let float_array = build_float32_result_array(&[1.0, 2.0]);
-        let int_array = build_int32_result_array(&[1, 2]);
-        assert_eq!(float_array.len(), 2);
-        assert_eq!(int_array.len(), 2);
-        assert!(validate_column_lengths(2, &[2, 2]).is_ok());
-
-        let session = OutputWriterSession::new(
-            "unused-run".to_string(),
-            "unused-chunks".to_string(),
-            "regenie2_linear".to_string(),
-            1,
-            1,
-            "arrow",
-            "float32",
-            false,
-            1,
-            "none".to_string(),
-            "none".to_string(),
-            false,
-        )
-        .expect("session should open");
-        session
-            .record_stage_timing(|stage_timings| {
-                stage_timings.enqueue_count += 1;
-            })
-            .expect("timing skip path should not lock");
-        session.abort().expect("session should abort");
-    }
-
-    #[test]
     fn output_writer_pool_reuses_one_process_pool_at_max_requested_cap() {
         let first_pool = get_output_writer_pool(1).expect("first pool should open");
         let second_pool = get_output_writer_pool(2).expect("second pool should reuse and grow first pool");

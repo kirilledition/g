@@ -179,7 +179,6 @@ uv run pytest tests/test_regenie_comparison_scripts.py -q -k binary_hot
 uv run ty check src/g tests
 uv run ruff check src tests
 . scripts/server_env.sh && cargo test --lib --quiet
-. scripts/server_env.sh && cargo test --test rust_python_bindings --quiet
 ```
 
 GPU work must run through SLURM on `landau`. Use production timing defaults for

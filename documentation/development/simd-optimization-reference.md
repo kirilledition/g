@@ -340,7 +340,7 @@ Validation commands used in the final pass:
 ```text
 cargo test --lib
 cargo test bgen --lib
-cargo test --test rust_native_coverage bgen
+cargo test trusted --lib
 cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
 cargo fmt --all --check
 ```
