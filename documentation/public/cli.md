@@ -194,6 +194,7 @@ For the supported compatibility surface, see [Compatibility](compatibility.md).
 | `g --help`, `g regenie --help` | Exit `0` and print help. |
 | Missing command, invalid option, invalid value, or validation error | Non-zero usage/error exit; invalid root usage exits `2`. |
 | Successful `g regenie` run | Exit `0` and print generated artifact paths. |
+| Runtime failure during `g regenie` | Exit `1` and print a concise `Error: ...` line without a Python traceback. Configured logs and telemetry contain structured failure details. |
 | First SIGINT or SIGTERM during `g regenie` | Flush queued chunks for resume, print an interruption message, and exit with `128 + signal_number` such as `130` for SIGINT. |
 | Second shutdown signal during graceful drain | Abort through the normal signal-derived interrupt path. |
 

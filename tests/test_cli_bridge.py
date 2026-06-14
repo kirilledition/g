@@ -12,26 +12,28 @@ import typing
 import unittest.mock
 from pathlib import Path
 
-import pytest
-
 from g import cli
 
 if typing.TYPE_CHECKING:
+    import pytest
+
     import g._core
 
 
 class FakeTelemetrySession:
     """Telemetry session test double for CLI ownership tests."""
 
-    def __init__(self) -> None:
+    def __init__(self, close_error: Exception | None = None) -> None:
         self.paths = python_types.SimpleNamespace()
         self.logged_events: list[str] = []
+        self.logged_payloads: list[dict[str, object]] = []
         self.closed = False
+        self.close_error = close_error
 
     def log_event(self, event: str, level: str = "info", **fields: object) -> None:
         """Record a telemetry event name."""
-        del level, fields
         self.logged_events.append(event)
+        self.logged_payloads.append({"event": event, "level": level, **fields})
 
     def writer_counters(self) -> dict[str, object]:
         """Return empty writer counters."""
@@ -39,6 +41,8 @@ class FakeTelemetrySession:
 
     def close(self) -> None:
         """Record session closure."""
+        if self.close_error is not None:
+            raise self.close_error
         self.closed = True
 
 
@@ -237,8 +241,10 @@ def test_run_args_bridges_interruption_events(
     assert "native_cli_interrupted_line" in event_names
 
 
-def test_run_args_closes_telemetry_when_logging_initialization_fails() -> None:
-    """Ensure telemetry cleanup starts immediately after session creation."""
+def test_run_args_reports_runtime_initialization_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ensure runtime initialization failures are rendered without tracebacks."""
     from g.engine import telemetry as telemetry_module
     from g.runner import execution as runner_execution
     from g.runner import runtime as runner_runtime
@@ -257,12 +263,110 @@ def test_run_args_closes_telemetry_when_logging_initialization_fails() -> None:
         unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy") as runtime_preflight_mock,
         unittest.mock.patch.object(runner_runtime, "initialize_logging", side_effect=RuntimeError("logging failed")),
         unittest.mock.patch.object(runner_execution, "regenie") as regenie_mock,
-        pytest.raises(RuntimeError, match="logging failed"),
+        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
     ):
-        cli.run_args(["regenie"])
+        exit_code = cli.run_args(["regenie"])
 
+    output = capsys.readouterr()
+    assert exit_code == 1
+    assert output.out == ""
+    assert output.err == "Error: logging failed\n"
+    assert "Traceback" not in output.err
     regenie_mock.assert_not_called()
     build_runtime_policy_mock.assert_called_once_with(run_config, telemetry_session.paths)
     runtime_preflight_mock.assert_called_once_with(runtime_policy)
+    assert telemetry_session.logged_events == ["run_failed", "telemetry_session_closed"]
+    assert telemetry_session.logged_payloads[0]["error_type"] == "RuntimeError"
+    assert telemetry_session.logged_payloads[0]["error_message"] == "logging failed"
+    assert telemetry_session.closed is True
+    event_names = {call.args[1] for call in diagnostic_event_mock.call_args_list}
+    assert "native_cli_failed_line" in event_names
+
+
+def test_run_args_reports_runner_failure_without_traceback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ensure runner failures return a concise CLI error instead of raising."""
+    from g.engine import shutdown
+    from g.engine import telemetry as telemetry_module
+    from g.runner import execution as runner_execution
+    from g.runner import runtime as runner_runtime
+
+    run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
+    telemetry_session = FakeTelemetrySession()
+    outcome = python_types.SimpleNamespace(stdout="", stderr="", exit_code=0, config=run_config)
+    runtime_policy = python_types.SimpleNamespace()
+    with (
+        unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
+        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_runtime, "build_runtime_policy", return_value=runtime_policy),
+        unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy"),
+        unittest.mock.patch.object(runner_runtime, "initialize_logging"),
+        unittest.mock.patch.object(
+            shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
+        ),
+        unittest.mock.patch.object(runner_execution, "regenie", side_effect=RuntimeError("pipeline failed")),
+        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
+    ):
+        exit_code = cli.run_args(["regenie"])
+
+    output = capsys.readouterr()
+    assert exit_code == 1
+    assert output.out == ""
+    assert output.err == "Error: pipeline failed\n"
+    assert "Traceback" not in output.err
     assert telemetry_session.logged_events == ["telemetry_session_closed"]
     assert telemetry_session.closed is True
+    event_names = {call.args[1] for call in diagnostic_event_mock.call_args_list}
+    assert "native_cli_failed_line" in event_names
+
+
+def test_run_args_reports_telemetry_close_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ensure telemetry close failures are rendered without tracebacks."""
+    from g.engine import run_events, shutdown
+    from g.engine import telemetry as telemetry_module
+    from g.runner import execution as runner_execution
+    from g.runner import runtime as runner_runtime
+
+    run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
+    telemetry_session = FakeTelemetrySession(close_error=RuntimeError("telemetry close failed"))
+    run_artifacts = run_events.RunArtifacts(
+        output_run_directory=Path("output.run"),
+        final_dataset=None,
+        final_parquet=None,
+        final_regenie=None,
+        effective_config=None,
+        phenotype_artifacts=(),
+        phenotype_name=None,
+        association_mode=None,
+        phenotype_count=None,
+        run_id=None,
+    )
+    outcome = python_types.SimpleNamespace(stdout="", stderr="", exit_code=0, config=run_config)
+    runtime_policy = python_types.SimpleNamespace()
+    with (
+        unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
+        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_runtime, "build_runtime_policy", return_value=runtime_policy),
+        unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy"),
+        unittest.mock.patch.object(runner_runtime, "initialize_logging"),
+        unittest.mock.patch.object(
+            shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
+        ),
+        unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts),
+        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
+    ):
+        exit_code = cli.run_args(["regenie"])
+
+    output = capsys.readouterr()
+    assert exit_code == 1
+    assert output.out == "Success. Chunked run saved to output.run\n"
+    assert output.err == "Error: telemetry close failed\n"
+    assert "Traceback" not in output.err
+    assert telemetry_session.logged_events == ["telemetry_session_closed"]
+    assert telemetry_session.closed is False
+    event_names = {call.args[1] for call in diagnostic_event_mock.call_args_list}
+    assert "native_cli_completed_line" in event_names
+    assert "native_cli_failed_line" in event_names

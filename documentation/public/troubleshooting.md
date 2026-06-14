@@ -40,6 +40,16 @@ Common absent flags include `--bed`, `--pgen`, `--keep`, `--remove`,
 
 See [Compatibility](compatibility.md) for the supported and unsupported surface.
 
+## `g regenie` Prints `Error: ...`
+
+Runtime failures are reported as a concise stderr line and exit code `1`, not a
+Python traceback. Re-run with telemetry or logging enabled when you need the
+structured failure event and detailed diagnostics:
+
+```bash
+uv run g regenie ... --telemetry profile --log_dir /path/to/logs
+```
+
 ## Missing Step 1 Predictions
 
 `g` does not implement REGENIE Step 1. Produce prediction lists with upstream

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import typing
@@ -13,6 +14,7 @@ if typing.TYPE_CHECKING:
 
 
 NATIVE_CLI_OUTPUT_LOG_LIMIT = 4096
+RUNTIME_FAILURE_EXIT_CODE = 1
 
 
 def run_args(arguments: typing.Sequence[str]) -> int:
@@ -28,8 +30,11 @@ def run_args(arguments: typing.Sequence[str]) -> int:
     from g.runner import execution as runner_execution
     from g.runner import runtime as runner_runtime
 
-    run_telemetry_session = telemetry.build_telemetry_session(outcome.config)
+    run_telemetry_session = None
+    exit_code = RUNTIME_FAILURE_EXIT_CODE
+    runner_started = False
     try:
+        run_telemetry_session = telemetry.build_telemetry_session(outcome.config)
         runtime_policy = runner_runtime.build_runtime_policy(outcome.config, run_telemetry_session.paths)
         runner_runtime.require_compatible_runtime_policy(runtime_policy)
         runner_runtime.initialize_logging(outcome.config.g_diagnostics, run_telemetry_session.paths)
@@ -37,6 +42,7 @@ def run_args(arguments: typing.Sequence[str]) -> int:
         log_native_cli_output(outcome, max_payload_chars=NATIVE_CLI_OUTPUT_LOG_LIMIT)
         try:
             with shutdown.install_graceful_shutdown_handlers():
+                runner_started = True
                 artifacts = runner_execution.regenie(
                     outcome.config,
                     run_telemetry_session=run_telemetry_session,
@@ -47,14 +53,33 @@ def run_args(arguments: typing.Sequence[str]) -> int:
             interrupted_event = run_events.build_run_interrupted_event(shutdown_request)
             print_interrupted_lines(run_events, interrupted_event)
             log_interrupted_lines(run_events, interrupted_event)
-            return shutdown_request.exit_code
-
-        completed_event = run_events.build_run_completed_event(artifacts)
-        print_completed_lines(run_events, completed_event)
-        log_completed_lines(run_events, completed_event)
-        return 0
+            exit_code = shutdown_request.exit_code
+        else:
+            completed_event = run_events.build_run_completed_event(artifacts)
+            print_completed_lines(run_events, completed_event)
+            log_completed_lines(run_events, completed_event)
+            exit_code = 0
+    except Exception as error:  # noqa: BLE001
+        exit_code = print_and_log_failed_event(
+            run_events,
+            error,
+            telemetry_session=run_telemetry_session,
+            log_run_failed_to_telemetry=not runner_started,
+        )
     finally:
-        telemetry.close_telemetry_session(run_telemetry_session)
+        if run_telemetry_session is not None:
+            try:
+                telemetry.close_telemetry_session(run_telemetry_session)
+            except Exception as error:  # noqa: BLE001
+                if exit_code == 0:
+                    print_and_log_failed_event(
+                        run_events,
+                        error,
+                        telemetry_session=None,
+                        log_run_failed_to_telemetry=False,
+                    )
+                    exit_code = RUNTIME_FAILURE_EXIT_CODE
+    return exit_code
 
 
 def print_native_cli_output(outcome: g._core.CliOutcome) -> None:
@@ -123,6 +148,61 @@ def log_interrupted_lines(run_events_module: typing.Any, interrupted_event: run_
                 "line": line,
             },
         )
+
+
+def print_and_log_failed_event(
+    run_events_module: typing.Any,
+    error: Exception,
+    *,
+    telemetry_session: typing.Any,
+    log_run_failed_to_telemetry: bool,
+) -> int:
+    """Print and log a concise runtime failure."""
+    failed_event = run_events_module.build_run_failed_event(error)
+    if log_run_failed_to_telemetry:
+        log_run_failed_telemetry_event(run_events_module, failed_event, telemetry_session=telemetry_session)
+    print_failed_lines(run_events_module, failed_event)
+    log_failed_lines(run_events_module, failed_event)
+    return RUNTIME_FAILURE_EXIT_CODE
+
+
+def log_run_failed_telemetry_event(
+    run_events_module: typing.Any,
+    failed_event: run_events.RunFailedEvent,
+    *,
+    telemetry_session: typing.Any,
+) -> None:
+    """Write a run failure event to telemetry when available."""
+    if telemetry_session is None:
+        return
+    with contextlib.suppress(Exception):
+        telemetry_session.log_event(
+            "run_failed",
+            level="error",
+            **run_events_module.run_failed_telemetry_fields(failed_event),
+        )
+
+
+def print_failed_lines(run_events_module: typing.Any, failed_event: run_events.RunFailedEvent) -> None:
+    """Print failure details."""
+    failed_lines = run_events_module.render_run_failed_lines(failed_event)
+    for line in failed_lines:
+        print(line, file=sys.stderr)
+
+
+def log_failed_lines(run_events_module: typing.Any, failed_event: run_events.RunFailedEvent) -> None:
+    """Emit failure diagnostics."""
+    failed_lines = run_events_module.render_run_failed_lines(failed_event)
+    for line in failed_lines:
+        with contextlib.suppress(Exception):
+            emit_diagnostic_event(
+                "error",
+                "native_cli_failed_line",
+                "Native CLI failure detail.",
+                {
+                    "line": line,
+                },
+            )
 
 
 def print_completed_lines(run_events_module: typing.Any, completed_event: run_events.RunCompletedEvent) -> None:

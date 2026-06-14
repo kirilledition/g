@@ -166,6 +166,11 @@ def build_run_interrupted_event(shutdown_request: shutdown.GracefulShutdownReque
     )
 
 
+def build_run_failed_event(error: Exception) -> RunFailedEvent:
+    """Build a structured failure event from an exception."""
+    return RunFailedEvent(error_type=type(error).__name__, error_message=str(error))
+
+
 def flatten_artifact_payloads(artifacts: RunArtifacts) -> tuple[RunArtifactPayload, ...]:
     """Return per-phenotype artifact payloads for a run artifact tree."""
     if artifacts.phenotype_artifacts:
@@ -270,3 +275,10 @@ def render_artifact_lines(artifact: RunArtifactPayload) -> tuple[str, ...]:
 def render_run_interrupted_lines(event: RunInterruptedEvent) -> tuple[str, ...]:
     """Render concise terminal lines for a gracefully interrupted run."""
     return (f"Interrupted by {event.signal_name}. Flushed queued chunks and saved committed output for --resume.",)
+
+
+def render_run_failed_lines(event: RunFailedEvent) -> tuple[str, ...]:
+    """Render concise terminal lines for a failed run."""
+    if event.error_message:
+        return (f"Error: {event.error_message}",)
+    return (f"Error: {event.error_type}",)
