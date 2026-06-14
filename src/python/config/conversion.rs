@@ -3,6 +3,11 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyMapping, PyModule, PyString, PyTuple};
 use toml::{Table, Value};
 
+use crate::interface::{self, ConfigOptionValueKind};
+
+const NATIVE_CONFIG_SECTION_NAMES: &[&str] =
+    &["input", "trait", "binary", "compute", "output", "diagnostics", "metadata"];
+
 pub(super) fn toml_table_from_py_mapping(raw_options: &Bound<'_, PyAny>) -> PyResult<Table> {
     let mapping = raw_options.cast::<PyMapping>()?;
     let items = mapping.call_method0("items")?;
@@ -15,6 +20,125 @@ pub(super) fn toml_table_from_py_mapping(raw_options: &Bound<'_, PyAny>) -> PyRe
         option_table.insert(key, value);
     }
     Ok(option_table)
+}
+
+pub(super) fn normalized_toml_table_from_py_options(raw_options: &Bound<'_, PyAny>) -> PyResult<Table> {
+    let mapping = raw_options.cast::<PyMapping>()?;
+    let items = mapping.call_method0("items")?;
+    let mut option_table = Table::new();
+    for item in items.try_iter()? {
+        let item = item?;
+        let tuple = item.cast::<PyTuple>()?;
+        let option_name = tuple.get_item(0)?.extract::<String>()?;
+        let option_value = tuple.get_item(1)?;
+        normalize_python_option(&mut option_table, &option_name, &option_value)?;
+    }
+    Ok(option_table)
+}
+
+fn normalize_python_option(
+    option_table: &mut Table,
+    option_name: &str,
+    option_value: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    let Some(option_metadata) = metadata_for_flat_python_name(option_name) else {
+        normalize_native_or_unknown_option(option_table, option_name, option_value)?;
+        return Ok(());
+    };
+    if option_value.is_none() {
+        return Err(PyValueError::new_err(format!(
+            "Option {option_name} does not accept None; omit the key to leave it unset."
+        )));
+    }
+    let normalized_value = normalize_python_option_value(option_name, option_metadata.value_kind, option_value)?;
+    let section_value =
+        option_table.entry(option_metadata.section.to_string()).or_insert_with(|| Value::Table(Table::new()));
+    let Value::Table(section_table) = section_value else {
+        option_table.insert(option_name.to_string(), normalized_value);
+        return Ok(());
+    };
+    section_table.insert(option_metadata.toml_name.to_string(), normalized_value);
+    Ok(())
+}
+
+fn normalize_native_or_unknown_option(
+    option_table: &mut Table,
+    option_name: &str,
+    option_value: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    if NATIVE_CONFIG_SECTION_NAMES.contains(&option_name) {
+        let normalized_value = toml_value_from_py_any(option_value)?;
+        if let Value::Table(section_updates) = normalized_value {
+            match option_table.get_mut(option_name) {
+                Some(Value::Table(section_table)) => {
+                    section_table.extend(section_updates);
+                }
+                Some(section_value) => {
+                    *section_value = Value::Table(section_updates);
+                }
+                None => {
+                    option_table.insert(option_name.to_string(), Value::Table(section_updates));
+                }
+            }
+        } else {
+            option_table.insert(option_name.to_string(), normalized_value);
+        }
+        return Ok(());
+    }
+    if option_value.cast::<PyMapping>().is_ok() {
+        return Err(PyValueError::new_err(format!(
+            "Unknown g regenie option: {}",
+            flatten_unknown_option_name(option_name, option_value)?
+        )));
+    }
+    Err(PyValueError::new_err(format!("Unknown g regenie option: {option_name}")))
+}
+
+fn metadata_for_flat_python_name(option_name: &str) -> Option<&'static interface::ConfigOptionMetadata> {
+    interface::config_option_metadata().iter().find(|metadata| metadata.flat_python_names.contains(&option_name))
+}
+
+fn normalize_python_option_value(
+    _option_name: &str,
+    value_kind: ConfigOptionValueKind,
+    option_value: &Bound<'_, PyAny>,
+) -> PyResult<Value> {
+    if value_kind != ConfigOptionValueKind::Boolean {
+        return toml_value_from_py_any(option_value);
+    }
+    if option_value.is_instance_of::<PyBool>() {
+        return Ok(Value::Boolean(option_value.extract::<bool>()?));
+    }
+    if option_value.is_instance_of::<PyString>() {
+        let normalized_value = option_value.extract::<String>()?.trim().to_lowercase();
+        if matches!(normalized_value.as_str(), "1" | "true" | "yes" | "on") {
+            return Ok(Value::Boolean(true));
+        }
+        if matches!(normalized_value.as_str(), "0" | "false" | "no" | "off") {
+            return Ok(Value::Boolean(false));
+        }
+    }
+    Err(PyValueError::new_err("Boolean option value must be a bool or one of true/false/on/off/yes/no/1/0."))
+}
+
+fn flatten_unknown_option_name(option_name: &str, option_value: &Bound<'_, PyAny>) -> PyResult<String> {
+    let mapping = option_value.cast::<PyMapping>()?;
+    if mapping.len()? == 0 {
+        return Ok(option_name.to_string());
+    }
+    let items = mapping.call_method0("items")?;
+    let Some(item) = items.try_iter()?.next() else {
+        return Ok(option_name.to_string());
+    };
+    let item = item?;
+    let tuple = item.cast::<PyTuple>()?;
+    let nested_key = tuple.get_item(0)?;
+    let nested_key_text = nested_key.str()?.to_string_lossy().into_owned();
+    let nested_value = tuple.get_item(1)?;
+    if nested_value.cast::<PyMapping>().is_ok() {
+        return Ok(format!("{option_name}.{}", flatten_unknown_option_name(&nested_key_text, &nested_value)?));
+    }
+    Ok(format!("{option_name}.{nested_key_text}"))
 }
 
 fn toml_value_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<Value> {

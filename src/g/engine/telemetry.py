@@ -129,16 +129,50 @@ class TelemetrySession:
 
     def build_event_payload(self, *, event: str, level: str, **fields: object) -> dict[str, object]:
         """Build a schema-versioned telemetry event payload."""
+        timestamp = format_timestamp(time.time())
+        process_identifier = os.getpid()
+        thread_name = threading.current_thread().name
+        native_payload_builder = getattr(_core, "build_telemetry_event_payload", None)
+        if native_payload_builder is not None:
+            return typing.cast(
+                "dict[str, object]",
+                dict(
+                    native_payload_builder(
+                        self.run_id,
+                        event,
+                        level,
+                        timestamp,
+                        process_identifier,
+                        thread_name,
+                        fields,
+                    )
+                ),
+            )
+        if self.native_telemetry_session is not None and hasattr(
+            self.native_telemetry_session,
+            "build_event_payload",
+        ):
+            return dict(
+                self.native_telemetry_session.build_event_payload(
+                    self.run_id,
+                    event,
+                    level,
+                    timestamp,
+                    process_identifier,
+                    thread_name,
+                    fields,
+                )
+            )
         payload: dict[str, object] = {
             "schema_version": TELEMETRY_SCHEMA_VERSION,
             "run_id": self.run_id,
-            "ts": format_timestamp(time.time()),
+            "ts": timestamp,
             "level": level.upper(),
             "source": "python",
             "target": "g.engine.telemetry",
             "event": event,
-            "pid": os.getpid(),
-            "thread_name": threading.current_thread().name,
+            "pid": process_identifier,
+            "thread_name": thread_name,
         }
         payload.update({key: value for key, value in fields.items() if value is not None})
         return payload

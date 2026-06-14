@@ -6,6 +6,8 @@ import dataclasses
 import typing
 from dataclasses import dataclass
 
+import g._core
+
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
@@ -193,6 +195,9 @@ def flatten_artifact_payloads(artifacts: RunArtifacts) -> tuple[RunArtifactPaylo
 
 def run_completed_telemetry_fields(event: RunCompletedEvent) -> dict[str, object]:
     """Return JSON-serializable completion fields for telemetry."""
+    native_fields_builder = getattr(g._core, "build_run_completed_telemetry_fields", None)
+    if native_fields_builder is not None:
+        return typing.cast("dict[str, object]", dict(native_fields_builder(event)))
     fields: dict[str, object] = {
         "artifact_count": len(event.artifacts),
         "phenotype_artifacts": tuple(artifact_payload_to_mapping(artifact) for artifact in event.artifacts),
@@ -210,6 +215,9 @@ def run_completed_telemetry_fields(event: RunCompletedEvent) -> dict[str, object
 
 def run_interrupted_telemetry_fields(event: RunInterruptedEvent) -> dict[str, object]:
     """Return JSON-serializable graceful-interruption fields for telemetry."""
+    native_fields_builder = getattr(g._core, "build_run_interrupted_telemetry_fields", None)
+    if native_fields_builder is not None:
+        return typing.cast("dict[str, object]", dict(native_fields_builder(event)))
     return {
         "failure_kind": "graceful_shutdown",
         "signal_number": event.signal_number,
@@ -221,6 +229,9 @@ def run_interrupted_telemetry_fields(event: RunInterruptedEvent) -> dict[str, ob
 
 def run_failed_telemetry_fields(event: RunFailedEvent) -> dict[str, object]:
     """Return JSON-serializable failure fields for telemetry."""
+    native_fields_builder = getattr(g._core, "build_run_failed_telemetry_fields", None)
+    if native_fields_builder is not None:
+        return typing.cast("dict[str, object]", dict(native_fields_builder(event)))
     return {
         "failure_kind": "exception",
         "error_type": event.error_type,
@@ -248,6 +259,9 @@ def optional_path_string(path: Path | None) -> str | None:
 
 def render_run_completed_lines(event: RunCompletedEvent) -> tuple[str, ...]:
     """Render concise terminal lines for a completed run."""
+    native_renderer = getattr(g._core, "render_run_completed_lines", None)
+    if native_renderer is not None:
+        return typing.cast("tuple[str, ...]", tuple(native_renderer(event)))
     if not event.artifacts:
         return ("Success. Run completed.",)
     lines: list[str] = []
@@ -274,11 +288,17 @@ def render_artifact_lines(artifact: RunArtifactPayload) -> tuple[str, ...]:
 
 def render_run_interrupted_lines(event: RunInterruptedEvent) -> tuple[str, ...]:
     """Render concise terminal lines for a gracefully interrupted run."""
+    native_renderer = getattr(g._core, "render_run_interrupted_lines", None)
+    if native_renderer is not None:
+        return typing.cast("tuple[str, ...]", tuple(native_renderer(event)))
     return (f"Interrupted by {event.signal_name}. Flushed queued chunks and saved committed output for --resume.",)
 
 
 def render_run_failed_lines(event: RunFailedEvent) -> tuple[str, ...]:
     """Render concise terminal lines for a failed run."""
+    native_renderer = getattr(g._core, "render_run_failed_lines", None)
+    if native_renderer is not None:
+        return typing.cast("tuple[str, ...]", tuple(native_renderer(event)))
     if event.error_message:
         return (f"Error: {event.error_message}",)
     return (f"Error: {event.error_type}",)

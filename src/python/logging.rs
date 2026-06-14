@@ -281,6 +281,20 @@ impl NativeTelemetrySession {
         Ok(())
     }
 
+    pub fn build_event_payload<'py>(
+        &self,
+        py: Python<'py>,
+        run_id: &str,
+        event: &str,
+        level: &str,
+        timestamp: &str,
+        process_identifier: u32,
+        thread_name: &str,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        build_telemetry_event_payload(py, run_id, event, level, timestamp, process_identifier, thread_name, fields)
+    }
+
     pub fn counters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let writer_guard =
             self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
@@ -328,6 +342,36 @@ impl NativeTelemetrySession {
         writer.fail_if_lossless_cap_exceeded()?;
         counter_snapshot.to_py_dict(py)
     }
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+pub fn build_telemetry_event_payload<'py>(
+    py: Python<'py>,
+    run_id: &str,
+    event: &str,
+    level: &str,
+    timestamp: &str,
+    process_identifier: u32,
+    thread_name: &str,
+    fields: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("schema_version", 1)?;
+    payload.set_item("run_id", run_id)?;
+    payload.set_item("ts", timestamp)?;
+    payload.set_item("level", level.to_uppercase())?;
+    payload.set_item("source", "python")?;
+    payload.set_item("target", "g.engine.telemetry")?;
+    payload.set_item("event", event)?;
+    payload.set_item("pid", process_identifier)?;
+    payload.set_item("thread_name", thread_name)?;
+    for (key, value) in fields {
+        if !value.is_none() {
+            payload.set_item(key, value)?;
+        }
+    }
+    Ok(payload)
 }
 
 impl TelemetryWriterCounterSnapshot {

@@ -1,15 +1,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::output::resume;
 use crate::output::writer::{OutputFileFormat, OutputWriterError};
 
 const RUN_MANIFEST_FILE_NAME: &str = "run_manifest.json";
+const RUN_MANIFEST_SCHEMA_VERSION: i64 = 8;
+const OUTPUT_SCHEMA_VERSION: i64 = 2;
+const JAX_MATMUL_PRECISION_WHEN_UNSET: &str = "float32";
+const RESUME_POLICY: &str = "manifest_committed_chunks";
+const FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM: &str = "sha256";
+const FILE_FINGERPRINT_METADATA_ONLY: &str = "metadata-only";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OutputRunPaths {
@@ -55,6 +63,164 @@ pub(crate) struct RunManifestChunkCommit {
     pub(crate) variant_stop_index: i64,
     pub(crate) row_count: usize,
     pub(crate) chunk_file_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CurrentRunManifestHeaderInput {
+    pub(crate) association_mode: String,
+    pub(crate) association_backend_kind: String,
+    pub(crate) bgen_path: PathBuf,
+    pub(crate) sample_path: Option<PathBuf>,
+    pub(crate) phenotype_path: PathBuf,
+    pub(crate) phenotype_name: String,
+    pub(crate) covariate_path: Option<PathBuf>,
+    pub(crate) covariate_names: Vec<String>,
+    pub(crate) prediction_list_path: PathBuf,
+    pub(crate) sample_count: i64,
+    pub(crate) variant_count: i64,
+    pub(crate) chunk_size: i64,
+    pub(crate) variant_limit: Option<i64>,
+    pub(crate) binary_correction_plan_method: String,
+    pub(crate) binary_correction_plan_p_threshold: f64,
+    pub(crate) binary_correction_plan_firth_se: bool,
+    pub(crate) trusted_no_missing_diploid: bool,
+    pub(crate) sample_key_mode: String,
+    pub(crate) binary_kernel_config_json: Option<String>,
+    pub(crate) bgen_decode_tile_variant_count: i64,
+    pub(crate) trusted_bgen_validation_mode: String,
+    pub(crate) jax_device: String,
+    pub(crate) jax_enable_x64: bool,
+    pub(crate) jax_matmul_precision: Option<String>,
+    pub(crate) gpu_genotype_format: String,
+    pub(crate) score_dtype: String,
+    pub(crate) firth_dtype: String,
+    pub(crate) multi_phenotype_sample_mode: String,
+    pub(crate) phenotype_compute_group_id: Option<String>,
+    pub(crate) sample_set_fingerprint: Option<String>,
+    pub(crate) covariate_design_fingerprint: Option<String>,
+    pub(crate) prediction_alignment_fingerprint: Option<String>,
+    pub(crate) output_format: String,
+    pub(crate) finalize_parquet: bool,
+    pub(crate) writer_thread_count: i64,
+    pub(crate) writer_queue_depth: i64,
+    pub(crate) chunks_per_arrow_file: i64,
+    pub(crate) arrow_compression: String,
+    pub(crate) parquet_compression: String,
+    pub(crate) output_statistic_dtype: String,
+}
+
+pub(crate) fn build_current_run_manifest_header_json(
+    input: CurrentRunManifestHeaderInput,
+) -> Result<String, OutputWriterError> {
+    let bgen_fingerprint = build_required_file_fingerprint(&input.bgen_path, false, "BGEN")?;
+    let sample_fingerprint = build_optional_file_fingerprint(input.sample_path.as_deref(), true)?;
+    let phenotype_file_fingerprint = build_required_file_fingerprint(&input.phenotype_path, true, "phenotype file")?;
+    let covariate_file_fingerprint = build_optional_file_fingerprint(input.covariate_path.as_deref(), true)?;
+    let prediction_list_fingerprint =
+        build_required_file_fingerprint(&input.prediction_list_path, true, "prediction list")?;
+    let binary_correction_plan = json!({
+        "method": input.binary_correction_plan_method,
+        "p_threshold": input.binary_correction_plan_p_threshold,
+        "firth_se": input.binary_correction_plan_firth_se,
+    });
+    let binary_kernel_config = match input.binary_kernel_config_json {
+        Some(binary_kernel_config_json) => serde_json::from_str::<Value>(&binary_kernel_config_json)
+            .map_err(|error| OutputWriterError::InvalidInput(error.to_string()))?,
+        None => Value::Null,
+    };
+    let association_backend = json!({
+        "kind": input.association_backend_kind,
+        "association_mode": input.association_mode,
+        "device": input.jax_device,
+        "genotype_format": input.gpu_genotype_format,
+    });
+    let jax_policy = json!({
+        "device": input.jax_device,
+        "enable_x64": input.jax_enable_x64,
+        "matmul_precision": input.jax_matmul_precision.unwrap_or_else(|| JAX_MATMUL_PRECISION_WHEN_UNSET.to_string()),
+    });
+    let output_writer = json!({
+        "output_format": input.output_format,
+        "finalize_parquet": input.finalize_parquet,
+        "writer_thread_count": input.writer_thread_count,
+        "writer_queue_depth": input.writer_queue_depth,
+        "chunks_per_arrow_file": input.chunks_per_arrow_file,
+        "arrow_compression": input.arrow_compression,
+        "parquet_compression": input.parquet_compression,
+        "result_statistic_dtype": input.output_statistic_dtype,
+    });
+    let execution_plan = json!({
+        "manifest_schema_version": RUN_MANIFEST_SCHEMA_VERSION,
+        "output_schema_version": OUTPUT_SCHEMA_VERSION,
+        "association_mode": input.association_mode,
+        "association_backend": association_backend,
+        "bgen": bgen_fingerprint,
+        "sample": sample_fingerprint,
+        "phenotype_file": phenotype_file_fingerprint,
+        "phenotype_name": input.phenotype_name,
+        "covariate_file": covariate_file_fingerprint,
+        "covariate_names": input.covariate_names,
+        "prediction_list": prediction_list_fingerprint,
+        "sample_count": input.sample_count,
+        "variant_count": input.variant_count,
+        "chunk_size": input.chunk_size,
+        "variant_limit": input.variant_limit,
+        "binary_correction_plan": binary_correction_plan,
+        "binary_kernel_config": binary_kernel_config,
+        "trusted_no_missing_diploid": input.trusted_no_missing_diploid,
+        "trusted_bgen_validation_mode": input.trusted_bgen_validation_mode,
+        "sample_key_mode": input.sample_key_mode,
+        "bgen_decode_tile_variant_count": input.bgen_decode_tile_variant_count,
+        "jax_policy": jax_policy,
+        "gpu_genotype_format": input.gpu_genotype_format,
+        "score_dtype": input.score_dtype,
+        "firth_dtype": input.firth_dtype,
+        "multi_phenotype_sample_mode": input.multi_phenotype_sample_mode,
+        "phenotype_compute_group_id": input.phenotype_compute_group_id,
+        "sample_set_fingerprint": input.sample_set_fingerprint,
+        "covariate_design_fingerprint": input.covariate_design_fingerprint,
+        "prediction_alignment_fingerprint": input.prediction_alignment_fingerprint,
+        "output_writer": output_writer,
+        "resume_policy": RESUME_POLICY,
+    });
+    let execution_plan_hash = build_manifest_value_sha256(&execution_plan)?;
+    let current_header = json!({
+        "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
+        "output_schema_version": OUTPUT_SCHEMA_VERSION,
+        "association_mode": input.association_mode,
+        "association_backend": execution_plan["association_backend"].clone(),
+        "bgen": execution_plan["bgen"].clone(),
+        "sample": execution_plan["sample"].clone(),
+        "phenotype_file": execution_plan["phenotype_file"].clone(),
+        "phenotype_name": input.phenotype_name,
+        "covariate_file": execution_plan["covariate_file"].clone(),
+        "covariate_names": execution_plan["covariate_names"].clone(),
+        "prediction_list": execution_plan["prediction_list"].clone(),
+        "sample_count": input.sample_count,
+        "variant_count": input.variant_count,
+        "chunk_size": input.chunk_size,
+        "variant_limit": input.variant_limit,
+        "binary_correction_plan": execution_plan["binary_correction_plan"].clone(),
+        "binary_kernel_config": execution_plan["binary_kernel_config"].clone(),
+        "trusted_no_missing_diploid": input.trusted_no_missing_diploid,
+        "trusted_bgen_validation_mode": input.trusted_bgen_validation_mode,
+        "sample_key_mode": input.sample_key_mode,
+        "bgen_decode_tile_variant_count": input.bgen_decode_tile_variant_count,
+        "jax_policy": execution_plan["jax_policy"].clone(),
+        "gpu_genotype_format": input.gpu_genotype_format,
+        "score_dtype": input.score_dtype,
+        "firth_dtype": input.firth_dtype,
+        "multi_phenotype_sample_mode": input.multi_phenotype_sample_mode,
+        "phenotype_compute_group_id": input.phenotype_compute_group_id,
+        "sample_set_fingerprint": input.sample_set_fingerprint,
+        "covariate_design_fingerprint": input.covariate_design_fingerprint,
+        "prediction_alignment_fingerprint": input.prediction_alignment_fingerprint,
+        "output_writer": execution_plan["output_writer"].clone(),
+        "resume_policy": RESUME_POLICY,
+        "execution_plan": execution_plan,
+        "execution_plan_hash": execution_plan_hash,
+    });
+    serde_json::to_string(&current_header).map_err(OutputWriterError::runtime)
 }
 
 pub(crate) fn resolve_output_run_paths(
@@ -201,6 +367,66 @@ pub(crate) fn read_run_manifest_chunk_commits_from_text(
         )?;
     }
     Ok(committed_chunks_by_identifier.into_values().collect())
+}
+
+fn build_required_file_fingerprint(
+    path: &Path,
+    include_content_hash: bool,
+    role_name: &str,
+) -> Result<Value, OutputWriterError> {
+    build_optional_file_fingerprint(Some(path), include_content_hash)?
+        .ok_or_else(|| OutputWriterError::InvalidInput(format!("{role_name} fingerprint is required.")))
+}
+
+fn build_optional_file_fingerprint(
+    path: Option<&Path>,
+    include_content_hash: bool,
+) -> Result<Option<Value>, OutputWriterError> {
+    let Some(file_path) = path else {
+        return Ok(None);
+    };
+    let metadata = file_path.metadata().map_err(OutputWriterError::runtime)?;
+    let content_hash_algorithm =
+        if include_content_hash { FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM } else { FILE_FINGERPRINT_METADATA_ONLY };
+    let content_sha256 = if include_content_hash { Some(build_file_content_sha256(file_path)?) } else { None };
+    let mtime_ns = metadata
+        .mtime()
+        .checked_mul(1_000_000_000)
+        .and_then(|mtime_seconds_ns| mtime_seconds_ns.checked_add(metadata.mtime_nsec()))
+        .ok_or_else(|| OutputWriterError::Runtime("File modification timestamp overflowed nanoseconds.".to_string()))?;
+    let resolved_path = file_path.canonicalize().map_err(OutputWriterError::runtime)?;
+    Ok(Some(json!({
+        "path": resolved_path.display().to_string(),
+        "size": metadata.len(),
+        "mtime_ns": mtime_ns,
+        "content_hash_algorithm": content_hash_algorithm,
+        "content_sha256": content_sha256,
+    })))
+}
+
+fn build_file_content_sha256(path: &Path) -> Result<String, OutputWriterError> {
+    let mut file = File::open(path).map_err(OutputWriterError::runtime)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let bytes_read = file.read(&mut buffer).map_err(OutputWriterError::runtime)?;
+        if bytes_read == 0 {
+            break;
+        }
+        digest.update(&buffer[..bytes_read]);
+    }
+    Ok(encode_sha256_hex(digest))
+}
+
+fn build_manifest_value_sha256(value: &Value) -> Result<String, OutputWriterError> {
+    let manifest_bytes = serde_json::to_vec(value).map_err(OutputWriterError::runtime)?;
+    let mut digest = Sha256::new();
+    digest.update(manifest_bytes);
+    Ok(encode_sha256_hex(digest))
+}
+
+fn encode_sha256_hex(digest: Sha256) -> String {
+    digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn directory_exists_and_is_non_empty(directory_path: &Path) -> Result<bool, OutputWriterError> {
@@ -781,5 +1007,4 @@ mod tests {
 
         std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
     }
-
 }

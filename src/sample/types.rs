@@ -45,6 +45,17 @@ pub struct GroupedAlignedSampleData {
     pub groups: Vec<AlignedPhenotypeGroup>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedPhenotypeComputeGroup {
+    pub group_mode: String,
+    pub phenotype_indices: Vec<usize>,
+    pub phenotype_names: Vec<String>,
+    pub sample_mode: String,
+    pub sample_set_fingerprint: String,
+    pub covariate_design_fingerprint: String,
+    pub prediction_alignment_fingerprint: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct AlignmentInputs {
     pub sample_indices: Vec<i64>,

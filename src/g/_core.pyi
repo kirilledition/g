@@ -311,6 +311,15 @@ class NativeAlignedPhenotypeGroup:
 class NativeGroupedAlignedSampleData:
     groups: list[NativeAlignedPhenotypeGroup]
 
+class NativeResolvedPhenotypeComputeGroup:
+    group_mode: str
+    phenotype_indices: list[int]
+    phenotype_names: list[str]
+    sample_mode: str
+    sample_set_fingerprint: str
+    covariate_design_fingerprint: str
+    prediction_alignment_fingerprint: str | None
+
 class Regenie2RunEngine:
     sample_count: int
     variant_count: int
@@ -452,6 +461,16 @@ class NativeTelemetrySession:
         event_cap: int | None = None,
     ) -> None: ...
     def emit_json_line(self, json_line: str) -> None: ...
+    def build_event_payload(
+        self,
+        run_id: str,
+        event: str,
+        level: str,
+        timestamp: str,
+        process_identifier: int,
+        thread_name: str,
+        fields: dict[str, object],
+    ) -> dict[str, object]: ...
     def counters(self) -> dict[str, object]: ...
     def finish(self) -> dict[str, object]: ...
 
@@ -561,6 +580,48 @@ def prepare_output_run(
 ) -> NativePreparedOutputRun: ...
 def load_run_manifest_json(run_directory: str) -> str | None: ...
 def write_run_manifest_json(run_directory: str, manifest_json: str) -> None: ...
+def build_current_run_manifest_header_json(
+    association_mode: str,
+    association_backend_kind: str,
+    bgen_path: str,
+    sample_path: str | None,
+    phenotype_path: str,
+    phenotype_name: str,
+    covariate_path: str | None,
+    covariate_names: list[str],
+    prediction_list_path: str,
+    sample_count: int,
+    variant_count: int,
+    chunk_size: int,
+    variant_limit: int | None,
+    binary_correction_plan_method: str,
+    binary_correction_plan_p_threshold: float,
+    binary_correction_plan_firth_se: bool,
+    trusted_no_missing_diploid: bool,
+    sample_key_mode: str,
+    binary_kernel_config_json: str | None,
+    bgen_decode_tile_variant_count: int,
+    trusted_bgen_validation_mode: str,
+    jax_device: str,
+    jax_enable_x64: bool,
+    jax_matmul_precision: str | None,
+    gpu_genotype_format: str,
+    score_dtype: str,
+    firth_dtype: str,
+    multi_phenotype_sample_mode: str,
+    phenotype_compute_group_id: str | None,
+    sample_set_fingerprint: str | None,
+    covariate_design_fingerprint: str | None,
+    prediction_alignment_fingerprint: str | None,
+    output_format: str,
+    finalize_parquet: bool,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
+    arrow_compression: str,
+    parquet_compression: str,
+    output_statistic_dtype: str,
+) -> str: ...
 def validate_run_manifest_compatibility(manifest_json: str, current_header_json: str) -> None: ...
 def read_manifest_committed_chunk_identifiers(manifest_json: str) -> list[int]: ...
 def initialize_output_run(
@@ -586,6 +647,21 @@ def initialize_logging(
     trace_event_cap: int | None = None,
 ) -> bool: ...
 def shutdown_logging() -> None: ...
+def build_telemetry_event_payload(
+    run_id: str,
+    event: str,
+    level: str,
+    timestamp: str,
+    process_identifier: int,
+    thread_name: str,
+    fields: dict[str, object],
+) -> dict[str, object]: ...
+def build_run_completed_telemetry_fields(event: object) -> dict[str, object]: ...
+def build_run_interrupted_telemetry_fields(event: object) -> dict[str, object]: ...
+def build_run_failed_telemetry_fields(event: object) -> dict[str, object]: ...
+def render_run_completed_lines(event: object) -> tuple[str, ...]: ...
+def render_run_interrupted_lines(event: object) -> tuple[str, ...]: ...
+def render_run_failed_lines(event: object) -> tuple[str, ...]: ...
 def scan_committed_chunk_identifiers(chunks_directory: str) -> list[int]: ...
 def repair_strict_manifest_chunk_commits(chunks_directory: str, manifest_json: str) -> str: ...
 def validate_strict_manifest_chunks(chunks_directory: str, manifest_json: str) -> list[int]: ...
@@ -659,3 +735,23 @@ def align_multi_sample_data_from_sample_file(
     is_binary_trait: bool = False,
     sample_key_mode: g.types.SampleKeyMode | str = "iid",
 ) -> NativeMultiAlignedSampleData: ...
+def resolve_single_phenotype_compute_group(
+    aligned_sample_data: NativeAlignedSampleData,
+    phenotype_name: str,
+    prediction_list_path: str | None,
+    sample_key_mode: g.types.SampleKeyMode | str,
+) -> NativeResolvedPhenotypeComputeGroup: ...
+def resolve_per_phenotype_compute_group(
+    aligned_sample_data: NativeMultiAlignedSampleData,
+    phenotype_indices: list[int],
+    phenotype_names: list[str],
+    prediction_list_path: str | None,
+    sample_key_mode: g.types.SampleKeyMode | str,
+) -> NativeResolvedPhenotypeComputeGroup: ...
+def resolve_complete_case_compute_group(
+    aligned_sample_data: NativeMultiAlignedSampleData,
+    phenotype_indices: list[int],
+    phenotype_names: list[str],
+    prediction_list_path: str | None,
+    sample_key_mode: g.types.SampleKeyMode | str,
+) -> NativeResolvedPhenotypeComputeGroup: ...

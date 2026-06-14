@@ -613,8 +613,74 @@ def build_current_run_execution_plan(current_header: CurrentRunManifestHeader) -
     )
 
 
+def build_native_current_run_manifest_header_mapping(
+    current_header: CurrentRunManifestHeader,
+) -> dict[str, typing.Any] | None:
+    """Build the manifest header through the native JSON boundary when available."""
+    native_build_header = getattr(_core, "build_current_run_manifest_header_json", None)
+    if native_build_header is None:
+        return None
+    binary_kernel_config_json = (
+        None
+        if current_header.binary_kernel_config is None
+        else json.dumps(normalize_execution_plan_value(current_header.binary_kernel_config), sort_keys=True)
+    )
+    manifest_json = native_build_header(
+        current_header.association_mode.value,
+        current_header.association_backend.kind,
+        current_header.bgen.path,
+        None if current_header.sample is None else current_header.sample.path,
+        current_header.phenotype_file.path,
+        current_header.phenotype_name,
+        None if current_header.covariate_file is None else current_header.covariate_file.path,
+        list(current_header.covariate_names),
+        current_header.prediction_list.path,
+        current_header.sample_count,
+        current_header.variant_count,
+        current_header.chunk_size,
+        current_header.variant_limit,
+        current_header.binary_correction_plan.method,
+        current_header.binary_correction_plan.p_threshold,
+        current_header.binary_correction_plan.firth_se,
+        current_header.trusted_no_missing_diploid,
+        current_header.sample_key_mode.value,
+        binary_kernel_config_json,
+        current_header.bgen_decode_tile_variant_count,
+        current_header.trusted_bgen_validation_mode.value,
+        current_header.jax_policy.device,
+        current_header.jax_policy.enable_x64,
+        None
+        if current_header.jax_policy.matmul_precision == JAX_MATMUL_PRECISION_WHEN_UNSET
+        else current_header.jax_policy.matmul_precision,
+        current_header.gpu_genotype_format.value,
+        current_header.score_dtype.value,
+        current_header.firth_dtype.value,
+        current_header.multi_phenotype_sample_mode.value,
+        current_header.phenotype_compute_group_id,
+        current_header.sample_set_fingerprint,
+        current_header.covariate_design_fingerprint,
+        current_header.prediction_alignment_fingerprint,
+        current_header.output_writer.output_format,
+        current_header.output_writer.finalize_parquet,
+        current_header.output_writer.writer_thread_count,
+        current_header.output_writer.writer_queue_depth,
+        current_header.output_writer.chunks_per_arrow_file,
+        current_header.output_writer.arrow_compression,
+        current_header.output_writer.parquet_compression,
+        current_header.output_writer.result_statistic_dtype,
+    )
+    manifest_header = json.loads(manifest_json)
+    if not isinstance(manifest_header, dict):
+        message = "Native current run manifest header must contain a JSON object."
+        raise ValueError(message)
+    return manifest_header
+
+
 def current_run_manifest_header_to_mapping(current_header: CurrentRunManifestHeader) -> dict[str, typing.Any]:
     """Serialize a typed current-run manifest header to native JSON fields."""
+    native_manifest_header = build_native_current_run_manifest_header_mapping(current_header)
+    if native_manifest_header is not None:
+        return native_manifest_header
     execution_plan = build_current_run_execution_plan(current_header)
     return {
         "schema_version": RUN_MANIFEST_SCHEMA_VERSION,

@@ -18,7 +18,7 @@ use crate::pipeline::Regenie2RunEngineCore;
 use crate::regenie::{MultiPredictionSource as NativeMultiPredictionSource, PredictionSource};
 use crate::sample::{
     AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, GroupedAlignedSampleData, MultiAlignedSampleData,
-    MultiAlignmentInputs, SampleKeyMode,
+    MultiAlignmentInputs, ResolvedPhenotypeComputeGroup, SampleKeyMode,
 };
 
 mod config;
@@ -26,18 +26,26 @@ mod errors;
 mod logging;
 mod output;
 mod profile;
+mod run_events;
 mod runtime;
 
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
-use logging::{NativeTelemetrySession, emit_diagnostic_event, initialize_logging, shutdown_logging};
+use logging::{
+    NativeTelemetrySession, build_telemetry_event_payload, emit_diagnostic_event, initialize_logging, shutdown_logging,
+};
 use output::{
     NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
-    finalize_output_run_chunks, initialize_output_run, load_run_manifest_json, prepare_output_run,
-    read_manifest_committed_chunk_identifiers, repair_strict_manifest_chunk_commits, resolve_output_run_paths,
-    scan_committed_chunk_identifiers, validate_run_manifest_compatibility, validate_strict_manifest_chunks,
-    write_regenie2_multi_native_chunk, write_regenie2_multi_native_chunk_f64, write_run_manifest_json,
+    build_current_run_manifest_header_json, finalize_output_run_chunks, initialize_output_run, load_run_manifest_json,
+    prepare_output_run, read_manifest_committed_chunk_identifiers, repair_strict_manifest_chunk_commits,
+    resolve_output_run_paths, scan_committed_chunk_identifiers, validate_run_manifest_compatibility,
+    validate_strict_manifest_chunks, write_regenie2_multi_native_chunk, write_regenie2_multi_native_chunk_f64,
+    write_run_manifest_json,
 };
 use profile::build_profile_snapshot_dict;
+use run_events::{
+    build_run_completed_telemetry_fields, build_run_failed_telemetry_fields, build_run_interrupted_telemetry_fields,
+    render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
+};
 use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool};
 
 type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
@@ -216,6 +224,11 @@ pub(crate) struct NativeGroupedAlignedSampleData {
     data: GroupedAlignedSampleData,
 }
 
+#[pyclass]
+pub(crate) struct NativeResolvedPhenotypeComputeGroup {
+    data: ResolvedPhenotypeComputeGroup,
+}
+
 impl VariantMetadata {
     fn new(variant_start_index: usize, variant_stop_index: usize, metadata: VariantMetadataColumns) -> Self {
         Self { variant_start_index, variant_stop_index, metadata: Arc::new(metadata) }
@@ -242,6 +255,12 @@ impl NativeAlignedPhenotypeGroup {
 
 impl NativeGroupedAlignedSampleData {
     fn new(data: GroupedAlignedSampleData) -> Self {
+        Self { data }
+    }
+}
+
+impl NativeResolvedPhenotypeComputeGroup {
+    fn new(data: ResolvedPhenotypeComputeGroup) -> Self {
         Self { data }
     }
 }
@@ -365,6 +384,44 @@ impl NativeGroupedAlignedSampleData {
     #[getter]
     fn groups(&self, py: Python<'_>) -> PyResult<Vec<Py<NativeAlignedPhenotypeGroup>>> {
         self.data.groups.iter().cloned().map(|group| Py::new(py, NativeAlignedPhenotypeGroup::new(group))).collect()
+    }
+}
+
+#[pymethods]
+impl NativeResolvedPhenotypeComputeGroup {
+    #[getter]
+    fn group_mode(&self) -> String {
+        self.data.group_mode.clone()
+    }
+
+    #[getter]
+    fn phenotype_indices(&self) -> Vec<usize> {
+        self.data.phenotype_indices.clone()
+    }
+
+    #[getter]
+    fn phenotype_names(&self) -> Vec<String> {
+        self.data.phenotype_names.clone()
+    }
+
+    #[getter]
+    fn sample_mode(&self) -> String {
+        self.data.sample_mode.clone()
+    }
+
+    #[getter]
+    fn sample_set_fingerprint(&self) -> String {
+        self.data.sample_set_fingerprint.clone()
+    }
+
+    #[getter]
+    fn covariate_design_fingerprint(&self) -> String {
+        self.data.covariate_design_fingerprint.clone()
+    }
+
+    #[getter]
+    fn prediction_alignment_fingerprint(&self) -> Option<String> {
+        self.data.prediction_alignment_fingerprint.clone()
     }
 }
 
@@ -1414,6 +1471,61 @@ fn align_multi_sample_data_from_sample_file(
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
+fn resolve_single_phenotype_compute_group(
+    aligned_sample_data: PyRef<'_, NativeAlignedSampleData>,
+    phenotype_name: String,
+    prediction_list_path: Option<String>,
+    sample_key_mode: String,
+) -> PyResult<NativeResolvedPhenotypeComputeGroup> {
+    let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
+    Ok(NativeResolvedPhenotypeComputeGroup::new(crate::sample::resolve_single_phenotype_compute_group(
+        &aligned_sample_data.data,
+        phenotype_name,
+        prediction_list_path.as_deref(),
+        parsed_sample_key_mode,
+    )))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn resolve_per_phenotype_compute_group(
+    aligned_sample_data: PyRef<'_, NativeMultiAlignedSampleData>,
+    phenotype_indices: Vec<usize>,
+    phenotype_names: Vec<String>,
+    prediction_list_path: Option<String>,
+    sample_key_mode: String,
+) -> PyResult<NativeResolvedPhenotypeComputeGroup> {
+    let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
+    Ok(NativeResolvedPhenotypeComputeGroup::new(crate::sample::resolve_per_phenotype_compute_group(
+        &aligned_sample_data.data,
+        phenotype_indices,
+        phenotype_names,
+        prediction_list_path.as_deref(),
+        parsed_sample_key_mode,
+    )))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn resolve_complete_case_compute_group(
+    aligned_sample_data: PyRef<'_, NativeMultiAlignedSampleData>,
+    phenotype_indices: Vec<usize>,
+    phenotype_names: Vec<String>,
+    prediction_list_path: Option<String>,
+    sample_key_mode: String,
+) -> PyResult<NativeResolvedPhenotypeComputeGroup> {
+    let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
+    Ok(NativeResolvedPhenotypeComputeGroup::new(crate::sample::resolve_complete_case_compute_group(
+        &aligned_sample_data.data,
+        phenotype_indices,
+        phenotype_names,
+        prediction_list_path.as_deref(),
+        parsed_sample_key_mode,
+    )))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 #[pyo3(signature = (variant_count, chunk_size, chromosome_boundary_indices, variant_limit=None, committed_chunk_identifiers=None))]
 fn plan_genotype_chunks(
     variant_count: usize,
@@ -1470,12 +1582,18 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeMultiAlignedSampleData>()?;
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
+    module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
     module.add_class::<MultiRegeniePredictionSource>()?;
     module.add_class::<NativeTelemetrySession>()?;
     module.add_class::<VariantMetadata>()?;
+    module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_completed_telemetry_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_failed_telemetry_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
     module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;
@@ -1501,5 +1619,11 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(align_multi_sample_data, module)?)?;
     module.add_function(wrap_pyfunction!(align_sample_data_from_sample_file, module)?)?;
     module.add_function(wrap_pyfunction!(align_multi_sample_data_from_sample_file, module)?)?;
+    module.add_function(wrap_pyfunction!(render_run_completed_lines, module)?)?;
+    module.add_function(wrap_pyfunction!(render_run_failed_lines, module)?)?;
+    module.add_function(wrap_pyfunction!(render_run_interrupted_lines, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_complete_case_compute_group, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_per_phenotype_compute_group, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_single_phenotype_compute_group, module)?)?;
     Ok(())
 }

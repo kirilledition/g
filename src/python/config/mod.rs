@@ -13,7 +13,7 @@ use crate::interface::{
 mod conversion;
 
 use conversion::{
-    enum_value, optional_enum_value, optional_path, path_to_string, string_tuple, toml_table_from_py_mapping,
+    enum_value, normalized_toml_table_from_py_options, optional_enum_value, optional_path, path_to_string, string_tuple,
 };
 
 #[pyclass(name = "InputConfig", skip_from_py_object)]
@@ -736,7 +736,7 @@ impl CliOutcome {
 
 #[pyfunction]
 fn config_from_options(raw_options: &Bound<'_, PyAny>) -> PyResult<RegenieConfig> {
-    let option_table = toml_table_from_py_mapping(raw_options)?;
+    let option_table = normalized_toml_table_from_py_options(raw_options)?;
     interface::from_options(&option_table)
         .map(RegenieConfig::new)
         .map_err(|error| config_error_to_py("from_options", error))

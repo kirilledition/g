@@ -193,7 +193,7 @@ def flatten_mapping_section(
 
 def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
     """Build a normalized config from Python option dictionaries."""
-    return g._core.config_from_options(normalize_python_options(raw_options))
+    return g._core.config_from_options(raw_options)
 
 
 typing.cast("typing.Any", RegenieConfig).from_options = staticmethod(from_options)
