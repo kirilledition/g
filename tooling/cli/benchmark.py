@@ -60,8 +60,8 @@ def build_profile_comparison_arguments(config: omegaconf.DictConfig) -> profile_
         output_dir=tooling_hydra_arguments.path_or_none(tool_values["output_dir"])
         or Path("data/profiles/regenie_comparison"),
         sample_interval_seconds=float(tool_values["sample_interval_seconds"]),
-        g_variant_limit=tooling_hydra_arguments.integer_or_none(tool_values["g_variant_limit"]),
-        g_chunk_size=int(tool_values["g_chunk_size"]),
+        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values["g_variant_limit"]),
+        chunk_size=int(tool_values["g_chunk_size"]),
         enable_jax_trace=tooling_hydra_arguments.boolean_value(tool_values["enable_jax_trace"]),
         enable_memory_profile=tooling_hydra_arguments.boolean_value(tool_values["enable_memory_profile"]),
     )

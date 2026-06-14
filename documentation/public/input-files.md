@@ -10,7 +10,7 @@ CLI names and TOML mapping, see [CLI](cli.md) and [Configuration](configuration.
 | Input | CLI | TOML | Required |
 | --- | --- | --- | --- |
 | BGEN genotype file | `--bgen` | `[input].bgen` | Yes. |
-| Sample file | `--sample` | `[input].sample` | Required when sample IDs are not embedded or when explicit sample IDs are needed. |
+| Sample file | `--sample` | `[input].sample` | Required when the BGEN does not embed usable sample IDs. |
 | Phenotype table | `--phenoFile` | `[input].phenoFile` | Yes. |
 | Phenotype columns | `--phenoCol`, `--phenoColList` | `[input].phenoCol`, `[input].phenoColList` | Yes. |
 | Covariate table | `--covarFile` | `[input].covarFile` | Required when covariates are selected. |
@@ -27,6 +27,10 @@ Supported:
 - Oxford `.sample` files through `--sample`.
 - Embedded BGEN sample identifiers when present and valid for the selected
   sample-key mode.
+
+`g regenie` follows REGENIE's BGEN sample behavior: when `--sample` is omitted,
+sample identifiers are read from the BGEN itself. Adjacent `.sample` files are
+not discovered implicitly.
 
 Recognized but not implemented:
 

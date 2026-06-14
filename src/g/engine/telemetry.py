@@ -53,10 +53,10 @@ class TelemetrySession:
         paths: TelemetryPaths,
         progress_interval_seconds: float,
         progress_interval_chunks: int,
-        queue_size: int = 8192,
-        lossy: bool = True,
-        trace_event_cap: int = 0,
-        run_id: str | None = None,
+        queue_size: int,
+        lossy: bool,
+        trace_event_cap: int,
+        run_id: str | None,
     ) -> None:
         """Initialize a run telemetry session."""
         self.mode = mode
@@ -90,7 +90,7 @@ class TelemetrySession:
         """Return whether profiling-grade telemetry is enabled."""
         return self.mode in {types.TelemetryMode.PROFILE, types.TelemetryMode.TRACE}
 
-    def log_event(self, event: str, level: str = "info", **fields: object) -> None:
+    def log_event(self, event: str, level: str, **fields: object) -> None:
         """Write one structured lifecycle or profile event."""
         if not self.enabled:
             return
@@ -248,6 +248,7 @@ def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySe
         queue_size=diagnostics_config.log_queue_size,
         lossy=diagnostics_config.log_lossy,
         trace_event_cap=diagnostics_config.trace_event_cap,
+        run_id=None,
     )
 
 

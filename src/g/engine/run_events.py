@@ -31,16 +31,16 @@ class RunArtifacts:
 
     """
 
-    output_run_directory: Path | None = None
-    final_dataset: Path | None = None
-    final_parquet: Path | None = None
-    final_regenie: Path | None = None
-    effective_config: Path | None = None
-    phenotype_artifacts: tuple[RunArtifacts, ...] = ()
-    phenotype_name: str | None = None
-    association_mode: types.AssociationMode | None = None
-    phenotype_count: int | None = None
-    run_id: str | None = None
+    output_run_directory: Path | None
+    final_dataset: Path | None
+    final_parquet: Path | None
+    final_regenie: Path | None
+    effective_config: Path | None
+    phenotype_artifacts: tuple[RunArtifacts, ...]
+    phenotype_name: str | None
+    association_mode: types.AssociationMode | None
+    phenotype_count: int | None
+    run_id: str | None
 
 
 @dataclass(frozen=True)
@@ -98,7 +98,7 @@ class RunInterruptedEvent:
     signal_number: int
     signal_name: str
     exit_code: int
-    flushed_for_resume: bool = True
+    flushed_for_resume: bool
 
 
 @dataclass(frozen=True)
@@ -162,12 +162,8 @@ def build_run_interrupted_event(shutdown_request: shutdown.GracefulShutdownReque
         signal_number=shutdown_signal.number,
         signal_name=shutdown_signal.name,
         exit_code=shutdown_signal.exit_code,
+        flushed_for_resume=True,
     )
-
-
-def build_run_failed_event(error: Exception) -> RunFailedEvent:
-    """Build a structured failure event from a non-graceful exception."""
-    return RunFailedEvent(error_type=type(error).__name__, error_message=str(error))
 
 
 def flatten_artifact_payloads(artifacts: RunArtifacts) -> tuple[RunArtifactPayload, ...]:
@@ -178,18 +174,15 @@ def flatten_artifact_payloads(artifacts: RunArtifacts) -> tuple[RunArtifactPaylo
             for phenotype_artifact in artifacts.phenotype_artifacts
             for artifact_payload in flatten_artifact_payloads(phenotype_artifact)
         )
-    return (build_artifact_payload(artifacts),)
-
-
-def build_artifact_payload(artifacts: RunArtifacts) -> RunArtifactPayload:
-    """Build a structured payload for one artifact set."""
-    return RunArtifactPayload(
-        phenotype_name=artifacts.phenotype_name,
-        output_run_directory=artifacts.output_run_directory,
-        final_dataset=artifacts.final_dataset,
-        final_parquet=artifacts.final_parquet,
-        final_regenie=artifacts.final_regenie,
-        effective_config=artifacts.effective_config,
+    return (
+        RunArtifactPayload(
+            phenotype_name=artifacts.phenotype_name,
+            output_run_directory=artifacts.output_run_directory,
+            final_dataset=artifacts.final_dataset,
+            final_parquet=artifacts.final_parquet,
+            final_regenie=artifacts.final_regenie,
+            effective_config=artifacts.effective_config,
+        ),
     )
 
 

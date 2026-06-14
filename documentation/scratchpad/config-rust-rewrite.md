@@ -586,7 +586,7 @@ if config.trait_config.trait_type == Quantitative {
 }
 ```
 
-This also replaces the old Python `explicit_options` behavior cleanly. The current PyO3 `RegenieConfig` does not expose `explicit_options`, but some tests still expect it.  I would not bring back the Python `explicit_options` set as public API, but I would keep equivalent provenance internally in Rust.
+This also replaces the old Python per-option provenance behavior cleanly. The PyO3 `RegenieConfig` should keep equivalent provenance internally in Rust rather than exposing it as public Python API.
 
 ---
 

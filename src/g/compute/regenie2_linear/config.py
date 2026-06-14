@@ -18,8 +18,8 @@ class LinearNumericalConfig:
 
     """
 
-    minimum_variance: float = DEFAULT_LINEAR_MINIMUM_VARIANCE
-    relative_variance_tolerance: float = DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE
+    minimum_variance: float
+    relative_variance_tolerance: float
 
     def __post_init__(self) -> None:
         """Validate positive numerical settings."""
@@ -31,4 +31,7 @@ class LinearNumericalConfig:
             raise ValueError(message)
 
 
-DEFAULT_LINEAR_NUMERICAL_CONFIG = LinearNumericalConfig()
+DEFAULT_LINEAR_NUMERICAL_CONFIG = LinearNumericalConfig(
+    minimum_variance=DEFAULT_LINEAR_MINIMUM_VARIANCE,
+    relative_variance_tolerance=DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE,
+)

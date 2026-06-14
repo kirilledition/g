@@ -8,12 +8,16 @@ import subprocess
 import sys
 import textwrap
 import types as python_types
+import typing
 import unittest.mock
 from pathlib import Path
 
 import pytest
 
 from g import cli
+
+if typing.TYPE_CHECKING:
+    import g._core
 
 
 class FakeTelemetrySession:
@@ -55,7 +59,7 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
             "g.engine.run_events",
             "g.engine.shutdown",
             "g.engine.telemetry",
-            "g.jax_setup",
+            "g.jax_runtime.setup",
             "jax",
             "jax.numpy",
         )
@@ -80,7 +84,7 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
                 contextlib.redirect_stdout(stdout_buffer),
                 contextlib.redirect_stderr(stderr_buffer),
             ):
-                actual_exit_code = g.cli.run_args(arguments)
+                actual_exit_code = g.cli.run_args(arguments, direct_regenie=False)
             if actual_exit_code != expected_exit_code:
                 raise AssertionError((actual_exit_code, expected_exit_code))
             if stdout_buffer.getvalue() != expected_stdout:
@@ -108,10 +112,13 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
 def test_log_native_cli_output_bounds_payloads() -> None:
     """Ensure native output diagnostics carry bounded previews, not full payloads."""
     long_stdout = "x" * (cli.NATIVE_CLI_OUTPUT_LOG_LIMIT + 3)
-    outcome = python_types.SimpleNamespace(stdout=long_stdout, stderr="", exit_code=0, config=None)
+    outcome = typing.cast(
+        "g._core.CliOutcome",
+        python_types.SimpleNamespace(stdout=long_stdout, stderr="", exit_code=0, config=None),
+    )
 
     with unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock:
-        cli.log_native_cli_output(outcome)
+        cli.log_native_cli_output(outcome, max_payload_chars=cli.NATIVE_CLI_OUTPUT_LOG_LIMIT)
 
     diagnostic_event_mock.assert_called_once()
     payload = json.loads(diagnostic_event_mock.call_args.args[3])
@@ -127,9 +134,10 @@ def test_run_args_bridges_completion_events(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Ensure successful completion lines are logged and printed."""
-    from g import runner as runner_module
     from g.engine import run_events, shutdown
     from g.engine import telemetry as telemetry_module
+    from g.runner import execution as runner_execution
+    from g.runner import runtime as runner_runtime
 
     run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
     telemetry_session = FakeTelemetrySession()
@@ -151,17 +159,17 @@ def test_run_args_bridges_completion_events(
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
         unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
         unittest.mock.patch.object(
-            runner_module, "build_runtime_policy", return_value=runtime_policy
+            runner_runtime, "build_runtime_policy", return_value=runtime_policy
         ) as build_runtime_policy_mock,
-        unittest.mock.patch.object(runner_module, "require_compatible_runtime_policy") as runtime_preflight_mock,
-        unittest.mock.patch.object(runner_module, "initialize_logging") as initialize_logging_mock,
+        unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy") as runtime_preflight_mock,
+        unittest.mock.patch.object(runner_runtime, "initialize_logging") as initialize_logging_mock,
         unittest.mock.patch.object(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
-        unittest.mock.patch.object(runner_module, "regenie", return_value=run_artifacts) as regenie_mock,
+        unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts) as regenie_mock,
         unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
     ):
-        exit_code = cli.run_args(["regenie"])
+        exit_code = cli.run_args(["regenie"], direct_regenie=False)
 
     output = capsys.readouterr()
     assert exit_code == 0
@@ -184,9 +192,10 @@ def test_run_args_bridges_interruption_events(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Ensure graceful interruption is logged and printed as structured completion lines."""
-    from g import runner as runner_module
     from g.engine import shutdown
     from g.engine import telemetry as telemetry_module
+    from g.runner import execution as runner_execution
+    from g.runner import runtime as runner_runtime
 
     run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
     telemetry_session = FakeTelemetrySession()
@@ -199,17 +208,17 @@ def test_run_args_bridges_interruption_events(
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
         unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
         unittest.mock.patch.object(
-            runner_module, "build_runtime_policy", return_value=runtime_policy
+            runner_runtime, "build_runtime_policy", return_value=runtime_policy
         ) as build_runtime_policy_mock,
-        unittest.mock.patch.object(runner_module, "require_compatible_runtime_policy") as runtime_preflight_mock,
-        unittest.mock.patch.object(runner_module, "initialize_logging") as initialize_logging_mock,
+        unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy") as runtime_preflight_mock,
+        unittest.mock.patch.object(runner_runtime, "initialize_logging") as initialize_logging_mock,
         unittest.mock.patch.object(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
-        unittest.mock.patch.object(runner_module, "regenie", side_effect=shutdown_request) as regenie_mock,
+        unittest.mock.patch.object(runner_execution, "regenie", side_effect=shutdown_request) as regenie_mock,
         unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
     ):
-        exit_code = cli.run_args(["regenie"])
+        exit_code = cli.run_args(["regenie"], direct_regenie=False)
 
     output = capsys.readouterr()
     assert exit_code == 130
@@ -230,8 +239,9 @@ def test_run_args_bridges_interruption_events(
 
 def test_run_args_closes_telemetry_when_logging_initialization_fails() -> None:
     """Ensure telemetry cleanup starts immediately after session creation."""
-    from g import runner as runner_module
     from g.engine import telemetry as telemetry_module
+    from g.runner import execution as runner_execution
+    from g.runner import runtime as runner_runtime
 
     run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
     telemetry_session = FakeTelemetrySession()
@@ -242,14 +252,14 @@ def test_run_args_closes_telemetry_when_logging_initialization_fails() -> None:
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
         unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
         unittest.mock.patch.object(
-            runner_module, "build_runtime_policy", return_value=runtime_policy
+            runner_runtime, "build_runtime_policy", return_value=runtime_policy
         ) as build_runtime_policy_mock,
-        unittest.mock.patch.object(runner_module, "require_compatible_runtime_policy") as runtime_preflight_mock,
-        unittest.mock.patch.object(runner_module, "initialize_logging", side_effect=RuntimeError("logging failed")),
-        unittest.mock.patch.object(runner_module, "regenie") as regenie_mock,
+        unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy") as runtime_preflight_mock,
+        unittest.mock.patch.object(runner_runtime, "initialize_logging", side_effect=RuntimeError("logging failed")),
+        unittest.mock.patch.object(runner_execution, "regenie") as regenie_mock,
         pytest.raises(RuntimeError, match="logging failed"),
     ):
-        cli.run_args(["regenie"])
+        cli.run_args(["regenie"], direct_regenie=False)
 
     regenie_mock.assert_not_called()
     build_runtime_policy_mock.assert_called_once_with(run_config, telemetry_session.paths)

@@ -15,7 +15,7 @@ CLI args / TOML config / Python option dict
         |
 raw option layers
         |
-OptionSpec registry + packaged defaults
+Rust option metadata + packaged defaults + validation
         |
 RegenieConfig
         |
@@ -32,13 +32,15 @@ scattered runtime defaults directly. User-controlled behavior flows through
 
 | Source | Owns |
 | --- | --- |
-| `src/g/interface/options.py` | Canonical option registry, CLI flags, destination aliases, TOML section/key mapping, support level, accepted values, help text. |
-| `src/g/interface/toml_schema.py` | Strict TOML shape and accepted section/key names. |
-| `src/g/config.default.toml` | Packaged default values for defaultable options. |
-| `src/g/interface/config_layers.py` | Layer decoding, normalization, overlay, boolean coercion, Python alias handling. |
-| `src/g/interface/config.py` | Runtime dataclasses, validation, unsupported-option rejection, trait resolution, serialization. |
+| `src/interface/options.rs` | Canonical option metadata for CLI names, TOML aliases, flat Python names, and value kinds. |
+| `src/interface/cli/` | CLI parser and CLI-to-config-layer conversion. |
+| `src/interface/toml.rs` | Strict TOML layer decoding and accepted section/key names. |
+| `src/interface/config.default.toml` | Packaged default values for defaultable options. |
+| `src/interface/defaults.rs`, `overlay.rs`, `partial.rs`, `resolved.rs`, `validation.rs`, `run_validation.rs` | Defaults, layer overlay, resolved config construction, validation, and run validation. |
+| `src/python/config/` | PyO3 conversion between Rust-owned config objects and Python classes. |
+| `src/g/interface/config.py` | Thin Python bridge that normalizes Python option dictionaries using Rust metadata. |
 | `src/g/execution_plan.py` | Immutable execution-plan construction from validated config. |
-| `src/g/cli.py` | Click command wiring generated from `OptionSpec`. |
+| `src/g/cli.py` | Thin Python dispatcher into the Rust CLI frontend. |
 
 When adding or changing a user-facing option, update the owning source and the
 corresponding tests. Do not introduce a second option table.
@@ -54,28 +56,27 @@ configurable defaults do not reappear as production constants.
 
 ## Option Addition Checklist
 
-1. Add one `OptionSpec` in `src/g/interface/options.py`.
-2. Add the TOML field to `src/g/interface/toml_schema.py`.
-3. Add a packaged default in `src/g/config.default.toml` when the option is
+1. Add or update `ConfigOptionMetadata` in `src/interface/options.rs`.
+2. Add the CLI parser/layer field in `src/interface/cli/` when the option is
+   accepted on the command line.
+3. Add the TOML/partial/resolved config field in `src/interface/` when the
+   option is accepted in config files or affects runtime state.
+4. Add a packaged default in `src/interface/config.default.toml` when the option is
    defaultable.
-4. Add a field to the appropriate runtime dataclass in
-   `src/g/interface/config.py`.
-5. Thread the field into `ExecutionPlan` or the target runtime boundary.
-6. Add validation for invalid combinations or unsupported modes.
-7. Update tests for CLI, TOML schema, Python options, and the runtime boundary.
-8. Update public docs if behavior, defaults policy, inputs, outputs, telemetry,
+5. Update `src/python/config/` and `src/g/_core.pyi` when the option is exposed
+   through Python config objects.
+6. Thread the field into `ExecutionPlan` or the target runtime boundary.
+7. Add validation for invalid combinations or unsupported modes.
+8. Update tests for CLI, TOML, Python options, and the runtime boundary.
+9. Update public docs if behavior, defaults policy, inputs, outputs, telemetry,
    or performance assumptions change.
 
-## Support Levels
+## Unsupported Options And Aliases
 
-| Support level | Meaning |
-| --- | --- |
-| `SUPPORTED` | Option is accepted and executable. |
-| `RECOGNIZED_UNSUPPORTED` | Option is accepted for migration diagnostics, then rejected when active. |
-| `G_EXTENSION` | Engine-specific native CLI option outside REGENIE's original option set. |
-| `DEPRECATED_ALIAS` | Reserved for compatibility aliases. |
-
-Recognized unsupported options must never be silently ignored.
+REGENIE-style names and engine-specific names are declared in Rust metadata.
+Accepted aliases must resolve to one canonical config field before validation.
+Recognized unsupported options must be rejected explicitly; they must never be
+silently ignored or handled only in Python.
 
 ## Boolean And Trait Rules
 
@@ -90,8 +91,9 @@ Trait flags have layer-aware semantics:
 - an explicit binary selection clears quantitative mode in the merged config;
 - binary-only options are rejected after the final trait type is known.
 
-Keep these rules centralized in `src/g/interface/config.py` and
-`src/g/interface/config_layers.py`.
+Keep these rules centralized in the Rust CLI layer, overlay, and validation
+modules under `src/interface/`. Python should only normalize Python option
+dictionaries into the Rust-owned shape before calling the PyO3 config builder.
 
 ## Tests To Update
 

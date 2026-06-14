@@ -132,20 +132,11 @@ def optional_string(value: object | None) -> str | None:
     return str(value)
 
 
-def normalize_option_name(option_name: str) -> str:
-    """Return a Python option name unchanged.
-
-    Deprecated compatibility helper; native Rust metadata is the source of
-    supported option aliases.
-    """
-    return option_name
-
-
 def normalize_trait_type(
     *,
-    qt: bool | None = None,
-    bt: bool | None = None,
-    trait_type: types.RegenieTraitType | str | None = None,
+    qt: bool | None,
+    bt: bool | None,
+    trait_type: types.RegenieTraitType | str | None,
 ) -> types.RegenieTraitType:
     """Normalize quantitative/binary trait selectors."""
     if qt is True and bt is True:
@@ -191,18 +182,7 @@ def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
     return g._core.config_from_options(normalize_python_options(raw_options))
 
 
-def explicit_options(config: RegenieConfig) -> frozenset[str]:
-    """Return explicit Python option names.
-
-    Deprecated compatibility property. The Rust frontend tracks native
-    provenance for validation, but Python does not expose per-option provenance.
-    """
-    del config
-    return frozenset()
-
-
 typing.cast("typing.Any", RegenieConfig).from_options = staticmethod(from_options)
-typing.cast("typing.Any", RegenieConfig).explicit_options = property(explicit_options)
 
 
 @functools.cache

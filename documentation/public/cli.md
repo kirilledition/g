@@ -51,7 +51,7 @@ requires these run-specific inputs:
 | `--phenoCol NAME` or `--phenoColList LIST` | Always | One or more phenotype columns. |
 | `--pred PATH` | Always | Upstream REGENIE Step 1 prediction list. |
 | `--out PATH` | Always | User output prefix. |
-| `--sample PATH` | When BGEN sample IDs are absent or unsuitable | Oxford sample file. |
+| `--sample PATH` | When the BGEN does not embed usable sample IDs | Oxford sample file. |
 | `--covarFile PATH`, `--covarCol`, `--covarColList` | When the model uses covariates | Covariate table and selected columns. |
 
 ## Supported REGENIE-Style Options
@@ -62,7 +62,7 @@ requires these run-specific inputs:
 | `--qt` / hidden `--no-qt` | `[trait]` | Quantitative trait mode. |
 | `--bt` / hidden `--no-bt` | `[trait]` | Binary trait mode. |
 | `--bgen` | `[input]` | BGEN genotype file. |
-| `--sample` | `[input]` | BGEN sample file. |
+| `--sample` | `[input]` | Optional BGEN sample file. If omitted, embedded BGEN sample IDs are used. |
 | `--phenoFile` | `[input]` | Phenotype table. |
 | `--phenoCol` | `[input]` | Repeatable phenotype column option. |
 | `--phenoColList` | `[input]` | Comma-delimited phenotype column list. |

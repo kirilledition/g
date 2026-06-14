@@ -8,7 +8,6 @@ import jax.numpy as jnp
 from g import types
 from g.compute.common import dtype as compute_dtype
 from g.compute.common import genotype, pvalue
-from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.compute.regenie2_linear import result as regenie2_linear_result
 
 
@@ -16,8 +15,8 @@ def compute_positive_residual_variance_mask(
     variance: jax.Array,
     reference_sum_squares: jax.Array,
     *,
-    minimum_variance: float = regenie2_linear_config.DEFAULT_LINEAR_MINIMUM_VARIANCE,
-    relative_variance_tolerance: float = regenie2_linear_config.DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE,
+    minimum_variance: float,
+    relative_variance_tolerance: float,
 ) -> jax.Array:
     """Return a stable positive residual-variance mask after covariate projection."""
     variance_floor = jnp.maximum(
@@ -33,7 +32,7 @@ def compute_normalized_genotype_sum_squares_from_stats(
     genotype_observation_count: jax.Array,
     genotype_imputed_dosage_square_sum: jax.Array,
     sample_count: int,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    score_dtype: types.FloatingPointDtype,
 ) -> jax.Array:
     """Compute shifted genotype sum of squares from native chunk statistics."""
     jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
@@ -80,13 +79,13 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
     adjusted_residual_sum_squares: jax.Array,
     degrees_of_freedom: jax.Array,
     genotype_matrix_by_variant: jax.Array,
-    genotype_dosage_sum: jax.Array | None = None,
-    genotype_observation_count: jax.Array | None = None,
-    genotype_imputed_dosage_square_sum: jax.Array | None = None,
-    score_left_hand_matrix: jax.Array | None = None,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-    linear_minimum_variance: float = regenie2_linear_config.DEFAULT_LINEAR_MINIMUM_VARIANCE,
-    linear_relative_variance_tolerance: float = regenie2_linear_config.DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE,
+    genotype_dosage_sum: jax.Array | None,
+    genotype_observation_count: jax.Array | None,
+    genotype_imputed_dosage_square_sum: jax.Array | None,
+    score_left_hand_matrix: jax.Array | None,
+    score_dtype: types.FloatingPointDtype,
+    linear_minimum_variance: float,
+    linear_relative_variance_tolerance: float,
 ) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     """Compute linear score-test statistics for trait-major residuals and variant-major genotypes."""
     if genotype_dosage_sum is None or genotype_observation_count is None:

@@ -15,6 +15,8 @@ if typing.TYPE_CHECKING:
     from g.engine import timing
 
 cast_statistic_array_for_native_writer = transfers.cast_statistic_array_for_native_writer
+cast_statistic_array_for_native_writer_float32 = transfers.cast_statistic_array_for_native_writer_float32
+cast_statistic_array_for_native_writer_float64 = transfers.cast_statistic_array_for_native_writer_float64
 narrow_public_statistic_array_on_device = transfers.narrow_public_statistic_array_on_device
 record_stage_duration_with_optional_chunk = transfers.record_stage_duration_with_optional_chunk
 record_transfer_metadata_for_array = transfers.record_transfer_metadata_for_array
@@ -259,24 +261,32 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
 
     write_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
     if all(isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions):
-        write_multi_chunk = (
-            _core.write_regenie2_multi_native_chunk_f64
-            if output_statistic_dtype == types.FloatingPointDtype.FLOAT64
-            else _core.write_regenie2_multi_native_chunk
-        )
-        write_multi_chunk(
-            writer_sessions=list(active_writer_sessions),
-            active_trait_indices=list(range(len(active_writer_sessions))),
-            metadata=metadata,
-            chunk_stats=chunk_stats,
-            beta=cast_statistic_array_for_native_writer(host_values["beta"], output_statistic_dtype),
-            standard_error=cast_statistic_array_for_native_writer(
-                host_values["standard_error"], output_statistic_dtype
-            ),
-            chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"], output_statistic_dtype),
-            log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"], output_statistic_dtype),
-            extra_code=host_values["extra_code"],
-        )
+        native_writer_sessions = typing.cast("tuple[_core.OutputWriterSession, ...]", active_writer_sessions)
+        native_extra_code = typing.cast("typing.Any", host_values["extra_code"])
+        if output_statistic_dtype == types.FloatingPointDtype.FLOAT64:
+            _core.write_regenie2_multi_native_chunk_f64(
+                writer_sessions=list(native_writer_sessions),
+                active_trait_indices=list(range(len(native_writer_sessions))),
+                metadata=metadata,
+                chunk_stats=chunk_stats,
+                beta=cast_statistic_array_for_native_writer_float64(host_values["beta"]),
+                standard_error=cast_statistic_array_for_native_writer_float64(host_values["standard_error"]),
+                chi_squared=cast_statistic_array_for_native_writer_float64(host_values["chi_squared"]),
+                log10_p_value=cast_statistic_array_for_native_writer_float64(host_values["log10_p_value"]),
+                extra_code=native_extra_code,
+            )
+        else:
+            _core.write_regenie2_multi_native_chunk(
+                writer_sessions=list(native_writer_sessions),
+                active_trait_indices=list(range(len(native_writer_sessions))),
+                metadata=metadata,
+                chunk_stats=chunk_stats,
+                beta=cast_statistic_array_for_native_writer_float32(host_values["beta"]),
+                standard_error=cast_statistic_array_for_native_writer_float32(host_values["standard_error"]),
+                chi_squared=cast_statistic_array_for_native_writer_float32(host_values["chi_squared"]),
+                log10_p_value=cast_statistic_array_for_native_writer_float32(host_values["log10_p_value"]),
+                extra_code=native_extra_code,
+            )
         if stage_timing_recorder is not None:
             record_stage_duration_with_optional_chunk(
                 stage_timing_recorder=stage_timing_recorder,

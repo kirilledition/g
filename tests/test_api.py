@@ -14,10 +14,16 @@ import g
 import g.cli as cli_module
 import g.engine.shutdown as shutdown_module
 import g.engine.telemetry as telemetry_module
-from g import api, execution_plan, jax_runtime, runner, types
+from g import api, execution_plan, types
 from g.interface import config
 from g.io import output
 from g.io.output import OutputRunPaths, PreparedOutputRun
+from g.jax_runtime import diagnostics as jax_runtime_diagnostics
+from g.jax_runtime import models as jax_runtime_models
+from g.jax_runtime import resolution as jax_runtime_resolution
+from g.runner import execution as runner_execution
+from g.runner import metadata as runner_metadata
+from g.runner import runtime as runner_runtime
 
 
 def complete_mock_output_initialization(
@@ -55,36 +61,32 @@ def build_minimal_config() -> config.RegenieConfig:
 
 def build_compute_config(**overrides: object) -> config.GComputeConfig:
     """Build packaged compute config with test overrides."""
-    pytest.skip("Outdated dataclass config helper; rebuild after Rust config API settles.")
+    return config.RegenieConfig.from_options(build_minimal_options(**overrides)).g_compute
 
 
 def build_trait_config(**overrides: object) -> config.TraitConfig:
     """Build packaged trait config with test overrides."""
-    pytest.skip("Outdated dataclass config helper; rebuild after Rust config API settles.")
+    return config.RegenieConfig.from_options(build_minimal_options(**overrides)).trait
 
 
 def build_binary_config(**overrides: object) -> config.BinaryConfig:
     """Build packaged binary config with test overrides."""
-    pytest.skip("Outdated dataclass config helper; rebuild after Rust config API settles.")
+    normalized_overrides = dict(overrides)
+    if "p_threshold" in normalized_overrides:
+        normalized_overrides["pThresh"] = normalized_overrides.pop("p_threshold")
+    raw_options = build_minimal_options(**normalized_overrides)
+    raw_options["qt"] = False
+    raw_options["bt"] = True
+    return config.RegenieConfig.from_options(raw_options).binary
 
 
 def build_diagnostics_config(**overrides: object) -> config.GDiagnosticsConfig:
     """Build packaged diagnostics config with test overrides."""
-    pytest.skip("Outdated dataclass config helper; rebuild after Rust config API settles.")
+    return config.RegenieConfig.from_options(build_minimal_options(**overrides)).g_diagnostics
 
 
-def test_public_package_exposes_only_new_regenie_interface() -> None:
-    assert "regenie" in g.__all__
-    assert "RegenieConfig" not in g.__all__
-    assert "InputConfig" not in g.__all__
-    assert "TraitConfig" not in g.__all__
-    assert "BinaryConfig" not in g.__all__
-    assert "GComputeConfig" not in g.__all__
-    assert "GDiagnosticsConfig" not in g.__all__
-    assert "GOutputConfig" not in g.__all__
-    assert "regenie2" not in g.__all__
-    assert "regenie2_linear" not in g.__all__
-    assert "ComputeConfig" not in g.__all__
+def test_public_package_keeps_lazy_public_boundary_without_all() -> None:
+    assert not hasattr(g, "__all__")
     assert g.regenie is api.regenie
 
 
@@ -112,7 +114,7 @@ def test_importing_api_does_not_import_jax_heavy_modules() -> None:
         forbidden_modules = (
             "jax",
             "jax.numpy",
-            "g.jax_setup",
+            "g.jax_runtime.setup",
             "g.compute.regenie2_linear.api",
             "g.compute.regenie2_binary.api",
             "g.compute.common.genotype",
@@ -268,16 +270,19 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
     assert kernel_config.approximate_firth.use_block_math is True
 
 
-def test_build_linear_numerical_config_maps_compute_options() -> None:
-    linear_numerical_config = execution_plan.build_linear_numerical_config(
-        build_compute_config(
+def test_quantitative_kernel_config_maps_linear_numerical_options() -> None:
+    regenie_config = config.RegenieConfig.from_options(
+        build_minimal_options(
             linear_minimum_variance=3.0e-9,
             linear_relative_variance_tolerance=4.0e-6,
         )
     )
+    kernel_config = execution_plan.build_kernel_config(regenie_config)
+    linear_numerical_config = kernel_config.linear_numerical_config
 
-    assert linear_numerical_config.minimum_variance == 3.0e-9
-    assert linear_numerical_config.relative_variance_tolerance == 4.0e-6
+    assert linear_numerical_config is not None
+    assert linear_numerical_config.minimum_variance == pytest.approx(3.0e-9)
+    assert linear_numerical_config.relative_variance_tolerance == pytest.approx(4.0e-6)
 
 
 def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
@@ -285,11 +290,9 @@ def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
         build_binary_config(firth=True, approx=True, p_threshold=0.01)
     )
 
-    assert plan == types.BinaryCorrectionPlan(
-        method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
-        p_threshold=0.01,
-        firth_se=False,
-    )
+    assert plan.method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
+    assert plan.p_threshold == pytest.approx(0.01)
+    assert plan.firth_se is False
 
 
 def test_regenie_callable_dispatches_linear_pipeline() -> None:
@@ -303,13 +306,13 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
 
     with (
         patch("g.interface.config.validate_config_for_run"),
-        patch("g.runner.configure_runtime_before_jax_import") as mock_configure_runtime_before_jax_import,
+        patch("g.runner.runtime.configure_runtime_before_jax_import") as mock_configure_runtime_before_jax_import,
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest={"committed_chunks": []}),
         ) as mock_prepare_output_run,
-        patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=complete_pipeline) as mock_pipeline,
-        patch("g.runner.extend_run_manifest") as mock_extend_run_manifest,
+        patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=complete_pipeline) as mock_pipeline,
+        patch("g.runner.metadata.extend_run_manifest") as mock_extend_run_manifest,
         patch("g.interface.config.write_toml") as mock_write_toml,
     ):
         artifacts = api.regenie(build_minimal_config())
@@ -326,11 +329,12 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_pipeline.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
     assert mock_pipeline.call_args.kwargs["alignment_config"].sample_key_mode == types.SampleKeyMode.IID
-    assert mock_pipeline.call_args.kwargs["chunks_per_arrow_file"] == 16
-    assert mock_pipeline.call_args.kwargs["arrow_compression"] == types.ArrowCompression.ZSTD
-    assert mock_pipeline.call_args.kwargs["parquet_compression"] == types.ParquetCompression.NONE
-    assert mock_pipeline.call_args.kwargs["output_statistic_dtype"] == types.FloatingPointDtype.FLOAT32
-    assert mock_pipeline.call_args.kwargs["finalize_parquet"] is False
+    writer_settings = mock_pipeline.call_args.kwargs["writer_settings"]
+    assert writer_settings.chunks_per_arrow_file == 16
+    assert writer_settings.arrow_compression == types.ArrowCompression.ZSTD
+    assert writer_settings.parquet_compression == types.ParquetCompression.NONE
+    assert writer_settings.output_statistic_dtype == types.FloatingPointDtype.FLOAT32
+    assert writer_settings.finalize_parquet is False
     mock_extend_run_manifest.assert_called_once()
     mock_write_toml.assert_called_once()
 
@@ -359,16 +363,16 @@ def test_regenie_completion_event_includes_user_visible_artifacts(tmp_path: Path
     )
 
     with (
-        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner.initialize_logging"),
-        patch("g.runner.configure_runtime"),
-        patch("g.runner.configure_runtime_before_jax_import"),
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.initialize_logging"),
+        patch("g.runner.runtime.configure_runtime"),
+        patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
-        patch("g.runner.run_regenie2_linear_bgen_pipeline", return_value=final_parquet),
-        patch("g.runner.extend_run_manifest"),
+        patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", return_value=final_parquet),
+        patch("g.runner.metadata.extend_run_manifest"),
         patch("g.interface.config.validate_config_for_run"),
         patch("g.interface.config.write_toml"),
     ):
@@ -421,16 +425,16 @@ def test_regenie_graceful_shutdown_event_preserves_signal_exit(tmp_path: Path) -
     )
 
     with (
-        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner.initialize_logging"),
-        patch("g.runner.configure_runtime"),
-        patch("g.runner.configure_runtime_before_jax_import"),
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.initialize_logging"),
+        patch("g.runner.runtime.configure_runtime"),
+        patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
-        patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=shutdown_request),
-        patch("g.runner.extend_run_manifest"),
+        patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=shutdown_request),
+        patch("g.runner.metadata.extend_run_manifest"),
         patch("g.interface.config.validate_config_for_run"),
         patch("g.interface.config.write_toml"),
         pytest.raises(shutdown_module.GracefulShutdownRequested),
@@ -475,13 +479,13 @@ def test_regenie_does_not_write_run_start_metadata_before_output_initialization_
 
     with (
         patch("g.interface.config.validate_config_for_run"),
-        patch("g.runner.configure_runtime_before_jax_import"),
+        patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
-        patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=fail_pipeline),
-        patch("g.runner.extend_run_manifest", side_effect=record_extend_run_manifest),
+        patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=fail_pipeline),
+        patch("g.runner.metadata.extend_run_manifest", side_effect=record_extend_run_manifest),
         patch("g.interface.config.write_toml", side_effect=record_write_toml),
         pytest.raises(RuntimeError, match="pipeline failed"),
     ):
@@ -516,13 +520,13 @@ def test_regenie_writes_run_start_metadata_after_output_initialization() -> None
 
     with (
         patch("g.interface.config.validate_config_for_run"),
-        patch("g.runner.configure_runtime_before_jax_import"),
+        patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
-        patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=fail_after_output_initialization),
-        patch("g.runner.extend_run_manifest", side_effect=record_extend_run_manifest),
+        patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=fail_after_output_initialization),
+        patch("g.runner.metadata.extend_run_manifest", side_effect=record_extend_run_manifest),
         patch("g.interface.config.write_toml", side_effect=record_write_toml),
         pytest.raises(RuntimeError, match="pipeline failed after initialization"),
     ):
@@ -565,12 +569,12 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
         return Path("results/output.g/trait.regenie2_linear.run/final.parquet")
 
     with (
-        patch("g.runner.initialize_logging", side_effect=record_logging_bootstrap),
-        patch("g.runner.configure_runtime", side_effect=record_native_runtime_bootstrap),
-        patch("g.runner.configure_runtime_before_jax_import", side_effect=record_jax_bootstrap),
+        patch("g.runner.runtime.initialize_logging", side_effect=record_logging_bootstrap),
+        patch("g.runner.runtime.configure_runtime", side_effect=record_native_runtime_bootstrap),
+        patch("g.runner.runtime.configure_runtime_before_jax_import", side_effect=record_jax_bootstrap),
         patch("g.execution_plan.output.prepare_output_run", side_effect=record_prepare_output_run),
-        patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=record_pipeline),
-        patch("g.runner.extend_run_manifest"),
+        patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=record_pipeline),
+        patch("g.runner.metadata.extend_run_manifest"),
         patch("g.interface.config.validate_config_for_run"),
         patch("g.interface.config.write_toml"),
     ):
@@ -600,8 +604,11 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
         trace_event_cap=2048,
     )
 
-    with patch("g.runner._core", FakeCoreModule()):
-        runner.initialize_logging(diagnostics_config)
+    with (
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime._core", FakeCoreModule()),
+    ):
+        runner_runtime.initialize_logging(diagnostics_config, telemetry_paths=None)
 
     assert calls == [
         {
@@ -637,10 +644,10 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
     )
 
     with (
-        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner._core", FakeCoreModule()),
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime._core", FakeCoreModule()),
     ):
-        runner.initialize_logging(diagnostics_config, telemetry_paths)
+        runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["log_file"] is None
     assert calls[0]["trace_file"] == str(stream_file)
@@ -669,10 +676,10 @@ def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path)
     )
 
     with (
-        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner._core", FakeCoreModule()),
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime._core", FakeCoreModule()),
     ):
-        runner.initialize_logging(diagnostics_config, telemetry_paths)
+        runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["trace_event_cap"] == 17
 
@@ -695,10 +702,10 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
     )
 
     with (
-        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner._core", FakeCoreModule()),
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime._core", FakeCoreModule()),
     ):
-        runner.initialize_logging(diagnostics_config, telemetry_paths)
+        runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["log_file"] is None
     assert calls[0]["trace_file"] == str(stream_file)
@@ -711,7 +718,7 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
             del kwargs
             return False
 
-    configured_policy = runner.LoggingRuntimePolicy(
+    configured_policy = runner_runtime.LoggingRuntimePolicy(
         log_filter="info",
         log_file=tmp_path / "logs" / "first.jsonl",
         log_stderr=True,
@@ -726,11 +733,11 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
     diagnostics_config = build_diagnostics_config(log_file=tmp_path / "logs" / "second.jsonl")
 
     with (
-        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy),
-        patch("g.runner._core", FakeCoreModule()),
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy),
+        patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Logging runtime policy is process-global"),
     ):
-        runner.initialize_logging(diagnostics_config)
+        runner_runtime.initialize_logging(diagnostics_config, telemetry_paths=None)
 
 
 def test_configure_runtime_sets_native_knobs_and_threads() -> None:
@@ -744,10 +751,10 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
             calls.append(("threads", thread_count))
 
     with (
-        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None),
-        patch("g.runner._core", FakeCoreModule()),
+        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", None),
+        patch("g.runner.runtime._core", FakeCoreModule()),
     ):
-        runner.configure_runtime(
+        runner_runtime.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
             build_trait_config(threads=4),
         )
@@ -766,10 +773,10 @@ def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None
             calls.append(("threads", thread_count))
 
     with (
-        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4),
-        patch("g.runner._core", FakeCoreModule()),
+        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", 4),
+        patch("g.runner.runtime._core", FakeCoreModule()),
     ):
-        runner.configure_runtime(
+        runner_runtime.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
             build_trait_config(threads=4),
         )
@@ -788,11 +795,11 @@ def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -
             calls.append(("threads", thread_count))
 
     with (
-        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4),
-        patch("g.runner._core", FakeCoreModule()),
+        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", 4),
+        patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Rayon --threads is process-global"),
     ):
-        runner.configure_runtime(
+        runner_runtime.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
             build_trait_config(threads=8),
         )
@@ -812,11 +819,11 @@ def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
             raise RuntimeError("global pool already initialized")
 
     with (
-        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None),
-        patch("g.runner._core", FakeCoreModule()),
+        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", None),
+        patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Unable to configure Rayon global thread pool"),
     ):
-        runner.configure_runtime(
+        runner_runtime.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
             build_trait_config(threads=4),
         )
@@ -825,56 +832,58 @@ def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
 
 
 def test_effective_rayon_thread_count_prefers_configured_thread_count() -> None:
-    with patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4):
-        assert runner.effective_rayon_thread_count(8) == 4
+    with patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", 4):
+        assert runner_runtime.effective_rayon_thread_count(8) == 4
 
 
 def test_effective_rayon_thread_count_returns_requested_thread_count_without_configuration() -> None:
-    with patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None):
-        assert runner.effective_rayon_thread_count(8) == 8
+    with patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", None):
+        assert runner_runtime.effective_rayon_thread_count(8) == 8
 
 
-def test_runtime_bootstrap_delegates_policy_to_jax_setup_once() -> None:
+def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
     call_order: list[str] = []
 
     class FakeJaxSetupModule:
-        def configure_jax_runtime_before_backend_init(
+        def configure_before_backend_init(
             self,
-            policy: jax_runtime.JaxRuntimePolicy,
+            policy: jax_runtime_models.JaxRuntimePolicy,
             *,
-            diagnostic_sink: typing.Callable[[jax_runtime.JaxRuntimeDiagnosticEvent], None],
-        ) -> jax_runtime.JaxRuntimeSetupReport:
+            diagnostic_sink: typing.Callable[[jax_runtime_models.JaxRuntimeDiagnosticEvent], None],
+        ) -> jax_runtime_models.JaxRuntimeSetupReport:
             del diagnostic_sink
             call_order.append(f"setup:{policy.device.value}")
-            return jax_runtime.JaxRuntimeSetupReport(
+            return jax_runtime_models.JaxRuntimeSetupReport(
                 requested_device=policy.device,
-                platform=jax_runtime.JaxPlatform.CUDA,
+                platform_name=jax_runtime_models.JAX_CUDA_PLATFORM_NAME,
                 cache_directory=Path("/tmp/test-jax-cache"),
                 matmul_precision=types.JaxMatmulPrecision.FLOAT32,
                 persistent_cache_enabled=policy.persistent_cache,
                 persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
                 persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
-                xla_auxiliary_cache=jax_runtime.XlaAuxiliaryCacheResolution(
-                    mode=jax_runtime.XlaAuxiliaryCacheMode.DISABLED,
-                    reason="not requested",
-                ),
+                xla_auxiliary_cache_mode=jax_runtime_models.XlaAuxiliaryCacheMode.DISABLED,
+                xla_auxiliary_cache_reason="not requested",
                 transfer_guard_enabled=policy.transfer_guard,
-                gpu_validation=jax_runtime.GpuValidationResult(status=jax_runtime.GpuValidationStatus.SUCCEEDED),
+                gpu_validation_status=jax_runtime_models.GpuValidationStatus.SUCCEEDED,
+                gpu_validation_message=None,
             )
 
     def import_module(module_name: str) -> object:
         call_order.append(f"import:{module_name}")
-        if module_name == "g.jax_setup":
+        if module_name == "g.jax_runtime.setup":
             return FakeJaxSetupModule()
         raise AssertionError(f"Unexpected import: {module_name}")
 
     with (
-        patch("g.jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY", None),
-        patch("g.runner.importlib.import_module", side_effect=import_module),
+        patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.importlib.import_module", side_effect=import_module),
     ):
-        runner.configure_runtime_before_jax_import(build_compute_config(device=types.Device.GPU))
+        runner_runtime.configure_runtime_before_jax_import(
+            build_compute_config(device=types.Device.GPU),
+            telemetry_session=None,
+        )
 
-    assert call_order == ["import:g.jax_setup", "setup:gpu"]
+    assert call_order == ["import:g.jax_runtime.setup", "setup:gpu"]
 
 
 def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
@@ -885,42 +894,42 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
             recorded_events.append((event_name, level, fields))
 
     class FakeJaxSetupModule:
-        def configure_jax_runtime_before_backend_init(
+        def configure_before_backend_init(
             self,
-            policy: jax_runtime.JaxRuntimePolicy,
+            policy: jax_runtime_models.JaxRuntimePolicy,
             *,
-            diagnostic_sink: typing.Callable[[jax_runtime.JaxRuntimeDiagnosticEvent], None],
-        ) -> jax_runtime.JaxRuntimeSetupReport:
-            setup_report = jax_runtime.JaxRuntimeSetupReport(
+            diagnostic_sink: typing.Callable[[jax_runtime_models.JaxRuntimeDiagnosticEvent], None],
+        ) -> jax_runtime_models.JaxRuntimeSetupReport:
+            setup_report = jax_runtime_models.JaxRuntimeSetupReport(
                 requested_device=policy.device,
-                platform=jax_runtime.JaxPlatform.CPU,
+                platform_name=jax_runtime_models.JAX_CPU_PLATFORM_NAME,
                 cache_directory=Path("/tmp/test-jax-cache"),
                 matmul_precision=types.JaxMatmulPrecision.FLOAT32,
                 persistent_cache_enabled=policy.persistent_cache,
                 persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
                 persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
-                xla_auxiliary_cache=jax_runtime.XlaAuxiliaryCacheResolution(
-                    mode=jax_runtime.XlaAuxiliaryCacheMode.DISABLED,
-                    reason="not requested",
-                ),
+                xla_auxiliary_cache_mode=jax_runtime_models.XlaAuxiliaryCacheMode.DISABLED,
+                xla_auxiliary_cache_reason="not requested",
                 transfer_guard_enabled=policy.transfer_guard,
-                gpu_validation=jax_runtime.GpuValidationResult(status=jax_runtime.GpuValidationStatus.SKIPPED),
+                gpu_validation_status=jax_runtime_models.GpuValidationStatus.SKIPPED,
+                gpu_validation_message=None,
             )
-            jax_runtime.emit_jax_runtime_setup_diagnostics(setup_report, diagnostic_sink)
+            for diagnostic_event in jax_runtime_diagnostics.diagnostic_events_from_setup_report(setup_report):
+                diagnostic_sink(diagnostic_event)
             return setup_report
 
     def import_module(module_name: str) -> object:
-        if module_name == "g.jax_setup":
+        if module_name == "g.jax_runtime.setup":
             return FakeJaxSetupModule()
         raise AssertionError(f"Unexpected import: {module_name}")
 
     telemetry_session = typing.cast("telemetry_module.TelemetrySession", RecordingTelemetrySession())
 
     with (
-        patch("g.jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY", None),
-        patch("g.runner.importlib.import_module", side_effect=import_module),
+        patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.importlib.import_module", side_effect=import_module),
     ):
-        runner.configure_runtime_before_jax_import(build_compute_config(), telemetry_session=telemetry_session)
+        runner_runtime.configure_runtime_before_jax_import(build_compute_config(), telemetry_session=telemetry_session)
 
     assert [recorded_event[0] for recorded_event in recorded_events] == [
         "jax_platform_selected",
@@ -941,32 +950,31 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
     call_order: list[str] = []
 
     class FakeJaxSetupModule:
-        def configure_jax_runtime_before_backend_init(
+        def configure_before_backend_init(
             self,
-            policy: jax_runtime.JaxRuntimePolicy,
+            policy: jax_runtime_models.JaxRuntimePolicy,
             *,
-            diagnostic_sink: typing.Callable[[jax_runtime.JaxRuntimeDiagnosticEvent], None],
-        ) -> jax_runtime.JaxRuntimeSetupReport:
+            diagnostic_sink: typing.Callable[[jax_runtime_models.JaxRuntimeDiagnosticEvent], None],
+        ) -> jax_runtime_models.JaxRuntimeSetupReport:
             del diagnostic_sink
             call_order.append(f"setup:{policy.cache_directory}")
-            return jax_runtime.JaxRuntimeSetupReport(
+            return jax_runtime_models.JaxRuntimeSetupReport(
                 requested_device=policy.device,
-                platform=jax_runtime.JaxPlatform.CPU,
+                platform_name=jax_runtime_models.JAX_CPU_PLATFORM_NAME,
                 cache_directory=typing.cast("Path", policy.cache_directory),
                 matmul_precision=types.JaxMatmulPrecision.FLOAT32,
                 persistent_cache_enabled=policy.persistent_cache,
                 persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
                 persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
-                xla_auxiliary_cache=jax_runtime.XlaAuxiliaryCacheResolution(
-                    mode=jax_runtime.XlaAuxiliaryCacheMode.DISABLED,
-                    reason="not requested",
-                ),
+                xla_auxiliary_cache_mode=jax_runtime_models.XlaAuxiliaryCacheMode.DISABLED,
+                xla_auxiliary_cache_reason="not requested",
                 transfer_guard_enabled=policy.transfer_guard,
-                gpu_validation=jax_runtime.GpuValidationResult(status=jax_runtime.GpuValidationStatus.SKIPPED),
+                gpu_validation_status=jax_runtime_models.GpuValidationStatus.SKIPPED,
+                gpu_validation_message=None,
             )
 
     def import_module(module_name: str) -> object:
-        if module_name == "g.jax_setup":
+        if module_name == "g.jax_runtime.setup":
             return FakeJaxSetupModule()
         raise AssertionError(f"Unexpected import: {module_name}")
 
@@ -997,21 +1005,21 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
         }
     )
     with (
-        patch("g.jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", None),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch(
-            "g.runner.run_regenie2_linear_bgen_pipeline",
+            "g.runner.runtime.run_regenie2_linear_bgen_pipeline",
             return_value=Path("results/output.g/trait.regenie2_linear.run/final.parquet"),
         ),
-        patch("g.runner.initialize_logging"),
-        patch("g.runner.configure_runtime"),
-        patch("g.runner.extend_run_manifest"),
+        patch("g.runner.runtime.initialize_logging"),
+        patch("g.runner.runtime.configure_runtime"),
+        patch("g.runner.metadata.extend_run_manifest"),
         patch("g.interface.config.validate_config_for_run"),
         patch("g.interface.config.write_toml"),
-        patch("g.runner.importlib.import_module", side_effect=import_module),
+        patch("g.runner.runtime.importlib.import_module", side_effect=import_module),
     ):
         api.regenie(first_config)
         api.regenie(first_config)
@@ -1028,12 +1036,12 @@ def test_describe_runtime_state_reports_process_global_state() -> None:
         build_minimal_options(telemetry="off", log_filter="g=debug", threads=4)
     )
     telemetry_paths = telemetry_module.resolve_telemetry_paths(regenie_config)
-    runtime_policy = runner.build_runtime_policy(regenie_config, telemetry_paths)
+    runtime_policy = runner_runtime.build_runtime_policy(regenie_config, telemetry_paths)
 
     with (
-        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", runtime_policy.logging_policy),
-        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", runtime_policy.rayon_thread_count),
-        patch("g.jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY", runtime_policy.jax_policy),
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", runtime_policy.logging_policy),
+        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", runtime_policy.rayon_thread_count),
+        patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", runtime_policy.jax_policy),
     ):
         runtime_state = api.describe_runtime_state()
 
@@ -1043,7 +1051,7 @@ def test_describe_runtime_state_reports_process_global_state() -> None:
         jax_policy=runtime_policy.jax_policy,
     )
     assert runtime_state.logging_policy is not None
-    assert "log-filter=g=debug" in runner.describe_logging_runtime_policy(runtime_state.logging_policy)
+    assert "log-filter=g=debug" in runner_runtime.describe_logging_runtime_policy(runtime_state.logging_policy)
 
 
 def test_regenie_rejects_incompatible_logging_policy_before_output_prepare(tmp_path: Path) -> None:
@@ -1053,15 +1061,15 @@ def test_regenie_rejects_incompatible_logging_policy_before_output_prepare(tmp_p
     requested_config = config.RegenieConfig.from_options(
         build_minimal_options(telemetry="off", log_filter="g=debug", out=str(tmp_path / "second"))
     )
-    configured_policy = runner.build_runtime_policy(
+    configured_policy = runner_runtime.build_runtime_policy(
         configured_config,
         telemetry_module.resolve_telemetry_paths(configured_config),
     )
 
     with (
-        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy.logging_policy),
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy.logging_policy),
         patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
-        patch("g.runner.initialize_logging") as initialize_logging_mock,
+        patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
         pytest.raises(RuntimeError, match=r"Logging runtime policy is process-global.*fresh Python process"),
     ):
@@ -1075,10 +1083,10 @@ def test_regenie_rejects_incompatible_rayon_policy_before_output_prepare() -> No
     requested_config = config.RegenieConfig.from_options(build_minimal_options(telemetry="off", threads=8))
 
     with (
-        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4),
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", 4),
         patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
-        patch("g.runner.initialize_logging") as initialize_logging_mock,
+        patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
         pytest.raises(RuntimeError, match=r"Rayon --threads is process-global.*fresh Python process"),
     ):
@@ -1095,14 +1103,14 @@ def test_regenie_rejects_incompatible_jax_policy_before_output_prepare(tmp_path:
     requested_config = config.RegenieConfig.from_options(
         build_minimal_options(telemetry="off", jax_cache_dir=str(tmp_path / "second-cache"))
     )
-    configured_jax_policy = jax_runtime.build_jax_runtime_policy(configured_config.g_compute)
+    configured_jax_policy = jax_runtime_resolution.resolve_jax_runtime_policy(configured_config.g_compute)
 
     with (
-        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None),
-        patch("g.jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY", configured_jax_policy),
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", None),
+        patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", configured_jax_policy),
         patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
-        patch("g.runner.initialize_logging") as initialize_logging_mock,
+        patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
         pytest.raises(RuntimeError, match=r"JAX runtime is already configured.*fresh Python process"),
     ):
@@ -1163,13 +1171,13 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
     )
 
     with (
-        patch("g.runner.configure_runtime_before_jax_import"),
+        patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
-        patch("g.runner.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
-        patch("g.runner.extend_run_manifest"),
+        patch("g.runner.runtime.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
+        patch("g.runner.metadata.extend_run_manifest"),
         patch("g.interface.config.validate_config_for_run"),
         patch("g.interface.config.write_toml"),
     ):
@@ -1261,13 +1269,14 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
             "g.execution_plan.output.prepare_output_run",
             return_value=output.PreparedOutputRun(run_paths, None),
         ),
-        patch("g.runner.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
+        patch("g.runner.runtime.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
     ):
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
-        runner.dispatch_one_phenotype_engine_pipeline(
+        runner_execution.dispatch_one_phenotype_engine_pipeline(
             plan=plan,
             phenotype_run_plan=plan.phenotype_run_plans[0],
             stage_timing_recorder=None,
+            telemetry_session=None,
             output_initialized_callback=lambda phenotype_names: None,
         )
 
@@ -1311,12 +1320,13 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
                 output.PreparedOutputRun(run_paths[1], None),
             ),
         ),
-        patch("g.runner.run_regenie2_multi_phenotype_binary_bgen_pipeline") as mock_binary_pipeline,
+        patch("g.runner.runtime.run_regenie2_multi_phenotype_binary_bgen_pipeline") as mock_binary_pipeline,
     ):
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
-        runner.dispatch_multi_phenotype_engine_pipeline(
+        runner_execution.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=None,
+            telemetry_session=None,
             output_initialized_callback=lambda phenotype_names: None,
         )
 
@@ -1329,12 +1339,43 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
 
 
 def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:
-    with patch("g.api.runner.regenie") as mock_runner_regenie:
+    with patch("g.api.runner_execution.regenie") as mock_runner_regenie:
         mock_runner_regenie.return_value = api.RunArtifacts(
+            output_run_directory=None,
+            final_dataset=None,
+            final_parquet=None,
+            final_regenie=None,
+            effective_config=None,
             phenotype_artifacts=(
-                api.RunArtifacts(output_run_directory=Path("one")),
-                api.RunArtifacts(output_run_directory=Path("two")),
-            )
+                api.RunArtifacts(
+                    output_run_directory=Path("one"),
+                    final_dataset=None,
+                    final_parquet=None,
+                    final_regenie=None,
+                    effective_config=None,
+                    phenotype_artifacts=(),
+                    phenotype_name="one",
+                    association_mode=None,
+                    phenotype_count=2,
+                    run_id=None,
+                ),
+                api.RunArtifacts(
+                    output_run_directory=Path("two"),
+                    final_dataset=None,
+                    final_parquet=None,
+                    final_regenie=None,
+                    effective_config=None,
+                    phenotype_artifacts=(),
+                    phenotype_name="two",
+                    association_mode=None,
+                    phenotype_count=2,
+                    run_id=None,
+                ),
+            ),
+            phenotype_name=None,
+            association_mode=None,
+            phenotype_count=2,
+            run_id=None,
         )
         artifacts = api.regenie.from_options(
             {
@@ -1372,10 +1413,15 @@ def test_default_multi_phenotype_plan_dispatches_grouped_multi_phenotype_run() -
             "g.execution_plan.output.prepare_output_run",
             return_value=output.PreparedOutputRun(run_paths, None),
         ),
-        patch("g.runner.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
+        patch("g.runner.runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
     ):
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
-        runner.dispatch_execution_plan(regenie_config=regenie_config, plan=plan, stage_timing_recorder=None)
+        runner_execution.dispatch_execution_plan(
+            regenie_config=regenie_config,
+            plan=plan,
+            stage_timing_recorder=None,
+            telemetry_session=None,
+        )
 
     mock_multi_pipeline.assert_called_once()
     assert mock_multi_pipeline.call_args.kwargs["sample_mode"] == types.MultiPhenotypeSampleMode.PER_PHENOTYPE
@@ -1417,12 +1463,13 @@ def test_multi_phenotype_plan_dispatch_forwards_packed8_genotype_format() -> Non
                 output.PreparedOutputRun(run_paths[1], None),
             ),
         ),
-        patch("g.runner.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
+        patch("g.runner.runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
     ):
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
-        runner.dispatch_multi_phenotype_engine_pipeline(
+        runner_execution.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=None,
+            telemetry_session=None,
             output_initialized_callback=lambda phenotype_names: None,
         )
 
@@ -1466,10 +1513,11 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
 
     assert tuple(phenotype_plan.output_run_paths for phenotype_plan in plan.phenotype_run_plans) == run_paths
     assert tuple(phenotype_plan.existing_manifest for phenotype_plan in plan.phenotype_run_plans) == existing_manifests
-    with patch("g.runner.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_pipeline:
-        runner.dispatch_multi_phenotype_engine_pipeline(
+    with patch("g.runner.runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_pipeline:
+        runner_execution.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=None,
+            telemetry_session=None,
             output_initialized_callback=lambda phenotype_names: None,
         )
 
@@ -1498,7 +1546,7 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
     ):
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
 
-    runner.extend_run_manifest(plan=plan, phenotype_run_plan=plan.phenotype_run_plans[0])
+    runner_metadata.extend_run_manifest(plan=plan, phenotype_run_plan=plan.phenotype_run_plans[0])
 
     manifest = output.load_run_manifest(run_paths)
     assert manifest is not None

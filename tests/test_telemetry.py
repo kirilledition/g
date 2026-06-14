@@ -6,9 +6,10 @@ import unittest.mock
 
 import pytest
 
-from g import runner, types
+from g import types
 from g.engine import telemetry
 from g.interface import config
+from g.runner import runtime as runner_runtime
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -139,10 +140,10 @@ def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path:
     telemetry_paths = telemetry.resolve_telemetry_paths(regenie_config)
 
     with (
-        unittest.mock.patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        unittest.mock.patch("g.runner._core", FakeCoreModule()),
+        unittest.mock.patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        unittest.mock.patch("g.runner.runtime._core", FakeCoreModule()),
     ):
-        runner.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
+        runner_runtime.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
 
     assert calls[0]["trace_file"] == str(telemetry_paths.stream_file)
     assert calls[0]["trace_filter"] == "g=info"
@@ -176,10 +177,10 @@ def test_initialize_logging_uses_trace_filter_for_trace_unified_stream(tmp_path:
     telemetry_paths = telemetry.resolve_telemetry_paths(regenie_config)
 
     with (
-        unittest.mock.patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        unittest.mock.patch("g.runner._core", FakeCoreModule()),
+        unittest.mock.patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        unittest.mock.patch("g.runner.runtime._core", FakeCoreModule()),
     ):
-        runner.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
+        runner_runtime.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
 
     assert calls[0]["trace_file"] == str(telemetry_paths.stream_file)
     assert calls[0]["trace_filter"] == "g.native.bgen=trace,g.output=debug"
@@ -217,10 +218,13 @@ def test_telemetry_session_writes_schema_events_and_throttled_progress(tmp_path:
         paths=telemetry_paths,
         progress_interval_seconds=999.0,
         progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
         run_id="run-1",
     )
 
-    telemetry_session.log_event("run_started", association_mode="regenie2_linear")
+    telemetry_session.log_event("run_started", level="info", association_mode="regenie2_linear")
     telemetry_session.log_progress(processed_chunk_count=1, chromosome="22")
     telemetry_session.log_progress(processed_chunk_count=2, chromosome="22")
     telemetry_session.close()
@@ -250,11 +254,14 @@ def test_profile_telemetry_flushes_buffered_events_on_close(tmp_path: Path) -> N
         paths=telemetry_paths,
         progress_interval_seconds=999.0,
         progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
         run_id="run-1",
     )
 
     for chunk_index in range(20):
-        telemetry_session.log_event("chunk_profile", chunk_index=chunk_index)
+        telemetry_session.log_event("chunk_profile", level="info", chunk_index=chunk_index)
     telemetry.close_telemetry_session(telemetry_session)
     telemetry_session.close()
 
@@ -283,11 +290,14 @@ def test_telemetry_close_returns_writer_counters(tmp_path: Path) -> None:
         paths=telemetry_paths,
         progress_interval_seconds=999.0,
         progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
         run_id="run-1",
     )
 
-    telemetry_session.log_event("first_profile_event")
-    telemetry_session.log_event("second_profile_event")
+    telemetry_session.log_event("first_profile_event", level="info")
+    telemetry_session.log_event("second_profile_event", level="info")
     close_metadata = telemetry_session.close()
 
     assert close_metadata is not None
@@ -315,15 +325,16 @@ def test_trace_telemetry_event_cap_fails_without_lossy_mode(tmp_path: Path) -> N
         paths=telemetry_paths,
         progress_interval_seconds=999.0,
         progress_interval_chunks=10,
+        queue_size=1024,
         lossy=False,
         trace_event_cap=2,
         run_id="run-1",
     )
 
-    telemetry_session.log_event("first_trace_event")
-    telemetry_session.log_event("second_trace_event")
+    telemetry_session.log_event("first_trace_event", level="info")
+    telemetry_session.log_event("second_trace_event", level="info")
     with pytest.raises(RuntimeError, match="Trace telemetry event cap exceeded at 2 events"):
-        telemetry_session.log_event("third_trace_event")
+        telemetry_session.log_event("third_trace_event", level="info")
     with pytest.raises(RuntimeError, match="Trace telemetry event cap exceeded at 2 events"):
         telemetry_session.close()
 
@@ -347,13 +358,14 @@ def test_trace_telemetry_event_cap_drops_with_lossy_mode(tmp_path: Path) -> None
         paths=telemetry_paths,
         progress_interval_seconds=999.0,
         progress_interval_chunks=10,
+        queue_size=1024,
         lossy=True,
         trace_event_cap=2,
         run_id="run-1",
     )
 
     for event_index in range(5):
-        telemetry_session.log_event("trace_event", event_index=event_index)
+        telemetry_session.log_event("trace_event", level="info", event_index=event_index)
     close_metadata = telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
@@ -384,13 +396,14 @@ def test_non_trace_telemetry_ignores_trace_event_cap(tmp_path: Path, telemetry_m
         paths=telemetry_paths,
         progress_interval_seconds=999.0,
         progress_interval_chunks=10,
+        queue_size=1024,
         lossy=False,
         trace_event_cap=1,
         run_id="run-1",
     )
 
     for event_index in range(3):
-        telemetry_session.log_event("non_trace_event", event_index=event_index)
+        telemetry_session.log_event("non_trace_event", level="info", event_index=event_index)
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None

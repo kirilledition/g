@@ -142,26 +142,6 @@ def build_empty_firth_boolean_array(extra_code: jax.Array) -> jax.Array:
     return jnp.zeros_like(extra_code, dtype=jnp.bool_)
 
 
-def build_multi_binary_score_test_chunk_result(
-    *,
-    beta: jax.Array,
-    standard_error: jax.Array,
-    chi_squared: jax.Array,
-    log10_p_value: jax.Array,
-    extra_code: jax.Array,
-    valid_mask: jax.Array,
-) -> Regenie2MultiBinaryScoreChunkResult:
-    """Build a multi-trait binary score-test chunk result."""
-    return Regenie2MultiBinaryScoreChunkResult(
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-        extra_code=extra_code,
-        valid_mask=valid_mask,
-    )
-
-
 def expand_score_result_with_empty_firth_diagnostics(
     result: Regenie2BinaryScoreChunkResult,
 ) -> Regenie2BinaryChunkResult:

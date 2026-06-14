@@ -122,7 +122,7 @@ class Regenie2ResultWriteWorkItem:
     extra_code: jax.Array | None
     host_dosage_buffer: HostGenotypeBuffer | None
     release_in_flight_slot: bool
-    binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None = None
+    binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None
 
 
 @dataclass(frozen=True)
@@ -138,7 +138,7 @@ class Regenie2MultiResultWriteWorkItem:
     extra_code: jax.Array | None
     host_dosage_buffer: HostGenotypeBuffer | None
     release_in_flight_slot: bool
-    binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None = None
+    binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None
 
 
 class NativeBgenRunInputProtocol(typing.Protocol):

@@ -149,9 +149,9 @@ class BinaryCorrectionPlan:
 
     """
 
-    method: BinaryFallbackMethod = BinaryFallbackMethod.SCORE_ONLY
-    p_threshold: float = 0.05
-    firth_se: bool = False
+    method: BinaryFallbackMethod
+    p_threshold: float
+    firth_se: bool
 
 
 class SampleIdentifierSource(enum.StrEnum):

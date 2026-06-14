@@ -132,7 +132,7 @@ Important runtime knobs include:
 | `--firth_batch_size` | Binary approximate-Firth batch size. |
 | `--jax_persistent_cache` | Enable JAX persistent compilation cache. |
 | `--jax_cache_dir` | Persistent JAX compilation cache directory. |
-| `--jax_xla_autotune_cache` | Enable XLA auxiliary autotune caches only when the cache directory is node-local. |
+| `--jax_xla_autotune_cache` | Enable XLA auxiliary autotune caches when the persistent cache is enabled. Prefer a local `--jax_cache_dir` for this cache. |
 | `--jax_transfer_guard` | Enable JAX transfer guard diagnostics. |
 
 Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only,

@@ -12,7 +12,8 @@ import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-from g import _core, runtime_policy, types
+from g import _core, types
+from g.jax_runtime import models as jax_runtime_models
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,32 @@ class OutputRunPaths:
 
 
 @dataclass(frozen=True)
+class OutputWriterSettings:
+    """Output writer and finalization settings for a run.
+
+    Attributes:
+        finalize_parquet: Whether chunk output should be finalized to one Parquet file.
+        writer_thread_count: Number of writer worker threads.
+        writer_queue_depth: Maximum queued chunk writes.
+        chunks_per_arrow_file: Number of chunks per Arrow output file.
+        arrow_compression: Arrow IPC compression codec.
+        parquet_compression: Parquet finalization compression codec.
+        output_format: Chunk output format.
+        output_statistic_dtype: Persisted dtype for public statistic columns.
+
+    """
+
+    finalize_parquet: bool
+    writer_thread_count: int
+    writer_queue_depth: int
+    chunks_per_arrow_file: int
+    arrow_compression: types.ArrowCompression
+    parquet_compression: types.ParquetCompression
+    output_format: types.OutputFormat
+    output_statistic_dtype: types.FloatingPointDtype
+
+
+@dataclass(frozen=True)
 class PreparedOutputRun:
     """Prepared output run state for chunk persistence."""
 
@@ -68,7 +95,7 @@ def get_run_manifest_path(output_run_paths: OutputRunPaths) -> Path:
     return output_run_paths.run_directory / RUN_MANIFEST_FILENAME
 
 
-def parse_run_manifest_json(manifest_json: str, manifest_path: Path | None = None) -> dict[str, typing.Any]:
+def parse_run_manifest_json(manifest_json: str, manifest_path: Path | None) -> dict[str, typing.Any]:
     """Parse a native run manifest JSON payload for Python callers."""
     manifest: typing.Any = json.loads(manifest_json)
     if not isinstance(manifest, dict):
@@ -84,7 +111,7 @@ def parse_run_manifest_json(manifest_json: str, manifest_path: Path | None = Non
 def resolve_output_run_paths(
     output_root: Path,
     association_mode: types.AssociationMode,
-    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    output_format: types.OutputFormat,
 ) -> OutputRunPaths:
     """Derive run paths from an output root and association mode."""
     native_run_paths = _core.resolve_output_run_paths(str(output_root), association_mode.value, output_format.value)
@@ -134,7 +161,7 @@ def build_file_content_sha256(path: Path) -> str:
     return fingerprint_hash.hexdigest()
 
 
-def build_file_fingerprint(path: Path | None, *, include_content_hash: bool = False) -> dict[str, typing.Any] | None:
+def build_file_fingerprint(path: Path | None, *, include_content_hash: bool) -> dict[str, typing.Any] | None:
     """Build a lightweight immutable fingerprint for an input file."""
     if path is None:
         return None
@@ -191,13 +218,13 @@ def build_execution_plan_hash(execution_plan: dict[str, typing.Any]) -> str:
 
 def build_jax_policy_manifest(
     *,
-    device: types.Device = types.Device.CPU,
-    matmul_precision: types.JaxMatmulPrecision | None = None,
+    device: types.Device,
+    matmul_precision: types.JaxMatmulPrecision | None,
 ) -> dict[str, typing.Any]:
     """Build manifest fields for JAX precision and backend policy."""
     return {
         "device": device.value,
-        "enable_x64": runtime_policy.JAX_ENABLE_X64,
+        "enable_x64": jax_runtime_models.JAX_ENABLE_X64,
         "matmul_precision": JAX_MATMUL_PRECISION_WHEN_UNSET if matmul_precision is None else matmul_precision.value,
     }
 
@@ -260,19 +287,19 @@ def build_current_run_manifest_header(
     binary_correction_plan: types.BinaryCorrectionPlan,
     trusted_no_missing_diploid: bool,
     sample_key_mode: types.SampleKeyMode,
-    binary_kernel_config: typing.Any | None = None,
+    binary_kernel_config: typing.Any | None,
     bgen_decode_tile_variant_count: int,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     jax_device: types.Device,
-    jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    jax_matmul_precision: types.JaxMatmulPrecision | None,
     gpu_genotype_format: types.GpuGenotypeFormat,
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
-    multi_phenotype_sample_mode: MultiPhenotypeSampleMode = MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
-    phenotype_compute_group_id: str | None = None,
-    sample_set_fingerprint: str | None = None,
-    covariate_design_fingerprint: str | None = None,
-    prediction_alignment_fingerprint: str | None = None,
+    multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
+    phenotype_compute_group_id: str | None,
+    sample_set_fingerprint: str | None,
+    covariate_design_fingerprint: str | None,
+    prediction_alignment_fingerprint: str | None,
     output_format: types.OutputFormat,
     finalize_parquet: bool,
     writer_thread_count: int,
@@ -280,10 +307,10 @@ def build_current_run_manifest_header(
     chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression,
     parquet_compression: types.ParquetCompression,
-    output_statistic_dtype: types.FloatingPointDtype = DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE,
+    output_statistic_dtype: types.FloatingPointDtype,
 ) -> dict[str, typing.Any]:
     """Build immutable run manifest fields from the current execution plan."""
-    bgen_fingerprint = build_file_fingerprint(bgen_path)
+    bgen_fingerprint = build_file_fingerprint(bgen_path, include_content_hash=False)
     sample_fingerprint = build_file_fingerprint(sample_path, include_content_hash=True)
     phenotype_file_fingerprint = build_file_fingerprint(phenotype_path, include_content_hash=True)
     covariate_file_fingerprint = build_file_fingerprint(covariate_path, include_content_hash=True)
@@ -459,9 +486,9 @@ def prepare_output_run(
     *,
     output_root: Path,
     association_mode: types.AssociationMode,
-    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    output_format: types.OutputFormat,
     resume: bool,
-    resume_mode: types.ResumeMode = types.ResumeMode.FAST,
+    resume_mode: types.ResumeMode,
 ) -> PreparedOutputRun:
     """Prepare a chunked output run directory and load existing manifest state."""
     del resume_mode
@@ -500,8 +527,8 @@ def create_output_writer_session(
     chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression,
     parquet_compression: types.ParquetCompression,
-    output_statistic_dtype: types.FloatingPointDtype = DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE,
-    collect_stage_timings: bool = False,
+    output_statistic_dtype: types.FloatingPointDtype,
+    collect_stage_timings: bool,
 ) -> typing.Any:
     """Create one native Rust output writer session."""
     return _core.OutputWriterSession(
@@ -538,7 +565,7 @@ def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
 def finalize_chunks_to_parquet(
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
-    output_format: types.OutputFormat = types.OutputFormat.ARROW,
+    output_format: types.OutputFormat,
 ) -> Path:
     """Compact committed chunk files into one compressed Parquet file in Rust."""
     final_parquet_path = _core.finalize_output_run_chunks(

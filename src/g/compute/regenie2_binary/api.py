@@ -15,7 +15,8 @@ from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
-from g.compute.regenie2_binary import variant_major_correction as regenie2_binary_variant_major_correction
+from g.compute.regenie2_binary.variant_major_correction import dispatch as regenie2_binary_variant_major_dispatch
+from g.compute.regenie2_binary.variant_major_correction import public as regenie2_binary_variant_major_correction
 
 BinaryChunkDiagnostics = regenie2_binary_diagnostics.BinaryChunkDiagnostics
 Regenie2BinaryState = regenie2_binary_state.Regenie2BinaryState
@@ -34,7 +35,7 @@ binary_chunk_diagnostics_to_mapping = regenie2_binary_diagnostics.binary_chunk_d
 def prepare_regenie2_binary_state(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_state.Regenie2BinaryState:
     """Prepare reusable binary step 2 state."""
     return regenie2_binary_state.build_binary_state(covariate_matrix, phenotype_vector, score_dtype)
@@ -43,7 +44,7 @@ def prepare_regenie2_binary_state(
 def prepare_regenie2_multi_binary_state(
     covariate_matrix: jax.Array,
     phenotype_matrix: jax.Array,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_state.Regenie2MultiBinaryState:
     """Prepare reusable multi-trait binary step 2 state."""
     return regenie2_binary_state.build_multi_binary_state(covariate_matrix, phenotype_matrix, score_dtype)
@@ -55,7 +56,7 @@ def prepare_regenie2_binary_chromosome_state(
     loco_offset: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_state.Regenie2BinaryChromosomeState:
     """Prepare chromosome-specific null logistic state reused across chunks."""
     return regenie2_binary_state.build_binary_chromosome_state(
@@ -73,7 +74,7 @@ def prepare_regenie2_multi_binary_chromosome_state(
     loco_offset_matrix: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_state.Regenie2MultiBinaryChromosomeState:
     """Prepare chromosome-specific null logistic state for all requested binary traits."""
     return regenie2_binary_state.build_multi_binary_chromosome_state(
@@ -91,7 +92,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     genotype_matrix: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Compute the uncorrected score-test result for one binary chunk."""
     return regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
@@ -99,6 +100,8 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
         genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix, score_dtype),
         correction_plan=correction_plan,
         kernel_config=kernel_config,
+        dosage_sum=None,
+        observation_count=None,
         score_dtype=score_dtype,
     )
 
@@ -109,9 +112,9 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     genotype_matrix_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Compute the uncorrected score-test result for one variant-major binary chunk."""
     return regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
@@ -135,9 +138,9 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     genotype_matrix_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Compute score-only binary statistics while donating one-shot chunk inputs."""
     return regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
@@ -161,9 +164,9 @@ def compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_variant
     genotype_matrix_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute multi-trait score-only binary statistics while donating one-shot chunk inputs."""
     return regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
@@ -192,7 +195,7 @@ compute_multi_binary_score_test_variant_major_donating_inputs = (
 )
 def decode_packed8_probability_pairs_to_variant_major_dosage_donating_input(
     packed_probability_pairs_by_variant: jax.Array,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> jax.Array:
     """Decode packed8 probability pairs while donating the packed input buffer."""
     return genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
@@ -210,9 +213,9 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8(
     packed_probability_pairs_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Decode packed8 probabilities on device and compute binary score statistics."""
     genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
@@ -240,9 +243,9 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8_donat
     packed_probability_pairs_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Decode packed8 probabilities on device and compute score-only binary statistics."""
     genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
@@ -274,9 +277,9 @@ def compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_packed8
     packed_probability_pairs_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Decode packed8 probabilities on device and compute multi-trait score statistics."""
     genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
@@ -304,9 +307,9 @@ def compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_packed8
     packed_probability_pairs_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Decode packed8 probabilities on device and compute multi-trait score-only binary statistics."""
     genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
@@ -338,6 +341,7 @@ compute_multi_binary_score_test_packed8_donating_inputs = (
         "tiny_candidate_capacity",
         "small_candidate_capacity",
         "bounded_candidate_capacity",
+        "overflow_candidate_capacity",
     ),
 )
 def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major_no_overflow(
@@ -345,13 +349,14 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major_no_o
     genotype_matrix_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None = None,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
-    tiny_candidate_capacity: int = 0,
-    small_candidate_capacity: int = 0,
-    bounded_candidate_capacity: int = 0,
+    sparse_candidate_mask: jax.Array | None,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
+    tiny_candidate_capacity: int,
+    small_candidate_capacity: int,
+    bounded_candidate_capacity: int,
+    overflow_candidate_capacity: int,
 ) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
     """Compute a multi-trait binary chunk in one executable when overflow is impossible."""
     score_test_result = regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
@@ -363,7 +368,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major_no_o
         observation_count=observation_count,
         score_dtype=score_dtype,
     )
-    correction_module = regenie2_binary_variant_major_correction
+    correction_module = regenie2_binary_variant_major_dispatch
     return correction_module.apply_device_candidate_corrections_multi_firth_variant_major_with_device_dispatch(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
@@ -372,6 +377,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major_no_o
         tiny_candidate_capacity=tiny_candidate_capacity,
         small_candidate_capacity=small_candidate_capacity,
         bounded_candidate_capacity=bounded_candidate_capacity,
+        overflow_candidate_capacity=overflow_candidate_capacity,
         sparse_candidate_mask=sparse_candidate_mask,
         dosage_sum=dosage_sum,
         observation_count=observation_count,
@@ -388,6 +394,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major_no_o
         "tiny_candidate_capacity",
         "small_candidate_capacity",
         "bounded_candidate_capacity",
+        "overflow_candidate_capacity",
     ),
 )
 def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8_no_overflow(
@@ -395,13 +402,14 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8_no_overflo
     packed_probability_pairs_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None = None,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
-    tiny_candidate_capacity: int = 0,
-    small_candidate_capacity: int = 0,
-    bounded_candidate_capacity: int = 0,
+    sparse_candidate_mask: jax.Array | None,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
+    tiny_candidate_capacity: int,
+    small_candidate_capacity: int,
+    bounded_candidate_capacity: int,
+    overflow_candidate_capacity: int,
 ) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
     """Compute a packed8 multi-trait binary chunk in one executable when overflow is impossible."""
     genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
@@ -417,7 +425,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8_no_overflo
         observation_count=observation_count,
         score_dtype=score_dtype,
     )
-    correction_module = regenie2_binary_variant_major_correction
+    correction_module = regenie2_binary_variant_major_dispatch
     return correction_module.apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
         chromosome_state=chromosome_state,
         packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
@@ -426,6 +434,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8_no_overflo
         tiny_candidate_capacity=tiny_candidate_capacity,
         small_candidate_capacity=small_candidate_capacity,
         bounded_candidate_capacity=bounded_candidate_capacity,
+        overflow_candidate_capacity=overflow_candidate_capacity,
         sparse_candidate_mask=sparse_candidate_mask,
         dosage_sum=dosage_sum,
         observation_count=observation_count,
@@ -469,9 +478,9 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state(
     genotype_matrix: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
-    stage_duration_recorder: StageDurationRecorder | None = None,
+    sparse_candidate_mask: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
+    stage_duration_recorder: StageDurationRecorder | None,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult | regenie2_binary_result.Regenie2MultiBinaryChunkResult:
     """Compute multi-trait binary REGENIE step 2 association using one genotype chunk."""
     return compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
@@ -482,6 +491,8 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state(
         kernel_config=kernel_config,
         score_dtype=score_dtype,
         stage_duration_recorder=stage_duration_recorder,
+        dosage_sum=None,
+        observation_count=None,
     )
 
 
@@ -490,11 +501,11 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
     genotype_matrix_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
-    stage_duration_recorder: StageDurationRecorder | None = None,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
+    sparse_candidate_mask: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
+    stage_duration_recorder: StageDurationRecorder | None,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult | regenie2_binary_result.Regenie2MultiBinaryChunkResult:
     """Compute multi-trait binary association from variant-major genotypes.
 
@@ -524,6 +535,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
                 tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
                 small_candidate_capacity=capacity_plan.small_candidate_capacity,
                 bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
+                overflow_candidate_capacity=capacity_plan.overflow_candidate_capacity,
             )
     score_test_result = regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
         chromosome_state=chromosome_state,
@@ -552,11 +564,11 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
     packed_probability_pairs_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
-    stage_duration_recorder: StageDurationRecorder | None = None,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
+    sparse_candidate_mask: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
+    stage_duration_recorder: StageDurationRecorder | None,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult | regenie2_binary_result.Regenie2MultiBinaryChunkResult:
     """Compute multi-trait binary association from packed8 BGEN probability pairs."""
     if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
@@ -589,6 +601,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
             tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
             small_candidate_capacity=capacity_plan.small_candidate_capacity,
             bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
+            overflow_candidate_capacity=capacity_plan.overflow_candidate_capacity,
         )
     score_test_result = compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_packed8(
         chromosome_state=chromosome_state,
@@ -618,11 +631,11 @@ def compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
     genotype_matrix_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
-    stage_duration_recorder: StageDurationRecorder | None = None,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
+    sparse_candidate_mask: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
+    stage_duration_recorder: StageDurationRecorder | None,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
     """Compute binary association from a variant-major chunk."""
     score_test_result = compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
@@ -652,11 +665,11 @@ def compute_regenie2_binary_chunk_from_chromosome_state_packed8(
     packed_probability_pairs_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
-    stage_duration_recorder: StageDurationRecorder | None = None,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
+    sparse_candidate_mask: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
+    stage_duration_recorder: StageDurationRecorder | None,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
     """Compute binary association from packed8 BGEN probability pairs.
 
@@ -702,9 +715,9 @@ def compute_regenie2_binary_chunk_from_chromosome_state(
     genotype_matrix: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
-    stage_duration_recorder: StageDurationRecorder | None = None,
+    sparse_candidate_mask: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
+    stage_duration_recorder: StageDurationRecorder | None,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association using cached null state."""
     return compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
@@ -715,6 +728,8 @@ def compute_regenie2_binary_chunk_from_chromosome_state(
         kernel_config=kernel_config,
         score_dtype=score_dtype,
         stage_duration_recorder=stage_duration_recorder,
+        dosage_sum=None,
+        observation_count=None,
     )
 
 
@@ -724,9 +739,9 @@ def compute_regenie2_binary_chunk(
     loco_offset: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None = None,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
-    stage_duration_recorder: StageDurationRecorder | None = None,
+    sparse_candidate_mask: jax.Array | None,
+    score_dtype: g_types.FloatingPointDtype,
+    stage_duration_recorder: StageDurationRecorder | None,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association for a genotype chunk."""
     chromosome_state = prepare_regenie2_binary_chromosome_state(

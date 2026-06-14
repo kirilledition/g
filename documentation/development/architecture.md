@@ -29,17 +29,16 @@ src/g/
   api.py                         public Python API
   cli.py                         thin Python dispatcher into the Rust CLI frontend
   interface/
-    config.py                    compatibility wrappers around Rust-owned config objects
+    config.py                    thin Python bridge around Rust-owned config objects
   execution_plan.py              immutable normalized run plans
-  runner.py                      runtime orchestration, telemetry, dispatch, artifacts
-  jax_runtime.py                 JAX runtime policy, reports, diagnostics
-  jax_setup.py                   order-sensitive JAX config mutation and GPU validation
-  runtime_paths.py               node-local and cluster path policy
+  runner/                        runtime orchestration, telemetry, dispatch, artifacts
+  jax_runtime/                   JAX runtime policy, resolution, diagnostics, state, setup
+  runtime_paths.py               default runtime cache path helpers
   engine/
     backend_planner.py           association backend selection before dispatch
-    regenie2_pipeline.py         native-driven BGEN pipeline wrappers
-    callbacks.py                 JAX callback workers and result materialization
-    native_dispatch.py           Rust bridge for engine/alignment/predictions
+    regenie2_pipeline/           native-driven BGEN pipeline wrappers
+    callbacks/                   JAX callback workers and result materialization
+    native_dispatch/             Rust bridge for engine/alignment/predictions
     telemetry.py                 JSONL run telemetry
     timing.py                    synchronized profile summaries
     preflight.py                 pre-run validation

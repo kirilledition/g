@@ -45,6 +45,9 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
   * Good: `from g.io import source`; `source.split_sample_file_line()`  
   * Bad: `from g.api import ComputeConfig`  
   * Bad: `from g.io.source import split_sample_file_line`
+* **Rule:** Internal package initializers under `src/g/**/__init__.py` are package markers only. Do not define `__all__`, import/re-export submodules, assign aliases, or place helper functions there.
+* **Rule:** The top-level `src/g/__init__.py` may keep the lazy public entrypoint boundary required by the console script, but it must not define `__all__`.
+* Run `uv run python -m tooling.cli.debug tool.name=check_internal_init_exports` (or `just check-internal-init-exports`) before reviewing changes that touch package initializers.
 
 ### **Naming Conventions**
 
@@ -90,6 +93,13 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
       return RegressionResult(betas=betas, standard\_errors=standard\_errors)
 
 ### **JAX Pytree Containers**
+
+### **Internal Defaults**
+
+* **Rule:** Production Python code under `src/g` must not define default values on function or method parameters.
+* **Rule:** Dataclasses under `src/g` must not define field defaults or `default_factory` values.
+* Pass optional values explicitly as `None`, and pass policy constants explicitly at the call site. Defaults belong at config parsing, native boundary adaptation, or test/tooling helpers, not inside internal runtime code.
+* Run `uv run python -m tooling.cli.debug tool.name=check_internal_defaults` (or `just check-internal-defaults`) before reviewing changes that touch internal signatures or dataclasses.
 
 * **Rule:** For containers used inside JAX JIT boundaries (state containers, loop carriers), use `@dataclass(frozen=True)` with `@jax.tree_util.register_dataclass`.  
 

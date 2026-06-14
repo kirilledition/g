@@ -25,6 +25,8 @@ if typing.TYPE_CHECKING:
 
     import omegaconf
 
+SCORE_DTYPE = types.FloatingPointDtype.FLOAT32
+
 
 @dataclass(frozen=True)
 class BinaryParityInputs:
@@ -182,12 +184,14 @@ def prepare_chromosome_state(
     regenie_state = regenie2_binary.prepare_regenie2_binary_state(
         covariate_matrix=inputs.covariate_matrix,
         phenotype_vector=inputs.phenotype_vector,
+        score_dtype=SCORE_DTYPE,
     )
     return regenie2_binary.prepare_regenie2_binary_chromosome_state(
         regenie_state,
         inputs.loco_offset,
         correction_plan,
         kernel_config,
+        SCORE_DTYPE,
     )
 
 
@@ -268,6 +272,7 @@ def compare_binary_paths(
         inputs.genotype_matrix,
         correction_plan,
         kernel_config,
+        SCORE_DTYPE,
     )
     production_corrected_result = typing.cast(
         "regenie2_binary_result.Regenie2BinaryChunkResult",
@@ -276,6 +281,9 @@ def compare_binary_paths(
             inputs.genotype_matrix,
             correction_plan,
             kernel_config,
+            sparse_candidate_mask=None,
+            score_dtype=SCORE_DTYPE,
+            stage_duration_recorder=None,
         ),
     )
     genotype_matrix_by_variant = jnp.transpose(inputs.genotype_matrix)
@@ -284,6 +292,9 @@ def compare_binary_paths(
         genotype_matrix_by_variant,
         correction_plan,
         kernel_config,
+        dosage_sum=None,
+        observation_count=None,
+        score_dtype=SCORE_DTYPE,
     )
     variant_major_corrected_result = typing.cast(
         "regenie2_binary_result.Regenie2BinaryChunkResult",
@@ -292,6 +303,11 @@ def compare_binary_paths(
             genotype_matrix_by_variant,
             correction_plan,
             kernel_config,
+            sparse_candidate_mask=None,
+            score_dtype=SCORE_DTYPE,
+            stage_duration_recorder=None,
+            dosage_sum=None,
+            observation_count=None,
         ),
     )
     production_metrics = compute_path_metrics(

@@ -21,7 +21,7 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
-from g.engine import native_dispatch
+from g.engine.native_dispatch import models as native_dispatch_models
 from g.interface import config as interface_config
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
@@ -30,6 +30,8 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
     import omegaconf
+
+SCORE_DTYPE = types.FloatingPointDtype.FLOAT32
 
 
 @dataclass(frozen=True)
@@ -293,7 +295,11 @@ def compute_score_debug_arrays(
 ) -> ScoreDebugArrays:
     """Compute score-test internal arrays for selected variants."""
     raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
+    genotype_flip_result = genotype.build_regenie_flipped_genotypes(
+        raw_genotype_matrix_by_variant,
+        dosage_sum=None,
+        observation_count=None,
+    )
     genotype_matrix_by_variant_float32 = genotype_flip_result.genotype_matrix_by_variant
     weighted_genotype_matrix_by_variant = (
         genotype_matrix_by_variant_float32 * chromosome_state.square_root_weight[None, :]
@@ -355,6 +361,7 @@ def build_debug_records_for_chunk(
         selected_genotype_matrix_by_variant.T,
         correction_plan,
         kernel_config,
+        SCORE_DTYPE,
     )
     final_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
         chromosome_state=chromosome_state,
@@ -362,6 +369,8 @@ def build_debug_records_for_chunk(
         correction_plan=correction_plan,
         sparse_candidate_mask=jnp.asarray(chunk_stats.is_rare_sparse_firth_candidate[selected_offsets]),
         kernel_config=kernel_config,
+        score_dtype=SCORE_DTYPE,
+        stage_duration_recorder=None,
     )
     score_debug_arrays = compute_score_debug_arrays(
         chromosome_state, selected_genotype_matrix_by_variant, kernel_config
@@ -430,7 +439,7 @@ class BinaryVariantDebugCaptureCallback:
     def __init__(
         self,
         *,
-        run_input: native_dispatch.NativeBgenRunInput,
+        run_input: native_dispatch_models.NativeBgenRunInput,
         prediction_source: _core.RegeniePredictionSource,
         selector: VariantSelector,
         correction_plan: types.BinaryCorrectionPlan,
@@ -489,6 +498,7 @@ class BinaryVariantDebugCaptureCallback:
             state = regenie2_binary.prepare_regenie2_binary_state(
                 jnp.asarray(self.run_input.covariate_matrix, dtype=jnp.float32),
                 jnp.asarray(self.run_input.phenotype_vector, dtype=jnp.float32),
+                SCORE_DTYPE,
             )
             loco_offset = jnp.asarray(self.prediction_source.get_chromosome_predictions(chromosome), dtype=jnp.float32)
             self.chromosome_states[chromosome] = regenie2_binary.prepare_regenie2_binary_chromosome_state(
@@ -496,6 +506,7 @@ class BinaryVariantDebugCaptureCallback:
                 loco_offset,
                 self.correction_plan,
                 self.kernel_config,
+                SCORE_DTYPE,
             )
         return self.chromosome_states[chromosome]
 
@@ -604,7 +615,7 @@ def capture_g_records(arguments: BinaryDebugArguments, selector: VariantSelector
         arguments.variant_limit,
         bool(arguments.trusted_no_missing_diploid),
     )
-    run_input = native_dispatch.build_native_bgen_run_input(
+    run_input = native_dispatch_models.build_native_bgen_run_input(
         engine.align_sample_data(
             sample_path=str(arguments.sample),
             phenotype_path=str(arguments.pheno_file),

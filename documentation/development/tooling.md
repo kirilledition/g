@@ -72,6 +72,8 @@ tooling/
   debug/
     binary_firth.py
     binary_regenie_parity.py
+    check_internal_defaults.py
+    check_internal_init_exports.py
     check_pyo3_stub.py
     linear_regenie_parity.py
   performance/
@@ -130,6 +132,13 @@ Keep this setting. It preserves repository-relative paths for benchmark inputs,
 outputs, and reports.
 
 ## Entry Points
+
+`tooling.cli.debug`
+
+Dispatches repository debug and guardrail tools through `tool.name`. Use
+`tool.name=check_pyo3_stub` for Rust `_core` stub sync,
+`tool.name=check_internal_defaults` for internal default-parameter policy, and
+`tool.name=check_internal_init_exports` for package-initializer export policy.
 
 `tooling.cli.benchmark_bgen_reader`
 

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 
-from g import types
 from g.compute.common import dtype as compute_dtype
 from g.compute.common import linalg
+
+if typing.TYPE_CHECKING:
+    from g import types
 
 
 @jax.tree_util.register_dataclass
@@ -95,7 +98,7 @@ class Regenie2MultiLinearChromosomeState:
 def build_multi_linear_state(
     covariate_matrix: jax.Array,
     phenotype_matrix: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    score_dtype: types.FloatingPointDtype,
 ) -> Regenie2MultiLinearState:
     """Build shared covariate projection and trait-major phenotype residuals."""
     jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
@@ -175,7 +178,7 @@ def build_single_linear_chromosome_state_from_multi(
 def build_multi_linear_chromosome_state(
     state: Regenie2MultiLinearState,
     loco_prediction_matrix: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    score_dtype: types.FloatingPointDtype,
 ) -> Regenie2MultiLinearChromosomeState:
     """Build chromosome-specific trait-major residual state reused across chunks."""
     loco_prediction_matrix_compute = jnp.asarray(

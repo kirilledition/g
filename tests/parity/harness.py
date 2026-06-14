@@ -149,7 +149,7 @@ def load_golden_metadata(metadata_path: Path = DEFAULT_METADATA_PATH) -> ParityM
     regenie_reference = typing.cast("dict[str, object]", payload["regenie_reference"])
     workflows = tuple(parse_workflow_payload(workflow_payload) for workflow_payload in workflow_payloads)
     return ParityMetadata(
-        schema_version=int(payload["schema_version"]),
+        schema_version=int(typing.cast("int | str", payload["schema_version"])),
         regenie_reference=regenie_reference,
         workflows=workflows,
     )
@@ -177,7 +177,7 @@ def parse_tolerances(tolerances_payload: object) -> tuple[StatisticTolerance, ..
         StatisticTolerance(
             observed_column=str(tolerance_payload["observed_column"]),
             baseline_column=str(tolerance_payload["baseline_column"]),
-            absolute_tolerance=float(tolerance_payload["absolute_tolerance"]),
+            absolute_tolerance=float(typing.cast("float | int | str", tolerance_payload["absolute_tolerance"])),
         )
         for tolerance_payload in tolerance_payloads
     )

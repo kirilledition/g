@@ -117,7 +117,7 @@ def build_firth_candidate_capacity_plan(
     *,
     variant_count: int,
     preferred_candidate_capacity: int,
-    trait_count: int = 1,
+    trait_count: int,
 ) -> FirthCandidateCapacityPlan:
     """Build static capacities for device Firth candidate dispatch."""
     if variant_count <= 0:

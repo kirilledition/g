@@ -5,7 +5,6 @@ import typing
 import pytest
 
 from g import _core
-from g.io import source
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -81,30 +80,3 @@ def test_native_sample_file_alignment_rejects_ragged_rows(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match="has 1 values, but the header declares 2 columns"):
         _core.align_sample_data_from_sample_file(str(sample_path), 1, str(phenotype_path), "trait")
-
-
-def test_resolve_bgen_sample_path_prefers_explicit_path(tmp_path: Path) -> None:
-    bgen_path = tmp_path / "study.bgen"
-    explicit_sample_path = tmp_path / "explicit.sample"
-    adjacent_sample_path = tmp_path / "study.sample"
-    bgen_path.write_text("", encoding="utf-8")
-    explicit_sample_path.write_text("", encoding="utf-8")
-    adjacent_sample_path.write_text("", encoding="utf-8")
-
-    assert source.resolve_bgen_sample_path(bgen_path, explicit_sample_path) == explicit_sample_path
-
-
-def test_resolve_bgen_sample_path_finds_adjacent_sample_file(tmp_path: Path) -> None:
-    bgen_path = tmp_path / "study.bgen"
-    adjacent_sample_path = tmp_path / "study.sample"
-    bgen_path.write_text("", encoding="utf-8")
-    adjacent_sample_path.write_text("", encoding="utf-8")
-
-    assert source.resolve_bgen_sample_path(bgen_path) == adjacent_sample_path
-
-
-def test_resolve_bgen_sample_path_returns_none_without_match(tmp_path: Path) -> None:
-    bgen_path = tmp_path / "study.bgen"
-    bgen_path.write_text("", encoding="utf-8")
-
-    assert source.resolve_bgen_sample_path(bgen_path) is None

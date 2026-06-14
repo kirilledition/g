@@ -31,7 +31,7 @@ sweeps on a login node.
 | Quantitative kernels | `tests/test_regenie2_linear.py`, `tests/test_regenie2_parity.py` |
 | Binary score and Firth kernels | `tests/test_regenie2_binary*.py`, `tests/test_regenie_binary_correction_contract.py` |
 | Pipeline orchestration | `tests/test_regenie2_pipeline.py`, `tests/test_callback_lifecycle.py` |
-| JAX runtime | `tests/test_jax_setup.py`, `tests/test_warm_cache.py` |
+| JAX runtime | `tests/test_jax_runtime.py`, `tests/test_warm_cache.py` |
 | Telemetry and timing | `tests/test_telemetry.py`, `tests/test_timing.py` |
 | Development tooling | `tests/test_tooling_architecture.py`, `tests/test_regenie_comparison_scripts.py` |
 

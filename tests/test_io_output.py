@@ -75,6 +75,80 @@ HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
 DEFAULT_TEST_INPUT_PATH: typing.Final[object] = object()
 
 
+def resolve_test_output_run_paths(
+    output_root: Path,
+    association_mode: AssociationMode,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+) -> output.OutputRunPaths:
+    """Resolve output paths with the test fixture's default output format."""
+    return output.resolve_output_run_paths(
+        output_root,
+        association_mode,
+        output_format,
+    )
+
+
+def prepare_test_output_run(
+    *,
+    output_root: Path,
+    association_mode: AssociationMode,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    resume: bool,
+    resume_mode: types.ResumeMode = types.ResumeMode.FAST,
+) -> output.PreparedOutputRun:
+    """Prepare output paths with explicit production arguments."""
+    return output.prepare_output_run(
+        output_root=output_root,
+        association_mode=association_mode,
+        output_format=output_format,
+        resume=resume,
+        resume_mode=resume_mode,
+    )
+
+
+def create_test_output_writer_session(
+    output_run_paths: output.OutputRunPaths,
+    association_mode: AssociationMode,
+    *,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    finalize_parquet: bool,
+    output_format: types.OutputFormat,
+    chunks_per_arrow_file: int,
+    arrow_compression: types.ArrowCompression,
+    parquet_compression: types.ParquetCompression,
+    output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    collect_stage_timings: bool = False,
+) -> typing.Any:
+    """Create a writer session with explicit production arguments."""
+    return output.create_output_writer_session(
+        output_run_paths,
+        association_mode,
+        writer_thread_count=writer_thread_count,
+        writer_queue_depth=writer_queue_depth,
+        finalize_parquet=finalize_parquet,
+        output_format=output_format,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
+        parquet_compression=parquet_compression,
+        output_statistic_dtype=output_statistic_dtype,
+        collect_stage_timings=collect_stage_timings,
+    )
+
+
+def finalize_test_chunks_to_parquet(
+    output_run_paths: output.OutputRunPaths,
+    association_mode: AssociationMode,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+) -> Path:
+    """Finalize chunks with the test fixture's default output format."""
+    return output.finalize_chunks_to_parquet(
+        output_run_paths,
+        association_mode,
+        output_format,
+    )
+
+
 class NativeChunkWritingCallback:
     """Callback that writes deterministic association values for native chunks."""
 
@@ -179,7 +253,7 @@ def write_native_chunks(
 ) -> None:
     if output_format == types.OutputFormat.REGENIE and not output.get_run_manifest_path(output_run_paths).exists():
         output.write_run_manifest(output_run_paths, {"committed_chunks": []})
-    writer_session = output.create_output_writer_session(
+    writer_session = create_test_output_writer_session(
         output_run_paths,
         association_mode,
         writer_thread_count=1,
@@ -222,7 +296,7 @@ def build_test_header(
     write_input_files: bool = True,
 ) -> dict[str, typing.Any]:
     bgen_path = tmp_path / "study.bgen"
-    resolved_sample_path = (
+    selected_sample_path = (
         tmp_path / "study.sample" if sample_path is DEFAULT_TEST_INPUT_PATH else typing.cast("Path | None", sample_path)
     )
     phenotype_path = tmp_path / "phenotypes.tsv"
@@ -237,7 +311,7 @@ def build_test_header(
             input_path
             for input_path in (
                 bgen_path,
-                resolved_sample_path,
+                selected_sample_path,
                 phenotype_path,
                 resolved_covariate_path,
                 prediction_list_path,
@@ -250,7 +324,7 @@ def build_test_header(
         association_mode=association_mode,
         association_backend_kind=association_backend_kind,
         bgen_path=bgen_path,
-        sample_path=resolved_sample_path,
+        sample_path=selected_sample_path,
         phenotype_path=phenotype_path,
         phenotype_name="trait",
         covariate_path=resolved_covariate_path,
@@ -260,7 +334,11 @@ def build_test_header(
         variant_count=10,
         chunk_size=2,
         variant_limit=None,
-        binary_correction_plan=types.BinaryCorrectionPlan(),
+        binary_correction_plan=types.BinaryCorrectionPlan(
+            method=types.BinaryFallbackMethod.SCORE_ONLY,
+            p_threshold=0.05,
+            firth_se=False,
+        ),
         trusted_no_missing_diploid=False,
         sample_key_mode=types.SampleKeyMode.IID,
         binary_kernel_config=binary_kernel_config,
@@ -276,6 +354,7 @@ def build_test_header(
         bgen_decode_tile_variant_count=64,
         trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
         jax_device=types.Device.CPU,
+        jax_matmul_precision=None,
         finalize_parquet=False,
         writer_thread_count=1,
         writer_queue_depth=1,
@@ -410,7 +489,7 @@ def test_fast_resume_rejects_control_file_content_change_with_preserved_metadata
     replacement_text: str,
 ) -> None:
     manifest_header = build_test_header(tmp_path)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / f"output-{manifest_field_name}-content",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
@@ -426,7 +505,7 @@ def test_fast_resume_rejects_control_file_content_change_with_preserved_metadata
     )
     assert current_header["execution_plan_hash"] != manifest_header["execution_plan_hash"]
 
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / f"output-{manifest_field_name}-content",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -463,29 +542,27 @@ def initialize_test_output_run(
 
 
 def test_resolve_output_run_paths_appends_mode_suffix(tmp_path: Path) -> None:
-    output_run_paths = output.resolve_output_run_paths(tmp_path / "results/output", AssociationMode.REGENIE2_LINEAR)
+    output_run_paths = resolve_test_output_run_paths(tmp_path / "results/output", AssociationMode.REGENIE2_LINEAR)
     assert output_run_paths.run_directory == tmp_path / "results/output.regenie2_linear.run"
     assert output_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/parts"
 
-    dotted_output_run_paths = output.resolve_output_run_paths(
+    dotted_output_run_paths = resolve_test_output_run_paths(
         tmp_path / "results/output.v1",
         AssociationMode.REGENIE2_LINEAR,
     )
     assert dotted_output_run_paths.run_directory == tmp_path / "results/output.v1.regenie2_linear.run"
 
-    literal_run_paths = output.resolve_output_run_paths(
-        tmp_path / "results/output.run", AssociationMode.REGENIE2_LINEAR
-    )
+    literal_run_paths = resolve_test_output_run_paths(tmp_path / "results/output.run", AssociationMode.REGENIE2_LINEAR)
     assert literal_run_paths.run_directory == tmp_path / "results/output.run"
 
-    arrow_run_paths = output.resolve_output_run_paths(
+    arrow_run_paths = resolve_test_output_run_paths(
         tmp_path / "results/output",
         AssociationMode.REGENIE2_LINEAR,
         types.OutputFormat.ARROW,
     )
     assert arrow_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/chunks"
 
-    regenie_run_paths = output.resolve_output_run_paths(
+    regenie_run_paths = resolve_test_output_run_paths(
         tmp_path / "results/output",
         AssociationMode.REGENIE2_LINEAR,
         types.OutputFormat.REGENIE,
@@ -499,7 +576,7 @@ def test_output_manifest_helpers_cover_empty_paths_and_invalid_json(tmp_path: Pa
     manifest_path.write_text("[]", encoding="utf-8")
 
     assert output.build_chunk_file_name(7) == "chunk_000000007.arrow"
-    assert output.build_file_fingerprint(None) is None
+    assert output.build_file_fingerprint(None, include_content_hash=False) is None
     assert output.normalize_execution_plan_value(Path("relative/path")) == "relative/path"
     assert output.iter_sorted_chunk_file_paths(output_run_paths.chunks_directory) == ()
     with pytest.raises(ValueError, match="must contain a JSON object"):
@@ -630,7 +707,7 @@ def test_initialize_output_run_rejects_resume_without_manifest(tmp_path: Path) -
 
 def test_prepare_output_run_rejects_resume_without_manifest(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match=r"Resume requires run_manifest\.json"):
-        output.prepare_output_run(
+        prepare_test_output_run(
             output_root=tmp_path / "output",
             association_mode=AssociationMode.REGENIE2_LINEAR,
             resume=True,
@@ -649,7 +726,7 @@ def test_prepare_output_run_rejects_non_empty_directory_without_resume(tmp_path:
     run_directory.mkdir(parents=True)
     (run_directory / "stale_file.txt").write_text("stale", encoding="utf-8")
     with pytest.raises(ValueError, match="already exists and is not empty"):
-        output.prepare_output_run(
+        prepare_test_output_run(
             output_root=tmp_path / "output",
             association_mode=AssociationMode.REGENIE2_LINEAR,
             resume=False,
@@ -716,7 +793,7 @@ def test_native_writer_writes_parquet_dataset_parts_with_footer_metadata(tmp_pat
 
 def test_native_writer_writes_regenie_text_parts_and_final_output(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path, output_format=types.OutputFormat.REGENIE)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         output_format=types.OutputFormat.REGENIE,
@@ -758,7 +835,7 @@ def test_native_writer_writes_regenie_text_parts_and_final_output(tmp_path: Path
     assert manifest["final_regenie"] == str(final_regenie_path)
     assert manifest["final_row_count"] == 4
 
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         output_format=types.OutputFormat.REGENIE,
@@ -780,7 +857,7 @@ def test_native_binary_writer_writes_regenie_text_extra_labels(tmp_path: Path) -
         association_mode=AssociationMode.REGENIE2_BINARY,
         output_format=types.OutputFormat.REGENIE,
     )
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_BINARY,
         output_format=types.OutputFormat.REGENIE,
@@ -805,7 +882,7 @@ def test_native_binary_writer_writes_regenie_text_extra_labels(tmp_path: Path) -
 
 def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Path) -> None:
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
-    writer_session = output.create_output_writer_session(
+    writer_session = create_test_output_writer_session(
         output_run_paths,
         AssociationMode.REGENIE2_LINEAR,
         writer_thread_count=1,
@@ -882,7 +959,7 @@ def test_public_native_writer_copies_numpy_arrays_before_enqueue(tmp_path: Path)
     chunk_stats = capture_callback.require_chunk_stats()
     row_count = metadata.variant_stop_index - metadata.variant_start_index
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
-    writer_session = output.create_output_writer_session(
+    writer_session = create_test_output_writer_session(
         output_run_paths,
         AssociationMode.REGENIE2_BINARY,
         writer_thread_count=1,
@@ -937,7 +1014,7 @@ def test_public_native_writer_preserves_float64_output_statistics(tmp_path: Path
     chunk_stats = capture_callback.require_chunk_stats()
     row_count = metadata.variant_stop_index - metadata.variant_start_index
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
-    writer_session = output.create_output_writer_session(
+    writer_session = create_test_output_writer_session(
         output_run_paths,
         AssociationMode.REGENIE2_BINARY,
         writer_thread_count=1,
@@ -994,7 +1071,7 @@ def test_public_multi_native_writer_copies_numpy_rows_before_enqueue(tmp_path: P
     for output_run_paths in writer_run_paths:
         output_run_paths.chunks_directory.mkdir()
         writer_sessions.append(
-            output.create_output_writer_session(
+            create_test_output_writer_session(
                 output_run_paths,
                 AssociationMode.REGENIE2_BINARY,
                 writer_thread_count=1,
@@ -1082,7 +1159,7 @@ def test_public_multi_native_writer_preserves_float64_output_statistics(tmp_path
     for output_run_paths in writer_run_paths:
         output_run_paths.chunks_directory.mkdir()
         writer_sessions.append(
-            output.create_output_writer_session(
+            create_test_output_writer_session(
                 output_run_paths,
                 AssociationMode.REGENIE2_BINARY,
                 writer_thread_count=1,
@@ -1140,7 +1217,7 @@ def test_public_multi_native_writer_preserves_float64_output_statistics(tmp_path
 
 def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
@@ -1152,7 +1229,7 @@ def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_
         output_format=types.OutputFormat.PARQUET,
     )
 
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1167,7 +1244,7 @@ def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_
 
 def test_initialize_output_run_preserves_preinitialized_metadata(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
@@ -1194,7 +1271,7 @@ def test_initialize_output_run_preserves_preinitialized_metadata(tmp_path: Path)
 
 def test_prepare_output_run_strict_resume_validates_manifest_chunks(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
@@ -1206,7 +1283,7 @@ def test_prepare_output_run_strict_resume_validates_manifest_chunks(tmp_path: Pa
         output_format=types.OutputFormat.PARQUET,
     )
 
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1224,7 +1301,7 @@ def test_prepare_output_run_strict_resume_validates_manifest_chunks(tmp_path: Pa
 
 def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path, output_format=types.OutputFormat.ARROW)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         output_format=types.OutputFormat.ARROW,
@@ -1237,7 +1314,7 @@ def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Pa
     manifest["committed_chunks"] = []
     output.write_run_manifest(prepared_output_run.output_run_paths, manifest)
 
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         output_format=types.OutputFormat.ARROW,
@@ -1278,7 +1355,7 @@ def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Pa
 
 def test_fast_resume_trusts_only_manifest_committed_chunks(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
@@ -1286,7 +1363,7 @@ def test_fast_resume_trusts_only_manifest_committed_chunks(tmp_path: Path) -> No
     initialize_test_output_run(prepared_output_run, current_header)
     (prepared_output_run.output_run_paths.chunks_directory / "chunk_000000000.arrow").write_bytes(b"staged")
 
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1302,7 +1379,7 @@ def test_fast_resume_trusts_only_manifest_committed_chunks(tmp_path: Path) -> No
 
 def test_initialize_output_run_rejects_incompatible_manifest_even_in_fast_mode(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
@@ -1311,7 +1388,7 @@ def test_initialize_output_run_rejects_incompatible_manifest_even_in_fast_mode(t
         prepared_output_run.output_run_paths,
         {**current_header, "association_mode": AssociationMode.REGENIE2_BINARY.value, "committed_chunks": []},
     )
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1428,7 +1505,7 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
     current_header = build_test_header(tmp_path)
     manifest_header = dict(current_header)
     manifest_header[field_name] = replacement_value
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / f"output-{field_name}",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
@@ -1437,7 +1514,7 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
         prepared_output_run.output_run_paths,
         {**manifest_header, "committed_chunks": []},
     )
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / f"output-{field_name}",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1454,13 +1531,13 @@ def test_initialize_output_run_rejects_output_statistic_dtype_resume(tmp_path: P
         output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
         write_input_files=False,
     )
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output-statistic-dtype",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
     output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output-statistic-dtype",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1485,13 +1562,13 @@ def test_initialize_output_run_rejects_per_phenotype_complete_case_resume(tmp_pa
     manifest_header["execution_plan"]["phenotype_compute_group_id"] = "complete-case-group"
     manifest_header["execution_plan"]["sample_set_fingerprint"] = "complete-case-samples"
     manifest_header["execution_plan_hash"] = output.build_execution_plan_hash(manifest_header["execution_plan"])
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output-sample-mode",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
     output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output-sample-mode",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1546,13 +1623,13 @@ def test_initialize_output_run_rejects_execution_plan_hash_mismatch(
     manifest_header = copy.deepcopy(current_header)
     manifest_header["execution_plan"][nested_field_name] = replacement_value
     manifest_header["execution_plan_hash"] = output.build_execution_plan_hash(manifest_header["execution_plan"])
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / f"output-execution-plan-{nested_field_name}",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
     output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / f"output-execution-plan-{nested_field_name}",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1566,13 +1643,13 @@ def test_initialize_output_run_rejects_execution_plan_hash_only_mismatch(tmp_pat
     current_header = build_test_header(tmp_path)
     manifest_header = dict(current_header)
     manifest_header["execution_plan_hash"] = "0" * 64
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output-execution-plan-hash",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
     output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output-execution-plan-hash",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1586,13 +1663,13 @@ def test_initialize_output_run_rejects_old_schema_manifest(tmp_path: Path) -> No
     current_header = build_test_header(tmp_path)
     manifest_header = dict(current_header)
     manifest_header["schema_version"] = 1
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
     output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1606,13 +1683,13 @@ def test_initialize_output_run_rejects_missing_manifest_header_field(tmp_path: P
     current_header = build_test_header(tmp_path)
     manifest_header = dict(current_header)
     del manifest_header["prediction_list"]
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
     output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1626,7 +1703,7 @@ def test_initialize_output_run_incompatible_resume_preserves_manifest_bytes(tmp_
     current_header = build_test_header(tmp_path)
     manifest_header = dict(current_header)
     manifest_header["chunk_size"] = 4
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
@@ -1634,7 +1711,7 @@ def test_initialize_output_run_incompatible_resume_preserves_manifest_bytes(tmp_
     output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
     manifest_path = output.get_run_manifest_path(prepared_output_run.output_run_paths)
     original_manifest_bytes = manifest_path.read_bytes()
-    resumed_output_run = output.prepare_output_run(
+    resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=True,
@@ -1652,7 +1729,7 @@ def test_prepare_output_run_resume_requires_manifest(tmp_path: Path) -> None:
     chunks_directory.mkdir(parents=True)
 
     with pytest.raises(ValueError, match=r"Resume requires run_manifest\.json"):
-        output.prepare_output_run(
+        prepare_test_output_run(
             output_root=tmp_path / "output",
             association_mode=AssociationMode.REGENIE2_LINEAR,
             resume=True,
@@ -1665,7 +1742,7 @@ def test_prepare_output_run_strict_resume_requires_manifest(tmp_path: Path) -> N
     chunks_directory.mkdir(parents=True)
 
     with pytest.raises(ValueError, match=r"Resume requires run_manifest\.json"):
-        output.prepare_output_run(
+        prepare_test_output_run(
             output_root=tmp_path / "output",
             association_mode=AssociationMode.REGENIE2_LINEAR,
             resume=True,
@@ -1728,7 +1805,7 @@ def test_regenie2_step2_output_schema_contract(
         output_format=output_format,
         output_statistic_dtype=output_statistic_dtype,
     )
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=run_directory,
         association_mode=association_mode,
         output_format=output_format,
@@ -1752,7 +1829,7 @@ def test_regenie2_step2_output_schema_contract(
             chunk_schema = pq.ParquetFile(chunk_path).schema_arrow
         assert_step2_output_schema_contract(chunk_schema, expected_statistic_schema_dtype)
 
-    final_parquet_path = output.finalize_chunks_to_parquet(
+    final_parquet_path = finalize_test_chunks_to_parquet(
         output_run_paths,
         association_mode,
         output_format=output_format,
@@ -1767,7 +1844,7 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
         association_mode=AssociationMode.REGENIE2_BINARY,
         output_format=types.OutputFormat.ARROW,
     )
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_BINARY,
         output_format=types.OutputFormat.ARROW,
@@ -1780,7 +1857,7 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
         extra_code_value=types.BinaryExtraCode.FIRTH.value,
     )
 
-    parquet_path = output.finalize_chunks_to_parquet(
+    parquet_path = finalize_test_chunks_to_parquet(
         prepared_output_run.output_run_paths,
         AssociationMode.REGENIE2_BINARY,
     )
@@ -1817,7 +1894,7 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
 
 def test_finalize_parquet_dataset_parts_to_single_parquet(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
@@ -1829,7 +1906,7 @@ def test_finalize_parquet_dataset_parts_to_single_parquet(tmp_path: Path) -> Non
         output_format=types.OutputFormat.PARQUET,
     )
 
-    parquet_path = output.finalize_chunks_to_parquet(
+    parquet_path = finalize_test_chunks_to_parquet(
         prepared_output_run.output_run_paths,
         AssociationMode.REGENIE2_LINEAR,
         output_format=types.OutputFormat.PARQUET,
@@ -1842,13 +1919,13 @@ def test_finalize_parquet_dataset_parts_to_single_parquet(tmp_path: Path) -> Non
 
 def test_output_writer_finish_interrupted_flushes_commits_without_final_parquet(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
     initialize_test_output_run(prepared_output_run, current_header)
-    writer_session = output.create_output_writer_session(
+    writer_session = create_test_output_writer_session(
         prepared_output_run.output_run_paths,
         AssociationMode.REGENIE2_LINEAR,
         writer_thread_count=1,
@@ -1883,14 +1960,14 @@ def test_output_writer_finish_interrupted_flushes_commits_without_final_parquet(
 
 def test_finalize_chunks_to_parquet_writes_empty_schema_when_no_chunks_exist(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
-    prepared_output_run = output.prepare_output_run(
+    prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
     initialize_test_output_run(prepared_output_run, current_header)
 
-    parquet_path = output.finalize_chunks_to_parquet(
+    parquet_path = finalize_test_chunks_to_parquet(
         prepared_output_run.output_run_paths,
         AssociationMode.REGENIE2_LINEAR,
         output_format=types.OutputFormat.PARQUET,

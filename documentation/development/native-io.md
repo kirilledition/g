@@ -16,9 +16,9 @@ delivery, output writing, manifest handling, and resume.
 | `src/sample.rs` | Sample, phenotype, covariate, and prediction alignment. |
 | `src/output/` | Arrow IPC chunks, Parquet parts/finalization, REGENIE text, manifests, resume, and writer sessions. |
 | `src/python/` | PyO3 bindings for native runtime, output, and logging. |
-| `src/g/io/source.py` | Python source configuration and sample-file helpers. |
+| `src/g/io/source.py` | Python BGEN source configuration. |
 | `src/g/io/output.py` | Python output path, manifest, resume, and finalization bridge. |
-| `src/g/engine/native_dispatch.py` | Runtime bridge between execution plans and native engines. |
+| `src/g/engine/native_dispatch/` | Runtime bridge between execution plans and native engines. |
 
 ## BGEN Contract
 

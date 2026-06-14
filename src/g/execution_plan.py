@@ -59,8 +59,8 @@ class KernelConfig:
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     alignment_config: config.GComputeConfig
     multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode
-    binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None
+    binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None
+    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None
 
 
 @dataclass(frozen=True)
@@ -70,31 +70,17 @@ class OutputPlan:
     Attributes:
         output_prefix: User-facing output prefix.
         output_run_root: Root directory for per-phenotype chunked runs.
-        output_format: Requested final output format.
-        finalize_parquet: Whether the native writer should finalize Parquet.
         resume: Whether to resume a previous run.
         resume_mode: Resume validation mode.
-        writer_threads: Number of output writer threads.
-        writer_queue_depth: Output writer queue depth.
-        chunks_per_arrow_file: Number of engine chunks grouped into one output file.
-        arrow_compression: Arrow IPC compression codec.
-        parquet_compression: Parquet dataset part compression codec.
-        output_statistic_dtype: Persisted dtype for public statistic columns.
+        writer_settings: Output writer and finalization settings.
 
     """
 
     output_prefix: Path
     output_run_root: Path
-    output_format: types.OutputFormat
-    finalize_parquet: bool
     resume: bool
     resume_mode: types.ResumeMode
-    writer_threads: int
-    writer_queue_depth: int
-    chunks_per_arrow_file: int
-    arrow_compression: types.ArrowCompression
-    parquet_compression: types.ParquetCompression
-    output_statistic_dtype: types.FloatingPointDtype
+    writer_settings: output.OutputWriterSettings
 
 
 @dataclass(frozen=True)
@@ -134,9 +120,9 @@ class PhenotypeComputeGroup:
     phenotype_indices: tuple[int, ...]
     phenotype_names: tuple[str, ...]
     sample_mode: types.MultiPhenotypeSampleMode
-    sample_set_fingerprint: str | None = None
-    covariate_design_fingerprint: str | None = None
-    prediction_alignment_fingerprint: str | None = None
+    sample_set_fingerprint: str | None
+    covariate_design_fingerprint: str | None
+    prediction_alignment_fingerprint: str | None
 
 
 def build_phenotype_compute_group_id(phenotype_compute_group: PhenotypeComputeGroup) -> str:
@@ -263,22 +249,27 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
     )
 
 
-def build_linear_numerical_config(
-    compute_config: config.GComputeConfig,
-) -> regenie2_linear_config.LinearNumericalConfig:
-    """Build immutable linear JAX numerical settings from public compute config."""
-    return regenie2_linear_config.LinearNumericalConfig(
-        minimum_variance=compute_config.linear_minimum_variance,
-        relative_variance_tolerance=compute_config.linear_relative_variance_tolerance,
-    )
-
-
 def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> RegenieExecutionPlan:
     """Build a complete execution plan from a validated public config."""
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_root = regenie_config.g_output.output_run_directory or output_prefix.with_name(f"{output_prefix.name}.g")
     association_mode = resolve_association_mode(regenie_config.trait.trait_type)
-    output_plan = build_output_plan(regenie_config, output_prefix, output_run_root)
+    output_plan = OutputPlan(
+        output_prefix=output_prefix,
+        output_run_root=output_run_root,
+        resume=regenie_config.g_output.resume,
+        resume_mode=regenie_config.g_output.resume_mode,
+        writer_settings=output.OutputWriterSettings(
+            finalize_parquet=regenie_config.g_output.finalize_parquet,
+            writer_thread_count=regenie_config.g_output.writer_threads,
+            writer_queue_depth=regenie_config.g_output.writer_queue_depth,
+            chunks_per_arrow_file=regenie_config.g_output.chunks_per_arrow_file,
+            arrow_compression=regenie_config.g_output.arrow_compression,
+            parquet_compression=regenie_config.g_output.parquet_compression,
+            output_format=regenie_config.g_output.format,
+            output_statistic_dtype=regenie_config.g_output.output_statistic_dtype,
+        ),
+    )
     kernel_config = build_kernel_config(regenie_config)
     phenotype_run_plans = tuple(
         build_phenotype_run_plan(
@@ -295,9 +286,9 @@ def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> Regeni
     )
     return RegenieExecutionPlan(
         association_mode=association_mode,
-        genotype_source_config=source.build_bgen_source_config(
-            typing.cast("Path", regenie_config.input.bgen),
-            regenie_config.input.sample,
+        genotype_source_config=source.GenotypeSourceConfig(
+            source_path=typing.cast("Path", regenie_config.input.bgen),
+            sample_path=regenie_config.input.sample,
         ),
         phenotype_path=typing.cast("Path", regenie_config.input.pheno_file),
         prediction_list_path=typing.cast("Path", regenie_config.input.pred),
@@ -308,7 +299,11 @@ def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> Regeni
         binary_correction_plan=(
             normalize_binary_correction_config(regenie_config.binary)
             if regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
-            else types.BinaryCorrectionPlan()
+            else types.BinaryCorrectionPlan(
+                method=types.BinaryFallbackMethod.SCORE_ONLY,
+                p_threshold=0.05,
+                firth_se=False,
+            )
         ),
         kernel_config=kernel_config,
         output_plan=output_plan,
@@ -332,6 +327,9 @@ def build_phenotype_compute_groups(
                 phenotype_indices=(0,),
                 phenotype_names=phenotype_names,
                 sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+                sample_set_fingerprint=None,
+                covariate_design_fingerprint=None,
+                prediction_alignment_fingerprint=None,
             ),
         )
     phenotype_indices = tuple(range(len(phenotype_names)))
@@ -342,6 +340,9 @@ def build_phenotype_compute_groups(
                 phenotype_indices=phenotype_indices,
                 phenotype_names=phenotype_names,
                 sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+                sample_set_fingerprint=None,
+                covariate_design_fingerprint=None,
+                prediction_alignment_fingerprint=None,
             ),
         )
     return tuple(
@@ -350,6 +351,9 @@ def build_phenotype_compute_groups(
             phenotype_indices=(phenotype_index,),
             phenotype_names=(phenotype_name,),
             sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+            sample_set_fingerprint=None,
+            covariate_design_fingerprint=None,
+            prediction_alignment_fingerprint=None,
         )
         for phenotype_index, phenotype_name in enumerate(phenotype_names)
     )
@@ -360,28 +364,6 @@ def resolve_association_mode(trait_type: types.RegenieTraitType) -> types.Associ
     if trait_type == types.RegenieTraitType.BINARY:
         return types.AssociationMode.REGENIE2_BINARY
     return types.AssociationMode.REGENIE2_LINEAR
-
-
-def build_output_plan(
-    regenie_config: config.RegenieConfig,
-    output_prefix: Path,
-    output_run_root: Path,
-) -> OutputPlan:
-    """Build output settings from a public config."""
-    return OutputPlan(
-        output_prefix=output_prefix,
-        output_run_root=output_run_root,
-        output_format=regenie_config.g_output.format,
-        finalize_parquet=regenie_config.g_output.finalize_parquet,
-        resume=regenie_config.g_output.resume,
-        resume_mode=regenie_config.g_output.resume_mode,
-        writer_threads=regenie_config.g_output.writer_threads,
-        writer_queue_depth=regenie_config.g_output.writer_queue_depth,
-        chunks_per_arrow_file=regenie_config.g_output.chunks_per_arrow_file,
-        arrow_compression=regenie_config.g_output.arrow_compression,
-        parquet_compression=regenie_config.g_output.parquet_compression,
-        output_statistic_dtype=regenie_config.g_output.output_statistic_dtype,
-    )
 
 
 def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
@@ -406,7 +388,10 @@ def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
             else None
         ),
         linear_numerical_config=(
-            build_linear_numerical_config(regenie_config.g_compute)
+            regenie2_linear_config.LinearNumericalConfig(
+                minimum_variance=regenie_config.g_compute.linear_minimum_variance,
+                relative_variance_tolerance=regenie_config.g_compute.linear_relative_variance_tolerance,
+            )
             if regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
             else None
         ),
@@ -425,7 +410,7 @@ def build_phenotype_run_plan(
     prepared_output_run = output.prepare_output_run(
         output_root=output_plan.output_run_root / output_directory_name,
         association_mode=association_mode,
-        output_format=output_plan.output_format,
+        output_format=output_plan.writer_settings.output_format,
         resume=output_plan.resume,
         resume_mode=output_plan.resume_mode,
     )

@@ -15,10 +15,10 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from g import _core
+from g import _core, types
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import state as regenie2_linear_state
-from g.engine import native_dispatch
+from g.engine.native_dispatch import models as native_dispatch_models
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 
@@ -303,7 +303,7 @@ class LinearVariantDebugCaptureCallback:
     def __init__(
         self,
         *,
-        run_input: native_dispatch.NativeBgenRunInput,
+        run_input: native_dispatch_models.NativeBgenRunInput,
         prediction_source: _core.RegeniePredictionSource,
         selector: VariantSelector,
     ) -> None:
@@ -314,6 +314,7 @@ class LinearVariantDebugCaptureCallback:
         self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
             jnp.asarray(self.run_input.covariate_matrix, dtype=jnp.float32),
             jnp.asarray(self.run_input.phenotype_vector, dtype=jnp.float32),
+            types.FloatingPointDtype.FLOAT32,
         )
         self.chromosome_states: dict[str, regenie2_linear_state.Regenie2LinearChromosomeState] = {}
         self.records: list[VariantDebugRecord] = []
@@ -472,7 +473,7 @@ def capture_g_records(arguments: LinearDebugArguments, selector: VariantSelector
         arguments.variant_limit,
         bool(arguments.trusted_no_missing_diploid),
     )
-    run_input = native_dispatch.build_native_bgen_run_input(
+    run_input = native_dispatch_models.build_native_bgen_run_input(
         engine.align_sample_data(
             sample_path=str(arguments.sample),
             phenotype_path=str(arguments.pheno_file),

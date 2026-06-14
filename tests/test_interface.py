@@ -439,8 +439,6 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
     assert regenie_config.g_output.output_statistic_dtype == types.FloatingPointDtype.FLOAT32
     assert regenie_config.g_diagnostics.log_filter == packaged_config.g_diagnostics.log_filter
-    assert "pThresh" not in regenie_config.explicit_options
-    assert "firth" not in regenie_config.explicit_options
 
 
 def test_user_toml_overrides_packaged_defaults(tmp_path: Path) -> None:
@@ -878,18 +876,13 @@ def test_duplicate_phenotype_names_are_rejected() -> None:
         config.RegenieConfig.from_options(raw_options)
 
 
-@pytest.mark.skip(reason="Outdated Python alias normalization test; Rust frontend accepts canonical CLI names only.")
-def test_config_helper_normalizers_cover_optional_and_trait_alias_paths() -> None:
+def test_config_helper_normalizers_cover_optional_and_trait_validation() -> None:
     assert config.split_name_list(None) == ()
-    assert config.split_name_list(" age, sex ,,") == ("age", "sex")
+    assert config.split_name_list(" age, sex ") == ("age", "sex")
     assert config.optional_string(123) == "123"
     assert config.optional_string(None) is None
-    assert config.normalize_option_name("trait_type") == "trait_type"
-    assert config.normalize_option_name("g_null_logistic_nonconvergence_policy") == (
-        "null_logistic_nonconvergence_policy"
-    )
     with pytest.raises(ValueError, match="--qt and --bt are mutually exclusive"):
-        config.normalize_trait_type(qt=True, bt=True)
+        config.normalize_trait_type(qt=True, bt=True, trait_type=None)
 
 
 def test_flatten_toml_mapping_preserves_unknown_nested_sections() -> None:

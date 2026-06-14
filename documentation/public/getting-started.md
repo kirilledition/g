@@ -29,7 +29,7 @@ The active user workflow is REGENIE Step 2 over BGEN input:
 
 Prepare or locate the files that a REGENIE Step 2 run needs:
 
-- BGEN genotype file and optional Oxford `.sample` file.
+- BGEN genotype file and Oxford `.sample` file unless the BGEN embeds usable sample IDs.
 - Phenotype table.
 - Optional covariate table.
 - REGENIE Step 1 prediction list from upstream `regenie`.

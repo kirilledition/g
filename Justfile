@@ -766,8 +766,8 @@ lint:
 typecheck:
     {{ server_env }} && uv run ty check src tests scripts tooling
 
-# Run all checks (format, lint, typecheck, stub sync check)
-check: format lint typecheck check-core-stub
+# Run all checks (format, lint, typecheck, stub sync check, internal policy checks)
+check: format lint typecheck check-core-stub check-internal-defaults check-internal-init-exports
 
 # Check Python formatting without requiring Nix or direct Cargo access
 format-local-check:
@@ -789,12 +789,20 @@ test-local-focused:
 check-core-stub:
     uv run python -m tooling.cli.debug tool.name=check_pyo3_stub
 
+# Verify production Python code does not hide runtime policy in defaults
+check-internal-defaults:
+    uv run python -m tooling.cli.debug tool.name=check_internal_defaults
+
+# Verify internal package initializers do not re-export aliases
+check-internal-init-exports:
+    uv run python -m tooling.cli.debug tool.name=check_internal_init_exports
+
 # Non-heavy no-Nix test suite
 test-local:
     uv run pytest tests/ -m "not phase0_data and not phase1_parity"
 
 # Local no-Nix verification lane; Rust fmt/clippy still require a full Cargo toolchain
-check-local: format-local-check lint-local typecheck-local test-local-focused check-core-stub
+check-local: format-local-check lint-local typecheck-local test-local-focused check-core-stub check-internal-defaults check-internal-init-exports
 
 # Run CI lint checks without installing the project package
 ci-lint:

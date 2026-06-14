@@ -15,7 +15,9 @@ from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import api as regenie2_linear
-from g.engine import native_dispatch
+from g.engine.native_dispatch import engine as native_dispatch_engine
+from g.engine.native_dispatch import loaders as native_dispatch_loaders
+from g.engine.native_dispatch import models as native_dispatch_models
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -67,11 +69,11 @@ class WarmCacheSignature:
     genotype_path: WarmCacheGenotypePath
     trait_count: int
     score_dtype: types.FloatingPointDtype
-    correction_method: types.BinaryFallbackMethod | None = None
-    correction_p_threshold: float | None = None
-    correction_firth_se: bool | None = None
-    firth_candidate_batch_size: int | None = None
-    firth_candidate_capacity: int | None = None
+    correction_method: types.BinaryFallbackMethod | None
+    correction_p_threshold: float | None
+    correction_firth_se: bool | None
+    firth_candidate_batch_size: int | None
+    firth_candidate_capacity: int | None
 
 
 @dataclass(frozen=True)
@@ -143,6 +145,11 @@ def build_linear_warm_cache_signature(
         genotype_path=genotype_path,
         trait_count=1,
         score_dtype=score_dtype,
+        correction_method=None,
+        correction_p_threshold=None,
+        correction_firth_se=None,
+        firth_candidate_batch_size=None,
+        firth_candidate_capacity=None,
     )
 
 
@@ -213,7 +220,7 @@ def build_synthetic_variant_major_genotype_matrix(
     phenotype_vector: jax.Array,
     variant_count: int,
     is_binary_trait: bool,
-    exact_integer_dosage: bool = False,
+    exact_integer_dosage: bool,
 ) -> jax.Array:
     """Build deterministic variant-major genotype inputs for cache warming."""
     if exact_integer_dosage:
@@ -268,21 +275,22 @@ def warm_regenie2_linear_bgen_cache(
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
-    trusted_no_missing_diploid: bool = False,
-    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
-    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
-    gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    trusted_no_missing_diploid: bool,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
+    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    gpu_genotype_format: types.GpuGenotypeFormat,
+    score_dtype: types.FloatingPointDtype,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for quantitative REGENIE step 2."""
-    engine = native_dispatch.build_bgen_run_engine(
+    engine = native_dispatch_engine.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        trusted_bgen_validator=None,
     )
-    run_input = native_dispatch.load_native_bgen_run_input(
+    run_input = native_dispatch_loaders.load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
         phenotype_path=phenotype_path,
@@ -291,8 +299,10 @@ def warm_regenie2_linear_bgen_cache(
         covariate_names=covariate_names,
         is_binary_trait=False,
         alignment_config=alignment_config,
+        build_native_bgen_run_input_callable=None,
+        load_aligned_sample_data_callable=None,
     )
-    prediction_source = native_dispatch.build_regenie_prediction_source(
+    prediction_source = native_dispatch_loaders.build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
         run_input=run_input,
@@ -368,22 +378,23 @@ def warm_regenie2_binary_bgen_cache(
     chunk_size: int,
     variant_limit: int | None,
     correction_plan: types.BinaryCorrectionPlan,
-    trusted_no_missing_diploid: bool = False,
-    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
-    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
+    trusted_no_missing_diploid: bool,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
+    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    gpu_genotype_format: types.GpuGenotypeFormat,
+    score_dtype: types.FloatingPointDtype,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
-    engine = native_dispatch.build_bgen_run_engine(
+    engine = native_dispatch_engine.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        trusted_bgen_validator=None,
     )
-    run_input = native_dispatch.load_native_bgen_run_input(
+    run_input = native_dispatch_loaders.load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
         phenotype_path=phenotype_path,
@@ -392,8 +403,10 @@ def warm_regenie2_binary_bgen_cache(
         covariate_names=covariate_names,
         is_binary_trait=True,
         alignment_config=alignment_config,
+        build_native_bgen_run_input_callable=None,
+        load_aligned_sample_data_callable=None,
     )
-    prediction_source = native_dispatch.build_regenie_prediction_source(
+    prediction_source = native_dispatch_loaders.build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
         run_input=run_input,
@@ -448,6 +461,8 @@ def warm_regenie2_binary_bgen_cache(
                     packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
                     correction_plan=correction_plan,
                     kernel_config=kernel_config,
+                    sparse_candidate_mask=None,
+                    stage_duration_recorder=None,
                     dosage_sum=native_stats.dosage_sum,
                     observation_count=native_stats.observation_count,
                     score_dtype=score_dtype,
@@ -468,6 +483,8 @@ def warm_regenie2_binary_bgen_cache(
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
                 correction_plan=correction_plan,
                 kernel_config=kernel_config,
+                sparse_candidate_mask=None,
+                stage_duration_recorder=None,
                 dosage_sum=native_stats.dosage_sum,
                 observation_count=native_stats.observation_count,
                 score_dtype=score_dtype,

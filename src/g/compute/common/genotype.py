@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 
-from g import types
 from g.compute.common import dtype as compute_dtype
+
+if typing.TYPE_CHECKING:
+    from g import types
 
 ALLELE_COUNT_MULTIPLIER = 2.0
 EIGHT_BIT_PROBABILITY_DENOMINATOR = 255.0
@@ -32,7 +35,7 @@ class RegenieGenotypeFlipResult:
 
 def convert_sample_major_to_variant_major(
     genotype_matrix: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    score_dtype: types.FloatingPointDtype,
 ) -> jax.Array:
     """Convert sample-major dosages to the canonical variant-major compute layout.
 
@@ -49,7 +52,7 @@ def convert_sample_major_to_variant_major(
 
 def decode_packed8_probability_pairs_to_variant_major_dosage(
     packed_probability_pairs_by_variant: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    score_dtype: types.FloatingPointDtype,
 ) -> jax.Array:
     """Decode trusted unphased 8-bit BGEN probability pairs to variant-major dosage.
 
@@ -74,7 +77,7 @@ def decode_packed8_probability_pairs_to_variant_major_dosage(
 
 def normalize_high_frequency_diploid_genotypes_sample_major(
     genotype_matrix: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    score_dtype: types.FloatingPointDtype,
 ) -> jax.Array:
     """Shift high-frequency diploid dosages to avoid score-kernel cancellation.
 
@@ -98,7 +101,7 @@ def normalize_high_frequency_diploid_genotypes_sample_major(
 
 def normalize_high_frequency_diploid_genotypes_variant_major(
     genotype_matrix_by_variant: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    score_dtype: types.FloatingPointDtype,
 ) -> jax.Array:
     """Shift high-frequency diploid dosages to avoid score-kernel cancellation.
 
@@ -123,7 +126,7 @@ def normalize_high_frequency_diploid_genotypes_variant_major_from_stats(
     genotype_matrix_by_variant: jax.Array,
     dosage_sum: jax.Array,
     observation_count: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    score_dtype: types.FloatingPointDtype,
 ) -> jax.Array:
     """Shift high-frequency diploid dosages using native per-variant statistics.
 
@@ -150,8 +153,8 @@ def normalize_high_frequency_diploid_genotypes_variant_major_from_stats(
 
 def build_regenie_flipped_genotypes(
     genotype_matrix_by_variant: jax.Array,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
 ) -> RegenieGenotypeFlipResult:
     """Code variant-major genotypes the way REGENIE does before testing.
 

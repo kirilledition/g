@@ -48,7 +48,7 @@ class GracefulShutdownRequested(Exception):  # noqa: N818
 class GracefulShutdownController:
     """Install process signal handlers that request one graceful drain."""
 
-    def __init__(self, handled_signals: tuple[signal.Signals, ...] | None = None) -> None:
+    def __init__(self, handled_signals: tuple[signal.Signals, ...] | None) -> None:
         """Initialize the controller."""
         self.handled_signals = handled_signals or (signal.SIGINT, signal.SIGTERM)
         self.previous_handlers: dict[signal.Signals, typing.Any] = {}
@@ -114,4 +114,4 @@ def raise_second_signal_exception(shutdown_signal: ShutdownSignal) -> typing.NoR
 
 def install_graceful_shutdown_handlers() -> GracefulShutdownController:
     """Create a controller that installs default graceful shutdown handlers."""
-    return GracefulShutdownController()
+    return GracefulShutdownController(handled_signals=None)

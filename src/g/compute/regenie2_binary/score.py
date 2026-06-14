@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import typing
+
 import jax
 import jax.numpy as jnp
 
-from g import types
 from g.compute.common import dtype as compute_dtype
 from g.compute.common import genotype, pvalue
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import correction as regenie2_binary_correction
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
+
+if typing.TYPE_CHECKING:
+    from g import types
 
 
 def compute_positive_variance_mask(
@@ -42,9 +46,9 @@ def compute_binary_score_test_chunk_variant_major(
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Compute the binary score test from canonical variant-major genotypes.
 
@@ -79,9 +83,9 @@ def compute_multi_binary_score_test_chunk_variant_major(
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
+    score_dtype: types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute batched binary score tests for trait-major states and variant-major genotypes.
 
@@ -180,7 +184,7 @@ def compute_multi_binary_score_test_chunk_variant_major(
     )
     valid_mask = null_logistic_converged & jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     extra_code = regenie2_binary_correction.build_extra_code(log10_p_value, valid_mask, correction_plan)
-    return regenie2_binary_result.build_multi_binary_score_test_chunk_result(
+    return regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
@@ -192,8 +196,8 @@ def compute_multi_binary_score_test_chunk_variant_major(
 
 def compute_genotype_mean(
     genotype_matrix_by_variant: jax.Array,
-    dosage_sum: jax.Array | None = None,
-    observation_count: jax.Array | None = None,
+    dosage_sum: jax.Array | None,
+    observation_count: jax.Array | None,
 ) -> jax.Array:
     """Compute per-variant genotype means from native stats when available."""
     if dosage_sum is None or observation_count is None:

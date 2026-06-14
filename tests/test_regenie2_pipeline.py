@@ -13,6 +13,25 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import g.engine.callbacks.binary as callback_binary
+import g.engine.callbacks.diagnostics as callback_diagnostics
+import g.engine.callbacks.grouped as callback_grouped
+import g.engine.callbacks.linear as callback_linear
+import g.engine.callbacks.runtime as callback_runtime
+import g.engine.callbacks.shared as callback_shared
+import g.engine.callbacks.transfers as callback_transfers
+import g.engine.callbacks.writers as callback_writers
+import g.engine.native_dispatch.delivery as native_dispatch_delivery
+import g.engine.native_dispatch.engine as native_dispatch_engine
+import g.engine.native_dispatch.groups as native_dispatch_groups
+import g.engine.native_dispatch.loaders as native_dispatch_loaders
+import g.engine.native_dispatch.models as native_dispatch_models
+import g.engine.native_dispatch.writers as native_dispatch_writers
+import g.engine.regenie2_pipeline.context as pipeline_context
+import g.engine.regenie2_pipeline.multi_group as pipeline_multi_group
+import g.engine.regenie2_pipeline.multi_trait as pipeline_multi_trait
+import g.engine.regenie2_pipeline.outputs as pipeline_outputs
+import g.engine.regenie2_pipeline.single_trait as pipeline_single_trait
 from g import execution_plan, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
@@ -22,7 +41,7 @@ from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import state as regenie2_linear_state
-from g.engine import callbacks, native_dispatch, regenie2_pipeline, shutdown, timing
+from g.engine import shutdown, timing
 from g.interface import config as interface_config
 from g.io import output, source
 
@@ -32,14 +51,309 @@ def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelC
     return execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
 
 
+SCORE_ONLY_PLAN = types.BinaryCorrectionPlan(
+    method=types.BinaryFallbackMethod.SCORE_ONLY,
+    p_threshold=0.05,
+    firth_se=False,
+)
+
+
+def build_test_genotype_source_config(
+    source_path: Path,
+    sample_path: Path | None = None,
+) -> source.GenotypeSourceConfig:
+    """Build genotype source config with an explicit sample path field."""
+    return source.GenotypeSourceConfig(source_path=source_path, sample_path=sample_path)
+
+
+def build_test_output_writer_settings(
+    *,
+    finalize_parquet: bool,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
+    parquet_compression: types.ParquetCompression,
+    arrow_compression: types.ArrowCompression,
+    output_format: types.OutputFormat,
+    output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> output.OutputWriterSettings:
+    """Build writer settings with explicit output statistic dtype."""
+    return output.OutputWriterSettings(
+        finalize_parquet=finalize_parquet,
+        writer_thread_count=writer_thread_count,
+        writer_queue_depth=writer_queue_depth,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        parquet_compression=parquet_compression,
+        arrow_compression=arrow_compression,
+        output_format=output_format,
+        output_statistic_dtype=output_statistic_dtype,
+    )
+
+
+def build_test_binary_pipeline_callback(
+    *,
+    run_input: typing.Any,
+    prediction_source: typing.Any,
+    writer_session: typing.Any,
+    correction_plan: types.BinaryCorrectionPlan = SCORE_ONLY_PLAN,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
+        types.NullLogisticNonconvergencePolicy.FAIL
+    ),
+    staging_depth: int = 2,
+    result_in_flight_limit: int | None = None,
+    dosage_buffer_limit: int | None = None,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: typing.Any = None,
+    output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> callback_binary.BinaryRegenie2PipelineCallback:
+    """Build binary callback tests with explicit production arguments."""
+    return callback_binary.BinaryRegenie2PipelineCallback(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        writer_session=writer_session,
+        correction_plan=correction_plan,
+        kernel_config=kernel_config,
+        null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+        staging_depth=staging_depth,
+        result_in_flight_limit=result_in_flight_limit,
+        dosage_buffer_limit=dosage_buffer_limit,
+        score_dtype=score_dtype,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+        output_statistic_dtype=output_statistic_dtype,
+    )
+
+
+def build_test_regenie2_pipeline_context(**keyword_arguments: typing.Any) -> pipeline_context.Regenie2PipelineContext:
+    """Build pipeline context with explicit optional test defaults."""
+    keyword_arguments.setdefault(
+        "phenotype_compute_groups",
+        execution_plan.build_phenotype_compute_groups(
+            phenotype_names=("trait",),
+            multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        ),
+    )
+    keyword_arguments.setdefault("output_initialized_callback", None)
+    return pipeline_context.build_regenie2_pipeline_context(**keyword_arguments)
+
+
+def open_test_pipeline_bgen_engine(**keyword_arguments: typing.Any) -> typing.Any:
+    """Open a pipeline BGEN engine with explicit optional test defaults."""
+    keyword_arguments.setdefault("phenotype_count", None)
+    return pipeline_outputs.open_pipeline_bgen_engine(**keyword_arguments)
+
+
+def build_test_linear_pipeline_callback(
+    *,
+    run_input: typing.Any,
+    prediction_source: typing.Any,
+    writer_session: typing.Any,
+    staging_depth: int = 2,
+    result_in_flight_limit: int | None = None,
+    dosage_buffer_limit: int | None = None,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
+    stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: typing.Any = None,
+    output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> callback_linear.LinearRegenie2PipelineCallback:
+    """Build linear callback tests with explicit production arguments."""
+    return callback_linear.LinearRegenie2PipelineCallback(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        writer_session=writer_session,
+        staging_depth=staging_depth,
+        result_in_flight_limit=result_in_flight_limit,
+        dosage_buffer_limit=dosage_buffer_limit,
+        score_dtype=score_dtype,
+        linear_numerical_config=linear_numerical_config,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+        output_statistic_dtype=output_statistic_dtype,
+    )
+
+
+def build_test_multi_linear_pipeline_callback(
+    *,
+    run_input: typing.Any,
+    prediction_source: typing.Any,
+    writer_sessions: tuple[typing.Any, ...],
+    committed_chunk_identifier_sets: tuple[set[int], ...],
+    staging_depth: int = 2,
+    result_in_flight_limit: int | None = None,
+    dosage_buffer_limit: int | None = None,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
+    stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: typing.Any = None,
+    output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> callback_linear.MultiLinearRegenie2PipelineCallback:
+    """Build multi-trait linear callback tests with explicit production arguments."""
+    return callback_linear.MultiLinearRegenie2PipelineCallback(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+        staging_depth=staging_depth,
+        result_in_flight_limit=result_in_flight_limit,
+        dosage_buffer_limit=dosage_buffer_limit,
+        score_dtype=score_dtype,
+        linear_numerical_config=linear_numerical_config,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+        output_statistic_dtype=output_statistic_dtype,
+    )
+
+
+def build_test_multi_binary_pipeline_callback(
+    *,
+    run_input: typing.Any,
+    prediction_source: typing.Any,
+    writer_sessions: tuple[typing.Any, ...],
+    committed_chunk_identifier_sets: tuple[set[int], ...],
+    correction_plan: types.BinaryCorrectionPlan = SCORE_ONLY_PLAN,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
+        types.NullLogisticNonconvergencePolicy.FAIL
+    ),
+    staging_depth: int = 2,
+    result_in_flight_limit: int | None = None,
+    dosage_buffer_limit: int | None = None,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: typing.Any = None,
+    output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> callback_binary.MultiBinaryRegenie2PipelineCallback:
+    """Build multi-trait binary callback tests with explicit production arguments."""
+    return callback_binary.MultiBinaryRegenie2PipelineCallback(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+        correction_plan=correction_plan,
+        kernel_config=kernel_config,
+        null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+        staging_depth=staging_depth,
+        result_in_flight_limit=result_in_flight_limit,
+        dosage_buffer_limit=dosage_buffer_limit,
+        score_dtype=score_dtype,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+        output_statistic_dtype=output_statistic_dtype,
+    )
+
+
+def run_test_bgen_engine_with_callback(**keyword_arguments: typing.Any) -> Path | None:
+    """Run native delivery with explicit optional test defaults."""
+    keyword_arguments.setdefault("variant_major_packed8_probability_pairs", False)
+    keyword_arguments.setdefault("stage_timing_snapshot_writer", timing.write_stage_timing_snapshot)
+    return native_dispatch_delivery.run_bgen_engine_with_callback(**keyword_arguments)
+
+
+def run_test_bgen_engine_with_multi_callback(**keyword_arguments: typing.Any) -> tuple[Path | None, ...]:
+    """Run native multi-delivery with explicit optional test defaults."""
+    keyword_arguments.setdefault("writer_finish_thread_count", 1)
+    keyword_arguments.setdefault("variant_major_packed8_probability_pairs", False)
+    return pipeline_multi_group.run_bgen_engine_with_multi_callback(**keyword_arguments)
+
+
+def _add_single_pipeline_defaults(keyword_arguments: dict[str, typing.Any]) -> None:
+    keyword_arguments.setdefault("staging_depth", 2)
+    keyword_arguments.setdefault("result_in_flight_limit", None)
+    keyword_arguments.setdefault("dosage_buffer_limit", None)
+    keyword_arguments.setdefault("existing_manifest", None)
+    keyword_arguments.setdefault("resume", False)
+    keyword_arguments.setdefault("resume_mode", types.ResumeMode.FAST)
+    keyword_arguments.setdefault("trusted_no_missing_diploid", False)
+    keyword_arguments.setdefault("trusted_bgen_validation_mode", types.TrustedBgenValidationMode.CACHE_ON_MISS)
+    keyword_arguments.setdefault("jax_device", types.Device.CPU)
+    keyword_arguments.setdefault("jax_matmul_precision", None)
+    keyword_arguments.setdefault("gpu_genotype_format", types.GpuGenotypeFormat.DOSAGE)
+    keyword_arguments.setdefault("stage_timing_recorder", None)
+    keyword_arguments.setdefault("telemetry_session", None)
+    keyword_arguments.setdefault("alignment_config", None)
+    keyword_arguments.setdefault("output_initialized_callback", None)
+
+
+def run_test_regenie2_linear_bgen_pipeline(**keyword_arguments: typing.Any) -> Path | None:
+    """Run linear pipeline tests with explicit production arguments."""
+    _add_single_pipeline_defaults(keyword_arguments)
+    keyword_arguments.setdefault("linear_numerical_config", None)
+    return pipeline_single_trait.run_regenie2_linear_bgen_pipeline(**keyword_arguments)
+
+
+def run_test_regenie2_binary_bgen_pipeline(**keyword_arguments: typing.Any) -> Path | None:
+    """Run binary pipeline tests with explicit production arguments."""
+    _add_single_pipeline_defaults(keyword_arguments)
+    keyword_arguments.setdefault("correction_plan", SCORE_ONLY_PLAN)
+    keyword_arguments.setdefault("kernel_config", build_default_binary_kernel_config())
+    keyword_arguments.setdefault("null_logistic_nonconvergence_policy", types.NullLogisticNonconvergencePolicy.FAIL)
+    return pipeline_single_trait.run_regenie2_binary_bgen_pipeline(**keyword_arguments)
+
+
+def _add_multi_pipeline_defaults(keyword_arguments: dict[str, typing.Any]) -> None:
+    keyword_arguments.setdefault("staging_depth", 2)
+    keyword_arguments.setdefault("result_in_flight_limit", None)
+    keyword_arguments.setdefault("dosage_buffer_limit", None)
+    keyword_arguments.setdefault("existing_manifests_by_phenotype", None)
+    keyword_arguments.setdefault("resume", False)
+    keyword_arguments.setdefault("resume_mode", types.ResumeMode.FAST)
+    keyword_arguments.setdefault("trusted_no_missing_diploid", False)
+    keyword_arguments.setdefault("trusted_bgen_validation_mode", types.TrustedBgenValidationMode.CACHE_ON_MISS)
+    keyword_arguments.setdefault("jax_device", types.Device.CPU)
+    keyword_arguments.setdefault("jax_matmul_precision", None)
+    keyword_arguments.setdefault("gpu_genotype_format", types.GpuGenotypeFormat.DOSAGE)
+    keyword_arguments.setdefault("stage_timing_recorder", None)
+    keyword_arguments.setdefault("telemetry_session", None)
+    keyword_arguments.setdefault("alignment_config", None)
+    keyword_arguments.setdefault("sample_mode", None)
+    keyword_arguments.setdefault("phenotype_compute_groups", None)
+    keyword_arguments.setdefault("output_initialized_callback", None)
+
+
+def run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+    **keyword_arguments: typing.Any,
+) -> tuple[Path | None, ...]:
+    """Run multi-phenotype linear pipeline tests with explicit production arguments."""
+    _add_multi_pipeline_defaults(keyword_arguments)
+    keyword_arguments.setdefault("linear_numerical_config", None)
+    return pipeline_multi_trait.run_regenie2_multi_phenotype_linear_bgen_pipeline(**keyword_arguments)
+
+
+def run_test_regenie2_multi_phenotype_binary_bgen_pipeline(
+    **keyword_arguments: typing.Any,
+) -> tuple[Path | None, ...]:
+    """Run multi-phenotype binary pipeline tests with explicit production arguments."""
+    _add_multi_pipeline_defaults(keyword_arguments)
+    keyword_arguments.setdefault("correction_plan", SCORE_ONLY_PLAN)
+    keyword_arguments.setdefault("kernel_config", build_default_binary_kernel_config())
+    keyword_arguments.setdefault("null_logistic_nonconvergence_policy", types.NullLogisticNonconvergencePolicy.FAIL)
+    return pipeline_multi_trait.run_regenie2_multi_phenotype_binary_bgen_pipeline(**keyword_arguments)
+
+
+def build_test_bgen_run_engine(**keyword_arguments: typing.Any) -> typing.Any:
+    """Build a native run engine with explicit optional test defaults."""
+    keyword_arguments.setdefault("trusted_no_missing_diploid", False)
+    keyword_arguments.setdefault("trusted_bgen_validation_mode", types.TrustedBgenValidationMode.CACHE_ON_MISS)
+    keyword_arguments.setdefault("trusted_bgen_validator", None)
+    return native_dispatch_engine.build_bgen_run_engine(**keyword_arguments)
+
+
+def load_test_native_bgen_run_input(**keyword_arguments: typing.Any) -> native_dispatch_models.NativeBgenRunInput:
+    """Load native run input with explicit optional injection points."""
+    keyword_arguments.setdefault("alignment_config", None)
+    keyword_arguments.setdefault("build_native_bgen_run_input_callable", None)
+    keyword_arguments.setdefault("load_aligned_sample_data_callable", None)
+    return native_dispatch_loaders.load_native_bgen_run_input(**keyword_arguments)
+
+
 @dataclasses.dataclass(frozen=True)
 class PipelineRuntimeOptions:
     """Runtime options that pipeline tests pass explicitly."""
 
-    writer_thread_count: int
-    writer_queue_depth: int
-    chunks_per_arrow_file: int
-    parquet_compression: types.ParquetCompression
+    writer_settings: output.OutputWriterSettings
     bgen_decode_tile_variant_count: int
     score_dtype: types.FloatingPointDtype
     firth_dtype: types.FloatingPointDtype
@@ -51,17 +365,23 @@ def build_default_pipeline_runtime_options() -> PipelineRuntimeOptions:
     compute_config = packaged_config.g_compute
     output_config = packaged_config.g_output
     return PipelineRuntimeOptions(
-        writer_thread_count=output_config.writer_threads,
-        writer_queue_depth=output_config.writer_queue_depth,
-        chunks_per_arrow_file=output_config.chunks_per_arrow_file,
-        parquet_compression=output_config.parquet_compression,
+        writer_settings=build_test_output_writer_settings(
+            finalize_parquet=output_config.finalize_parquet,
+            writer_thread_count=output_config.writer_threads,
+            writer_queue_depth=output_config.writer_queue_depth,
+            chunks_per_arrow_file=output_config.chunks_per_arrow_file,
+            arrow_compression=output_config.arrow_compression,
+            parquet_compression=output_config.parquet_compression,
+            output_format=output_config.format,
+            output_statistic_dtype=output_config.output_statistic_dtype,
+        ),
         bgen_decode_tile_variant_count=compute_config.bgen_decode_tile_variant_count,
         score_dtype=compute_config.score_dtype,
         firth_dtype=compute_config.firth_dtype,
     )
 
 
-def write_test_run_manifest(output_run_paths: output.OutputRunPaths, header: dict[str, object]) -> bytes:
+def write_test_run_manifest(output_run_paths: output.OutputRunPaths, header: typing.Mapping[str, object]) -> bytes:
     """Write a minimal run manifest and return its bytes."""
     output.write_run_manifest(output_run_paths, {**header, "committed_chunks": []})
     return output.get_run_manifest_path(output_run_paths).read_bytes()
@@ -195,7 +515,8 @@ class RecordingTelemetrySession:
         self.events: list[tuple[str, dict[str, object]]] = []
         self.progress_events: list[dict[str, object]] = []
 
-    def log_event(self, event_name: str, **fields: object) -> None:
+    def log_event(self, event_name: str, level: str, **fields: object) -> None:
+        del level
         self.events.append((event_name, fields))
 
     def log_progress(self, **fields: object) -> None:
@@ -217,20 +538,22 @@ class NoFinalWriterSession:
 def test_require_current_chromosome_state_returns_prepared_state() -> None:
     chromosome_state = object()
 
-    resolved_state = callbacks.require_current_chromosome_state(chromosome_state, chromosome="chr22")
+    resolved_state = callback_runtime.require_current_chromosome_state(chromosome_state, chromosome="chr22")
 
     assert resolved_state is chromosome_state
 
 
 def test_require_current_chromosome_state_raises_clear_error_when_missing() -> None:
     with pytest.raises(RuntimeError, match="Chromosome state for 'chr22' was not prepared"):
-        callbacks.require_current_chromosome_state(None, chromosome="chr22")
+        callback_runtime.require_current_chromosome_state(None, chromosome="chr22")
 
 
 def test_cast_statistic_array_for_native_writer_uses_public_float32_schema() -> None:
     precise_values = np.asarray([1.0, 1.0 + 2.0**-30], dtype=np.float64)
 
-    writer_values = callbacks.cast_statistic_array_for_native_writer(precise_values, types.FloatingPointDtype.FLOAT32)
+    writer_values = callback_transfers.cast_statistic_array_for_native_writer(
+        precise_values, types.FloatingPointDtype.FLOAT32
+    )
 
     assert writer_values.dtype == np.float32
     np.testing.assert_array_equal(writer_values, precise_values.astype(np.float32))
@@ -239,7 +562,9 @@ def test_cast_statistic_array_for_native_writer_uses_public_float32_schema() -> 
 def test_cast_statistic_array_for_native_writer_preserves_public_float64_schema() -> None:
     precise_values = np.asarray([1.0, 1.0 + 2.0**-30], dtype=np.float64)
 
-    writer_values = callbacks.cast_statistic_array_for_native_writer(precise_values, types.FloatingPointDtype.FLOAT64)
+    writer_values = callback_transfers.cast_statistic_array_for_native_writer(
+        precise_values, types.FloatingPointDtype.FLOAT64
+    )
 
     assert writer_values.dtype == np.float64
     np.testing.assert_array_equal(writer_values, precise_values)
@@ -250,7 +575,7 @@ def test_write_regenie2_native_chunk_downcasts_float64_statistics_before_writing
     precise_values = np.asarray([1.0, 1.0 + 2.0**-30], dtype=np.float64)
     extra_code = np.asarray([0, 3], dtype=np.int32)
 
-    callbacks.write_regenie2_native_chunk_with_optional_timing(
+    callback_writers.write_regenie2_native_chunk_with_optional_timing(
         writer_session=writer_session,
         metadata=typing.cast("typing.Any", SimpleNamespace()),
         chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
@@ -303,7 +628,7 @@ def test_finish_writer_sessions_uses_bounded_concurrent_pool() -> None:
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         finish_future = executor.submit(
-            native_dispatch.finish_writer_sessions,
+            native_dispatch_writers.finish_writer_sessions,
             writer_sessions=(
                 BlockingWriterSession("trait-a"),
                 BlockingWriterSession("trait-b"),
@@ -332,10 +657,10 @@ def test_finish_writer_sessions_uses_bounded_concurrent_pool() -> None:
 
 def test_write_regenie2_native_chunk_records_per_chunk_output_timing() -> None:
     writer_session = FakeWriterSession()
-    stage_timing_recorder = timing.StageTimingRecorder()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     metadata = build_native_metadata()
 
-    callbacks.write_regenie2_native_chunk_with_optional_timing(
+    callback_writers.write_regenie2_native_chunk_with_optional_timing(
         writer_session=writer_session,
         metadata=metadata,
         chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
@@ -364,7 +689,7 @@ def test_write_regenie2_native_chunk_records_per_chunk_output_timing() -> None:
 def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_extra_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(callbacks.writers, "time", FailingPerfCounterClock)
+    monkeypatch.setattr(callback_writers, "time", FailingPerfCounterClock)
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
     metadata = build_native_metadata()
     chunk_stats = typing.cast("typing.Any", SimpleNamespace())
@@ -376,7 +701,7 @@ def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_ext
         dtype=jnp.int32,
     )
 
-    callbacks.write_regenie2_multi_native_chunk_with_optional_timing(
+    callback_writers.write_regenie2_multi_native_chunk_with_optional_timing(
         writer_sessions=writer_sessions,
         committed_chunk_identifier_sets=(set(), {metadata.variant_start_index}),
         metadata=metadata,
@@ -418,9 +743,9 @@ def test_write_regenie2_multi_native_chunk_materializes_only_active_trait_rows(
             host_values[key] = np.asarray(device_array)
         return host_values
 
-    monkeypatch.setattr(callbacks.jax, "device_get", recording_device_get)
+    monkeypatch.setattr(callback_shared.jax, "device_get", recording_device_get)
 
-    callbacks.write_regenie2_multi_native_chunk_with_optional_timing(
+    callback_writers.write_regenie2_multi_native_chunk_with_optional_timing(
         writer_sessions=writer_sessions,
         committed_chunk_identifier_sets=({metadata.variant_start_index}, set()),
         metadata=metadata,
@@ -462,10 +787,10 @@ def test_write_regenie2_multi_native_chunk_skips_device_get_when_all_traits_comm
         del value
         raise AssertionError("device_get should not run when all trait chunks are committed")
 
-    monkeypatch.setattr(callbacks.jax, "device_get", fail_device_get)
-    monkeypatch.setattr(callbacks.writers, "time", FailingPerfCounterClock)
+    monkeypatch.setattr(callback_shared.jax, "device_get", fail_device_get)
+    monkeypatch.setattr(callback_writers, "time", FailingPerfCounterClock)
 
-    callbacks.write_regenie2_multi_native_chunk_with_optional_timing(
+    callback_writers.write_regenie2_multi_native_chunk_with_optional_timing(
         writer_sessions=writer_sessions,
         committed_chunk_identifier_sets=(
             {metadata.variant_start_index},
@@ -496,8 +821,8 @@ def test_chunk_stats_helpers_use_bundled_compute_arrays_with_path_specific_field
     linear_chunk_stats = BundledChunkStats()
     binary_chunk_stats = BundledChunkStats()
 
-    linear_arrays = callbacks.get_linear_chunk_stats_arrays(typing.cast("typing.Any", linear_chunk_stats))
-    binary_arrays = callbacks.get_binary_chunk_stats_arrays(
+    linear_arrays = callback_transfers.get_linear_chunk_stats_arrays(typing.cast("typing.Any", linear_chunk_stats))
+    binary_arrays = callback_transfers.get_binary_chunk_stats_arrays(
         typing.cast("typing.Any", binary_chunk_stats),
         include_sparse_firth_candidate=True,
     )
@@ -531,7 +856,7 @@ def test_binary_chunk_diagnostics_are_detailed_only_for_exact_timing() -> None:
         extra_code=jnp.asarray([types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.FIRTH.value], dtype=jnp.int32),
         valid_mask=jnp.asarray([True, True]),
     )
-    aggregate_recorder = timing.StageTimingRecorder()
+    aggregate_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     exact_recorder = timing.StageTimingRecorder(exact_stage_timings=True)
     diagnostics = SimpleNamespace(
         score_only_count=1,
@@ -557,8 +882,8 @@ def test_binary_chunk_diagnostics_are_detailed_only_for_exact_timing() -> None:
     )
 
     with patch("g.compute.regenie2_binary.api.count_binary_chunk_diagnostics", return_value=diagnostics) as mock_count:
-        callbacks.record_binary_chunk_diagnostics(stage_timing_recorder=aggregate_recorder, result=result)
-        callbacks.record_binary_chunk_diagnostics(stage_timing_recorder=exact_recorder, result=result)
+        callback_diagnostics.record_binary_chunk_diagnostics(stage_timing_recorder=aggregate_recorder, result=result)
+        callback_diagnostics.record_binary_chunk_diagnostics(stage_timing_recorder=exact_recorder, result=result)
 
     mock_count.assert_called_once_with(result)
     assert aggregate_recorder.snapshot().binary_chunk_diagnostics == ()
@@ -589,13 +914,13 @@ def test_binary_chunk_diagnostics_are_detailed_only_for_exact_timing() -> None:
 
 
 def test_binary_compute_preprocessed_chunk_collects_summary_diagnostics_for_worker_consumption() -> None:
-    callback = callbacks.BinaryRegenie2PipelineCallback(
+    callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=FakeWriterSession(),
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=build_default_binary_kernel_config(),
-        stage_timing_recorder=timing.StageTimingRecorder(),
+        stage_timing_recorder=timing.StageTimingRecorder(exact_stage_timings=False),
     )
     chunk_stats = typing.cast("typing.Any", SparseOnlyChunkStats())
     chromosome_state = build_binary_chromosome_state()
@@ -635,11 +960,11 @@ def test_binary_compute_preprocessed_chunk_collects_summary_diagnostics_for_work
 
 
 def test_binary_compute_preprocessed_chunk_collects_diagnostics_with_exact_timing() -> None:
-    callback = callbacks.BinaryRegenie2PipelineCallback(
+    callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=FakeWriterSession(),
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=build_default_binary_kernel_config(),
         stage_timing_recorder=timing.StageTimingRecorder(exact_stage_timings=True),
     )
@@ -685,19 +1010,20 @@ def test_binary_compute_preprocessed_chunk_collects_diagnostics_with_exact_timin
 
 
 def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> None:
-    callback = callbacks.BinaryRegenie2PipelineCallback(
+    callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=FakeWriterSession(),
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=build_default_binary_kernel_config(),
+        telemetry_session=typing.cast("typing.Any", RecordingTelemetrySession()),
     )
     callback.result_queue = queue.Queue(maxsize=2)
     diagnostics = typing.cast(
         "regenie2_binary.BinaryChunkDiagnostics",
         SimpleNamespace(score_test_candidate_count=2),
     )
-    work_item = callbacks.Regenie2ResultWriteWorkItem(
+    work_item = callback_shared.Regenie2ResultWriteWorkItem(
         metadata=build_native_metadata(),
         chunk_stats=typing.cast("typing.Any", ExplodingChunkStats()),
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
@@ -747,8 +1073,8 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
         diagnostics=diagnostics,
     )
     mock_mapping.assert_called_once_with(diagnostics)
-    assert callback.binary_correction_summary["score_only_count"] == 1
-    assert callback.binary_correction_summary["score_test_candidate_count"] == 2
+    assert callback.binary_correction_summary.score_only_count == 1
+    assert callback.binary_correction_summary.score_test_candidate_count == 2
 
 
 class FakeRunEngine:
@@ -904,8 +1230,8 @@ def build_native_aligned_sample_data() -> SimpleNamespace:
     )
 
 
-def build_native_run_input() -> native_dispatch.NativeBgenRunInput:
-    return native_dispatch.NativeBgenRunInput(
+def build_native_run_input() -> native_dispatch_models.NativeBgenRunInput:
+    return native_dispatch_models.NativeBgenRunInput(
         native_aligned_sample_data=typing.cast("typing.Any", build_native_aligned_sample_data()),
         sample_indices=np.asarray([1, 0], dtype=np.int64),
         phenotype_vector=np.asarray([0.0, 1.0], dtype=np.float32),
@@ -917,18 +1243,18 @@ def build_native_run_input() -> native_dispatch.NativeBgenRunInput:
 def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
     telemetry_session = RecordingTelemetrySession()
     pipeline_options = build_default_pipeline_runtime_options()
-    writer_settings = regenie2_pipeline.build_output_writer_settings(
+    writer_settings = build_test_output_writer_settings(
         finalize_parquet=False,
-        writer_thread_count=pipeline_options.writer_thread_count,
-        writer_queue_depth=pipeline_options.writer_queue_depth,
-        chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-        parquet_compression=pipeline_options.parquet_compression,
+        writer_thread_count=pipeline_options.writer_settings.writer_thread_count,
+        writer_queue_depth=pipeline_options.writer_settings.writer_queue_depth,
+        chunks_per_arrow_file=pipeline_options.writer_settings.chunks_per_arrow_file,
+        parquet_compression=pipeline_options.writer_settings.parquet_compression,
         arrow_compression=types.ArrowCompression.ZSTD,
         output_format=types.OutputFormat.PARQUET,
     )
-    context = regenie2_pipeline.build_regenie2_pipeline_context(
+    context = build_test_regenie2_pipeline_context(
         association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
         phenotype_path=Path("phenotype.tsv"),
         prediction_list_path=Path("pred.list"),
         covariate_path=None,
@@ -942,7 +1268,7 @@ def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
         score_dtype=pipeline_options.score_dtype,
         firth_dtype=pipeline_options.firth_dtype,
         gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         binary_kernel_config=None,
         linear_numerical_config=None,
         writer_settings=writer_settings,
@@ -952,8 +1278,8 @@ def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
     )
     engine = FakeRunEngine("study.bgen", chunk_size=32, trusted_no_missing_diploid=True)
 
-    with patch("g.engine.regenie2_pipeline.native_dispatch.build_bgen_run_engine", return_value=engine):
-        opened_engine = regenie2_pipeline.open_pipeline_bgen_engine(
+    with patch("g.engine.regenie2_pipeline.outputs.native_dispatch_engine.build_bgen_run_engine", return_value=engine):
+        opened_engine = open_test_pipeline_bgen_engine(
             context=context,
             pipeline_label="linear",
             phenotype_name="trait",
@@ -980,7 +1306,7 @@ def build_native_run_input_with_alignment(
     sample_indices: tuple[int, ...],
     phenotype_values: tuple[float, ...],
     covariate_values: tuple[tuple[float, ...], ...],
-) -> native_dispatch.NativeBgenRunInput:
+) -> native_dispatch_models.NativeBgenRunInput:
     native_aligned_sample_data = SimpleNamespace(
         sample_indices=np.asarray(sample_indices, dtype=np.int64),
         family_identifiers=[f"family{sample_index}" for sample_index in sample_indices],
@@ -991,7 +1317,7 @@ def build_native_run_input_with_alignment(
         covariate_matrix=np.asarray(covariate_values, dtype=np.float32),
         is_binary_trait=False,
     )
-    return native_dispatch.NativeBgenRunInput(
+    return native_dispatch_models.NativeBgenRunInput(
         native_aligned_sample_data=typing.cast("typing.Any", native_aligned_sample_data),
         sample_indices=np.asarray(sample_indices, dtype=np.int64),
         phenotype_vector=np.asarray(phenotype_values, dtype=np.float32),
@@ -1004,8 +1330,8 @@ def build_grouped_run_input_from_single_trait_inputs(
     *,
     phenotype_indices: tuple[int, ...],
     phenotype_names: tuple[str, ...],
-    run_inputs: tuple[native_dispatch.NativeBgenRunInput, ...],
-) -> native_dispatch.NativeBgenGroupedRunInput:
+    run_inputs: tuple[native_dispatch_models.NativeBgenRunInput, ...],
+) -> native_dispatch_models.NativeBgenGroupedRunInput:
     first_run_input = run_inputs[0]
     native_multi_aligned_sample_data = SimpleNamespace(
         phenotype_names=phenotype_names,
@@ -1020,7 +1346,7 @@ def build_grouped_run_input_from_single_trait_inputs(
         covariate_matrix=np.asarray(first_run_input.covariate_matrix, dtype=np.float32),
         is_binary_trait=first_run_input.is_binary_trait,
     )
-    run_input = native_dispatch.NativeBgenMultiRunInput(
+    run_input = native_dispatch_models.NativeBgenMultiRunInput(
         native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
         phenotype_names=phenotype_names,
         sample_indices=np.ascontiguousarray(native_multi_aligned_sample_data.sample_indices, dtype=np.int64),
@@ -1028,8 +1354,8 @@ def build_grouped_run_input_from_single_trait_inputs(
         covariate_matrix=np.asarray(native_multi_aligned_sample_data.covariate_matrix, dtype=np.float32),
         is_binary_trait=native_multi_aligned_sample_data.is_binary_trait,
     )
-    return native_dispatch.NativeBgenGroupedRunInput(
-        compute_group=native_dispatch.build_resolved_phenotype_compute_group(
+    return native_dispatch_models.NativeBgenGroupedRunInput(
+        compute_group=native_dispatch_groups.build_resolved_phenotype_compute_group(
             phenotype_indices=phenotype_indices,
             run_input=run_input,
             prediction_list_path=Path("pred.list"),
@@ -1042,7 +1368,7 @@ def build_grouped_run_input_from_single_trait_inputs(
     )
 
 
-def build_native_multi_run_input() -> native_dispatch.NativeBgenMultiRunInput:
+def build_native_multi_run_input() -> native_dispatch_models.NativeBgenMultiRunInput:
     native_multi_aligned_sample_data = SimpleNamespace(
         phenotype_names=["trait_a", "trait_b"],
         sample_indices=np.asarray([1, 0], dtype=np.int64),
@@ -1053,7 +1379,7 @@ def build_native_multi_run_input() -> native_dispatch.NativeBgenMultiRunInput:
         covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
         is_binary_trait=False,
     )
-    return native_dispatch.NativeBgenMultiRunInput(
+    return native_dispatch_models.NativeBgenMultiRunInput(
         native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
         phenotype_names=("trait_a", "trait_b"),
         sample_indices=np.asarray([1, 0], dtype=np.int64),
@@ -1070,7 +1396,7 @@ def test_complete_case_compute_group_resolution_adds_alignment_fingerprints() ->
         multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
     )
 
-    compute_group = native_dispatch.build_resolved_complete_case_phenotype_compute_group(
+    compute_group = native_dispatch_groups.build_resolved_complete_case_phenotype_compute_group(
         run_input=run_input,
         prediction_list_path=Path("pred.list"),
         planned_compute_groups=planned_compute_groups,
@@ -1109,7 +1435,7 @@ def test_get_metadata_chromosome_prefers_scalar_label_without_full_column_access
         def chromosome(self) -> list[str]:
             raise AssertionError("chromosome column should not be read when scalar label is available")
 
-    assert callbacks.get_metadata_chromosome(ScalarChromosomeMetadata()) == "22"
+    assert callback_shared.get_metadata_chromosome(ScalarChromosomeMetadata()) == "22"
 
 
 def build_binary_chromosome_state(*, converged: bool = True) -> SimpleNamespace:
@@ -1232,17 +1558,19 @@ class BundledChunkStats(ExplodingChunkStats):
         return compute_arrays
 
 
-class ManualCallbackRunner(callbacks.NativeBgenCallbackRunner):
+class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
     def __init__(self) -> None:
         self.processed_chunk_count = 0
         self.stage_timing_recorder = None
         self.telemetry_session = None
         self.current_progress_chromosome = None
         self.dosage_queue: queue.Queue[
-            callbacks.PreprocessedDosageChunkWorkItem | callbacks.PreprocessedVariantMajorDosageChunkWorkItem | None
+            callback_shared.PreprocessedDosageChunkWorkItem
+            | callback_shared.PreprocessedVariantMajorDosageChunkWorkItem
+            | None
         ] = queue.Queue()
         self.result_queue: queue.Queue[
-            callbacks.Regenie2ResultWriteWorkItem | callbacks.Regenie2MultiResultWriteWorkItem | None
+            callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None
         ] = queue.Queue()
         self.result_in_flight_slots = threading.BoundedSemaphore(2)
         self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
@@ -1321,9 +1649,17 @@ def test_native_callback_runner_records_chromosome_progress_transitions() -> Non
 
 
 def test_native_callback_runner_defers_worker_start_until_explicit_start() -> None:
-    class ThreadedManualCallbackRunner(callbacks.NativeBgenCallbackRunner):
+    class ThreadedManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def __init__(self) -> None:
-            super().__init__(worker_name="threaded-manual-callback")
+            super().__init__(
+                worker_name="threaded-manual-callback",
+                staging_depth=2,
+                result_in_flight_limit=None,
+                dosage_buffer_limit=None,
+                stage_timing_recorder=None,
+                telemetry_session=None,
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+            )
 
         def compute_preprocessed_chunk(
             self,
@@ -1371,13 +1707,18 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
 
 
 def test_native_callback_runner_records_native_delivery_timing_for_enqueued_chunk() -> None:
-    stage_timing_recorder = timing.StageTimingRecorder()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
 
-    class TimedCallbackRunner(callbacks.NativeBgenCallbackRunner):
+    class TimedCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def __init__(self) -> None:
             super().__init__(
                 worker_name="timed-manual-callback",
+                staging_depth=2,
+                result_in_flight_limit=None,
+                dosage_buffer_limit=None,
                 stage_timing_recorder=stage_timing_recorder,
+                telemetry_session=None,
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
             )
             self.metadata: list[object] = []
 
@@ -1433,20 +1774,20 @@ def test_native_callback_runner_records_native_delivery_timing_for_enqueued_chun
 
 def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
     callback = ManualCallbackRunner()
-    stage_timing_recorder = timing.StageTimingRecorder()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     callback.stage_timing_recorder = stage_timing_recorder
     metadata = build_native_metadata()
     chunk_stats = typing.cast("typing.Any", SimpleNamespace())
 
     callback.dosage_queue.put_nowait(
-        callbacks.PreprocessedVariantMajorDosageChunkWorkItem(
+        callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
             metadata=metadata,
             genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
             chunk_stats=chunk_stats,
         )
     )
     callback.dosage_queue.put_nowait(
-        callbacks.PreprocessedDosageChunkWorkItem(
+        callback_shared.PreprocessedDosageChunkWorkItem(
             metadata=metadata,
             genotype_matrix=np.ones((2, 2), dtype=np.float32),
             chunk_stats=chunk_stats,
@@ -1483,7 +1824,7 @@ def test_native_callback_runner_records_worker_errors_from_consumer() -> None:
 
     callback = FailingCallbackRunner()
     callback.dosage_queue.put_nowait(
-        callbacks.PreprocessedDosageChunkWorkItem(
+        callback_shared.PreprocessedDosageChunkWorkItem(
             metadata=build_native_metadata(),
             genotype_matrix=np.ones((2, 2), dtype=np.float32),
             chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
@@ -1516,10 +1857,10 @@ def test_native_callback_runner_reuses_and_replaces_host_dosage_buffers() -> Non
     assert id(replacement_buffer) in callback.dosage_buffer_identifiers
 
     limited_callback = ManualCallbackRunner()
-    first_limited_buffer = limited_callback.acquire_dosage_buffer_with_shape((1, 1))
-    second_limited_buffer = limited_callback.acquire_dosage_buffer_with_shape((1, 2))
+    first_limited_buffer = limited_callback.acquire_dosage_buffer_with_shape((1, 1), np.float32)
+    second_limited_buffer = limited_callback.acquire_dosage_buffer_with_shape((1, 2), np.float32)
     limited_callback.release_dosage_buffer(first_limited_buffer)
-    blocked_replacement = limited_callback.acquire_dosage_buffer_with_shape((4, 5))
+    blocked_replacement = limited_callback.acquire_dosage_buffer_with_shape((4, 5), np.float32)
     assert blocked_replacement.shape == (4, 5)
     assert limited_callback.dosage_buffer_count == limited_callback.dosage_buffer_limit
     assert id(first_limited_buffer) not in limited_callback.dosage_buffer_identifiers
@@ -1571,7 +1912,7 @@ def test_native_callback_runner_surfaces_worker_and_writer_errors() -> None:
 
 
 def test_base_native_callback_runner_compute_methods_are_abstract() -> None:
-    class IncompleteCallbackRunner(callbacks.NativeBgenCallbackRunner):
+    class IncompleteCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def compute_preprocessed_chunk(
             self,
             *,
@@ -1582,12 +1923,20 @@ def test_base_native_callback_runner_compute_methods_are_abstract() -> None:
             del variant_metadata, genotype_matrix, chunk_stats
 
     with pytest.raises(TypeError, match="abstract"):
-        IncompleteCallbackRunner(worker_name="incomplete-callback")
+        IncompleteCallbackRunner(
+            worker_name="incomplete-callback",
+            staging_depth=2,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            stage_timing_recorder=None,
+            telemetry_session=None,
+            output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+        )
 
 
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:
     result_queue: queue.Queue[
-        callbacks.Regenie2ResultWriteWorkItem | callbacks.Regenie2MultiResultWriteWorkItem | None
+        callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None
     ] = queue.Queue(maxsize=1)
     result_queue.put_nowait(None)
     stop_event = threading.Event()
@@ -1600,7 +1949,7 @@ def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> No
     callback.worker_threads_started = True
 
     try:
-        callback.stop_result_worker()
+        callback.stop_result_worker(timeout_seconds=None)
     finally:
         stop_event.set()
         result_worker_thread.join()
@@ -1609,7 +1958,7 @@ def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> No
 
 
 def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> None:
-    dosage_queue: queue.Queue[callbacks.PreprocessedDosageChunkWorkItem | None] = queue.Queue(maxsize=1)
+    dosage_queue: queue.Queue[callback_shared.PreprocessedDosageChunkWorkItem | None] = queue.Queue(maxsize=1)
     dosage_queue.put_nowait(None)
     stop_event = threading.Event()
     worker_thread = threading.Thread(target=stop_event.wait, name="failed-dosage-worker")
@@ -1621,7 +1970,7 @@ def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> No
     callback.worker_threads_started = True
 
     try:
-        callback.stop_dosage_worker()
+        callback.stop_dosage_worker(timeout_seconds=None)
     finally:
         stop_event.set()
         worker_thread.join()
@@ -1631,7 +1980,7 @@ def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> No
 
 def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
     result_queue: queue.Queue[
-        callbacks.Regenie2ResultWriteWorkItem | callbacks.Regenie2MultiResultWriteWorkItem | None
+        callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None
     ] = queue.Queue(maxsize=1)
     result_queue.put_nowait(None)
     stop_event = threading.Event()
@@ -1646,16 +1995,16 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
     try:
         with (
             patch("g.engine.callbacks.runtime.RESULT_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
-            np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "blocked-result-worker"),
+            np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "blocked-result-worker"),
         ):
-            callback.stop_result_worker()
+            callback.stop_result_worker(timeout_seconds=0.0)
     finally:
         stop_event.set()
         result_worker_thread.join()
 
 
 def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
-    dosage_queue: queue.Queue[callbacks.PreprocessedDosageChunkWorkItem | None] = queue.Queue(maxsize=1)
+    dosage_queue: queue.Queue[callback_shared.PreprocessedDosageChunkWorkItem | None] = queue.Queue(maxsize=1)
     dosage_queue.put_nowait(None)
     stop_event = threading.Event()
     worker_thread = threading.Thread(target=stop_event.wait, name="blocked-dosage-worker")
@@ -1669,9 +2018,9 @@ def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
     try:
         with (
             patch("g.engine.callbacks.runtime.DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
-            np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "blocked-dosage-worker"),
+            np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "blocked-dosage-worker"),
         ):
-            callback.stop_dosage_worker()
+            callback.stop_dosage_worker(timeout_seconds=0.0)
     finally:
         stop_event.set()
         worker_thread.join()
@@ -1688,9 +2037,9 @@ def test_join_result_worker_raises_when_worker_does_not_stop() -> None:
     try:
         with (
             patch("g.engine.callbacks.runtime.RESULT_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
-            np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "stuck-result-worker"),
+            np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "stuck-result-worker"),
         ):
-            callback.join_result_worker()
+            callback.join_result_worker(timeout_seconds=0.0)
     finally:
         stop_event.set()
         result_worker_thread.join()
@@ -1707,16 +2056,16 @@ def test_join_dosage_worker_raises_when_worker_does_not_stop() -> None:
     try:
         with (
             patch("g.engine.callbacks.runtime.DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
-            np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "stuck-dosage-worker"),
+            np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "stuck-dosage-worker"),
         ):
-            callback.join_dosage_worker()
+            callback.join_dosage_worker(timeout_seconds=0.0)
     finally:
         stop_event.set()
         worker_thread.join()
 
 
 def test_native_bgen_callback_runner_rejects_nonpositive_staging_depth() -> None:
-    class ConcreteCallbackRunner(callbacks.NativeBgenCallbackRunner):
+    class ConcreteCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def compute_preprocessed_chunk(
             self,
             *,
@@ -1745,11 +2094,19 @@ def test_native_bgen_callback_runner_rejects_nonpositive_staging_depth() -> None
             del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
 
     with pytest.raises(ValueError, match="staging_depth must be positive"):
-        ConcreteCallbackRunner(worker_name="invalid-staging-depth", staging_depth=0)
+        ConcreteCallbackRunner(
+            worker_name="invalid-staging-depth",
+            staging_depth=0,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            stage_timing_recorder=None,
+            telemetry_session=None,
+            output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+        )
 
 
 def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
-    class ConcreteCallbackRunner(callbacks.NativeBgenCallbackRunner):
+    class ConcreteCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def compute_preprocessed_chunk(
             self,
             *,
@@ -1777,12 +2134,23 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
         ) -> None:
             del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
 
-    default_callback = ConcreteCallbackRunner(worker_name="default-capacity", staging_depth=3)
+    default_callback = ConcreteCallbackRunner(
+        worker_name="default-capacity",
+        staging_depth=3,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+        stage_timing_recorder=None,
+        telemetry_session=None,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+    )
     explicit_callback = ConcreteCallbackRunner(
         worker_name="explicit-capacity",
         staging_depth=3,
         result_in_flight_limit=7,
         dosage_buffer_limit=8,
+        stage_timing_recorder=None,
+        telemetry_session=None,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
     )
 
     assert default_callback.result_in_flight_limit == 4
@@ -1802,7 +2170,7 @@ def test_native_bgen_callback_runner_rejects_nonpositive_capacity_limits(
     capacity_name: typing.Literal["result_in_flight_limit", "dosage_buffer_limit"],
     error_message: str,
 ) -> None:
-    class ConcreteCallbackRunner(callbacks.NativeBgenCallbackRunner):
+    class ConcreteCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def compute_preprocessed_chunk(
             self,
             *,
@@ -1832,9 +2200,25 @@ def test_native_bgen_callback_runner_rejects_nonpositive_capacity_limits(
 
     with pytest.raises(ValueError, match=error_message):
         if capacity_name == "result_in_flight_limit":
-            ConcreteCallbackRunner(worker_name="invalid-capacity", staging_depth=1, result_in_flight_limit=0)
+            ConcreteCallbackRunner(
+                worker_name="invalid-capacity",
+                staging_depth=1,
+                result_in_flight_limit=0,
+                dosage_buffer_limit=None,
+                stage_timing_recorder=None,
+                telemetry_session=None,
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+            )
         else:
-            ConcreteCallbackRunner(worker_name="invalid-capacity", staging_depth=1, dosage_buffer_limit=0)
+            ConcreteCallbackRunner(
+                worker_name="invalid-capacity",
+                staging_depth=1,
+                result_in_flight_limit=None,
+                dosage_buffer_limit=0,
+                stage_timing_recorder=None,
+                telemetry_session=None,
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+            )
 
 
 def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -> None:
@@ -1846,7 +2230,7 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
         log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
         valid_mask=jnp.asarray([True, True]),
     )
-    callback = callbacks.LinearRegenie2PipelineCallback(
+    callback = build_test_linear_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -1883,7 +2267,7 @@ def test_linear_variant_major_callback_passes_native_sums_to_jitted_compute() ->
         log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
         valid_mask=jnp.asarray([True, True]),
     )
-    callback = callbacks.LinearRegenie2PipelineCallback(
+    callback = build_test_linear_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -1930,7 +2314,7 @@ def test_linear_packed8_callback_passes_native_sums_to_jitted_compute() -> None:
         log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
         valid_mask=jnp.asarray([True, True]),
     )
-    callback = callbacks.LinearRegenie2PipelineCallback(
+    callback = build_test_linear_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -1993,7 +2377,7 @@ def test_linear_callback_does_not_block_chunk_compute_without_timing() -> None:
         log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
         valid_mask=jnp.asarray([True, True]),
     )
-    callback = callbacks.LinearRegenie2PipelineCallback(
+    callback = build_test_linear_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -2029,8 +2413,8 @@ def test_linear_callback_records_aggregate_chunk_timing_without_blocking() -> No
         log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
         valid_mask=jnp.asarray([True, True]),
     )
-    stage_timing_recorder = timing.StageTimingRecorder()
-    callback = callbacks.LinearRegenie2PipelineCallback(
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    callback = build_test_linear_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -2071,7 +2455,7 @@ def test_linear_callback_blocks_chunk_compute_with_exact_timing() -> None:
         valid_mask=jnp.asarray([True, True]),
     )
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=True)
-    callback = callbacks.LinearRegenie2PipelineCallback(
+    callback = build_test_linear_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -2104,7 +2488,7 @@ def test_linear_callback_blocks_chunk_compute_with_exact_timing() -> None:
 
 def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
     writer_session = FakeWriterSession()
-    callback = callbacks.LinearRegenie2PipelineCallback(
+    callback = build_test_linear_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -2118,7 +2502,7 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
     assert callback.result_in_flight_slots.acquire(blocking=False) is False
 
     callback.put_result_write_item(
-        callbacks.Regenie2ResultWriteWorkItem(
+        callback_shared.Regenie2ResultWriteWorkItem(
             metadata=build_native_metadata(),
             chunk_stats=typing.cast("typing.Any", ExplodingChunkStats()),
             beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
@@ -2128,6 +2512,7 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
             extra_code=None,
             host_dosage_buffer=host_dosage_buffer,
             release_in_flight_slot=True,
+            binary_chunk_diagnostics=None,
         )
     )
     callback.finish()
@@ -2169,11 +2554,15 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
         nr_zero_start_iteration_count=jnp.zeros(2, dtype=jnp.int32),
         nr_warm_start_iteration_count=jnp.zeros(2, dtype=jnp.int32),
     )
-    callback = callbacks.BinaryRegenie2PipelineCallback(
+    callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
-        correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
+        correction_plan=types.BinaryCorrectionPlan(
+            method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+            p_threshold=0.05,
+            firth_se=False,
+        ),
         kernel_config=kernel_config,
     )
     chunk_stats = typing.cast("typing.Any", SparseOnlyChunkStats())
@@ -2218,11 +2607,11 @@ def test_binary_score_only_sample_major_callback_skips_sparse_mask_transfer() ->
         ),
         valid_mask=jnp.asarray([True, True]),
     )
-    callback = callbacks.BinaryRegenie2PipelineCallback(
+    callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=build_default_binary_kernel_config(),
     )
     chunk_stats = typing.cast("typing.Any", ExplodingSparseCandidateChunkStats())
@@ -2252,7 +2641,7 @@ def test_binary_score_only_sample_major_callback_skips_sparse_mask_transfer() ->
 def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute() -> None:
     writer_session = FakeWriterSession()
     kernel_config = build_default_binary_kernel_config()
-    stage_timing_recorder = timing.StageTimingRecorder()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     result = regenie2_binary_result.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
@@ -2286,11 +2675,15 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
         nr_zero_start_iteration_count=jnp.zeros(3, dtype=jnp.int32),
         nr_warm_start_iteration_count=jnp.zeros(3, dtype=jnp.int32),
     )
-    callback = callbacks.BinaryRegenie2PipelineCallback(
+    callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
-        correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
+        correction_plan=types.BinaryCorrectionPlan(
+            method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+            p_threshold=0.05,
+            firth_se=False,
+        ),
         kernel_config=kernel_config,
         stage_timing_recorder=stage_timing_recorder,
     )
@@ -2373,11 +2766,11 @@ def test_binary_score_only_variant_major_callback_uses_jitted_variant_major_scor
         ),
         valid_mask=jnp.asarray([True, True, True]),
     )
-    callback = callbacks.BinaryRegenie2PipelineCallback(
+    callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=kernel_config,
     )
     variant_major_genotype_matrix = np.asarray(
@@ -2450,11 +2843,11 @@ def test_binary_score_only_packed8_callback_uses_jitted_packed_score_compute() -
         ),
         valid_mask=jnp.asarray([True, True, True]),
     )
-    callback = callbacks.BinaryRegenie2PipelineCallback(
+    callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=kernel_config,
     )
     packed_probability_pairs_by_variant = np.asarray(
@@ -2604,7 +2997,7 @@ def build_multi_binary_chunk_result() -> regenie2_binary_result.Regenie2MultiBin
 def test_multi_linear_sample_major_callback_prepares_state_and_writes_traits() -> None:
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
     result = build_multi_linear_result()
-    callback = callbacks.MultiLinearRegenie2PipelineCallback(
+    callback = build_test_multi_linear_pipeline_callback(
         run_input=build_native_multi_run_input(),
         prediction_source=build_multi_trait_prediction_source(),
         writer_sessions=writer_sessions,
@@ -2633,7 +3026,7 @@ def test_multi_linear_sample_major_callback_prepares_state_and_writes_traits() -
 def test_multi_linear_variant_major_callback_passes_native_genotype_summaries() -> None:
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
     result = build_multi_linear_result()
-    callback = callbacks.MultiLinearRegenie2PipelineCallback(
+    callback = build_test_multi_linear_pipeline_callback(
         run_input=build_native_multi_run_input(),
         prediction_source=build_multi_trait_prediction_source(),
         writer_sessions=writer_sessions,
@@ -2676,7 +3069,7 @@ def test_multi_linear_variant_major_callback_passes_native_genotype_summaries() 
 def test_multi_linear_packed8_callback_uses_multi_packed_compute() -> None:
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
     result = build_multi_linear_result()
-    callback = callbacks.MultiLinearRegenie2PipelineCallback(
+    callback = build_test_multi_linear_pipeline_callback(
         run_input=build_native_multi_run_input(),
         prediction_source=build_multi_trait_prediction_source(),
         writer_sessions=writer_sessions,
@@ -2728,11 +3121,11 @@ def test_multi_linear_packed8_callback_uses_multi_packed_compute() -> None:
 
 
 def test_binary_callback_fails_when_null_logistic_does_not_converge() -> None:
-    callback = callbacks.BinaryRegenie2PipelineCallback(
+    callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=FakeWriterSession(),
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=build_default_binary_kernel_config(),
     )
 
@@ -2752,11 +3145,11 @@ def test_binary_callback_fails_when_null_logistic_does_not_converge() -> None:
 def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    callback = callbacks.BinaryRegenie2PipelineCallback(
+    callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=FakeWriterSession(),
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=build_default_binary_kernel_config(),
         null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.WARN,
     )
@@ -2778,12 +3171,12 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence(
 
 
 def test_multi_binary_callback_fails_when_any_null_logistic_trait_does_not_converge() -> None:
-    callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+    callback = build_test_multi_binary_pipeline_callback(
         run_input=build_native_multi_run_input(),
         prediction_source=FakePredictionSource(),
         writer_sessions=(FakeWriterSession(), FakeWriterSession()),
         committed_chunk_identifier_sets=(set(), set()),
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=build_default_binary_kernel_config(),
     )
 
@@ -2816,12 +3209,12 @@ def test_multi_binary_score_only_sample_major_callback_skips_sparse_mask_transfe
         ),
         valid_mask=jnp.asarray([[True, True], [True, True]]),
     )
-    callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+    callback = build_test_multi_binary_pipeline_callback(
         run_input=build_native_multi_run_input(),
         prediction_source=FakePredictionSource(),
         writer_sessions=writer_sessions,
         committed_chunk_identifier_sets=(set(), set()),
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=build_default_binary_kernel_config(),
     )
     chunk_stats = typing.cast("typing.Any", ExplodingSparseCandidateChunkStats())
@@ -2864,12 +3257,12 @@ def test_multi_binary_score_only_variant_major_callback_uses_donated_score_compu
         ),
         valid_mask=jnp.asarray([[True, True], [True, True]]),
     )
-    callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+    callback = build_test_multi_binary_pipeline_callback(
         run_input=build_native_multi_run_input(),
         prediction_source=FakePredictionSource(),
         writer_sessions=writer_sessions,
         committed_chunk_identifier_sets=(set(), set()),
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=build_default_binary_kernel_config(),
     )
     variant_major_genotype_matrix = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
@@ -2913,12 +3306,12 @@ def test_multi_binary_score_only_variant_major_callback_uses_donated_score_compu
 def test_multi_binary_score_only_packed8_callback_uses_packed_score_compute() -> None:
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
     result = build_multi_binary_score_result()
-    callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+    callback = build_test_multi_binary_pipeline_callback(
         run_input=build_native_multi_run_input(),
         prediction_source=FakePredictionSource(),
         writer_sessions=writer_sessions,
         committed_chunk_identifier_sets=(set(), set()),
-        correction_plan=types.BinaryCorrectionPlan(),
+        correction_plan=SCORE_ONLY_PLAN,
         kernel_config=build_default_binary_kernel_config(),
     )
     callback.current_chromosome = "22"
@@ -2961,7 +3354,7 @@ def test_multi_binary_score_only_packed8_callback_uses_packed_score_compute() ->
 
 def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config() -> None:
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
-    stage_timing_recorder = timing.StageTimingRecorder()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     kernel_config = dataclasses.replace(
         build_default_binary_kernel_config(),
         null_logistic=dataclasses.replace(
@@ -3038,12 +3431,16 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         nr_warm_start_iteration_count=jnp.zeros((2, 2), dtype=jnp.int32),
     )
     chromosome_state = build_multi_binary_chromosome_state()
-    callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+    callback = build_test_multi_binary_pipeline_callback(
         run_input=build_native_multi_run_input(),
         prediction_source=FakePredictionSource(),
         writer_sessions=writer_sessions,
         committed_chunk_identifier_sets=(set(), set()),
-        correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
+        correction_plan=types.BinaryCorrectionPlan(
+            method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+            p_threshold=0.05,
+            firth_se=False,
+        ),
         kernel_config=kernel_config,
         stage_timing_recorder=stage_timing_recorder,
     )
@@ -3098,7 +3495,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
 
 def test_multi_binary_approximate_firth_packed8_callback_uses_packed_chunk_compute() -> None:
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
-    stage_timing_recorder = timing.StageTimingRecorder()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     kernel_config = dataclasses.replace(
         build_default_binary_kernel_config(),
         firth_candidate=dataclasses.replace(
@@ -3107,12 +3504,16 @@ def test_multi_binary_approximate_firth_packed8_callback_uses_packed_chunk_compu
         ),
     )
     result = build_multi_binary_chunk_result()
-    callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+    callback = build_test_multi_binary_pipeline_callback(
         run_input=build_native_multi_run_input(),
         prediction_source=FakePredictionSource(),
         writer_sessions=writer_sessions,
         committed_chunk_identifier_sets=(set(), set()),
-        correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
+        correction_plan=types.BinaryCorrectionPlan(
+            method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+            p_threshold=0.05,
+            firth_se=False,
+        ),
         kernel_config=kernel_config,
         stage_timing_recorder=stage_timing_recorder,
     )
@@ -3177,30 +3578,33 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
         return SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1)
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            return_value=run_input,
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            "g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header",
             return_value={"header": "current"},
         ) as mock_manifest_header,
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             side_effect=lambda **kwargs: (
                 preparation_order.append("manifest")
                 or output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0}))
             ),
         ),
         patch(
-            "g.engine.regenie2_pipeline.preflight.run_regenie2_preflight",
+            "g.engine.regenie2_pipeline.single_trait.preflight.run_regenie2_preflight",
             side_effect=record_preflight,
         ) as mock_preflight,
         patch(
@@ -3208,8 +3612,8 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             return_value=typing.cast("regenie2_linear_state.Regenie2LinearState", "state"),
         ),
     ):
-        final_path = regenie2_pipeline.run_regenie2_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_path = run_test_regenie2_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
             prediction_list_path=Path("pred.list"),
@@ -3221,11 +3625,16 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             staging_depth=3,
             existing_manifest={"header": "current", "committed_chunks": []},
             resume=True,
-            finalize_parquet=True,
-            writer_thread_count=2,
-            writer_queue_depth=3,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=build_test_output_writer_settings(
+                finalize_parquet=True,
+                writer_thread_count=2,
+                writer_queue_depth=3,
+                chunks_per_arrow_file=pipeline_options.writer_settings.chunks_per_arrow_file,
+                arrow_compression=pipeline_options.writer_settings.arrow_compression,
+                parquet_compression=pipeline_options.writer_settings.parquet_compression,
+                output_format=types.OutputFormat.PARQUET,
+                output_statistic_dtype=pipeline_options.writer_settings.output_statistic_dtype,
+            ),
             trusted_no_missing_diploid=True,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
@@ -3246,7 +3655,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.LinearRegenie2PipelineCallback)
+    assert isinstance(callback, callback_linear.LinearRegenie2PipelineCallback)
     assert callback.dosage_queue_depth == 3
     assert callback.dosage_buffer_limit == 4
     assert committed_chunk_identifiers == [0, 64]
@@ -3267,20 +3676,23 @@ def test_single_trait_preflight_failure_does_not_initialize_output_or_writer(tmp
     output_run_paths = output.OutputRunPaths(tmp_path / "run", tmp_path / "run/chunks")
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
-        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.regenie2_pipeline.preflight.run_regenie2_preflight",
+            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            return_value=run_input,
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.single_trait.preflight.run_regenie2_preflight",
             side_effect=ValueError("invalid preflight"),
         ) as mock_preflight,
-        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_manifest_header,
-        patch("g.engine.regenie2_pipeline.output.initialize_output_run") as mock_initialize_output_run,
-        patch("g.engine.regenie2_pipeline.output.create_output_writer_session") as mock_create_writer_session,
+        patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
+        patch("g.engine.regenie2_pipeline.outputs.output.initialize_output_run") as mock_initialize_output_run,
+        patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session") as mock_create_writer_session,
         pytest.raises(ValueError, match="invalid preflight"),
     ):
-        regenie2_pipeline.run_regenie2_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        run_test_regenie2_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
             prediction_list_path=Path("pred.list"),
@@ -3292,10 +3704,7 @@ def test_single_trait_preflight_failure_does_not_initialize_output_or_writer(tmp
             staging_depth=3,
             existing_manifest=None,
             resume=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -3328,7 +3737,7 @@ def test_multi_resume_manifest_mismatch_does_not_partially_initialize_outputs(tm
     second_manifest_bytes = write_test_run_manifest(second_output_run_paths, second_manifest_header)
 
     with pytest.raises(ValueError, match="chunk_size"):
-        regenie2_pipeline.initialize_pipeline_output_runs(
+        pipeline_outputs.initialize_pipeline_output_runs(
             output_run_paths_by_trait=(first_output_run_paths, second_output_run_paths),
             existing_manifests_by_trait=(
                 {**first_header, "committed_chunks": []},
@@ -3351,17 +3760,20 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
-        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
-        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_manifest_header,
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            return_value=run_input,
+        ),
+        patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
         ),
         patch(
@@ -3370,8 +3782,8 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
         ),
     ):
         mock_manifest_header.return_value = {"header": "current"}
-        final_path = regenie2_pipeline.run_regenie2_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_path = run_test_regenie2_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
             prediction_list_path=Path("pred.list"),
@@ -3384,10 +3796,7 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
             existing_manifest={"header": "current", "committed_chunks": []},
             resume=True,
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -3402,7 +3811,7 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.LinearRegenie2PipelineCallback)
+    assert isinstance(callback, callback_linear.LinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [0, 64]
     assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_PACKED8
     assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
@@ -3451,7 +3860,7 @@ def test_native_dispatch_graceful_shutdown_drains_and_marks_writer_interrupted()
     writer_session = FakeWriterSession()
 
     with pytest.raises(shutdown.GracefulShutdownRequested):
-        native_dispatch.run_bgen_engine_with_callback(
+        run_test_bgen_engine_with_callback(
             engine=typing.cast("typing.Any", engine),
             run_input=build_native_run_input(),
             committed_chunk_identifiers={0},
@@ -3473,7 +3882,7 @@ def test_native_dispatch_hard_interrupt_aborts_callback_and_writer() -> None:
     writer_session = FakeWriterSession()
 
     with pytest.raises(KeyboardInterrupt):
-        native_dispatch.run_bgen_engine_with_callback(
+        run_test_bgen_engine_with_callback(
             engine=typing.cast("typing.Any", engine),
             run_input=build_native_run_input(),
             committed_chunk_identifiers={0},
@@ -3493,7 +3902,7 @@ def test_native_dispatch_records_profile_and_allows_no_final_path() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32)
     callback = FinishTrackingCallback()
     writer_session = NoFinalWriterSession()
-    stage_timing_recorder = timing.StageTimingRecorder()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     snapshot_calls: list[tuple[timing.StageTimingRecorder | None, Path | None]] = []
 
     def record_snapshot(
@@ -3502,7 +3911,7 @@ def test_native_dispatch_records_profile_and_allows_no_final_path() -> None:
     ) -> None:
         snapshot_calls.append((recorder, stage_timing_path))
 
-    final_path = native_dispatch.run_bgen_engine_with_callback(
+    final_path = run_test_bgen_engine_with_callback(
         engine=typing.cast("typing.Any", engine),
         run_input=build_native_run_input(),
         committed_chunk_identifiers={2, 1},
@@ -3529,7 +3938,7 @@ def test_multi_dispatch_graceful_shutdown_drains_and_marks_all_writers_interrupt
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
 
     with pytest.raises(shutdown.GracefulShutdownRequested):
-        regenie2_pipeline.run_bgen_engine_with_multi_callback(
+        run_test_bgen_engine_with_multi_callback(
             engine=typing.cast("typing.Any", engine),
             run_input=build_native_multi_run_input(),
             committed_chunk_identifiers={0},
@@ -3561,30 +3970,33 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
         return SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1)
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            return_value=run_input,
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            "g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header",
             return_value={"header": "current"},
         ) as mock_manifest_header,
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             side_effect=lambda **kwargs: (
                 preparation_order.append("manifest")
                 or output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0}))
             ),
         ),
         patch(
-            "g.engine.regenie2_pipeline.preflight.run_regenie2_preflight",
+            "g.engine.regenie2_pipeline.single_trait.preflight.run_regenie2_preflight",
             side_effect=record_preflight,
         ) as mock_preflight,
         patch(
@@ -3592,8 +4004,8 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             return_value=typing.cast("regenie2_binary_state.Regenie2BinaryState", "state"),
         ),
     ):
-        final_path = regenie2_pipeline.run_regenie2_binary_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_path = run_test_regenie2_binary_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
             prediction_list_path=Path("pred.list"),
@@ -3606,10 +4018,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             existing_manifest={"header": "current", "committed_chunks": []},
             resume=True,
             trusted_no_missing_diploid=True,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -3624,7 +4033,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.BinaryRegenie2PipelineCallback)
+    assert isinstance(callback, callback_binary.BinaryRegenie2PipelineCallback)
     assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == [0, 64]
     assert mock_preflight.call_args.kwargs["variant_limit"] == 100
@@ -3639,15 +4048,19 @@ def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> No
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
-        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
-        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header", return_value={"header": "current"}
+            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            return_value=run_input,
+        ),
+        patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header",
+            return_value={"header": "current"},
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
         ),
         patch(
@@ -3655,8 +4068,8 @@ def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> No
             return_value=typing.cast("regenie2_binary_state.Regenie2BinaryState", "state"),
         ),
     ):
-        final_path = regenie2_pipeline.run_regenie2_binary_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_path = run_test_regenie2_binary_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
             prediction_list_path=Path("pred.list"),
@@ -3669,10 +4082,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> No
             existing_manifest={"header": "current", "committed_chunks": []},
             resume=True,
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -3694,17 +4104,20 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
-        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
-        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_manifest_header,
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            return_value=run_input,
+        ),
+        patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
         ),
         patch(
@@ -3713,8 +4126,8 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
         ),
     ):
         mock_manifest_header.return_value = {"header": "current"}
-        final_path = regenie2_pipeline.run_regenie2_binary_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_path = run_test_regenie2_binary_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
             prediction_list_path=Path("pred.list"),
@@ -3727,10 +4140,7 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
             existing_manifest={"header": "current", "committed_chunks": []},
             resume=True,
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -3746,7 +4156,7 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.BinaryRegenie2PipelineCallback)
+    assert isinstance(callback, callback_binary.BinaryRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [0, 64]
     assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_PACKED8
     assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
@@ -3767,26 +4177,29 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
         preparation_order.append("preflight")
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch(
-            "g.engine.native_dispatch.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            return_value=run_input,
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.run_multi_preflight",
+            "g.engine.regenie2_pipeline.multi_group.run_multi_preflight",
             side_effect=record_preflight,
         ) as mock_run_multi_preflight,
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_sessions.pop(0),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            "g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header",
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             side_effect=lambda **kwargs: (
                 preparation_order.append("manifest")
                 or output.InitializedOutputRun(committed_chunk_identifiers=initialized_chunk_sets.pop(0))
@@ -3797,8 +4210,8 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
         ),
     ):
-        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_paths = run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -3817,10 +4230,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             ),
             resume=True,
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -3836,7 +4246,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
+    assert isinstance(callback, callback_linear.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
     assert mock_run_multi_preflight.call_args.kwargs["variant_limit"] == 100
@@ -3853,22 +4263,26 @@ def test_multi_preflight_failure_does_not_initialize_outputs_or_writers(tmp_path
     )
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch(
-            "g.engine.native_dispatch.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            return_value=run_input,
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.run_multi_preflight", side_effect=ValueError("invalid multi preflight")
+            "g.engine.regenie2_pipeline.multi_group.run_multi_preflight",
+            side_effect=ValueError("invalid multi preflight"),
         ) as mock_run_multi_preflight,
-        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_manifest_header,
-        patch("g.engine.regenie2_pipeline.output.initialize_output_run") as mock_initialize_output_run,
-        patch("g.engine.regenie2_pipeline.output.create_output_writer_session") as mock_create_writer_session,
+        patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
+        patch("g.engine.regenie2_pipeline.outputs.output.initialize_output_run") as mock_initialize_output_run,
+        patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session") as mock_create_writer_session,
         pytest.raises(ValueError, match="invalid multi preflight"),
     ):
-        regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -3881,10 +4295,7 @@ def test_multi_preflight_failure_does_not_initialize_outputs_or_writers(tmp_path
             existing_manifests_by_phenotype=(None, None),
             resume=False,
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -3910,23 +4321,26 @@ def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes(
     chromosome_state = SimpleNamespace(adjusted_residual_matrix=jnp.asarray([[0.0, 0.0]], dtype=jnp.float32))
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", PartialCommitDeliveringRunEngine),
-        patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", PartialCommitDeliveringRunEngine),
         patch(
-            "g.engine.native_dispatch.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            return_value=run_input,
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
-        patch("g.engine.regenie2_pipeline.run_multi_preflight"),
+        patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight"),
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: pending_writer_sessions.pop(0),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            "g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header",
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             side_effect=lambda **kwargs: output.InitializedOutputRun(
                 committed_chunk_identifiers=initialized_chunk_sets.pop(0)
             ),
@@ -3944,8 +4358,8 @@ def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes(
             return_value=build_multi_linear_result(),
         ) as mock_compute,
     ):
-        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_paths = run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -3964,10 +4378,7 @@ def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes(
             ),
             resume=True,
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -3979,7 +4390,7 @@ def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes(
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
+    assert isinstance(callback, callback_linear.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
     assert mock_compute.call_count == 2
@@ -4010,23 +4421,26 @@ def test_multi_binary_pipeline_opens_engine_once_and_skips_only_shared_committed
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch(
-            "g.engine.native_dispatch.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            return_value=run_input,
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
-        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
+        patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            "g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header",
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             side_effect=lambda **kwargs: output.InitializedOutputRun(
                 committed_chunk_identifiers=initialized_chunk_sets.pop(0)
             ),
@@ -4036,8 +4450,8 @@ def test_multi_binary_pipeline_opens_engine_once_and_skips_only_shared_committed
             return_value=typing.cast("regenie2_binary_state.Regenie2MultiBinaryState", "state"),
         ),
     ):
-        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_binary_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_paths = run_test_regenie2_multi_phenotype_binary_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -4056,10 +4470,7 @@ def test_multi_binary_pipeline_opens_engine_once_and_skips_only_shared_committed
             ),
             resume=True,
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -4074,7 +4485,7 @@ def test_multi_binary_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.MultiBinaryRegenie2PipelineCallback)
+    assert isinstance(callback, callback_binary.MultiBinaryRegenie2PipelineCallback)
     assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
@@ -4092,27 +4503,27 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch(
-            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.native_dispatch.load_native_bgen_multi_run_input",
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
             return_value=run_input,
         ) as mock_load_native_multi_run_input,
         patch(
-            "g.engine.native_dispatch.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
-        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
+        patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
         ),
-        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_build_header,
+        patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_build_header,
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
         ),
         patch(
@@ -4121,8 +4532,8 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
         ),
     ):
         mock_build_header.side_effect = ({"header": "trait_a"}, {"header": "trait_b"})
-        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_paths = run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -4135,10 +4546,7 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
                 output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
             ),
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -4156,7 +4564,7 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
+    assert isinstance(callback, callback_linear.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == []
     assert mock_run_multi_preflight.call_args.kwargs["trusted_no_missing_diploid"] is True
     assert tuple(call.kwargs["gpu_genotype_format"] for call in mock_build_header.call_args_list) == (
@@ -4167,7 +4575,7 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
         True,
         True,
     )
-    expected_compute_group = native_dispatch.build_resolved_complete_case_phenotype_compute_group(
+    expected_compute_group = native_dispatch_groups.build_resolved_complete_case_phenotype_compute_group(
         run_input=run_input,
         prediction_list_path=Path("pred.list"),
         planned_compute_groups=planned_compute_groups,
@@ -4222,23 +4630,23 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.MultiRegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.MultiRegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.load_native_bgen_grouped_run_inputs",
+            "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
             return_value=grouped_run_inputs,
         ) as mock_load_grouped_run_inputs,
-        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
+        patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            "g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header",
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ) as mock_build_header,
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
         ),
         patch(
@@ -4246,8 +4654,8 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
             return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
         ),
     ):
-        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_paths = run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -4260,10 +4668,7 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
                 output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
             ),
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -4278,7 +4683,7 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
     assert len(engine.run_call_arguments) == 1
     sample_indices, callback, committed_chunk_identifiers = engine.run_call_arguments[0]
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
+    assert isinstance(callback, callback_linear.MultiLinearRegenie2PipelineCallback)
     assert callback.run_input.phenotype_names == ("trait_a", "trait_b")
     assert grouped_run_inputs[0].compute_group.phenotype_indices == (0, 1)
     assert grouped_run_inputs[0].compute_group.phenotype_names == ("trait_a", "trait_b")
@@ -4332,21 +4737,24 @@ def test_grouped_per_phenotype_packed8_forces_trusted_delivery_and_manifests() -
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.MultiRegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.MultiRegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.native_dispatch.load_native_bgen_grouped_run_inputs", return_value=grouped_run_inputs),
-        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
+            return_value=grouped_run_inputs,
+        ),
+        patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
         ),
-        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_build_header,
+        patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_build_header,
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
         ),
         patch(
@@ -4355,8 +4763,8 @@ def test_grouped_per_phenotype_packed8_forces_trusted_delivery_and_manifests() -
         ),
     ):
         mock_build_header.side_effect = ({"header": "trait_a"}, {"header": "trait_b"})
-        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_paths = run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -4369,10 +4777,7 @@ def test_grouped_per_phenotype_packed8_forces_trusted_delivery_and_manifests() -
                 output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
             ),
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -4388,7 +4793,7 @@ def test_grouped_per_phenotype_packed8_forces_trusted_delivery_and_manifests() -
     assert len(engine.run_call_arguments) == 1
     sample_indices, callback, committed_chunk_identifiers = engine.run_call_arguments[0]
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
+    assert isinstance(callback, callback_linear.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == []
     assert mock_run_multi_preflight.call_args.kwargs["trusted_no_missing_diploid"] is True
     assert tuple(call.kwargs["gpu_genotype_format"] for call in mock_build_header.call_args_list) == (
@@ -4433,20 +4838,23 @@ def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.MultiRegeniePredictionSource", FakePredictionSource),
-        patch("g.engine.native_dispatch.load_native_bgen_grouped_run_inputs", return_value=grouped_run_inputs),
-        patch("g.engine.regenie2_pipeline.run_multi_preflight"),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.MultiRegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
+            return_value=grouped_run_inputs,
+        ),
+        patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight"),
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            "g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header",
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
         ),
         patch(
@@ -4454,8 +4862,8 @@ def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
             return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
         ),
     ):
-        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_paths = run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -4468,10 +4876,7 @@ def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
                 output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
             ),
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -4518,24 +4923,27 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.MultiRegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.MultiRegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.native_dispatch.load_native_bgen_grouped_run_inputs", return_value=grouped_run_inputs),
-        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
+            return_value=grouped_run_inputs,
+        ),
+        patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            "g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header",
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ) as mock_build_header,
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
         ),
         patch(
@@ -4543,8 +4951,8 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
             return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
         ),
     ):
-        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_paths = run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -4557,10 +4965,7 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
                 output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
             ),
             trusted_no_missing_diploid=True,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -4574,7 +4979,7 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
     assert len(engine.run_call_arguments) == 1
     sample_indices, callback, committed_chunk_identifiers = engine.run_call_arguments[0]
     np.testing.assert_array_equal(sample_indices, np.asarray([0, 1, 2], dtype=np.int64))
-    assert isinstance(callback, callbacks.GroupedMultiPhenotypeFanoutCallback)
+    assert isinstance(callback, callback_grouped.GroupedMultiPhenotypeFanoutCallback)
     np.testing.assert_array_equal(callback.group_fanouts[0].sample_position_array, np.asarray([0, 1, 2]))
     np.testing.assert_array_equal(callback.group_fanouts[1].sample_position_array, np.asarray([1, 2]))
     assert committed_chunk_identifiers == []
@@ -4636,24 +5041,27 @@ def test_grouped_per_phenotype_pipeline_keeps_multi_pass_when_union_not_cheaper(
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.MultiRegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.MultiRegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.native_dispatch.load_native_bgen_grouped_run_inputs", return_value=grouped_run_inputs),
-        patch("g.engine.regenie2_pipeline.run_multi_preflight"),
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
+            return_value=grouped_run_inputs,
+        ),
+        patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight"),
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            "g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header",
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
         ),
         patch(
@@ -4661,8 +5069,8 @@ def test_grouped_per_phenotype_pipeline_keeps_multi_pass_when_union_not_cheaper(
             return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
         ),
     ):
-        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_paths = run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -4675,10 +5083,7 @@ def test_grouped_per_phenotype_pipeline_keeps_multi_pass_when_union_not_cheaper(
                 output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
             ),
             trusted_no_missing_diploid=True,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -4707,24 +5112,27 @@ def test_multi_binary_complete_case_packed8_preserves_kernel_config_and_manifest
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch(
-            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
         patch(
-            "g.engine.native_dispatch.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            return_value=run_input,
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
-        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
+        patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
         patch(
-            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
         ),
-        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_build_header,
+        patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_build_header,
         patch(
-            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
         ),
         patch(
@@ -4733,8 +5141,8 @@ def test_multi_binary_complete_case_packed8_preserves_kernel_config_and_manifest
         ),
     ):
         mock_build_header.side_effect = ({"header": "trait_a"}, {"header": "trait_b"})
-        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_binary_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        final_paths = run_test_regenie2_multi_phenotype_binary_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -4747,10 +5155,7 @@ def test_multi_binary_complete_case_packed8_preserves_kernel_config_and_manifest
                 output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
             ),
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -4767,7 +5172,7 @@ def test_multi_binary_complete_case_packed8_preserves_kernel_config_and_manifest
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, callbacks.MultiBinaryRegenie2PipelineCallback)
+    assert isinstance(callback, callback_binary.MultiBinaryRegenie2PipelineCallback)
     assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == []
     assert mock_run_multi_preflight.call_args.kwargs["trusted_no_missing_diploid"] is True
@@ -4789,8 +5194,8 @@ def test_multi_linear_pipeline_rejects_missing_sample_mode() -> None:
     pipeline_options = build_default_pipeline_runtime_options()
 
     with pytest.raises(ValueError, match="per-phenotype or complete-case"):
-        regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        run_test_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_names=("trait_a", "trait_b"),
             prediction_list_path=Path("pred.list"),
@@ -4803,10 +5208,7 @@ def test_multi_linear_pipeline_rejects_missing_sample_mode() -> None:
                 output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
             ),
             trusted_no_missing_diploid=False,
-            writer_thread_count=pipeline_options.writer_thread_count,
-            writer_queue_depth=pipeline_options.writer_queue_depth,
-            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
-            parquet_compression=pipeline_options.parquet_compression,
+            writer_settings=pipeline_options.writer_settings,
             bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
@@ -4817,11 +5219,11 @@ def test_build_bgen_run_engine_rejects_assumed_trusted_validation() -> None:
     FakeRunEngine.instances.clear()
 
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         pytest.raises(ValueError, match="assume_validated"),
     ):
-        native_dispatch.build_bgen_run_engine(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        build_test_bgen_run_engine(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
             chunk_size=32,
             variant_limit=100,
             trusted_no_missing_diploid=True,
@@ -4835,15 +5237,15 @@ def test_build_bgen_run_engine_caches_trusted_validation(tmp_path: Path, monkeyp
     bgen_path.write_bytes(b"bgen")
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
 
-    with patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine):
-        first_engine = native_dispatch.build_bgen_run_engine(
-            genotype_source_config=source.build_bgen_source_config(bgen_path),
+    with patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine):
+        first_engine = build_test_bgen_run_engine(
+            genotype_source_config=build_test_genotype_source_config(source_path=bgen_path),
             chunk_size=32,
             variant_limit=100,
             trusted_no_missing_diploid=True,
         )
-        second_engine = native_dispatch.build_bgen_run_engine(
-            genotype_source_config=source.build_bgen_source_config(bgen_path),
+        second_engine = build_test_bgen_run_engine(
+            genotype_source_config=build_test_genotype_source_config(source_path=bgen_path),
             chunk_size=32,
             variant_limit=100,
             trusted_no_missing_diploid=True,
@@ -4861,9 +5263,9 @@ def test_build_bgen_run_engine_force_validates_trusted_bgen(tmp_path: Path, monk
     bgen_path.write_bytes(b"bgen")
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
 
-    with patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine):
-        engine = native_dispatch.build_bgen_run_engine(
-            genotype_source_config=source.build_bgen_source_config(bgen_path),
+    with patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine):
+        engine = build_test_bgen_run_engine(
+            genotype_source_config=build_test_genotype_source_config(source_path=bgen_path),
             chunk_size=32,
             variant_limit=100,
             trusted_no_missing_diploid=True,
@@ -4876,11 +5278,11 @@ def test_build_bgen_run_engine_force_validates_trusted_bgen(tmp_path: Path, monk
 
 def test_bgen_source_config_rejects_non_bgen_suffix_before_engine_open() -> None:
     with (
-        patch("g.engine.native_dispatch._core.Regenie2RunEngine") as mock_run_engine,
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine") as mock_run_engine,
         pytest.raises(ValueError, match=r"Expected a \.bgen source path"),
     ):
-        native_dispatch.build_bgen_run_engine(
-            genotype_source_config=source.build_bgen_source_config(Path("study.vcf")),
+        build_test_bgen_run_engine(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.vcf")),
             chunk_size=32,
             variant_limit=100,
         )
@@ -4894,15 +5296,15 @@ def test_load_native_bgen_run_input_uses_rust_alignment_for_embedded_samples(tmp
         sample_count=2,
         contains_embedded_samples=True,
     )
-    genotype_source_config = source.build_bgen_source_config(tmp_path / "study.bgen")
+    genotype_source_config = build_test_genotype_source_config(source_path=tmp_path / "study.bgen")
 
     with (
         patch(
-            "g.engine.native_dispatch.load_native_aligned_sample_data",
+            "g.engine.native_dispatch.loaders.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
         ) as mock_load_aligned_sample_data,
     ):
-        run_input = native_dispatch.load_native_bgen_run_input(
+        run_input = load_test_native_bgen_run_input(
             genotype_source_config=genotype_source_config,
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
@@ -4926,15 +5328,15 @@ def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
         contains_embedded_samples=False,
     )
     sample_path = Path("study.sample")
-    genotype_source_config = source.build_bgen_source_config(Path("study.bgen"), sample_path=sample_path)
+    genotype_source_config = build_test_genotype_source_config(source_path=Path("study.bgen"), sample_path=sample_path)
 
     with (
         patch(
-            "g.engine.native_dispatch.load_native_aligned_sample_data",
+            "g.engine.native_dispatch.loaders.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
         ) as mock_load_aligned_sample_data,
     ):
-        run_input = native_dispatch.load_native_bgen_run_input(
+        run_input = load_test_native_bgen_run_input(
             genotype_source_config=genotype_source_config,
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
@@ -4947,7 +5349,7 @@ def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
     assert run_input.native_aligned_sample_data is native_aligned_sample_data
     mock_load_aligned_sample_data.assert_called_once_with(
         engine=engine,
-        sample_path=genotype_source_config.resolved_sample_path,
+        sample_path=genotype_source_config.sample_path,
         phenotype_path=Path("phenotype.tsv"),
         phenotype_name="trait",
         covariate_path=Path("covariates.tsv"),
@@ -4966,16 +5368,16 @@ def test_alignment_config_reaches_native_alignment_and_prediction_source(tmp_pat
         sample_count=2,
         contains_embedded_samples=True,
     )
-    genotype_source_config = source.build_bgen_source_config(tmp_path / "study.bgen")
+    genotype_source_config = build_test_genotype_source_config(source_path=tmp_path / "study.bgen")
 
     with (
         patch(
-            "g.engine.native_dispatch.load_native_aligned_sample_data",
+            "g.engine.native_dispatch.loaders.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
         ) as mock_load_aligned_sample_data,
-        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
     ):
-        run_input = native_dispatch.load_native_bgen_run_input(
+        run_input = load_test_native_bgen_run_input(
             genotype_source_config=genotype_source_config,
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
@@ -4985,7 +5387,7 @@ def test_alignment_config_reaches_native_alignment_and_prediction_source(tmp_pat
             is_binary_trait=False,
             alignment_config=alignment_config,
         )
-        prediction_source = native_dispatch.build_regenie_prediction_source(
+        prediction_source = native_dispatch_loaders.build_regenie_prediction_source(
             prediction_list_path=Path("pred.list"),
             phenotype_name="trait",
             run_input=run_input,

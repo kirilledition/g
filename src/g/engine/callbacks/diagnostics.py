@@ -27,7 +27,7 @@ def enforce_null_logistic_nonconvergence_policy(
     chromosome: str,
     null_logistic_converged: typing.Any,
     policy: types.NullLogisticNonconvergencePolicy,
-    phenotype_names: tuple[str, ...] | None = None,
+    phenotype_names: tuple[str, ...] | None,
 ) -> None:
     """Raise or warn when a binary null-logistic chromosome fit did not converge."""
     convergence_flags = np.asarray(jax.device_get(null_logistic_converged), dtype=np.bool_)

@@ -15,8 +15,8 @@ decoded genotype chunks. Public mathematical behavior is documented in
 | `src/g/compute/common/` | Shared dtype, genotype, linear algebra, and p-value helpers. |
 | `src/g/compute/regenie2_linear/` | Quantitative Step 2 state preparation and score/statistic kernels. |
 | `src/g/compute/regenie2_binary/` | Binary null model, score test, candidate selection, correction, diagnostics, and Firth paths. |
-| `src/g/engine/callbacks.py` | Device result materialization and writer callback timing. |
-| `src/g/engine/regenie2_pipeline.py` | Pipeline wrapper that builds kernel configs and dispatches native chunks to JAX callbacks. |
+| `src/g/engine/callbacks/` | Device result materialization, callback lifecycle, and writer callback timing. |
+| `src/g/engine/regenie2_pipeline/` | Pipeline wrappers that build kernel contexts and dispatch native chunks to JAX callbacks. |
 | `src/g/execution_plan.py` | Public config to immutable kernel/runtime settings. |
 
 ## Kernel Boundary

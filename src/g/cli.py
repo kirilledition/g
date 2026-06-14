@@ -15,7 +15,7 @@ if typing.TYPE_CHECKING:
 NATIVE_CLI_OUTPUT_LOG_LIMIT = 4096
 
 
-def run_args(arguments: typing.Sequence[str], *, direct_regenie: bool = False) -> int:
+def run_args(arguments: typing.Sequence[str], *, direct_regenie: bool) -> int:
     """Run CLI arguments through the Rust frontend."""
     outcome = g._core.dispatch_cli(list(arguments), direct_regenie)
     if outcome.config is None:
@@ -24,19 +24,20 @@ def run_args(arguments: typing.Sequence[str], *, direct_regenie: bool = False) -
 
     # Runtime imports intentionally stay past Rust parsing so help and parser
     # error paths avoid importing JAX-facing runner and engine modules.
-    from g import runner
     from g.engine import run_events, shutdown, telemetry
+    from g.runner import execution as runner_execution
+    from g.runner import runtime as runner_runtime
 
     run_telemetry_session = telemetry.build_telemetry_session(outcome.config)
     try:
-        runtime_policy = runner.build_runtime_policy(outcome.config, run_telemetry_session.paths)
-        runner.require_compatible_runtime_policy(runtime_policy)
-        runner.initialize_logging(outcome.config.g_diagnostics, run_telemetry_session.paths)
+        runtime_policy = runner_runtime.build_runtime_policy(outcome.config, run_telemetry_session.paths)
+        runner_runtime.require_compatible_runtime_policy(runtime_policy)
+        runner_runtime.initialize_logging(outcome.config.g_diagnostics, run_telemetry_session.paths)
         print_native_cli_output(outcome)
-        log_native_cli_output(outcome)
+        log_native_cli_output(outcome, max_payload_chars=NATIVE_CLI_OUTPUT_LOG_LIMIT)
         try:
             with shutdown.install_graceful_shutdown_handlers():
-                artifacts = runner.regenie(
+                artifacts = runner_execution.regenie(
                     outcome.config,
                     run_telemetry_session=run_telemetry_session,
                     close_telemetry_session_on_exit=False,
@@ -64,7 +65,7 @@ def print_native_cli_output(outcome: g._core.CliOutcome) -> None:
         print(outcome.stderr, end="", file=sys.stderr)
 
 
-def log_native_cli_output(outcome: g._core.CliOutcome, *, max_payload_chars: int = NATIVE_CLI_OUTPUT_LOG_LIMIT) -> None:
+def log_native_cli_output(outcome: g._core.CliOutcome, *, max_payload_chars: int) -> None:
     """Emit bounded diagnostics for native CLI stdout and stderr."""
     if outcome.stdout:
         emit_diagnostic_event(
@@ -152,4 +153,4 @@ def regenie_main() -> None:
 
 def main() -> None:
     """Run the GWAS CLI."""
-    raise SystemExit(run_args(sys.argv[1:]))
+    raise SystemExit(run_args(sys.argv[1:], direct_regenie=False))

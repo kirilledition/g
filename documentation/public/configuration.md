@@ -51,8 +51,11 @@ run-specific input and output fields.
 | Phenotype columns | `[input].pheno_columns`, `[input].phenoCol`, or `[input].phenoColList` | `--phenoCol`, `--phenoColList` | Always. |
 | Step 1 prediction list | `[input].pred` | `--pred` | Always. |
 | Output prefix | `[output].out` | `--out` | Always. |
-| Sample file | `[input].sample` | `--sample` | When BGEN sample IDs are absent or unsuitable. |
+| Sample file | `[input].sample` | `--sample` | When the BGEN does not embed usable sample IDs. |
 | Covariate table and columns | `[input].covar_file`, `[input].covar_columns`, plus REGENIE-style aliases | `--covarFile`, `--covarCol`, `--covarColList` | When the model includes covariates. |
+
+If `[input].sample` is omitted, `g regenie` reads embedded sample identifiers
+from the BGEN. It does not infer an adjacent `.sample` path.
 
 `[trait].step` must resolve to `2`. REGENIE Step 1 is not implemented.
 

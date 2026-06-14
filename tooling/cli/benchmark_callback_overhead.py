@@ -16,7 +16,11 @@ import numpy as np
 import numpy.typing as npt
 
 import tooling.configuration as tooling_configuration
-from g.engine import callbacks, timing
+from g import types
+from g.engine import timing
+from g.engine.callbacks import diagnostics as callback_diagnostics
+from g.engine.callbacks import runtime as callback_runtime
+from g.engine.callbacks import transfers as callback_transfers
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import reports as tooling_reports
@@ -186,7 +190,7 @@ class CaseSummary:
     mean_nanoseconds_per_chunk: float
 
 
-class CallbackOverheadBenchmarkRunner(callbacks.NativeBgenCallbackRunner):
+class CallbackOverheadBenchmarkRunner(callback_runtime.NativeBgenCallbackRunner):
     """Concrete callback runner used by the synthetic benchmark."""
 
     def __init__(
@@ -200,7 +204,11 @@ class CallbackOverheadBenchmarkRunner(callbacks.NativeBgenCallbackRunner):
         super().__init__(
             worker_name="callback-overhead-benchmark",
             staging_depth=staging_depth,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
             stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=None,
+            output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
         )
         self.workload_mode = workload_mode
         self.last_device_array: jax.Array | None = None
@@ -215,10 +223,11 @@ class CallbackOverheadBenchmarkRunner(callbacks.NativeBgenCallbackRunner):
         """Process one synthetic sample-major callback chunk."""
         del chunk_stats
         if self.workload_mode == CallbackWorkloadMode.HOST_TO_DEVICE:
-            self.last_device_array = callbacks.put_genotype_matrix_on_device(
+            self.last_device_array = callback_transfers.put_genotype_matrix_on_device(
                 genotype_matrix,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="benchmark_genotype",
             )
 
     def compute_preprocessed_variant_major_chunk(
@@ -249,7 +258,7 @@ class CallbackOverheadBenchmarkRunner(callbacks.NativeBgenCallbackRunner):
         """Synchronize the final device transfer when the trial requests it."""
         if self.last_device_array is None:
             return
-        callbacks.block_until_ready(self.last_device_array)
+        callback_diagnostics.block_until_ready(self.last_device_array)
 
 
 def parse_stage_timing_modes(raw_value: str) -> tuple[StageTimingMode, ...]:

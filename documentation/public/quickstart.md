@@ -9,7 +9,7 @@ upstream REGENIE Step 1 prediction files.
 `g` runs REGENIE Step 2. It does not run REGENIE Step 1.
 
 - `--bgen`: BGEN genotype file.
-- `--sample`: Oxford sample file when samples are not embedded or when you need explicit sample IDs.
+- `--sample`: Oxford sample file when the BGEN does not embed usable sample IDs.
 - `--phenoFile`: Phenotype table.
 - `--phenoCol` or `--phenoColList`: Phenotype column names.
 - `--covarFile` and `--covarColList`: Covariates when your model uses them.

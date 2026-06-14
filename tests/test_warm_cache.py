@@ -119,10 +119,14 @@ def install_native_dispatch_fakes(
         assert keyword_arguments["run_input"] is run_input
         return FakePredictionSource(sample_count=int(run_input.sample_indices.shape[0]))
 
-    monkeypatch.setattr(warm_cache.native_dispatch, "build_bgen_run_engine", fake_build_bgen_run_engine)
-    monkeypatch.setattr(warm_cache.native_dispatch, "load_native_bgen_run_input", fake_load_native_bgen_run_input)
+    monkeypatch.setattr(warm_cache.native_dispatch_engine, "build_bgen_run_engine", fake_build_bgen_run_engine)
     monkeypatch.setattr(
-        warm_cache.native_dispatch,
+        warm_cache.native_dispatch_loaders,
+        "load_native_bgen_run_input",
+        fake_load_native_bgen_run_input,
+    )
+    monkeypatch.setattr(
+        warm_cache.native_dispatch_loaders,
         "build_regenie_prediction_source",
         fake_build_regenie_prediction_source,
     )
@@ -267,6 +271,10 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
         covariate_names=None,
         chunk_size=50,
         variant_limit=None,
+        trusted_no_missing_diploid=False,
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+        alignment_config=None,
+        gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
         score_dtype=types.FloatingPointDtype.FLOAT64,
     )
 
@@ -285,6 +293,11 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
             genotype_path=warm_cache.WarmCacheGenotypePath.LINEAR_DOSAGE,
             trait_count=1,
             score_dtype=types.FloatingPointDtype.FLOAT64,
+            correction_method=None,
+            correction_p_threshold=None,
+            correction_firth_se=None,
+            firth_candidate_batch_size=None,
+            firth_candidate_capacity=None,
         ),
         warm_cache.WarmCacheSignature(
             shape=warm_cache.WarmCacheShape(sample_count=6, variant_count=5),
@@ -293,6 +306,11 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
             genotype_path=warm_cache.WarmCacheGenotypePath.LINEAR_DOSAGE,
             trait_count=1,
             score_dtype=types.FloatingPointDtype.FLOAT64,
+            correction_method=None,
+            correction_p_threshold=None,
+            correction_firth_se=None,
+            firth_candidate_batch_size=None,
+            firth_candidate_capacity=None,
         ),
     )
 
@@ -333,11 +351,15 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
         genotype_matrix_by_variant: jax.Array,
         correction_plan: types.BinaryCorrectionPlan,
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
+        sparse_candidate_mask: jax.Array | None,
+        stage_duration_recorder: typing.Callable[[str, float], None] | None,
         dosage_sum: jax.Array,
         observation_count: jax.Array,
         score_dtype: types.FloatingPointDtype,
     ) -> FakeChunkResult:
         del chromosome_state, correction_plan
+        assert sparse_candidate_mask is None
+        assert stage_duration_recorder is None
         observed_shapes.append(typing.cast("tuple[int, int]", genotype_matrix_by_variant.shape))
         observed_kernel_configs.append(kernel_config)
         observed_score_dtypes.append(score_dtype)
@@ -366,7 +388,11 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
         chunk_size=50,
         variant_limit=None,
         correction_plan=correction_plan,
+        trusted_no_missing_diploid=False,
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+        alignment_config=None,
         kernel_config=kernel_config,
+        gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
         score_dtype=types.FloatingPointDtype.FLOAT64,
     )
 
@@ -413,7 +439,11 @@ def test_warm_regenie2_binary_packed8_cache_executes_donating_score_entrypoint(
     engine = FakeEngine(variant_count=50)
     run_input = build_fake_run_input(is_binary_trait=True)
     install_native_dispatch_fakes(monkeypatch, engine=engine, run_input=run_input)
-    correction_plan = types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.SCORE_ONLY)
+    correction_plan = types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.SCORE_ONLY,
+        p_threshold=0.05,
+        firth_se=False,
+    )
     kernel_config = build_default_binary_kernel_config()
     observed_packed_shapes: list[tuple[int, int, int]] = []
 
@@ -473,8 +503,12 @@ def test_warm_regenie2_binary_packed8_cache_executes_donating_score_entrypoint(
         chunk_size=50,
         variant_limit=None,
         correction_plan=correction_plan,
+        trusted_no_missing_diploid=False,
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+        alignment_config=None,
         kernel_config=kernel_config,
         gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+        score_dtype=types.FloatingPointDtype.FLOAT32,
     )
 
     assert observed_packed_shapes == [(50, 6, 2)]

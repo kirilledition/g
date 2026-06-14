@@ -460,7 +460,11 @@ fn validate_sample_file_header(
 fn open_sample_file_reader(sample_path: &Path) -> Result<SampleFileReader<BufReader<File>>, String> {
     let sample_file = File::open(sample_path)
         .map_err(|error| format!("Failed to read sample file '{}': {error}.", sample_path.display()))?;
-    Ok(SampleFileReader::new(sample_path.display().to_string(), BufReader::new(sample_file)))
+    Ok(SampleFileReader {
+        path_text: sample_path.display().to_string(),
+        reader: BufReader::new(sample_file),
+        line_buffer: String::new(),
+    })
 }
 
 fn open_phenotype_table_reader(table_path: &Path) -> Result<StreamingTabularReader<File>, String> {
@@ -498,10 +502,6 @@ fn read_tabular_header<R: Read>(
 }
 
 impl<R: BufRead> SampleFileReader<R> {
-    fn new(path_text: String, reader: R) -> Self {
-        Self { path_text, reader, line_buffer: String::new() }
-    }
-
     fn read_required_fields(&mut self, empty_error_message: String) -> Result<Vec<String>, String> {
         self.read_next_fields()?.ok_or(empty_error_message)
     }

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import typing
 
-from g import runner
+from g.engine import run_events
 from g.interface import config
+from g.runner import execution as runner_execution
+from g.runner import runtime as runner_runtime
 
-RunArtifacts = runner.RunArtifacts
-RuntimeState = runner.RuntimeState
+RunArtifacts = run_events.RunArtifacts
+RuntimeState = runner_runtime.RuntimeState
 
 
 class RegenieApi:
@@ -16,16 +18,26 @@ class RegenieApi:
 
     def __call__(self, regenie_config: config.RegenieConfig) -> RunArtifacts:
         """Run from a normalized config."""
-        return runner.regenie(regenie_config)
+        return runner_execution.regenie(
+            regenie_config,
+            run_telemetry_session=None,
+            close_telemetry_session_on_exit=True,
+            initialize_logging_on_entry=True,
+        )
 
     def from_options(self, raw_options: typing.Mapping[str, typing.Any]) -> RunArtifacts:
         """Build a config from Python options and run it."""
-        return runner.regenie(config.RegenieConfig.from_options(raw_options))
+        return runner_execution.regenie(
+            config.RegenieConfig.from_options(raw_options),
+            run_telemetry_session=None,
+            close_telemetry_session_on_exit=True,
+            initialize_logging_on_entry=True,
+        )
 
 
 def describe_runtime_state() -> RuntimeState:
     """Return process-global runtime settings already configured in this process."""
-    return runner.describe_runtime_state()
+    return runner_runtime.describe_runtime_state()
 
 
 regenie = RegenieApi()

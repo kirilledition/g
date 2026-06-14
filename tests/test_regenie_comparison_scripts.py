@@ -918,7 +918,9 @@ def test_binary_path_parity_harness_synthetic_score_only_fixture_passes() -> Non
     comparison = binary_firth_parity.compare_binary_paths(
         inputs=binary_firth_parity.build_synthetic_inputs(),
         correction_plan=binary_firth_parity.types.BinaryCorrectionPlan(
-            method=binary_firth_parity.types.BinaryFallbackMethod.SCORE_ONLY
+            method=binary_firth_parity.types.BinaryFallbackMethod.SCORE_ONLY,
+            p_threshold=0.05,
+            firth_se=False,
         ),
     )
 
@@ -1633,10 +1635,41 @@ def test_binary_hot_output_metrics_aggregate_multi_phenotype_artifacts(tmp_path:
 
     output_metrics = binary_hot_benchmark.measure_output_metrics(
         binary_hot_benchmark.api.RunArtifacts(
+            output_run_directory=None,
+            final_dataset=None,
+            final_parquet=None,
+            final_regenie=None,
+            effective_config=None,
             phenotype_artifacts=(
-                binary_hot_benchmark.api.RunArtifacts(output_run_directory=first_run_directory),
-                binary_hot_benchmark.api.RunArtifacts(output_run_directory=second_run_directory),
-            )
+                binary_hot_benchmark.api.RunArtifacts(
+                    output_run_directory=first_run_directory,
+                    final_dataset=None,
+                    final_parquet=None,
+                    final_regenie=None,
+                    effective_config=None,
+                    phenotype_artifacts=(),
+                    phenotype_name=None,
+                    association_mode=None,
+                    phenotype_count=None,
+                    run_id=None,
+                ),
+                binary_hot_benchmark.api.RunArtifacts(
+                    output_run_directory=second_run_directory,
+                    final_dataset=None,
+                    final_parquet=None,
+                    final_regenie=None,
+                    effective_config=None,
+                    phenotype_artifacts=(),
+                    phenotype_name=None,
+                    association_mode=None,
+                    phenotype_count=None,
+                    run_id=None,
+                ),
+            ),
+            phenotype_name=None,
+            association_mode=None,
+            phenotype_count=None,
+            run_id=None,
         )
     )
 
@@ -1657,7 +1690,18 @@ def test_binary_hot_output_metrics_count_partitioned_final_dataset(tmp_path: Pat
     pl.DataFrame({"INFO": [0.7], "BETA": [0.3]}).write_parquet(second_part_path)
 
     output_metrics = binary_hot_benchmark.measure_output_metrics(
-        binary_hot_benchmark.api.RunArtifacts(output_run_directory=run_directory)
+        binary_hot_benchmark.api.RunArtifacts(
+            output_run_directory=run_directory,
+            final_dataset=None,
+            final_parquet=None,
+            final_regenie=None,
+            effective_config=None,
+            phenotype_artifacts=(),
+            phenotype_name=None,
+            association_mode=None,
+            phenotype_count=None,
+            run_id=None,
+        )
     )
 
     assert output_metrics.output_run_directory == str(run_directory)

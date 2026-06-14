@@ -905,7 +905,7 @@ just profile-chr10-gpu-binary-deep-landau \
 ### `check`
 
 - Inputs: same as `format`, `lint`, and `typecheck`.
-- Output: full format/lint/typecheck lane.
+- Output: full format/lint/typecheck lane, Rust stub sync check, internal default check, and internal package initializer export check.
 - Use when: running the default local quality gate with Rust tooling available.
 
 ### `format-local-check`
@@ -941,8 +941,14 @@ just profile-chr10-gpu-binary-deep-landau \
 ### `check-local`
 
 - Inputs: Python environment and native extension build support.
-- Output: local format check, lint, typecheck, and focused tests.
+- Output: local format check, lint, typecheck, focused tests, Rust stub sync check, internal default check, and internal package initializer export check.
 - Use when: running a no-Nix verification lane.
+
+### `check-internal-init-exports`
+
+- Inputs: Python environment.
+- Output: failure if internal `src/g/**/__init__.py` files define `__all__`, import/re-export symbols, or assign aliases.
+- Use when: changing package initializer files or reviewing internal module boundaries.
 
 ### `ci-lint`
 

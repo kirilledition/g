@@ -1,0 +1,236 @@
+"""Prepared multi-phenotype group delivery helpers."""
+
+from __future__ import annotations
+
+import logging
+import time
+import typing
+
+import g.engine.callbacks.binary as callback_binary
+import g.engine.callbacks.linear as callback_linear
+from g import _core, execution_plan, types
+from g.engine import preflight, timing
+from g.engine.native_dispatch import delivery as native_dispatch_delivery
+from g.engine.native_dispatch import models as native_dispatch_models
+from g.engine.regenie2_pipeline import context as pipeline_context
+from g.engine.regenie2_pipeline import outputs, telemetry_events
+
+if typing.TYPE_CHECKING:
+    from pathlib import Path
+
+    from g.io import output
+
+logger = logging.getLogger(__name__)
+
+
+def intersect_committed_chunk_identifier_sets(
+    committed_chunk_identifier_sets: tuple[set[int], ...],
+) -> set[int]:
+    """Return chunk identifiers already committed by every output in a delivery."""
+    if not committed_chunk_identifier_sets:
+        return set()
+    return set.intersection(*committed_chunk_identifier_sets)
+
+
+def prepare_multi_phenotype_bgen_group_delivery(
+    *,
+    context: pipeline_context.Regenie2PipelineContext,
+    engine: _core.Regenie2RunEngine,
+    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    prediction_source: typing.Any,
+    compute_group: execution_plan.PhenotypeComputeGroup,
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    staging_depth: int,
+    result_in_flight_limit: int | None,
+    dosage_buffer_limit: int | None,
+    existing_manifests: tuple[dict[str, typing.Any] | None, ...],
+    resume: bool,
+    resume_mode: types.ResumeMode,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+    output_sample_mode: output.MultiPhenotypeSampleMode,
+) -> pipeline_context.PreparedMultiPhenotypeGroupDelivery:
+    """Prepare one compatible phenotype group for native BGEN delivery."""
+    telemetry_events.log_prediction_source_loaded(
+        context=context,
+        phenotype_name=None,
+        phenotype_count=len(run_input.phenotype_names),
+    )
+    preflight_start_time = time.perf_counter()
+    logger.debug("Running preflight validation for multi-phenotype pipeline.")
+    run_multi_preflight(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        engine=engine,
+        variant_limit=context.variant_limit,
+        trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
+    )
+    timing.record_stage_duration(context.stage_timing_recorder, "preflight_validation", preflight_start_time)
+    logger.debug("Preflight validation passed for multi-phenotype pipeline.")
+    if context.telemetry_session is not None:
+        context.telemetry_session.log_event(
+            "preflight_completed",
+            level="info",
+            association_mode=context.association_mode.value,
+            phenotype_count=len(run_input.phenotype_names),
+            sample_count=int(run_input.sample_indices.shape[0]),
+        )
+    current_headers = tuple(
+        outputs.build_pipeline_manifest_header(
+            context=context,
+            phenotype_name=phenotype_name,
+            covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
+            sample_count=int(run_input.sample_indices.shape[0]),
+            variant_count=int(engine.variant_count),
+            multi_phenotype_sample_mode=output_sample_mode,
+            phenotype_compute_group=compute_group,
+        )
+        for phenotype_name in compute_group.phenotype_names
+    )
+    initialized_outputs = outputs.initialize_pipeline_output_runs(
+        output_run_paths_by_trait=output_run_paths_by_phenotype,
+        existing_manifests_by_trait=existing_manifests,
+        current_headers_by_trait=current_headers,
+        resume=resume,
+        resume_mode=resume_mode,
+    )
+    outputs.notify_output_runs_initialized(context=context, phenotype_names=compute_group.phenotype_names)
+    committed_chunk_identifier_sets = initialized_outputs
+    writer_sessions = outputs.create_pipeline_writer_sessions(
+        context=context,
+        output_run_paths_by_trait=output_run_paths_by_phenotype,
+    )
+    writer_session_tuple = writer_sessions
+    if context.is_binary_trait:
+        binary_kernel_config = pipeline_context.require_binary_kernel_config(context.binary_kernel_config)
+        callback = callback_binary.MultiBinaryRegenie2PipelineCallback(
+            run_input=run_input,
+            prediction_source=prediction_source,
+            writer_sessions=writer_session_tuple,
+            committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+            correction_plan=context.correction_plan,
+            kernel_config=binary_kernel_config,
+            null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+            staging_depth=staging_depth,
+            result_in_flight_limit=result_in_flight_limit,
+            dosage_buffer_limit=dosage_buffer_limit,
+            score_dtype=context.score_dtype,
+            stage_timing_recorder=context.stage_timing_recorder,
+            telemetry_session=context.telemetry_session,
+            output_statistic_dtype=context.writer_settings.output_statistic_dtype,
+        )
+    else:
+        callback = callback_linear.MultiLinearRegenie2PipelineCallback(
+            run_input=run_input,
+            prediction_source=prediction_source,
+            writer_sessions=writer_session_tuple,
+            committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+            staging_depth=staging_depth,
+            result_in_flight_limit=result_in_flight_limit,
+            dosage_buffer_limit=dosage_buffer_limit,
+            score_dtype=context.score_dtype,
+            linear_numerical_config=pipeline_context.require_linear_numerical_config(context.linear_numerical_config),
+            stage_timing_recorder=context.stage_timing_recorder,
+            telemetry_session=context.telemetry_session,
+            output_statistic_dtype=context.writer_settings.output_statistic_dtype,
+        )
+    return pipeline_context.PreparedMultiPhenotypeGroupDelivery(
+        compute_group=compute_group,
+        phenotype_indices=compute_group.phenotype_indices,
+        run_input=run_input,
+        callback=callback,
+        writer_sessions=writer_session_tuple,
+        committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+    )
+
+
+def run_prepared_multi_phenotype_bgen_group(
+    *,
+    context: pipeline_context.Regenie2PipelineContext,
+    engine: _core.Regenie2RunEngine,
+    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    prediction_source: typing.Any,
+    compute_group: execution_plan.PhenotypeComputeGroup,
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    staging_depth: int,
+    result_in_flight_limit: int | None,
+    dosage_buffer_limit: int | None,
+    existing_manifests: tuple[dict[str, typing.Any] | None, ...],
+    resume: bool,
+    resume_mode: types.ResumeMode,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+    output_sample_mode: output.MultiPhenotypeSampleMode,
+) -> tuple[Path | None, ...]:
+    """Run one prepared compatible phenotype group through one BGEN pass."""
+    prepared_delivery = prepare_multi_phenotype_bgen_group_delivery(
+        context=context,
+        engine=engine,
+        run_input=run_input,
+        prediction_source=prediction_source,
+        compute_group=compute_group,
+        output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+        staging_depth=staging_depth,
+        result_in_flight_limit=result_in_flight_limit,
+        dosage_buffer_limit=dosage_buffer_limit,
+        existing_manifests=existing_manifests,
+        resume=resume,
+        resume_mode=resume_mode,
+        null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+        output_sample_mode=output_sample_mode,
+    )
+    return run_bgen_engine_with_multi_callback(
+        engine=engine,
+        run_input=run_input,
+        committed_chunk_identifiers=intersect_committed_chunk_identifier_sets(
+            prepared_delivery.committed_chunk_identifier_sets
+        ),
+        writer_sessions=prepared_delivery.writer_sessions,
+        callback=prepared_delivery.callback,
+        stage_timing_recorder=context.stage_timing_recorder,
+        writer_finish_thread_count=context.writer_settings.writer_thread_count,
+        variant_major_packed8_probability_pairs=context.uses_packed8_genotypes,
+    )
+
+
+def run_multi_preflight(
+    *,
+    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    prediction_source: typing.Any,
+    engine: _core.Regenie2RunEngine,
+    variant_limit: int | None,
+    trusted_no_missing_diploid: bool,
+) -> None:
+    """Run shared batched preflight checks for a multi-trait run."""
+    preflight.run_regenie2_multi_preflight(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        engine=engine,
+        variant_limit=variant_limit,
+        is_binary_trait=run_input.is_binary_trait,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
+
+
+def run_bgen_engine_with_multi_callback(
+    *,
+    engine: _core.Regenie2RunEngine,
+    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    committed_chunk_identifiers: set[int] | None,
+    writer_sessions: tuple[typing.Any, ...],
+    callback: object,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    writer_finish_thread_count: int,
+    variant_major_packed8_probability_pairs: bool,
+) -> tuple[Path | None, ...]:
+    """Run native BGEN chunk delivery once and close all per-phenotype writers."""
+    return native_dispatch_delivery.run_bgen_engine_with_writer_sessions(
+        engine=engine,
+        run_input=run_input,
+        committed_chunk_identifiers=committed_chunk_identifiers,
+        writer_sessions=writer_sessions,
+        callback=callback,
+        stage_timing_recorder=stage_timing_recorder,
+        writer_finish_thread_count=writer_finish_thread_count,
+        variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
+        pipeline_label="Multi-phenotype native BGEN",
+        stage_timing_snapshot_writer=timing.write_stage_timing_snapshot,
+    )

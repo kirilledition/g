@@ -53,16 +53,14 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         writer_session: typing.Any,
         correction_plan: types.BinaryCorrectionPlan,
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
-        null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
-            types.NullLogisticNonconvergencePolicy.FAIL
-        ),
-        staging_depth: int = 1,
-        result_in_flight_limit: int | None = None,
-        dosage_buffer_limit: int | None = None,
-        score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-        stage_timing_recorder: timing.StageTimingRecorder | None = None,
-        telemetry_session: telemetry.TelemetrySession | None = None,
-        output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+        null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+        staging_depth: int,
+        result_in_flight_limit: int | None,
+        dosage_buffer_limit: int | None,
+        score_dtype: types.FloatingPointDtype,
+        stage_timing_recorder: timing.StageTimingRecorder | None,
+        telemetry_session: telemetry.TelemetrySession | None,
+        output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -113,6 +111,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
+                    array_role="sparse_candidate_mask",
                 )
             )
             result = self.compute_binary_result(
@@ -143,9 +142,9 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: (regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult),
-        host_dosage_buffer: HostGenotypeBuffer | None = None,
-        release_in_flight_slot: bool = False,
-        binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None = None,
+        host_dosage_buffer: HostGenotypeBuffer | None,
+        release_in_flight_slot: bool,
+        binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None,
     ) -> None:
         """Enqueue a binary result for materialization and writing."""
         self.put_result_write_item(
@@ -187,6 +186,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             chromosome=chromosome,
             null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
             policy=self.null_logistic_nonconvergence_policy,
+            phenotype_names=None,
         )
         null_logistic_converged = bool(jax.device_get(self.current_chromosome_state.null_logistic_converged))
         self.record_binary_null_model_failure_count(0 if null_logistic_converged else 1)
@@ -213,7 +213,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: typing.Any,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
-        sparse_candidate_mask: jax.Array | None = None,
+        sparse_candidate_mask: jax.Array | None,
     ) -> regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult:
         """Compute binary REGENIE step 2 statistics for one chunk."""
         self.prepare_chromosome_state(variant_metadata)
@@ -226,6 +226,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_matrix,
             self.stage_timing_recorder,
             variant_metadata,
+            array_role="genotype_matrix",
         )
         compute_start_time = time.perf_counter()
         result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
@@ -266,6 +267,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="genotype_matrix_by_variant",
             )
             binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
                 chunk_stats,
@@ -275,11 +277,13 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 binary_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="dosage_sum",
             )
             observation_count = put_chunk_array_on_device(
                 binary_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="observation_count",
             )
             sparse_candidate_mask = (
                 None
@@ -288,6 +292,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
+                    array_role="sparse_candidate_mask",
                 )
             )
             compute_start_time = time.perf_counter()
@@ -358,6 +363,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="packed_probability_pairs",
             )
             binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
                 chunk_stats,
@@ -367,11 +373,13 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 binary_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="dosage_sum",
             )
             observation_count = put_chunk_array_on_device(
                 binary_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="observation_count",
             )
             sparse_candidate_mask = (
                 None
@@ -380,6 +388,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
+                    array_role="sparse_candidate_mask",
                 )
             )
             compute_start_time = time.perf_counter()
@@ -441,16 +450,14 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         committed_chunk_identifier_sets: tuple[set[int], ...],
         correction_plan: types.BinaryCorrectionPlan,
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
-        null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
-            types.NullLogisticNonconvergencePolicy.FAIL
-        ),
-        staging_depth: int = 1,
-        result_in_flight_limit: int | None = None,
-        dosage_buffer_limit: int | None = None,
-        score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-        stage_timing_recorder: timing.StageTimingRecorder | None = None,
-        telemetry_session: telemetry.TelemetrySession | None = None,
-        output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+        null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+        staging_depth: int,
+        result_in_flight_limit: int | None,
+        dosage_buffer_limit: int | None,
+        score_dtype: types.FloatingPointDtype,
+        stage_timing_recorder: timing.StageTimingRecorder | None,
+        telemetry_session: telemetry.TelemetrySession | None,
+        output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -557,6 +564,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="genotype_matrix",
             )
             binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
                 chunk_stats,
@@ -569,6 +577,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
+                    array_role="sparse_candidate_mask",
                 )
             )
             compute_start_time = time.perf_counter()
@@ -624,6 +633,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="genotype_matrix_by_variant",
             )
             binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
                 chunk_stats,
@@ -633,11 +643,13 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 binary_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="dosage_sum",
             )
             observation_count = put_chunk_array_on_device(
                 binary_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="observation_count",
             )
             sparse_candidate_mask = (
                 None
@@ -646,6 +658,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
+                    array_role="sparse_candidate_mask",
                 )
             )
             compute_start_time = time.perf_counter()
@@ -715,6 +728,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="packed_probability_pairs",
             )
             binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
                 chunk_stats,
@@ -724,11 +738,13 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 binary_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="dosage_sum",
             )
             observation_count = put_chunk_array_on_device(
                 binary_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="observation_count",
             )
             sparse_candidate_mask = (
                 None
@@ -737,6 +753,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
+                    array_role="sparse_candidate_mask",
                 )
             )
             compute_start_time = time.perf_counter()
@@ -830,9 +847,9 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: regenie2_binary.Regenie2MultiBinaryScoreChunkResult | regenie2_binary.Regenie2MultiBinaryChunkResult,
-        host_dosage_buffer: HostGenotypeBuffer | None = None,
-        release_in_flight_slot: bool = False,
-        binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None = None,
+        host_dosage_buffer: HostGenotypeBuffer | None,
+        release_in_flight_slot: bool,
+        binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None,
     ) -> None:
         """Enqueue a multi-binary result for materialization and writing."""
         self.put_result_write_item(

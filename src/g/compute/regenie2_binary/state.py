@@ -151,7 +151,7 @@ class Regenie2MultiBinaryChromosomeState:
 def build_binary_state(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> Regenie2BinaryState:
     """Build reusable binary step 2 state."""
     jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
@@ -166,7 +166,7 @@ def build_binary_state(
 def build_multi_binary_state(
     covariate_matrix: jax.Array,
     phenotype_matrix: jax.Array,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> Regenie2MultiBinaryState:
     """Build reusable multi-trait binary step 2 state."""
     jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
@@ -236,7 +236,7 @@ def build_binary_chromosome_state(
     loco_offset: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> Regenie2BinaryChromosomeState:
     """Build chromosome-specific binary null model state reused across chunks."""
     jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
@@ -334,7 +334,7 @@ def build_multi_binary_chromosome_state(
     loco_offset_matrix: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+    score_dtype: g_types.FloatingPointDtype,
 ) -> Regenie2MultiBinaryChromosomeState:
     """Build chromosome-specific null logistic state for all requested binary traits."""
     loco_offset_matrix_compute = jnp.asarray(loco_offset_matrix, dtype=compute_dtype.resolve_jax_dtype(score_dtype))

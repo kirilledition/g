@@ -65,9 +65,9 @@ def record_transfer_metadata_for_array(
 def put_genotype_matrix_on_device(
     genotype_matrix: jax.Array | HostGenotypeBuffer,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    chunk_metadata: typing.Any | None = None,
+    chunk_metadata: typing.Any | None,
     *,
-    array_role: str = "genotype_matrix",
+    array_role: str,
 ) -> jax.Array:
     """Transfer a genotype chunk to the active JAX device with optional timing."""
     if stage_timing_recorder is None:
@@ -96,7 +96,7 @@ def put_chunk_array_on_device(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     chunk_metadata: typing.Any,
     *,
-    array_role: str = "chunk_array",
+    array_role: str,
 ) -> jax.Array:
     """Transfer one chunk-scoped array to the active JAX device with timing."""
     if stage_timing_recorder is None:
@@ -125,7 +125,7 @@ def block_compute_result_for_timing(
     result_ready_value: jax.Array,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     start_time: float,
-    chunk_metadata: typing.Any | None = None,
+    chunk_metadata: typing.Any | None,
 ) -> None:
     """Synchronize chunk compute only when detailed stage timings are enabled."""
     if stage_timing_recorder is None:
@@ -158,7 +158,7 @@ def record_stage_duration_with_optional_chunk(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     stage_name: str,
     start_time: float,
-    chunk_metadata: typing.Any | None = None,
+    chunk_metadata: typing.Any | None,
 ) -> None:
     """Record a stage duration globally and optionally against one chunk."""
     if stage_timing_recorder is None:
@@ -226,6 +226,16 @@ def cast_statistic_array_for_native_writer(
         "PublicStatisticArray",
         np.asarray(array, dtype=resolve_public_statistic_numpy_dtype(output_statistic_dtype)),
     )
+
+
+def cast_statistic_array_for_native_writer_float32(array: object) -> npt.NDArray[np.float32]:
+    """Cast computed statistics to the float32 native writer schema dtype."""
+    return typing.cast("npt.NDArray[np.float32]", np.asarray(array, dtype=np.float32))
+
+
+def cast_statistic_array_for_native_writer_float64(array: object) -> npt.NDArray[np.float64]:
+    """Cast computed statistics to the float64 native writer schema dtype."""
+    return typing.cast("npt.NDArray[np.float64]", np.asarray(array, dtype=np.float64))
 
 
 def get_chunk_stats_compute_arrays(
@@ -310,6 +320,8 @@ __all__ = [
     "build_chunk_timing_identity",
     "build_projected_variant_major_dosage_chunk_stats",
     "cast_statistic_array_for_native_writer",
+    "cast_statistic_array_for_native_writer_float32",
+    "cast_statistic_array_for_native_writer_float64",
     "get_binary_chunk_stats_arrays",
     "get_chunk_stats_compute_arrays",
     "get_linear_chunk_stats_arrays",

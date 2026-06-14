@@ -48,14 +48,14 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         run_input: NativeBgenRunInputProtocol,
         prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
-        staging_depth: int = 1,
-        result_in_flight_limit: int | None = None,
-        dosage_buffer_limit: int | None = None,
-        score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-        linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
-        stage_timing_recorder: timing.StageTimingRecorder | None = None,
-        telemetry_session: telemetry.TelemetrySession | None = None,
-        output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+        staging_depth: int,
+        result_in_flight_limit: int | None,
+        dosage_buffer_limit: int | None,
+        score_dtype: types.FloatingPointDtype,
+        linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
+        stage_timing_recorder: timing.StageTimingRecorder | None,
+        telemetry_session: telemetry.TelemetrySession | None,
+        output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -105,6 +105,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     extra_code=None,
                     host_dosage_buffer=host_dosage_buffer,
                     release_in_flight_slot=True,
+                    binary_chunk_diagnostics=None,
                 )
             )
         except Exception:
@@ -140,6 +141,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     extra_code=None,
                     host_dosage_buffer=host_dosage_buffer,
                     release_in_flight_slot=True,
+                    binary_chunk_diagnostics=None,
                 )
             )
         except Exception:
@@ -169,22 +171,26 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="packed_probability_pairs",
             )
             linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
             genotype_dosage_sum = put_chunk_array_on_device(
                 linear_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="dosage_sum",
             )
             genotype_observation_count = put_chunk_array_on_device(
                 linear_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="observation_count",
             )
             genotype_imputed_dosage_square_sum = put_chunk_array_on_device(
                 linear_chunk_stats_arrays.imputed_dosage_square_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="imputed_dosage_square_sum",
             )
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_linear_chunk_packed8_donating_inputs(
@@ -222,8 +228,8 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: regenie2_linear.Regenie2LinearChunkResult,
-        host_dosage_buffer: HostGenotypeBuffer | None = None,
-        release_in_flight_slot: bool = False,
+        host_dosage_buffer: HostGenotypeBuffer | None,
+        release_in_flight_slot: bool,
     ) -> None:
         """Enqueue a linear result for materialization and writing."""
         self.put_result_write_item(
@@ -237,6 +243,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 extra_code=None,
                 host_dosage_buffer=host_dosage_buffer,
                 release_in_flight_slot=release_in_flight_slot,
+                binary_chunk_diagnostics=None,
             )
         )
 
@@ -258,22 +265,26 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_matrix_by_variant,
             self.stage_timing_recorder,
             variant_metadata,
+            array_role="genotype_matrix_by_variant",
         )
         linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
         genotype_dosage_sum = put_chunk_array_on_device(
             linear_chunk_stats_arrays.dosage_sum,
             self.stage_timing_recorder,
             variant_metadata,
+            array_role="dosage_sum",
         )
         genotype_observation_count = put_chunk_array_on_device(
             linear_chunk_stats_arrays.observation_count,
             self.stage_timing_recorder,
             variant_metadata,
+            array_role="observation_count",
         )
         genotype_imputed_dosage_square_sum = put_chunk_array_on_device(
             linear_chunk_stats_arrays.imputed_dosage_square_sum,
             self.stage_timing_recorder,
             variant_metadata,
+            array_role="imputed_dosage_square_sum",
         )
         compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
@@ -332,6 +343,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_matrix,
             self.stage_timing_recorder,
             variant_metadata,
+            array_role="genotype_matrix",
         )
         compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
@@ -359,14 +371,14 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         prediction_source: MultiRegeniePredictionSourceProtocol,
         writer_sessions: tuple[typing.Any, ...],
         committed_chunk_identifier_sets: tuple[set[int], ...],
-        staging_depth: int = 1,
-        result_in_flight_limit: int | None = None,
-        dosage_buffer_limit: int | None = None,
-        score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-        linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
-        stage_timing_recorder: timing.StageTimingRecorder | None = None,
-        telemetry_session: telemetry.TelemetrySession | None = None,
-        output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+        staging_depth: int,
+        result_in_flight_limit: int | None,
+        dosage_buffer_limit: int | None,
+        score_dtype: types.FloatingPointDtype,
+        linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
+        stage_timing_recorder: timing.StageTimingRecorder | None,
+        telemetry_session: telemetry.TelemetrySession | None,
+        output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -466,6 +478,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="genotype_matrix",
             )
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state(
@@ -514,22 +527,26 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="genotype_matrix_by_variant",
             )
             linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
             genotype_dosage_sum = put_chunk_array_on_device(
                 linear_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="dosage_sum",
             )
             genotype_observation_count = put_chunk_array_on_device(
                 linear_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="observation_count",
             )
             genotype_imputed_dosage_square_sum = put_chunk_array_on_device(
                 linear_chunk_stats_arrays.imputed_dosage_square_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="imputed_dosage_square_sum",
             )
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
@@ -581,22 +598,26 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="packed_probability_pairs",
             )
             linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
             genotype_dosage_sum = put_chunk_array_on_device(
                 linear_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="dosage_sum",
             )
             genotype_observation_count = put_chunk_array_on_device(
                 linear_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="observation_count",
             )
             genotype_imputed_dosage_square_sum = put_chunk_array_on_device(
                 linear_chunk_stats_arrays.imputed_dosage_square_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
+                array_role="imputed_dosage_square_sum",
             )
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_multi_linear_chunk_packed8_donating_inputs(
@@ -650,8 +671,8 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: regenie2_linear.Regenie2MultiLinearChunkResult,
-        host_dosage_buffer: HostGenotypeBuffer | None = None,
-        release_in_flight_slot: bool = False,
+        host_dosage_buffer: HostGenotypeBuffer | None,
+        release_in_flight_slot: bool,
     ) -> None:
         """Enqueue a multi-linear result for materialization and writing."""
         self.put_result_write_item(
@@ -667,6 +688,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     extra_code=None,
                     host_dosage_buffer=host_dosage_buffer,
                     release_in_flight_slot=release_in_flight_slot,
+                    binary_chunk_diagnostics=None,
                 ),
             )
         )

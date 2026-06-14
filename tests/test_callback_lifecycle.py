@@ -9,15 +9,28 @@ import pytest
 
 from g import types
 from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
-from g.engine import callbacks, native_dispatch
+from g.engine import timing
+from g.engine.callbacks import runtime as callback_runtime
+from g.engine.callbacks import transfers as callback_transfers
+from g.engine.callbacks import writers as callback_writers
+from g.engine.native_dispatch import delivery as native_dispatch_delivery
+from g.engine.native_dispatch import models as native_dispatch_models
 
 
-class FailingLifecycleCallbackRunner(callbacks.NativeBgenCallbackRunner):
+class FailingLifecycleCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
     """Callback runner that raises from dosage work to test worker error propagation."""
 
     def __init__(self) -> None:
         """Initialize a failing callback runner."""
-        super().__init__(worker_name="failing-lifecycle-callback")
+        super().__init__(
+            worker_name="failing-lifecycle-callback",
+            staging_depth=1,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            stage_timing_recorder=None,
+            telemetry_session=None,
+            output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+        )
 
     def compute_preprocessed_chunk(
         self,
@@ -57,19 +70,19 @@ class ProgressTrackingTelemetrySession:
 
     def __init__(self) -> None:
         """Initialize telemetry capture state."""
-        self.logged_events: list[tuple[str, dict[str, typing.Any]]] = []
+        self.logged_events: list[tuple[str, str, dict[str, typing.Any]]] = []
         self.logged_progress: list[dict[str, typing.Any]] = []
 
-    def log_event(self, event_name: str, **kwargs: typing.Any) -> None:
+    def log_event(self, event_name: str, level: str, **kwargs: typing.Any) -> None:
         """Record a telemetry event call."""
-        self.logged_events.append((event_name, kwargs))
+        self.logged_events.append((event_name, level, kwargs))
 
     def log_progress(self, **kwargs: typing.Any) -> None:
         """Record a progress callback call."""
         self.logged_progress.append(kwargs)
 
 
-class ProgressTrackingCallbackRunner(callbacks.NativeBgenCallbackRunner):
+class ProgressTrackingCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
     """Lifecycle-only callback runner that tracks progress and telemetry hooks."""
 
     def __init__(
@@ -77,7 +90,15 @@ class ProgressTrackingCallbackRunner(callbacks.NativeBgenCallbackRunner):
         telemetry_session: typing.Any,
     ) -> None:
         """Initialize the tracking callback runner."""
-        super().__init__(worker_name="progress-tracking-callback", telemetry_session=telemetry_session)
+        super().__init__(
+            worker_name="progress-tracking-callback",
+            staging_depth=1,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            stage_timing_recorder=None,
+            telemetry_session=telemetry_session,
+            output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+        )
 
     def compute_preprocessed_chunk(
         self,
@@ -120,12 +141,20 @@ class ChunkMetadata:
         self.variant_stop_index = variant_stop
 
 
-class LifecycleCallbackRunner(callbacks.NativeBgenCallbackRunner):
+class LifecycleCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
     """Minimal concrete callback runner for worker lifecycle tests."""
 
     def __init__(self) -> None:
         """Initialize a lifecycle-only callback runner."""
-        super().__init__(worker_name="lifecycle-callback")
+        super().__init__(
+            worker_name="lifecycle-callback",
+            staging_depth=1,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            stage_timing_recorder=None,
+            telemetry_session=None,
+            output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+        )
 
     def compute_preprocessed_chunk(
         self,
@@ -292,13 +321,15 @@ def test_native_dispatch_starts_callback_before_engine_delivery() -> None:
     engine = StartCheckingRunEngine()
     callback = StartTrackingCallback()
 
-    native_dispatch.run_bgen_engine_with_callback(
+    native_dispatch_delivery.run_bgen_engine_with_callback(
         engine=typing.cast("typing.Any", engine),
-        run_input=typing.cast("native_dispatch.NativeBgenRunInput", RunInput()),
+        run_input=typing.cast("native_dispatch_models.NativeBgenRunInput", RunInput()),
         committed_chunk_identifiers={2},
         writer_session=WriterSession(),
         callback=callback,
         stage_timing_recorder=None,
+        variant_major_packed8_probability_pairs=False,
+        stage_timing_snapshot_writer=timing.write_stage_timing_snapshot,
     )
 
     assert callback.events == ["start", "engine", "finish"]
@@ -321,7 +352,7 @@ def test_native_callback_runner_default_queue_path_does_not_collect_timing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Do not collect queue or callback timings unless a recorder is configured."""
-    monkeypatch.setattr(callbacks.runtime, "time", FailingPerfCounterClock)
+    monkeypatch.setattr(callback_runtime, "time", FailingPerfCounterClock)
     callback = LifecycleCallbackRunner()
 
     callback.compute_preprocessed_dosage_chunk(
@@ -342,14 +373,15 @@ def test_default_transfer_path_does_not_block_for_timing(monkeypatch: pytest.Mon
         message = "block_until_ready should not be called without exact timings"
         raise AssertionError(message)
 
-    monkeypatch.setattr(callbacks.transfers, "time", FailingPerfCounterClock)
-    monkeypatch.setattr(callbacks.transfers, "block_until_ready", fail_block_until_ready)
+    monkeypatch.setattr(callback_transfers, "time", FailingPerfCounterClock)
+    monkeypatch.setattr(callback_transfers, "block_until_ready", fail_block_until_ready)
     source_array = np.asarray([[1.0, 2.0]], dtype=np.float32)
 
-    device_array = callbacks.put_chunk_array_on_device(
+    device_array = callback_transfers.put_chunk_array_on_device(
         source_array,
         stage_timing_recorder=None,
         chunk_metadata=ChunkMetadata("chr1", 0, 1),
+        array_role="test",
     )
 
     np.testing.assert_array_equal(np.asarray(device_array), source_array)
@@ -357,10 +389,10 @@ def test_default_transfer_path_does_not_block_for_timing(monkeypatch: pytest.Mon
 
 def test_default_writer_path_preserves_values_without_timing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Materialize output values unchanged without default timing probes."""
-    monkeypatch.setattr(callbacks.writers, "time", FailingPerfCounterClock)
+    monkeypatch.setattr(callback_writers, "time", FailingPerfCounterClock)
     writer_session = CapturingWriterSession()
 
-    callbacks.write_regenie2_native_chunk_with_optional_timing(
+    callback_writers.write_regenie2_native_chunk_with_optional_timing(
         writer_session=writer_session,
         metadata=typing.cast("typing.Any", ChunkMetadata("chr1", 0, 2)),
         chunk_stats=typing.cast("typing.Any", object()),
@@ -398,10 +430,10 @@ def test_native_callback_runner_records_progress_and_chromosome_events() -> None
     callback.finish()
 
     assert telemetry_session.logged_events == [
-        ("chromosome_started", {"chromosome": "chr1", "processed_chunk_count": 1}),
-        ("chromosome_completed", {"chromosome": "chr1", "processed_chunk_count": 1}),
-        ("chromosome_started", {"chromosome": "chr2", "processed_chunk_count": 2}),
-        ("chromosome_completed", {"chromosome": "chr2", "processed_chunk_count": 2}),
+        ("chromosome_started", "info", {"chromosome": "chr1", "processed_chunk_count": 1}),
+        ("chromosome_completed", "info", {"chromosome": "chr1", "processed_chunk_count": 1}),
+        ("chromosome_started", "info", {"chromosome": "chr2", "processed_chunk_count": 2}),
+        ("chromosome_completed", "info", {"chromosome": "chr2", "processed_chunk_count": 2}),
     ]
     assert len(telemetry_session.logged_progress) == 2
     assert telemetry_session.logged_progress[0]["chromosome"] == "chr1"
@@ -441,6 +473,7 @@ def test_native_callback_runner_emits_binary_correction_summary() -> None:
     assert telemetry_session.logged_events == [
         (
             "binary_correction_summary",
+            "info",
             {
                 "chunk_count": 1,
                 "score_only_count": 3,
@@ -500,7 +533,7 @@ def test_binary_correction_summary_skips_materialization_without_telemetry(
         dense_correction_count=jnp.asarray(1, dtype=jnp.int32),
     )
     monkeypatch.setattr(
-        callbacks.runtime,
+        callback_runtime,
         "binary_chunk_diagnostics_to_mapping",
         fail_binary_chunk_diagnostics_to_mapping,
     )

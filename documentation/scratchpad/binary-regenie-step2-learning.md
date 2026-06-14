@@ -675,7 +675,7 @@ uv run pytest \
 For output and setup regressions that affected the parity work:
 
 ```bash
-uv run pytest tests/test_io_output.py tests/test_jax_setup.py -q
+uv run pytest tests/test_io_output.py tests/test_jax_runtime.py -q
 ```
 
 For local quality gates:

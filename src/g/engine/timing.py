@@ -136,11 +136,11 @@ class TransferMetadataSnapshot:
 class QueueBackpressureAccumulator:
     """Mutable queue/backpressure aggregate held behind the recorder lock."""
 
-    observation_count: int = 0
-    max_depth: int = 0
-    max_capacity: int = 0
-    total_elapsed_seconds: float = 0.0
-    total_blocked_seconds: float = 0.0
+    observation_count: int
+    max_depth: int
+    max_capacity: int
+    total_elapsed_seconds: float
+    total_blocked_seconds: float
 
     def add_observation(
         self,
@@ -162,10 +162,10 @@ class QueueBackpressureAccumulator:
 class TransferMetadataAccumulator:
     """Mutable transfer metadata aggregate held behind the recorder lock."""
 
-    observation_count: int = 0
-    total_bytes: int = 0
-    max_bytes: int = 0
-    total_elements: int = 0
+    observation_count: int
+    total_bytes: int
+    max_bytes: int
+    total_elements: int
 
     def add_observation(self, *, byte_count: int, element_count: int) -> None:
         """Add one transfer metadata observation."""
@@ -178,7 +178,7 @@ class TransferMetadataAccumulator:
 class StageTimingRecorder:
     """Thread-safe diagnostic wall-time collector for profiling harnesses."""
 
-    def __init__(self, *, exact_stage_timings: bool = False) -> None:
+    def __init__(self, *, exact_stage_timings: bool) -> None:
         """Initialize empty stage timing state."""
         self.exact_stage_timings = exact_stage_timings
         self.stage_totals_seconds: dict[str, float] = {}
@@ -245,13 +245,22 @@ class StageTimingRecorder:
         operation_name: str,
         queue_depth: int,
         queue_capacity: int,
-        elapsed_seconds: float = 0.0,
-        blocked_seconds: float = 0.0,
+        elapsed_seconds: float,
+        blocked_seconds: float,
     ) -> None:
         """Store one queue or bounded-resource pressure observation."""
         with self.lock:
             key = (queue_name, operation_name)
-            accumulator = self.queue_backpressure.setdefault(key, QueueBackpressureAccumulator())
+            accumulator = self.queue_backpressure.setdefault(
+                key,
+                QueueBackpressureAccumulator(
+                    observation_count=0,
+                    max_depth=0,
+                    max_capacity=0,
+                    total_elapsed_seconds=0.0,
+                    total_blocked_seconds=0.0,
+                ),
+            )
             accumulator.add_observation(
                 queue_depth=queue_depth,
                 queue_capacity=queue_capacity,
@@ -272,7 +281,15 @@ class StageTimingRecorder:
         """Store metadata for one host/device transfer observation."""
         with self.lock:
             key = (transfer_name, array_role, dtype_name, ndim)
-            accumulator = self.transfer_metadata.setdefault(key, TransferMetadataAccumulator())
+            accumulator = self.transfer_metadata.setdefault(
+                key,
+                TransferMetadataAccumulator(
+                    observation_count=0,
+                    total_bytes=0,
+                    max_bytes=0,
+                    total_elements=0,
+                ),
+            )
             accumulator.add_observation(byte_count=byte_count, element_count=element_count)
 
     def snapshot(self) -> StageTimingSnapshot:
@@ -316,9 +333,9 @@ class StageTimingRecorder:
 
 
 def build_stage_timing_recorder(
-    stage_timing_path: pathlib.Path | None = None,
+    stage_timing_path: pathlib.Path | None,
     *,
-    force: bool = False,
+    force: bool,
 ) -> StageTimingRecorder | None:
     """Create a diagnostic stage recorder when requested."""
     if stage_timing_path is None and not force:
@@ -333,7 +350,7 @@ def should_collect_exact_stage_timings(stage_timing_recorder: StageTimingRecorde
 
 def write_stage_timing_snapshot(
     stage_timing_recorder: StageTimingRecorder | None,
-    stage_timing_path: pathlib.Path | None = None,
+    stage_timing_path: pathlib.Path | None,
 ) -> None:
     """Persist diagnostic stage timings when requested."""
     if stage_timing_recorder is None:
@@ -358,9 +375,9 @@ def write_stage_timing_snapshot(
 
 def write_profile_summary(
     stage_timing_recorder: StageTimingRecorder | None,
-    profile_summary_path: pathlib.Path | None = None,
+    profile_summary_path: pathlib.Path | None,
     *,
-    run_id: str | None = None,
+    run_id: str | None,
 ) -> None:
     """Persist aggregate profile summary metrics when requested."""
     if stage_timing_recorder is None:

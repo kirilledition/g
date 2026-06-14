@@ -12,7 +12,7 @@ if typing.TYPE_CHECKING:
 
 
 def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> None:
-    recorder = timing.StageTimingRecorder()
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     native_profile = {"variant_decode_count": 4}
     binary_diagnostics: dict[str, int | float] = {"firth_candidate_count": 2}
     null_diagnostics = {"chromosome": "22", "null_logistic_iteration_count": 5}
@@ -62,7 +62,7 @@ def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> 
 
 
 def test_stage_timing_recorder_aggregates_queue_backpressure() -> None:
-    recorder = timing.StageTimingRecorder()
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
 
     recorder.add_queue_backpressure_observation(
         queue_name="result_queue",
@@ -70,6 +70,7 @@ def test_stage_timing_recorder_aggregates_queue_backpressure() -> None:
         queue_depth=1,
         queue_capacity=2,
         elapsed_seconds=0.25,
+        blocked_seconds=0.0,
     )
     recorder.add_queue_backpressure_observation(
         queue_name="result_queue",
@@ -94,7 +95,7 @@ def test_stage_timing_recorder_aggregates_queue_backpressure() -> None:
 
 
 def test_stage_timing_recorder_aggregates_transfer_metadata() -> None:
-    recorder = timing.StageTimingRecorder()
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
 
     recorder.add_stage_duration("host_to_device_transfer", 2.0)
     recorder.add_transfer_metadata(
@@ -132,9 +133,9 @@ def test_stage_timing_recorder_aggregates_transfer_metadata() -> None:
 
 
 def test_build_stage_timing_recorder_is_opt_in(tmp_path: Path) -> None:
-    assert timing.build_stage_timing_recorder(None) is None
+    assert timing.build_stage_timing_recorder(None, force=False) is None
     aggregate_recorder = timing.build_stage_timing_recorder(None, force=True)
-    exact_recorder = timing.build_stage_timing_recorder(tmp_path / "timings.json")
+    exact_recorder = timing.build_stage_timing_recorder(tmp_path / "timings.json", force=False)
 
     assert isinstance(aggregate_recorder, timing.StageTimingRecorder)
     assert isinstance(exact_recorder, timing.StageTimingRecorder)
@@ -146,7 +147,7 @@ def test_build_stage_timing_recorder_is_opt_in(tmp_path: Path) -> None:
 
 def test_write_stage_timing_snapshot_noops_without_recorder_or_path(tmp_path: Path) -> None:
     output_path = tmp_path / "missing" / "timings.json"
-    recorder = timing.StageTimingRecorder()
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
 
     timing.write_stage_timing_snapshot(None, output_path)
     timing.write_stage_timing_snapshot(recorder, None)
@@ -156,7 +157,7 @@ def test_write_stage_timing_snapshot_noops_without_recorder_or_path(tmp_path: Pa
 
 def test_write_stage_timing_snapshot_persists_payload_and_derived_metrics(tmp_path: Path) -> None:
     output_path = tmp_path / "diagnostics" / "timings.json"
-    recorder = timing.StageTimingRecorder()
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     recorder.add_stage_duration("native_engine_delivery", 2.0)
     recorder.add_stage_duration("output_write", 4.0)
     recorder.add_stage_duration("jax_compute", 1.0)
@@ -205,7 +206,7 @@ def test_write_stage_timing_snapshot_persists_payload_and_derived_metrics(tmp_pa
 
 def test_write_profile_summary_persists_aggregate_payload(tmp_path: Path) -> None:
     output_path = tmp_path / "logs" / "profile.summary.json"
-    recorder = timing.StageTimingRecorder()
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     recorder.add_stage_duration("native_engine_delivery", 2.0)
     recorder.set_native_bgen_profile({"variant_decode_count": 8})
     recorder.add_chunk_stage_duration(
@@ -257,7 +258,7 @@ def test_build_derived_metrics_omits_zero_denominator_values() -> None:
 
 
 def test_record_stage_duration_uses_elapsed_perf_counter(monkeypatch: pytest.MonkeyPatch) -> None:
-    recorder = timing.StageTimingRecorder()
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     monkeypatch.setattr(timing.time, "perf_counter", lambda: 12.5)
 
     timing.record_stage_duration(recorder, "jax_compute", 10.0)
@@ -269,7 +270,7 @@ def test_record_stage_duration_uses_elapsed_perf_counter(monkeypatch: pytest.Mon
 
 
 def test_record_chunk_stage_duration_uses_elapsed_perf_counter(monkeypatch: pytest.MonkeyPatch) -> None:
-    recorder = timing.StageTimingRecorder()
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     chunk_identity = timing.ChunkTimingIdentity(
         chunk_identifier=5,
         chromosome="22",

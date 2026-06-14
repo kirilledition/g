@@ -12,6 +12,13 @@ from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 from g.interface import config as interface_config
 
+SCORE_DTYPE = types.FloatingPointDtype.FLOAT32
+SCORE_ONLY_CORRECTION_PLAN = types.BinaryCorrectionPlan(
+    method=types.BinaryFallbackMethod.SCORE_ONLY,
+    p_threshold=0.05,
+    firth_se=False,
+)
+
 
 def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
     """Build the packaged-default kernel config for tests."""
@@ -35,13 +42,14 @@ def build_scalar_fixture() -> tuple[regenie2_binary_state.Regenie2BinaryChromoso
     )
     phenotype_vector = jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
     genotype_vector = jnp.asarray([0.0, 2.0, 0.0, 0.0, 2.0, 0.0, 2.0, 0.0], dtype=jnp.float32)
-    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
+    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector, SCORE_DTYPE)
     kernel_config = build_default_binary_kernel_config()
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
         jnp.zeros_like(phenotype_vector),
-        types.BinaryCorrectionPlan(),
+        SCORE_ONLY_CORRECTION_PLAN,
         kernel_config,
+        SCORE_DTYPE,
     )
     residualize_genotypes = regenie2_binary_firth_scalar_approx.residualize_and_scale_genotypes_for_approximate_firth
     residualized_genotype_vector = residualize_genotypes(chromosome_state, genotype_vector[None, :])[0]
@@ -210,13 +218,14 @@ def test_collinear_scalar_candidate_gets_numerical_failure_label() -> None:
         dtype=jnp.float32,
     )
     phenotype_vector = jnp.asarray([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
-    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
+    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector, SCORE_DTYPE)
     kernel_config = build_default_binary_kernel_config()
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
         jnp.zeros_like(phenotype_vector),
-        types.BinaryCorrectionPlan(),
+        SCORE_ONLY_CORRECTION_PLAN,
         kernel_config,
+        SCORE_DTYPE,
     )
     raw_genotype_vector = covariate_matrix[:, 1]
     residualize_genotypes = regenie2_binary_firth_scalar_approx.residualize_and_scale_genotypes_for_approximate_firth

@@ -276,7 +276,7 @@ data/regenie2_binary_chr22_gpu.g/trait_0001_phenotype_binary.regenie2_binary.run
 
 - `just upgrade-deps` is now Python-package only. Nix lockfile updates moved to `just upgrade-nix-lock`.
 - `just doctor-jax` should be treated as a host-specific check. On a login node without NVIDIA libraries, CPU fallback is expected.
-- JAX persistent compilation cache defaults to `/tmp/<user>/g-jax-cache`; use
+- JAX persistent compilation cache defaults under the platform temporary directory; use
   `--jax_cache_dir` for an explicit cache path.
 - Profiling recipes isolate CPU JAX caches under
   `${G_PROFILE_CPU_JAX_CACHE_PARENT:-/tmp/g-jax-cpu-profile-cache}/host-<hostname>/features-<cpu-fingerprint>/`

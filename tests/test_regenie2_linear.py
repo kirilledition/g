@@ -14,8 +14,11 @@ from g import types
 from g.compute.common import genotype, linalg, pvalue
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import config as regenie2_linear_config
+from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
+
+DEFAULT_LINEAR_NUMERICAL_CONFIG = regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,142 @@ class LinearFormulaResult:
     log10_p_value: npt.NDArray[np.float64]
 
 
+def normalize_test_sample_major_genotypes(
+    genotype_matrix: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> jax.Array:
+    """Normalize sample-major test genotypes with explicit production arguments."""
+    return genotype.normalize_high_frequency_diploid_genotypes_sample_major(
+        genotype_matrix,
+        score_dtype=score_dtype,
+    )
+
+
+def normalize_test_variant_major_genotypes(
+    genotype_matrix_by_variant: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> jax.Array:
+    """Normalize variant-major test genotypes with explicit production arguments."""
+    return genotype.normalize_high_frequency_diploid_genotypes_variant_major(
+        genotype_matrix_by_variant,
+        score_dtype=score_dtype,
+    )
+
+
+def normalize_test_variant_major_genotypes_from_stats(
+    genotype_matrix_by_variant: jax.Array,
+    genotype_dosage_sum: jax.Array,
+    genotype_observation_count: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> jax.Array:
+    """Normalize native-stat variant-major test genotypes with explicit production arguments."""
+    return genotype.normalize_high_frequency_diploid_genotypes_variant_major_from_stats(
+        genotype_matrix_by_variant,
+        genotype_dosage_sum,
+        genotype_observation_count,
+        score_dtype=score_dtype,
+    )
+
+
+def compute_test_normalized_genotype_sum_squares_from_stats(
+    *,
+    genotype_dosage_sum: jax.Array,
+    genotype_observation_count: jax.Array,
+    genotype_imputed_dosage_square_sum: jax.Array,
+    sample_count: int,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> jax.Array:
+    """Compute normalized genotype sum squares with explicit production arguments."""
+    return regenie2_linear_score.compute_normalized_genotype_sum_squares_from_stats(
+        genotype_dosage_sum=genotype_dosage_sum,
+        genotype_observation_count=genotype_observation_count,
+        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
+        sample_count=sample_count,
+        score_dtype=score_dtype,
+    )
+
+
+def prepare_test_linear_state(
+    *,
+    covariate_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> regenie2_linear_state.Regenie2LinearState:
+    """Prepare a single-trait linear state with explicit production arguments."""
+    return regenie2_linear.prepare_regenie2_linear_state(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        score_dtype=score_dtype,
+    )
+
+
+def prepare_test_multi_linear_state(
+    covariate_matrix: jax.Array,
+    phenotype_matrix: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> regenie2_linear_state.Regenie2MultiLinearState:
+    """Prepare a multi-trait linear state with explicit production arguments."""
+    return regenie2_linear.prepare_regenie2_multi_linear_state(
+        covariate_matrix,
+        phenotype_matrix,
+        score_dtype=score_dtype,
+    )
+
+
+def compute_test_linear_chunk(
+    *,
+    state: regenie2_linear_state.Regenie2LinearState,
+    genotype_matrix: jax.Array,
+    loco_predictions: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    linear_minimum_variance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
+    linear_relative_variance_tolerance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance,
+) -> regenie2_linear_result.Regenie2LinearChunkResult:
+    """Compute a single-trait linear chunk with explicit production arguments."""
+    return regenie2_linear.compute_regenie2_linear_chunk(
+        state=state,
+        genotype_matrix=genotype_matrix,
+        loco_predictions=loco_predictions,
+        score_dtype=score_dtype,
+        linear_minimum_variance=linear_minimum_variance,
+        linear_relative_variance_tolerance=linear_relative_variance_tolerance,
+    )
+
+
+def compute_test_linear_chunk_trait_major_variant_major(
+    *,
+    whitened_covariate_transpose: jax.Array,
+    adjusted_residual_matrix: jax.Array,
+    adjusted_residual_projection_coordinate_matrix: jax.Array,
+    adjusted_residual_sum_squares: jax.Array,
+    degrees_of_freedom: jax.Array,
+    genotype_matrix_by_variant: jax.Array,
+    genotype_dosage_sum: jax.Array | None = None,
+    genotype_observation_count: jax.Array | None = None,
+    genotype_imputed_dosage_square_sum: jax.Array | None = None,
+    score_left_hand_matrix: jax.Array | None = None,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    linear_minimum_variance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
+    linear_relative_variance_tolerance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance,
+) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
+    """Compute a trait-major variant-major linear chunk with explicit production arguments."""
+    return regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
+        whitened_covariate_transpose=whitened_covariate_transpose,
+        adjusted_residual_matrix=adjusted_residual_matrix,
+        adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
+        adjusted_residual_sum_squares=adjusted_residual_sum_squares,
+        degrees_of_freedom=degrees_of_freedom,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        genotype_dosage_sum=genotype_dosage_sum,
+        genotype_observation_count=genotype_observation_count,
+        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
+        score_left_hand_matrix=score_left_hand_matrix,
+        score_dtype=score_dtype,
+        linear_minimum_variance=linear_minimum_variance,
+        linear_relative_variance_tolerance=linear_relative_variance_tolerance,
+    )
+
+
 def compute_score_reference_chunk(
     state: regenie2_linear_state.Regenie2LinearState,
     covariate_matrix: jax.Array,
@@ -60,7 +199,7 @@ def compute_score_reference_chunk(
     loco_predictions: jax.Array,
 ) -> ReferenceRegenie2LinearChunkResult:
     """Compute the unoptimized score-statistic formula for regression-test comparison."""
-    normalized_genotype_matrix = genotype.normalize_high_frequency_diploid_genotypes_sample_major(
+    normalized_genotype_matrix = normalize_test_sample_major_genotypes(
         genotype_matrix,
     )
     covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jnp.float32)
@@ -271,7 +410,7 @@ class TestPrepareRegenie2LinearState:
 
         phenotype_vector = jnp.arange(sample_count, dtype=jnp.float32) + 0.5
 
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
         )
@@ -289,7 +428,7 @@ class TestPrepareRegenie2LinearState:
         covariate_matrix = jnp.array(rng.standard_normal((sample_count, covariate_count)), dtype=jnp.float32)
         phenotype_vector = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
 
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
         )
@@ -306,7 +445,7 @@ class TestPrepareRegenie2LinearState:
         covariate_matrix = jnp.asarray(rng.standard_normal((sample_count, covariate_count)), dtype=jnp.float32)
         phenotype_matrix = jnp.asarray(rng.standard_normal((trait_count, sample_count)), dtype=jnp.float32)
         loco_prediction_matrix = jnp.asarray(rng.standard_normal((trait_count, sample_count)), dtype=jnp.float32)
-        state = regenie2_linear.prepare_regenie2_multi_linear_state(covariate_matrix, phenotype_matrix)
+        state = prepare_test_multi_linear_state(covariate_matrix, phenotype_matrix)
 
         chromosome_state = regenie2_linear.prepare_regenie2_multi_linear_chromosome_state(
             state,
@@ -395,15 +534,11 @@ class TestComputeRegenie2LinearChunk:
         native_dosage_sum = jnp.asarray([3.0, 9.0, 7.0], dtype=jnp.float32)
         native_observation_count = jnp.asarray([5, 5, 4], dtype=jnp.int32)
         native_imputed_dosage_square_sum = jnp.asarray([5.0, 17.0, 16.0625], dtype=jnp.float32)
-        normalized_genotype_matrix_by_variant = genotype.normalize_high_frequency_diploid_genotypes_variant_major(
-            genotype_matrix_by_variant
-        )
-        stats_normalized_genotype_matrix_by_variant = (
-            genotype.normalize_high_frequency_diploid_genotypes_variant_major_from_stats(
-                genotype_matrix_by_variant,
-                native_dosage_sum,
-                native_observation_count,
-            )
+        normalized_genotype_matrix_by_variant = normalize_test_variant_major_genotypes(genotype_matrix_by_variant)
+        stats_normalized_genotype_matrix_by_variant = normalize_test_variant_major_genotypes_from_stats(
+            genotype_matrix_by_variant,
+            native_dosage_sum,
+            native_observation_count,
         )
         numpy.testing.assert_allclose(
             stats_normalized_genotype_matrix_by_variant,
@@ -416,7 +551,7 @@ class TestComputeRegenie2LinearChunk:
             normalized_genotype_matrix_by_variant,
             normalized_genotype_matrix_by_variant,
         )
-        observed_sum_squares = regenie2_linear_score.compute_normalized_genotype_sum_squares_from_stats(
+        observed_sum_squares = compute_test_normalized_genotype_sum_squares_from_stats(
             genotype_dosage_sum=native_dosage_sum,
             genotype_observation_count=native_observation_count,
             genotype_imputed_dosage_square_sum=native_imputed_dosage_square_sum,
@@ -430,7 +565,7 @@ class TestComputeRegenie2LinearChunk:
         adjusted_residual_projection_coordinate_matrix = jnp.asarray([[0.0]], dtype=jnp.float32)
         adjusted_residual_sum_squares = jnp.asarray([0.55], dtype=jnp.float32)
         degrees_of_freedom = jnp.asarray(sample_count - 1, dtype=jnp.float32)
-        fallback_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
+        fallback_result = compute_test_linear_chunk_trait_major_variant_major(
             whitened_covariate_transpose=whitened_covariate_transpose,
             adjusted_residual_matrix=adjusted_residual_matrix,
             adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
@@ -438,7 +573,7 @@ class TestComputeRegenie2LinearChunk:
             degrees_of_freedom=degrees_of_freedom,
             genotype_matrix_by_variant=genotype_matrix_by_variant,
         )
-        stats_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
+        stats_result = compute_test_linear_chunk_trait_major_variant_major(
             whitened_covariate_transpose=whitened_covariate_transpose,
             adjusted_residual_matrix=adjusted_residual_matrix,
             adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
@@ -481,12 +616,12 @@ class TestComputeRegenie2LinearChunk:
 
         loco_predictions = jnp.array(rng.standard_normal(sample_count) * 0.1, dtype=jnp.float32)
 
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
         )
 
-        result = regenie2_linear.compute_regenie2_linear_chunk(
+        result = compute_test_linear_chunk(
             state=state,
             genotype_matrix=genotype_matrix,
             loco_predictions=loco_predictions,
@@ -517,11 +652,11 @@ class TestComputeRegenie2LinearChunk:
         genotype_matrix[:, 0] = 0.0
         genotype_matrix = jnp.array(genotype_matrix)
         loco_predictions = jnp.array(rng.standard_normal(sample_count) * 0.2, dtype=jnp.float32)
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=jnp.array(covariate_matrix),
             phenotype_vector=phenotype_vector,
         )
-        optimized_result = regenie2_linear.compute_regenie2_linear_chunk(
+        optimized_result = compute_test_linear_chunk(
             state=state,
             genotype_matrix=genotype_matrix,
             loco_predictions=loco_predictions,
@@ -572,12 +707,12 @@ class TestComputeRegenie2LinearChunk:
         )
         loco_predictions = jnp.asarray([0.01, -0.02, 0.03, -0.01], dtype=jnp.float64)
 
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
             score_dtype=types.FloatingPointDtype.FLOAT64,
         )
-        result = regenie2_linear.compute_regenie2_linear_chunk(
+        result = compute_test_linear_chunk(
             state=state,
             genotype_matrix=genotype_matrix,
             loco_predictions=loco_predictions,
@@ -600,7 +735,7 @@ class TestComputeRegenie2LinearChunk:
         phenotype_vector = rng.normal(size=sample_count)
         loco_predictions = np.zeros(sample_count, dtype=np.float64)
 
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=jnp.asarray(covariate_matrix),
             phenotype_vector=jnp.asarray(phenotype_vector),
             score_dtype=types.FloatingPointDtype.FLOAT64,
@@ -644,7 +779,7 @@ class TestComputeRegenie2LinearChunk:
         )
         expected_sum_squares = float(np.sum(np.square(dosage_values - 2.0), dtype=np.float64))
 
-        observed_sum_squares = regenie2_linear_score.compute_normalized_genotype_sum_squares_from_stats(
+        observed_sum_squares = compute_test_normalized_genotype_sum_squares_from_stats(
             genotype_dosage_sum=jnp.asarray(dosage_sum),
             genotype_observation_count=jnp.asarray(observation_count),
             genotype_imputed_dosage_square_sum=jnp.asarray(imputed_dosage_square_sum),
@@ -677,13 +812,13 @@ class TestComputeRegenie2LinearChunk:
         genotype_matrix = jnp.array(rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32))
         loco_predictions = jnp.array(rng.standard_normal(sample_count) * 0.2, dtype=jnp.float32)
 
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=jnp.array(covariate_matrix),
             phenotype_vector=phenotype_vector,
         )
         chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(state, loco_predictions)
 
-        direct_result = regenie2_linear.compute_regenie2_linear_chunk(
+        direct_result = compute_test_linear_chunk(
             state=state,
             genotype_matrix=genotype_matrix,
             loco_predictions=loco_predictions,
@@ -714,7 +849,7 @@ class TestComputeRegenie2LinearChunk:
             rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32),
         )
         loco_predictions = jnp.asarray(rng.standard_normal(sample_count) * 0.1, dtype=jnp.float32)
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=jnp.asarray(covariate_matrix),
             phenotype_vector=phenotype_vector,
         )
@@ -765,7 +900,7 @@ class TestComputeRegenie2LinearChunk:
         genotype_matrix[90:, 0] = 1.0
         genotype_matrix_by_variant = genotype_matrix.T
         loco_predictions = jnp.asarray(rng.standard_normal(sample_count) * 0.1, dtype=jnp.float32)
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=jnp.asarray(covariate_matrix),
             phenotype_vector=phenotype_vector,
         )
@@ -827,7 +962,7 @@ class TestComputeRegenie2LinearChunk:
             adjusted_residual=phenotype_residual - loco_predictions,
             genotype_matrix=genotype_matrix,
         )
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=jnp.asarray(covariate_matrix, dtype=jnp.float32),
             phenotype_vector=jnp.asarray(phenotype_vector, dtype=jnp.float32),
         )
@@ -880,12 +1015,12 @@ class TestComputeRegenie2LinearChunk:
 
         loco_predictions = jnp.zeros(sample_count, dtype=jnp.float32)
 
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
         )
 
-        result = regenie2_linear.compute_regenie2_linear_chunk(
+        result = compute_test_linear_chunk(
             state=state,
             genotype_matrix=genotype_matrix,
             loco_predictions=loco_predictions,
@@ -918,7 +1053,7 @@ class TestComputeRegenie2LinearChunk:
         )
         loco_predictions = jnp.zeros(sample_count, dtype=jnp.float32)
 
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=jnp.asarray(covariate_matrix),
             phenotype_vector=phenotype_vector,
         )
@@ -964,7 +1099,7 @@ class TestComputeRegenie2LinearChunk:
         )
         loco_prediction_matrix = jnp.zeros((trait_count, sample_count), dtype=jnp.float32)
 
-        multi_state = regenie2_linear.prepare_regenie2_multi_linear_state(
+        multi_state = prepare_test_multi_linear_state(
             covariate_matrix=jnp.asarray(covariate_matrix),
             phenotype_matrix=phenotype_matrix,
         )
@@ -1014,19 +1149,19 @@ class TestComputeRegenie2LinearChunk:
 
         genotype_matrix = jnp.array(rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32))
 
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
         )
 
-        result_no_loco = regenie2_linear.compute_regenie2_linear_chunk(
+        result_no_loco = compute_test_linear_chunk(
             state=state,
             genotype_matrix=genotype_matrix,
             loco_predictions=jnp.zeros(sample_count, dtype=jnp.float32),
         )
 
         loco_predictions = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
-        result_with_loco = regenie2_linear.compute_regenie2_linear_chunk(
+        result_with_loco = compute_test_linear_chunk(
             state=state,
             genotype_matrix=genotype_matrix,
             loco_predictions=loco_predictions,
@@ -1102,11 +1237,11 @@ class TestComputeRegenie2LinearChunk:
         assert not np.allclose(unprojected_result.standard_error, fixture.expected_standard_error, rtol=1e-5, atol=1e-7)
         assert not np.allclose(unprojected_result.chi_squared, fixture.expected_chi_squared, rtol=1e-5, atol=1e-7)
 
-        state = regenie2_linear.prepare_regenie2_linear_state(
+        state = prepare_test_linear_state(
             covariate_matrix=jnp.asarray(fixture.covariate_matrix, dtype=jnp.float32),
             phenotype_vector=jnp.asarray(fixture.phenotype_vector, dtype=jnp.float32),
         )
-        observed_result = regenie2_linear.compute_regenie2_linear_chunk(
+        observed_result = compute_test_linear_chunk(
             state=state,
             genotype_matrix=jnp.asarray(fixture.genotype_matrix, dtype=jnp.float32),
             loco_predictions=jnp.asarray(fixture.loco_predictions, dtype=jnp.float32),
@@ -1161,7 +1296,7 @@ class TestComputeRegenie2LinearChunk:
             atol=1e-6,
         )
 
-        multi_state = regenie2_linear.prepare_regenie2_multi_linear_state(
+        multi_state = prepare_test_multi_linear_state(
             covariate_matrix=jnp.asarray(fixture.covariate_matrix, dtype=jnp.float32),
             phenotype_matrix=jnp.asarray(fixture.phenotype_vector[None, :], dtype=jnp.float32),
         )
@@ -1239,7 +1374,7 @@ class TestComputeRegenie2LinearChunk:
             dtype=jnp.float32,
         )
 
-        multi_state = regenie2_linear.prepare_regenie2_multi_linear_state(
+        multi_state = prepare_test_multi_linear_state(
             covariate_matrix=jnp.asarray(covariate_matrix),
             phenotype_matrix=phenotype_matrix,
         )
@@ -1254,12 +1389,12 @@ class TestComputeRegenie2LinearChunk:
 
         single_results = []
         for trait_index in range(trait_count):
-            single_state = regenie2_linear.prepare_regenie2_linear_state(
+            single_state = prepare_test_linear_state(
                 covariate_matrix=jnp.asarray(covariate_matrix),
                 phenotype_vector=phenotype_matrix[trait_index],
             )
             single_results.append(
-                regenie2_linear.compute_regenie2_linear_chunk(
+                compute_test_linear_chunk(
                     state=single_state,
                     genotype_matrix=genotype_matrix,
                     loco_predictions=loco_prediction_matrix[trait_index],
