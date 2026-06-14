@@ -100,6 +100,20 @@ class JaxRuntimeSetupReport:
 
 
 @dataclass(frozen=True)
+class JaxRuntimeDiagnosticField:
+    """Structured field attached to a JAX runtime diagnostic event.
+
+    Attributes:
+        name: Event field name.
+        value: Event field value.
+
+    """
+
+    name: str
+    value: object
+
+
+@dataclass(frozen=True)
 class JaxRuntimeDiagnosticEvent:
     """Structured diagnostic event for JAX runtime setup.
 
@@ -114,4 +128,4 @@ class JaxRuntimeDiagnosticEvent:
     event_name: str
     level: JaxRuntimeDiagnosticLevel
     message: str
-    fields: tuple[tuple[str, object], ...]
+    fields: tuple[JaxRuntimeDiagnosticField, ...]

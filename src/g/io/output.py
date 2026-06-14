@@ -90,6 +90,173 @@ class InitializedOutputRun:
     committed_chunk_identifiers: frozenset[int]
 
 
+@dataclass(frozen=True)
+class ManifestFileFingerprint:
+    """Stable fingerprint for an input file recorded in a run manifest.
+
+    Attributes:
+        path: Absolute input file path.
+        size: File size in bytes.
+        mtime_ns: File modification timestamp in nanoseconds.
+        content_hash_algorithm: Content hash algorithm or metadata-only marker.
+        content_sha256: SHA-256 content hash when content hashing is enabled.
+
+    """
+
+    path: str
+    size: int
+    mtime_ns: int
+    content_hash_algorithm: str
+    content_sha256: str | None
+
+
+@dataclass(frozen=True)
+class BinaryCorrectionPlanManifest:
+    """Manifest representation of binary fallback policy.
+
+    Attributes:
+        method: Binary fallback method name.
+        p_threshold: Score-test p-value threshold for correction.
+        firth_se: Whether Firth standard errors are requested.
+
+    """
+
+    method: str
+    p_threshold: float
+    firth_se: bool
+
+
+@dataclass(frozen=True)
+class AssociationBackendManifest:
+    """Manifest representation of the selected association backend.
+
+    Attributes:
+        kind: Concrete backend implementation.
+        association_mode: Statistical association mode.
+        device: JAX device requested for the backend.
+        genotype_format: Native genotype delivery format.
+
+    """
+
+    kind: str
+    association_mode: str
+    device: str
+    genotype_format: str
+
+
+@dataclass(frozen=True)
+class JaxPolicyManifest:
+    """Manifest representation of JAX numerical and backend policy.
+
+    Attributes:
+        device: Requested JAX device.
+        enable_x64: Whether x64 is enabled for JAX.
+        matmul_precision: Default JAX matmul precision.
+
+    """
+
+    device: str
+    enable_x64: bool
+    matmul_precision: str
+
+
+@dataclass(frozen=True)
+class OutputWriterManifest:
+    """Manifest representation of output writer settings.
+
+    Attributes:
+        output_format: Persisted chunk output format.
+        finalize_parquet: Whether chunks are finalized into Parquet.
+        writer_thread_count: Number of writer threads.
+        writer_queue_depth: Maximum queued chunk writes.
+        chunks_per_arrow_file: Number of chunks per Arrow file.
+        arrow_compression: Arrow IPC compression codec.
+        parquet_compression: Parquet compression codec.
+        result_statistic_dtype: Persisted public statistic dtype.
+
+    """
+
+    output_format: str
+    finalize_parquet: bool
+    writer_thread_count: int
+    writer_queue_depth: int
+    chunks_per_arrow_file: int
+    arrow_compression: str
+    parquet_compression: str
+    result_statistic_dtype: str
+
+
+@dataclass(frozen=True)
+class CurrentRunManifestHeader:
+    """Typed current-run manifest header before JSON serialization.
+
+    Attributes:
+        association_mode: Statistical association mode.
+        association_backend: Selected association backend metadata.
+        bgen: BGEN file fingerprint.
+        sample: Optional sample file fingerprint.
+        phenotype_file: Phenotype file fingerprint.
+        phenotype_name: Phenotype column name.
+        covariate_file: Optional covariate file fingerprint.
+        covariate_names: Covariate column names.
+        prediction_list: REGENIE prediction-list fingerprint.
+        sample_count: Number of aligned samples.
+        variant_count: Number of variants in the source.
+        chunk_size: Native variant chunk size.
+        variant_limit: Optional variant processing cap.
+        binary_correction_plan: Binary correction policy.
+        binary_kernel_config: Binary kernel configuration when binary.
+        trusted_no_missing_diploid: Trusted BGEN fast-path policy.
+        trusted_bgen_validation_mode: Trusted BGEN validation policy.
+        sample_key_mode: Sample identity matching mode.
+        bgen_decode_tile_variant_count: Native BGEN decode tile size.
+        jax_policy: JAX backend and precision policy.
+        gpu_genotype_format: Native genotype format delivered to GPU kernels.
+        score_dtype: Score-test compute dtype.
+        firth_dtype: Firth compute dtype.
+        multi_phenotype_sample_mode: Multi-phenotype sample inclusion mode.
+        phenotype_compute_group_id: Stable compute-group identifier.
+        sample_set_fingerprint: Aligned sample-set fingerprint.
+        covariate_design_fingerprint: Aligned covariate-design fingerprint.
+        prediction_alignment_fingerprint: Prediction alignment fingerprint.
+        output_writer: Output writer policy.
+
+    """
+
+    association_mode: types.AssociationMode
+    association_backend: AssociationBackendManifest
+    bgen: ManifestFileFingerprint
+    sample: ManifestFileFingerprint | None
+    phenotype_file: ManifestFileFingerprint
+    phenotype_name: str
+    covariate_file: ManifestFileFingerprint | None
+    covariate_names: tuple[str, ...]
+    prediction_list: ManifestFileFingerprint
+    sample_count: int
+    variant_count: int
+    chunk_size: int
+    variant_limit: int | None
+    binary_correction_plan: BinaryCorrectionPlanManifest
+    binary_kernel_config: typing.Any | None
+    trusted_no_missing_diploid: bool
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode
+    sample_key_mode: types.SampleKeyMode
+    bgen_decode_tile_variant_count: int
+    jax_policy: JaxPolicyManifest
+    gpu_genotype_format: types.GpuGenotypeFormat
+    score_dtype: types.FloatingPointDtype
+    firth_dtype: types.FloatingPointDtype
+    multi_phenotype_sample_mode: MultiPhenotypeSampleMode
+    phenotype_compute_group_id: str | None
+    sample_set_fingerprint: str | None
+    covariate_design_fingerprint: str | None
+    prediction_alignment_fingerprint: str | None
+    output_writer: OutputWriterManifest
+
+
+RunManifestHeaderInput = CurrentRunManifestHeader | dict[str, typing.Any]
+
+
 def get_run_manifest_path(output_run_paths: OutputRunPaths) -> Path:
     """Return the run manifest path for an output run."""
     return output_run_paths.run_directory / RUN_MANIFEST_FILENAME
@@ -161,7 +328,7 @@ def build_file_content_sha256(path: Path) -> str:
     return fingerprint_hash.hexdigest()
 
 
-def build_file_fingerprint(path: Path | None, *, include_content_hash: bool) -> dict[str, typing.Any] | None:
+def build_file_fingerprint(path: Path | None, *, include_content_hash: bool) -> ManifestFileFingerprint | None:
     """Build a lightweight immutable fingerprint for an input file."""
     if path is None:
         return None
@@ -169,22 +336,50 @@ def build_file_fingerprint(path: Path | None, *, include_content_hash: bool) -> 
     content_hash_algorithm = (
         FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM if include_content_hash else FILE_FINGERPRINT_METADATA_ONLY
     )
+    return ManifestFileFingerprint(
+        path=str(path.resolve()),
+        size=path_stat.st_size,
+        mtime_ns=path_stat.st_mtime_ns,
+        content_hash_algorithm=content_hash_algorithm,
+        content_sha256=build_file_content_sha256(path) if include_content_hash else None,
+    )
+
+
+def file_fingerprint_to_mapping(
+    file_fingerprint: ManifestFileFingerprint | None,
+) -> dict[str, typing.Any] | None:
+    """Serialize a file fingerprint to manifest JSON fields."""
+    if file_fingerprint is None:
+        return None
     return {
-        "path": str(path.resolve()),
-        "size": path_stat.st_size,
-        "mtime_ns": path_stat.st_mtime_ns,
-        "content_hash_algorithm": content_hash_algorithm,
-        "content_sha256": build_file_content_sha256(path) if include_content_hash else None,
+        "path": file_fingerprint.path,
+        "size": file_fingerprint.size,
+        "mtime_ns": file_fingerprint.mtime_ns,
+        "content_hash_algorithm": file_fingerprint.content_hash_algorithm,
+        "content_sha256": file_fingerprint.content_sha256,
     }
 
 
-def build_binary_correction_plan_manifest(binary_correction_plan: types.BinaryCorrectionPlan) -> dict[str, typing.Any]:
+def require_manifest_file_fingerprint(
+    file_fingerprint: ManifestFileFingerprint | None,
+    role_name: str,
+) -> ManifestFileFingerprint:
+    """Return a required file fingerprint or fail at an internal boundary."""
+    if file_fingerprint is None:
+        message = f"{role_name} fingerprint is required."
+        raise ValueError(message)
+    return file_fingerprint
+
+
+def build_binary_correction_plan_manifest(
+    binary_correction_plan: types.BinaryCorrectionPlan,
+) -> BinaryCorrectionPlanManifest:
     """Build the manifest representation of a binary correction plan."""
-    return {
-        "method": str(binary_correction_plan.method),
-        "p_threshold": binary_correction_plan.p_threshold,
-        "firth_se": binary_correction_plan.firth_se,
-    }
+    return BinaryCorrectionPlanManifest(
+        method=str(binary_correction_plan.method),
+        p_threshold=binary_correction_plan.p_threshold,
+        firth_se=binary_correction_plan.firth_se,
+    )
 
 
 def normalize_execution_plan_value(value: typing.Any) -> typing.Any:
@@ -205,7 +400,7 @@ def normalize_execution_plan_value(value: typing.Any) -> typing.Any:
     return value
 
 
-def build_execution_plan_hash(execution_plan: dict[str, typing.Any]) -> str:
+def build_execution_plan_hash(execution_plan: typing.Any) -> str:
     """Build a stable SHA-256 hash for compute/output-affecting run state."""
     normalized_execution_plan = normalize_execution_plan_value(execution_plan)
     execution_plan_bytes = json.dumps(
@@ -220,13 +415,13 @@ def build_jax_policy_manifest(
     *,
     device: types.Device,
     matmul_precision: types.JaxMatmulPrecision | None,
-) -> dict[str, typing.Any]:
+) -> JaxPolicyManifest:
     """Build manifest fields for JAX precision and backend policy."""
-    return {
-        "device": device.value,
-        "enable_x64": jax_runtime_models.JAX_ENABLE_X64,
-        "matmul_precision": JAX_MATMUL_PRECISION_WHEN_UNSET if matmul_precision is None else matmul_precision.value,
-    }
+    return JaxPolicyManifest(
+        device=device.value,
+        enable_x64=jax_runtime_models.JAX_ENABLE_X64,
+        matmul_precision=JAX_MATMUL_PRECISION_WHEN_UNSET if matmul_precision is None else matmul_precision.value,
+    )
 
 
 def build_association_backend_manifest(
@@ -235,14 +430,14 @@ def build_association_backend_manifest(
     association_mode: types.AssociationMode,
     jax_device: types.Device,
     gpu_genotype_format: types.GpuGenotypeFormat,
-) -> dict[str, typing.Any]:
+) -> AssociationBackendManifest:
     """Build manifest fields for the selected association backend."""
-    return {
-        "kind": association_backend_kind.value,
-        "association_mode": association_mode.value,
-        "device": jax_device.value,
-        "genotype_format": gpu_genotype_format.value,
-    }
+    return AssociationBackendManifest(
+        kind=association_backend_kind.value,
+        association_mode=association_mode.value,
+        device=jax_device.value,
+        genotype_format=gpu_genotype_format.value,
+    )
 
 
 def build_output_writer_manifest(
@@ -255,18 +450,18 @@ def build_output_writer_manifest(
     arrow_compression: types.ArrowCompression,
     parquet_compression: types.ParquetCompression,
     output_statistic_dtype: types.FloatingPointDtype,
-) -> dict[str, typing.Any]:
+) -> OutputWriterManifest:
     """Build manifest fields for output materialization and writer settings."""
-    return {
-        "output_format": output_format.value,
-        "finalize_parquet": finalize_parquet,
-        "writer_thread_count": writer_thread_count,
-        "writer_queue_depth": writer_queue_depth,
-        "chunks_per_arrow_file": chunks_per_arrow_file,
-        "arrow_compression": arrow_compression.value,
-        "parquet_compression": parquet_compression.value,
-        "result_statistic_dtype": output_statistic_dtype.value,
-    }
+    return OutputWriterManifest(
+        output_format=output_format.value,
+        finalize_parquet=finalize_parquet,
+        writer_thread_count=writer_thread_count,
+        writer_queue_depth=writer_queue_depth,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression.value,
+        parquet_compression=parquet_compression.value,
+        result_statistic_dtype=output_statistic_dtype.value,
+    )
 
 
 def build_current_run_manifest_header(
@@ -308,13 +503,22 @@ def build_current_run_manifest_header(
     arrow_compression: types.ArrowCompression,
     parquet_compression: types.ParquetCompression,
     output_statistic_dtype: types.FloatingPointDtype,
-) -> dict[str, typing.Any]:
+) -> CurrentRunManifestHeader:
     """Build immutable run manifest fields from the current execution plan."""
-    bgen_fingerprint = build_file_fingerprint(bgen_path, include_content_hash=False)
+    bgen_fingerprint = require_manifest_file_fingerprint(
+        build_file_fingerprint(bgen_path, include_content_hash=False),
+        "BGEN",
+    )
     sample_fingerprint = build_file_fingerprint(sample_path, include_content_hash=True)
-    phenotype_file_fingerprint = build_file_fingerprint(phenotype_path, include_content_hash=True)
+    phenotype_file_fingerprint = require_manifest_file_fingerprint(
+        build_file_fingerprint(phenotype_path, include_content_hash=True),
+        "phenotype file",
+    )
     covariate_file_fingerprint = build_file_fingerprint(covariate_path, include_content_hash=True)
-    prediction_list_fingerprint = build_file_fingerprint(prediction_list_path, include_content_hash=True)
+    prediction_list_fingerprint = require_manifest_file_fingerprint(
+        build_file_fingerprint(prediction_list_path, include_content_hash=True),
+        "prediction list",
+    )
     binary_correction_plan_manifest = build_binary_correction_plan_manifest(binary_correction_plan)
     output_writer_manifest = build_output_writer_manifest(
         output_format=output_format,
@@ -336,89 +540,136 @@ def build_current_run_manifest_header(
         jax_device=jax_device,
         gpu_genotype_format=gpu_genotype_format,
     )
-    execution_plan = normalize_execution_plan_value(
+    return CurrentRunManifestHeader(
+        association_mode=association_mode,
+        association_backend=association_backend_manifest,
+        bgen=bgen_fingerprint,
+        sample=sample_fingerprint,
+        phenotype_file=phenotype_file_fingerprint,
+        phenotype_name=phenotype_name,
+        covariate_file=covariate_file_fingerprint,
+        covariate_names=covariate_names,
+        prediction_list=prediction_list_fingerprint,
+        sample_count=sample_count,
+        variant_count=variant_count,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        binary_correction_plan=binary_correction_plan_manifest,
+        binary_kernel_config=binary_kernel_config,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        sample_key_mode=sample_key_mode,
+        bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
+        jax_policy=jax_policy_manifest,
+        gpu_genotype_format=gpu_genotype_format,
+        score_dtype=score_dtype,
+        firth_dtype=firth_dtype,
+        multi_phenotype_sample_mode=multi_phenotype_sample_mode,
+        phenotype_compute_group_id=phenotype_compute_group_id,
+        sample_set_fingerprint=sample_set_fingerprint,
+        covariate_design_fingerprint=covariate_design_fingerprint,
+        prediction_alignment_fingerprint=prediction_alignment_fingerprint,
+        output_writer=output_writer_manifest,
+    )
+
+
+def build_current_run_execution_plan(current_header: CurrentRunManifestHeader) -> dict[str, typing.Any]:
+    """Build normalized manifest fields that determine resume compatibility."""
+    return normalize_execution_plan_value(
         {
             "manifest_schema_version": RUN_MANIFEST_SCHEMA_VERSION,
             "output_schema_version": OUTPUT_SCHEMA_VERSION,
-            "association_mode": association_mode,
-            "association_backend": association_backend_manifest,
-            "bgen": bgen_fingerprint,
-            "sample": sample_fingerprint,
-            "phenotype_file": phenotype_file_fingerprint,
-            "phenotype_name": phenotype_name,
-            "covariate_file": covariate_file_fingerprint,
-            "covariate_names": covariate_names,
-            "prediction_list": prediction_list_fingerprint,
-            "sample_count": sample_count,
-            "variant_count": variant_count,
-            "chunk_size": chunk_size,
-            "variant_limit": variant_limit,
-            "binary_correction_plan": binary_correction_plan_manifest,
-            "binary_kernel_config": binary_kernel_config,
-            "trusted_no_missing_diploid": trusted_no_missing_diploid,
-            "trusted_bgen_validation_mode": trusted_bgen_validation_mode,
-            "sample_key_mode": sample_key_mode,
-            "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
-            "jax_policy": jax_policy_manifest,
-            "gpu_genotype_format": gpu_genotype_format,
-            "score_dtype": score_dtype,
-            "firth_dtype": firth_dtype,
-            "multi_phenotype_sample_mode": multi_phenotype_sample_mode,
-            "phenotype_compute_group_id": phenotype_compute_group_id,
-            "sample_set_fingerprint": sample_set_fingerprint,
-            "covariate_design_fingerprint": covariate_design_fingerprint,
-            "prediction_alignment_fingerprint": prediction_alignment_fingerprint,
-            "output_writer": output_writer_manifest,
+            "association_mode": current_header.association_mode,
+            "association_backend": current_header.association_backend,
+            "bgen": current_header.bgen,
+            "sample": current_header.sample,
+            "phenotype_file": current_header.phenotype_file,
+            "phenotype_name": current_header.phenotype_name,
+            "covariate_file": current_header.covariate_file,
+            "covariate_names": current_header.covariate_names,
+            "prediction_list": current_header.prediction_list,
+            "sample_count": current_header.sample_count,
+            "variant_count": current_header.variant_count,
+            "chunk_size": current_header.chunk_size,
+            "variant_limit": current_header.variant_limit,
+            "binary_correction_plan": current_header.binary_correction_plan,
+            "binary_kernel_config": current_header.binary_kernel_config,
+            "trusted_no_missing_diploid": current_header.trusted_no_missing_diploid,
+            "trusted_bgen_validation_mode": current_header.trusted_bgen_validation_mode,
+            "sample_key_mode": current_header.sample_key_mode,
+            "bgen_decode_tile_variant_count": current_header.bgen_decode_tile_variant_count,
+            "jax_policy": current_header.jax_policy,
+            "gpu_genotype_format": current_header.gpu_genotype_format,
+            "score_dtype": current_header.score_dtype,
+            "firth_dtype": current_header.firth_dtype,
+            "multi_phenotype_sample_mode": current_header.multi_phenotype_sample_mode,
+            "phenotype_compute_group_id": current_header.phenotype_compute_group_id,
+            "sample_set_fingerprint": current_header.sample_set_fingerprint,
+            "covariate_design_fingerprint": current_header.covariate_design_fingerprint,
+            "prediction_alignment_fingerprint": current_header.prediction_alignment_fingerprint,
+            "output_writer": current_header.output_writer,
             "resume_policy": RESUME_POLICY,
         }
     )
-    header = {
+
+
+def current_run_manifest_header_to_mapping(current_header: CurrentRunManifestHeader) -> dict[str, typing.Any]:
+    """Serialize a typed current-run manifest header to native JSON fields."""
+    execution_plan = build_current_run_execution_plan(current_header)
+    return {
         "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
         "output_schema_version": OUTPUT_SCHEMA_VERSION,
-        "association_mode": str(association_mode),
-        "association_backend": association_backend_manifest,
-        "bgen": bgen_fingerprint,
-        "sample": sample_fingerprint,
-        "phenotype_file": phenotype_file_fingerprint,
-        "phenotype_name": phenotype_name,
-        "covariate_file": covariate_file_fingerprint,
-        "covariate_names": list(covariate_names),
-        "prediction_list": prediction_list_fingerprint,
-        "sample_count": sample_count,
-        "variant_count": variant_count,
-        "chunk_size": chunk_size,
-        "variant_limit": variant_limit,
-        "binary_correction_plan": binary_correction_plan_manifest,
-        "binary_kernel_config": normalize_execution_plan_value(binary_kernel_config),
-        "trusted_no_missing_diploid": trusted_no_missing_diploid,
-        "trusted_bgen_validation_mode": str(trusted_bgen_validation_mode),
-        "sample_key_mode": str(sample_key_mode),
-        "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
-        "jax_policy": jax_policy_manifest,
-        "gpu_genotype_format": gpu_genotype_format.value,
-        "score_dtype": score_dtype.value,
-        "firth_dtype": firth_dtype.value,
-        "multi_phenotype_sample_mode": multi_phenotype_sample_mode.value,
-        "phenotype_compute_group_id": phenotype_compute_group_id,
-        "sample_set_fingerprint": sample_set_fingerprint,
-        "covariate_design_fingerprint": covariate_design_fingerprint,
-        "prediction_alignment_fingerprint": prediction_alignment_fingerprint,
-        "output_writer": output_writer_manifest,
+        "association_mode": str(current_header.association_mode),
+        "association_backend": dataclasses.asdict(current_header.association_backend),
+        "bgen": file_fingerprint_to_mapping(current_header.bgen),
+        "sample": file_fingerprint_to_mapping(current_header.sample),
+        "phenotype_file": file_fingerprint_to_mapping(current_header.phenotype_file),
+        "phenotype_name": current_header.phenotype_name,
+        "covariate_file": file_fingerprint_to_mapping(current_header.covariate_file),
+        "covariate_names": list(current_header.covariate_names),
+        "prediction_list": file_fingerprint_to_mapping(current_header.prediction_list),
+        "sample_count": current_header.sample_count,
+        "variant_count": current_header.variant_count,
+        "chunk_size": current_header.chunk_size,
+        "variant_limit": current_header.variant_limit,
+        "binary_correction_plan": dataclasses.asdict(current_header.binary_correction_plan),
+        "binary_kernel_config": normalize_execution_plan_value(current_header.binary_kernel_config),
+        "trusted_no_missing_diploid": current_header.trusted_no_missing_diploid,
+        "trusted_bgen_validation_mode": str(current_header.trusted_bgen_validation_mode),
+        "sample_key_mode": str(current_header.sample_key_mode),
+        "bgen_decode_tile_variant_count": current_header.bgen_decode_tile_variant_count,
+        "jax_policy": dataclasses.asdict(current_header.jax_policy),
+        "gpu_genotype_format": current_header.gpu_genotype_format.value,
+        "score_dtype": current_header.score_dtype.value,
+        "firth_dtype": current_header.firth_dtype.value,
+        "multi_phenotype_sample_mode": current_header.multi_phenotype_sample_mode.value,
+        "phenotype_compute_group_id": current_header.phenotype_compute_group_id,
+        "sample_set_fingerprint": current_header.sample_set_fingerprint,
+        "covariate_design_fingerprint": current_header.covariate_design_fingerprint,
+        "prediction_alignment_fingerprint": current_header.prediction_alignment_fingerprint,
+        "output_writer": dataclasses.asdict(current_header.output_writer),
         "resume_policy": RESUME_POLICY,
         "execution_plan": execution_plan,
+        "execution_plan_hash": build_execution_plan_hash(execution_plan),
     }
-    header["execution_plan_hash"] = build_execution_plan_hash(execution_plan)
-    return header
+
+
+def run_manifest_header_input_to_mapping(current_header: RunManifestHeaderInput) -> dict[str, typing.Any]:
+    """Serialize typed headers while accepting raw test/native boundary mappings."""
+    if isinstance(current_header, CurrentRunManifestHeader):
+        return current_run_manifest_header_to_mapping(current_header)
+    return current_header
 
 
 def validate_manifest_compatibility(
     manifest: dict[str, typing.Any],
-    current_header: dict[str, typing.Any],
+    current_header: RunManifestHeaderInput,
 ) -> None:
     """Validate immutable manifest fields against the current run header."""
+    current_header_mapping = run_manifest_header_input_to_mapping(current_header)
     _core.validate_run_manifest_compatibility(
         json.dumps(manifest, sort_keys=True),
-        json.dumps(current_header, sort_keys=True),
+        json.dumps(current_header_mapping, sort_keys=True),
     )
 
 
@@ -461,16 +712,17 @@ def initialize_output_run(
     *,
     output_run_paths: OutputRunPaths,
     existing_manifest: dict[str, typing.Any] | None,
-    current_header: dict[str, typing.Any],
+    current_header: RunManifestHeaderInput,
     resume: bool,
     resume_mode: types.ResumeMode,
 ) -> InitializedOutputRun:
     """Validate/write the manifest header and return accepted committed chunks."""
+    current_header_mapping = run_manifest_header_input_to_mapping(current_header)
     native_initialized_output_run = _core.initialize_output_run(
         str(output_run_paths.run_directory),
         str(output_run_paths.chunks_directory),
         None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True),
-        json.dumps(current_header, sort_keys=True),
+        json.dumps(current_header_mapping, sort_keys=True),
         resume,
         resume_mode.value,
     )

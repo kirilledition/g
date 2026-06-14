@@ -87,7 +87,7 @@ def build_pipeline_manifest_header(
     variant_count: int,
     multi_phenotype_sample_mode: output.MultiPhenotypeSampleMode,
     phenotype_compute_group: execution_plan.PhenotypeComputeGroup | None,
-) -> dict[str, typing.Any]:
+) -> output.CurrentRunManifestHeader:
     """Build the current manifest header for one output run."""
     phenotype_compute_group_id = (
         None
@@ -145,7 +145,7 @@ def initialize_pipeline_output_runs(
     *,
     output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
     existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
-    current_headers_by_trait: tuple[dict[str, typing.Any], ...],
+    current_headers_by_trait: tuple[output.RunManifestHeaderInput, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
 ) -> tuple[set[int], ...]:
@@ -181,7 +181,7 @@ def validate_pipeline_resume_compatibility(
     *,
     output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
     existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
-    current_headers_by_trait: tuple[dict[str, typing.Any], ...],
+    current_headers_by_trait: tuple[output.RunManifestHeaderInput, ...],
     resume_mode: types.ResumeMode,
 ) -> None:
     """Validate all resume manifests before any output run is mutated."""

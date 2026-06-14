@@ -189,19 +189,28 @@ def test_python_options_merge_flat_options_with_native_sections() -> None:
 
 
 def test_python_flat_option_schema_is_owned_by_native_metadata() -> None:
-    expected_flat_option_sections: dict[str, tuple[str, str]] = {}
+    expected_flat_option_sections: dict[str, config.FlatOptionTarget] = {}
     expected_boolean_option_names: set[str] = set()
     for option_metadata in g._core.config_option_schema():
         for python_name in option_metadata["flat_python_names"]:
             assert not python_name.startswith(("g-", "g_"))
-            expected_flat_option_sections[python_name] = (option_metadata["section"], option_metadata["toml_name"])
+            expected_flat_option_sections[python_name] = config.FlatOptionTarget(
+                section_name=option_metadata["section"],
+                option_name=option_metadata["toml_name"],
+            )
             if option_metadata["value_kind"] == "boolean":
                 expected_boolean_option_names.add(python_name)
 
     assert expected_flat_option_sections == config.FLAT_OPTION_SECTIONS
     assert frozenset(expected_boolean_option_names) == config.BOOLEAN_PYTHON_OPTIONS
-    assert config.FLAT_OPTION_SECTIONS["device"] == ("compute", "device")
-    assert config.FLAT_OPTION_SECTIONS["phenoCol"] == ("input", "pheno_col")
+    assert config.FLAT_OPTION_SECTIONS["device"] == config.FlatOptionTarget(
+        section_name="compute",
+        option_name="device",
+    )
+    assert config.FLAT_OPTION_SECTIONS["phenoCol"] == config.FlatOptionTarget(
+        section_name="input",
+        option_name="pheno_col",
+    )
     assert "g-device" not in config.FLAT_OPTION_SECTIONS
 
 

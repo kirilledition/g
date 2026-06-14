@@ -174,7 +174,7 @@ def validate_grouped_per_phenotype_resume_compatibility(
         return
     selected_output_run_paths: list[output.OutputRunPaths] = []
     selected_existing_manifests: list[dict[str, typing.Any] | None] = []
-    selected_current_headers: list[dict[str, typing.Any]] = []
+    selected_current_headers: list[output.RunManifestHeaderInput] = []
     for grouped_run_input in grouped_run_inputs:
         compute_group = grouped_run_input.compute_group
         run_input = grouped_run_input.run_input

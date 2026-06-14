@@ -15,7 +15,7 @@ def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> 
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     native_profile = {"variant_decode_count": 4}
     binary_diagnostics: dict[str, int | float] = {"firth_candidate_count": 2}
-    null_diagnostics = {"chromosome": "22", "null_logistic_iteration_count": 5}
+    null_diagnostics = {"chromosome": "22", "iteration_count": 5}
     chunk_identity = timing.ChunkTimingIdentity(
         chunk_identifier=64,
         chromosome="22",
@@ -55,8 +55,12 @@ def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> 
         ),
     )
     assert snapshot.native_bgen_profile == {"variant_decode_count": 4}
-    assert snapshot.binary_chunk_diagnostics == ({"firth_candidate_count": 2},)
-    assert snapshot.null_logistic_diagnostics == ({"chromosome": "22", "null_logistic_iteration_count": 5},)
+    assert timing.serialize_binary_chunk_diagnostics(snapshot.binary_chunk_diagnostics) == (
+        {"firth_candidate_count": 2},
+    )
+    assert timing.serialize_null_logistic_diagnostics(snapshot.null_logistic_diagnostics) == (
+        {"chromosome": "22", "iteration_count": 5},
+    )
     assert snapshot.queue_backpressure == ()
     assert snapshot.transfer_metadata == ()
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from g.jax_runtime import models
 
 
-def diagnostic_fields(**fields: object) -> tuple[tuple[str, object], ...]:
+def diagnostic_fields(**fields: object) -> tuple[models.JaxRuntimeDiagnosticField, ...]:
     """Build immutable diagnostic fields without `None` values.
 
     Args:
@@ -15,7 +15,9 @@ def diagnostic_fields(**fields: object) -> tuple[tuple[str, object], ...]:
         Event field tuple.
 
     """
-    return tuple((key, value) for key, value in fields.items() if value is not None)
+    return tuple(
+        models.JaxRuntimeDiagnosticField(name=key, value=value) for key, value in fields.items() if value is not None
+    )
 
 
 def diagnostic_events_from_setup_report(

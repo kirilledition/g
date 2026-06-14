@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 import time
@@ -57,6 +58,112 @@ class ChunkStageTimingSnapshot:
 
 
 @dataclass(frozen=True)
+class BinaryChunkDiagnosticsSnapshot:
+    """Host-side binary diagnostics counters for one processed chunk.
+
+    Attributes:
+        score_only_count: Variants that retained score-test statistics.
+        score_test_candidate_count: Variants selected for score-test fallback labels.
+        firth_candidate_count: Variants with a nonzero Firth iteration count.
+        firth_iteration_min: Minimum Firth iteration count among candidates.
+        firth_iteration_median: Median Firth iteration count among candidates.
+        firth_iteration_max: Maximum Firth iteration count among candidates.
+        firth_converged_count: Variants with successful Firth correction.
+        firth_failed_count: Variants labelled as failed candidate tests.
+        firth_numerical_failure_count: Firth numerical failures.
+        firth_max_iteration_failure_count: Firth iteration-limit failures.
+        firth_invalid_statistic_failure_count: Firth invalid-statistic failures.
+        firth_step_halving_failure_count: Firth step-halving failures.
+        pseudo_firth_attempt_count: Scalar pseudo-Firth attempts.
+        pseudo_firth_success_count: Scalar pseudo-Firth successes.
+        nr_zero_start_attempt_count: Zero-start Newton-Raphson attempts.
+        nr_zero_start_success_count: Zero-start Newton-Raphson successes.
+        nr_warm_start_attempt_count: Warm-start Newton-Raphson attempts.
+        nr_warm_start_success_count: Warm-start Newton-Raphson successes.
+        sparse_correction_count: Sparse carrier-only corrections.
+        dense_correction_count: Dense corrections.
+
+    """
+
+    score_only_count: int | float | None
+    score_test_candidate_count: int | float | None
+    firth_candidate_count: int | float | None
+    firth_iteration_min: int | float | None
+    firth_iteration_median: int | float | None
+    firth_iteration_max: int | float | None
+    firth_converged_count: int | float | None
+    firth_failed_count: int | float | None
+    firth_numerical_failure_count: int | float | None
+    firth_max_iteration_failure_count: int | float | None
+    firth_invalid_statistic_failure_count: int | float | None
+    firth_step_halving_failure_count: int | float | None
+    pseudo_firth_attempt_count: int | float | None
+    pseudo_firth_success_count: int | float | None
+    nr_zero_start_attempt_count: int | float | None
+    nr_zero_start_success_count: int | float | None
+    nr_warm_start_attempt_count: int | float | None
+    nr_warm_start_success_count: int | float | None
+    sparse_correction_count: int | float | None
+    dense_correction_count: int | float | None
+
+
+@dataclass(frozen=True)
+class NullLogisticDiagnosticsSnapshot:
+    """Host-side null logistic diagnostics for one chromosome or trait lane.
+
+    Attributes:
+        chromosome: Chromosome label.
+        phenotype: Phenotype name for multi-trait diagnostics.
+        iteration_count: Null logistic iteration count.
+        converged: Whether null logistic fitting converged, encoded as an integer.
+        firth_iteration_count: Null Firth fallback iteration count.
+        firth_convergence_reason_code: Null Firth convergence reason code.
+        correction_method: Binary correction method.
+
+    """
+
+    chromosome: str | None
+    phenotype: str | None
+    iteration_count: int | None
+    converged: int | None
+    firth_iteration_count: int | None
+    firth_convergence_reason_code: int | None
+    correction_method: str | None
+
+
+@dataclass(frozen=True)
+class QueueBackpressureKey:
+    """Dictionary key for one queue/backpressure aggregate.
+
+    Attributes:
+        queue_name: Queue or resource being observed.
+        operation_name: Operation that produced the observation.
+
+    """
+
+    queue_name: str
+    operation_name: str
+
+
+@dataclass(frozen=True)
+class TransferMetadataKey:
+    """Dictionary key for one host/device transfer aggregate.
+
+    Attributes:
+        transfer_name: Timed transfer stage name.
+        array_role: Logical role for the transferred array.
+        dtype_name: Data type name for the transferred array.
+        ndim: Number of array dimensions.
+
+    """
+
+    transfer_name: str
+    array_role: str
+    dtype_name: str
+    ndim: int
+
+
+@dataclass(frozen=True)
 class StageTimingSnapshot:
     """Diagnostic stage timing snapshot for one native REGENIE step 2 run.
 
@@ -76,8 +183,8 @@ class StageTimingSnapshot:
     stage_counts: dict[str, int]
     chunk_stage_timings: tuple[ChunkStageTimingSnapshot, ...]
     native_bgen_profile: dict[str, int]
-    binary_chunk_diagnostics: tuple[dict[str, int | float], ...]
-    null_logistic_diagnostics: tuple[dict[str, int | str], ...]
+    binary_chunk_diagnostics: tuple[BinaryChunkDiagnosticsSnapshot, ...]
+    null_logistic_diagnostics: tuple[NullLogisticDiagnosticsSnapshot, ...]
     queue_backpressure: tuple[QueueBackpressureSnapshot, ...]
     transfer_metadata: tuple[TransferMetadataSnapshot, ...]
 
@@ -175,6 +282,109 @@ class TransferMetadataAccumulator:
         self.total_elements += element_count
 
 
+def optional_numeric_diagnostic(
+    diagnostics: typing.Mapping[str, int | float],
+    key: str,
+) -> int | float | None:
+    """Return a numeric diagnostic value when present."""
+    return diagnostics.get(key)
+
+
+def optional_integer_diagnostic(
+    diagnostics: typing.Mapping[str, int | str],
+    key: str,
+) -> int | None:
+    """Return an integer diagnostic value when present."""
+    value = diagnostics.get(key)
+    if value is None:
+        return None
+    return int(value)
+
+
+def optional_string_diagnostic(
+    diagnostics: typing.Mapping[str, int | str],
+    key: str,
+) -> str | None:
+    """Return a string diagnostic value when present."""
+    value = diagnostics.get(key)
+    if value is None:
+        return None
+    return str(value)
+
+
+def binary_chunk_diagnostics_snapshot_from_mapping(
+    diagnostics: typing.Mapping[str, int | float],
+) -> BinaryChunkDiagnosticsSnapshot:
+    """Build a typed binary diagnostic snapshot from JSON-like counters."""
+    return BinaryChunkDiagnosticsSnapshot(
+        score_only_count=optional_numeric_diagnostic(diagnostics, "score_only_count"),
+        score_test_candidate_count=optional_numeric_diagnostic(diagnostics, "score_test_candidate_count"),
+        firth_candidate_count=optional_numeric_diagnostic(diagnostics, "firth_candidate_count"),
+        firth_iteration_min=optional_numeric_diagnostic(diagnostics, "firth_iteration_min"),
+        firth_iteration_median=optional_numeric_diagnostic(diagnostics, "firth_iteration_median"),
+        firth_iteration_max=optional_numeric_diagnostic(diagnostics, "firth_iteration_max"),
+        firth_converged_count=optional_numeric_diagnostic(diagnostics, "firth_converged_count"),
+        firth_failed_count=optional_numeric_diagnostic(diagnostics, "firth_failed_count"),
+        firth_numerical_failure_count=optional_numeric_diagnostic(diagnostics, "firth_numerical_failure_count"),
+        firth_max_iteration_failure_count=optional_numeric_diagnostic(diagnostics, "firth_max_iteration_failure_count"),
+        firth_invalid_statistic_failure_count=optional_numeric_diagnostic(
+            diagnostics,
+            "firth_invalid_statistic_failure_count",
+        ),
+        firth_step_halving_failure_count=optional_numeric_diagnostic(
+            diagnostics,
+            "firth_step_halving_failure_count",
+        ),
+        pseudo_firth_attempt_count=optional_numeric_diagnostic(diagnostics, "pseudo_firth_attempt_count"),
+        pseudo_firth_success_count=optional_numeric_diagnostic(diagnostics, "pseudo_firth_success_count"),
+        nr_zero_start_attempt_count=optional_numeric_diagnostic(diagnostics, "nr_zero_start_attempt_count"),
+        nr_zero_start_success_count=optional_numeric_diagnostic(diagnostics, "nr_zero_start_success_count"),
+        nr_warm_start_attempt_count=optional_numeric_diagnostic(diagnostics, "nr_warm_start_attempt_count"),
+        nr_warm_start_success_count=optional_numeric_diagnostic(diagnostics, "nr_warm_start_success_count"),
+        sparse_correction_count=optional_numeric_diagnostic(diagnostics, "sparse_correction_count"),
+        dense_correction_count=optional_numeric_diagnostic(diagnostics, "dense_correction_count"),
+    )
+
+
+def null_logistic_diagnostics_snapshot_from_mapping(
+    diagnostics: typing.Mapping[str, int | str],
+) -> NullLogisticDiagnosticsSnapshot:
+    """Build a typed null logistic diagnostic snapshot from JSON-like counters."""
+    return NullLogisticDiagnosticsSnapshot(
+        chromosome=optional_string_diagnostic(diagnostics, "chromosome"),
+        phenotype=optional_string_diagnostic(diagnostics, "phenotype"),
+        iteration_count=optional_integer_diagnostic(diagnostics, "iteration_count"),
+        converged=optional_integer_diagnostic(diagnostics, "converged"),
+        firth_iteration_count=optional_integer_diagnostic(diagnostics, "firth_iteration_count"),
+        firth_convergence_reason_code=optional_integer_diagnostic(diagnostics, "firth_convergence_reason_code"),
+        correction_method=optional_string_diagnostic(diagnostics, "correction_method"),
+    )
+
+
+def binary_chunk_diagnostics_snapshot_to_mapping(
+    diagnostics: BinaryChunkDiagnosticsSnapshot,
+) -> dict[str, int | float]:
+    """Serialize a binary diagnostic snapshot to JSON-ready counters."""
+    serialized_diagnostics: dict[str, int | float] = {}
+    for diagnostic_field in dataclasses.fields(diagnostics):
+        diagnostic_value = getattr(diagnostics, diagnostic_field.name)
+        if diagnostic_value is not None:
+            serialized_diagnostics[diagnostic_field.name] = diagnostic_value
+    return serialized_diagnostics
+
+
+def null_logistic_diagnostics_snapshot_to_mapping(
+    diagnostics: NullLogisticDiagnosticsSnapshot,
+) -> dict[str, int | str]:
+    """Serialize a null logistic diagnostic snapshot to JSON-ready counters."""
+    serialized_diagnostics: dict[str, int | str] = {}
+    for diagnostic_field in dataclasses.fields(diagnostics):
+        diagnostic_value = getattr(diagnostics, diagnostic_field.name)
+        if diagnostic_value is not None:
+            serialized_diagnostics[diagnostic_field.name] = diagnostic_value
+    return serialized_diagnostics
+
+
 class StageTimingRecorder:
     """Thread-safe diagnostic wall-time collector for profiling harnesses."""
 
@@ -185,10 +395,10 @@ class StageTimingRecorder:
         self.stage_counts: dict[str, int] = {}
         self.chunk_stage_timings: list[ChunkStageTimingSnapshot] = []
         self.native_bgen_profile: dict[str, int] = {}
-        self.binary_chunk_diagnostics: list[dict[str, int | float]] = []
-        self.null_logistic_diagnostics: list[dict[str, int | str]] = []
-        self.queue_backpressure: dict[tuple[str, str], QueueBackpressureAccumulator] = {}
-        self.transfer_metadata: dict[tuple[str, str, str, int], TransferMetadataAccumulator] = {}
+        self.binary_chunk_diagnostics: list[BinaryChunkDiagnosticsSnapshot] = []
+        self.null_logistic_diagnostics: list[NullLogisticDiagnosticsSnapshot] = []
+        self.queue_backpressure: dict[QueueBackpressureKey, QueueBackpressureAccumulator] = {}
+        self.transfer_metadata: dict[TransferMetadataKey, TransferMetadataAccumulator] = {}
         self.lock = threading.Lock()
 
     def add_stage_duration_unlocked(self, stage_name: str, duration_seconds: float) -> None:
@@ -231,12 +441,12 @@ class StageTimingRecorder:
     def add_binary_chunk_diagnostics(self, diagnostics: dict[str, int | float]) -> None:
         """Store diagnostic counters for one binary chunk."""
         with self.lock:
-            self.binary_chunk_diagnostics.append(dict(diagnostics))
+            self.binary_chunk_diagnostics.append(binary_chunk_diagnostics_snapshot_from_mapping(diagnostics))
 
     def add_null_logistic_diagnostics(self, diagnostics: dict[str, int | str]) -> None:
         """Store null logistic fit diagnostics for one chromosome."""
         with self.lock:
-            self.null_logistic_diagnostics.append(dict(diagnostics))
+            self.null_logistic_diagnostics.append(null_logistic_diagnostics_snapshot_from_mapping(diagnostics))
 
     def add_queue_backpressure_observation(
         self,
@@ -250,7 +460,7 @@ class StageTimingRecorder:
     ) -> None:
         """Store one queue or bounded-resource pressure observation."""
         with self.lock:
-            key = (queue_name, operation_name)
+            key = QueueBackpressureKey(queue_name=queue_name, operation_name=operation_name)
             accumulator = self.queue_backpressure.setdefault(
                 key,
                 QueueBackpressureAccumulator(
@@ -280,7 +490,12 @@ class StageTimingRecorder:
     ) -> None:
         """Store metadata for one host/device transfer observation."""
         with self.lock:
-            key = (transfer_name, array_role, dtype_name, ndim)
+            key = TransferMetadataKey(
+                transfer_name=transfer_name,
+                array_role=array_role,
+                dtype_name=dtype_name,
+                ndim=ndim,
+            )
             accumulator = self.transfer_metadata.setdefault(
                 key,
                 TransferMetadataAccumulator(
@@ -300,33 +515,42 @@ class StageTimingRecorder:
                 stage_counts=dict(self.stage_counts),
                 chunk_stage_timings=tuple(self.chunk_stage_timings),
                 native_bgen_profile=dict(self.native_bgen_profile),
-                binary_chunk_diagnostics=tuple(dict(diagnostics) for diagnostics in self.binary_chunk_diagnostics),
-                null_logistic_diagnostics=tuple(dict(diagnostics) for diagnostics in self.null_logistic_diagnostics),
+                binary_chunk_diagnostics=tuple(self.binary_chunk_diagnostics),
+                null_logistic_diagnostics=tuple(self.null_logistic_diagnostics),
                 queue_backpressure=tuple(
                     QueueBackpressureSnapshot(
-                        queue_name=queue_name,
-                        operation_name=operation_name,
+                        queue_name=key.queue_name,
+                        operation_name=key.operation_name,
                         observation_count=accumulator.observation_count,
                         max_depth=accumulator.max_depth,
                         max_capacity=accumulator.max_capacity,
                         total_elapsed_seconds=accumulator.total_elapsed_seconds,
                         total_blocked_seconds=accumulator.total_blocked_seconds,
                     )
-                    for (queue_name, operation_name), accumulator in sorted(self.queue_backpressure.items())
+                    for key, accumulator in sorted(
+                        self.queue_backpressure.items(),
+                        key=lambda item: (item[0].queue_name, item[0].operation_name),
+                    )
                 ),
                 transfer_metadata=tuple(
                     TransferMetadataSnapshot(
-                        transfer_name=transfer_name,
-                        array_role=array_role,
-                        dtype_name=dtype_name,
-                        ndim=ndim,
+                        transfer_name=key.transfer_name,
+                        array_role=key.array_role,
+                        dtype_name=key.dtype_name,
+                        ndim=key.ndim,
                         observation_count=accumulator.observation_count,
                         total_bytes=accumulator.total_bytes,
                         max_bytes=accumulator.max_bytes,
                         total_elements=accumulator.total_elements,
                     )
-                    for (transfer_name, array_role, dtype_name, ndim), accumulator in sorted(
-                        self.transfer_metadata.items()
+                    for key, accumulator in sorted(
+                        self.transfer_metadata.items(),
+                        key=lambda item: (
+                            item[0].transfer_name,
+                            item[0].array_role,
+                            item[0].dtype_name,
+                            item[0].ndim,
+                        ),
                     )
                 ),
             )
@@ -363,8 +587,8 @@ def write_stage_timing_snapshot(
         "stage_counts": snapshot.stage_counts,
         "chunk_stage_timings": serialize_chunk_stage_timings(snapshot.chunk_stage_timings),
         "native_bgen_profile": snapshot.native_bgen_profile,
-        "binary_chunk_diagnostics": snapshot.binary_chunk_diagnostics,
-        "null_logistic_diagnostics": snapshot.null_logistic_diagnostics,
+        "binary_chunk_diagnostics": serialize_binary_chunk_diagnostics(snapshot.binary_chunk_diagnostics),
+        "null_logistic_diagnostics": serialize_null_logistic_diagnostics(snapshot.null_logistic_diagnostics),
         "queue_backpressure": serialize_queue_backpressure(snapshot.queue_backpressure),
         "transfer_metadata": serialize_transfer_metadata(snapshot.transfer_metadata),
         "derived_metrics": build_derived_metrics(snapshot),
@@ -419,6 +643,24 @@ def serialize_chunk_stage_timings(
             "duration_seconds": chunk_stage_timing.duration_seconds,
         }
         for chunk_stage_timing in chunk_stage_timings
+    )
+
+
+def serialize_binary_chunk_diagnostics(
+    binary_chunk_diagnostics: tuple[BinaryChunkDiagnosticsSnapshot, ...],
+) -> tuple[dict[str, int | float], ...]:
+    """Serialize binary diagnostic snapshots to JSON-compatible dictionaries."""
+    return tuple(
+        binary_chunk_diagnostics_snapshot_to_mapping(diagnostics) for diagnostics in binary_chunk_diagnostics
+    )
+
+
+def serialize_null_logistic_diagnostics(
+    null_logistic_diagnostics: tuple[NullLogisticDiagnosticsSnapshot, ...],
+) -> tuple[dict[str, int | str], ...]:
+    """Serialize null logistic diagnostic snapshots to JSON-compatible dictionaries."""
+    return tuple(
+        null_logistic_diagnostics_snapshot_to_mapping(diagnostics) for diagnostics in null_logistic_diagnostics
     )
 
 
@@ -477,11 +719,14 @@ def build_chunk_stage_summary(
     return summary
 
 
-def build_binary_chunk_summary(binary_chunk_diagnostics: tuple[dict[str, int | float], ...]) -> dict[str, int | float]:
+def build_binary_chunk_summary(
+    binary_chunk_diagnostics: tuple[BinaryChunkDiagnosticsSnapshot, ...],
+) -> dict[str, int | float]:
     """Build aggregate binary chunk diagnostic counters."""
     if not binary_chunk_diagnostics:
         return {"chunk_count": 0}
     summary: dict[str, int | float] = {"chunk_count": len(binary_chunk_diagnostics)}
+    diagnostics_mappings = serialize_binary_chunk_diagnostics(binary_chunk_diagnostics)
     sum_keys = (
         "score_only_count",
         "score_test_candidate_count",
@@ -494,12 +739,12 @@ def build_binary_chunk_summary(binary_chunk_diagnostics: tuple[dict[str, int | f
         "firth_step_halving_failure_count",
     )
     for key in sum_keys:
-        summary[f"{key}_total"] = sum(float(diagnostics.get(key, 0.0)) for diagnostics in binary_chunk_diagnostics)
+        summary[f"{key}_total"] = sum(float(diagnostics.get(key, 0.0)) for diagnostics in diagnostics_mappings)
     summary["firth_iteration_min"] = min(
-        float(diagnostics.get("firth_iteration_min", 0.0)) for diagnostics in binary_chunk_diagnostics
+        float(diagnostics.get("firth_iteration_min", 0.0)) for diagnostics in diagnostics_mappings
     )
     summary["firth_iteration_max"] = max(
-        float(diagnostics.get("firth_iteration_max", 0.0)) for diagnostics in binary_chunk_diagnostics
+        float(diagnostics.get("firth_iteration_max", 0.0)) for diagnostics in diagnostics_mappings
     )
     return summary
 

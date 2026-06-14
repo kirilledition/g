@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections.abc
 import functools
 import typing
+from dataclasses import dataclass
 
 import g._core
 from g import types
@@ -21,14 +22,28 @@ GDiagnosticsConfig = g._core.GDiagnosticsConfig
 RegenieConfig = g._core.RegenieConfig
 
 
-def build_flat_option_sections() -> dict[str, tuple[str, str]]:
+@dataclass(frozen=True)
+class FlatOptionTarget:
+    """Native config target for one flat Python option name.
+
+    Attributes:
+        section_name: Native TOML section name.
+        option_name: Native TOML option name inside the section.
+
+    """
+
+    section_name: str
+    option_name: str
+
+
+def build_flat_option_sections() -> dict[str, FlatOptionTarget]:
     """Build Python flat-option targets from Rust-owned metadata."""
-    flat_option_sections: dict[str, tuple[str, str]] = {}
+    flat_option_sections: dict[str, FlatOptionTarget] = {}
     for option_metadata in g._core.config_option_schema():
         section_name = option_metadata["section"]
         toml_name = option_metadata["toml_name"]
         for python_name in option_metadata["flat_python_names"]:
-            flat_option_sections[python_name] = (section_name, toml_name)
+            flat_option_sections[python_name] = FlatOptionTarget(section_name=section_name, option_name=toml_name)
     return flat_option_sections
 
 
@@ -42,7 +57,7 @@ def build_boolean_python_options() -> frozenset[str]:
     return frozenset(boolean_option_names)
 
 
-FLAT_OPTION_SECTIONS: dict[str, tuple[str, str]] = build_flat_option_sections()
+FLAT_OPTION_SECTIONS: dict[str, FlatOptionTarget] = build_flat_option_sections()
 BOOLEAN_PYTHON_OPTIONS: frozenset[str] = build_boolean_python_options()
 
 BOOLEAN_TRUE_VALUES = frozenset(("1", "true", "yes", "on"))
@@ -75,12 +90,11 @@ def normalize_python_options(raw_options: typing.Mapping[str, typing.Any]) -> di
         if option_value is None:
             message = f"Option {option_name} does not accept None; omit the key to leave it unset."
             raise ValueError(message)
-        section_name, section_option_name = option_target
-        section_options = normalized_options.setdefault(section_name, {})
+        section_options = normalized_options.setdefault(option_target.section_name, {})
         if not isinstance(section_options, dict):
             normalized_options[option_name] = option_value
             continue
-        section_options[section_option_name] = normalize_python_option_value(option_name, option_value)
+        section_options[option_target.option_name] = normalize_python_option_value(option_name, option_value)
     return normalized_options
 
 

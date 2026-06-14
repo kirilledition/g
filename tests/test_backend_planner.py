@@ -78,9 +78,9 @@ def test_plan_association_backend_resolves_current_jax_paths(
     assert plan.jax_device == jax_device
     assert plan.genotype_format == gpu_genotype_format
     assert plan.uses_variant_major_packed8_delivery is expected_packed8_delivery.value
-    assert plan.manifest_metadata() == {
-        "kind": expected_backend_kind.value,
-        "association_mode": association_mode.value,
-        "device": jax_device.value,
-        "genotype_format": gpu_genotype_format.value,
-    }
+    assert plan.manifest_metadata() == backend_planner.AssociationBackendMetadata(
+        kind=expected_backend_kind.value,
+        association_mode=association_mode.value,
+        device=jax_device.value,
+        genotype_format=gpu_genotype_format.value,
+    )

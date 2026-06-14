@@ -320,7 +320,7 @@ def build_test_header(
         ]
         for input_path in input_paths:
             input_path.write_text(input_path.name, encoding="utf-8")
-    return output.build_current_run_manifest_header(
+    current_header = output.build_current_run_manifest_header(
         association_mode=association_mode,
         association_backend_kind=association_backend_kind,
         bgen_path=bgen_path,
@@ -363,6 +363,7 @@ def build_test_header(
         parquet_compression=types.ParquetCompression.NONE,
         output_statistic_dtype=output_statistic_dtype,
     )
+    return output.current_run_manifest_header_to_mapping(current_header)
 
 
 def test_current_run_manifest_records_configured_x64_policy(tmp_path: Path) -> None:
@@ -1860,6 +1861,7 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
     parquet_path = finalize_test_chunks_to_parquet(
         prepared_output_run.output_run_paths,
         AssociationMode.REGENIE2_BINARY,
+        output_format=types.OutputFormat.ARROW,
     )
 
     parquet_frame = pl.read_parquet(parquet_path)

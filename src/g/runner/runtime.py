@@ -106,7 +106,7 @@ def record_jax_runtime_diagnostic_event(
         telemetry_session: Optional run telemetry session.
 
     """
-    event_fields = dict(diagnostic_event.fields)
+    event_fields = {diagnostic_field.name: diagnostic_field.value for diagnostic_field in diagnostic_event.fields}
     logging_level = logging.INFO
     if diagnostic_event.level == jax_runtime_models.JaxRuntimeDiagnosticLevel.ERROR:
         logging_level = logging.ERROR

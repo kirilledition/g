@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import typing
+from dataclasses import dataclass
 
 from g import execution_plan, types
 from g.engine import run_events, shutdown, telemetry, timing
@@ -14,8 +15,68 @@ from g.runner import metadata, runtime
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
+    from g.io import output, source
+
 logger = logging.getLogger(__name__)
 RunArtifacts = run_events.RunArtifacts
+
+
+@dataclass(frozen=True)
+class CommonEngineDispatchRequest:
+    """Arguments shared by single- and multi-phenotype engine dispatch.
+
+    Attributes:
+        genotype_source_config: BGEN source configuration.
+        phenotype_path: Phenotype file path.
+        prediction_list_path: REGENIE step 1 prediction list.
+        covariate_path: Optional covariate file path.
+        covariate_names: Optional covariate column names.
+        chunk_size: Native variant chunk size.
+        variant_limit: Optional variant cap.
+        staging_depth: Native callback staging depth.
+        result_in_flight_limit: Optional cap for materialization backlog.
+        dosage_buffer_limit: Optional cap for native dosage decode buffers.
+        resume: Whether output resume is enabled.
+        resume_mode: Resume validation policy.
+        writer_settings: Output writer settings.
+        trusted_no_missing_diploid: Trusted BGEN fast-path policy.
+        trusted_bgen_validation_mode: Trusted BGEN validation policy.
+        bgen_decode_tile_variant_count: Native BGEN decode tile size.
+        jax_device: Requested JAX device.
+        jax_matmul_precision: Optional JAX matmul precision.
+        score_dtype: Score-test compute dtype.
+        firth_dtype: Firth compute dtype.
+        stage_timing_recorder: Optional stage timing recorder.
+        telemetry_session: Optional telemetry session.
+        alignment_config: Sample alignment settings.
+        output_initialized_callback: Callback after manifest initialization.
+
+    """
+
+    genotype_source_config: source.GenotypeSourceConfig
+    phenotype_path: Path
+    prediction_list_path: Path
+    covariate_path: Path | None
+    covariate_names: tuple[str, ...] | None
+    chunk_size: int
+    variant_limit: int | None
+    staging_depth: int
+    result_in_flight_limit: int | None
+    dosage_buffer_limit: int | None
+    resume: bool
+    resume_mode: types.ResumeMode
+    writer_settings: output.OutputWriterSettings
+    trusted_no_missing_diploid: bool
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode
+    bgen_decode_tile_variant_count: int
+    jax_device: types.Device
+    jax_matmul_precision: types.JaxMatmulPrecision | None
+    score_dtype: types.FloatingPointDtype
+    firth_dtype: types.FloatingPointDtype
+    stage_timing_recorder: timing.StageTimingRecorder | None
+    telemetry_session: telemetry.TelemetrySession | None
+    alignment_config: typing.Any
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
 
 
 def regenie(
@@ -151,7 +212,7 @@ def dispatch_execution_plan(
     *,
     regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
-    stage_timing_recorder: typing.Any,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
 ) -> tuple[Path | None, ...]:
     """Dispatch an execution plan to the native engine layer."""
@@ -180,74 +241,93 @@ def dispatch_execution_plan(
     )
 
 
-def build_common_engine_arguments(
+def build_common_engine_dispatch_request(
     *,
     plan: execution_plan.RegenieExecutionPlan,
-    stage_timing_recorder: typing.Any,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
-) -> dict[str, typing.Any]:
-    """Build arguments shared by single- and multi-phenotype native wrappers."""
-    return {
-        "genotype_source_config": plan.genotype_source_config,
-        "phenotype_path": plan.phenotype_path,
-        "prediction_list_path": plan.prediction_list_path,
-        "covariate_path": plan.covariate_path,
-        "covariate_names": plan.covariate_names,
-        "chunk_size": plan.kernel_config.chunk_size,
-        "variant_limit": plan.kernel_config.variant_limit,
-        "staging_depth": plan.kernel_config.staging_depth,
-        "result_in_flight_limit": plan.kernel_config.result_in_flight_limit,
-        "dosage_buffer_limit": plan.kernel_config.dosage_buffer_limit,
-        "resume": plan.output_plan.resume,
-        "resume_mode": plan.output_plan.resume_mode,
-        "writer_settings": plan.output_plan.writer_settings,
-        "trusted_no_missing_diploid": plan.kernel_config.trusted_no_missing_diploid,
-        "trusted_bgen_validation_mode": plan.kernel_config.trusted_bgen_validation_mode,
-        "bgen_decode_tile_variant_count": plan.kernel_config.bgen_decode_tile_variant_count,
-        "jax_device": plan.kernel_config.device,
-        "jax_matmul_precision": plan.kernel_config.alignment_config.jax_matmul_precision,
-        "score_dtype": plan.kernel_config.alignment_config.score_dtype,
-        "firth_dtype": plan.kernel_config.alignment_config.firth_dtype,
-        "stage_timing_recorder": stage_timing_recorder,
-        "telemetry_session": telemetry_session,
-        "alignment_config": plan.kernel_config.alignment_config,
-        "output_initialized_callback": output_initialized_callback,
-    }
+) -> CommonEngineDispatchRequest:
+    """Build shared engine dispatch arguments."""
+    return CommonEngineDispatchRequest(
+        genotype_source_config=plan.genotype_source_config,
+        phenotype_path=plan.phenotype_path,
+        prediction_list_path=plan.prediction_list_path,
+        covariate_path=plan.covariate_path,
+        covariate_names=plan.covariate_names,
+        chunk_size=plan.kernel_config.chunk_size,
+        variant_limit=plan.kernel_config.variant_limit,
+        staging_depth=plan.kernel_config.staging_depth,
+        result_in_flight_limit=plan.kernel_config.result_in_flight_limit,
+        dosage_buffer_limit=plan.kernel_config.dosage_buffer_limit,
+        resume=plan.output_plan.resume,
+        resume_mode=plan.output_plan.resume_mode,
+        writer_settings=plan.output_plan.writer_settings,
+        trusted_no_missing_diploid=plan.kernel_config.trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=plan.kernel_config.trusted_bgen_validation_mode,
+        bgen_decode_tile_variant_count=plan.kernel_config.bgen_decode_tile_variant_count,
+        jax_device=plan.kernel_config.device,
+        jax_matmul_precision=plan.kernel_config.alignment_config.jax_matmul_precision,
+        score_dtype=plan.kernel_config.alignment_config.score_dtype,
+        firth_dtype=plan.kernel_config.alignment_config.firth_dtype,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+        alignment_config=plan.kernel_config.alignment_config,
+        output_initialized_callback=output_initialized_callback,
+    )
 
 
 def dispatch_one_phenotype_engine_pipeline(
     *,
     plan: execution_plan.RegenieExecutionPlan,
     phenotype_run_plan: execution_plan.PhenotypeRunPlan,
-    stage_timing_recorder: typing.Any,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> Path | None:
     """Dispatch one phenotype to the native linear or binary pipeline."""
-    common_arguments = build_common_engine_arguments(
+    common_request = build_common_engine_dispatch_request(
         plan=plan,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
         output_initialized_callback=output_initialized_callback,
     )
-    common_arguments.update(
-        {
-            "phenotype_name": phenotype_run_plan.phenotype_name,
-            "output_run_paths": phenotype_run_plan.output_run_paths,
-            "existing_manifest": phenotype_run_plan.existing_manifest,
-        }
-    )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
         logger.debug("Dispatching binary native engine pipeline.")
         final_output_path = runtime.run_regenie2_binary_bgen_pipeline(
-            **common_arguments,
+            genotype_source_config=common_request.genotype_source_config,
+            phenotype_path=common_request.phenotype_path,
+            phenotype_name=phenotype_run_plan.phenotype_name,
+            prediction_list_path=common_request.prediction_list_path,
+            covariate_path=common_request.covariate_path,
+            covariate_names=common_request.covariate_names,
+            chunk_size=common_request.chunk_size,
+            variant_limit=common_request.variant_limit,
+            output_run_paths=phenotype_run_plan.output_run_paths,
+            staging_depth=common_request.staging_depth,
+            result_in_flight_limit=common_request.result_in_flight_limit,
+            dosage_buffer_limit=common_request.dosage_buffer_limit,
+            existing_manifest=phenotype_run_plan.existing_manifest,
+            resume=common_request.resume,
+            resume_mode=common_request.resume_mode,
+            writer_settings=common_request.writer_settings,
+            trusted_no_missing_diploid=common_request.trusted_no_missing_diploid,
+            trusted_bgen_validation_mode=common_request.trusted_bgen_validation_mode,
+            bgen_decode_tile_variant_count=common_request.bgen_decode_tile_variant_count,
+            jax_device=common_request.jax_device,
+            jax_matmul_precision=common_request.jax_matmul_precision,
+            score_dtype=common_request.score_dtype,
+            firth_dtype=common_request.firth_dtype,
             correction_plan=plan.binary_correction_plan,
             kernel_config=plan.kernel_config.binary_kernel_config,
             null_logistic_nonconvergence_policy=(
                 plan.kernel_config.alignment_config.null_logistic_nonconvergence_policy
             ),
             gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
+            stage_timing_recorder=common_request.stage_timing_recorder,
+            telemetry_session=common_request.telemetry_session,
+            alignment_config=common_request.alignment_config,
+            output_initialized_callback=common_request.output_initialized_callback,
         )
         metadata.log_writer_finished(
             telemetry_session=telemetry_session,
@@ -258,9 +338,35 @@ def dispatch_one_phenotype_engine_pipeline(
         return final_output_path
     logger.debug("Dispatching linear native engine pipeline.")
     final_output_path = runtime.run_regenie2_linear_bgen_pipeline(
-        **common_arguments,
+        genotype_source_config=common_request.genotype_source_config,
+        phenotype_path=common_request.phenotype_path,
+        phenotype_name=phenotype_run_plan.phenotype_name,
+        prediction_list_path=common_request.prediction_list_path,
+        covariate_path=common_request.covariate_path,
+        covariate_names=common_request.covariate_names,
+        chunk_size=common_request.chunk_size,
+        variant_limit=common_request.variant_limit,
+        output_run_paths=phenotype_run_plan.output_run_paths,
+        staging_depth=common_request.staging_depth,
+        result_in_flight_limit=common_request.result_in_flight_limit,
+        dosage_buffer_limit=common_request.dosage_buffer_limit,
+        existing_manifest=phenotype_run_plan.existing_manifest,
+        resume=common_request.resume,
+        resume_mode=common_request.resume_mode,
+        writer_settings=common_request.writer_settings,
+        trusted_no_missing_diploid=common_request.trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=common_request.trusted_bgen_validation_mode,
+        bgen_decode_tile_variant_count=common_request.bgen_decode_tile_variant_count,
+        jax_device=common_request.jax_device,
+        jax_matmul_precision=common_request.jax_matmul_precision,
+        score_dtype=common_request.score_dtype,
+        firth_dtype=common_request.firth_dtype,
         gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
         linear_numerical_config=plan.kernel_config.linear_numerical_config,
+        stage_timing_recorder=common_request.stage_timing_recorder,
+        telemetry_session=common_request.telemetry_session,
+        alignment_config=common_request.alignment_config,
+        output_initialized_callback=common_request.output_initialized_callback,
     )
     metadata.log_writer_finished(
         telemetry_session=telemetry_session,
@@ -274,48 +380,97 @@ def dispatch_one_phenotype_engine_pipeline(
 def dispatch_multi_phenotype_engine_pipeline(
     *,
     plan: execution_plan.RegenieExecutionPlan,
-    stage_timing_recorder: typing.Any,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> tuple[Path | None, ...]:
     """Dispatch multiple phenotypes to the shared native pipeline."""
-    common_arguments = build_common_engine_arguments(
+    common_request = build_common_engine_dispatch_request(
         plan=plan,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
         output_initialized_callback=output_initialized_callback,
     )
-    common_arguments.update(
-        {
-            "sample_mode": plan.kernel_config.multi_phenotype_sample_mode,
-            "phenotype_names": tuple(
-                phenotype_run_plan.phenotype_name for phenotype_run_plan in plan.phenotype_run_plans
-            ),
-            "output_run_paths_by_phenotype": tuple(
-                phenotype_run_plan.output_run_paths for phenotype_run_plan in plan.phenotype_run_plans
-            ),
-            "existing_manifests_by_phenotype": tuple(
-                phenotype_run_plan.existing_manifest for phenotype_run_plan in plan.phenotype_run_plans
-            ),
-            "phenotype_compute_groups": plan.phenotype_compute_groups,
-            "gpu_genotype_format": plan.kernel_config.gpu_genotype_format,
-        }
+    phenotype_names = tuple(phenotype_run_plan.phenotype_name for phenotype_run_plan in plan.phenotype_run_plans)
+    output_run_paths_by_phenotype = tuple(
+        phenotype_run_plan.output_run_paths for phenotype_run_plan in plan.phenotype_run_plans
+    )
+    existing_manifests_by_phenotype = tuple(
+        phenotype_run_plan.existing_manifest for phenotype_run_plan in plan.phenotype_run_plans
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
         logger.debug("Dispatching multi-phenotype binary native engine pipeline.")
         final_output_paths = runtime.run_regenie2_multi_phenotype_binary_bgen_pipeline(
-            **common_arguments,
+            genotype_source_config=common_request.genotype_source_config,
+            phenotype_path=common_request.phenotype_path,
+            phenotype_names=phenotype_names,
+            prediction_list_path=common_request.prediction_list_path,
+            covariate_path=common_request.covariate_path,
+            covariate_names=common_request.covariate_names,
+            chunk_size=common_request.chunk_size,
+            variant_limit=common_request.variant_limit,
+            output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+            staging_depth=common_request.staging_depth,
+            result_in_flight_limit=common_request.result_in_flight_limit,
+            dosage_buffer_limit=common_request.dosage_buffer_limit,
+            existing_manifests_by_phenotype=existing_manifests_by_phenotype,
+            resume=common_request.resume,
+            resume_mode=common_request.resume_mode,
+            writer_settings=common_request.writer_settings,
+            trusted_no_missing_diploid=common_request.trusted_no_missing_diploid,
+            trusted_bgen_validation_mode=common_request.trusted_bgen_validation_mode,
+            bgen_decode_tile_variant_count=common_request.bgen_decode_tile_variant_count,
+            jax_device=common_request.jax_device,
+            jax_matmul_precision=common_request.jax_matmul_precision,
+            score_dtype=common_request.score_dtype,
+            firth_dtype=common_request.firth_dtype,
             correction_plan=plan.binary_correction_plan,
             kernel_config=plan.kernel_config.binary_kernel_config,
             null_logistic_nonconvergence_policy=(
                 plan.kernel_config.alignment_config.null_logistic_nonconvergence_policy
             ),
+            gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
+            stage_timing_recorder=common_request.stage_timing_recorder,
+            telemetry_session=common_request.telemetry_session,
+            alignment_config=common_request.alignment_config,
+            sample_mode=plan.kernel_config.multi_phenotype_sample_mode,
+            phenotype_compute_groups=plan.phenotype_compute_groups,
+            output_initialized_callback=common_request.output_initialized_callback,
         )
     else:
         logger.debug("Dispatching multi-phenotype linear native engine pipeline.")
         final_output_paths = runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            **common_arguments,
+            genotype_source_config=common_request.genotype_source_config,
+            phenotype_path=common_request.phenotype_path,
+            phenotype_names=phenotype_names,
+            prediction_list_path=common_request.prediction_list_path,
+            covariate_path=common_request.covariate_path,
+            covariate_names=common_request.covariate_names,
+            chunk_size=common_request.chunk_size,
+            variant_limit=common_request.variant_limit,
+            output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+            staging_depth=common_request.staging_depth,
+            result_in_flight_limit=common_request.result_in_flight_limit,
+            dosage_buffer_limit=common_request.dosage_buffer_limit,
+            existing_manifests_by_phenotype=existing_manifests_by_phenotype,
+            resume=common_request.resume,
+            resume_mode=common_request.resume_mode,
+            writer_settings=common_request.writer_settings,
+            trusted_no_missing_diploid=common_request.trusted_no_missing_diploid,
+            trusted_bgen_validation_mode=common_request.trusted_bgen_validation_mode,
+            bgen_decode_tile_variant_count=common_request.bgen_decode_tile_variant_count,
+            jax_device=common_request.jax_device,
+            jax_matmul_precision=common_request.jax_matmul_precision,
+            score_dtype=common_request.score_dtype,
+            firth_dtype=common_request.firth_dtype,
             linear_numerical_config=plan.kernel_config.linear_numerical_config,
+            gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
+            stage_timing_recorder=common_request.stage_timing_recorder,
+            telemetry_session=common_request.telemetry_session,
+            alignment_config=common_request.alignment_config,
+            sample_mode=plan.kernel_config.multi_phenotype_sample_mode,
+            phenotype_compute_groups=plan.phenotype_compute_groups,
+            output_initialized_callback=common_request.output_initialized_callback,
         )
     if telemetry_session is not None:
         telemetry_session.log_event(

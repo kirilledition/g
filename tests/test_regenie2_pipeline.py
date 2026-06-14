@@ -887,7 +887,7 @@ def test_binary_chunk_diagnostics_are_detailed_only_for_exact_timing() -> None:
 
     mock_count.assert_called_once_with(result)
     assert aggregate_recorder.snapshot().binary_chunk_diagnostics == ()
-    assert exact_recorder.snapshot().binary_chunk_diagnostics == (
+    assert timing.serialize_binary_chunk_diagnostics(exact_recorder.snapshot().binary_chunk_diagnostics) == (
         {
             "score_only_count": 1,
             "score_test_candidate_count": 2,

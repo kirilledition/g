@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 
 from g import types
+
+
+@dataclass(frozen=True)
+class AssociationBackendMetadata:
+    """Stable metadata for one selected association backend.
+
+    Attributes:
+        kind: Concrete backend implementation.
+        association_mode: Statistical association mode.
+        device: JAX device requested for the backend.
+        genotype_format: Native genotype delivery format.
+
+    """
+
+    kind: str
+    association_mode: str
+    device: str
+    genotype_format: str
 
 
 @dataclass(frozen=True)
@@ -28,14 +45,14 @@ class AssociationBackendPlan:
     genotype_format: types.GpuGenotypeFormat
     uses_variant_major_packed8_delivery: bool
 
-    def manifest_metadata(self) -> dict[str, typing.Any]:
+    def manifest_metadata(self) -> AssociationBackendMetadata:
         """Return stable manifest metadata for this backend selection."""
-        return {
-            "kind": self.backend_kind.value,
-            "association_mode": self.association_mode.value,
-            "device": self.jax_device.value,
-            "genotype_format": self.genotype_format.value,
-        }
+        return AssociationBackendMetadata(
+            kind=self.backend_kind.value,
+            association_mode=self.association_mode.value,
+            device=self.jax_device.value,
+            genotype_format=self.genotype_format.value,
+        )
 
 
 def plan_association_backend(

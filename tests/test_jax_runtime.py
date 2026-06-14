@@ -175,7 +175,10 @@ def test_configure_before_backend_init_emits_structured_diagnostics(tmp_path: Pa
         "jax_transfer_guard_configured",
         "jax_gpu_validation",
     ]
-    event_fields = [dict(diagnostic_event.fields) for diagnostic_event in diagnostic_events]
+    event_fields = [
+        {diagnostic_field.name: diagnostic_field.value for diagnostic_field in diagnostic_event.fields}
+        for diagnostic_event in diagnostic_events
+    ]
     assert event_fields[0]["platform"] == "cpu"
     assert event_fields[1]["cache_directory"] == str(cache_directory)
     assert event_fields[2]["enabled"] is False
@@ -203,7 +206,7 @@ def test_configure_before_backend_init_emits_gpu_validation_failure_before_raise
     failure_event = diagnostic_events[-1]
     assert failure_event.event_name == "jax_gpu_validation"
     assert failure_event.level == models.JaxRuntimeDiagnosticLevel.ERROR
-    assert dict(failure_event.fields) == {
+    assert {diagnostic_field.name: diagnostic_field.value for diagnostic_field in failure_event.fields} == {
         "status": "failed",
         "message": "no gpu",
     }
