@@ -215,7 +215,6 @@ jobs:
           mkdir -p package-install-artifacts
           "${RUNNER_TEMP}/g-package-install/bin/g" --help | tee package-install-artifacts/g-help.txt
           "${RUNNER_TEMP}/g-package-install/bin/g" regenie --help | tee package-install-artifacts/g-regenie-help.txt
-          "${RUNNER_TEMP}/g-package-install/bin/g-regenie" --help | tee package-install-artifacts/g-regenie-script-help.txt
 
       - name: Upload package-install artifacts
         if: always()

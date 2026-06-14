@@ -87,25 +87,25 @@ def regenie(
     initialize_logging_on_entry: bool,
 ) -> RunArtifacts:
     """Run the shared REGENIE-compatible config path."""
-    config.validate_config_for_run(regenie_config)
     active_telemetry_session = run_telemetry_session or telemetry.build_telemetry_session(regenie_config)
-    runtime_policy = runtime.build_runtime_policy(regenie_config, active_telemetry_session.paths)
-    runtime.require_compatible_runtime_policy(runtime_policy)
-    if initialize_logging_on_entry:
-        runtime.initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
-    association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
-    phenotype_count = len(regenie_config.input.pheno_columns)
-    active_telemetry_session.log_event(
-        "run_started",
-        level="info",
-        association_mode=association_mode.value,
-        trait_type=regenie_config.trait.trait_type.value,
-        phenotype_count=phenotype_count,
-        output_run_root=str(telemetry.resolve_output_run_root(regenie_config)),
-    )
-    logger.info("Starting REGENIE run.")
-    runtime.configure_runtime(regenie_config.g_compute, regenie_config.trait)
     try:
+        config.validate_config_for_run(regenie_config)
+        runtime_policy = runtime.build_runtime_policy(regenie_config, active_telemetry_session.paths)
+        runtime.require_compatible_runtime_policy(runtime_policy)
+        if initialize_logging_on_entry:
+            runtime.initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
+        association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
+        phenotype_count = len(regenie_config.input.pheno_columns)
+        active_telemetry_session.log_event(
+            "run_started",
+            level="info",
+            association_mode=association_mode.value,
+            trait_type=regenie_config.trait.trait_type.value,
+            phenotype_count=phenotype_count,
+            output_run_root=str(telemetry.resolve_output_run_root(regenie_config)),
+        )
+        logger.info("Starting REGENIE run.")
+        runtime.configure_runtime(regenie_config.g_compute, regenie_config.trait)
         artifacts = run_validated_regenie_config(regenie_config, telemetry_session=active_telemetry_session)
     except shutdown.GracefulShutdownRequested as shutdown_request:
         interrupted_event = run_events.build_run_interrupted_event(shutdown_request)

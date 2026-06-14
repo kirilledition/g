@@ -400,6 +400,42 @@ def test_regenie_completion_event_includes_user_visible_artifacts(tmp_path: Path
     ]
 
 
+def test_regenie_runtime_configuration_failure_writes_run_failed_telemetry(tmp_path: Path) -> None:
+    event_stream_path = tmp_path / "events.jsonl"
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "sample": "dataset.sample",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": str(tmp_path / "output"),
+            "log_file": str(event_stream_path),
+        }
+    )
+
+    with (
+        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.initialize_logging"),
+        patch("g.runner.runtime.configure_runtime", side_effect=RuntimeError("rayon failed")),
+        patch("g.interface.config.validate_config_for_run"),
+        pytest.raises(RuntimeError, match="rayon failed"),
+    ):
+        api.regenie(regenie_config)
+
+    event_payloads = [json.loads(line) for line in event_stream_path.read_text(encoding="utf-8").splitlines()]
+    event_names = [event_payload["event"] for event_payload in event_payloads]
+    failed_payload = [event_payload for event_payload in event_payloads if event_payload["event"] == "run_failed"][-1]
+
+    assert event_names == ["run_started", "run_failed", "telemetry_session_closed"]
+    assert failed_payload["level"] == "ERROR"
+    assert failed_payload["failure_kind"] == "exception"
+    assert failed_payload["error_type"] == "RuntimeError"
+    assert failed_payload["error_message"] == "rayon failed"
+
+
 def test_regenie_graceful_shutdown_event_preserves_signal_exit(tmp_path: Path) -> None:
     run_paths = OutputRunPaths(
         run_directory=tmp_path / "output.g" / "trait.regenie2_linear.run",
