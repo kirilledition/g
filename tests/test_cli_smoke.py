@@ -32,7 +32,6 @@ def build_cli_failure_message(completed_process: subprocess.CompletedProcess[str
 
 
 @pytest.mark.cli_smoke
-@pytest.mark.skip(reason="Outdated installed CLI smoke output assertion; revisit after Rust CLI/config API settles.")
 def test_installed_cli_runs_regenie2_linear_smoke(tmp_path: Path) -> None:
     """Run the installed console script through a tiny real BGEN scan."""
     g_executable = shutil.which("g")
@@ -113,7 +112,7 @@ def test_installed_cli_runs_regenie2_linear_smoke(tmp_path: Path) -> None:
     (artifact_directory / "g-stderr.txt").write_text(completed_process.stderr, encoding="utf-8")
 
     assert completed_process.returncode == 0, build_cli_failure_message(completed_process)
-    assert "Parquet dataset saved" in completed_process.stdout
+    assert "Success. Chunked run saved to" in completed_process.stdout
 
     part_paths = sorted(output_run_root.glob("*.run/parts/*.parquet"))
     assert len(part_paths) == 2

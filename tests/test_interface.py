@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -21,26 +23,6 @@ def build_valid_quantitative_options() -> dict[str, object]:
         "pred": "predictions.list",
         "out": "results/output",
     }
-
-
-def build_input_config(**overrides: object) -> config.InputConfig:
-    """Build packaged input config with test overrides."""
-    pytest.skip("Outdated dataclass config helper; rebuild after Rust config API settles.")
-
-
-def build_trait_config(**overrides: object) -> config.TraitConfig:
-    """Build packaged trait config with test overrides."""
-    pytest.skip("Outdated dataclass config helper; rebuild after Rust config API settles.")
-
-
-def build_binary_config(**overrides: object) -> config.BinaryConfig:
-    """Build packaged binary config with test overrides."""
-    pytest.skip("Outdated dataclass config helper; rebuild after Rust config API settles.")
-
-
-def build_output_config(**overrides: object) -> config.GOutputConfig:
-    """Build packaged output config with test overrides."""
-    pytest.skip("Outdated dataclass config helper; rebuild after Rust config API settles.")
 
 
 def test_all_option_specs_are_accepted_by_python_options() -> None:
@@ -327,44 +309,143 @@ def test_public_docs_do_not_reference_legacy_g_dash_flags() -> None:
     assert offenders == []
 
 
-@pytest.mark.skip(reason="Outdated Python option metadata test; Rust config API is not settled.")
-def test_every_supported_option_has_explain_metadata() -> None:
-    pass
+def test_every_supported_option_has_native_surface_metadata() -> None:
+    supported_value_kinds = {
+        "boolean",
+        "float",
+        "integer",
+        "name-list",
+        "path",
+        "string",
+        "string-enum",
+    }
+    for option_metadata in g._core.config_option_schema():
+        assert set(option_metadata) == {
+            "section",
+            "toml_name",
+            "accepted_toml_names",
+            "cli_long_name",
+            "negative_cli_long_name",
+            "flat_python_names",
+            "value_kind",
+        }
+        assert option_metadata["section"] in config.NATIVE_CONFIG_SECTION_NAMES | {"config"}
+        assert isinstance(option_metadata["toml_name"], str)
+        assert option_metadata["toml_name"]
+        assert option_metadata["value_kind"] in supported_value_kinds
+        assert isinstance(option_metadata["accepted_toml_names"], list)
+        assert isinstance(option_metadata["flat_python_names"], list)
+        if option_metadata["negative_cli_long_name"] is not None:
+            assert option_metadata["value_kind"] == "boolean"
 
 
-@pytest.mark.skip(reason="Outdated Python default catalog test; Rust config API is not settled.")
 def test_packaged_default_catalog_matches_option_policies() -> None:
-    pass
+    default_config_path = Path(__file__).resolve().parents[1] / "src" / "interface" / "config.default.toml"
+    default_payload = tomllib.loads(default_config_path.read_text(encoding="utf-8"))
+    known_options_by_section: dict[str, set[str]] = {}
+    for option_metadata in g._core.config_option_schema():
+        section_name = option_metadata["section"]
+        if section_name == "config":
+            continue
+        known_options_by_section.setdefault(section_name, set()).add(option_metadata["toml_name"])
+
+    assert set(default_payload) <= set(known_options_by_section)
+    assert {"trait", "binary", "compute", "output", "diagnostics"} <= set(default_payload)
+    for section_name, section_payload in default_payload.items():
+        assert isinstance(section_payload, dict)
+        assert set(section_payload) <= known_options_by_section[section_name]
 
 
-@pytest.mark.skip(reason="Outdated Python default catalog test; Rust config API is not settled.")
 def test_packaged_default_hash_uses_raw_toml_payload() -> None:
-    pass
+    default_config_path = Path(__file__).resolve().parents[1] / "src" / "interface" / "config.default.toml"
+    expected_hash = hashlib.sha256(default_config_path.read_bytes()).hexdigest()
+    effective_default_payload = tomllib.loads(config.dumps_toml(config.load_packaged_config()))
+
+    assert effective_default_payload["metadata"]["default-config-hash"] == expected_hash
+    assert effective_default_payload["metadata"]["option-schema-version"] == 2
 
 
-@pytest.mark.skip(reason="Outdated Python TOML schema test; Rust config API is not settled.")
 def test_typed_toml_schema_matches_option_registry() -> None:
-    pass
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "bt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoColList": "trait_a,trait_b",
+            "covarCol": "age",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "firth": True,
+            "approx": True,
+            "firth-se": True,
+        }
+    )
+    effective_payload = tomllib.loads(config.dumps_toml(regenie_config))
+    known_options_by_section: dict[str, set[str]] = {}
+    for option_metadata in g._core.config_option_schema():
+        section_name = option_metadata["section"]
+        if section_name == "config":
+            continue
+        known_options_by_section.setdefault(section_name, set()).add(option_metadata["toml_name"])
+    known_options_by_section["input"].update({"pheno_columns", "covar_columns"})
+
+    for section_name, section_payload in effective_payload.items():
+        if section_name == "metadata":
+            continue
+        assert isinstance(section_payload, dict)
+        assert set(section_payload) <= known_options_by_section[section_name]
 
 
-@pytest.mark.skip(reason="Outdated Python TOML schema test; Rust config API is not settled.")
 def test_packaged_default_toml_decodes_to_typed_config() -> None:
-    pass
+    packaged_config = config.load_packaged_config()
+    packaged_payload = tomllib.loads(config.dumps_toml(packaged_config))
+
+    assert packaged_payload["trait"]["step"] == packaged_config.trait.step
+    assert packaged_payload["trait"]["trait_type"] == packaged_config.trait.trait_type.value
+    assert packaged_payload["binary"]["p_threshold"] == pytest.approx(packaged_config.binary.p_threshold)
+    assert packaged_payload["compute"]["device"] == packaged_config.g_compute.device.value
+    assert packaged_payload["output"]["format"] == packaged_config.g_output.format.value
+    assert packaged_payload["diagnostics"]["telemetry"] == packaged_config.g_diagnostics.telemetry.value
 
 
-@pytest.mark.skip(reason="Outdated Python msgspec TOML schema test; Rust config API is not settled.")
-def test_msgspec_toml_schema_rejects_unknown_keys_and_wrong_types() -> None:
-    pass
+@pytest.mark.parametrize(
+    ("toml_text", "error_match"),
+    [
+        ("[unknown]\nvalue = true\n", "unknown field"),
+        ("[trait]\nstep = \"two\"\n", "invalid type"),
+    ],
+)
+def test_native_toml_schema_rejects_unknown_keys_and_wrong_types(
+    tmp_path: Path,
+    toml_text: str,
+    error_match: str,
+) -> None:
+    config_path = tmp_path / "invalid.toml"
+    config_path.write_text(toml_text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=error_match):
+        config.RegenieConfig.from_toml(config_path)
 
 
-@pytest.mark.skip(reason="Outdated Python msgspec TOML schema test; Rust config API is not settled.")
-def test_msgspec_toml_schema_rejects_removed_jax_x64_option() -> None:
-    pass
+def test_native_toml_schema_rejects_removed_jax_x64_option(tmp_path: Path) -> None:
+    config_path = tmp_path / "removed.toml"
+    config_path.write_text("[compute]\njax_x64 = true\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"unknown field.*jax_x64"):
+        config.RegenieConfig.from_toml(config_path)
 
 
-@pytest.mark.skip(reason="Outdated Python TOML schema test; Rust config API is not settled.")
-def test_toml_metadata_is_accepted_but_not_an_option() -> None:
-    pass
+def test_toml_metadata_is_accepted_but_not_an_option(tmp_path: Path) -> None:
+    config_path = tmp_path / "effective.toml"
+    effective_toml = config.dumps_toml(config.RegenieConfig.from_options(build_valid_quantitative_options()))
+    config_path.write_text(f"{effective_toml}ignored-user-field = \"ignored\"\n", encoding="utf-8")
+
+    regenie_config = config.RegenieConfig.from_toml(config_path)
+    emitted_payload = tomllib.loads(config.dumps_toml(regenie_config))
+
+    assert "metadata" not in config.FLAT_OPTION_SECTIONS
+    assert "ignored-user-field" not in emitted_payload["metadata"]
 
 
 def test_no_configurable_default_constants_reappear_in_source() -> None:
@@ -849,11 +930,6 @@ def test_output_tuning_defaults_come_from_packaged_default_config() -> None:
     assert regenie_config.g_output.finalize_parquet is False
 
 
-@pytest.mark.skip(reason="Rust-owned config objects are no longer dataclasses; rebuild this test with native helpers.")
-def test_quantitative_execution_plan_rejects_direct_binary_only_config() -> None:
-    pass
-
-
 def test_staging_depth_must_be_positive() -> None:
     raw_options: dict[str, object] = {
         "step": 2,
@@ -914,6 +990,31 @@ def test_flatten_toml_mapping_preserves_unknown_nested_sections() -> None:
     assert flattened_options["g.scalar"] is True
 
 
-@pytest.mark.skip(reason="Rust-owned config objects are no longer dataclasses; rebuild this test with native helpers.")
 def test_toml_serialization_emits_multi_column_and_binary_sections() -> None:
-    pass
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "bt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoColList": "trait_a,trait_b",
+            "covarColList": "age,sex",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "firth": True,
+            "approx": True,
+            "pThresh": 0.01,
+            "firth-se": True,
+        }
+    )
+
+    toml_payload = tomllib.loads(config.dumps_toml(regenie_config))
+
+    assert toml_payload["input"]["pheno_columns"] == ["trait_a", "trait_b"]
+    assert toml_payload["input"]["covar_columns"] == ["age", "sex"]
+    assert toml_payload["binary"] == {
+        "firth": True,
+        "approx": True,
+        "p_threshold": 0.01,
+        "firth_se": True,
+    }
