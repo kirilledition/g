@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import typing
+from pathlib import Path
 
-from g import runtime_paths, types
+from g import _core, runtime_paths, types
 from g.jax_runtime import models
 
 if typing.TYPE_CHECKING:
@@ -52,35 +53,35 @@ def resolve_jax_runtime_setup(policy: models.JaxRuntimePolicy) -> models.JaxRunt
         resolved_cache_directory = runtime_paths.default_local_cache_directory(DEFAULT_CACHE_DIRECTORY_NAME)
     else:
         resolved_cache_directory = policy.cache_directory.expanduser()
-    gpu_validation_status = models.GpuValidationStatus.SKIPPED
-    gpu_validation_message = "CPU runtime requested; GPU validation skipped."
-    if policy.device == types.Device.GPU:
-        gpu_validation_status = models.GpuValidationStatus.PENDING
-        gpu_validation_message = None
-    matmul_precision = types.JaxMatmulPrecision.FLOAT32
-    if policy.matmul_precision is not None:
-        matmul_precision = policy.matmul_precision
-    platform_name = models.JAX_CPU_PLATFORM_NAME
-    if policy.device == types.Device.GPU:
-        platform_name = models.JAX_CUDA_PLATFORM_NAME
-    xla_auxiliary_cache_mode = models.XlaAuxiliaryCacheMode.DISABLED
-    xla_auxiliary_cache_reason = "persistent compilation cache is disabled"
-    if policy.persistent_cache and not policy.xla_autotune_cache:
-        xla_auxiliary_cache_reason = "XLA auxiliary cache was not requested"
-    elif policy.persistent_cache:
-        xla_auxiliary_cache_mode = models.XlaAuxiliaryCacheMode.PER_FUSION_AUTOTUNE
-        xla_auxiliary_cache_reason = "XLA auxiliary cache was requested"
+    setup_payload = _core.resolve_jax_runtime_setup_payload(
+        policy.device.value,
+        str(resolved_cache_directory),
+        None if policy.matmul_precision is None else policy.matmul_precision.value,
+        policy.persistent_cache,
+        policy.persistent_cache_min_entry_size_bytes,
+        policy.persistent_cache_min_compile_time_seconds,
+        policy.xla_autotune_cache,
+        policy.transfer_guard,
+    )
     return models.JaxRuntimeSetupReport(
-        requested_device=policy.device,
-        platform_name=platform_name,
-        cache_directory=resolved_cache_directory,
-        matmul_precision=matmul_precision,
-        persistent_cache_enabled=policy.persistent_cache,
-        persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
-        xla_auxiliary_cache_mode=xla_auxiliary_cache_mode,
-        xla_auxiliary_cache_reason=xla_auxiliary_cache_reason,
-        transfer_guard_enabled=policy.transfer_guard,
-        gpu_validation_status=gpu_validation_status,
-        gpu_validation_message=gpu_validation_message,
+        requested_device=types.Device(typing.cast("str", setup_payload["requested_device"])),
+        platform_name=typing.cast("str", setup_payload["platform_name"]),
+        cache_directory=Path(typing.cast("str", setup_payload["cache_directory"])),
+        matmul_precision=types.JaxMatmulPrecision(typing.cast("str", setup_payload["matmul_precision"])),
+        persistent_cache_enabled=typing.cast("bool", setup_payload["persistent_cache_enabled"]),
+        persistent_cache_min_entry_size_bytes=typing.cast(
+            "int",
+            setup_payload["persistent_cache_min_entry_size_bytes"],
+        ),
+        persistent_cache_min_compile_time_seconds=typing.cast(
+            "int",
+            setup_payload["persistent_cache_min_compile_time_seconds"],
+        ),
+        xla_auxiliary_cache_mode=models.XlaAuxiliaryCacheMode(
+            typing.cast("str", setup_payload["xla_auxiliary_cache_mode"])
+        ),
+        xla_auxiliary_cache_reason=typing.cast("str", setup_payload["xla_auxiliary_cache_reason"]),
+        transfer_guard_enabled=typing.cast("bool", setup_payload["transfer_guard_enabled"]),
+        gpu_validation_status=models.GpuValidationStatus(typing.cast("str", setup_payload["gpu_validation_status"])),
+        gpu_validation_message=typing.cast("str | None", setup_payload["gpu_validation_message"]),
     )

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
 
-from g import types
+from g import _core, types
 
 
 @dataclass(frozen=True)
@@ -62,18 +63,18 @@ def plan_association_backend(
     gpu_genotype_format: types.GpuGenotypeFormat,
 ) -> AssociationBackendPlan:
     """Select the concrete backend used by association execution."""
-    if gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
-        return AssociationBackendPlan(
-            backend_kind=types.AssociationBackendKind.JAX_PACKED8,
-            association_mode=association_mode,
-            jax_device=jax_device,
-            genotype_format=gpu_genotype_format,
-            uses_variant_major_packed8_delivery=True,
-        )
+    backend_payload = _core.plan_association_backend_payload(
+        association_mode.value,
+        jax_device.value,
+        gpu_genotype_format.value,
+    )
     return AssociationBackendPlan(
-        backend_kind=types.AssociationBackendKind.JAX_DOSAGE,
-        association_mode=association_mode,
-        jax_device=jax_device,
-        genotype_format=gpu_genotype_format,
-        uses_variant_major_packed8_delivery=False,
+        backend_kind=types.AssociationBackendKind(typing.cast("str", backend_payload["backend_kind"])),
+        association_mode=types.AssociationMode(typing.cast("str", backend_payload["association_mode"])),
+        jax_device=types.Device(typing.cast("str", backend_payload["jax_device"])),
+        genotype_format=types.GpuGenotypeFormat(typing.cast("str", backend_payload["genotype_format"])),
+        uses_variant_major_packed8_delivery=typing.cast(
+            "bool",
+            backend_payload["uses_variant_major_packed8_delivery"],
+        ),
     )

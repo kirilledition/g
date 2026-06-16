@@ -23,6 +23,7 @@ use crate::sample::{
 
 mod config;
 mod errors;
+mod host_policy;
 mod logging;
 mod output;
 mod profile;
@@ -30,6 +31,11 @@ mod run_events;
 mod runtime;
 
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
+use host_policy::{
+    build_phenotype_compute_group_id_value, build_phenotype_compute_groups_payload,
+    build_phenotype_output_directory_name, normalize_binary_correction_payload, plan_association_backend_payload,
+    resolve_association_mode_value, resolve_jax_runtime_setup_payload,
+};
 use logging::{
     NativeTelemetrySession, build_telemetry_event_payload, emit_diagnostic_event, initialize_logging, shutdown_logging,
 };
@@ -1593,6 +1599,13 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_run_completed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_failed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(build_phenotype_compute_group_id_value, module)?)?;
+    module.add_function(wrap_pyfunction!(build_phenotype_compute_groups_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_phenotype_output_directory_name, module)?)?;
+    module.add_function(wrap_pyfunction!(normalize_binary_correction_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_association_backend_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;

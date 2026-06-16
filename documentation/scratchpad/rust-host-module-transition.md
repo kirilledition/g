@@ -35,6 +35,10 @@ the current Python public API and test behavior.
 - Current-run manifest header construction now uses native JSON when `_core` is available.
 - Sample/group fingerprints and compute-group resolution now use native helpers for real native aligned-data objects, with Python fallback for tests and adapters using fake objects.
 - Run-event rendering and telemetry payload shaping now use native helpers while keeping Python dataclass APIs.
+- Host-policy follow-up moved backend planning, binary correction normalization,
+  config-time phenotype compute-group planning and IDs, phenotype output slug
+  construction, association-mode resolution, and pure JAX runtime setup payload
+  resolution into Rust/PyO3 while preserving Python dataclass and enum APIs.
 
 ## Verification Run
 
@@ -46,3 +50,12 @@ the current Python public API and test behavior.
 - `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed.
 - `uv run --no-sync ty check src tests scripts tooling` passed.
 - `uv run --no-sync ruff check src/g/interface/config.py src/g/io/output.py src/g/engine/native_dispatch/groups.py src/g/engine/run_events.py src/g/engine/telemetry.py src/g/_core.pyi` passed.
+
+## Host-Policy Follow-Up Verification Run
+
+- `uv run pytest tests/test_backend_planner.py tests/test_regenie_binary_correction_contract.py tests/test_jax_runtime.py -q` passed: 31 tests.
+- `uv run pytest tests/test_regenie2_pipeline.py tests/test_api.py -q` passed: 135 tests.
+- `just check-core-stub` passed.
+- `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed.
+- `uv run --no-sync ty check src tests scripts tooling` passed.
+- `uv run ruff check src/g/engine/backend_planner.py src/g/execution_plan.py src/g/jax_runtime/resolution.py` passed.

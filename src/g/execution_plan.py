@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-import re
 import typing
 from dataclasses import dataclass
 
-from g import types
+from g import _core, types
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.io import output, source
@@ -17,10 +14,6 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g.interface import config
-
-
-PHENOTYPE_DIRECTORY_SAFE_CHARACTER_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
-PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH = 80
 
 
 @dataclass(frozen=True)
@@ -127,21 +120,15 @@ class PhenotypeComputeGroup:
 
 def build_phenotype_compute_group_id(phenotype_compute_group: PhenotypeComputeGroup) -> str:
     """Build a deterministic identifier for a resolved phenotype compute group."""
-    group_payload = {
-        "group_mode": phenotype_compute_group.group_mode.value,
-        "phenotype_indices": phenotype_compute_group.phenotype_indices,
-        "phenotype_names": phenotype_compute_group.phenotype_names,
-        "sample_mode": phenotype_compute_group.sample_mode.value,
-        "sample_set_fingerprint": phenotype_compute_group.sample_set_fingerprint,
-        "covariate_design_fingerprint": phenotype_compute_group.covariate_design_fingerprint,
-        "prediction_alignment_fingerprint": phenotype_compute_group.prediction_alignment_fingerprint,
-    }
-    group_payload_bytes = json.dumps(
-        group_payload,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(group_payload_bytes).hexdigest()
+    return _core.build_phenotype_compute_group_id_value(
+        phenotype_compute_group.group_mode.value,
+        phenotype_compute_group.phenotype_indices,
+        phenotype_compute_group.phenotype_names,
+        phenotype_compute_group.sample_mode.value,
+        phenotype_compute_group.sample_set_fingerprint,
+        phenotype_compute_group.covariate_design_fingerprint,
+        phenotype_compute_group.prediction_alignment_fingerprint,
+    )
 
 
 @dataclass(frozen=True)
@@ -180,28 +167,17 @@ class RegenieExecutionPlan:
 
 def normalize_binary_correction_config(binary_config: config.BinaryConfig) -> types.BinaryCorrectionPlan:
     """Normalize REGENIE-style binary correction flags into an internal plan."""
-    if not (0.0 < binary_config.p_threshold < 1.0):
-        message = "pThresh must be in (0, 1)."
-        raise ValueError(message)
-    if binary_config.spa:
-        message = "SPA fallback is not implemented yet. Omit --spa for score-test-only output."
-        raise NotImplementedError(message)
-    if binary_config.approx and not binary_config.firth:
-        message = "--approx requires --firth."
-        raise ValueError(message)
-    if binary_config.firth and binary_config.approx:
-        return types.BinaryCorrectionPlan(
-            method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
-            p_threshold=binary_config.p_threshold,
-            firth_se=binary_config.firth_se,
-        )
-    if binary_config.firth:
-        message = "Exact REGENIE --firth without --approx is not implemented yet. Use --firth --approx."
-        raise NotImplementedError(message)
+    correction_payload = _core.normalize_binary_correction_payload(
+        binary_config.firth,
+        binary_config.approx,
+        binary_config.spa,
+        binary_config.p_threshold,
+        binary_config.firth_se,
+    )
     return types.BinaryCorrectionPlan(
-        method=types.BinaryFallbackMethod.SCORE_ONLY,
-        p_threshold=binary_config.p_threshold,
-        firth_se=False,
+        method=types.BinaryFallbackMethod(typing.cast("str", correction_payload["method"])),
+        p_threshold=typing.cast("float", correction_payload["p_threshold"]),
+        firth_se=typing.cast("bool", correction_payload["firth_se"]),
     )
 
 
@@ -317,53 +293,18 @@ def build_phenotype_compute_groups(
     multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode,
 ) -> tuple[PhenotypeComputeGroup, ...]:
     """Build config-time phenotype compute groups."""
-    if not phenotype_names:
-        message = "At least one phenotype is required for execution planning."
-        raise ValueError(message)
-    if len(phenotype_names) == 1:
-        return (
-            PhenotypeComputeGroup(
-                group_mode=types.PhenotypeComputeGroupMode.SINGLE_PHENOTYPE,
-                phenotype_indices=(0,),
-                phenotype_names=phenotype_names,
-                sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
-                sample_set_fingerprint=None,
-                covariate_design_fingerprint=None,
-                prediction_alignment_fingerprint=None,
-            ),
-        )
-    phenotype_indices = tuple(range(len(phenotype_names)))
-    if multi_phenotype_sample_mode == types.MultiPhenotypeSampleMode.COMPLETE_CASE:
-        return (
-            PhenotypeComputeGroup(
-                group_mode=types.PhenotypeComputeGroupMode.COMPLETE_CASE,
-                phenotype_indices=phenotype_indices,
-                phenotype_names=phenotype_names,
-                sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
-                sample_set_fingerprint=None,
-                covariate_design_fingerprint=None,
-                prediction_alignment_fingerprint=None,
-            ),
-        )
     return tuple(
-        PhenotypeComputeGroup(
-            group_mode=types.PhenotypeComputeGroupMode.PER_PHENOTYPE_COMPATIBLE,
-            phenotype_indices=(phenotype_index,),
-            phenotype_names=(phenotype_name,),
-            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
-            sample_set_fingerprint=None,
-            covariate_design_fingerprint=None,
-            prediction_alignment_fingerprint=None,
+        adapt_phenotype_compute_group_payload(group_payload)
+        for group_payload in _core.build_phenotype_compute_groups_payload(
+            phenotype_names,
+            multi_phenotype_sample_mode.value,
         )
-        for phenotype_index, phenotype_name in enumerate(phenotype_names)
     )
 
 
 def resolve_association_mode(trait_type: types.RegenieTraitType) -> types.AssociationMode:
     """Resolve a trait family to the native association mode."""
-    if trait_type == types.RegenieTraitType.BINARY:
-        return types.AssociationMode.REGENIE2_BINARY
-    return types.AssociationMode.REGENIE2_LINEAR
+    return types.AssociationMode(_core.resolve_association_mode_value(trait_type.value))
 
 
 def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
@@ -424,7 +365,20 @@ def build_phenotype_run_plan(
 
 def build_phenotype_output_directory_name(phenotype_index: int, phenotype_name: str) -> str:
     """Build a deterministic safe directory name for one phenotype output."""
-    sanitized_slug = PHENOTYPE_DIRECTORY_SAFE_CHARACTER_PATTERN.sub("_", phenotype_name).strip("._-")
-    if not sanitized_slug:
-        sanitized_slug = "phenotype"
-    return f"trait_{phenotype_index:04d}_{sanitized_slug[:PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH]}"
+    return _core.build_phenotype_output_directory_name(phenotype_index, phenotype_name)
+
+
+def adapt_phenotype_compute_group_payload(group_payload: dict[str, object]) -> PhenotypeComputeGroup:
+    """Adapt a native group payload to the public Python execution-plan shape."""
+    return PhenotypeComputeGroup(
+        group_mode=types.PhenotypeComputeGroupMode(typing.cast("str", group_payload["group_mode"])),
+        phenotype_indices=tuple(typing.cast("typing.Sequence[int]", group_payload["phenotype_indices"])),
+        phenotype_names=tuple(typing.cast("typing.Sequence[str]", group_payload["phenotype_names"])),
+        sample_mode=types.MultiPhenotypeSampleMode(typing.cast("str", group_payload["sample_mode"])),
+        sample_set_fingerprint=typing.cast("str | None", group_payload["sample_set_fingerprint"]),
+        covariate_design_fingerprint=typing.cast("str | None", group_payload["covariate_design_fingerprint"]),
+        prediction_alignment_fingerprint=typing.cast(
+            "str | None",
+            group_payload["prediction_alignment_fingerprint"],
+        ),
+    )
