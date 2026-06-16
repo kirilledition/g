@@ -35,6 +35,26 @@ def compute_firth_variantwise(
 
     scalar_offset_vector = jnp.asarray(null_firth_offset, dtype=jnp.float64)
     scalar_phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
+    if not kernel_config.approximate_firth.use_block_math:
+        return jax.vmap(fit_scalar_variant_firth_lane, in_axes=(None, 0, 0, 0, 0))(
+            regenie2_binary_firth_types.ScalarVariantFirthLaneSharedOperands(
+                phenotype_vector=scalar_phenotype_vector,
+                offset_vector=scalar_offset_vector,
+                sparse_carrier_dosage_threshold=jnp.asarray(
+                    kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
+                    dtype=jnp.float64,
+                ),
+                null_failed=~jnp.isfinite(null_penalized_log_likelihood),
+                solver_parameters=regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(
+                    kernel_config,
+                    jnp.float64,
+                ),
+            ),
+            genotype_matrix_by_variant,
+            raw_genotype_matrix_by_variant,
+            skip_firth_mask,
+            sparse_correction_mask,
+        )
 
     def fit_variant(
         genotype_vector: jax.Array,
@@ -43,19 +63,6 @@ def compute_firth_variantwise(
         skip_firth: jax.Array,
         sparse_correction: jax.Array,
     ) -> regenie2_binary_firth_types.FirthVariantResult:
-        if not kernel_config.approximate_firth.use_block_math:
-            return regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
-                phenotype_vector=scalar_phenotype_vector,
-                genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
-                offset_vector=scalar_offset_vector,
-                carrier_sample_mask=raw_genotype_vector
-                > kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
-                sparse_correction=sparse_correction,
-                warm_start_beta=jnp.asarray(0.0, dtype=jnp.float64),
-                skip_firth=skip_firth,
-                null_failed=~jnp.isfinite(null_penalized_log_likelihood),
-                kernel_config=kernel_config,
-            )
         return regenie2_binary_firth_full_model.fit_single_variant_firth_logistic_regression(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
@@ -141,18 +148,158 @@ def compute_firth_multi_variantwise(
     )
 
 
+def build_compact_sparse_carrier_indices_for_lane(carrier_mask: jax.Array) -> jax.Array:
+    """Build fixed-capacity carrier indices for one sparse lane."""
+    return jnp.nonzero(carrier_mask, size=models.SPARSE_FIRTH_CARRIER_CAPACITY, fill_value=0)[0]
+
+
 def build_compact_sparse_carrier_indices(
     *,
     raw_genotype_matrix_by_variant: jax.Array,
-    sparse_carrier_dosage_threshold: float,
+    sparse_carrier_dosage_threshold: float | jax.Array,
 ) -> jax.Array:
     """Build fixed-capacity carrier sample indices for sparse Firth lanes."""
     carrier_sample_mask = raw_genotype_matrix_by_variant > sparse_carrier_dosage_threshold
+    return jax.vmap(build_compact_sparse_carrier_indices_for_lane)(carrier_sample_mask)
 
-    def build_one_lane(carrier_mask: jax.Array) -> jax.Array:
-        return jnp.nonzero(carrier_mask, size=models.SPARSE_FIRTH_CARRIER_CAPACITY, fill_value=0)[0]
 
-    return jax.vmap(build_one_lane)(carrier_sample_mask)
+def fit_scalar_variant_firth_lane(
+    shared_operands: regenie2_binary_firth_types.ScalarVariantFirthLaneSharedOperands,
+    genotype_vector: jax.Array,
+    raw_genotype_vector: jax.Array,
+    skip_firth: jax.Array,
+    sparse_correction: jax.Array,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Fit one scalar approximate-Firth lane from variant-major inputs."""
+    return regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth_with_solver_parameters(
+        phenotype_vector=shared_operands.phenotype_vector,
+        genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
+        offset_vector=shared_operands.offset_vector,
+        carrier_sample_mask=raw_genotype_vector > shared_operands.sparse_carrier_dosage_threshold,
+        sparse_correction=sparse_correction,
+        warm_start_beta=jnp.asarray(0.0, dtype=jnp.float64),
+        skip_firth=skip_firth,
+        null_failed=shared_operands.null_failed,
+        solver_parameters=shared_operands.solver_parameters,
+    )
+
+
+def compute_active_scalar_variant_firth_fixed_batch(
+    operands: regenie2_binary_firth_types.ScalarVariantFirthFixedBatchOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute one active scalar variant-wise fixed Firth batch."""
+    carry = operands.carry
+    batch_index = operands.batch_index
+    return jax.vmap(
+        fit_scalar_variant_firth_lane,
+        in_axes=(None, 0, 0, 0, 0),
+    )(
+        carry.shared_operands,
+        carry.genotype_batches[batch_index],
+        carry.raw_genotype_batches[batch_index],
+        ~carry.active_mask_batches[batch_index],
+        carry.sparse_correction_mask_batches[batch_index],
+    )
+
+
+def return_empty_scalar_variant_firth_fixed_batch(
+    operands: regenie2_binary_firth_types.ScalarVariantFirthFixedBatchOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Return the empty scalar variant-wise fixed-batch result."""
+    return operands.carry.empty_firth_variant_result
+
+
+def compute_scalar_variant_firth_fixed_batch(
+    carry: regenie2_binary_firth_types.ScalarVariantFirthFixedBatchScanCarry,
+    batch_index: jax.Array,
+) -> tuple[
+    regenie2_binary_firth_types.ScalarVariantFirthFixedBatchScanCarry, regenie2_binary_firth_types.FirthVariantResult
+]:
+    """Compute or skip one scalar variant-wise fixed Firth batch."""
+    operands = regenie2_binary_firth_types.ScalarVariantFirthFixedBatchOperands(
+        carry=carry,
+        batch_index=batch_index,
+    )
+    batch_result = jax.lax.cond(
+        batch_index < carry.active_batch_count,
+        compute_active_scalar_variant_firth_fixed_batch,
+        return_empty_scalar_variant_firth_fixed_batch,
+        operands,
+    )
+    return carry, batch_result
+
+
+def fit_compact_sparse_firth_lane(
+    shared_operands: regenie2_binary_firth_types.CompactSparseFirthLaneSharedOperands,
+    phenotype_vector: jax.Array,
+    genotype_vector: jax.Array,
+    offset_vector: jax.Array,
+    carrier_slot_mask: jax.Array,
+    lane_full_null_deviance: jax.Array,
+    skip_firth: jax.Array,
+    null_failed: jax.Array,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Fit one compact sparse scalar approximate-Firth lane."""
+    return regenie2_binary_firth_scalar_approx.fit_compact_carrier_regenie_approximate_firth_with_solver_parameters(
+        phenotype_vector=phenotype_vector,
+        genotype_vector=genotype_vector,
+        offset_vector=offset_vector,
+        active_carrier_slot_mask=carrier_slot_mask,
+        full_null_deviance=lane_full_null_deviance,
+        warm_start_beta=jnp.asarray(0.0, dtype=offset_vector.dtype),
+        skip_firth=skip_firth,
+        null_failed=null_failed,
+        solver_parameters=shared_operands.solver_parameters,
+    )
+
+
+def compute_active_compact_sparse_firth_fixed_batch(
+    operands: regenie2_binary_firth_types.CompactSparseFirthFixedBatchOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute one active compact sparse scalar Firth batch."""
+    carry = operands.carry
+    batch_index = operands.batch_index
+    return jax.vmap(
+        fit_compact_sparse_firth_lane,
+        in_axes=(None, 0, 0, 0, 0, 0, 0, 0),
+    )(
+        carry.shared_operands,
+        carry.phenotype_batches[batch_index],
+        carry.genotype_batches[batch_index],
+        carry.offset_batches[batch_index],
+        carry.active_carrier_slot_mask_batches[batch_index],
+        carry.full_null_deviance_batches[batch_index],
+        ~carry.active_mask_batches[batch_index],
+        carry.null_failed_mask_batches[batch_index],
+    )
+
+
+def return_empty_compact_sparse_firth_fixed_batch(
+    operands: regenie2_binary_firth_types.CompactSparseFirthFixedBatchOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Return the empty compact sparse fixed-batch result."""
+    return operands.carry.empty_firth_variant_result
+
+
+def compute_compact_sparse_firth_fixed_batch(
+    carry: regenie2_binary_firth_types.CompactSparseFirthFixedBatchScanCarry,
+    batch_index: jax.Array,
+) -> tuple[
+    regenie2_binary_firth_types.CompactSparseFirthFixedBatchScanCarry,
+    regenie2_binary_firth_types.FirthVariantResult,
+]:
+    """Compute or skip one compact sparse scalar Firth fixed batch."""
+    operands = regenie2_binary_firth_types.CompactSparseFirthFixedBatchOperands(
+        carry=carry,
+        batch_index=batch_index,
+    )
+    batch_result = jax.lax.cond(
+        batch_index < carry.active_batch_count,
+        compute_active_compact_sparse_firth_fixed_batch,
+        return_empty_compact_sparse_firth_fixed_batch,
+        operands,
+    )
+    return carry, batch_result
 
 
 def compute_compact_sparse_firth_variantwise_fixed_batches(
@@ -169,6 +316,37 @@ def compute_compact_sparse_firth_variantwise_fixed_batches(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Compute compact sparse scalar Firth fits using fixed-size carrier slots."""
+    return compute_compact_sparse_firth_variantwise_fixed_batches_with_solver_parameters(
+        phenotype_matrix=phenotype_matrix,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        offset_matrix=offset_matrix,
+        active_carrier_slot_mask=active_carrier_slot_mask,
+        full_null_deviance=full_null_deviance,
+        active_mask=active_mask,
+        fallback_count=fallback_count,
+        firth_batch_size=firth_batch_size,
+        null_failed_mask=null_failed_mask,
+        solver_parameters=regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(
+            kernel_config,
+            offset_matrix.dtype,
+        ),
+    )
+
+
+def compute_compact_sparse_firth_variantwise_fixed_batches_with_solver_parameters(
+    *,
+    phenotype_matrix: jax.Array,
+    genotype_matrix_by_variant: jax.Array,
+    offset_matrix: jax.Array,
+    active_carrier_slot_mask: jax.Array,
+    full_null_deviance: jax.Array,
+    active_mask: jax.Array,
+    fallback_count: jax.Array,
+    firth_batch_size: int,
+    null_failed_mask: jax.Array,
+    solver_parameters: regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute compact sparse fixed batches with explicit solver policy."""
     batch_count = active_mask.shape[0] // firth_batch_size
     active_batch_count = (fallback_count + firth_batch_size - 1) // firth_batch_size
     phenotype_batches = phenotype_matrix.reshape((batch_count, firth_batch_size, -1))
@@ -181,59 +359,68 @@ def compute_compact_sparse_firth_variantwise_fixed_batches(
     full_null_deviance_batches = full_null_deviance_vector.reshape((batch_count, firth_batch_size))
     null_failed_mask_batches = null_failed_mask_vector.reshape((batch_count, firth_batch_size))
     empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
-
-    def compute_firth_batch(
-        carry: None,
-        batch_index: jax.Array,
-    ) -> tuple[None, regenie2_binary_firth_types.FirthVariantResult]:
-        del carry
-
-        def fit_variant(
-            phenotype_vector: jax.Array,
-            genotype_vector: jax.Array,
-            offset_vector: jax.Array,
-            carrier_slot_mask: jax.Array,
-            lane_full_null_deviance: jax.Array,
-            skip_firth: jax.Array,
-            null_failed: jax.Array,
-        ) -> regenie2_binary_firth_types.FirthVariantResult:
-            return regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth_compact_carriers(
-                phenotype_vector=phenotype_vector,
-                genotype_vector=genotype_vector,
-                offset_vector=offset_vector,
-                active_carrier_slot_mask=carrier_slot_mask,
-                full_null_deviance=lane_full_null_deviance,
-                warm_start_beta=jnp.asarray(0.0, dtype=offset_vector.dtype),
-                skip_firth=skip_firth,
-                null_failed=null_failed,
-                kernel_config=kernel_config,
-            )
-
-        def run_active_batch(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
-            return jax.vmap(
-                fit_variant,
-                in_axes=(0, 0, 0, 0, 0, 0, 0),
-            )(
-                phenotype_batches[batch_index],
-                genotype_batches[batch_index],
-                offset_batches[batch_index],
-                active_carrier_slot_mask_batches[batch_index],
-                full_null_deviance_batches[batch_index],
-                ~active_mask_batches[batch_index],
-                null_failed_mask_batches[batch_index],
-            )
-
-        batch_result = jax.lax.cond(
-            batch_index < active_batch_count,
-            run_active_batch,
-            lambda _: empty_firth_variant_result,
-            operand=None,
-        )
-        return None, batch_result
-
+    scan_carry = regenie2_binary_firth_types.CompactSparseFirthFixedBatchScanCarry(
+        shared_operands=regenie2_binary_firth_types.CompactSparseFirthLaneSharedOperands(
+            solver_parameters=solver_parameters
+        ),
+        phenotype_batches=phenotype_batches,
+        genotype_batches=genotype_batches,
+        offset_batches=offset_batches,
+        active_carrier_slot_mask_batches=active_carrier_slot_mask_batches,
+        active_mask_batches=active_mask_batches,
+        full_null_deviance_batches=full_null_deviance_batches,
+        null_failed_mask_batches=null_failed_mask_batches,
+        active_batch_count=active_batch_count,
+        empty_firth_variant_result=empty_firth_variant_result,
+    )
     _, batched_firth_result = jax.lax.scan(
-        compute_firth_batch,
-        None,
+        compute_compact_sparse_firth_fixed_batch,
+        scan_carry,
+        jnp.arange(batch_count, dtype=jnp.int32),
+    )
+    return regenie2_binary_firth_types.flatten_batched_firth_variant_result(batched_firth_result)
+
+
+def compute_scalar_firth_variantwise_fixed_batches_without_sparse_compaction_with_solver_parameters(
+    *,
+    null_firth_offset: jax.Array,
+    phenotype_vector: jax.Array,
+    genotype_matrix_by_variant: jax.Array,
+    raw_genotype_matrix_by_variant: jax.Array,
+    active_mask: jax.Array,
+    sparse_correction_mask: jax.Array,
+    fallback_count: jax.Array,
+    firth_batch_size: int,
+    null_penalized_log_likelihood: jax.Array,
+    sparse_carrier_dosage_threshold: jax.Array,
+    solver_parameters: regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute scalar approximate-Firth fixed batches with explicit policy."""
+    batch_count = active_mask.shape[0] // firth_batch_size
+    active_batch_count = (fallback_count + firth_batch_size - 1) // firth_batch_size
+    genotype_batches = genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
+    raw_genotype_batches = raw_genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
+    active_mask_batches = active_mask.reshape((batch_count, firth_batch_size))
+    sparse_correction_mask_batches = sparse_correction_mask.reshape((batch_count, firth_batch_size))
+    empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
+    scan_carry = regenie2_binary_firth_types.ScalarVariantFirthFixedBatchScanCarry(
+        shared_operands=regenie2_binary_firth_types.ScalarVariantFirthLaneSharedOperands(
+            phenotype_vector=jnp.asarray(phenotype_vector, dtype=jnp.float64),
+            offset_vector=jnp.asarray(null_firth_offset, dtype=jnp.float64),
+            sparse_carrier_dosage_threshold=sparse_carrier_dosage_threshold,
+            null_failed=~jnp.isfinite(null_penalized_log_likelihood),
+            solver_parameters=solver_parameters,
+        ),
+        genotype_batches=genotype_batches,
+        raw_genotype_batches=raw_genotype_batches,
+        active_mask_batches=active_mask_batches,
+        sparse_correction_mask_batches=sparse_correction_mask_batches,
+        active_batch_count=active_batch_count,
+        empty_firth_variant_result=empty_firth_variant_result,
+    )
+    _, batched_firth_result = jax.lax.scan(
+        compute_scalar_variant_firth_fixed_batch,
+        scan_carry,
         jnp.arange(batch_count, dtype=jnp.int32),
     )
     return regenie2_binary_firth_types.flatten_batched_firth_variant_result(batched_firth_result)
@@ -265,6 +452,26 @@ def compute_firth_variantwise_fixed_batches_without_sparse_compaction(
     active_mask_batches = active_mask.reshape((batch_count, firth_batch_size))
     sparse_correction_mask_batches = sparse_correction_mask.reshape((batch_count, firth_batch_size))
     empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
+    if not kernel_config.approximate_firth.use_block_math:
+        return compute_scalar_firth_variantwise_fixed_batches_without_sparse_compaction_with_solver_parameters(
+            null_firth_offset=null_firth_offset,
+            phenotype_vector=phenotype_vector,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            raw_genotype_matrix_by_variant=raw_genotype_matrix_by_variant,
+            active_mask=active_mask,
+            sparse_correction_mask=sparse_correction_mask,
+            fallback_count=fallback_count,
+            firth_batch_size=firth_batch_size,
+            null_penalized_log_likelihood=null_penalized_log_likelihood,
+            sparse_carrier_dosage_threshold=jnp.asarray(
+                kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
+                dtype=jnp.float64,
+            ),
+            solver_parameters=regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(
+                kernel_config,
+                jnp.float64,
+            ),
+        )
 
     def compute_firth_batch(
         carry: None,
@@ -374,6 +581,225 @@ def compute_firth_multi_variantwise_fixed_batches_without_sparse_compaction(
     return regenie2_binary_firth_types.flatten_batched_firth_variant_result(batched_firth_result)
 
 
+def compute_scalar_firth_without_sparse_compaction_from_operands(
+    operands: regenie2_binary_firth_types.ScalarFirthSparseCompactionOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute scalar approximate-Firth batches without sparse compaction."""
+    return compute_scalar_firth_variantwise_fixed_batches_without_sparse_compaction_with_solver_parameters(
+        null_firth_offset=operands.null_firth_offset,
+        phenotype_vector=operands.phenotype_vector,
+        genotype_matrix_by_variant=operands.genotype_matrix_by_variant,
+        raw_genotype_matrix_by_variant=operands.raw_genotype_matrix_by_variant,
+        active_mask=operands.active_mask,
+        sparse_correction_mask=operands.sparse_correction_mask,
+        fallback_count=operands.fallback_count,
+        firth_batch_size=operands.firth_batch_size,
+        null_penalized_log_likelihood=operands.null_penalized_log_likelihood,
+        sparse_carrier_dosage_threshold=operands.sparse_carrier_dosage_threshold,
+        solver_parameters=operands.solver_parameters,
+    )
+
+
+def compute_scalar_firth_without_sparse_compaction_from_split_operands(
+    operands: regenie2_binary_firth_types.ScalarFirthSparseSplitOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute without sparse compaction from split-path operands."""
+    return compute_scalar_firth_without_sparse_compaction_from_operands(operands.compaction_operands)
+
+
+def return_empty_scalar_firth_sparse_stream(
+    operands: regenie2_binary_firth_types.ScalarFirthSparseStreamOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Return an empty sparse stream result."""
+    return regenie2_binary_firth_types.build_empty_firth_variant_result(operands.active_mask.shape[0])
+
+
+def compute_scalar_firth_dense_sparse_stream(
+    operands: regenie2_binary_firth_types.ScalarFirthSparseStreamOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute dense lanes from a scalar sparse-compaction split."""
+    compaction_operands = operands.split_operands.compaction_operands
+    dense_null_penalized_log_likelihood = (
+        compaction_operands.null_penalized_log_likelihood
+        if compaction_operands.null_penalized_log_likelihood.ndim == 0
+        else jnp.take(
+            compaction_operands.null_penalized_log_likelihood,
+            operands.lane_indices,
+            axis=0,
+        )
+    )
+    return compute_scalar_firth_variantwise_fixed_batches_without_sparse_compaction_with_solver_parameters(
+        null_firth_offset=compaction_operands.null_firth_offset,
+        phenotype_vector=compaction_operands.phenotype_vector,
+        genotype_matrix_by_variant=jnp.take(
+            compaction_operands.genotype_matrix_by_variant,
+            operands.lane_indices,
+            axis=0,
+        ),
+        raw_genotype_matrix_by_variant=jnp.take(
+            compaction_operands.raw_genotype_matrix_by_variant,
+            operands.lane_indices,
+            axis=0,
+        ),
+        active_mask=operands.active_mask,
+        sparse_correction_mask=jnp.take(
+            compaction_operands.sparse_correction_mask,
+            operands.lane_indices,
+            axis=0,
+        ),
+        fallback_count=operands.active_count,
+        firth_batch_size=compaction_operands.firth_batch_size,
+        null_penalized_log_likelihood=dense_null_penalized_log_likelihood,
+        sparse_carrier_dosage_threshold=compaction_operands.sparse_carrier_dosage_threshold,
+        solver_parameters=compaction_operands.solver_parameters,
+    )
+
+
+def compute_scalar_firth_compact_sparse_stream(
+    operands: regenie2_binary_firth_types.ScalarFirthSparseStreamOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute compact sparse lanes from a scalar sparse-compaction split."""
+    split_operands = operands.split_operands
+    compaction_operands = split_operands.compaction_operands
+    compact_null_failed_mask = (
+        ~jnp.isfinite(compaction_operands.null_penalized_log_likelihood)
+        if compaction_operands.null_penalized_log_likelihood.ndim == 0
+        else ~jnp.isfinite(jnp.take(compaction_operands.null_penalized_log_likelihood, operands.lane_indices, axis=0))
+    )
+    compact_lane_raw_genotype_matrix = jnp.take(
+        compaction_operands.raw_genotype_matrix_by_variant,
+        operands.lane_indices,
+        axis=0,
+    )
+    compact_carrier_indices = build_compact_sparse_carrier_indices(
+        raw_genotype_matrix_by_variant=compact_lane_raw_genotype_matrix,
+        sparse_carrier_dosage_threshold=compaction_operands.sparse_carrier_dosage_threshold,
+    )
+    compact_carrier_count = jnp.take(split_operands.carrier_count, operands.lane_indices, axis=0)
+    compact_carrier_slot_mask = (
+        jnp.arange(models.SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :] < compact_carrier_count[:, None]
+    ) & operands.active_mask[:, None]
+    compact_lane_genotype_matrix = jnp.take(
+        compaction_operands.genotype_matrix_by_variant,
+        operands.lane_indices,
+        axis=0,
+    )
+    compact_genotype_matrix = jnp.take_along_axis(
+        compact_lane_genotype_matrix,
+        compact_carrier_indices,
+        axis=1,
+    )
+    compact_phenotype_matrix = jnp.take(
+        jnp.asarray(compaction_operands.phenotype_vector, dtype=jnp.float64),
+        compact_carrier_indices,
+        axis=0,
+    )
+    compact_offset_matrix = jnp.take(
+        jnp.asarray(compaction_operands.null_firth_offset, dtype=jnp.float64),
+        compact_carrier_indices,
+        axis=0,
+    )
+    return compute_compact_sparse_firth_variantwise_fixed_batches_with_solver_parameters(
+        phenotype_matrix=compact_phenotype_matrix,
+        genotype_matrix_by_variant=jnp.asarray(compact_genotype_matrix, dtype=jnp.float64),
+        offset_matrix=compact_offset_matrix,
+        active_carrier_slot_mask=compact_carrier_slot_mask,
+        full_null_deviance=jnp.asarray(compaction_operands.full_null_deviance, dtype=jnp.float64),
+        active_mask=operands.active_mask,
+        fallback_count=operands.active_count,
+        firth_batch_size=compaction_operands.firth_batch_size,
+        null_failed_mask=compact_null_failed_mask,
+        solver_parameters=compaction_operands.solver_parameters,
+    )
+
+
+def scatter_firth_stream_result(
+    operands: regenie2_binary_firth_types.FirthStreamScatterOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Scatter one stream result into candidate-lane order."""
+    return streams.scatter_firth_variant_result_by_lane_stream(
+        base_result=operands.base_result,
+        lane_indices=operands.lane_indices,
+        active_mask=operands.active_mask,
+        stream_result=operands.stream_result,
+    )
+
+
+def compute_scalar_firth_sparse_split_path(
+    operands: regenie2_binary_firth_types.ScalarFirthSparseSplitOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute scalar Firth lanes split between dense and compact streams."""
+    compaction_operands = operands.compaction_operands
+    dense_lane_mask = compaction_operands.active_mask & (~operands.compact_sparse_lane_mask)
+    dense_stream_plan = streams.build_firth_lane_stream_plan(dense_lane_mask)
+    compact_stream_plan = streams.build_firth_lane_stream_plan(operands.compact_sparse_lane_mask)
+    dense_stream_operands = regenie2_binary_firth_types.ScalarFirthSparseStreamOperands(
+        split_operands=operands,
+        lane_indices=dense_stream_plan.lane_indices,
+        active_mask=dense_stream_plan.active_mask,
+        active_count=dense_stream_plan.active_count,
+    )
+    compact_stream_operands = regenie2_binary_firth_types.ScalarFirthSparseStreamOperands(
+        split_operands=operands,
+        lane_indices=compact_stream_plan.lane_indices,
+        active_mask=compact_stream_plan.active_mask,
+        active_count=compact_stream_plan.active_count,
+    )
+    dense_result = jax.lax.cond(
+        dense_stream_plan.active_count > 0,
+        compute_scalar_firth_dense_sparse_stream,
+        return_empty_scalar_firth_sparse_stream,
+        dense_stream_operands,
+    )
+    compact_result = jax.lax.cond(
+        compact_stream_plan.active_count > 0,
+        compute_scalar_firth_compact_sparse_stream,
+        return_empty_scalar_firth_sparse_stream,
+        compact_stream_operands,
+    )
+    empty_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
+        compaction_operands.active_mask.shape[0]
+    )
+    scattered_dense_result = scatter_firth_stream_result(
+        regenie2_binary_firth_types.FirthStreamScatterOperands(
+            base_result=empty_result,
+            lane_indices=dense_stream_plan.lane_indices,
+            active_mask=dense_stream_plan.active_mask,
+            stream_result=dense_result,
+        )
+    )
+    return scatter_firth_stream_result(
+        regenie2_binary_firth_types.FirthStreamScatterOperands(
+            base_result=scattered_dense_result,
+            lane_indices=compact_stream_plan.lane_indices,
+            active_mask=compact_stream_plan.active_mask,
+            stream_result=compact_result,
+        )
+    )
+
+
+def compute_scalar_firth_with_sparse_compaction(
+    operands: regenie2_binary_firth_types.ScalarFirthSparseCompactionOperands,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute scalar Firth batches with compact sparse lanes when possible."""
+    carrier_sample_mask = operands.raw_genotype_matrix_by_variant > operands.sparse_carrier_dosage_threshold
+    carrier_count = jnp.sum(carrier_sample_mask, axis=1, dtype=jnp.int32)
+    compact_sparse_lane_mask = (
+        operands.active_mask & operands.sparse_correction_mask & (carrier_count <= models.SPARSE_FIRTH_CARRIER_CAPACITY)
+    )
+    split_operands = regenie2_binary_firth_types.ScalarFirthSparseSplitOperands(
+        compaction_operands=operands,
+        carrier_count=carrier_count,
+        compact_sparse_lane_mask=compact_sparse_lane_mask,
+    )
+    return jax.lax.cond(
+        jnp.any(compact_sparse_lane_mask),
+        compute_scalar_firth_sparse_split_path,
+        compute_scalar_firth_without_sparse_compaction_from_split_operands,
+        split_operands,
+    )
+
+
 def compute_firth_variantwise_fixed_batches(
     *,
     covariate_matrix: jax.Array,
@@ -393,8 +819,7 @@ def compute_firth_variantwise_fixed_batches(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Compute single-trait Firth fits with compact sparse lanes when eligible."""
-
-    def compute_without_sparse_compaction() -> regenie2_binary_firth_types.FirthVariantResult:
+    if kernel_config.approximate_firth.use_block_math:
         return compute_firth_variantwise_fixed_batches_without_sparse_compaction(
             covariate_matrix=covariate_matrix,
             null_logistic_coefficients=null_logistic_coefficients,
@@ -412,172 +837,32 @@ def compute_firth_variantwise_fixed_batches(
             kernel_config=kernel_config,
         )
 
-    if kernel_config.approximate_firth.use_block_math:
-        return compute_without_sparse_compaction()
-
-    def compute_with_sparse_compaction(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
-        carrier_sample_mask = (
-            raw_genotype_matrix_by_variant > kernel_config.approximate_firth.sparse_carrier_dosage_threshold
-        )
-        carrier_count = jnp.sum(carrier_sample_mask, axis=1, dtype=jnp.int32)
-        compact_sparse_lane_mask = (
-            active_mask & sparse_correction_mask & (carrier_count <= models.SPARSE_FIRTH_CARRIER_CAPACITY)
-        )
-
-        def compute_split_path(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
-            dense_lane_mask = active_mask & (~compact_sparse_lane_mask)
-            dense_stream_plan = streams.build_firth_lane_stream_plan(dense_lane_mask)
-            compact_stream_plan = streams.build_firth_lane_stream_plan(compact_sparse_lane_mask)
-            dense_fallback_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
-                dense_stream_plan.active_mask.shape[0]
-            )
-            empty_result = regenie2_binary_firth_types.build_empty_firth_variant_result(active_mask.shape[0])
-            dense_stream_has_lanes = dense_stream_plan.active_count > 0
-            compact_stream_has_lanes = compact_stream_plan.active_count > 0
-
-            def compute_dense_stream(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
-                dense_null_penalized_log_likelihood = (
-                    null_penalized_log_likelihood
-                    if null_penalized_log_likelihood.ndim == 0
-                    else jnp.take(
-                        null_penalized_log_likelihood,
-                        dense_stream_plan.lane_indices,
-                        axis=0,
-                    )
-                )
-                return compute_firth_variantwise_fixed_batches_without_sparse_compaction(
-                    covariate_matrix=covariate_matrix,
-                    null_logistic_coefficients=null_logistic_coefficients,
-                    null_firth_offset=null_firth_offset,
-                    phenotype_vector=phenotype_vector,
-                    genotype_matrix_by_variant=jnp.take(
-                        genotype_matrix_by_variant,
-                        dense_stream_plan.lane_indices,
-                        axis=0,
-                    ),
-                    raw_genotype_matrix_by_variant=jnp.take(
-                        raw_genotype_matrix_by_variant,
-                        dense_stream_plan.lane_indices,
-                        axis=0,
-                    ),
-                    loco_offset=loco_offset,
-                    initial_coefficients=jnp.take(initial_coefficients, dense_stream_plan.lane_indices, axis=0),
-                    active_mask=dense_stream_plan.active_mask,
-                    sparse_correction_mask=jnp.take(sparse_correction_mask, dense_stream_plan.lane_indices, axis=0),
-                    fallback_count=dense_stream_plan.active_count,
-                    firth_batch_size=firth_batch_size,
-                    null_penalized_log_likelihood=dense_null_penalized_log_likelihood,
-                    kernel_config=kernel_config,
-                )
-
-            dense_result = jax.lax.cond(
-                dense_stream_has_lanes,
-                compute_dense_stream,
-                lambda _: dense_fallback_result,
-                operand=None,
-            )
-
-            def compute_compact_stream(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
-                compact_null_failed_mask = (
-                    ~jnp.isfinite(null_penalized_log_likelihood)
-                    if null_penalized_log_likelihood.ndim == 0
-                    else ~jnp.isfinite(
-                        jnp.take(null_penalized_log_likelihood, compact_stream_plan.lane_indices, axis=0)
-                    )
-                )
-                compact_lane_raw_genotype_matrix = jnp.take(
-                    raw_genotype_matrix_by_variant,
-                    compact_stream_plan.lane_indices,
-                    axis=0,
-                )
-                compact_carrier_indices = build_compact_sparse_carrier_indices(
-                    raw_genotype_matrix_by_variant=compact_lane_raw_genotype_matrix,
-                    sparse_carrier_dosage_threshold=kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
-                )
-                compact_carrier_count = jnp.take(carrier_count, compact_stream_plan.lane_indices, axis=0)
-                compact_carrier_slot_mask = (
-                    jnp.arange(models.SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :]
-                    < compact_carrier_count[:, None]
-                ) & compact_stream_plan.active_mask[:, None]
-                compact_lane_genotype_matrix = jnp.take(
-                    genotype_matrix_by_variant,
-                    compact_stream_plan.lane_indices,
-                    axis=0,
-                )
-                compact_genotype_matrix = jnp.take_along_axis(
-                    compact_lane_genotype_matrix,
-                    compact_carrier_indices,
-                    axis=1,
-                )
-                compact_phenotype_matrix = jnp.take(
-                    jnp.asarray(phenotype_vector, dtype=jnp.float64),
-                    compact_carrier_indices,
-                    axis=0,
-                )
-                compact_offset_matrix = jnp.take(
-                    jnp.asarray(null_firth_offset, dtype=jnp.float64),
-                    compact_carrier_indices,
-                    axis=0,
-                )
-                return compute_compact_sparse_firth_variantwise_fixed_batches(
-                    phenotype_matrix=compact_phenotype_matrix,
-                    genotype_matrix_by_variant=jnp.asarray(compact_genotype_matrix, dtype=jnp.float64),
-                    offset_matrix=compact_offset_matrix,
-                    active_carrier_slot_mask=compact_carrier_slot_mask,
-                    full_null_deviance=jnp.asarray(full_null_deviance, dtype=jnp.float64),
-                    active_mask=compact_stream_plan.active_mask,
-                    fallback_count=compact_stream_plan.active_count,
-                    firth_batch_size=firth_batch_size,
-                    null_failed_mask=compact_null_failed_mask,
-                    kernel_config=kernel_config,
-                )
-
-            compact_fallback_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
-                compact_stream_plan.active_mask.shape[0]
-            )
-
-            compact_result = jax.lax.cond(
-                compact_stream_has_lanes,
-                compute_compact_stream,
-                lambda _: compact_fallback_result,
-                operand=None,
-            )
-
-            scattered_dense_result = jax.lax.cond(
-                dense_stream_has_lanes,
-                lambda base: streams.scatter_firth_variant_result_by_lane_stream(
-                    base_result=base,
-                    lane_indices=dense_stream_plan.lane_indices,
-                    active_mask=dense_stream_plan.active_mask,
-                    stream_result=dense_result,
-                ),
-                lambda base: base,
-                empty_result,
-            )
-            return jax.lax.cond(
-                compact_stream_has_lanes,
-                lambda base: streams.scatter_firth_variant_result_by_lane_stream(
-                    base_result=base,
-                    lane_indices=compact_stream_plan.lane_indices,
-                    active_mask=compact_stream_plan.active_mask,
-                    stream_result=compact_result,
-                ),
-                lambda base: base,
-                scattered_dense_result,
-            )
-
-        return jax.lax.cond(
-            jnp.any(compact_sparse_lane_mask),
-            compute_split_path,
-            lambda _: compute_without_sparse_compaction(),
-            operand=None,
-        )
-
+    sparse_carrier_dosage_threshold = jnp.asarray(
+        kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
+        dtype=jnp.float64,
+    )
+    compaction_operands = regenie2_binary_firth_types.ScalarFirthSparseCompactionOperands(
+        null_firth_offset=null_firth_offset,
+        phenotype_vector=phenotype_vector,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        raw_genotype_matrix_by_variant=raw_genotype_matrix_by_variant,
+        active_mask=active_mask,
+        sparse_correction_mask=sparse_correction_mask,
+        fallback_count=fallback_count,
+        firth_batch_size=firth_batch_size,
+        null_penalized_log_likelihood=null_penalized_log_likelihood,
+        full_null_deviance=full_null_deviance,
+        sparse_carrier_dosage_threshold=sparse_carrier_dosage_threshold,
+        solver_parameters=regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(
+            kernel_config,
+            jnp.float64,
+        ),
+    )
     return jax.lax.cond(
         jnp.any(active_mask & sparse_correction_mask),
-        compute_with_sparse_compaction,
-        lambda _: compute_without_sparse_compaction(),
-        operand=None,
+        compute_scalar_firth_with_sparse_compaction,
+        compute_scalar_firth_without_sparse_compaction_from_operands,
+        compaction_operands,
     )
 
 
