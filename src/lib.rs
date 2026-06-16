@@ -8,6 +8,7 @@ pub mod pipeline;
 pub mod python;
 pub mod regenie;
 pub mod sample;
+pub(crate) mod timing;
 
 use pyo3::prelude::*;
 

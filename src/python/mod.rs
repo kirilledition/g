@@ -29,6 +29,7 @@ mod output;
 mod profile;
 mod run_events;
 mod runtime;
+mod timing;
 
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
 use host_policy::{
@@ -53,6 +54,7 @@ use run_events::{
     render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
 };
 use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool};
+use timing::NativeStageTimingRecorder;
 
 type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
 
@@ -1589,6 +1591,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
+    module.add_class::<NativeStageTimingRecorder>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;

@@ -39,6 +39,9 @@ the current Python public API and test behavior.
   config-time phenotype compute-group planning and IDs, phenotype output slug
   construction, association-mode resolution, and pure JAX runtime setup payload
   resolution into Rust/PyO3 while preserving Python dataclass and enum APIs.
+- Timing recorder follow-up moved mutable stage timing state and aggregate
+  queue/transfer/diagnostic bookkeeping into Rust/PyO3 while preserving the
+  Python `StageTimingSnapshot` dataclasses and JSON writer payloads.
 
 ## Verification Run
 
@@ -59,3 +62,12 @@ the current Python public API and test behavior.
 - `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed.
 - `uv run --no-sync ty check src tests scripts tooling` passed.
 - `uv run ruff check src/g/engine/backend_planner.py src/g/execution_plan.py src/g/jax_runtime/resolution.py` passed.
+
+## Timing Recorder Follow-Up Verification Run
+
+- `uv run pytest tests/test_timing.py -q` passed: 10 tests.
+- `uv run pytest tests/test_timing.py tests/test_callback_lifecycle.py tests/test_regenie2_pipeline.py -q` passed: 111 tests.
+- `just check-core-stub` passed.
+- `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed.
+- `uv run --no-sync ty check src tests scripts tooling` passed.
+- `uv run ruff check src/g/engine/timing.py src/g/_core.pyi` passed.

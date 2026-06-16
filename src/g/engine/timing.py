@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import threading
 import time
 import typing
 from dataclasses import dataclass
+
+from g import _core
 
 if typing.TYPE_CHECKING:
     import pathlib
@@ -390,26 +391,20 @@ class StageTimingRecorder:
 
     def __init__(self, *, exact_stage_timings: bool) -> None:
         """Initialize empty stage timing state."""
-        self.exact_stage_timings = exact_stage_timings
-        self.stage_totals_seconds: dict[str, float] = {}
-        self.stage_counts: dict[str, int] = {}
-        self.chunk_stage_timings: list[ChunkStageTimingSnapshot] = []
-        self.native_bgen_profile: dict[str, int] = {}
-        self.binary_chunk_diagnostics: list[BinaryChunkDiagnosticsSnapshot] = []
-        self.null_logistic_diagnostics: list[NullLogisticDiagnosticsSnapshot] = []
-        self.queue_backpressure: dict[QueueBackpressureKey, QueueBackpressureAccumulator] = {}
-        self.transfer_metadata: dict[TransferMetadataKey, TransferMetadataAccumulator] = {}
-        self.lock = threading.Lock()
+        self.native_recorder = _core.NativeStageTimingRecorder(exact_stage_timings)
+
+    @property
+    def exact_stage_timings(self) -> bool:
+        """Return whether exact synchronized stage timings are requested."""
+        return self.native_recorder.exact_stage_timings
 
     def add_stage_duration_unlocked(self, stage_name: str, duration_seconds: float) -> None:
-        """Accumulate one measured duration while the caller holds the lock."""
-        self.stage_totals_seconds[stage_name] = self.stage_totals_seconds.get(stage_name, 0.0) + duration_seconds
-        self.stage_counts[stage_name] = self.stage_counts.get(stage_name, 0) + 1
+        """Accumulate one measured duration."""
+        self.native_recorder.add_stage_duration(stage_name, duration_seconds)
 
     def add_stage_duration(self, stage_name: str, duration_seconds: float) -> None:
         """Accumulate one measured duration."""
-        with self.lock:
-            self.add_stage_duration_unlocked(stage_name, duration_seconds)
+        self.native_recorder.add_stage_duration(stage_name, duration_seconds)
 
     def add_chunk_stage_duration(
         self,
@@ -419,34 +414,27 @@ class StageTimingRecorder:
         duration_seconds: float,
     ) -> None:
         """Accumulate one measured duration and attach it to a native chunk."""
-        with self.lock:
-            self.add_stage_duration_unlocked(stage_name, duration_seconds)
-            self.chunk_stage_timings.append(
-                ChunkStageTimingSnapshot(
-                    chunk_identifier=chunk_identity.chunk_identifier,
-                    chromosome=chunk_identity.chromosome,
-                    variant_start_index=chunk_identity.variant_start_index,
-                    variant_stop_index=chunk_identity.variant_stop_index,
-                    variant_count=chunk_identity.variant_count,
-                    stage_name=stage_name,
-                    duration_seconds=duration_seconds,
-                )
-            )
+        self.native_recorder.add_chunk_stage_duration(
+            chunk_identity.chunk_identifier,
+            chunk_identity.chromosome,
+            chunk_identity.variant_start_index,
+            chunk_identity.variant_stop_index,
+            chunk_identity.variant_count,
+            stage_name,
+            duration_seconds,
+        )
 
     def set_native_bgen_profile(self, profile_snapshot: dict[str, int]) -> None:
         """Store native BGEN profiling counters."""
-        with self.lock:
-            self.native_bgen_profile = dict(profile_snapshot)
+        self.native_recorder.set_native_bgen_profile(profile_snapshot)
 
     def add_binary_chunk_diagnostics(self, diagnostics: dict[str, int | float]) -> None:
         """Store diagnostic counters for one binary chunk."""
-        with self.lock:
-            self.binary_chunk_diagnostics.append(binary_chunk_diagnostics_snapshot_from_mapping(diagnostics))
+        self.native_recorder.add_binary_chunk_diagnostics(diagnostics)
 
     def add_null_logistic_diagnostics(self, diagnostics: dict[str, int | str]) -> None:
         """Store null logistic fit diagnostics for one chromosome."""
-        with self.lock:
-            self.null_logistic_diagnostics.append(null_logistic_diagnostics_snapshot_from_mapping(diagnostics))
+        self.native_recorder.add_null_logistic_diagnostics(diagnostics)
 
     def add_queue_backpressure_observation(
         self,
@@ -459,24 +447,14 @@ class StageTimingRecorder:
         blocked_seconds: float,
     ) -> None:
         """Store one queue or bounded-resource pressure observation."""
-        with self.lock:
-            key = QueueBackpressureKey(queue_name=queue_name, operation_name=operation_name)
-            accumulator = self.queue_backpressure.setdefault(
-                key,
-                QueueBackpressureAccumulator(
-                    observation_count=0,
-                    max_depth=0,
-                    max_capacity=0,
-                    total_elapsed_seconds=0.0,
-                    total_blocked_seconds=0.0,
-                ),
-            )
-            accumulator.add_observation(
-                queue_depth=queue_depth,
-                queue_capacity=queue_capacity,
-                elapsed_seconds=elapsed_seconds,
-                blocked_seconds=blocked_seconds,
-            )
+        self.native_recorder.add_queue_backpressure_observation(
+            queue_name,
+            operation_name,
+            queue_depth,
+            queue_capacity,
+            elapsed_seconds,
+            blocked_seconds,
+        )
 
     def add_transfer_metadata(
         self,
@@ -489,71 +467,106 @@ class StageTimingRecorder:
         element_count: int,
     ) -> None:
         """Store metadata for one host/device transfer observation."""
-        with self.lock:
-            key = TransferMetadataKey(
-                transfer_name=transfer_name,
-                array_role=array_role,
-                dtype_name=dtype_name,
-                ndim=ndim,
-            )
-            accumulator = self.transfer_metadata.setdefault(
-                key,
-                TransferMetadataAccumulator(
-                    observation_count=0,
-                    total_bytes=0,
-                    max_bytes=0,
-                    total_elements=0,
-                ),
-            )
-            accumulator.add_observation(byte_count=byte_count, element_count=element_count)
+        self.native_recorder.add_transfer_metadata(
+            transfer_name,
+            array_role,
+            dtype_name,
+            ndim,
+            byte_count,
+            element_count,
+        )
 
     def snapshot(self) -> StageTimingSnapshot:
         """Return an immutable copy of the current timings."""
-        with self.lock:
-            return StageTimingSnapshot(
-                stage_totals_seconds=dict(self.stage_totals_seconds),
-                stage_counts=dict(self.stage_counts),
-                chunk_stage_timings=tuple(self.chunk_stage_timings),
-                native_bgen_profile=dict(self.native_bgen_profile),
-                binary_chunk_diagnostics=tuple(self.binary_chunk_diagnostics),
-                null_logistic_diagnostics=tuple(self.null_logistic_diagnostics),
-                queue_backpressure=tuple(
-                    QueueBackpressureSnapshot(
-                        queue_name=key.queue_name,
-                        operation_name=key.operation_name,
-                        observation_count=accumulator.observation_count,
-                        max_depth=accumulator.max_depth,
-                        max_capacity=accumulator.max_capacity,
-                        total_elapsed_seconds=accumulator.total_elapsed_seconds,
-                        total_blocked_seconds=accumulator.total_blocked_seconds,
-                    )
-                    for key, accumulator in sorted(
-                        self.queue_backpressure.items(),
-                        key=lambda item: (item[0].queue_name, item[0].operation_name),
-                    )
-                ),
-                transfer_metadata=tuple(
-                    TransferMetadataSnapshot(
-                        transfer_name=key.transfer_name,
-                        array_role=key.array_role,
-                        dtype_name=key.dtype_name,
-                        ndim=key.ndim,
-                        observation_count=accumulator.observation_count,
-                        total_bytes=accumulator.total_bytes,
-                        max_bytes=accumulator.max_bytes,
-                        total_elements=accumulator.total_elements,
-                    )
-                    for key, accumulator in sorted(
-                        self.transfer_metadata.items(),
-                        key=lambda item: (
-                            item[0].transfer_name,
-                            item[0].array_role,
-                            item[0].dtype_name,
-                            item[0].ndim,
-                        ),
-                    )
-                ),
+        return adapt_stage_timing_snapshot_payload(self.native_recorder.snapshot_payload())
+
+
+def adapt_stage_timing_snapshot_payload(snapshot_payload: dict[str, object]) -> StageTimingSnapshot:
+    """Adapt a native timing snapshot payload to the public Python shape."""
+    return StageTimingSnapshot(
+        stage_totals_seconds=dict(typing.cast("typing.Mapping[str, float]", snapshot_payload["stage_totals_seconds"])),
+        stage_counts=dict(typing.cast("typing.Mapping[str, int]", snapshot_payload["stage_counts"])),
+        chunk_stage_timings=tuple(
+            adapt_chunk_stage_timing_payload(chunk_stage_timing_payload)
+            for chunk_stage_timing_payload in typing.cast(
+                "typing.Sequence[dict[str, object]]",
+                snapshot_payload["chunk_stage_timings"],
             )
+        ),
+        native_bgen_profile=dict(typing.cast("typing.Mapping[str, int]", snapshot_payload["native_bgen_profile"])),
+        binary_chunk_diagnostics=tuple(
+            binary_chunk_diagnostics_snapshot_from_mapping(
+                typing.cast("typing.Mapping[str, int | float]", binary_diagnostic_payload)
+            )
+            for binary_diagnostic_payload in typing.cast(
+                "typing.Sequence[dict[str, object]]",
+                snapshot_payload["binary_chunk_diagnostics"],
+            )
+        ),
+        null_logistic_diagnostics=tuple(
+            null_logistic_diagnostics_snapshot_from_mapping(
+                typing.cast("typing.Mapping[str, int | str]", null_logistic_diagnostic_payload)
+            )
+            for null_logistic_diagnostic_payload in typing.cast(
+                "typing.Sequence[dict[str, object]]",
+                snapshot_payload["null_logistic_diagnostics"],
+            )
+        ),
+        queue_backpressure=tuple(
+            adapt_queue_backpressure_payload(queue_backpressure_payload)
+            for queue_backpressure_payload in typing.cast(
+                "typing.Sequence[dict[str, object]]",
+                snapshot_payload["queue_backpressure"],
+            )
+        ),
+        transfer_metadata=tuple(
+            adapt_transfer_metadata_payload(transfer_metadata_payload)
+            for transfer_metadata_payload in typing.cast(
+                "typing.Sequence[dict[str, object]]",
+                snapshot_payload["transfer_metadata"],
+            )
+        ),
+    )
+
+
+def adapt_chunk_stage_timing_payload(chunk_stage_timing_payload: dict[str, object]) -> ChunkStageTimingSnapshot:
+    """Adapt one native chunk-stage timing payload."""
+    return ChunkStageTimingSnapshot(
+        chunk_identifier=typing.cast("int", chunk_stage_timing_payload["chunk_identifier"]),
+        chromosome=typing.cast("str", chunk_stage_timing_payload["chromosome"]),
+        variant_start_index=typing.cast("int", chunk_stage_timing_payload["variant_start_index"]),
+        variant_stop_index=typing.cast("int", chunk_stage_timing_payload["variant_stop_index"]),
+        variant_count=typing.cast("int", chunk_stage_timing_payload["variant_count"]),
+        stage_name=typing.cast("str", chunk_stage_timing_payload["stage_name"]),
+        duration_seconds=typing.cast("float", chunk_stage_timing_payload["duration_seconds"]),
+    )
+
+
+def adapt_queue_backpressure_payload(queue_backpressure_payload: dict[str, object]) -> QueueBackpressureSnapshot:
+    """Adapt one native queue/backpressure payload."""
+    return QueueBackpressureSnapshot(
+        queue_name=typing.cast("str", queue_backpressure_payload["queue_name"]),
+        operation_name=typing.cast("str", queue_backpressure_payload["operation_name"]),
+        observation_count=typing.cast("int", queue_backpressure_payload["observation_count"]),
+        max_depth=typing.cast("int", queue_backpressure_payload["max_depth"]),
+        max_capacity=typing.cast("int", queue_backpressure_payload["max_capacity"]),
+        total_elapsed_seconds=typing.cast("float", queue_backpressure_payload["total_elapsed_seconds"]),
+        total_blocked_seconds=typing.cast("float", queue_backpressure_payload["total_blocked_seconds"]),
+    )
+
+
+def adapt_transfer_metadata_payload(transfer_metadata_payload: dict[str, object]) -> TransferMetadataSnapshot:
+    """Adapt one native transfer metadata payload."""
+    return TransferMetadataSnapshot(
+        transfer_name=typing.cast("str", transfer_metadata_payload["transfer_name"]),
+        array_role=typing.cast("str", transfer_metadata_payload["array_role"]),
+        dtype_name=typing.cast("str", transfer_metadata_payload["dtype_name"]),
+        ndim=typing.cast("int", transfer_metadata_payload["ndim"]),
+        observation_count=typing.cast("int", transfer_metadata_payload["observation_count"]),
+        total_bytes=typing.cast("int", transfer_metadata_payload["total_bytes"]),
+        max_bytes=typing.cast("int", transfer_metadata_payload["max_bytes"]),
+        total_elements=typing.cast("int", transfer_metadata_payload["total_elements"]),
+    )
 
 
 def build_stage_timing_recorder(

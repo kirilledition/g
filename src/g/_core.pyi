@@ -474,6 +474,43 @@ class NativeTelemetrySession:
     def counters(self) -> dict[str, object]: ...
     def finish(self) -> dict[str, object]: ...
 
+class NativeStageTimingRecorder:
+    exact_stage_timings: bool
+    def __init__(self, exact_stage_timings: bool) -> None: ...
+    def add_stage_duration(self, stage_name: str, duration_seconds: float) -> None: ...
+    def add_chunk_stage_duration(
+        self,
+        chunk_identifier: int,
+        chromosome: str,
+        variant_start_index: int,
+        variant_stop_index: int,
+        variant_count: int,
+        stage_name: str,
+        duration_seconds: float,
+    ) -> None: ...
+    def set_native_bgen_profile(self, profile_snapshot: dict[str, int]) -> None: ...
+    def add_binary_chunk_diagnostics(self, diagnostics: dict[str, int | float]) -> None: ...
+    def add_null_logistic_diagnostics(self, diagnostics: dict[str, int | str]) -> None: ...
+    def add_queue_backpressure_observation(
+        self,
+        queue_name: str,
+        operation_name: str,
+        queue_depth: int,
+        queue_capacity: int,
+        elapsed_seconds: float,
+        blocked_seconds: float,
+    ) -> None: ...
+    def add_transfer_metadata(
+        self,
+        transfer_name: str,
+        array_role: str,
+        dtype_name: str,
+        ndim: int,
+        byte_count: int,
+        element_count: int,
+    ) -> None: ...
+    def snapshot_payload(self) -> dict[str, object]: ...
+
 class OutputWriterSession:
     def __init__(
         self,
