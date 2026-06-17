@@ -27,7 +27,7 @@ dev = [
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.16",
     "scalene>=2.3.0",
-    "ty>=0.0.44",
+    "ty>=0.0.50",
 ]
 docs = [
     "mkdocstrings-python>=2.0.4",
