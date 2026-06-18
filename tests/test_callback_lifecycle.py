@@ -25,6 +25,7 @@ class FailingLifecycleCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         super().__init__(
             worker_name="failing-lifecycle-callback",
             staging_depth=1,
+            native_callback_batch_size=1,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -93,6 +94,7 @@ class ProgressTrackingCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         super().__init__(
             worker_name="progress-tracking-callback",
             staging_depth=1,
+            native_callback_batch_size=1,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -149,6 +151,7 @@ class LifecycleCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         super().__init__(
             worker_name="lifecycle-callback",
             staging_depth=1,
+            native_callback_batch_size=1,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -274,9 +277,10 @@ class StartCheckingRunEngine:
         sample_indices: np.ndarray,
         callback: StartTrackingCallback,
         committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int:
         """Assert callback startup happens before native delivery."""
-        del sample_indices, committed_chunk_identifiers
+        del sample_indices, committed_chunk_identifiers, callback_batch_size
         callback.events.append("engine")
         return 0
 

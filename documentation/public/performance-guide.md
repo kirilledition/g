@@ -45,6 +45,7 @@ Use the current packaged defaults first. Override only with measurements.
 | `--threads` | Native Rayon thread request for Rust-owned work. |
 | `--device` | JAX execution target, `cpu` or `gpu`. |
 | `--staging_depth` | Native callback staging depth. |
+| `--native_callback_batch_size` | Optional native-to-Python dosage callback handoff batch size; default is `1`. |
 | `--result_in_flight_limit` | Optional cap for result chunks awaiting materialization. |
 | `--dosage_buffer_limit` | Optional cap for reusable native dosage decode buffers. |
 | `--bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
@@ -57,6 +58,9 @@ Use the current packaged defaults first. Override only with measurements.
 | `--firth_candidate_capacity` | Candidate capacity for binary fallback staging. |
 | `--jax_persistent_cache` and `--jax_cache_dir` | JAX compilation cache behavior. |
 | `--telemetry` | Progress, profile, and trace modes. Profile/trace can perturb timing. |
+
+`--native_callback_batch_size` currently applies to variant-major dosage BGEN
+delivery. Packed8 and grouped union delivery reject values above `1`.
 
 Current default values are in `src/interface/config.default.toml`.
 

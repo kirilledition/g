@@ -33,6 +33,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     covariate_names: tuple[str, ...] | None,
     output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
     staging_depth: int,
+    native_callback_batch_size: int,
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
     existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None,
@@ -113,6 +114,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             phenotype_names=phenotype_names,
             output_run_paths_by_phenotype=output_run_paths_by_phenotype,
             staging_depth=staging_depth,
+            native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             existing_manifests=existing_manifests,
@@ -139,6 +141,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
                 ),
             ),
             staging_depth=staging_depth,
+            native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             existing_manifests=typing.cast(
@@ -262,6 +265,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     phenotype_names: tuple[str, ...],
     output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
     staging_depth: int,
+    native_callback_batch_size: int,
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
     existing_manifests: tuple[dict[str, typing.Any] | None, ...],
@@ -270,6 +274,9 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
 ) -> tuple[Path | None, ...]:
     """Run overlapping per-phenotype groups through one union-sample BGEN delivery."""
+    if native_callback_batch_size > 1:
+        message = "native_callback_batch_size > 1 is not supported for grouped union BGEN delivery."
+        raise ValueError(message)
     union_sample_indices = build_union_sample_indices(grouped_run_inputs)
     logger.info(
         "Using union per-phenotype BGEN delivery: group_count=%s union_sample_count=%s grouped_sample_count=%s.",
@@ -292,6 +299,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
                 ),
             ),
             staging_depth=staging_depth,
+            native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             existing_manifests=typing.cast(

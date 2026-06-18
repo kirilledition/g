@@ -114,6 +114,7 @@ class BenchmarkConfiguration:
     device: types.Device
     chunk_size: int
     staging_depth: int
+    native_callback_batch_size: int
     output_writer_thread_count: int
     output_writer_queue_depth: int
     trusted_no_missing_diploid: bool
@@ -148,6 +149,7 @@ class BenchmarkArguments:
         device: Runtime device.
         chunk_size: REGENIE bsize value.
         staging_depth: Native staging depth.
+        native_callback_batch_size: Native-to-Python callback chunk batch size.
         output_writer_thread_count: Background writer thread count.
         output_writer_queue_depth: Background writer queue depth.
         trusted_no_missing_diploid: Whether to use the trusted BGEN decode path.
@@ -184,6 +186,7 @@ class BenchmarkArguments:
     device: str
     chunk_size: int
     staging_depth: int
+    native_callback_batch_size: int
     output_writer_thread_count: int
     output_writer_queue_depth: int
     trusted_no_missing_diploid: bool
@@ -481,6 +484,7 @@ def build_configuration(arguments: BenchmarkArguments) -> BenchmarkConfiguration
         device=types.Device(arguments.device),
         chunk_size=int(arguments.chunk_size),
         staging_depth=int(arguments.staging_depth),
+        native_callback_batch_size=int(arguments.native_callback_batch_size),
         output_writer_thread_count=int(arguments.output_writer_thread_count),
         output_writer_queue_depth=int(arguments.output_writer_queue_depth),
         trusted_no_missing_diploid=bool(arguments.trusted_no_missing_diploid),
@@ -575,6 +579,7 @@ def configuration_to_json_dict(configuration: BenchmarkConfiguration) -> dict[st
         "device": configuration.device.value,
         "chunk_size": configuration.chunk_size,
         "staging_depth": configuration.staging_depth,
+        "native_callback_batch_size": configuration.native_callback_batch_size,
         "output_writer_thread_count": configuration.output_writer_thread_count,
         "output_writer_queue_depth": configuration.output_writer_queue_depth,
         "trusted_no_missing_diploid": configuration.trusted_no_missing_diploid,
@@ -616,6 +621,7 @@ def configuration_from_json_dict(payload: dict[str, typing.Any]) -> BenchmarkCon
         device=types.Device(str(payload["device"])),
         chunk_size=int(payload["chunk_size"]),
         staging_depth=int(payload.get("staging_depth", payload.get("prefetch_chunks", 1))),
+        native_callback_batch_size=int(payload.get("native_callback_batch_size", 1)),
         output_writer_thread_count=int(payload["output_writer_thread_count"]),
         output_writer_queue_depth=int(payload["output_writer_queue_depth"]),
         trusted_no_missing_diploid=bool(payload["trusted_no_missing_diploid"]),
@@ -826,6 +832,7 @@ def build_compute_config(
     compute_options: dict[str, object] = {
         "device": configuration.device.value,
         "staging_depth": configuration.staging_depth,
+        "native_callback_batch_size": configuration.native_callback_batch_size,
         "jax_cache_dir": configuration.jax_cache_directory,
         "jax_persistent_cache_min_entry_size_bytes": -1,
         "jax_persistent_cache_min_compile_time_seconds": 0,
@@ -1522,6 +1529,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArgume
         device=str(tool_values["device"]),
         chunk_size=int(tool_values["chunk_size"]),
         staging_depth=int(tool_values["staging_depth"]),
+        native_callback_batch_size=int(tool_values["native_callback_batch_size"]),
         output_writer_thread_count=int(tool_values["output_writer_thread_count"]),
         output_writer_queue_depth=int(tool_values["output_writer_queue_depth"]),
         trusted_no_missing_diploid=bool(tool_values["trusted_no_missing_diploid"]),

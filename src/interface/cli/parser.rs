@@ -158,6 +158,8 @@ pub(crate) struct ComputeCli {
     pub(crate) device: Option<DeviceValue>,
     #[arg(long = "staging_depth", help_heading = "Compute")]
     pub(crate) staging_depth: Option<NonZeroU32>,
+    #[arg(long = "native_callback_batch_size", help_heading = "Compute")]
+    pub(crate) native_callback_batch_size: Option<NonZeroU32>,
     #[arg(long = "result_in_flight_limit", help_heading = "Compute")]
     pub(crate) result_in_flight_limit: Option<NonZeroU32>,
     #[arg(long = "dosage_buffer_limit", help_heading = "Compute")]

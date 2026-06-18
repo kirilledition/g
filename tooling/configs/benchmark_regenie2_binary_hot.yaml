@@ -16,6 +16,7 @@ tool:
   device: ${machine.device}
   chunk_size: ${workload.chunk_size}
   staging_depth: ${workload.staging_depth}
+  native_callback_batch_size: ${workload.native_callback_batch_size}
   output_writer_thread_count: ${workload.output_writer_thread_count}
   output_writer_queue_depth: ${workload.output_writer_queue_depth}
   trusted_no_missing_diploid: true

@@ -101,6 +101,7 @@ def build_test_binary_pipeline_callback(
         types.NullLogisticNonconvergencePolicy.FAIL
     ),
     staging_depth: int = 2,
+    native_callback_batch_size: int = 1,
     result_in_flight_limit: int | None = None,
     dosage_buffer_limit: int | None = None,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
@@ -117,6 +118,7 @@ def build_test_binary_pipeline_callback(
         kernel_config=kernel_config,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
         staging_depth=staging_depth,
+        native_callback_batch_size=native_callback_batch_size,
         result_in_flight_limit=result_in_flight_limit,
         dosage_buffer_limit=dosage_buffer_limit,
         score_dtype=score_dtype,
@@ -151,6 +153,7 @@ def build_test_linear_pipeline_callback(
     prediction_source: typing.Any,
     writer_session: typing.Any,
     staging_depth: int = 2,
+    native_callback_batch_size: int = 1,
     result_in_flight_limit: int | None = None,
     dosage_buffer_limit: int | None = None,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
@@ -165,6 +168,7 @@ def build_test_linear_pipeline_callback(
         prediction_source=prediction_source,
         writer_session=writer_session,
         staging_depth=staging_depth,
+        native_callback_batch_size=native_callback_batch_size,
         result_in_flight_limit=result_in_flight_limit,
         dosage_buffer_limit=dosage_buffer_limit,
         score_dtype=score_dtype,
@@ -182,6 +186,7 @@ def build_test_multi_linear_pipeline_callback(
     writer_sessions: tuple[typing.Any, ...],
     committed_chunk_identifier_sets: tuple[set[int], ...],
     staging_depth: int = 2,
+    native_callback_batch_size: int = 1,
     result_in_flight_limit: int | None = None,
     dosage_buffer_limit: int | None = None,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
@@ -197,6 +202,7 @@ def build_test_multi_linear_pipeline_callback(
         writer_sessions=writer_sessions,
         committed_chunk_identifier_sets=committed_chunk_identifier_sets,
         staging_depth=staging_depth,
+        native_callback_batch_size=native_callback_batch_size,
         result_in_flight_limit=result_in_flight_limit,
         dosage_buffer_limit=dosage_buffer_limit,
         score_dtype=score_dtype,
@@ -219,6 +225,7 @@ def build_test_multi_binary_pipeline_callback(
         types.NullLogisticNonconvergencePolicy.FAIL
     ),
     staging_depth: int = 2,
+    native_callback_batch_size: int = 1,
     result_in_flight_limit: int | None = None,
     dosage_buffer_limit: int | None = None,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
@@ -236,6 +243,7 @@ def build_test_multi_binary_pipeline_callback(
         kernel_config=kernel_config,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
         staging_depth=staging_depth,
+        native_callback_batch_size=native_callback_batch_size,
         result_in_flight_limit=result_in_flight_limit,
         dosage_buffer_limit=dosage_buffer_limit,
         score_dtype=score_dtype,
@@ -261,6 +269,7 @@ def run_test_bgen_engine_with_multi_callback(**keyword_arguments: typing.Any) ->
 
 def _add_single_pipeline_defaults(keyword_arguments: dict[str, typing.Any]) -> None:
     keyword_arguments.setdefault("staging_depth", 2)
+    keyword_arguments.setdefault("native_callback_batch_size", 1)
     keyword_arguments.setdefault("result_in_flight_limit", None)
     keyword_arguments.setdefault("dosage_buffer_limit", None)
     keyword_arguments.setdefault("existing_manifest", None)
@@ -295,6 +304,7 @@ def run_test_regenie2_binary_bgen_pipeline(**keyword_arguments: typing.Any) -> P
 
 def _add_multi_pipeline_defaults(keyword_arguments: dict[str, typing.Any]) -> None:
     keyword_arguments.setdefault("staging_depth", 2)
+    keyword_arguments.setdefault("native_callback_batch_size", 1)
     keyword_arguments.setdefault("result_in_flight_limit", None)
     keyword_arguments.setdefault("dosage_buffer_limit", None)
     keyword_arguments.setdefault("existing_manifests_by_phenotype", None)
@@ -498,6 +508,25 @@ class FakeWriterSession:
 
     def abort(self) -> None:
         self.aborted = True
+
+
+class BufferObservingWriterSession(FakeWriterSession):
+    def __init__(
+        self,
+        callback: callback_runtime.NativeBgenCallbackRunner,
+        expected_buffer: callback_shared.HostGenotypeBuffer,
+    ) -> None:
+        super().__init__()
+        self.callback = callback
+        self.expected_buffer = expected_buffer
+        self.observed_buffer_before_write = False
+
+    def write_regenie2_native_chunk(self, **kwargs: object) -> None:
+        observed_buffer = self.callback.free_dosage_buffers.get_nowait()
+        assert observed_buffer is self.expected_buffer
+        self.callback.free_dosage_buffers.put_nowait(observed_buffer)
+        self.observed_buffer_before_write = True
+        super().write_regenie2_native_chunk(**kwargs)
 
 
 class FailingPerfCounterClock:
@@ -1039,7 +1068,7 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
     callback.result_queue.put_nowait(None)
     with (
         patch(
-            "g.engine.callbacks.runtime.write_regenie2_native_chunk_with_optional_timing",
+            "g.engine.callbacks.runtime.write_materialized_regenie2_native_chunk_with_optional_timing",
         ) as mock_write,
         patch("g.engine.callbacks.runtime.record_binary_chunk_diagnostics_from_count") as mock_record,
         patch(
@@ -1132,8 +1161,10 @@ class FakeRunEngine:
         sample_indices: np.ndarray,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int:
         self.run_method = "variant_major_buffered"
+        self.callback_batch_size = callback_batch_size
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         self.run_call_arguments.append(self.run_arguments)
         return 0
@@ -1143,11 +1174,13 @@ class FakeRunEngine:
         aligned_sample_data: object,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int:
         return self.run_bgen_variant_major_dosage_buffered_chunks(
             typing.cast("typing.Any", aligned_sample_data).sample_indices,
             callback,
             committed_chunk_identifiers,
+            callback_batch_size,
         )
 
     def run_bgen_variant_major_dosage_buffered_chunks_for_native_multi_aligned_samples(
@@ -1155,11 +1188,13 @@ class FakeRunEngine:
         aligned_sample_data: object,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int:
         return self.run_bgen_variant_major_dosage_buffered_chunks(
             typing.cast("typing.Any", aligned_sample_data).sample_indices,
             callback,
             committed_chunk_identifiers,
+            callback_batch_size,
         )
 
     def run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
@@ -1204,8 +1239,10 @@ class PartialCommitDeliveringRunEngine(FakeRunEngine):
         sample_indices: np.ndarray,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int:
         self.run_method = "variant_major_buffered"
+        self.callback_batch_size = callback_batch_size
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         self.run_call_arguments.append(self.run_arguments)
         for chunk_identifier in (0, 64):
@@ -1564,9 +1601,11 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         self.stage_timing_recorder = None
         self.telemetry_session = None
         self.current_progress_chromosome = None
+        self.native_callback_batch_size = 1
         self.dosage_queue: queue.Queue[
             callback_shared.PreprocessedDosageChunkWorkItem
             | callback_shared.PreprocessedVariantMajorDosageChunkWorkItem
+            | callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
             | None
         ] = queue.Queue()
         self.result_queue: queue.Queue[
@@ -1654,6 +1693,7 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
             super().__init__(
                 worker_name="threaded-manual-callback",
                 staging_depth=2,
+                native_callback_batch_size=1,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=None,
                 stage_timing_recorder=None,
@@ -1714,6 +1754,7 @@ def test_native_callback_runner_records_native_delivery_timing_for_enqueued_chun
             super().__init__(
                 worker_name="timed-manual-callback",
                 staging_depth=2,
+                native_callback_batch_size=1,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=None,
                 stage_timing_recorder=stage_timing_recorder,
@@ -1772,6 +1813,78 @@ def test_native_callback_runner_records_native_delivery_timing_for_enqueued_chun
     }
 
 
+def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> None:
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+
+    class BatchedCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
+        def __init__(self) -> None:
+            super().__init__(
+                worker_name="batched-manual-callback",
+                staging_depth=2,
+                native_callback_batch_size=2,
+                result_in_flight_limit=None,
+                dosage_buffer_limit=2,
+                stage_timing_recorder=stage_timing_recorder,
+                telemetry_session=None,
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+            )
+            self.metadata: list[object] = []
+
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del genotype_matrix_by_variant, chunk_stats
+            self.metadata.append(variant_metadata)
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    first_metadata = build_native_metadata_for_chunk(chunk_identifier=0)
+    second_metadata = build_native_metadata_for_chunk(chunk_identifier=2)
+    callback = BatchedCallbackRunner()
+    try:
+        callback.compute_preprocessed_variant_major_dosage_chunk_batch(
+            metadata_batch=(first_metadata, second_metadata),
+            genotype_matrix_by_variant_batch=(
+                np.ones((2, 2), dtype=np.float32),
+                np.full((2, 2), 2.0, dtype=np.float32),
+            ),
+            chunk_stats_batch=(
+                typing.cast("typing.Any", SimpleNamespace()),
+                typing.cast("typing.Any", SimpleNamespace()),
+            ),
+        )
+        callback.finish()
+    finally:
+        callback.abort()
+
+    assert callback.metadata == [first_metadata, second_metadata]
+    assert callback.processed_chunk_count == 2
+    snapshot = stage_timing_recorder.snapshot()
+    assert snapshot.stage_counts["callback_queue_put"] == 1
+    assert snapshot.stage_counts["native_delivery"] == 2
+    assert snapshot.stage_counts["python_callback"] == 2
+
+
 def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
     callback = ManualCallbackRunner()
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
@@ -1807,6 +1920,36 @@ def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
         "python_callback",
     )
     assert snapshot.stage_counts["python_callback"] == 2
+
+
+def test_native_dosage_delivery_forwards_callback_batch_size() -> None:
+    engine = FakeRunEngine("study.bgen", chunk_size=32)
+    callback = SimpleNamespace(native_callback_batch_size=2)
+    run_input = SimpleNamespace(sample_indices=np.asarray([0, 1], dtype=np.int64))
+
+    processed_chunk_count = native_dispatch_delivery.run_variant_major_dosage_delivery(
+        engine=typing.cast("typing.Any", engine),
+        run_input=typing.cast("typing.Any", run_input),
+        callback=callback,
+        committed_chunk_identifier_list=[],
+    )
+
+    assert processed_chunk_count == 0
+    assert engine.callback_batch_size == 2
+
+
+def test_native_packed8_delivery_rejects_callback_batch_size_above_one() -> None:
+    engine = FakeRunEngine("study.bgen", chunk_size=32)
+    callback = SimpleNamespace(native_callback_batch_size=2)
+    run_input = SimpleNamespace(sample_indices=np.asarray([0, 1], dtype=np.int64))
+
+    with pytest.raises(ValueError, match="packed8 BGEN delivery"):
+        native_dispatch_delivery.run_variant_major_packed8_delivery(
+            engine=typing.cast("typing.Any", engine),
+            run_input=typing.cast("typing.Any", run_input),
+            callback=callback,
+            committed_chunk_identifier_list=[],
+        )
 
 
 def test_native_callback_runner_records_worker_errors_from_consumer() -> None:
@@ -1926,6 +2069,7 @@ def test_base_native_callback_runner_compute_methods_are_abstract() -> None:
         IncompleteCallbackRunner(
             worker_name="incomplete-callback",
             staging_depth=2,
+            native_callback_batch_size=1,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -2097,6 +2241,7 @@ def test_native_bgen_callback_runner_rejects_nonpositive_staging_depth() -> None
         ConcreteCallbackRunner(
             worker_name="invalid-staging-depth",
             staging_depth=0,
+            native_callback_batch_size=1,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -2137,6 +2282,7 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
     default_callback = ConcreteCallbackRunner(
         worker_name="default-capacity",
         staging_depth=3,
+        native_callback_batch_size=1,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
         stage_timing_recorder=None,
@@ -2146,6 +2292,7 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
     explicit_callback = ConcreteCallbackRunner(
         worker_name="explicit-capacity",
         staging_depth=3,
+        native_callback_batch_size=1,
         result_in_flight_limit=7,
         dosage_buffer_limit=8,
         stage_timing_recorder=None,
@@ -2157,6 +2304,48 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
     assert default_callback.dosage_buffer_limit == 4
     assert explicit_callback.result_in_flight_limit == 7
     assert explicit_callback.dosage_buffer_limit == 8
+
+
+def test_native_bgen_callback_runner_rejects_batch_size_above_dosage_buffer_limit() -> None:
+    class ConcreteCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    with pytest.raises(ValueError, match="effective dosage_buffer_limit"):
+        ConcreteCallbackRunner(
+            worker_name="oversized-batch",
+            staging_depth=1,
+            native_callback_batch_size=3,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=2,
+            stage_timing_recorder=None,
+            telemetry_session=None,
+            output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+        )
 
 
 @pytest.mark.parametrize(
@@ -2203,6 +2392,7 @@ def test_native_bgen_callback_runner_rejects_nonpositive_capacity_limits(
             ConcreteCallbackRunner(
                 worker_name="invalid-capacity",
                 staging_depth=1,
+                native_callback_batch_size=1,
                 result_in_flight_limit=0,
                 dosage_buffer_limit=None,
                 stage_timing_recorder=None,
@@ -2213,6 +2403,7 @@ def test_native_bgen_callback_runner_rejects_nonpositive_capacity_limits(
             ConcreteCallbackRunner(
                 worker_name="invalid-capacity",
                 staging_depth=1,
+                native_callback_batch_size=1,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=0,
                 stage_timing_recorder=None,
@@ -2522,6 +2713,41 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
     callback.release_result_in_flight_slot()
     assert callback.free_dosage_buffers.get_nowait() is host_dosage_buffer
     assert len(writer_session.native_chunks) == 1
+
+
+def test_result_worker_releases_host_dosage_buffer_before_output_write() -> None:
+    writer_session = FakeWriterSession()
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+        staging_depth=1,
+    )
+    host_dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=2)
+    host_dosage_buffer.fill(1)
+    observing_writer_session = BufferObservingWriterSession(callback, host_dosage_buffer)
+    callback.writer_session = observing_writer_session
+    callback.acquire_result_in_flight_slot()
+
+    callback.process_result_write_item(
+        callback_shared.Regenie2ResultWriteWorkItem(
+            metadata=build_native_metadata(),
+            chunk_stats=typing.cast("typing.Any", ExplodingChunkStats()),
+            beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+            standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+            chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+            log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+            extra_code=None,
+            host_dosage_buffer=host_dosage_buffer,
+            release_in_flight_slot=True,
+            binary_chunk_diagnostics=None,
+        )
+    )
+
+    assert observing_writer_session.observed_buffer_before_write is True
+    assert callback.free_dosage_buffers.get_nowait() is host_dosage_buffer
+    assert callback.result_in_flight_slots.acquire(blocking=False) is True
+    callback.release_result_in_flight_slot()
 
 
 def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats() -> None:
@@ -3836,8 +4062,10 @@ class GracefulShutdownRunEngine(FakeRunEngine):
         sample_indices: np.ndarray,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int:
         self.run_method = "variant_major_buffered"
+        self.callback_batch_size = callback_batch_size
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         raise shutdown.GracefulShutdownRequested(shutdown.ShutdownSignal(number=2, name="SIGINT", exit_code=130))
 
@@ -3848,8 +4076,10 @@ class HardInterruptRunEngine(FakeRunEngine):
         sample_indices: np.ndarray,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int:
         self.run_method = "variant_major_buffered"
+        self.callback_batch_size = callback_batch_size
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         raise KeyboardInterrupt
 

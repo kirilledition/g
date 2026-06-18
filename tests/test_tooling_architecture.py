@@ -260,6 +260,7 @@ def test_deep_profile_resolves_cpu_cache_by_node_features_and_keeps_gpu_job_cach
         device="cpu",
         chunk_size=8192,
         staging_depth=1,
+        native_callback_batch_size=1,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
         output_writer_thread_count=4,

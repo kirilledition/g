@@ -233,6 +233,11 @@ impl GComputeConfig {
     }
 
     #[getter]
+    fn native_callback_batch_size(&self) -> i64 {
+        i64::from(self.data.native_callback_batch_size.get())
+    }
+
+    #[getter]
     fn result_in_flight_limit(&self) -> Option<i64> {
         self.data.result_in_flight_limit.map(|value| i64::from(value.get()))
     }

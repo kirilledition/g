@@ -175,6 +175,7 @@ def extend_run_manifest(
     manifest["runtime"] = {
         "device": plan.kernel_config.device.value,
         "staging_depth": plan.kernel_config.staging_depth,
+        "native_callback_batch_size": plan.kernel_config.native_callback_batch_size,
         "threads": plan.kernel_config.thread_count,
         "writer_threads": plan.output_plan.writer_settings.writer_thread_count,
         "writer_queue_depth": plan.output_plan.writer_settings.writer_queue_depth,

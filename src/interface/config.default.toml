@@ -12,6 +12,7 @@ firth_se = false
 [compute]
 device = "cpu"
 staging_depth = 1
+native_callback_batch_size = 1
 trusted_no_missing_diploid = false
 trusted_bgen_validation_mode = "cache_on_miss"
 sample_key_mode = "iid"

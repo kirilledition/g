@@ -34,6 +34,7 @@ class CommonEngineDispatchRequest:
         chunk_size: Native variant chunk size.
         variant_limit: Optional variant cap.
         staging_depth: Native callback staging depth.
+        native_callback_batch_size: Native-to-Python callback chunk batch size.
         result_in_flight_limit: Optional cap for materialization backlog.
         dosage_buffer_limit: Optional cap for native dosage decode buffers.
         resume: Whether output resume is enabled.
@@ -61,6 +62,7 @@ class CommonEngineDispatchRequest:
     chunk_size: int
     variant_limit: int | None
     staging_depth: int
+    native_callback_batch_size: int
     result_in_flight_limit: int | None
     dosage_buffer_limit: int | None
     resume: bool
@@ -258,6 +260,7 @@ def build_common_engine_dispatch_request(
         chunk_size=plan.kernel_config.chunk_size,
         variant_limit=plan.kernel_config.variant_limit,
         staging_depth=plan.kernel_config.staging_depth,
+        native_callback_batch_size=plan.kernel_config.native_callback_batch_size,
         result_in_flight_limit=plan.kernel_config.result_in_flight_limit,
         dosage_buffer_limit=plan.kernel_config.dosage_buffer_limit,
         resume=plan.output_plan.resume,
@@ -305,6 +308,7 @@ def dispatch_one_phenotype_engine_pipeline(
             variant_limit=common_request.variant_limit,
             output_run_paths=phenotype_run_plan.output_run_paths,
             staging_depth=common_request.staging_depth,
+            native_callback_batch_size=common_request.native_callback_batch_size,
             result_in_flight_limit=common_request.result_in_flight_limit,
             dosage_buffer_limit=common_request.dosage_buffer_limit,
             existing_manifest=phenotype_run_plan.existing_manifest,
@@ -348,6 +352,7 @@ def dispatch_one_phenotype_engine_pipeline(
         variant_limit=common_request.variant_limit,
         output_run_paths=phenotype_run_plan.output_run_paths,
         staging_depth=common_request.staging_depth,
+        native_callback_batch_size=common_request.native_callback_batch_size,
         result_in_flight_limit=common_request.result_in_flight_limit,
         dosage_buffer_limit=common_request.dosage_buffer_limit,
         existing_manifest=phenotype_run_plan.existing_manifest,
@@ -411,6 +416,7 @@ def dispatch_multi_phenotype_engine_pipeline(
             variant_limit=common_request.variant_limit,
             output_run_paths_by_phenotype=output_run_paths_by_phenotype,
             staging_depth=common_request.staging_depth,
+            native_callback_batch_size=common_request.native_callback_batch_size,
             result_in_flight_limit=common_request.result_in_flight_limit,
             dosage_buffer_limit=common_request.dosage_buffer_limit,
             existing_manifests_by_phenotype=existing_manifests_by_phenotype,
@@ -450,6 +456,7 @@ def dispatch_multi_phenotype_engine_pipeline(
             variant_limit=common_request.variant_limit,
             output_run_paths_by_phenotype=output_run_paths_by_phenotype,
             staging_depth=common_request.staging_depth,
+            native_callback_batch_size=common_request.native_callback_batch_size,
             result_in_flight_limit=common_request.result_in_flight_limit,
             dosage_buffer_limit=common_request.dosage_buffer_limit,
             existing_manifests_by_phenotype=existing_manifests_by_phenotype,

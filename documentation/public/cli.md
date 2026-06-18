@@ -162,7 +162,7 @@ branch.
 
 | Group | Examples | Purpose |
 | --- | --- | --- |
-| Device and staging | `--device`, `--staging_depth`, `--variant_limit` | JAX target, pipeline staging, and debug caps. |
+| Device and staging | `--device`, `--staging_depth`, `--native_callback_batch_size`, `--variant_limit` | JAX target, pipeline staging, callback handoff batching, and debug caps. |
 | BGEN and sample policy | `--trusted_no_missing_diploid`, `--trusted_bgen_validation_mode`, `--sample_key_mode`, `--multi_phenotype_sample_mode` | Input validation, sample identity, and multi-trait sample semantics. |
 | Numeric policy | `--linear_minimum_variance`, `--binary_minimum_probability`, `--score_dtype`, `--firth_dtype` | Numerical floors, dtype choices, and binary null behavior. |
 | Approximate Firth tuning | `--firth_batch_size`, `--firth_maximum_iterations`, `--null_firth_maximum_iterations` | Candidate batching and solver limits. |

@@ -126,6 +126,7 @@ pub struct BinaryConfigData {
 pub struct GComputeConfigData {
     pub device: DeviceValue,
     pub staging_depth: NonZeroU32,
+    pub native_callback_batch_size: NonZeroU32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_in_flight_limit: Option<NonZeroU32>,
     #[serde(skip_serializing_if = "Option::is_none")]

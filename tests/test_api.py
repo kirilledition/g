@@ -1293,6 +1293,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
             "firth": True,
             "approx": True,
             "firth_batch_size": 5,
+            "native_callback_batch_size": 3,
             "result_in_flight_limit": 7,
             "dosage_buffer_limit": 8,
             "null_logistic_nonconvergence_policy": "warn",
@@ -1318,6 +1319,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
 
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is plan.kernel_config.binary_kernel_config
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_candidate.batch_size == 5
+    assert mock_binary_pipeline.call_args.kwargs["native_callback_batch_size"] == 3
     assert mock_binary_pipeline.call_args.kwargs["result_in_flight_limit"] == 7
     assert mock_binary_pipeline.call_args.kwargs["dosage_buffer_limit"] == 8
     assert mock_binary_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.DOSAGE
