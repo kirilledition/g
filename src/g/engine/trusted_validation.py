@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
+import typing
 from pathlib import Path
 
 from g import _core, types
@@ -29,23 +29,27 @@ def build_trusted_bgen_validation_fingerprint(
     trusted_no_missing_diploid: bool,
 ) -> str:
     """Build a stable trusted BGEN validation fingerprint."""
-    bgen_stat = bgen_path.stat()
-    fingerprint_payload = {
-        "schema_version": TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION,
-        "bgen_path": str(bgen_path.resolve()),
-        "size": bgen_stat.st_size,
-        "mtime_ns": bgen_stat.st_mtime_ns,
-        "sample_count": sample_count,
-        "variant_count": variant_count,
-        "trusted_no_missing_diploid": trusted_no_missing_diploid,
-    }
-    fingerprint_json = json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(fingerprint_json.encode("utf-8")).hexdigest()
+    return _core.build_trusted_bgen_validation_fingerprint_value(
+        str(bgen_path),
+        sample_count,
+        variant_count,
+        trusted_no_missing_diploid,
+    )
 
 
 def trusted_bgen_validation_cache_path(fingerprint: str) -> Path:
     """Return the validation cache path for a fingerprint."""
-    return trusted_bgen_validation_cache_directory() / f"{fingerprint}.json"
+    return Path(
+        _core.build_trusted_bgen_validation_cache_path_value(
+            str(trusted_bgen_validation_cache_directory()),
+            fingerprint,
+        )
+    )
+
+
+def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
+    """Adapt a native mapping payload to a mutable Python dictionary."""
+    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
 
 
 def validate_trusted_bgen_with_cache(
@@ -76,13 +80,14 @@ def validate_trusted_bgen_with_cache(
         return
     engine.validate_trusted_no_missing_diploid()
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_payload = {
-        "schema_version": TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION,
-        "fingerprint": fingerprint,
-        "bgen_path": str(bgen_path.resolve()),
-        "sample_count": int(engine.sample_count),
-        "variant_count": int(engine.variant_count),
-    }
+    cache_payload = native_mapping_payload(
+        _core.build_trusted_bgen_validation_cache_payload(
+            fingerprint,
+            str(bgen_path),
+            int(engine.sample_count),
+            int(engine.variant_count),
+        )
+    )
     temporary_cache_path = cache_path.with_suffix(".json.tmp")
     temporary_cache_path.write_text(json.dumps(cache_payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     temporary_cache_path.replace(cache_path)

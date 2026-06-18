@@ -696,6 +696,53 @@ def build_telemetry_event_payload(
 def build_run_completed_telemetry_fields(event: object) -> dict[str, object]: ...
 def build_run_interrupted_telemetry_fields(event: object) -> dict[str, object]: ...
 def build_run_failed_telemetry_fields(event: object) -> dict[str, object]: ...
+def build_phenotype_run_artifacts_payload(
+    output_run_directory: str,
+    chunks_directory: str,
+    effective_config: str,
+    phenotype_name: str,
+    association_mode: str,
+    phenotype_count: int,
+    output_format: str,
+    final_output_path: str | None,
+) -> dict[str, object]: ...
+def build_multi_run_artifacts_payload(
+    association_mode: str,
+    phenotype_count: int,
+) -> dict[str, object]: ...
+def build_run_manifest_extension_payload(
+    phenotype_name: str,
+    effective_config: str,
+    output_format: str,
+    device: str,
+    staging_depth: int,
+    threads: int | None,
+    writer_threads: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
+    arrow_compression: str,
+    parquet_compression: str,
+    output_statistic_dtype: str,
+    bgen_decode_tile_variant_count: int,
+    trusted_no_missing_diploid: bool,
+    trusted_bgen_validation_mode: str,
+) -> dict[str, object]: ...
+def build_trusted_bgen_validation_fingerprint_value(
+    bgen_path: str,
+    sample_count: int,
+    variant_count: int,
+    trusted_no_missing_diploid: bool,
+) -> str: ...
+def build_trusted_bgen_validation_cache_path_value(
+    cache_directory: str,
+    fingerprint: str,
+) -> str: ...
+def build_trusted_bgen_validation_cache_payload(
+    fingerprint: str,
+    bgen_path: str,
+    sample_count: int,
+    variant_count: int,
+) -> dict[str, object]: ...
 def render_run_completed_lines(event: object) -> tuple[str, ...]: ...
 def render_run_interrupted_lines(event: object) -> tuple[str, ...]: ...
 def render_run_failed_lines(event: object) -> tuple[str, ...]: ...

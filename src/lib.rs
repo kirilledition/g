@@ -7,8 +7,10 @@ pub mod output;
 pub mod pipeline;
 pub mod python;
 pub mod regenie;
+pub(crate) mod run_metadata;
 pub mod sample;
 pub(crate) mod timing;
+pub(crate) mod trusted_validation;
 
 use pyo3::prelude::*;
 

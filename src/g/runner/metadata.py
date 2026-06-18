@@ -4,17 +4,47 @@ from __future__ import annotations
 
 import logging
 import typing
+from pathlib import Path
 
-from g import execution_plan, types
+from g import _core, execution_plan, types
 from g.engine import run_events, telemetry
 from g.interface import config
 from g.io import output
 
-if typing.TYPE_CHECKING:
-    from pathlib import Path
-
 logger = logging.getLogger(__name__)
 RunArtifacts = run_events.RunArtifacts
+
+
+def run_artifacts_from_native_payload(
+    artifact_payload: dict[str, object],
+    phenotype_artifacts: tuple[RunArtifacts, ...],
+) -> RunArtifacts:
+    """Adapt a native artifact payload to the public Python dataclass."""
+    association_mode_value = typing.cast("str | None", artifact_payload["association_mode"])
+    return RunArtifacts(
+        output_run_directory=optional_path_from_native_payload(artifact_payload["output_run_directory"]),
+        final_dataset=optional_path_from_native_payload(artifact_payload["final_dataset"]),
+        final_parquet=optional_path_from_native_payload(artifact_payload["final_parquet"]),
+        final_regenie=optional_path_from_native_payload(artifact_payload["final_regenie"]),
+        effective_config=optional_path_from_native_payload(artifact_payload["effective_config"]),
+        phenotype_artifacts=phenotype_artifacts,
+        phenotype_name=typing.cast("str | None", artifact_payload["phenotype_name"]),
+        association_mode=None if association_mode_value is None else types.AssociationMode(association_mode_value),
+        phenotype_count=typing.cast("int | None", artifact_payload["phenotype_count"]),
+        run_id=typing.cast("str | None", artifact_payload["run_id"]),
+    )
+
+
+def optional_path_from_native_payload(path_payload: object) -> Path | None:
+    """Adapt an optional native path string to a Python path."""
+    if path_payload is None:
+        return None
+    return Path(typing.cast("str", path_payload))
+
+
+def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
+    """Adapt a native mapping payload to a mutable Python dictionary."""
+    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
 
 
 def build_output_initialized_metadata_callback(
@@ -111,17 +141,12 @@ def finalize_execution_plan(
     logger.info("Finalized REGENIE run artifacts for %s phenotype(s).", len(phenotype_artifacts))
     if len(phenotype_artifacts) == 1:
         return phenotype_artifacts[0]
-    return RunArtifacts(
-        output_run_directory=None,
-        final_dataset=None,
-        final_parquet=None,
-        final_regenie=None,
-        effective_config=None,
-        phenotype_artifacts=phenotype_artifacts,
-        phenotype_name=None,
-        association_mode=plan.association_mode,
-        phenotype_count=len(phenotype_artifacts),
-        run_id=None,
+    return run_artifacts_from_native_payload(
+        _core.build_multi_run_artifacts_payload(
+            plan.association_mode.value,
+            len(phenotype_artifacts),
+        ),
+        phenotype_artifacts,
     )
 
 
@@ -134,28 +159,18 @@ def finalize_phenotype_run(
 ) -> RunArtifacts:
     """Build artifacts for one phenotype."""
     del regenie_config
-    final_dataset = (
-        phenotype_run_plan.output_run_paths.chunks_directory
-        if plan.output_plan.writer_settings.output_format == types.OutputFormat.PARQUET
-        else None
-    )
-    final_parquet_path = None
-    final_regenie_path = None
-    if plan.output_plan.writer_settings.output_format == types.OutputFormat.REGENIE:
-        final_regenie_path = final_output_path
-    else:
-        final_parquet_path = final_output_path
-    return RunArtifacts(
-        output_run_directory=phenotype_run_plan.output_run_paths.run_directory,
-        final_dataset=final_dataset,
-        final_parquet=final_parquet_path,
-        final_regenie=final_regenie_path,
-        effective_config=phenotype_run_plan.effective_config_path,
-        phenotype_artifacts=(),
-        phenotype_name=phenotype_run_plan.phenotype_name,
-        association_mode=plan.association_mode,
-        phenotype_count=len(plan.phenotype_run_plans),
-        run_id=None,
+    return run_artifacts_from_native_payload(
+        _core.build_phenotype_run_artifacts_payload(
+            str(phenotype_run_plan.output_run_paths.run_directory),
+            str(phenotype_run_plan.output_run_paths.chunks_directory),
+            str(phenotype_run_plan.effective_config_path),
+            phenotype_run_plan.phenotype_name,
+            plan.association_mode.value,
+            len(plan.phenotype_run_plans),
+            plan.output_plan.writer_settings.output_format.value,
+            None if final_output_path is None else str(final_output_path),
+        ),
+        (),
     )
 
 
@@ -166,24 +181,23 @@ def extend_run_manifest(
 ) -> None:
     """Add command and runtime metadata to a run manifest."""
     manifest = output.load_run_manifest(phenotype_run_plan.output_run_paths) or {}
-    manifest["command"] = {
-        "interface": "g regenie",
-        "phenotype": phenotype_run_plan.phenotype_name,
-        "effective_config": str(phenotype_run_plan.effective_config_path),
-        "output_format": plan.output_plan.writer_settings.output_format.value,
-    }
-    manifest["runtime"] = {
-        "device": plan.kernel_config.device.value,
-        "staging_depth": plan.kernel_config.staging_depth,
-        "threads": plan.kernel_config.thread_count,
-        "writer_threads": plan.output_plan.writer_settings.writer_thread_count,
-        "writer_queue_depth": plan.output_plan.writer_settings.writer_queue_depth,
-        "chunks_per_arrow_file": plan.output_plan.writer_settings.chunks_per_arrow_file,
-        "arrow_compression": plan.output_plan.writer_settings.arrow_compression.value,
-        "parquet_compression": plan.output_plan.writer_settings.parquet_compression.value,
-        "output_statistic_dtype": plan.output_plan.writer_settings.output_statistic_dtype.value,
-        "bgen_decode_tile_variant_count": plan.kernel_config.bgen_decode_tile_variant_count,
-        "trusted_no_missing_diploid": plan.kernel_config.trusted_no_missing_diploid,
-        "trusted_bgen_validation_mode": plan.kernel_config.trusted_bgen_validation_mode.value,
-    }
+    manifest_extension_payload = _core.build_run_manifest_extension_payload(
+        phenotype_run_plan.phenotype_name,
+        str(phenotype_run_plan.effective_config_path),
+        plan.output_plan.writer_settings.output_format.value,
+        plan.kernel_config.device.value,
+        plan.kernel_config.staging_depth,
+        plan.kernel_config.thread_count,
+        plan.output_plan.writer_settings.writer_thread_count,
+        plan.output_plan.writer_settings.writer_queue_depth,
+        plan.output_plan.writer_settings.chunks_per_arrow_file,
+        plan.output_plan.writer_settings.arrow_compression.value,
+        plan.output_plan.writer_settings.parquet_compression.value,
+        plan.output_plan.writer_settings.output_statistic_dtype.value,
+        plan.kernel_config.bgen_decode_tile_variant_count,
+        plan.kernel_config.trusted_no_missing_diploid,
+        plan.kernel_config.trusted_bgen_validation_mode.value,
+    )
+    manifest["command"] = native_mapping_payload(manifest_extension_payload["command"])
+    manifest["runtime"] = native_mapping_payload(manifest_extension_payload["runtime"])
     output.write_run_manifest(phenotype_run_plan.output_run_paths, manifest)

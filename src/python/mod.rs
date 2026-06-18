@@ -28,8 +28,10 @@ mod logging;
 mod output;
 mod profile;
 mod run_events;
+mod run_metadata;
 mod runtime;
 mod timing;
+mod trusted_validation;
 
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
 use host_policy::{
@@ -53,8 +55,15 @@ use run_events::{
     build_run_completed_telemetry_fields, build_run_failed_telemetry_fields, build_run_interrupted_telemetry_fields,
     render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
 };
+use run_metadata::{
+    build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload, build_run_manifest_extension_payload,
+};
 use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool};
 use timing::NativeStageTimingRecorder;
+use trusted_validation::{
+    build_trusted_bgen_validation_cache_path_value, build_trusted_bgen_validation_cache_payload,
+    build_trusted_bgen_validation_fingerprint_value,
+};
 
 type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
 
@@ -1602,14 +1611,20 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_run_completed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_failed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(build_multi_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_compute_group_id_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_compute_groups_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_output_directory_name, module)?)?;
+    module.add_function(wrap_pyfunction!(build_phenotype_run_artifacts_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_manifest_extension_payload, module)?)?;
     module.add_function(wrap_pyfunction!(normalize_binary_correction_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_association_backend_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_path_value, module)?)?;
+    module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_fingerprint_value, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
     module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;
