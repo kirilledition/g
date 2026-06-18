@@ -142,6 +142,7 @@ impl PartialBinaryConfig {
 pub(crate) struct PartialComputeConfig {
     pub(crate) device: Option<DeviceValue>,
     pub(crate) staging_depth: Option<NonZeroU32>,
+    pub(crate) native_callback_batch_size: Option<NonZeroU32>,
     pub(crate) result_in_flight_limit: Option<NonZeroU32>,
     pub(crate) dosage_buffer_limit: Option<NonZeroU32>,
     pub(crate) variant_limit: Option<NonZeroU32>,
@@ -203,6 +204,7 @@ impl PartialComputeConfig {
         Ok(GComputeConfigData {
             device: core.device,
             staging_depth: core.staging_depth,
+            native_callback_batch_size: core.native_callback_batch_size,
             result_in_flight_limit: core.result_in_flight_limit,
             dosage_buffer_limit: core.dosage_buffer_limit,
             variant_limit: core.variant_limit,
@@ -259,6 +261,7 @@ impl PartialComputeConfig {
         Ok(ResolvedComputeCoreFields {
             device: required("device", self.device)?,
             staging_depth: required("staging_depth", self.staging_depth)?,
+            native_callback_batch_size: required("native_callback_batch_size", self.native_callback_batch_size)?,
             result_in_flight_limit: self.result_in_flight_limit,
             dosage_buffer_limit: self.dosage_buffer_limit,
             variant_limit: self.variant_limit,
@@ -388,6 +391,7 @@ impl PartialComputeConfig {
 struct ResolvedComputeCoreFields {
     device: DeviceValue,
     staging_depth: NonZeroU32,
+    native_callback_batch_size: NonZeroU32,
     result_in_flight_limit: Option<NonZeroU32>,
     dosage_buffer_limit: Option<NonZeroU32>,
     variant_limit: Option<NonZeroU32>,

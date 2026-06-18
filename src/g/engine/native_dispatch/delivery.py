@@ -17,6 +17,15 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def resolve_native_callback_batch_size(callback: object) -> int:
+    """Return the validated native callback batch size for one callback object."""
+    native_callback_batch_size = int(getattr(callback, "native_callback_batch_size", 1))
+    if native_callback_batch_size <= 0:
+        message = "native_callback_batch_size must be positive."
+        raise ValueError(message)
+    return native_callback_batch_size
+
+
 def run_variant_major_packed8_delivery(
     *,
     engine: _core.Regenie2RunEngine,
@@ -25,6 +34,10 @@ def run_variant_major_packed8_delivery(
     committed_chunk_identifier_list: list[int],
 ) -> int:
     """Run packed8 delivery using native sample alignment when available."""
+    native_callback_batch_size = resolve_native_callback_batch_size(callback)
+    if native_callback_batch_size > 1:
+        message = "native_callback_batch_size > 1 is not supported for packed8 BGEN delivery."
+        raise ValueError(message)
     native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
     if native_multi_aligned_sample_data is not None:
         return int(
@@ -60,6 +73,7 @@ def run_variant_major_dosage_delivery(
     committed_chunk_identifier_list: list[int],
 ) -> int:
     """Run dosage delivery using native sample alignment when available."""
+    native_callback_batch_size = resolve_native_callback_batch_size(callback)
     native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
     if native_multi_aligned_sample_data is not None:
         return int(
@@ -67,6 +81,7 @@ def run_variant_major_dosage_delivery(
                 native_multi_aligned_sample_data,
                 callback,
                 committed_chunk_identifiers=committed_chunk_identifier_list,
+                callback_batch_size=native_callback_batch_size,
             )
         )
     native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
@@ -76,6 +91,7 @@ def run_variant_major_dosage_delivery(
                 native_aligned_sample_data,
                 callback,
                 committed_chunk_identifiers=committed_chunk_identifier_list,
+                callback_batch_size=native_callback_batch_size,
             )
         )
     return int(
@@ -83,6 +99,7 @@ def run_variant_major_dosage_delivery(
             run_input.sample_indices,
             callback,
             committed_chunk_identifiers=committed_chunk_identifier_list,
+            callback_batch_size=native_callback_batch_size,
         )
     )
 

@@ -41,6 +41,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "out": "results/output",
         "device": "cpu",
         "staging_depth": 2,
+        "native_callback_batch_size": 3,
         "result_in_flight_limit": 5,
         "dosage_buffer_limit": 6,
         "variant_limit": 100,
@@ -103,6 +104,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     regenie_config = config.RegenieConfig.from_options(raw_options)
 
     assert regenie_config.g_compute.trusted_bgen_validation_mode == types.TrustedBgenValidationMode.ASSUME_VALIDATED
+    assert regenie_config.g_compute.native_callback_batch_size == 3
     assert regenie_config.g_compute.result_in_flight_limit == 5
     assert regenie_config.g_compute.dosage_buffer_limit == 6
     assert regenie_config.g_compute.multi_phenotype_sample_mode == types.MultiPhenotypeSampleMode.COMPLETE_CASE
@@ -709,6 +711,7 @@ def test_unsupported_regenie_options_are_unknown(option_name: str) -> None:
         ({"out": None}, "Option out does not accept None"),
         ({"bsize": 0}, "trait.bsize"),
         ({"threads": 0}, "trait.threads"),
+        ({"native_callback_batch_size": 0}, "compute.native_callback_batch_size"),
         ({"result_in_flight_limit": 0}, "compute.result_in_flight_limit"),
         ({"dosage_buffer_limit": 0}, "compute.dosage_buffer_limit"),
         ({"variant_limit": 0}, "compute.variant_limit"),

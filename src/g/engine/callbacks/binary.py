@@ -36,6 +36,12 @@ put_chunk_array_on_device = transfers.put_chunk_array_on_device
 get_binary_chunk_stats_arrays = transfers.get_binary_chunk_stats_arrays
 block_compute_result_for_timing = transfers.block_compute_result_for_timing
 write_regenie2_multi_native_chunk_with_optional_timing = writers.write_regenie2_multi_native_chunk_with_optional_timing
+materialize_regenie2_multi_native_chunk_with_optional_timing = (
+    writers.materialize_regenie2_multi_native_chunk_with_optional_timing
+)
+write_materialized_regenie2_multi_native_chunk_with_optional_timing = (
+    writers.write_materialized_regenie2_multi_native_chunk_with_optional_timing
+)
 block_until_ready = diagnostics.block_until_ready
 enforce_null_logistic_nonconvergence_policy = diagnostics.enforce_null_logistic_nonconvergence_policy
 collect_binary_chunk_diagnostics_if_needed = diagnostics.collect_binary_chunk_diagnostics_if_needed
@@ -55,6 +61,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
         null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
         staging_depth: int,
+        native_callback_batch_size: int,
         result_in_flight_limit: int | None,
         dosage_buffer_limit: int | None,
         score_dtype: types.FloatingPointDtype,
@@ -82,6 +89,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         super().__init__(
             worker_name="regenie2-binary-callback",
             staging_depth=staging_depth,
+            native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
@@ -452,6 +460,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
         null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
         staging_depth: int,
+        native_callback_batch_size: int,
         result_in_flight_limit: int | None,
         dosage_buffer_limit: int | None,
         score_dtype: types.FloatingPointDtype,
@@ -480,6 +489,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         super().__init__(
             worker_name="regenie2-multi-binary-callback",
             staging_depth=staging_depth,
+            native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
@@ -522,17 +532,26 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
 
     def process_multi_result_write_item(self, multi_work_item: Regenie2MultiResultWriteWorkItem) -> None:
         """Materialize and write one multi-trait binary result work item."""
+        host_dosage_buffer_released = False
         try:
-            write_regenie2_multi_native_chunk_with_optional_timing(
+            materialized_chunk = materialize_regenie2_multi_native_chunk_with_optional_timing(
                 writer_sessions=self.writer_sessions,
                 committed_chunk_identifier_sets=self.committed_chunk_identifier_sets,
                 metadata=multi_work_item.metadata,
-                chunk_stats=multi_work_item.chunk_stats,
                 beta=multi_work_item.beta,
                 standard_error=multi_work_item.standard_error,
                 chi_squared=multi_work_item.chi_squared,
                 log10_p_value=multi_work_item.log10_p_value,
                 extra_code=multi_work_item.extra_code,
+                stage_timing_recorder=self.stage_timing_recorder,
+                output_statistic_dtype=self.output_statistic_dtype,
+            )
+            self.release_result_work_item_host_buffer(multi_work_item)
+            host_dosage_buffer_released = True
+            write_materialized_regenie2_multi_native_chunk_with_optional_timing(
+                metadata=multi_work_item.metadata,
+                chunk_stats=multi_work_item.chunk_stats,
+                materialized_chunk=materialized_chunk,
                 stage_timing_recorder=self.stage_timing_recorder,
                 output_statistic_dtype=self.output_statistic_dtype,
             )
@@ -542,7 +561,9 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             )
             self.record_binary_correction_diagnostics(multi_work_item.binary_chunk_diagnostics)
         finally:
-            self.release_result_work_item_buffer(multi_work_item)
+            if not host_dosage_buffer_released:
+                self.release_result_work_item_host_buffer(multi_work_item)
+            self.release_result_work_item_in_flight_slot(multi_work_item)
 
     def compute_preprocessed_chunk(
         self,

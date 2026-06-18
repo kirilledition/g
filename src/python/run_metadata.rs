@@ -54,6 +54,7 @@ pub(crate) fn build_run_manifest_extension_payload<'py>(
     output_format: String,
     device: String,
     staging_depth: i64,
+    native_callback_batch_size: i64,
     threads: Option<i64>,
     writer_threads: i64,
     writer_queue_depth: i64,
@@ -71,6 +72,7 @@ pub(crate) fn build_run_manifest_extension_payload<'py>(
         output_format,
         device,
         staging_depth,
+        native_callback_batch_size,
         threads,
         writer_threads,
         writer_queue_depth,
@@ -125,6 +127,7 @@ fn run_manifest_runtime_to_dict<'py>(
     let payload = PyDict::new(py);
     payload.set_item("device", &runtime.device)?;
     payload.set_item("staging_depth", runtime.staging_depth)?;
+    payload.set_item("native_callback_batch_size", runtime.native_callback_batch_size)?;
     set_optional_i64(py, &payload, "threads", runtime.threads)?;
     payload.set_item("writer_threads", runtime.writer_threads)?;
     payload.set_item("writer_queue_depth", runtime.writer_queue_depth)?;

@@ -153,6 +153,7 @@ Runtime CLI flags map directly to the sectioned snake_case TOML surface:
 | --- | --- |
 | `--device gpu` | `[compute] device = "gpu"` |
 | `--staging_depth N` | `[compute] staging_depth = N` |
+| `--native_callback_batch_size N` | `[compute] native_callback_batch_size = N` |
 | `--trusted_no_missing_diploid` | `[compute] trusted_no_missing_diploid = true` |
 | `--trusted_bgen_validation_mode cache_on_miss` | `[compute] trusted_bgen_validation_mode = "cache_on_miss"` |
 | `--sample_key_mode fid_iid` | `[compute] sample_key_mode = "fid_iid"` |

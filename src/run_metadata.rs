@@ -36,6 +36,7 @@ pub(crate) struct RunManifestExtensionInput {
     pub(crate) output_format: String,
     pub(crate) device: String,
     pub(crate) staging_depth: i64,
+    pub(crate) native_callback_batch_size: i64,
     pub(crate) threads: Option<i64>,
     pub(crate) writer_threads: i64,
     pub(crate) writer_queue_depth: i64,
@@ -60,6 +61,7 @@ pub(crate) struct RunManifestCommandPayload {
 pub(crate) struct RunManifestRuntimePayload {
     pub(crate) device: String,
     pub(crate) staging_depth: i64,
+    pub(crate) native_callback_batch_size: i64,
     pub(crate) threads: Option<i64>,
     pub(crate) writer_threads: i64,
     pub(crate) writer_queue_depth: i64,
@@ -126,6 +128,7 @@ pub(crate) fn build_run_manifest_extension(input: RunManifestExtensionInput) -> 
         output_format,
         device,
         staging_depth,
+        native_callback_batch_size,
         threads,
         writer_threads,
         writer_queue_depth,
@@ -147,6 +150,7 @@ pub(crate) fn build_run_manifest_extension(input: RunManifestExtensionInput) -> 
         runtime: RunManifestRuntimePayload {
             device,
             staging_depth,
+            native_callback_batch_size,
             threads,
             writer_threads,
             writer_queue_depth,

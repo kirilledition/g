@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import typing
+from dataclasses import dataclass
 
 import jax
 
@@ -24,11 +25,33 @@ select_active_trait_rows_on_device = transfers.select_active_trait_rows_on_devic
 get_metadata_chromosome = shared.get_metadata_chromosome
 
 
-def write_regenie2_native_chunk_with_optional_timing(
+@dataclass(frozen=True)
+class MaterializedRegenie2NativeChunk:
+    """Host-materialized single-trait REGENIE result arrays."""
+
+    beta: object
+    standard_error: object
+    chi_squared: object
+    log10_p_value: object
+    extra_code: object | None
+
+
+@dataclass(frozen=True)
+class MaterializedRegenie2MultiNativeChunk:
+    """Host-materialized multi-trait REGENIE result arrays and active writers."""
+
+    active_writer_sessions: tuple[typing.Any, ...]
+    use_native_multi_writer: bool
+    beta: object | None
+    standard_error: object | None
+    chi_squared: object | None
+    log10_p_value: object | None
+    extra_code: object | None
+
+
+def materialize_regenie2_native_chunk_with_optional_timing(
     *,
-    writer_session: typing.Any,
     metadata: _core.VariantMetadata,
-    chunk_stats: _core.ChunkStats,
     beta: jax.Array,
     standard_error: jax.Array,
     chi_squared: jax.Array,
@@ -36,13 +59,8 @@ def write_regenie2_native_chunk_with_optional_timing(
     extra_code: jax.Array | None,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     output_statistic_dtype: types.FloatingPointDtype,
-) -> None:
-    """Write one native-metadata REGENIE chunk while timing JAX result materialization.
-
-    The native Arrow/Parquet schema stores public result statistics with the
-    configured output dtype. Internal arrays are cast immediately before the
-    Rust writer call.
-    """
+) -> MaterializedRegenie2NativeChunk:
+    """Materialize one single-trait REGENIE result chunk on host."""
     materialization_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
     beta_device_array = narrow_public_statistic_array_on_device(beta, output_statistic_dtype)
     standard_error_device_array = narrow_public_statistic_array_on_device(standard_error, output_statistic_dtype)
@@ -96,7 +114,25 @@ def write_regenie2_native_chunk_with_optional_timing(
             start_time=materialization_start_time,
             chunk_metadata=metadata,
         )
+    return MaterializedRegenie2NativeChunk(
+        beta=host_values["beta"],
+        standard_error=host_values["standard_error"],
+        chi_squared=host_values["chi_squared"],
+        log10_p_value=host_values["log10_p_value"],
+        extra_code=host_values["extra_code"],
+    )
 
+
+def write_materialized_regenie2_native_chunk_with_optional_timing(
+    *,
+    writer_session: typing.Any,
+    metadata: _core.VariantMetadata,
+    chunk_stats: _core.ChunkStats,
+    materialized_chunk: MaterializedRegenie2NativeChunk,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    output_statistic_dtype: types.FloatingPointDtype,
+) -> None:
+    """Write one already-materialized single-trait REGENIE result chunk."""
     write_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
     write_chunk_method_name = "write_regenie2_native_chunk"
     if output_statistic_dtype == types.FloatingPointDtype.FLOAT64 and isinstance(
@@ -108,11 +144,17 @@ def write_regenie2_native_chunk_with_optional_timing(
     write_chunk_method(
         metadata=metadata,
         chunk_stats=chunk_stats,
-        beta=cast_statistic_array_for_native_writer(host_values["beta"], output_statistic_dtype),
-        standard_error=cast_statistic_array_for_native_writer(host_values["standard_error"], output_statistic_dtype),
-        chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"], output_statistic_dtype),
-        log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"], output_statistic_dtype),
-        extra_code=host_values["extra_code"],
+        beta=cast_statistic_array_for_native_writer(materialized_chunk.beta, output_statistic_dtype),
+        standard_error=cast_statistic_array_for_native_writer(
+            materialized_chunk.standard_error,
+            output_statistic_dtype,
+        ),
+        chi_squared=cast_statistic_array_for_native_writer(materialized_chunk.chi_squared, output_statistic_dtype),
+        log10_p_value=cast_statistic_array_for_native_writer(
+            materialized_chunk.log10_p_value,
+            output_statistic_dtype,
+        ),
+        extra_code=materialized_chunk.extra_code,
     )
     if stage_timing_recorder is not None:
         record_stage_duration_with_optional_chunk(
@@ -129,10 +171,9 @@ def write_regenie2_native_chunk_with_optional_timing(
         )
 
 
-def write_regenie2_multi_native_chunk_with_optional_timing(
+def write_regenie2_native_chunk_with_optional_timing(
     *,
-    writer_sessions: tuple[typing.Any, ...],
-    committed_chunk_identifier_sets: tuple[set[int], ...],
+    writer_session: typing.Any,
     metadata: _core.VariantMetadata,
     chunk_stats: _core.ChunkStats,
     beta: jax.Array,
@@ -143,29 +184,65 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     output_statistic_dtype: types.FloatingPointDtype,
 ) -> None:
-    """Materialize one multi-trait result once and write missing per-trait slices."""
+    """Write one native-metadata REGENIE chunk while timing JAX result materialization.
+
+    The native Arrow/Parquet schema stores public result statistics with the
+    configured output dtype. Internal arrays are cast immediately before the
+    Rust writer call.
+    """
+    materialized_chunk = materialize_regenie2_native_chunk_with_optional_timing(
+        metadata=metadata,
+        beta=beta,
+        standard_error=standard_error,
+        chi_squared=chi_squared,
+        log10_p_value=log10_p_value,
+        extra_code=extra_code,
+        stage_timing_recorder=stage_timing_recorder,
+        output_statistic_dtype=output_statistic_dtype,
+    )
+    write_materialized_regenie2_native_chunk_with_optional_timing(
+        writer_session=writer_session,
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        materialized_chunk=materialized_chunk,
+        stage_timing_recorder=stage_timing_recorder,
+        output_statistic_dtype=output_statistic_dtype,
+    )
+
+
+def materialize_regenie2_multi_native_chunk_with_optional_timing(
+    *,
+    writer_sessions: tuple[typing.Any, ...],
+    committed_chunk_identifier_sets: tuple[set[int], ...],
+    metadata: _core.VariantMetadata,
+    beta: jax.Array,
+    standard_error: jax.Array,
+    chi_squared: jax.Array,
+    log10_p_value: jax.Array,
+    extra_code: jax.Array | None,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    output_statistic_dtype: types.FloatingPointDtype,
+) -> MaterializedRegenie2MultiNativeChunk:
+    """Materialize one multi-trait REGENIE result chunk on host."""
     chunk_identifier = int(metadata.variant_start_index)
     active_trait_indices = tuple(
         trait_index
         for trait_index, _writer_session in enumerate(writer_sessions)
         if chunk_identifier not in committed_chunk_identifier_sets[trait_index]
     )
+    use_native_multi_writer = all(
+        isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions
+    )
     if not active_trait_indices:
-        if stage_timing_recorder is not None:
-            write_start_time = time.perf_counter()
-            record_stage_duration_with_optional_chunk(
-                stage_timing_recorder=stage_timing_recorder,
-                stage_name="output_write",
-                start_time=write_start_time,
-                chunk_metadata=metadata,
-            )
-            record_stage_duration_with_optional_chunk(
-                stage_timing_recorder=stage_timing_recorder,
-                stage_name="multi_trait_output_write_total",
-                start_time=write_start_time,
-                chunk_metadata=metadata,
-            )
-        return
+        return MaterializedRegenie2MultiNativeChunk(
+            active_writer_sessions=(),
+            use_native_multi_writer=use_native_multi_writer,
+            beta=None,
+            standard_error=None,
+            chi_squared=None,
+            log10_p_value=None,
+            extra_code=None,
+        )
 
     active_writer_sessions = tuple(writer_sessions[trait_index] for trait_index in active_trait_indices)
     total_trait_count = len(writer_sessions)
@@ -258,21 +335,60 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             start_time=materialization_start_time,
             chunk_metadata=metadata,
         )
+    return MaterializedRegenie2MultiNativeChunk(
+        active_writer_sessions=active_writer_sessions,
+        use_native_multi_writer=use_native_multi_writer,
+        beta=host_values["beta"],
+        standard_error=host_values["standard_error"],
+        chi_squared=host_values["chi_squared"],
+        log10_p_value=host_values["log10_p_value"],
+        extra_code=host_values["extra_code"],
+    )
 
+
+def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
+    *,
+    metadata: _core.VariantMetadata,
+    chunk_stats: _core.ChunkStats,
+    materialized_chunk: MaterializedRegenie2MultiNativeChunk,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    output_statistic_dtype: types.FloatingPointDtype,
+) -> None:
+    """Write one already-materialized multi-trait REGENIE result chunk."""
     write_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
-    if all(isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions):
+    active_writer_sessions = materialized_chunk.active_writer_sessions
+    if not active_writer_sessions:
+        if stage_timing_recorder is not None:
+            record_stage_duration_with_optional_chunk(
+                stage_timing_recorder=stage_timing_recorder,
+                stage_name="output_write",
+                start_time=write_start_time,
+                chunk_metadata=metadata,
+            )
+            record_stage_duration_with_optional_chunk(
+                stage_timing_recorder=stage_timing_recorder,
+                stage_name="multi_trait_output_write_total",
+                start_time=write_start_time,
+                chunk_metadata=metadata,
+            )
+        return
+    if materialized_chunk.use_native_multi_writer:
         native_writer_sessions = typing.cast("tuple[_core.OutputWriterSession, ...]", active_writer_sessions)
-        native_extra_code = typing.cast("typing.Any", host_values["extra_code"])
+        native_extra_code = typing.cast("typing.Any", materialized_chunk.extra_code)
+        beta = materialized_chunk.beta
+        standard_error = materialized_chunk.standard_error
+        chi_squared = materialized_chunk.chi_squared
+        log10_p_value = materialized_chunk.log10_p_value
         if output_statistic_dtype == types.FloatingPointDtype.FLOAT64:
             _core.write_regenie2_multi_native_chunk_f64(
                 writer_sessions=list(native_writer_sessions),
                 active_trait_indices=list(range(len(native_writer_sessions))),
                 metadata=metadata,
                 chunk_stats=chunk_stats,
-                beta=cast_statistic_array_for_native_writer_float64(host_values["beta"]),
-                standard_error=cast_statistic_array_for_native_writer_float64(host_values["standard_error"]),
-                chi_squared=cast_statistic_array_for_native_writer_float64(host_values["chi_squared"]),
-                log10_p_value=cast_statistic_array_for_native_writer_float64(host_values["log10_p_value"]),
+                beta=cast_statistic_array_for_native_writer_float64(beta),
+                standard_error=cast_statistic_array_for_native_writer_float64(standard_error),
+                chi_squared=cast_statistic_array_for_native_writer_float64(chi_squared),
+                log10_p_value=cast_statistic_array_for_native_writer_float64(log10_p_value),
                 extra_code=native_extra_code,
             )
         else:
@@ -281,10 +397,10 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
                 active_trait_indices=list(range(len(native_writer_sessions))),
                 metadata=metadata,
                 chunk_stats=chunk_stats,
-                beta=cast_statistic_array_for_native_writer_float32(host_values["beta"]),
-                standard_error=cast_statistic_array_for_native_writer_float32(host_values["standard_error"]),
-                chi_squared=cast_statistic_array_for_native_writer_float32(host_values["chi_squared"]),
-                log10_p_value=cast_statistic_array_for_native_writer_float32(host_values["log10_p_value"]),
+                beta=cast_statistic_array_for_native_writer_float32(beta),
+                standard_error=cast_statistic_array_for_native_writer_float32(standard_error),
+                chi_squared=cast_statistic_array_for_native_writer_float32(chi_squared),
+                log10_p_value=cast_statistic_array_for_native_writer_float32(log10_p_value),
                 extra_code=native_extra_code,
             )
         if stage_timing_recorder is not None:
@@ -304,24 +420,27 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
     for compact_trait_index, writer_session in enumerate(active_writer_sessions):
         per_trait_write_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
         extra_code_slice = None
-        if host_values["extra_code"] is not None:
-            extra_code_slice = host_values["extra_code"][compact_trait_index]
+        if materialized_chunk.extra_code is not None:
+            extra_code = typing.cast("typing.Any", materialized_chunk.extra_code)
+            extra_code_slice = extra_code[compact_trait_index]
+        beta = typing.cast("typing.Any", materialized_chunk.beta)
+        standard_error = typing.cast("typing.Any", materialized_chunk.standard_error)
+        chi_squared = typing.cast("typing.Any", materialized_chunk.chi_squared)
+        log10_p_value = typing.cast("typing.Any", materialized_chunk.log10_p_value)
         writer_session.write_regenie2_native_chunk(
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=cast_statistic_array_for_native_writer(
-                host_values["beta"][compact_trait_index], output_statistic_dtype
-            ),
+            beta=cast_statistic_array_for_native_writer(beta[compact_trait_index], output_statistic_dtype),
             standard_error=cast_statistic_array_for_native_writer(
-                host_values["standard_error"][compact_trait_index],
+                standard_error[compact_trait_index],
                 output_statistic_dtype,
             ),
             chi_squared=cast_statistic_array_for_native_writer(
-                host_values["chi_squared"][compact_trait_index],
+                chi_squared[compact_trait_index],
                 output_statistic_dtype,
             ),
             log10_p_value=cast_statistic_array_for_native_writer(
-                host_values["log10_p_value"][compact_trait_index],
+                log10_p_value[compact_trait_index],
                 output_statistic_dtype,
             ),
             extra_code=extra_code_slice,
@@ -348,8 +467,48 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
         )
 
 
+def write_regenie2_multi_native_chunk_with_optional_timing(
+    *,
+    writer_sessions: tuple[typing.Any, ...],
+    committed_chunk_identifier_sets: tuple[set[int], ...],
+    metadata: _core.VariantMetadata,
+    chunk_stats: _core.ChunkStats,
+    beta: jax.Array,
+    standard_error: jax.Array,
+    chi_squared: jax.Array,
+    log10_p_value: jax.Array,
+    extra_code: jax.Array | None,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    output_statistic_dtype: types.FloatingPointDtype,
+) -> None:
+    """Materialize one multi-trait result once and write missing per-trait slices."""
+    materialized_chunk = materialize_regenie2_multi_native_chunk_with_optional_timing(
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+        metadata=metadata,
+        beta=beta,
+        standard_error=standard_error,
+        chi_squared=chi_squared,
+        log10_p_value=log10_p_value,
+        extra_code=extra_code,
+        stage_timing_recorder=stage_timing_recorder,
+        output_statistic_dtype=output_statistic_dtype,
+    )
+    write_materialized_regenie2_multi_native_chunk_with_optional_timing(
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        materialized_chunk=materialized_chunk,
+        stage_timing_recorder=stage_timing_recorder,
+        output_statistic_dtype=output_statistic_dtype,
+    )
+
+
 __all__ = [
     "get_metadata_chromosome",
+    "materialize_regenie2_multi_native_chunk_with_optional_timing",
+    "materialize_regenie2_native_chunk_with_optional_timing",
+    "write_materialized_regenie2_multi_native_chunk_with_optional_timing",
+    "write_materialized_regenie2_native_chunk_with_optional_timing",
     "write_regenie2_multi_native_chunk_with_optional_timing",
     "write_regenie2_native_chunk_with_optional_timing",
 ]

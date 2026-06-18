@@ -132,6 +132,7 @@ impl PartialComputeConfig {
     fn overlay(&mut self, override_config: Self) {
         overlay_option!(self, override_config, device);
         overlay_option!(self, override_config, staging_depth);
+        overlay_option!(self, override_config, native_callback_batch_size);
         overlay_option!(self, override_config, result_in_flight_limit);
         overlay_option!(self, override_config, dosage_buffer_limit);
         overlay_option!(self, override_config, variant_limit);

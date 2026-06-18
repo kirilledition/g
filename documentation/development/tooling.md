@@ -562,6 +562,10 @@ Useful overrides:
 - `tool.dosage_buffer_limits=[default,4]`: include explicit reusable native
   dosage buffer pool limits in the candidate grid. `default` keeps the runtime
   derived capacity of `staging_depth + 1`.
+- `tool.native_callback_batch_size=2`: set the opt-in native-to-Python dosage
+  callback handoff batch size for binary hot benchmark trials.
+- `tool.native_callback_batch_sizes=[2]`: restrict deep-profile tuning to the
+  same callback handoff batch size.
 - `tool.rust_benchmarks=[bgen_read]`: limit Rust Criterion benches.
 - `tool.include_regenie_baseline=true`: also run original REGENIE headline
   trials when `regenie` is available.

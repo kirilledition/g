@@ -65,6 +65,7 @@ class WorkloadConfig:
         variant_limit: Optional variant cap.
         repeat_count: BGEN reader repeat count.
         staging_depth: Native callback staging depth.
+        native_callback_batch_size: Native-to-Python callback chunk batch size.
         output_writer_thread_count: Background output writer thread count.
         output_writer_queue_depth: Background output writer queue depth.
 
@@ -75,6 +76,7 @@ class WorkloadConfig:
     variant_limit: int | None = 16384
     repeat_count: int = 5
     staging_depth: int = 1
+    native_callback_batch_size: int = 1
     output_writer_thread_count: int = 8
     output_writer_queue_depth: int = 8
 
@@ -230,6 +232,7 @@ def instantiate_config(config: omegaconf.DictConfig) -> ToolingConfig:
             else None,
             repeat_count=int(workload_values["repeat_count"]),
             staging_depth=int(workload_values["staging_depth"]),
+            native_callback_batch_size=int(workload_values.get("native_callback_batch_size", 1)),
             output_writer_thread_count=int(workload_values["output_writer_thread_count"]),
             output_writer_queue_depth=int(workload_values["output_writer_queue_depth"]),
         ),

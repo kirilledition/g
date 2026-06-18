@@ -82,6 +82,7 @@ impl RegenieCli {
         Ok(PartialComputeConfig {
             device: self.compute.device,
             staging_depth: self.compute.staging_depth,
+            native_callback_batch_size: self.compute.native_callback_batch_size,
             result_in_flight_limit: self.compute.result_in_flight_limit,
             dosage_buffer_limit: self.compute.dosage_buffer_limit,
             variant_limit: self.compute.variant_limit,

@@ -101,6 +101,13 @@ class PreprocessedVariantMajorDosageChunkWorkItem:
 
 
 @dataclass(frozen=True)
+class PreprocessedVariantMajorDosageChunkBatchWorkItem:
+    """Variant-major dosage chunks staged together from one native callback."""
+
+    work_items: tuple[PreprocessedVariantMajorDosageChunkWorkItem, ...]
+
+
+@dataclass(frozen=True)
 class PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem:
     """One variant-major packed8 probability-pair chunk staged for JAX compute."""
 
@@ -212,6 +219,7 @@ __all__ = [
     "NativeBgenRunInputProtocol",
     "NativeBgenWorkerShutdownError",
     "PreprocessedDosageChunkWorkItem",
+    "PreprocessedVariantMajorDosageChunkBatchWorkItem",
     "PreprocessedVariantMajorDosageChunkWorkItem",
     "PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem",
     "Regenie2MultiResultWriteWorkItem",

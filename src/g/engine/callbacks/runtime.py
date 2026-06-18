@@ -33,6 +33,7 @@ GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS = shared.GRACEFUL_RESULT_WORKER_JOIN
 WORKER_ABORT_STOP_TIMEOUT_SECONDS = shared.WORKER_ABORT_STOP_TIMEOUT_SECONDS
 HostGenotypeBuffer = shared.HostGenotypeBuffer
 PreprocessedDosageChunkWorkItem = shared.PreprocessedDosageChunkWorkItem
+PreprocessedVariantMajorDosageChunkBatchWorkItem = shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
 PreprocessedVariantMajorDosageChunkWorkItem = shared.PreprocessedVariantMajorDosageChunkWorkItem
 PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem = (
     shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
@@ -42,6 +43,10 @@ Regenie2MultiResultWriteWorkItem = shared.Regenie2MultiResultWriteWorkItem
 NativeBgenWorkerShutdownError = shared.NativeBgenWorkerShutdownError
 record_stage_duration_with_optional_chunk = transfers.record_stage_duration_with_optional_chunk
 write_regenie2_native_chunk_with_optional_timing = writers.write_regenie2_native_chunk_with_optional_timing
+materialize_regenie2_native_chunk_with_optional_timing = writers.materialize_regenie2_native_chunk_with_optional_timing
+write_materialized_regenie2_native_chunk_with_optional_timing = (
+    writers.write_materialized_regenie2_native_chunk_with_optional_timing
+)
 record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
 binary_chunk_diagnostics_to_mapping = regenie2_binary.binary_chunk_diagnostics_to_mapping
 get_metadata_chromosome = shared.get_metadata_chromosome
@@ -94,6 +99,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         *,
         worker_name: str,
         staging_depth: int,
+        native_callback_batch_size: int,
         result_in_flight_limit: int | None,
         dosage_buffer_limit: int | None,
         stage_timing_recorder: timing.StageTimingRecorder | None,
@@ -103,6 +109,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Initialize shared native callback state."""
         if staging_depth <= 0:
             message = "staging_depth must be positive."
+            raise ValueError(message)
+        if native_callback_batch_size <= 0:
+            message = "native_callback_batch_size must be positive."
             raise ValueError(message)
         if result_in_flight_limit is not None and result_in_flight_limit <= 0:
             message = "result_in_flight_limit must be positive when provided."
@@ -119,11 +128,19 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.result_queue_depth = staging_depth
         self.result_in_flight_limit = result_in_flight_limit or self.result_queue_depth + 1
         self.dosage_buffer_limit = dosage_buffer_limit or self.dosage_queue_depth + 1
+        if self.dosage_buffer_limit < native_callback_batch_size:
+            message = (
+                "native_callback_batch_size must not exceed the effective dosage_buffer_limit "
+                f"({self.dosage_buffer_limit})."
+            )
+            raise ValueError(message)
+        self.native_callback_batch_size = native_callback_batch_size
         self.result_in_flight_slot_count = 0
         self.result_in_flight_slot_lock = threading.Lock()
         self.dosage_queue: queue.Queue[
             PreprocessedDosageChunkWorkItem
             | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkBatchWorkItem
             | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
             | None
         ] = queue.Queue(maxsize=self.dosage_queue_depth)
@@ -195,6 +212,40 @@ class NativeBgenCallbackRunner(abc.ABC):
             start_time=start_time,
             chunk_metadata=metadata,
         )
+
+    def record_chunk_stage_elapsed_duration(
+        self,
+        metadata: typing.Any,
+        stage_name: str,
+        elapsed_seconds: float,
+    ) -> None:
+        """Record an already-measured chunk stage duration."""
+        if self.stage_timing_recorder is None:
+            return
+        self.stage_timing_recorder.add_chunk_stage_duration(
+            chunk_identity=transfers.build_chunk_timing_identity(metadata),
+            stage_name=stage_name,
+            duration_seconds=elapsed_seconds,
+        )
+
+    def record_work_item_stage_elapsed_duration(
+        self,
+        work_item: (
+            PreprocessedDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkBatchWorkItem
+            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+        ),
+        stage_name: str,
+        elapsed_seconds: float,
+    ) -> None:
+        """Record a stage duration across one queued work item."""
+        if isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
+            duration_per_chunk = elapsed_seconds / len(work_item.work_items)
+            for chunk_work_item in work_item.work_items:
+                self.record_chunk_stage_elapsed_duration(chunk_work_item.metadata, stage_name, duration_per_chunk)
+            return
+        self.record_chunk_stage_elapsed_duration(work_item.metadata, stage_name, elapsed_seconds)
 
     def get_stage_duration_recorder(self) -> collections.abc.Callable[[str, float], None] | None:
         """Return an optional nested stage recorder for lower-level compute helpers."""
@@ -385,6 +436,46 @@ class NativeBgenCallbackRunner(abc.ABC):
         finally:
             self.record_chunk_stage_duration(metadata, "native_delivery", native_delivery_start_time)
 
+    def compute_preprocessed_variant_major_dosage_chunk_batch(
+        self,
+        metadata_batch: collections.abc.Sequence[typing.Any],
+        genotype_matrix_by_variant_batch: collections.abc.Sequence[npt.NDArray[np.float32]],
+        chunk_stats_batch: collections.abc.Sequence[_core.ChunkStats],
+    ) -> None:
+        """Enqueue a native batch of variant-major dosage chunks for JAX association."""
+        if not (
+            len(metadata_batch) == len(genotype_matrix_by_variant_batch) == len(chunk_stats_batch)
+        ):
+            message = "Variant-major dosage batch inputs must have identical lengths."
+            raise ValueError(message)
+        if not metadata_batch:
+            message = "Variant-major dosage batch must contain at least one chunk."
+            raise ValueError(message)
+        work_item = PreprocessedVariantMajorDosageChunkBatchWorkItem(
+            work_items=tuple(
+                PreprocessedVariantMajorDosageChunkWorkItem(
+                    metadata=metadata,
+                    genotype_matrix_by_variant=genotype_matrix_by_variant,
+                    chunk_stats=chunk_stats,
+                )
+                for metadata, genotype_matrix_by_variant, chunk_stats in zip(
+                    metadata_batch,
+                    genotype_matrix_by_variant_batch,
+                    chunk_stats_batch,
+                    strict=True,
+                )
+            )
+        )
+        if self.stage_timing_recorder is None:
+            self.put_dosage_work_item(work_item)
+            return
+        native_delivery_start_time = time.perf_counter()
+        try:
+            self.put_dosage_work_item(work_item)
+        finally:
+            elapsed_seconds = time.perf_counter() - native_delivery_start_time
+            self.record_work_item_stage_elapsed_duration(work_item, "native_delivery", elapsed_seconds)
+
     def compute_preprocessed_variant_major_packed8_probability_pair_chunk(
         self,
         metadata: typing.Any,
@@ -436,7 +527,8 @@ class NativeBgenCallbackRunner(abc.ABC):
                 try:
                     self.process_dosage_work_item(work_item)
                 finally:
-                    self.record_chunk_stage_duration(work_item.metadata, "python_callback", python_callback_start_time)
+                    elapsed_seconds = time.perf_counter() - python_callback_start_time
+                    self.record_work_item_stage_elapsed_duration(work_item, "python_callback", elapsed_seconds)
         except Exception as error:  # noqa: BLE001
             self.worker_error = error
 
@@ -453,10 +545,15 @@ class NativeBgenCallbackRunner(abc.ABC):
         work_item: (
             PreprocessedDosageChunkWorkItem
             | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkBatchWorkItem
             | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
         ),
     ) -> None:
         """Run one preprocessed dosage work item."""
+        if isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
+            for chunk_work_item in work_item.work_items:
+                self.process_dosage_work_item(chunk_work_item)
+            return
         if isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
             self.compute_preprocessed_variant_major_packed8_chunk(
                 variant_metadata=work_item.metadata,
@@ -638,16 +735,25 @@ class NativeBgenCallbackRunner(abc.ABC):
         work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
     ) -> None:
         """Materialize and write one computed result work item."""
+        host_dosage_buffer_released = False
         try:
-            write_regenie2_native_chunk_with_optional_timing(
-                writer_session=typing.cast("typing.Any", self).writer_session,
+            materialized_chunk = materialize_regenie2_native_chunk_with_optional_timing(
                 metadata=work_item.metadata,
-                chunk_stats=work_item.chunk_stats,
                 beta=work_item.beta,
                 standard_error=work_item.standard_error,
                 chi_squared=work_item.chi_squared,
                 log10_p_value=work_item.log10_p_value,
                 extra_code=work_item.extra_code,
+                stage_timing_recorder=self.stage_timing_recorder,
+                output_statistic_dtype=self.output_statistic_dtype,
+            )
+            self.release_result_work_item_host_buffer(work_item)
+            host_dosage_buffer_released = True
+            write_materialized_regenie2_native_chunk_with_optional_timing(
+                writer_session=typing.cast("typing.Any", self).writer_session,
+                metadata=work_item.metadata,
+                chunk_stats=work_item.chunk_stats,
+                materialized_chunk=materialized_chunk,
                 stage_timing_recorder=self.stage_timing_recorder,
                 output_statistic_dtype=self.output_statistic_dtype,
             )
@@ -657,13 +763,16 @@ class NativeBgenCallbackRunner(abc.ABC):
             )
             self.record_binary_correction_diagnostics(work_item.binary_chunk_diagnostics)
         finally:
-            self.release_result_work_item_buffer(work_item)
+            if not host_dosage_buffer_released:
+                self.release_result_work_item_host_buffer(work_item)
+            self.release_result_work_item_in_flight_slot(work_item)
 
     def put_dosage_work_item(
         self,
         work_item: (
             PreprocessedDosageChunkWorkItem
             | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkBatchWorkItem
             | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
             | None
         ),
@@ -1112,8 +1221,22 @@ class NativeBgenCallbackRunner(abc.ABC):
         work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
     ) -> None:
         """Release resources after a dependent JAX result is materialized."""
+        self.release_result_work_item_host_buffer(work_item)
+        self.release_result_work_item_in_flight_slot(work_item)
+
+    def release_result_work_item_host_buffer(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+    ) -> None:
+        """Release the host genotype buffer associated with one result."""
         if work_item.host_dosage_buffer is not None:
             self.release_dosage_buffer(work_item.host_dosage_buffer)
+
+    def release_result_work_item_in_flight_slot(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+    ) -> None:
+        """Release the in-flight result slot associated with one result."""
         if work_item.release_in_flight_slot:
             self.release_result_in_flight_slot()
 

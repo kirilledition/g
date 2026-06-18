@@ -254,6 +254,13 @@ const CONFIG_OPTION_METADATA: &[ConfigOptionMetadata] = &[
     ),
     option_metadata!(
         section: "compute",
+        toml: "native_callback_batch_size",
+        cli: Some("native_callback_batch_size"),
+        python: ["native_callback_batch_size"],
+        kind: Integer,
+    ),
+    option_metadata!(
+        section: "compute",
         toml: "result_in_flight_limit",
         cli: Some("result_in_flight_limit"),
         python: ["result_in_flight_limit"],

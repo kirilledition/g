@@ -187,6 +187,7 @@ def extend_run_manifest(
         plan.output_plan.writer_settings.output_format.value,
         plan.kernel_config.device.value,
         plan.kernel_config.staging_depth,
+        plan.kernel_config.native_callback_batch_size,
         plan.kernel_config.thread_count,
         plan.output_plan.writer_settings.writer_thread_count,
         plan.output_plan.writer_settings.writer_queue_depth,

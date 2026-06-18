@@ -194,6 +194,7 @@ class ProfileArguments:
         rust_benchmarks: Comma-separated Rust Criterion benchmark names.
         chunk_sizes: Comma-separated step 2 chunk-size values.
         staging_depths: Comma-separated staging-depth values.
+        native_callback_batch_sizes: Comma-separated native callback batch sizes.
         result_in_flight_limits: Comma-separated result in-flight limits, or default.
         dosage_buffer_limits: Comma-separated dosage buffer limits, or default.
         output_writer_thread_counts: Comma-separated writer thread-count values.
@@ -261,6 +262,7 @@ class ProfileArguments:
     rust_benchmarks: str
     chunk_sizes: str
     staging_depths: str
+    native_callback_batch_sizes: str
     result_in_flight_limits: str
     dosage_buffer_limits: str
     output_writer_thread_counts: str
@@ -322,6 +324,7 @@ class Step2Candidate:
     device: str
     chunk_size: int
     staging_depth: int
+    native_callback_batch_size: int
     result_in_flight_limit: int | None
     dosage_buffer_limit: int | None
     output_writer_thread_count: int
@@ -1503,6 +1506,7 @@ def build_candidate_slug(candidate: Step2Candidate) -> str:
         candidate.device,
         f"chunk{candidate.chunk_size}",
         f"staging{candidate.staging_depth}",
+        f"callbackbatch{candidate.native_callback_batch_size}",
         f"inflight{candidate.result_in_flight_limit if candidate.result_in_flight_limit is not None else 'default'}",
         f"buffer{candidate.dosage_buffer_limit if candidate.dosage_buffer_limit is not None else 'default'}",
         f"writer{candidate.output_writer_thread_count}",
@@ -1526,6 +1530,7 @@ def build_step2_candidates(
     bgen_candidates: tuple[BgenCandidateSummary, ...],
     chunk_sizes: tuple[int, ...],
     staging_depths: tuple[int, ...],
+    native_callback_batch_sizes: tuple[int, ...],
     result_in_flight_limits: tuple[int | None, ...],
     dosage_buffer_limits: tuple[int | None, ...],
     writer_thread_counts: tuple[int, ...],
@@ -1537,43 +1542,51 @@ def build_step2_candidates(
     for bgen_candidate in bgen_candidates:
         for chunk_size in chunk_sizes:
             for staging_depth in staging_depths:
-                for result_in_flight_limit in result_in_flight_limits:
-                    for dosage_buffer_limit in dosage_buffer_limits:
-                        for writer_thread_count in writer_thread_counts:
-                            for queue_depth in build_queue_depth_values(writer_thread_count, queue_depth_multipliers):
-                                if trait_type == "binary":
-                                    for firth_batch_size in firth_batch_sizes:
-                                        candidates.append(
-                                            Step2Candidate(
-                                                trait_type=trait_type,
-                                                device=device,
-                                                chunk_size=chunk_size,
-                                                staging_depth=staging_depth,
-                                                result_in_flight_limit=result_in_flight_limit,
-                                                dosage_buffer_limit=dosage_buffer_limit,
-                                                output_writer_thread_count=writer_thread_count,
-                                                output_writer_queue_depth=queue_depth,
-                                                bgen_decode_tile_variant_count=bgen_candidate.decode_tile_variant_count,
-                                                rayon_thread_count=bgen_candidate.rayon_thread_count,
-                                                firth_batch_size=firth_batch_size,
+                for native_callback_batch_size in native_callback_batch_sizes:
+                    for result_in_flight_limit in result_in_flight_limits:
+                        for dosage_buffer_limit in dosage_buffer_limits:
+                            for writer_thread_count in writer_thread_counts:
+                                for queue_depth in build_queue_depth_values(
+                                    writer_thread_count,
+                                    queue_depth_multipliers,
+                                ):
+                                    if trait_type == "binary":
+                                        for firth_batch_size in firth_batch_sizes:
+                                            candidates.append(
+                                                Step2Candidate(
+                                                    trait_type=trait_type,
+                                                    device=device,
+                                                    chunk_size=chunk_size,
+                                                    staging_depth=staging_depth,
+                                                    native_callback_batch_size=native_callback_batch_size,
+                                                    result_in_flight_limit=result_in_flight_limit,
+                                                    dosage_buffer_limit=dosage_buffer_limit,
+                                                    output_writer_thread_count=writer_thread_count,
+                                                    output_writer_queue_depth=queue_depth,
+                                                    bgen_decode_tile_variant_count=(
+                                                        bgen_candidate.decode_tile_variant_count
+                                                    ),
+                                                    rayon_thread_count=bgen_candidate.rayon_thread_count,
+                                                    firth_batch_size=firth_batch_size,
+                                                )
                                             )
+                                        continue
+                                    candidates.append(
+                                        Step2Candidate(
+                                            trait_type=trait_type,
+                                            device=device,
+                                            chunk_size=chunk_size,
+                                            staging_depth=staging_depth,
+                                            native_callback_batch_size=native_callback_batch_size,
+                                            result_in_flight_limit=result_in_flight_limit,
+                                            dosage_buffer_limit=dosage_buffer_limit,
+                                            output_writer_thread_count=writer_thread_count,
+                                            output_writer_queue_depth=queue_depth,
+                                            bgen_decode_tile_variant_count=bgen_candidate.decode_tile_variant_count,
+                                            rayon_thread_count=bgen_candidate.rayon_thread_count,
+                                            firth_batch_size=None,
                                         )
-                                    continue
-                                candidates.append(
-                                    Step2Candidate(
-                                        trait_type=trait_type,
-                                        device=device,
-                                        chunk_size=chunk_size,
-                                        staging_depth=staging_depth,
-                                        result_in_flight_limit=result_in_flight_limit,
-                                        dosage_buffer_limit=dosage_buffer_limit,
-                                        output_writer_thread_count=writer_thread_count,
-                                        output_writer_queue_depth=queue_depth,
-                                        bgen_decode_tile_variant_count=bgen_candidate.decode_tile_variant_count,
-                                        rayon_thread_count=bgen_candidate.rayon_thread_count,
-                                        firth_batch_size=None,
                                     )
-                                )
     return tuple(candidates)
 
 
@@ -1610,6 +1623,7 @@ def count_step2_tuning_candidates(
     selected_bgen_candidate_count: int,
     chunk_sizes: tuple[int, ...],
     staging_depths: tuple[int, ...],
+    native_callback_batch_sizes: tuple[int, ...],
     result_in_flight_limits: tuple[int | None, ...],
     dosage_buffer_limits: tuple[int | None, ...],
     writer_thread_counts: tuple[int, ...],
@@ -1623,6 +1637,7 @@ def count_step2_tuning_candidates(
         selected_bgen_candidate_count
         * len(chunk_sizes)
         * len(staging_depths)
+        * len(native_callback_batch_sizes)
         * len(result_in_flight_limits)
         * len(dosage_buffer_limits)
         * queue_depth_count
@@ -1665,6 +1680,7 @@ def build_campaign_budget(
     workload_keys = parse_profile_workload_keys(arguments.workload_keys)
     chunk_sizes = parse_int_list(arguments.chunk_sizes)
     staging_depths = parse_int_list(arguments.staging_depths)
+    native_callback_batch_sizes = parse_int_list(arguments.native_callback_batch_sizes)
     result_in_flight_limits = parse_optional_int_list(arguments.result_in_flight_limits)
     dosage_buffer_limits = parse_optional_int_list(arguments.dosage_buffer_limits)
     writer_thread_counts = parse_int_list(arguments.output_writer_thread_counts)
@@ -1680,6 +1696,7 @@ def build_campaign_budget(
             selected_bgen_candidate_count=selected_bgen_candidate_count,
             chunk_sizes=chunk_sizes,
             staging_depths=staging_depths,
+            native_callback_batch_sizes=native_callback_batch_sizes,
             result_in_flight_limits=result_in_flight_limits,
             dosage_buffer_limits=dosage_buffer_limits,
             writer_thread_counts=writer_thread_counts,
@@ -2074,6 +2091,7 @@ def build_g_step2_child_command(
     dosage_buffer_limit_expression = (
         "None" if candidate.dosage_buffer_limit is None else str(candidate.dosage_buffer_limit)
     )
+    native_callback_batch_size = candidate.native_callback_batch_size
     firth_batch_expression = "1024" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
     rayon_thread_expression = "None" if candidate.rayon_thread_count is None else str(candidate.rayon_thread_count)
     diagnostic_options_expression = repr(diagnostic_options or {})
@@ -2136,6 +2154,7 @@ def build_g_step2_child_command(
             compute_options = {{
                 "device": {device!r},
                 "staging_depth": {staging_depth},
+                "native_callback_batch_size": {native_callback_batch_size},
                 "bgen_decode_tile_variant_count": {bgen_tile_expression},
                 "firth_batch_size": {firth_batch_expression},
                 "jax_persistent_cache": True,
@@ -2210,6 +2229,7 @@ def build_g_step2_child_command(
         chunk_size=candidate.chunk_size,
         variant_limit_expression=variant_limit_expression,
         staging_depth=candidate.staging_depth,
+        native_callback_batch_size=native_callback_batch_size,
         result_in_flight_limit_expression=result_in_flight_limit_expression,
         dosage_buffer_limit_expression=dosage_buffer_limit_expression,
         writer_thread_count=candidate.output_writer_thread_count,
@@ -3083,6 +3103,7 @@ def run_candidate_tuning(
     emit_stage_timings = should_emit_stage_timings(arguments)
     chunk_sizes = parse_int_list(arguments.chunk_sizes)
     staging_depths = parse_int_list(arguments.staging_depths)
+    native_callback_batch_sizes = parse_int_list(arguments.native_callback_batch_sizes)
     result_in_flight_limits = parse_optional_int_list(arguments.result_in_flight_limits)
     dosage_buffer_limits = parse_optional_int_list(arguments.dosage_buffer_limits)
     writer_thread_counts = parse_int_list(arguments.output_writer_thread_counts)
@@ -3096,6 +3117,7 @@ def run_candidate_tuning(
             bgen_candidates=selected_bgen_summaries,
             chunk_sizes=chunk_sizes,
             staging_depths=staging_depths,
+            native_callback_batch_sizes=native_callback_batch_sizes,
             result_in_flight_limits=result_in_flight_limits,
             dosage_buffer_limits=dosage_buffer_limits,
             writer_thread_counts=writer_thread_counts,
@@ -3282,6 +3304,7 @@ def candidate_from_aggregate_name(winner_key: str, aggregate_result: AggregateRe
         device=device,
         chunk_size=read_int('"bsize": ', 8192),
         staging_depth=read_int('"staging_depth": ', 1),
+        native_callback_batch_size=read_int('"native_callback_batch_size": ', 1),
         result_in_flight_limit=read_optional_int('"result_in_flight_limit": '),
         dosage_buffer_limit=read_optional_int('"dosage_buffer_limit": '),
         output_writer_thread_count=read_int('"writer_threads": ', 8),
@@ -5114,6 +5137,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArgument
         rust_benchmarks=tooling_hydra_arguments.comma_join(tool_values["rust_benchmarks"]),
         chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
         staging_depths=tooling_hydra_arguments.comma_join(tool_values["staging_depths"]),
+        native_callback_batch_sizes=tooling_hydra_arguments.comma_join(tool_values["native_callback_batch_sizes"]),
         result_in_flight_limits=tooling_hydra_arguments.comma_join(tool_values["result_in_flight_limits"]),
         dosage_buffer_limits=tooling_hydra_arguments.comma_join(tool_values["dosage_buffer_limits"]),
         output_writer_thread_counts=tooling_hydra_arguments.comma_join(tool_values["output_writer_thread_counts"]),

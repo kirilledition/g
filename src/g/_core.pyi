@@ -52,6 +52,8 @@ class GComputeConfig:
     @property
     def staging_depth(self) -> int: ...
     @property
+    def native_callback_batch_size(self) -> int: ...
+    @property
     def result_in_flight_limit(self) -> int | None: ...
     @property
     def dosage_buffer_limit(self) -> int | None: ...
@@ -379,18 +381,21 @@ class Regenie2RunEngine:
         sample_indices: npt.NDArray[np.int64],
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int: ...
     def run_bgen_variant_major_dosage_buffered_chunks_for_native_aligned_samples(
         self,
         aligned_sample_data: NativeAlignedSampleData,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int: ...
     def run_bgen_variant_major_dosage_buffered_chunks_for_native_multi_aligned_samples(
         self,
         aligned_sample_data: NativeMultiAlignedSampleData,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int: ...
     def run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
         self,
@@ -752,6 +757,7 @@ def build_run_manifest_extension_payload(
     output_format: str,
     device: str,
     staging_depth: int,
+    native_callback_batch_size: int,
     threads: int | None,
     writer_threads: int,
     writer_queue_depth: int,

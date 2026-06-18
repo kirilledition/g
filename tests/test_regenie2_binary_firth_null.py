@@ -94,6 +94,7 @@ def run_stubbed_covariate_only_null_firth(
         )
 
     monkeypatch.setattr(regenie2_binary_firth_null, "fit_covariate_only_firth_null_model_once", fit_once)
+    jax.clear_caches()
     covariate_matrix = jnp.asarray(
         [
             [1.0, 0.0],

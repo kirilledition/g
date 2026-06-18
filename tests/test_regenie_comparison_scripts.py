@@ -1904,6 +1904,7 @@ def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pyte
         device="gpu",
         chunk_size=8192,
         staging_depth=1,
+        native_callback_batch_size=1,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
         output_writer_thread_count=4,
@@ -1947,6 +1948,7 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
         device="cpu",
         chunk_size=4096,
         staging_depth=2,
+        native_callback_batch_size=2,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
         output_writer_thread_count=1,
@@ -1966,6 +1968,7 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
     assert "phenotype_binary" in command_text
     assert "\"device\": 'cpu'" in command_text
     assert '"bsize": 4096' in command_text
+    assert '"native_callback_batch_size": 2' in command_text
     assert 'compute_options["variant_limit"] = 1000' in command_text
     assert '"firth": True' in command_text
     assert '"jax_persistent_cache": True' in command_text
@@ -2285,6 +2288,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         device="gpu",
         chunk_size=8192,
         staging_depth=1,
+        native_callback_batch_size=1,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
         output_writer_thread_count=4,
@@ -2497,6 +2501,7 @@ def test_deep_profile_deep_profiles_continue_after_timed_out_profiler(
         device="gpu",
         chunk_size=8192,
         staging_depth=1,
+        native_callback_batch_size=1,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
         output_writer_thread_count=4,

@@ -67,6 +67,8 @@ tool:
   staging_depths:
     - 1
     - 2
+  native_callback_batch_sizes:
+    - 1
   result_in_flight_limits:
     - null
   dosage_buffer_limits:
