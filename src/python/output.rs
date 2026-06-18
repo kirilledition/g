@@ -8,11 +8,15 @@ use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use crate::output::{
-    CurrentRunManifestHeaderInput, NativeChunkHandle, OutputResumeMode, OutputWriterError,
-    OutputWriterSession as NativeOutputWriterSession,
+    CurrentRunManifestHeaderInput, ManifestFileFingerprint as NativeManifestFileFingerprint, NativeChunkHandle,
+    OutputResumeMode, OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
     build_current_run_manifest_header_json as build_native_current_run_manifest_header_json,
+    build_file_content_sha256 as build_native_file_content_sha256,
+    build_manifest_file_fingerprint as build_native_manifest_file_fingerprint,
+    build_manifest_json_sha256 as build_native_manifest_json_sha256,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
     initialize_output_run as initialize_native_output_run, load_run_manifest_json as load_native_run_manifest_json,
     prepare_output_run as prepare_native_output_run,
@@ -525,6 +529,47 @@ pub(crate) fn build_current_run_manifest_header_json(
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_file_content_sha256_value(path: String) -> PyResult<String> {
+    build_native_file_content_sha256(Path::new(&path))
+        .map_err(|error| output_writer_error_to_py(error, "build_file_content_sha256_value"))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_manifest_file_fingerprint_payload<'py>(
+    py: Python<'py>,
+    path: String,
+    include_content_hash: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let file_fingerprint = build_native_manifest_file_fingerprint(Path::new(&path), include_content_hash)
+        .map_err(|error| output_writer_error_to_py(error, "build_manifest_file_fingerprint_payload"))?;
+    manifest_file_fingerprint_to_dict(py, &file_fingerprint)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_manifest_file_fingerprint_mapping_payload<'py>(
+    py: Python<'py>,
+    path: String,
+    size: u64,
+    mtime_ns: i64,
+    content_hash_algorithm: String,
+    content_sha256: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    manifest_file_fingerprint_to_dict(
+        py,
+        &NativeManifestFileFingerprint { path, size, mtime_ns, content_hash_algorithm, content_sha256 },
+    )
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_manifest_json_sha256(manifest_json: String) -> String {
+    build_native_manifest_json_sha256(&manifest_json)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn validate_run_manifest_compatibility(manifest_json: String, current_header_json: String) -> PyResult<()> {
     validate_native_run_manifest_compatibility(&manifest_json, &current_header_json)
         .map_err(|error| output_writer_error_to_py(error, "validate_run_manifest_compatibility"))
@@ -600,6 +645,19 @@ pub(crate) fn repair_strict_manifest_chunk_commits(
             .collect::<Vec<_>>(),
     )
     .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+fn manifest_file_fingerprint_to_dict<'py>(
+    py: Python<'py>,
+    file_fingerprint: &NativeManifestFileFingerprint,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("path", &file_fingerprint.path)?;
+    payload.set_item("size", file_fingerprint.size)?;
+    payload.set_item("mtime_ns", file_fingerprint.mtime_ns)?;
+    payload.set_item("content_hash_algorithm", &file_fingerprint.content_hash_algorithm)?;
+    payload.set_item("content_sha256", &file_fingerprint.content_sha256)?;
+    Ok(payload)
 }
 
 fn output_writer_error_to_py(error: OutputWriterError, operation: &str) -> PyErr {

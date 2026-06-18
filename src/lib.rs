@@ -9,6 +9,7 @@ pub mod python;
 pub mod regenie;
 pub(crate) mod run_metadata;
 pub mod sample;
+pub(crate) mod telemetry_policy;
 pub(crate) mod timing;
 pub(crate) mod trusted_validation;
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import hashlib
 import json
 import logging
 import re
@@ -28,9 +27,6 @@ OUTPUT_SCHEMA_VERSION = 2
 JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
 DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE = types.FloatingPointDtype.FLOAT32
-FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM = "sha256"
-FILE_FINGERPRINT_METADATA_ONLY = "metadata-only"
-FILE_FINGERPRINT_HASH_CHUNK_SIZE_BYTES = 1024 * 1024
 
 
 class MultiPhenotypeSampleMode(enum.StrEnum):
@@ -318,31 +314,33 @@ def write_run_manifest(output_run_paths: OutputRunPaths, manifest: dict[str, typ
 
 def build_file_content_sha256(path: Path) -> str:
     """Build a streaming SHA-256 content hash for a local input file."""
-    fingerprint_hash = hashlib.sha256()
-    with path.open("rb") as input_file:
-        while True:
-            input_chunk = input_file.read(FILE_FINGERPRINT_HASH_CHUNK_SIZE_BYTES)
-            if not input_chunk:
-                break
-            fingerprint_hash.update(input_chunk)
-    return fingerprint_hash.hexdigest()
+    return _core.build_file_content_sha256_value(str(path))
 
 
 def build_file_fingerprint(path: Path | None, *, include_content_hash: bool) -> ManifestFileFingerprint | None:
     """Build a lightweight immutable fingerprint for an input file."""
     if path is None:
         return None
-    path_stat = path.stat()
-    content_hash_algorithm = (
-        FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM if include_content_hash else FILE_FINGERPRINT_METADATA_ONLY
+    return manifest_file_fingerprint_from_native_payload(
+        _core.build_manifest_file_fingerprint_payload(str(path), include_content_hash)
     )
+
+
+def manifest_file_fingerprint_from_native_payload(payload: object) -> ManifestFileFingerprint:
+    """Adapt a native file-fingerprint payload to the public Python dataclass."""
+    fingerprint_payload = native_mapping_payload(payload)
     return ManifestFileFingerprint(
-        path=str(path.resolve()),
-        size=path_stat.st_size,
-        mtime_ns=path_stat.st_mtime_ns,
-        content_hash_algorithm=content_hash_algorithm,
-        content_sha256=build_file_content_sha256(path) if include_content_hash else None,
+        path=typing.cast("str", fingerprint_payload["path"]),
+        size=typing.cast("int", fingerprint_payload["size"]),
+        mtime_ns=typing.cast("int", fingerprint_payload["mtime_ns"]),
+        content_hash_algorithm=typing.cast("str", fingerprint_payload["content_hash_algorithm"]),
+        content_sha256=typing.cast("str | None", fingerprint_payload["content_sha256"]),
     )
+
+
+def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
+    """Adapt a native mapping payload to a mutable Python dictionary."""
+    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
 
 
 def file_fingerprint_to_mapping(
@@ -351,13 +349,15 @@ def file_fingerprint_to_mapping(
     """Serialize a file fingerprint to manifest JSON fields."""
     if file_fingerprint is None:
         return None
-    return {
-        "path": file_fingerprint.path,
-        "size": file_fingerprint.size,
-        "mtime_ns": file_fingerprint.mtime_ns,
-        "content_hash_algorithm": file_fingerprint.content_hash_algorithm,
-        "content_sha256": file_fingerprint.content_sha256,
-    }
+    return native_mapping_payload(
+        _core.build_manifest_file_fingerprint_mapping_payload(
+            file_fingerprint.path,
+            file_fingerprint.size,
+            file_fingerprint.mtime_ns,
+            file_fingerprint.content_hash_algorithm,
+            file_fingerprint.content_sha256,
+        )
+    )
 
 
 def require_manifest_file_fingerprint(
@@ -403,12 +403,12 @@ def normalize_execution_plan_value(value: typing.Any) -> typing.Any:
 def build_execution_plan_hash(execution_plan: typing.Any) -> str:
     """Build a stable SHA-256 hash for compute/output-affecting run state."""
     normalized_execution_plan = normalize_execution_plan_value(execution_plan)
-    execution_plan_bytes = json.dumps(
+    execution_plan_json = json.dumps(
         normalized_execution_plan,
         sort_keys=True,
         separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(execution_plan_bytes).hexdigest()
+    )
+    return _core.build_manifest_json_sha256(execution_plan_json)
 
 
 def build_jax_policy_manifest(

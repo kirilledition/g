@@ -30,6 +30,7 @@ mod profile;
 mod run_events;
 mod run_metadata;
 mod runtime;
+mod telemetry_policy;
 mod timing;
 mod trusted_validation;
 
@@ -44,7 +45,9 @@ use logging::{
 };
 use output::{
     NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
-    build_current_run_manifest_header_json, finalize_output_run_chunks, initialize_output_run, load_run_manifest_json,
+    build_current_run_manifest_header_json, build_file_content_sha256_value,
+    build_manifest_file_fingerprint_mapping_payload, build_manifest_file_fingerprint_payload,
+    build_manifest_json_sha256, finalize_output_run_chunks, initialize_output_run, load_run_manifest_json,
     prepare_output_run, read_manifest_committed_chunk_identifiers, repair_strict_manifest_chunk_commits,
     resolve_output_run_paths, scan_committed_chunk_identifiers, validate_run_manifest_compatibility,
     validate_strict_manifest_chunks, write_regenie2_multi_native_chunk, write_regenie2_multi_native_chunk_f64,
@@ -59,6 +62,10 @@ use run_metadata::{
     build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload, build_run_manifest_extension_payload,
 };
 use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool};
+use telemetry_policy::{
+    build_empty_telemetry_writer_counters_payload, format_telemetry_timestamp_value, paths_refer_to_same_file_value,
+    resolve_telemetry_output_run_root_value, resolve_telemetry_paths_payload, resolve_telemetry_stream_file_value,
+};
 use timing::NativeStageTimingRecorder;
 use trusted_validation::{
     build_trusted_bgen_validation_cache_path_value, build_trusted_bgen_validation_cache_payload,
@@ -1608,6 +1615,11 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeTelemetrySession>()?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_file_content_sha256_value, module)?)?;
+    module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_mapping_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_manifest_json_sha256, module)?)?;
+    module.add_function(wrap_pyfunction!(build_empty_telemetry_writer_counters_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_completed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_failed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
@@ -1620,8 +1632,12 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(normalize_binary_correction_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_association_backend_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_telemetry_output_run_root_value, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_telemetry_paths_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(format_telemetry_timestamp_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_path_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_fingerprint_value, module)?)?;
@@ -1634,6 +1650,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_output_run_paths, module)?)?;
     module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(summarize_variant_major_dosage_chunk_stats, module)?)?;
+    module.add_function(wrap_pyfunction!(paths_refer_to_same_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(validate_run_manifest_compatibility, module)?)?;
     module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;

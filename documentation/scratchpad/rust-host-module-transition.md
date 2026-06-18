@@ -16,6 +16,16 @@
   fingerprinting, cache path naming, and cache payload construction into
   Rust/PyO3 while keeping validation policy, engine calls, cache existence
   checks, and atomic cache writes in Python.
+- Current uncommitted follow-up: moved output manifest file content hashing,
+  file fingerprint payload/mapping construction, and execution-plan SHA-256
+  text hashing into Rust/PyO3 while keeping Python dataclass adapters and
+  execution-plan normalization stable.
+- Additional uncommitted follow-up: moved telemetry timestamp formatting,
+  telemetry output-root/path resolution, stream-file conflict policy, path
+  equivalence checks, and empty writer-counter payload shaping into Rust/PyO3
+  while keeping Python `TelemetryPaths` and `TelemetrySession` ownership stable.
+  Timestamp formatting uses a direct minimal-feature `chrono` dependency rather
+  than hand-written UTC calendar conversion.
 - Verification for the current checkpoint passed: focused pytest,
   `just check-core-stub`, `cargo test --workspace`, full `ty`, targeted `ruff`,
   and `just check-internal-defaults`.
@@ -85,6 +95,14 @@ the current Python public API and test behavior.
   validation cache filename construction, and validation cache payload shaping
   into Rust/PyO3 while preserving Python-owned validation policy and filesystem
   side effects.
+- Manifest fingerprint follow-up moved output file content SHA-256, manifest
+  file-fingerprint payload/mapping construction, and execution-plan JSON text
+  SHA-256 into Rust/PyO3 while preserving Python public helpers and dataclasses.
+- Telemetry path-policy follow-up moved deterministic telemetry timestamp,
+  path resolution, stream-file conflict checks, path equivalence checks, and
+  empty writer-counter payload construction into Rust/PyO3 while preserving
+  Python telemetry session and dataclass APIs. The timestamp renderer delegates
+  UTC/RFC3339 formatting to `chrono`.
 
 ## Verification Run
 
@@ -179,3 +197,75 @@ the current Python public API and test behavior.
   `result_queue_consumer_wait` +7.516s.
 - Output/count checks matched on common modes: 418,943 rows, 418,943 non-null
   INFO values, and identical finalized Parquet size of 20,648,112 bytes.
+
+## Manifest Fingerprint Follow-Up Verification Run
+
+- `uv run pytest tests/test_io_output.py::test_current_run_manifest_hashes_small_control_files tests/test_io_output.py::test_bgen_content_change_with_preserved_metadata_keeps_metadata_only_fingerprint tests/test_io_output.py::test_output_manifest_helpers_cover_empty_paths_and_invalid_json tests/test_io_output.py::test_initialize_output_run_rejects_execution_plan_hash_mismatch tests/test_io_output.py::test_initialize_output_run_rejects_execution_plan_hash_only_mismatch -q` passed: 24 tests.
+- `just check-core-stub` passed.
+- `uv run pytest tests/test_io_output.py tests/test_regenie2_pipeline.py -q` passed: 205 tests.
+- `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed: 122 tests.
+- `uv run --no-sync ty check src tests scripts tooling` passed.
+- `uv run --no-sync ruff check src/g/io/output.py src/g/_core.pyi` passed.
+- `just check-internal-defaults` passed.
+
+## Manifest Fingerprint Follow-Up Performance Check
+
+- Focused helper microbench on full chr22 inputs:
+  - BGEN metadata-only fingerprint: old Python 446.503us, native 312.176us,
+    delta -134.328us (-30.08%).
+  - Sample content fingerprint: old Python 2746.854us, native 2268.845us,
+    delta -478.010us (-17.40%).
+  - Sample standalone content SHA-256: old Python 2002.093us, native 2036.509us,
+    delta +34.416us (+1.72%).
+  - Fingerprint mapping only: old Python 0.224us, native 1.087us, delta
+    +0.863us; PyO3 overhead dominates this tiny dict construction.
+  - Execution-plan JSON SHA-256 only: old Python 4.999us, native 12.215us,
+    delta +7.216us; PyO3 overhead dominates this tiny hash.
+  - Public execution-plan hash helper: old Python 78.363us, native 82.917us,
+    delta +4.554us (+5.81%).
+- Production-style current-run manifest wrapper on chr22 control files:
+  - `build_current_run_manifest_header`: old Python 11073.813us, native-backed
+    9923.092us, delta -1150.720us (-10.39%).
+  - Interleaved `build_current_run_manifest_header` plus
+    `current_run_manifest_header_to_mapping`: old Python 21261.386us,
+    native-backed 20587.033us, delta -674.353us (-3.17%).
+- Standalone full 118 MB BGEN content SHA-256 was slower with native `sha2`:
+  old Python/OpenSSL 646.055ms, native 1240.668ms, delta +594.613ms (+92.04%).
+  This is not the production chr22 current-manifest path because BGEN manifest
+  identity is metadata-only; content hashes are used for the small control files.
+
+## Telemetry Path-Policy Follow-Up Verification Run
+
+- `uv run pytest tests/test_telemetry.py::test_resolve_telemetry_paths_defaults_to_output_run_logs tests/test_telemetry.py::test_trace_telemetry_paths_default_profile_summary_without_exact_stage_timings tests/test_telemetry.py::test_explicit_stage_timings_path_enables_exact_stage_output tests/test_telemetry.py::test_telemetry_stream_uses_log_file_or_trace_file_alias tests/test_telemetry.py::test_telemetry_stream_rejects_different_log_and_trace_files tests/test_telemetry.py::test_log_file_replaces_default_telemetry_stream -q` passed: 6 tests.
+- `uv run pytest tests/test_telemetry.py tests/test_cli_bridge.py tests/test_api.py tests/test_callback_lifecycle.py -q` passed: 74 tests.
+- `just check-core-stub` passed.
+- `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed: 122 tests.
+- `uv run --no-sync ty check src tests scripts tooling` passed.
+- `uv run --no-sync ruff check src/g/engine/telemetry.py src/g/_core.pyi` passed.
+- `just check-internal-defaults` passed.
+- After replacing manual UTC timestamp logic with `chrono`, the follow-up
+  re-ran focused telemetry tests, full telemetry-related pytest, `just
+  check-core-stub`, `cargo test --workspace`, `ty`, targeted `ruff`, timestamp
+  smoke checks, and `git diff --check`; all passed.
+
+## Telemetry Path-Policy Follow-Up Performance Check
+
+- Focused public-helper microbench compared the old Python implementation to
+  the current Rust/PyO3-backed Python helpers in the same process.
+- Results:
+  - `format_timestamp`: old Python 1.935us, native-backed 0.336us, delta
+    -1.599us (-82.63%).
+  - `resolve_output_run_root`: old Python 1.670us, native-backed 1.648us,
+    delta -0.022us (-1.30%).
+  - `resolve_telemetry_paths` default trace case: old Python 6.269us,
+    native-backed 6.461us, delta +0.192us (+3.06%).
+  - `resolve_telemetry_stream_file` default case: old Python 1.051us,
+    native-backed 1.636us, delta +0.585us (+55.67%).
+  - `paths_refer_to_same_file`: old Python 1822.756us, native-backed
+    1783.295us, delta -39.461us (-2.16%).
+  - `build_empty_writer_counters`: old Python 0.310us, native-backed 1.257us,
+    delta +0.947us (+305.89%).
+- Interpretation: this slice is performance-neutral at application scale.
+  Timestamp formatting and path equivalence improved, but PyO3/dict adapter
+  overhead makes the smallest helper calls slightly slower. These helpers run
+  at startup/teardown/path-policy frequency, not per variant or per result row.

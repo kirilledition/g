@@ -712,6 +712,7 @@ name = "g"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "chrono",
  "clap",
  "criterion",
  "crossbeam-channel",
