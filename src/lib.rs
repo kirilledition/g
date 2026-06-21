@@ -1,5 +1,6 @@
 #![warn(clippy::pedantic)]
 
+pub(crate) mod callback_summary;
 pub mod genotype;
 pub(crate) mod host_policy;
 pub mod interface;

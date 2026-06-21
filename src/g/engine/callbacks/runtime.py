@@ -8,7 +8,6 @@ import queue
 import threading
 import time
 import typing
-from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
@@ -48,32 +47,8 @@ write_materialized_regenie2_native_chunk_with_optional_timing = (
     writers.write_materialized_regenie2_native_chunk_with_optional_timing
 )
 record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
-binary_chunk_diagnostics_to_mapping = regenie2_binary.binary_chunk_diagnostics_to_mapping
+binary_chunk_diagnostics_to_summary_counts = regenie2_binary.binary_chunk_diagnostics_to_summary_counts
 get_metadata_chromosome = shared.get_metadata_chromosome
-
-
-@dataclass
-class BinaryCorrectionSummary:
-    """Aggregate binary correction counters accumulated across chunks."""
-
-    score_only_count: int
-    score_test_candidate_count: int
-    firth_attempted_count: int
-    firth_success_count: int
-    firth_failed_count: int
-    firth_numerical_failure_count: int
-    firth_max_iteration_failure_count: int
-    firth_invalid_statistic_failure_count: int
-    firth_step_halving_failure_count: int
-    pseudo_firth_attempt_count: int
-    pseudo_firth_success_count: int
-    nr_zero_start_attempt_count: int
-    nr_zero_start_success_count: int
-    nr_warm_start_attempt_count: int
-    nr_warm_start_success_count: int
-    sparse_correction_count: int
-    dense_correction_count: int
-    null_model_failure_count: int
 
 
 def require_current_chromosome_state[ChromosomeStateType](
@@ -153,27 +128,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.dosage_buffer_identifiers: set[int] = set()
         self.worker_error: BaseException | None = None
         self.result_worker_error: BaseException | None = None
-        self.binary_correction_summary = BinaryCorrectionSummary(
-            score_only_count=0,
-            score_test_candidate_count=0,
-            firth_attempted_count=0,
-            firth_success_count=0,
-            firth_failed_count=0,
-            firth_numerical_failure_count=0,
-            firth_max_iteration_failure_count=0,
-            firth_invalid_statistic_failure_count=0,
-            firth_step_halving_failure_count=0,
-            pseudo_firth_attempt_count=0,
-            pseudo_firth_success_count=0,
-            nr_zero_start_attempt_count=0,
-            nr_zero_start_success_count=0,
-            nr_warm_start_attempt_count=0,
-            nr_warm_start_success_count=0,
-            sparse_correction_count=0,
-            dense_correction_count=0,
-            null_model_failure_count=0,
-        )
-        self.binary_correction_summary_chunk_count = 0
+        self.binary_correction_summary = _core.NativeBinaryCorrectionSummary()
+        self.binary_correction_pending_diagnostics: list[regenie2_binary.BinaryChunkDiagnostics] = []
         self.worker_thread = threading.Thread(
             target=self.consume_dosage_chunks,
             name=worker_name,
@@ -186,6 +142,11 @@ class NativeBgenCallbackRunner(abc.ABC):
         )
         self.worker_start_lock = threading.Lock()
         self.worker_threads_started = False
+
+    @property
+    def binary_correction_summary_chunk_count(self) -> int:
+        """Return the number of chunks included in binary correction summary telemetry."""
+        return self.binary_correction_summary.chunk_count + len(self.binary_correction_pending_diagnostics)
 
     def start(self) -> None:
         """Start asynchronous callback workers after owner setup is complete."""
@@ -443,9 +404,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats_batch: collections.abc.Sequence[_core.ChunkStats],
     ) -> None:
         """Enqueue a native batch of variant-major dosage chunks for JAX association."""
-        if not (
-            len(metadata_batch) == len(genotype_matrix_by_variant_batch) == len(chunk_stats_batch)
-        ):
+        if not (len(metadata_batch) == len(genotype_matrix_by_variant_batch) == len(chunk_stats_batch)):
             message = "Variant-major dosage batch inputs must have identical lengths."
             raise ValueError(message)
         if not metadata_batch:
@@ -611,7 +570,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def record_binary_null_model_failure_count(self, failure_count: int) -> None:
         """Accumulate binary null-model failures for run-level telemetry."""
-        self.binary_correction_summary.null_model_failure_count += failure_count
+        self.binary_correction_summary.add_null_model_failure_count(failure_count)
 
     def record_binary_correction_diagnostics(
         self,
@@ -622,81 +581,55 @@ class NativeBgenCallbackRunner(abc.ABC):
             return
         if self.telemetry_session is None:
             return
-        diagnostics_mapping = binary_chunk_diagnostics_to_mapping(binary_chunk_diagnostics)
-        self.binary_correction_summary_chunk_count += 1
-        self.binary_correction_summary.score_only_count += int(diagnostics_mapping["score_only_count"])
-        self.binary_correction_summary.score_test_candidate_count += int(
-            diagnostics_mapping["score_test_candidate_count"]
+        self.binary_correction_pending_diagnostics.append(binary_chunk_diagnostics)
+
+    def flush_binary_correction_diagnostics(self) -> None:
+        """Materialize pending binary diagnostics and accumulate them into native summary counters."""
+        if not self.binary_correction_pending_diagnostics:
+            return
+        pending_diagnostics = tuple(self.binary_correction_pending_diagnostics)
+        diagnostics_counts = binary_chunk_diagnostics_to_summary_counts(pending_diagnostics)
+        self.binary_correction_pending_diagnostics.clear()
+        self.add_binary_correction_summary_counts(diagnostics_counts)
+
+    def add_binary_correction_summary_counts(
+        self,
+        diagnostics_counts: regenie2_binary.BinaryCorrectionSummaryCounts,
+    ) -> None:
+        """Accumulate one host-materialized binary diagnostics summary."""
+        self.binary_correction_summary.add_diagnostics_totals(
+            diagnostics_counts.chunk_count,
+            diagnostics_counts.score_only_count,
+            diagnostics_counts.score_test_candidate_count,
+            diagnostics_counts.firth_candidate_count,
+            diagnostics_counts.firth_converged_count,
+            diagnostics_counts.firth_failed_count,
+            diagnostics_counts.firth_numerical_failure_count,
+            diagnostics_counts.firth_max_iteration_failure_count,
+            diagnostics_counts.firth_invalid_statistic_failure_count,
+            diagnostics_counts.firth_step_halving_failure_count,
+            diagnostics_counts.pseudo_firth_attempt_count,
+            diagnostics_counts.pseudo_firth_success_count,
+            diagnostics_counts.nr_zero_start_attempt_count,
+            diagnostics_counts.nr_zero_start_success_count,
+            diagnostics_counts.nr_warm_start_attempt_count,
+            diagnostics_counts.nr_warm_start_success_count,
+            diagnostics_counts.sparse_correction_count,
+            diagnostics_counts.dense_correction_count,
         )
-        self.binary_correction_summary.firth_attempted_count += int(diagnostics_mapping["firth_candidate_count"])
-        self.binary_correction_summary.firth_success_count += int(diagnostics_mapping["firth_converged_count"])
-        self.binary_correction_summary.firth_failed_count += int(diagnostics_mapping["firth_failed_count"])
-        self.binary_correction_summary.firth_numerical_failure_count += int(
-            diagnostics_mapping["firth_numerical_failure_count"]
-        )
-        self.binary_correction_summary.firth_max_iteration_failure_count += int(
-            diagnostics_mapping["firth_max_iteration_failure_count"]
-        )
-        self.binary_correction_summary.firth_invalid_statistic_failure_count += int(
-            diagnostics_mapping["firth_invalid_statistic_failure_count"]
-        )
-        self.binary_correction_summary.firth_step_halving_failure_count += int(
-            diagnostics_mapping["firth_step_halving_failure_count"]
-        )
-        self.binary_correction_summary.pseudo_firth_attempt_count += int(
-            diagnostics_mapping["pseudo_firth_attempt_count"]
-        )
-        self.binary_correction_summary.pseudo_firth_success_count += int(
-            diagnostics_mapping["pseudo_firth_success_count"]
-        )
-        self.binary_correction_summary.nr_zero_start_attempt_count += int(
-            diagnostics_mapping["nr_zero_start_attempt_count"]
-        )
-        self.binary_correction_summary.nr_zero_start_success_count += int(
-            diagnostics_mapping["nr_zero_start_success_count"]
-        )
-        self.binary_correction_summary.nr_warm_start_attempt_count += int(
-            diagnostics_mapping["nr_warm_start_attempt_count"]
-        )
-        self.binary_correction_summary.nr_warm_start_success_count += int(
-            diagnostics_mapping["nr_warm_start_success_count"]
-        )
-        self.binary_correction_summary.sparse_correction_count += int(diagnostics_mapping["sparse_correction_count"])
-        self.binary_correction_summary.dense_correction_count += int(diagnostics_mapping["dense_correction_count"])
 
     def emit_binary_correction_summary(self) -> None:
         """Emit aggregate binary correction diagnostics when a binary run produced them."""
         if self.telemetry_session is None:
             return
-        if (
-            self.binary_correction_summary_chunk_count == 0
-            and self.binary_correction_summary.null_model_failure_count == 0
-        ):
+        self.flush_binary_correction_diagnostics()
+        if not self.binary_correction_summary.should_emit():
             return
+        summary_payload = typing.cast("dict[str, object]", self.binary_correction_summary.summary_payload())
         self.telemetry_session.log_event(
             "binary_correction_summary",
             level="info",
-            chunk_count=self.binary_correction_summary_chunk_count,
-            score_only_count=self.binary_correction_summary.score_only_count,
-            score_test_candidate_count=self.binary_correction_summary.score_test_candidate_count,
-            firth_attempted_count=self.binary_correction_summary.firth_attempted_count,
-            firth_success_count=self.binary_correction_summary.firth_success_count,
-            firth_failed_count=self.binary_correction_summary.firth_failed_count,
-            firth_numerical_failure_count=self.binary_correction_summary.firth_numerical_failure_count,
-            firth_max_iteration_failure_count=self.binary_correction_summary.firth_max_iteration_failure_count,
-            firth_invalid_statistic_failure_count=(
-                self.binary_correction_summary.firth_invalid_statistic_failure_count
-            ),
-            firth_step_halving_failure_count=self.binary_correction_summary.firth_step_halving_failure_count,
-            pseudo_firth_attempt_count=self.binary_correction_summary.pseudo_firth_attempt_count,
-            pseudo_firth_success_count=self.binary_correction_summary.pseudo_firth_success_count,
-            nr_zero_start_attempt_count=self.binary_correction_summary.nr_zero_start_attempt_count,
-            nr_zero_start_success_count=self.binary_correction_summary.nr_zero_start_success_count,
-            nr_warm_start_attempt_count=self.binary_correction_summary.nr_warm_start_attempt_count,
-            nr_warm_start_success_count=self.binary_correction_summary.nr_warm_start_success_count,
-            sparse_correction_count=self.binary_correction_summary.sparse_correction_count,
-            dense_correction_count=self.binary_correction_summary.dense_correction_count,
-            null_model_failure_count=self.binary_correction_summary.null_model_failure_count,
+            **summary_payload,
         )
 
     def consume_result_write_items(self) -> None:
@@ -709,6 +642,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 get_start_time = time.perf_counter()
                 work_item = self.result_queue.get()
                 if work_item is None:
+                    self.flush_binary_correction_diagnostics()
                     return
                 self.record_queue_stage_duration(
                     queue_name="result_queue",
@@ -727,6 +661,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         while True:
             work_item = self.result_queue.get()
             if work_item is None:
+                self.flush_binary_correction_diagnostics()
                 return
             self.process_result_write_item(work_item)
 

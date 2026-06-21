@@ -508,7 +508,7 @@ def test_binary_correction_summary_skips_materialization_without_telemetry(
 ) -> None:
     """Do not device-get binary diagnostics when no telemetry session consumes them."""
 
-    def fail_binary_chunk_diagnostics_to_mapping(binary_chunk_diagnostics: object) -> dict[str, int | float]:
+    def fail_binary_chunk_diagnostics_to_summary_counts(binary_chunk_diagnostics: object) -> object:
         del binary_chunk_diagnostics
         message = "binary diagnostics should not materialize without telemetry"
         raise AssertionError(message)
@@ -538,8 +538,8 @@ def test_binary_correction_summary_skips_materialization_without_telemetry(
     )
     monkeypatch.setattr(
         callback_runtime,
-        "binary_chunk_diagnostics_to_mapping",
-        fail_binary_chunk_diagnostics_to_mapping,
+        "binary_chunk_diagnostics_to_summary_counts",
+        fail_binary_chunk_diagnostics_to_summary_counts,
     )
 
     callback.record_binary_correction_diagnostics(diagnostics)

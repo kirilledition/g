@@ -12,6 +12,8 @@ import numpy as np
 from g import types
 
 if typing.TYPE_CHECKING:
+    import collections.abc
+
     from g.compute.regenie2_binary import result as regenie2_binary_result
 
 
@@ -64,6 +66,52 @@ class BinaryChunkDiagnostics:
     nr_warm_start_success_count: jax.Array
     sparse_correction_count: jax.Array
     dense_correction_count: jax.Array
+
+
+@dataclass(frozen=True)
+class BinaryCorrectionSummaryCounts:
+    """Host integer counters needed by aggregate binary correction telemetry.
+
+    Attributes:
+        chunk_count: Chunks included in these aggregate counters.
+        score_only_count: Variants that retained score-test statistics without correction.
+        score_test_candidate_count: Variants selected for any score-test fallback label.
+        firth_candidate_count: Variants with a nonzero Firth iteration count.
+        firth_converged_count: Variants that completed Firth correction successfully.
+        firth_failed_count: Variants labelled as failed candidate tests.
+        firth_numerical_failure_count: Firth candidates that failed numerically.
+        firth_max_iteration_failure_count: Firth candidates that hit the iteration limit.
+        firth_invalid_statistic_failure_count: Firth candidates with invalid final statistics.
+        firth_step_halving_failure_count: Firth candidates that exhausted step-halving attempts.
+        pseudo_firth_attempt_count: Candidates that attempted scalar pseudo-Firth.
+        pseudo_firth_success_count: Candidates that finished through scalar pseudo-Firth.
+        nr_zero_start_attempt_count: Candidates that attempted zero-start Newton-Raphson fallback.
+        nr_zero_start_success_count: Candidates that finished through zero-start Newton-Raphson fallback.
+        nr_warm_start_attempt_count: Candidates that attempted warm-start Newton-Raphson fallback.
+        nr_warm_start_success_count: Candidates that finished through warm-start Newton-Raphson fallback.
+        sparse_correction_count: Candidates corrected through carrier-only sparse inputs.
+        dense_correction_count: Candidates corrected through dense inputs.
+
+    """
+
+    chunk_count: int
+    score_only_count: int
+    score_test_candidate_count: int
+    firth_candidate_count: int
+    firth_converged_count: int
+    firth_failed_count: int
+    firth_numerical_failure_count: int
+    firth_max_iteration_failure_count: int
+    firth_invalid_statistic_failure_count: int
+    firth_step_halving_failure_count: int
+    pseudo_firth_attempt_count: int
+    pseudo_firth_success_count: int
+    nr_zero_start_attempt_count: int
+    nr_zero_start_success_count: int
+    nr_warm_start_attempt_count: int
+    nr_warm_start_success_count: int
+    sparse_correction_count: int
+    dense_correction_count: int
 
 
 def count_binary_chunk_diagnostics(
@@ -181,3 +229,67 @@ def binary_chunk_diagnostics_to_mapping(diagnostics: BinaryChunkDiagnostics) -> 
         "sparse_correction_count": int(diagnostics_on_host.sparse_correction_count),
         "dense_correction_count": int(diagnostics_on_host.dense_correction_count),
     }
+
+
+def binary_chunk_diagnostics_to_summary_counts(
+    diagnostics_batch: collections.abc.Sequence[BinaryChunkDiagnostics],
+) -> BinaryCorrectionSummaryCounts:
+    """Materialize binary diagnostics as one aggregate summary counter payload."""
+    diagnostics_on_host_batch = jax.device_get(tuple(diagnostics_batch))
+    return BinaryCorrectionSummaryCounts(
+        chunk_count=len(diagnostics_on_host_batch),
+        score_only_count=sum(
+            int(diagnostics_on_host.score_only_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        score_test_candidate_count=sum(
+            int(diagnostics_on_host.score_test_candidate_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_candidate_count=sum(
+            int(diagnostics_on_host.firth_candidate_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_converged_count=sum(
+            int(diagnostics_on_host.firth_converged_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_failed_count=sum(
+            int(diagnostics_on_host.firth_failed_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_numerical_failure_count=sum(
+            int(diagnostics_on_host.firth_numerical_failure_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_max_iteration_failure_count=sum(
+            int(diagnostics_on_host.firth_max_iteration_failure_count)
+            for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_invalid_statistic_failure_count=sum(
+            int(diagnostics_on_host.firth_invalid_statistic_failure_count)
+            for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_step_halving_failure_count=sum(
+            int(diagnostics_on_host.firth_step_halving_failure_count)
+            for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        pseudo_firth_attempt_count=sum(
+            int(diagnostics_on_host.pseudo_firth_attempt_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        pseudo_firth_success_count=sum(
+            int(diagnostics_on_host.pseudo_firth_success_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        nr_zero_start_attempt_count=sum(
+            int(diagnostics_on_host.nr_zero_start_attempt_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        nr_zero_start_success_count=sum(
+            int(diagnostics_on_host.nr_zero_start_success_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        nr_warm_start_attempt_count=sum(
+            int(diagnostics_on_host.nr_warm_start_attempt_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        nr_warm_start_success_count=sum(
+            int(diagnostics_on_host.nr_warm_start_success_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        sparse_correction_count=sum(
+            int(diagnostics_on_host.sparse_correction_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        dense_correction_count=sum(
+            int(diagnostics_on_host.dense_correction_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+    )

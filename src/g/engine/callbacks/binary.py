@@ -507,6 +507,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 get_start_time = time.perf_counter()
                 work_item = self.result_queue.get()
                 if work_item is None:
+                    self.flush_binary_correction_diagnostics()
                     return
                 self.record_queue_stage_duration(
                     queue_name="result_queue",
@@ -526,6 +527,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         while True:
             work_item = self.result_queue.get()
             if work_item is None:
+                self.flush_binary_correction_diagnostics()
                 return
             multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
             self.process_multi_result_write_item(multi_work_item)

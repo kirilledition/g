@@ -1072,27 +1072,28 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
         ) as mock_write,
         patch("g.engine.callbacks.runtime.record_binary_chunk_diagnostics_from_count") as mock_record,
         patch(
-            "g.engine.callbacks.runtime.binary_chunk_diagnostics_to_mapping",
-            return_value={
-                "score_only_count": 1,
-                "score_test_candidate_count": 2,
-                "firth_candidate_count": 0,
-                "firth_converged_count": 0,
-                "firth_failed_count": 0,
-                "firth_numerical_failure_count": 0,
-                "firth_max_iteration_failure_count": 0,
-                "firth_invalid_statistic_failure_count": 0,
-                "firth_step_halving_failure_count": 0,
-                "pseudo_firth_attempt_count": 0,
-                "pseudo_firth_success_count": 0,
-                "nr_zero_start_attempt_count": 0,
-                "nr_zero_start_success_count": 0,
-                "nr_warm_start_attempt_count": 0,
-                "nr_warm_start_success_count": 0,
-                "sparse_correction_count": 0,
-                "dense_correction_count": 0,
-            },
-        ) as mock_mapping,
+            "g.engine.callbacks.runtime.binary_chunk_diagnostics_to_summary_counts",
+            return_value=regenie2_binary.BinaryCorrectionSummaryCounts(
+                chunk_count=1,
+                score_only_count=1,
+                score_test_candidate_count=2,
+                firth_candidate_count=0,
+                firth_converged_count=0,
+                firth_failed_count=0,
+                firth_numerical_failure_count=0,
+                firth_max_iteration_failure_count=0,
+                firth_invalid_statistic_failure_count=0,
+                firth_step_halving_failure_count=0,
+                pseudo_firth_attempt_count=0,
+                pseudo_firth_success_count=0,
+                nr_zero_start_attempt_count=0,
+                nr_zero_start_success_count=0,
+                nr_warm_start_attempt_count=0,
+                nr_warm_start_success_count=0,
+                sparse_correction_count=0,
+                dense_correction_count=0,
+            ),
+        ) as mock_summary_counts,
     ):
         callback.consume_result_write_items()
 
@@ -1101,7 +1102,7 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
         stage_timing_recorder=None,
         diagnostics=diagnostics,
     )
-    mock_mapping.assert_called_once_with(diagnostics)
+    mock_summary_counts.assert_called_once_with((diagnostics,))
     assert callback.binary_correction_summary.score_only_count == 1
     assert callback.binary_correction_summary.score_test_candidate_count == 2
 

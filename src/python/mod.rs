@@ -21,6 +21,7 @@ use crate::sample::{
     MultiAlignmentInputs, ResolvedPhenotypeComputeGroup, SampleKeyMode,
 };
 
+mod callback_summary;
 mod config;
 mod errors;
 mod host_policy;
@@ -34,6 +35,7 @@ mod telemetry_policy;
 mod timing;
 mod trusted_validation;
 
+use callback_summary::NativeBinaryCorrectionSummary;
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
 use host_policy::{
     build_phenotype_compute_group_id_value, build_phenotype_compute_groups_payload,
@@ -1723,6 +1725,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<ChunkStats>()?;
     module.add_class::<NativeAlignedPhenotypeGroup>()?;
     module.add_class::<NativeAlignedSampleData>()?;
+    module.add_class::<NativeBinaryCorrectionSummary>()?;
     module.add_class::<NativeGroupedAlignedSampleData>()?;
     module.add_class::<NativeInitializedOutputRun>()?;
     module.add_class::<NativeMultiAlignedSampleData>()?;

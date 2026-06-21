@@ -26,6 +26,10 @@
   while keeping Python `TelemetryPaths` and `TelemetrySession` ownership stable.
   Timestamp formatting uses a direct minimal-feature `chrono` dependency rather
   than hand-written UTC calendar conversion.
+- Current uncommitted follow-up: moved binary correction summary counter state
+  and summary payload construction from the Python callback runtime into
+  Rust/PyO3 while keeping JAX diagnostic counting, Python callback workers,
+  and telemetry emission in Python.
 - Verification for the current checkpoint passed: focused pytest,
   `just check-core-stub`, `cargo test --workspace`, full `ty`, targeted `ruff`,
   and `just check-internal-defaults`.
@@ -103,6 +107,9 @@ the current Python public API and test behavior.
   empty writer-counter payload construction into Rust/PyO3 while preserving
   Python telemetry session and dataclass APIs. The timestamp renderer delegates
   UTC/RFC3339 formatting to `chrono`.
+- Callback summary follow-up moved binary correction summary accumulation and
+  summary payload construction into a native `NativeBinaryCorrectionSummary`
+  object while preserving Python-owned JAX diagnostics and telemetry emission.
 
 ## Verification Run
 
@@ -269,3 +276,59 @@ the current Python public API and test behavior.
   Timestamp formatting and path equivalence improved, but PyO3/dict adapter
   overhead makes the smallest helper calls slightly slower. These helpers run
   at startup/teardown/path-policy frequency, not per variant or per result row.
+
+## Callback Summary Follow-Up Verification Run
+
+- Moved callback binary correction summary counters and summary payload shaping
+  to Rust/PyO3. Python still decides when diagnostics are materialized, still
+  counts diagnostics through JAX, and still emits telemetry events.
+- `uv run pytest tests/test_callback_lifecycle.py::test_native_callback_runner_emits_binary_correction_summary tests/test_callback_lifecycle.py::test_binary_correction_summary_skips_materialization_without_telemetry tests/test_regenie2_pipeline.py::test_binary_result_worker_records_deferred_diagnostics_from_work_item -q` passed: 3 tests.
+- `uv run pytest tests/test_callback_lifecycle.py tests/test_regenie2_pipeline.py tests/test_regenie2_binary_diagnostics.py -q` passed: 109 tests.
+- `just check-core-stub` passed.
+- `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed: 122 tests.
+- `uv run --no-sync ty check src tests scripts tooling` passed.
+- `uv run --no-sync ruff check src/g/engine/callbacks/runtime.py src/g/_core.pyi` passed.
+- `just check-internal-defaults` passed.
+- Follow-up deferred materialization optimization added a pending diagnostics
+  buffer, batches JAX diagnostics materialization at result-worker drain or
+  summary emit, and uses native `add_diagnostics_totals` to cross PyO3 once for
+  the aggregate counters.
+- After that follow-up:
+  - `uv run pytest tests/test_callback_lifecycle.py::test_native_callback_runner_emits_binary_correction_summary tests/test_callback_lifecycle.py::test_binary_correction_summary_skips_materialization_without_telemetry tests/test_regenie2_pipeline.py::test_binary_result_worker_records_deferred_diagnostics_from_work_item -q` passed: 3 tests.
+  - `uv run pytest tests/test_callback_lifecycle.py tests/test_regenie2_pipeline.py tests/test_regenie2_binary_diagnostics.py -q` passed: 109 tests.
+  - `uv run --no-sync ruff check src/g/compute/regenie2_binary/diagnostics.py src/g/compute/regenie2_binary/api.py src/g/engine/callbacks/runtime.py src/g/engine/callbacks/binary.py tests/test_callback_lifecycle.py tests/test_regenie2_pipeline.py` passed.
+  - `uv run --no-sync ruff format --check src/g/compute/regenie2_binary/diagnostics.py src/g/compute/regenie2_binary/api.py src/g/engine/callbacks/runtime.py src/g/engine/callbacks/binary.py tests/test_callback_lifecycle.py tests/test_regenie2_pipeline.py` passed.
+  - `just check-core-stub` passed.
+  - `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed: 122 tests.
+  - `uv run --no-sync ty check src tests scripts tooling` passed.
+  - `just check-internal-defaults` passed.
+
+## Callback Summary Follow-Up Performance Check
+
+- Focused public-path microbench compared the old Python counter/dataclass
+  logic against the optimized Rust/PyO3-backed `NativeBinaryCorrectionSummary`.
+  The native path now passes typed counters directly and returns the native
+  summary payload without an extra Python `dict(...)` copy.
+- Results:
+  - One chunk, prebuilt diagnostics mapping: old Python 3.002us,
+    native-backed 3.262us, delta +0.261us (+8.68%).
+  - Twenty-six chunks, prebuilt diagnostics mapping: old Python 35.162us,
+    native-backed 26.757us, delta -8.405us (-23.90%).
+  - Twenty-six chunks including the shared JAX `device_get` diagnostics
+    materialization: old Python 4218.427us, native-backed 4191.104us, delta
+    -27.323us (-0.65%).
+- Interpretation: the optimized native path is still slightly slower for a
+  single chunk, but it is faster for the realistic chr22-style 26-chunk summary
+  path. Including the shared JAX diagnostics materialization, the measured path
+  improved by 0.027ms.
+- Deferred aggregate follow-up microbench:
+  - Old per-chunk mapping plus native count add for twenty-six chunks:
+    4511.691us.
+  - New deferred aggregate materialization plus one native totals add for
+    twenty-six chunks: 4212.903us.
+  - Delta: -298.788us (-6.62%) for this callback-summary slice.
+- Interpretation after the follow-up: this removes per-chunk summary
+  synchronization from the result processing path and makes the chr22-style
+  summary path faster in the CPU/JAX scalar microbench. The app-level effect is
+  still expected to be small because this path runs once per result chunk, not
+  per variant.
