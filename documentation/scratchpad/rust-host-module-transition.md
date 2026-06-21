@@ -30,6 +30,14 @@
   and summary payload construction from the Python callback runtime into
   Rust/PyO3 while keeping JAX diagnostic counting, Python callback workers,
   and telemetry emission in Python.
+- Current uncommitted follow-up: moved deterministic runner logging runtime
+  policy construction and policy description formatting into Rust/PyO3 while
+  keeping Python-owned process-global state, compatibility checks, JAX setup,
+  Rayon setup, and logging initialization side effects stable.
+- Current uncommitted follow-up: moved deterministic graceful-shutdown signal
+  metadata construction into Rust/PyO3 using `signal-hook` signal constants for
+  the native-known signal path while keeping Python-owned signal handler
+  installation/restoration and repeated-signal exception behavior stable.
 - Verification for the current checkpoint passed: focused pytest,
   `just check-core-stub`, `cargo test --workspace`, full `ty`, targeted `ruff`,
   and `just check-internal-defaults`.
@@ -110,6 +118,14 @@ the current Python public API and test behavior.
 - Callback summary follow-up moved binary correction summary accumulation and
   summary payload construction into a native `NativeBinaryCorrectionSummary`
   object while preserving Python-owned JAX diagnostics and telemetry emission.
+- Runtime policy follow-up moved logging runtime policy payload construction
+  and logging policy description formatting into native helpers while preserving
+  Python `LoggingRuntimePolicy`, `RuntimePolicy`, and process-global state.
+- Shutdown follow-up moved graceful-shutdown signal payload construction into a
+  native helper backed by `signal-hook` constants while preserving the Python
+  `GracefulShutdownController`, public `ShutdownSignal` dataclass adapter, and
+  Python fallback for valid platform signals outside `signal-hook`'s exported
+  constants.
 
 ## Verification Run
 
@@ -332,3 +348,98 @@ the current Python public API and test behavior.
   summary path faster in the CPU/JAX scalar microbench. The app-level effect is
   still expected to be small because this path runs once per result chunk, not
   per variant.
+
+## Runtime Policy Follow-Up Verification Run
+
+- Moved deterministic logging runtime policy payload construction and concise
+  policy description formatting to Rust/PyO3. Python still owns
+  `LoggingRuntimePolicy`, `RuntimePolicy`, process-global compatibility state,
+  Rayon/JAX runtime setup, and `_core.initialize_logging` side effects.
+- `uv run pytest tests/test_api.py::test_initialize_logging_passes_diagnostics_to_core tests/test_api.py::test_initialize_logging_uses_unified_telemetry_stream tests/test_api.py::test_initialize_logging_applies_trace_cap_only_in_trace_mode tests/test_api.py::test_initialize_logging_uses_trace_file_alias_as_unified_stream tests/test_api.py::test_initialize_logging_rejects_incompatible_process_global_policy tests/test_api.py::test_describe_runtime_state_reports_process_global_state -q` passed: 6 tests.
+- `uv run pytest tests/test_api.py tests/test_cli_bridge.py tests/test_telemetry.py -q` passed: 65 tests.
+- `uv run --no-sync ruff check src/g/runner/runtime.py src/g/_core.pyi` passed.
+- `uv run --no-sync ruff format --check src/g/runner/runtime.py src/g/_core.pyi` passed.
+- `just check-core-stub` passed.
+- `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed: 122 tests.
+- `uv run --no-sync ty check src tests scripts tooling` passed.
+- `just check-internal-defaults` passed.
+
+## Runtime Policy Follow-Up Performance Check
+
+- Focused helper microbench compared the old Python fallback policy builder to
+  the current Rust/PyO3-backed public wrapper using the same config objects.
+- Results:
+  - Python fallback `build_logging_runtime_policy`: 4.459us.
+  - Native-backed `build_logging_runtime_policy`: 17.656us.
+  - Delta: +13.197us (+295.95%).
+- Interpretation: this slice is not a speed win because PyO3/dict/path adapter
+  overhead dominates this tiny once-per-run helper. It is app-scale neutral and
+  keeps the migration moving by reducing Python-owned deterministic policy
+  logic without touching hot JAX/GPU paths.
+- Full chr22 binary GPU benchmark on `landau` compared clean `77faab38` to the
+  current uncommitted runtime-policy rewrite. Both runs used CUDA JAX 0.10.1 and
+  the standard `benchmark_regenie2_binary_hot` cold/hot harness.
+- App-level results:
+  - Cold finalized: baseline 122.839s, current 115.468s, delta -7.371s
+    (-6.00%).
+  - Hot no-final: baseline 4.044s, current 4.183s, delta +0.139s (+3.43%).
+  - Hot finalized: baseline 3.990s, current 3.907s, delta -0.083s (-2.07%).
+- Interpretation: no app-level regression signal. The steady-state hot metrics
+  moved in opposite directions by small amounts, and the cold run improved in
+  this single-run comparison. The isolated helper slowdown remains tiny and
+  once-per-run.
+
+## Shutdown Signal Follow-Up Verification Run
+
+- Moved deterministic graceful-shutdown signal payload construction to
+  Rust/PyO3. Python still owns installing/restoring process signal handlers,
+  first-signal graceful interruption, repeated-signal hard interrupt behavior,
+  and the public `ShutdownSignal`/`GracefulShutdownRequested` classes.
+- Native signal-name matching uses `signal-hook` 0.4.4 constants with default
+  features disabled. Python catches native unknown-signal errors and falls back
+  to `signal.Signals(...)`, preserving behavior for platform-valid signals that
+  `signal-hook::consts::signal` does not expose, such as `SIGSTKFLT` on this
+  Linux host.
+- Smoke check confirmed `_core.build_shutdown_signal_payload` is present,
+  `build_shutdown_signal(2)` returns `SIGINT`/130 through native, and
+  `build_shutdown_signal(16)` returns `SIGSTKFLT`/144 through fallback.
+- `uv run pytest tests/test_cli_bridge.py::test_run_args_bridges_interruption_events tests/test_api.py::test_regenie_graceful_shutdown_event_preserves_signal_exit -q` passed: 2 tests.
+- `uv run pytest tests/test_cli_bridge.py tests/test_api.py -q` passed: 50 tests.
+- `just check-core-stub` passed.
+- `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed: 122 tests.
+- `uv run --no-sync ty check src tests scripts tooling` passed.
+- `uv run --no-sync ruff check src/g/engine/shutdown.py src/g/_core.pyi` passed.
+- `uv run --no-sync ruff format --check src/g/engine/shutdown.py src/g/_core.pyi` passed.
+- `just check-internal-defaults` passed.
+
+## Shutdown Signal Follow-Up Performance Check
+
+- Focused microbench compared the old Python fallback to the current
+  Rust/PyO3-backed public helper in the same process. The first measurement
+  showed per-call PyO3/dict adapter overhead, so the final implementation caches
+  native-resolved SIGINT/SIGTERM `ShutdownSignal` objects at module import time.
+- Results after caching native-resolved default handled signals, median time per
+  call:
+  - Python fallback `build_shutdown_signal(SIGINT)`: 1.190us.
+  - Cached native-backed `build_shutdown_signal(SIGINT)`: 0.126us, delta
+    -1.065us (-89.44%).
+  - Python fallback `build_shutdown_signal(SIGTERM)`: 1.196us.
+  - Cached native-backed `build_shutdown_signal(SIGTERM)`: 0.126us, delta
+    -1.070us (-89.50%).
+  - Direct native `_core.build_shutdown_signal_payload(SIGINT)` only: 0.550us.
+  - Python adapter from prebuilt native payload: 0.969us.
+  - Python fallback `build_shutdown_signal(SIGSTKFLT)`: 1.184us.
+  - Native public helper with Python fallback for uncached `SIGSTKFLT`: 1.743us,
+    delta +0.559us (+47.25%).
+  - `GracefulShutdownController.handle_signal(SIGINT)` with Python fallback:
+    1.989us.
+  - `GracefulShutdownController.handle_signal(SIGINT)` with cached
+    native-backed helper: 0.889us, delta -1.100us (-55.29%).
+  - Normal `GracefulShutdownController` enter/exit handler installation:
+    5.671us absolute; this path does not call the signal payload helper.
+- Interpretation: normal app execution is not slowed, because regular runs only
+  install and restore handlers. If SIGINT/SIGTERM is handled, the moved path is
+  now faster than the old Python fallback because the native-resolved metadata
+  is cached. Uncached valid platform signals outside `signal-hook`'s exported
+  constants still fall back through Python and are slower, but the default
+  controller does not install handlers for those signals.

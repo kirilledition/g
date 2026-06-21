@@ -6,6 +6,7 @@ import importlib
 import logging
 import typing
 from dataclasses import dataclass
+from pathlib import Path
 
 from g import _core, types
 from g.jax_runtime import models as jax_runtime_models
@@ -13,8 +14,6 @@ from g.jax_runtime import resolution as jax_runtime_resolution
 from g.jax_runtime import state as jax_runtime_state
 
 if typing.TYPE_CHECKING:
-    from pathlib import Path
-
     from g.engine import telemetry
     from g.interface import config
 
@@ -144,6 +143,32 @@ def build_logging_runtime_policy(
     telemetry_paths: telemetry.TelemetryPaths | None,
 ) -> LoggingRuntimePolicy:
     """Build the process-global logging policy requested by a run."""
+    native_build_logging_runtime_policy = getattr(_core, "build_logging_runtime_policy_payload", None)
+    if callable(native_build_logging_runtime_policy):
+        telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
+        native_payload = native_build_logging_runtime_policy(
+            diagnostics_config.log_filter,
+            None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
+            diagnostics_config.log_stderr,
+            diagnostics_config.log_queue_size,
+            diagnostics_config.log_lossy,
+            diagnostics_config.include_source_location,
+            diagnostics_config.include_span_events,
+            None if diagnostics_config.trace_file is None else str(diagnostics_config.trace_file),
+            diagnostics_config.trace_filter,
+            diagnostics_config.trace_event_cap,
+            diagnostics_config.telemetry.value,
+            None if telemetry_stream_file is None else str(telemetry_stream_file),
+        )
+        return logging_runtime_policy_from_native_payload(native_payload)
+    return build_logging_runtime_policy_with_python_fallback(diagnostics_config, telemetry_paths)
+
+
+def build_logging_runtime_policy_with_python_fallback(
+    diagnostics_config: config.GDiagnosticsConfig,
+    telemetry_paths: telemetry.TelemetryPaths | None,
+) -> LoggingRuntimePolicy:
+    """Build logging policy when the native helper is unavailable."""
     telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
     log_file = diagnostics_config.log_file if telemetry_stream_file is None else None
     trace_file = diagnostics_config.trace_file if telemetry_stream_file is None else telemetry_stream_file
@@ -167,6 +192,35 @@ def build_logging_runtime_policy(
     )
 
 
+def logging_runtime_policy_from_native_payload(payload: object) -> LoggingRuntimePolicy:
+    """Adapt a native logging-runtime policy payload to the Python dataclass."""
+    policy_payload = native_mapping_payload(payload)
+    return LoggingRuntimePolicy(
+        log_filter=str(policy_payload["log_filter"]),
+        log_file=optional_path_from_native_payload(policy_payload["log_file"]),
+        log_stderr=bool(policy_payload["log_stderr"]),
+        log_queue_size=int(policy_payload["log_queue_size"]),
+        log_lossy=bool(policy_payload["log_lossy"]),
+        include_source_location=bool(policy_payload["include_source_location"]),
+        include_span_events=bool(policy_payload["include_span_events"]),
+        trace_file=optional_path_from_native_payload(policy_payload["trace_file"]),
+        trace_filter=str(policy_payload["trace_filter"]),
+        trace_event_cap=None if policy_payload["trace_event_cap"] is None else int(policy_payload["trace_event_cap"]),
+    )
+
+
+def optional_path_from_native_payload(path_payload: object) -> Path | None:
+    """Adapt a native optional path payload to `Path`."""
+    if path_payload is None:
+        return None
+    return Path(str(path_payload))
+
+
+def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
+    """Adapt a native mapping payload to a mutable Python dictionary."""
+    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
+
+
 def build_runtime_policy(
     regenie_config: config.RegenieConfig,
     telemetry_paths: telemetry.TelemetryPaths,
@@ -181,6 +235,22 @@ def build_runtime_policy(
 
 def describe_logging_runtime_policy(policy: LoggingRuntimePolicy) -> str:
     """Format a logging runtime policy for concise errors."""
+    native_describe_logging_runtime_policy = getattr(_core, "describe_logging_runtime_policy_value", None)
+    if callable(native_describe_logging_runtime_policy):
+        return str(
+            native_describe_logging_runtime_policy(
+                policy.log_filter,
+                None if policy.log_file is None else str(policy.log_file),
+                policy.log_stderr,
+                policy.log_queue_size,
+                policy.log_lossy,
+                policy.include_source_location,
+                policy.include_span_events,
+                None if policy.trace_file is None else str(policy.trace_file),
+                policy.trace_filter,
+                policy.trace_event_cap,
+            )
+        )
     log_file = "<none>" if policy.log_file is None else str(policy.log_file)
     trace_file = "<none>" if policy.trace_file is None else str(policy.trace_file)
     trace_event_cap = "<none>" if policy.trace_event_cap is None else str(policy.trace_event_cap)

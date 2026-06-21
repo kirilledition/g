@@ -773,6 +773,33 @@ def initialize_output_run(
     resume: bool,
     resume_mode: g.types.ResumeMode | str,
 ) -> NativeInitializedOutputRun: ...
+def build_logging_runtime_policy_payload(
+    log_filter: str,
+    log_file: str | None,
+    log_stderr: bool,
+    log_queue_size: int,
+    log_lossy: bool,
+    include_source_location: bool,
+    include_span_events: bool,
+    trace_file: str | None,
+    trace_filter: str,
+    trace_event_cap: int | None,
+    telemetry_mode: str,
+    telemetry_stream_file: str | None,
+) -> dict[str, object]: ...
+def describe_logging_runtime_policy_value(
+    log_filter: str,
+    log_file: str | None,
+    log_stderr: bool,
+    log_queue_size: int,
+    log_lossy: bool,
+    include_source_location: bool,
+    include_span_events: bool,
+    trace_file: str | None,
+    trace_filter: str,
+    trace_event_cap: int | None,
+) -> str: ...
+def build_shutdown_signal_payload(signal_number: int) -> dict[str, object]: ...
 def configure_bgen_decode_tile_variant_count(tile_variant_count: int) -> None: ...
 def configure_rayon_global_thread_pool(thread_count: int) -> None: ...
 def initialize_logging(

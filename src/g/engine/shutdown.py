@@ -6,8 +6,13 @@ import signal
 import typing
 from dataclasses import dataclass
 
+import g._core
+
 if typing.TYPE_CHECKING:
     import types as python_types
+
+NATIVE_BUILD_SHUTDOWN_SIGNAL_PAYLOAD = getattr(g._core, "build_shutdown_signal_payload", None)
+NATIVE_SHUTDOWN_SIGNAL_CACHE: dict[int, ShutdownSignal]
 
 
 @dataclass(frozen=True)
@@ -24,6 +29,23 @@ class ShutdownSignal:
     number: int
     name: str
     exit_code: int
+
+
+def build_native_shutdown_signal_cache() -> dict[int, ShutdownSignal]:
+    """Build cached native metadata for the default handled signals."""
+    native_build_shutdown_signal = NATIVE_BUILD_SHUTDOWN_SIGNAL_PAYLOAD
+    if not callable(native_build_shutdown_signal):
+        return {}
+    cached_signals: dict[int, ShutdownSignal] = {}
+    for handled_signal in (signal.SIGINT, signal.SIGTERM):
+        signal_number = int(handled_signal)
+        try:
+            cached_signals[signal_number] = shutdown_signal_from_native_payload(
+                native_build_shutdown_signal(signal_number)
+            )
+        except ValueError:
+            continue
+    return cached_signals
 
 
 class GracefulShutdownRequested(Exception):  # noqa: N818
@@ -97,12 +119,44 @@ class GracefulShutdownController:
 
 def build_shutdown_signal(signal_number: int) -> ShutdownSignal:
     """Build shutdown metadata for a POSIX signal."""
+    cached_signal = NATIVE_SHUTDOWN_SIGNAL_CACHE.get(signal_number)
+    if cached_signal is not None:
+        return cached_signal
+    native_build_shutdown_signal = NATIVE_BUILD_SHUTDOWN_SIGNAL_PAYLOAD
+    if callable(native_build_shutdown_signal):
+        try:
+            return shutdown_signal_from_native_payload(native_build_shutdown_signal(signal_number))
+        except ValueError:
+            return build_shutdown_signal_with_python_fallback(signal_number)
+    return build_shutdown_signal_with_python_fallback(signal_number)
+
+
+def build_shutdown_signal_with_python_fallback(signal_number: int) -> ShutdownSignal:
+    """Build shutdown metadata when the native helper is unavailable."""
     signal_value = signal.Signals(signal_number)
     return ShutdownSignal(
         number=signal_number,
         name=signal_value.name,
         exit_code=128 + signal_number,
     )
+
+
+def shutdown_signal_from_native_payload(payload: object) -> ShutdownSignal:
+    """Adapt native shutdown signal metadata to the public Python dataclass."""
+    signal_payload = native_mapping_payload(payload)
+    return ShutdownSignal(
+        number=int(signal_payload["number"]),
+        name=str(signal_payload["name"]),
+        exit_code=int(signal_payload["exit_code"]),
+    )
+
+
+def native_mapping_payload(payload: object) -> typing.Mapping[str, typing.Any]:
+    """Adapt a native mapping payload to a Python mapping."""
+    return typing.cast("typing.Mapping[str, typing.Any]", payload)
+
+
+NATIVE_SHUTDOWN_SIGNAL_CACHE = build_native_shutdown_signal_cache()
 
 
 def raise_second_signal_exception(shutdown_signal: ShutdownSignal) -> typing.NoReturn:
