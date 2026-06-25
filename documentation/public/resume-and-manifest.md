@@ -21,7 +21,8 @@ optional TOML file, and explicit CLI overrides.
 
 - manifest and output schema versions;
 - association mode;
-- BGEN, sample, phenotype, covariate, and prediction-list file fingerprints;
+- BGEN, sample, phenotype, covariate, prediction-list, and selected LOCO
+  prediction-file fingerprints;
 - phenotype name, covariate names, sample count, variant count, chunk size, and
   variant limit;
 - multi-phenotype sample mode, phenotype compute-group identifier, sample-set
@@ -40,7 +41,8 @@ name check.
 
 File fingerprints include resolved path, file size, and `mtime_ns`. Smaller
 control files also include a SHA-256 content hash: sample, phenotype, covariate,
-and prediction-list files. BGEN input fingerprints are metadata-only to avoid
+prediction-list, and LOCO prediction files referenced by the selected
+phenotype or compute group. BGEN input fingerprints are metadata-only to avoid
 hashing large genotype files during normal startup; their manifest field records
 that metadata-only policy explicitly.
 
@@ -90,9 +92,10 @@ all selected phenotype output runs pass compatibility checks.
 
 Common mismatch causes:
 
-- changed BGEN, sample, phenotype, covariate, or prediction-list file;
-- changed sample, phenotype, covariate, or prediction-list content even when
-  path, size, and `mtime_ns` are preserved;
+- changed BGEN, sample, phenotype, covariate, prediction-list, or selected
+  LOCO prediction file;
+- changed sample, phenotype, covariate, prediction-list, or selected LOCO
+  content even when path, size, and `mtime_ns` are preserved;
 - changed phenotype or covariate columns;
 - changed trait mode, binary correction plan, or Firth settings;
 - changed selected association backend;

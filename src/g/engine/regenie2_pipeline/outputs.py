@@ -104,6 +104,10 @@ def build_pipeline_manifest_header(
         covariate_path=context.covariate_path,
         covariate_names=covariate_names,
         prediction_list_path=context.prediction_list_path,
+        prediction_input_phenotype_names=(
+            (phenotype_name,) if phenotype_compute_group is None else phenotype_compute_group.phenotype_names
+        ),
+        fingerprint_cache=context.input_fingerprint_cache,
         sample_count=sample_count,
         variant_count=variant_count,
         chunk_size=context.chunk_size,

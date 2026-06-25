@@ -9,7 +9,7 @@ use crate::sample::SampleKeyMode;
 
 use super::{
     LocoPredictionCache, MultiPredictionSource, PredictionError, PredictionListEntry, PredictionSource,
-    normalize_chromosome,
+    normalize_chromosome, resolve_prediction_loco_paths,
 };
 
 static NEXT_FIXTURE_ID: AtomicUsize = AtomicUsize::new(0);
@@ -85,6 +85,35 @@ fn prediction_source_resolves_relative_loco_paths_from_prediction_list_directory
     .expect("relative LOCO path should resolve from prediction-list directory");
 
     assert_eq!(source.chromosome_predictions("22").expect("chr22 predictions"), &[0.7]);
+}
+
+#[test]
+fn resolves_prediction_loco_paths_in_requested_phenotype_order() {
+    let fixture = FixtureDirectory::new();
+    fixture.write_file("first.loco", "FID_IID F1_I1\n22 0.1\n");
+    let second_loco_path = fixture.write_file("second.loco", "FID_IID F1_I1\n22 0.2\n");
+    let prediction_list_path =
+        fixture.write_file("pred.list", &format!("first first.loco\nsecond {}\n", second_loco_path.display()));
+
+    let resolved_loco_paths = resolve_prediction_loco_paths(&prediction_list_path, &strings(&["second", "first"]))
+        .expect("prediction LOCO paths should resolve");
+
+    assert_eq!(resolved_loco_paths[0].phenotype_name, "second");
+    assert_eq!(resolved_loco_paths[0].loco_file_path, second_loco_path);
+    assert_eq!(resolved_loco_paths[1].phenotype_name, "first");
+    assert_eq!(resolved_loco_paths[1].loco_file_path, fixture.path.join("first.loco"));
+}
+
+#[test]
+fn resolve_prediction_loco_paths_reports_missing_requested_phenotype() {
+    let fixture = FixtureDirectory::new();
+    fixture.write_file("trait.loco", "FID_IID F1_I1\n22 0.1\n");
+    let prediction_list_path = fixture.write_file("pred.list", "trait trait.loco\n");
+
+    let error = resolve_prediction_loco_paths(&prediction_list_path, &strings(&["missing"]))
+        .expect_err("missing phenotype should be rejected");
+
+    assert_matches!(error, PredictionError::MissingPhenotype { .. });
 }
 
 #[test]

@@ -9,13 +9,14 @@ from dataclasses import dataclass
 from g import execution_plan, types
 from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.engine import backend_planner, telemetry, timing
+from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g.compute.regenie2_binary import config as regenie2_binary_config
     from g.engine.native_dispatch import models as native_dispatch_models
-    from g.io import output, source
+    from g.io import source
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class Regenie2PipelineContext:
         writer_settings: Output writer settings.
         stage_timing_recorder: Optional stage timing recorder for this run.
         telemetry_session: Optional telemetry sink.
+        input_fingerprint_cache: Run-scoped input fingerprint cache.
         alignment_config: Optional sample alignment settings.
         phenotype_compute_groups: Planned phenotype compute groups.
         output_initialized_callback: Callback invoked after output manifests
@@ -93,6 +95,7 @@ class Regenie2PipelineContext:
     writer_settings: output.OutputWriterSettings
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: telemetry.TelemetrySession | None
+    input_fingerprint_cache: output.ManifestFileFingerprintCache
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...]
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
@@ -199,6 +202,7 @@ def build_regenie2_pipeline_context(
         writer_settings=writer_settings,
         stage_timing_recorder=resolved_stage_timing_recorder,
         telemetry_session=telemetry_session,
+        input_fingerprint_cache=output.ManifestFileFingerprintCache(),
         alignment_config=alignment_config,
         phenotype_compute_groups=phenotype_compute_groups,
         output_initialized_callback=output_initialized_callback,

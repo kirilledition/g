@@ -57,6 +57,7 @@ just slurm-cpu-run 'uv run pytest \
   tests/test_regenie2_pipeline.py::test_complete_case_compute_group_resolution_adds_alignment_fingerprints \
   tests/test_regenie2_pipeline.py::test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes \
   tests/test_io_output.py::test_initialize_output_run_compatible_resume_preserves_committed_chunks \
+  tests/test_io_output.py::test_fast_resume_rejects_loco_file_content_change_with_preserved_metadata \
   tests/test_io_output.py::test_prepare_output_run_strict_resume_validates_manifest_chunks \
   -q'
 ```
@@ -110,6 +111,7 @@ The expected output is
 | Missing phenotype/covariate filtering | Contract | Tabular alignment tests assert explicit missing-value exclusion. |
 | Variant missingness/imputation | Contract | Native BGEN decode tests and variant-major kernel tests assert imputation/stat summary behavior. |
 | Resume after interruption | Contract | Output and pipeline tests assert committed chunks are reused and partial chunks are rewritten. |
+| Prediction input identity | Contract | Output tests assert selected LOCO prediction-file content changes reject resume. |
 
 ## Tolerances
 

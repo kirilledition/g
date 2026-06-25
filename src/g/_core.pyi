@@ -718,6 +718,7 @@ def build_current_run_manifest_header_json(
     covariate_path: str | None,
     covariate_names: list[str],
     prediction_list_path: str,
+    prediction_loco_files_json: str,
     sample_count: int,
     variant_count: int,
     chunk_size: int,
@@ -750,6 +751,10 @@ def build_current_run_manifest_header_json(
     parquet_compression: str,
     output_statistic_dtype: str,
 ) -> str: ...
+def resolve_prediction_loco_paths(
+    prediction_list_path: str,
+    phenotype_names: list[str],
+) -> list[dict[str, str]]: ...
 def build_file_content_sha256_value(path: str) -> str: ...
 def build_manifest_file_fingerprint_payload(
     path: str,

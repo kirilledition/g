@@ -12,7 +12,7 @@ use crate::output::resume;
 use crate::output::writer::{OutputFileFormat, OutputWriterError};
 
 const RUN_MANIFEST_FILE_NAME: &str = "run_manifest.json";
-const RUN_MANIFEST_SCHEMA_VERSION: i64 = 8;
+const RUN_MANIFEST_SCHEMA_VERSION: i64 = 9;
 const OUTPUT_SCHEMA_VERSION: i64 = 2;
 const JAX_MATMUL_PRECISION_WHEN_UNSET: &str = "float32";
 const RESUME_POLICY: &str = "manifest_committed_chunks";
@@ -85,6 +85,7 @@ pub(crate) struct CurrentRunManifestHeaderInput {
     pub(crate) covariate_path: Option<PathBuf>,
     pub(crate) covariate_names: Vec<String>,
     pub(crate) prediction_list_path: PathBuf,
+    pub(crate) prediction_loco_files_json: String,
     pub(crate) sample_count: i64,
     pub(crate) variant_count: i64,
     pub(crate) chunk_size: i64,
@@ -118,6 +119,7 @@ pub(crate) struct CurrentRunManifestHeaderInput {
     pub(crate) output_statistic_dtype: String,
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn build_current_run_manifest_header_json(
     input: CurrentRunManifestHeaderInput,
 ) -> Result<String, OutputWriterError> {
@@ -127,6 +129,17 @@ pub(crate) fn build_current_run_manifest_header_json(
     let covariate_file_fingerprint = build_optional_file_fingerprint(input.covariate_path.as_deref(), true)?;
     let prediction_list_fingerprint =
         build_required_file_fingerprint(&input.prediction_list_path, true, "prediction list")?;
+    let prediction_loco_files = serde_json::from_str::<Value>(&input.prediction_loco_files_json)
+        .map_err(|error| OutputWriterError::InvalidInput(error.to_string()))?;
+    if !prediction_loco_files.is_array() {
+        return Err(OutputWriterError::InvalidInput(
+            "prediction_loco_files_json must contain a JSON array.".to_string(),
+        ));
+    }
+    let prediction_inputs = json!({
+        "prediction_list": prediction_list_fingerprint.clone(),
+        "loco_files": prediction_loco_files,
+    });
     let binary_correction_plan = json!({
         "method": input.binary_correction_plan_method,
         "p_threshold": input.binary_correction_plan_p_threshold,
@@ -170,6 +183,7 @@ pub(crate) fn build_current_run_manifest_header_json(
         "covariate_file": covariate_file_fingerprint,
         "covariate_names": input.covariate_names,
         "prediction_list": prediction_list_fingerprint,
+        "prediction_inputs": prediction_inputs,
         "sample_count": input.sample_count,
         "variant_count": input.variant_count,
         "chunk_size": input.chunk_size,
@@ -205,6 +219,7 @@ pub(crate) fn build_current_run_manifest_header_json(
         "covariate_file": execution_plan["covariate_file"].clone(),
         "covariate_names": execution_plan["covariate_names"].clone(),
         "prediction_list": execution_plan["prediction_list"].clone(),
+        "prediction_inputs": execution_plan["prediction_inputs"].clone(),
         "sample_count": input.sample_count,
         "variant_count": input.variant_count,
         "chunk_size": input.chunk_size,

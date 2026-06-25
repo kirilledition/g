@@ -22,6 +22,12 @@ struct PredictionListEntry {
     loco_file_path: PathBuf,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct PredictionLocoPath {
+    pub phenotype_name: String,
+    pub loco_file_path: PathBuf,
+}
+
 #[derive(Debug)]
 struct LocoPredictions {
     sample_index: LocoSampleIndex,
@@ -290,6 +296,23 @@ impl MultiPredictionSource {
     fn cached_chromosome_prediction_matrix_count(&self) -> usize {
         self.lock_chromosome_prediction_matrix_cache().len()
     }
+}
+
+pub fn resolve_prediction_loco_paths(
+    prediction_list_path: &Path,
+    phenotype_names: &[String],
+) -> Result<Vec<PredictionLocoPath>, PredictionError> {
+    let entries = parse_prediction_list_file(prediction_list_path)?;
+    phenotype_names
+        .iter()
+        .map(|phenotype_name| {
+            let entry = find_prediction_list_entry(&entries, phenotype_name)?;
+            Ok(PredictionLocoPath {
+                phenotype_name: phenotype_name.clone(),
+                loco_file_path: entry.loco_file_path.clone(),
+            })
+        })
+        .collect()
 }
 
 #[must_use]

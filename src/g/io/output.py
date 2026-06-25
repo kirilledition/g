@@ -22,7 +22,7 @@ CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.parquet$")
 REGENIE_PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.regenie$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
-RUN_MANIFEST_SCHEMA_VERSION = 8
+RUN_MANIFEST_SCHEMA_VERSION = 9
 OUTPUT_SCHEMA_VERSION = 2
 JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
@@ -104,6 +104,95 @@ class ManifestFileFingerprint:
     mtime_ns: int
     content_hash_algorithm: str
     content_sha256: str | None
+
+
+@dataclass(frozen=True)
+class ManifestFileFingerprintCacheKey:
+    """Cache key for one observed file fingerprint request.
+
+    Attributes:
+        path: Canonical input file path.
+        include_content_hash: Whether the request includes a content hash.
+        size: File size observed before hashing.
+        mtime_ns: File modification timestamp observed before hashing.
+
+    """
+
+    path: str
+    include_content_hash: bool
+    size: int
+    mtime_ns: int
+
+
+class ManifestFileFingerprintCache:
+    """Run-scoped cache for immutable input file fingerprints."""
+
+    def __init__(self) -> None:
+        """Initialize an empty fingerprint cache."""
+        self._fingerprints_by_key: dict[ManifestFileFingerprintCacheKey, ManifestFileFingerprint] = {}
+
+    def build_file_fingerprint(
+        self,
+        path: Path | None,
+        *,
+        include_content_hash: bool,
+    ) -> ManifestFileFingerprint | None:
+        """Build or reuse a fingerprint for the observed input file state."""
+        if path is None:
+            return None
+        canonical_path = path.resolve(strict=True)
+        metadata = canonical_path.stat()
+        cache_key = ManifestFileFingerprintCacheKey(
+            path=str(canonical_path),
+            include_content_hash=include_content_hash,
+            size=metadata.st_size,
+            mtime_ns=metadata.st_mtime_ns,
+        )
+        cached_fingerprint = self._fingerprints_by_key.get(cache_key)
+        if cached_fingerprint is not None:
+            return cached_fingerprint
+        file_fingerprint = require_manifest_file_fingerprint(
+            build_file_fingerprint(canonical_path, include_content_hash=include_content_hash),
+            "input file",
+        )
+        self._fingerprints_by_key[cache_key] = file_fingerprint
+        return file_fingerprint
+
+
+@dataclass(frozen=True)
+class PredictionLocoFileFingerprint:
+    """Manifest identity for one phenotype's LOCO prediction file.
+
+    Attributes:
+        phenotype: Phenotype name resolved from the prediction list.
+        path: Absolute LOCO prediction file path.
+        size: File size in bytes.
+        mtime_ns: File modification timestamp in nanoseconds.
+        content_hash_algorithm: Content hash algorithm.
+        content_sha256: SHA-256 content hash.
+
+    """
+
+    phenotype: str
+    path: str
+    size: int
+    mtime_ns: int
+    content_hash_algorithm: str
+    content_sha256: str
+
+
+@dataclass(frozen=True)
+class PredictionInputsManifest:
+    """Manifest identity for REGENIE Step 1 prediction inputs.
+
+    Attributes:
+        prediction_list: Prediction-list file fingerprint.
+        loco_files: LOCO prediction files selected for this output run.
+
+    """
+
+    prediction_list: ManifestFileFingerprint
+    loco_files: tuple[PredictionLocoFileFingerprint, ...]
 
 
 @dataclass(frozen=True)
@@ -196,6 +285,7 @@ class CurrentRunManifestHeader:
         covariate_file: Optional covariate file fingerprint.
         covariate_names: Covariate column names.
         prediction_list: REGENIE prediction-list fingerprint.
+        prediction_inputs: REGENIE prediction-list and selected LOCO file fingerprints.
         sample_count: Number of aligned samples.
         variant_count: Number of variants in the source.
         chunk_size: Native variant chunk size.
@@ -228,6 +318,7 @@ class CurrentRunManifestHeader:
     covariate_file: ManifestFileFingerprint | None
     covariate_names: tuple[str, ...]
     prediction_list: ManifestFileFingerprint
+    prediction_inputs: PredictionInputsManifest
     sample_count: int
     variant_count: int
     chunk_size: int
@@ -326,6 +417,18 @@ def build_file_fingerprint(path: Path | None, *, include_content_hash: bool) -> 
     )
 
 
+def build_file_fingerprint_with_cache(
+    path: Path | None,
+    *,
+    include_content_hash: bool,
+    fingerprint_cache: ManifestFileFingerprintCache | None,
+) -> ManifestFileFingerprint | None:
+    """Build a file fingerprint through a run-scoped cache when available."""
+    if fingerprint_cache is None:
+        return build_file_fingerprint(path, include_content_hash=include_content_hash)
+    return fingerprint_cache.build_file_fingerprint(path, include_content_hash=include_content_hash)
+
+
 def manifest_file_fingerprint_from_native_payload(payload: object) -> ManifestFileFingerprint:
     """Adapt a native file-fingerprint payload to the public Python dataclass."""
     fingerprint_payload = native_mapping_payload(payload)
@@ -369,6 +472,58 @@ def require_manifest_file_fingerprint(
         message = f"{role_name} fingerprint is required."
         raise ValueError(message)
     return file_fingerprint
+
+
+def prediction_loco_file_fingerprint_to_mapping(
+    loco_file_fingerprint: PredictionLocoFileFingerprint,
+) -> dict[str, typing.Any]:
+    """Serialize a LOCO file fingerprint to manifest JSON fields."""
+    return {
+        "phenotype": loco_file_fingerprint.phenotype,
+        "path": loco_file_fingerprint.path,
+        "size": loco_file_fingerprint.size,
+        "mtime_ns": loco_file_fingerprint.mtime_ns,
+        "content_hash_algorithm": loco_file_fingerprint.content_hash_algorithm,
+        "content_sha256": loco_file_fingerprint.content_sha256,
+    }
+
+
+def build_prediction_loco_file_fingerprints(
+    *,
+    prediction_list_path: Path,
+    phenotype_names: tuple[str, ...],
+    fingerprint_cache: ManifestFileFingerprintCache | None,
+) -> tuple[PredictionLocoFileFingerprint, ...]:
+    """Build content fingerprints for LOCO files selected from a prediction list."""
+    resolved_loco_paths = _core.resolve_prediction_loco_paths(str(prediction_list_path), list(phenotype_names))
+    loco_file_fingerprints: list[PredictionLocoFileFingerprint] = []
+    for resolved_loco_path in resolved_loco_paths:
+        resolved_loco_path_payload = native_mapping_payload(resolved_loco_path)
+        phenotype = typing.cast("str", resolved_loco_path_payload["phenotype"])
+        loco_path = Path(typing.cast("str", resolved_loco_path_payload["path"]))
+        loco_file_fingerprint = require_manifest_file_fingerprint(
+            build_file_fingerprint_with_cache(
+                loco_path,
+                include_content_hash=True,
+                fingerprint_cache=fingerprint_cache,
+            ),
+            "LOCO prediction file",
+        )
+        content_sha256 = loco_file_fingerprint.content_sha256
+        if content_sha256 is None:
+            message = "LOCO prediction file fingerprint must include a content hash."
+            raise ValueError(message)
+        loco_file_fingerprints.append(
+            PredictionLocoFileFingerprint(
+                phenotype=phenotype,
+                path=loco_file_fingerprint.path,
+                size=loco_file_fingerprint.size,
+                mtime_ns=loco_file_fingerprint.mtime_ns,
+                content_hash_algorithm=loco_file_fingerprint.content_hash_algorithm,
+                content_sha256=content_sha256,
+            )
+        )
+    return tuple(loco_file_fingerprints)
 
 
 def build_binary_correction_plan_manifest(
@@ -475,6 +630,8 @@ def build_current_run_manifest_header(
     covariate_path: Path | None,
     covariate_names: tuple[str, ...],
     prediction_list_path: Path,
+    prediction_input_phenotype_names: tuple[str, ...],
+    fingerprint_cache: ManifestFileFingerprintCache | None,
     sample_count: int,
     variant_count: int,
     chunk_size: int,
@@ -506,18 +663,47 @@ def build_current_run_manifest_header(
 ) -> CurrentRunManifestHeader:
     """Build immutable run manifest fields from the current execution plan."""
     bgen_fingerprint = require_manifest_file_fingerprint(
-        build_file_fingerprint(bgen_path, include_content_hash=False),
+        build_file_fingerprint_with_cache(
+            bgen_path,
+            include_content_hash=False,
+            fingerprint_cache=fingerprint_cache,
+        ),
         "BGEN",
     )
-    sample_fingerprint = build_file_fingerprint(sample_path, include_content_hash=True)
+    sample_fingerprint = build_file_fingerprint_with_cache(
+        sample_path,
+        include_content_hash=True,
+        fingerprint_cache=fingerprint_cache,
+    )
     phenotype_file_fingerprint = require_manifest_file_fingerprint(
-        build_file_fingerprint(phenotype_path, include_content_hash=True),
+        build_file_fingerprint_with_cache(
+            phenotype_path,
+            include_content_hash=True,
+            fingerprint_cache=fingerprint_cache,
+        ),
         "phenotype file",
     )
-    covariate_file_fingerprint = build_file_fingerprint(covariate_path, include_content_hash=True)
+    covariate_file_fingerprint = build_file_fingerprint_with_cache(
+        covariate_path,
+        include_content_hash=True,
+        fingerprint_cache=fingerprint_cache,
+    )
     prediction_list_fingerprint = require_manifest_file_fingerprint(
-        build_file_fingerprint(prediction_list_path, include_content_hash=True),
+        build_file_fingerprint_with_cache(
+            prediction_list_path,
+            include_content_hash=True,
+            fingerprint_cache=fingerprint_cache,
+        ),
         "prediction list",
+    )
+    prediction_loco_files = build_prediction_loco_file_fingerprints(
+        prediction_list_path=prediction_list_path,
+        phenotype_names=prediction_input_phenotype_names,
+        fingerprint_cache=fingerprint_cache,
+    )
+    prediction_inputs_manifest = PredictionInputsManifest(
+        prediction_list=prediction_list_fingerprint,
+        loco_files=prediction_loco_files,
     )
     binary_correction_plan_manifest = build_binary_correction_plan_manifest(binary_correction_plan)
     output_writer_manifest = build_output_writer_manifest(
@@ -550,6 +736,7 @@ def build_current_run_manifest_header(
         covariate_file=covariate_file_fingerprint,
         covariate_names=covariate_names,
         prediction_list=prediction_list_fingerprint,
+        prediction_inputs=prediction_inputs_manifest,
         sample_count=sample_count,
         variant_count=variant_count,
         chunk_size=chunk_size,
@@ -588,6 +775,7 @@ def build_current_run_execution_plan(current_header: CurrentRunManifestHeader) -
             "covariate_file": current_header.covariate_file,
             "covariate_names": current_header.covariate_names,
             "prediction_list": current_header.prediction_list,
+            "prediction_inputs": current_header.prediction_inputs,
             "sample_count": current_header.sample_count,
             "variant_count": current_header.variant_count,
             "chunk_size": current_header.chunk_size,
@@ -625,6 +813,13 @@ def build_native_current_run_manifest_header_mapping(
         if current_header.binary_kernel_config is None
         else json.dumps(normalize_execution_plan_value(current_header.binary_kernel_config), sort_keys=True)
     )
+    prediction_loco_files_json = json.dumps(
+        [
+            prediction_loco_file_fingerprint_to_mapping(loco_file)
+            for loco_file in current_header.prediction_inputs.loco_files
+        ],
+        sort_keys=True,
+    )
     manifest_json = native_build_header(
         current_header.association_mode.value,
         current_header.association_backend.kind,
@@ -635,6 +830,7 @@ def build_native_current_run_manifest_header_mapping(
         None if current_header.covariate_file is None else current_header.covariate_file.path,
         list(current_header.covariate_names),
         current_header.prediction_list.path,
+        prediction_loco_files_json,
         current_header.sample_count,
         current_header.variant_count,
         current_header.chunk_size,
@@ -694,6 +890,7 @@ def current_run_manifest_header_to_mapping(current_header: CurrentRunManifestHea
         "covariate_file": file_fingerprint_to_mapping(current_header.covariate_file),
         "covariate_names": list(current_header.covariate_names),
         "prediction_list": file_fingerprint_to_mapping(current_header.prediction_list),
+        "prediction_inputs": normalize_execution_plan_value(current_header.prediction_inputs),
         "sample_count": current_header.sample_count,
         "variant_count": current_header.variant_count,
         "chunk_size": current_header.chunk_size,

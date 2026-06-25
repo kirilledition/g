@@ -105,6 +105,12 @@ implemented.
 `--pred` must point to a prediction list produced by upstream REGENIE Step 1.
 `g` does not produce Step 1 predictions.
 
+Each prediction-list row maps one phenotype to one LOCO prediction file. Relative
+LOCO paths are resolved from the prediction-list directory. Run manifests record
+the prediction-list content hash and the content hash of each selected LOCO file
+for the phenotype or compatible compute group, so changing a referenced LOCO file
+prevents resume even when the prediction-list file itself is unchanged.
+
 Step 2 statistics depend on the prediction file, trait mode, covariates,
 chromosome, and aligned sample set. Changing the prediction list can change
 results even when the tested BGEN file is unchanged.

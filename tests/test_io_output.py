@@ -306,6 +306,7 @@ def build_test_header(
         else typing.cast("Path | None", covariate_path)
     )
     prediction_list_path = tmp_path / "predictions.list"
+    loco_path = tmp_path / "trait.loco"
     if write_input_files:
         input_paths = [
             input_path
@@ -314,12 +315,14 @@ def build_test_header(
                 selected_sample_path,
                 phenotype_path,
                 resolved_covariate_path,
-                prediction_list_path,
             )
             if input_path is not None
         ]
         for input_path in input_paths:
             input_path.write_text(input_path.name, encoding="utf-8")
+        loco_path.write_text("FID_IID F1_I1\n22 0.1\n", encoding="utf-8")
+        prediction_list_path.write_text("trait  trait.loco\n", encoding="utf-8")
+    fingerprint_cache = output.ManifestFileFingerprintCache()
     current_header = output.build_current_run_manifest_header(
         association_mode=association_mode,
         association_backend_kind=association_backend_kind,
@@ -330,6 +333,8 @@ def build_test_header(
         covariate_path=resolved_covariate_path,
         covariate_names=("intercept", "age", "sex"),
         prediction_list_path=prediction_list_path,
+        prediction_input_phenotype_names=("trait",),
+        fingerprint_cache=fingerprint_cache,
         sample_count=4,
         variant_count=10,
         chunk_size=2,
@@ -431,6 +436,13 @@ def test_current_run_manifest_hashes_small_control_files(tmp_path: Path) -> None
         assert current_header[manifest_field_name]["content_hash_algorithm"] == "sha256"
         assert current_header[manifest_field_name]["content_sha256"] == expected_hash
         assert current_header["execution_plan"][manifest_field_name]["content_sha256"] == expected_hash
+    assert current_header["prediction_inputs"]["prediction_list"] == current_header["prediction_list"]
+    assert current_header["execution_plan"]["prediction_inputs"] == current_header["prediction_inputs"]
+    assert [loco_file["phenotype"] for loco_file in current_header["prediction_inputs"]["loco_files"]] == ["trait"]
+    loco_file = current_header["prediction_inputs"]["loco_files"][0]
+    loco_path = Path(loco_file["path"])
+    assert loco_file["content_hash_algorithm"] == "sha256"
+    assert loco_file["content_sha256"] == hashlib.sha256(loco_path.read_bytes()).hexdigest()
 
 
 def test_current_run_manifest_allows_optional_unhashed_inputs(tmp_path: Path) -> None:
@@ -480,7 +492,7 @@ def replace_file_text_preserving_size_and_mtime(path: Path, replacement_text: st
         ("sample", "study.sample", "STUDY.sample"),
         ("phenotype_file", "phenotypes.tsv", "PHENOTYPES.tsv"),
         ("covariate_file", "covariates.tsv", "COVARIATES.tsv"),
-        ("prediction_list", "predictions.list", "PREDICTIONS.list"),
+        ("prediction_list", "predictions.list", "trait\t trait.loco\n"),
     ],
 )
 def test_fast_resume_rejects_control_file_content_change_with_preserved_metadata(
@@ -513,6 +525,89 @@ def test_fast_resume_rejects_control_file_content_change_with_preserved_metadata
     )
     with pytest.raises(ValueError, match=rf"{manifest_field_name}\.content_sha256"):
         initialize_test_output_run(resumed_output_run, current_header, resume=True)
+
+
+def test_fast_resume_rejects_loco_file_content_change_with_preserved_metadata(tmp_path: Path) -> None:
+    manifest_header = build_test_header(tmp_path)
+    prepared_output_run = prepare_test_output_run(
+        output_root=tmp_path / "output-loco-content",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+
+    replace_file_text_preserving_size_and_mtime(tmp_path / "trait.loco", "FID_IID F1_I1\n22 0.2\n")
+    current_header = build_test_header(tmp_path, write_input_files=False)
+    original_loco_file = manifest_header["prediction_inputs"]["loco_files"][0]
+    current_loco_file = current_header["prediction_inputs"]["loco_files"][0]
+    assert current_loco_file["path"] == original_loco_file["path"]
+    assert current_loco_file["size"] == original_loco_file["size"]
+    assert current_loco_file["mtime_ns"] == original_loco_file["mtime_ns"]
+    assert current_loco_file["content_sha256"] != original_loco_file["content_sha256"]
+    assert current_header["execution_plan_hash"] != manifest_header["execution_plan_hash"]
+
+    resumed_output_run = prepare_test_output_run(
+        output_root=tmp_path / "output-loco-content",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+    )
+    with pytest.raises(ValueError, match=r"prediction_inputs\.loco_files\[0\]\.content_sha256"):
+        initialize_test_output_run(resumed_output_run, current_header, resume=True)
+
+
+def test_prediction_loco_fingerprints_hash_shared_file_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loco_path = tmp_path / "shared.loco"
+    loco_path.write_text("FID_IID F1_I1\n22 0.1\n", encoding="utf-8")
+    prediction_list_path = tmp_path / "predictions.list"
+    prediction_list_path.write_text("first shared.loco\nsecond shared.loco\n", encoding="utf-8")
+    observed_loco_paths: list[Path] = []
+    real_build_file_fingerprint = output.build_file_fingerprint
+
+    def record_file_fingerprint(
+        path: Path | None,
+        *,
+        include_content_hash: bool,
+    ) -> output.ManifestFileFingerprint | None:
+        if path is not None and path.name == "shared.loco":
+            observed_loco_paths.append(path)
+        return real_build_file_fingerprint(path, include_content_hash=include_content_hash)
+
+    monkeypatch.setattr(output, "build_file_fingerprint", record_file_fingerprint)
+
+    loco_files = output.build_prediction_loco_file_fingerprints(
+        prediction_list_path=prediction_list_path,
+        phenotype_names=("first", "second"),
+        fingerprint_cache=output.ManifestFileFingerprintCache(),
+    )
+
+    assert [loco_file.phenotype for loco_file in loco_files] == ["first", "second"]
+    assert [loco_file.path for loco_file in loco_files] == [str(loco_path.resolve()), str(loco_path.resolve())]
+    assert observed_loco_paths == [loco_path.resolve()]
+
+
+def test_prediction_loco_fingerprints_are_stable_for_relative_and_absolute_paths(tmp_path: Path) -> None:
+    loco_path = tmp_path / "trait.loco"
+    loco_path.write_text("FID_IID F1_I1\n22 0.1\n", encoding="utf-8")
+    relative_prediction_list_path = tmp_path / "relative.list"
+    absolute_prediction_list_path = tmp_path / "absolute.list"
+    relative_prediction_list_path.write_text("trait trait.loco\n", encoding="utf-8")
+    absolute_prediction_list_path.write_text(f"trait {loco_path}\n", encoding="utf-8")
+
+    relative_loco_files = output.build_prediction_loco_file_fingerprints(
+        prediction_list_path=relative_prediction_list_path,
+        phenotype_names=("trait",),
+        fingerprint_cache=output.ManifestFileFingerprintCache(),
+    )
+    absolute_loco_files = output.build_prediction_loco_file_fingerprints(
+        prediction_list_path=absolute_prediction_list_path,
+        phenotype_names=("trait",),
+        fingerprint_cache=output.ManifestFileFingerprintCache(),
+    )
+
+    assert relative_loco_files == absolute_loco_files
 
 
 def test_bgen_content_change_with_preserved_metadata_keeps_metadata_only_fingerprint(tmp_path: Path) -> None:
@@ -591,6 +686,18 @@ def test_native_manifest_compatibility_reports_missing_and_nested_differences() 
         output.validate_manifest_compatibility({"root": [{"a": 1}]}, {"root": [{"a": 2}]})
     with pytest.raises(ValueError, match="root"):
         output.validate_manifest_compatibility({"root": [1, 2]}, {"root": [1]})
+
+
+def test_resume_rejects_older_manifest_schema_after_prediction_input_schema_bump(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path)
+    older_manifest = copy.deepcopy(current_header)
+    older_manifest["schema_version"] = output.RUN_MANIFEST_SCHEMA_VERSION - 1
+    older_manifest["execution_plan"]["manifest_schema_version"] = output.RUN_MANIFEST_SCHEMA_VERSION - 1
+    older_manifest.pop("prediction_inputs")
+    older_manifest["execution_plan"].pop("prediction_inputs")
+
+    with pytest.raises(ValueError, match="manifest_schema_version"):
+        output.validate_manifest_compatibility(older_manifest, current_header)
 
 
 @pytest.mark.parametrize(
