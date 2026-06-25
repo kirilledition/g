@@ -49,7 +49,7 @@ null_firth_line_search_maximum_attempts = 25
 null_firth_step_halving_scale = 0.5
 use_block_firth_math = false
 bgen_decode_tile_variant_count = 64
-gpu_genotype_format = "dosage"
+gpu_genotype_format = "auto"
 # Score-test kernels default to the float32 fast path. This is an internal
 # JAX compute dtype; public result statistics are still written as float32.
 # Use float64 only when parity or numerical debugging needs outweigh throughput.

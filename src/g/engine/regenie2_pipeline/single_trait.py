@@ -15,7 +15,7 @@ from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import outputs, telemetry_events
+from g.engine.regenie2_pipeline import gpu_format, outputs, telemetry_events
 from g.io import output
 
 if typing.TYPE_CHECKING:
@@ -198,16 +198,26 @@ def run_single_trait_bgen_pipeline(
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+    prepared_engine: _core.Regenie2RunEngine | None,
 ) -> Path | None:
     """Run a single-trait REGENIE step 2 BGEN pipeline lifecycle."""
     pipeline_label = "binary" if context.is_binary_trait else "linear"
     logger.info("Starting %s REGENIE step 2 BGEN pipeline.", pipeline_label)
-    engine = outputs.open_pipeline_bgen_engine(
-        context=context,
-        pipeline_label=pipeline_label,
-        phenotype_name=phenotype_name,
-        phenotype_count=None,
-    )
+    if prepared_engine is None:
+        engine = outputs.open_pipeline_bgen_engine(
+            context=context,
+            pipeline_label=pipeline_label,
+            phenotype_name=phenotype_name,
+            phenotype_count=None,
+        )
+    else:
+        engine = outputs.use_prepared_pipeline_bgen_engine(
+            context=context,
+            engine=prepared_engine,
+            pipeline_label=pipeline_label,
+            phenotype_name=phenotype_name,
+            phenotype_count=None,
+        )
     run_input = load_single_trait_run_input(
         context=context,
         engine=engine,
@@ -314,6 +324,11 @@ def run_regenie2_linear_bgen_pipeline(
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
+    resolved_gpu_genotype_format = gpu_format.resolve_auto_to_dosage(
+        requested_gpu_genotype_format=gpu_genotype_format,
+        telemetry_session=telemetry_session,
+        resolution_reason="single_trait_linear",
+    )
     context = pipeline_context.build_regenie2_pipeline_context(
         association_mode=types.AssociationMode.REGENIE2_LINEAR,
         genotype_source_config=genotype_source_config,
@@ -329,7 +344,7 @@ def run_regenie2_linear_bgen_pipeline(
         jax_matmul_precision=jax_matmul_precision,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
-        gpu_genotype_format=gpu_genotype_format,
+        gpu_genotype_format=resolved_gpu_genotype_format,
         correction_plan=types.BinaryCorrectionPlan(
             method=types.BinaryFallbackMethod.SCORE_ONLY,
             p_threshold=0.05,
@@ -360,6 +375,7 @@ def run_regenie2_linear_bgen_pipeline(
         result_in_flight_limit=result_in_flight_limit,
         dosage_buffer_limit=dosage_buffer_limit,
         null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.FAIL,
+        prepared_engine=None,
     )
 
 
@@ -400,6 +416,18 @@ def run_regenie2_binary_bgen_pipeline(
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
     resolved_kernel_config = pipeline_context.require_binary_kernel_config(kernel_config)
+    gpu_genotype_format_resolution = gpu_format.resolve_single_trait_binary_gpu_genotype_format(
+        requested_gpu_genotype_format=gpu_genotype_format,
+        existing_manifest=existing_manifest,
+        resume=resume,
+        jax_device=jax_device,
+        genotype_source_config=genotype_source_config,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+    )
     context = pipeline_context.build_regenie2_pipeline_context(
         association_mode=types.AssociationMode.REGENIE2_BINARY,
         genotype_source_config=genotype_source_config,
@@ -415,7 +443,7 @@ def run_regenie2_binary_bgen_pipeline(
         jax_matmul_precision=jax_matmul_precision,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
-        gpu_genotype_format=gpu_genotype_format,
+        gpu_genotype_format=gpu_genotype_format_resolution.resolved_gpu_genotype_format,
         correction_plan=correction_plan,
         binary_kernel_config=resolved_kernel_config,
         linear_numerical_config=None,
@@ -442,4 +470,5 @@ def run_regenie2_binary_bgen_pipeline(
         result_in_flight_limit=result_in_flight_limit,
         dosage_buffer_limit=dosage_buffer_limit,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+        prepared_engine=gpu_genotype_format_resolution.prepared_engine,
     )

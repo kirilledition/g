@@ -158,6 +158,7 @@ Runtime CLI flags map directly to the sectioned snake_case TOML surface:
 | `--trusted_bgen_validation_mode cache_on_miss` | `[compute] trusted_bgen_validation_mode = "cache_on_miss"` |
 | `--sample_key_mode fid_iid` | `[compute] sample_key_mode = "fid_iid"` |
 | `--multi_phenotype_sample_mode complete-case` | `[compute] multi_phenotype_sample_mode = "complete-case"` |
+| `--gpu_genotype_format auto` | `[compute] gpu_genotype_format = "auto"`; default is `auto`, which resolves to packed8 only for eligible single-trait binary GPU runs |
 | `--jax_cache_dir PATH` | `[compute] jax_cache_dir = "PATH"` |
 | `--format parquet` | `[output] format = "parquet"` |
 | `--output_statistic_dtype float64` | `[output] output_statistic_dtype = "float64"`; default is `"float32"` |

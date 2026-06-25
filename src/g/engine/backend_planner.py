@@ -63,6 +63,9 @@ def plan_association_backend(
     gpu_genotype_format: types.GpuGenotypeFormat,
 ) -> AssociationBackendPlan:
     """Select the concrete backend used by association execution."""
+    if gpu_genotype_format == types.GpuGenotypeFormat.AUTO:
+        message = "gpu_genotype_format=auto must be resolved before backend planning."
+        raise ValueError(message)
     backend_payload = _core.plan_association_backend_payload(
         association_mode.value,
         jax_device.value,

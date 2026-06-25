@@ -59,6 +59,7 @@ class FloatingPointDtype(enum.StrEnum):
 class GpuGenotypeFormat(enum.StrEnum):
     """Host-to-device genotype representation for GPU kernels."""
 
+    AUTO = "auto"
     DOSAGE = "dosage"
     PACKED8 = "packed8"
 

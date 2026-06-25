@@ -28,6 +28,7 @@ import g.engine.native_dispatch.loaders as native_dispatch_loaders
 import g.engine.native_dispatch.models as native_dispatch_models
 import g.engine.native_dispatch.writers as native_dispatch_writers
 import g.engine.regenie2_pipeline.context as pipeline_context
+import g.engine.regenie2_pipeline.gpu_format as pipeline_gpu_format
 import g.engine.regenie2_pipeline.multi_group as pipeline_multi_group
 import g.engine.regenie2_pipeline.multi_trait as pipeline_multi_trait
 import g.engine.regenie2_pipeline.outputs as pipeline_outputs
@@ -1232,6 +1233,13 @@ class FakeRunEngine:
             callback,
             committed_chunk_identifiers,
         )
+
+
+class IncompatibleTrustedRunEngine(FakeRunEngine):
+    def validate_trusted_no_missing_diploid(self) -> None:
+        self.validation_count += 1
+        message = "packed8 incompatible"
+        raise ValueError(message)
 
 
 class PartialCommitDeliveringRunEngine(FakeRunEngine):
@@ -4392,6 +4400,238 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_PACKED8
     assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
     assert mock_manifest_header.call_args.kwargs["trusted_no_missing_diploid"] is True
+
+
+def test_binary_gpu_auto_uses_packed8_when_trusted_validation_succeeds() -> None:
+    FakeRunEngine.instances.clear()
+    FakePredictionSource.instances.clear()
+    telemetry_session = RecordingTelemetrySession()
+    writer_session = FakeWriterSession()
+    run_input = build_native_run_input()
+    pipeline_options = build_default_pipeline_runtime_options()
+
+    with (
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
+        patch(
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            return_value=run_input,
+        ),
+        patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
+        ),
+        patch(
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_state",
+            return_value=typing.cast("regenie2_binary_state.Regenie2BinaryState", "state"),
+        ),
+    ):
+        mock_manifest_header.return_value = {"header": "current"}
+        final_path = run_test_regenie2_binary_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            staging_depth=3,
+            existing_manifest=None,
+            resume=False,
+            trusted_no_missing_diploid=False,
+            writer_settings=pipeline_options.writer_settings,
+            bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+            score_dtype=pipeline_options.score_dtype,
+            firth_dtype=pipeline_options.firth_dtype,
+            kernel_config=build_default_binary_kernel_config(),
+            gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+            jax_device=types.Device.GPU,
+            telemetry_session=typing.cast("typing.Any", telemetry_session),
+        )
+
+    assert final_path == Path("results/final.parquet")
+    assert len(FakeRunEngine.instances) == 1
+    engine = FakeRunEngine.instances[0]
+    assert engine.trusted_no_missing_diploid is True
+    assert engine.validation_count == 1
+    assert engine.run_method == "variant_major_packed8"
+    assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_PACKED8
+    assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
+    assert mock_manifest_header.call_args.kwargs["trusted_no_missing_diploid"] is True
+    assert telemetry_session.events[0] == (
+        "gpu_genotype_format_resolved",
+        {
+            "requested_gpu_genotype_format": "auto",
+            "resolved_gpu_genotype_format": "packed8",
+            "resolution_reason": "trusted_validation_passed",
+        },
+    )
+
+
+def test_binary_gpu_auto_falls_back_to_dosage_when_trusted_validation_fails() -> None:
+    IncompatibleTrustedRunEngine.instances.clear()
+    FakePredictionSource.instances.clear()
+    telemetry_session = RecordingTelemetrySession()
+    writer_session = FakeWriterSession()
+    run_input = build_native_run_input()
+    pipeline_options = build_default_pipeline_runtime_options()
+
+    with (
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", IncompatibleTrustedRunEngine),
+        patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
+        patch(
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            return_value=run_input,
+        ),
+        patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
+        patch(
+            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
+        ),
+        patch(
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_state",
+            return_value=typing.cast("regenie2_binary_state.Regenie2BinaryState", "state"),
+        ),
+    ):
+        mock_manifest_header.return_value = {"header": "current"}
+        final_path = run_test_regenie2_binary_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            staging_depth=3,
+            existing_manifest=None,
+            resume=False,
+            trusted_no_missing_diploid=False,
+            writer_settings=pipeline_options.writer_settings,
+            bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+            score_dtype=pipeline_options.score_dtype,
+            firth_dtype=pipeline_options.firth_dtype,
+            kernel_config=build_default_binary_kernel_config(),
+            gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+            jax_device=types.Device.GPU,
+            telemetry_session=typing.cast("typing.Any", telemetry_session),
+        )
+
+    assert final_path == Path("results/final.parquet")
+    assert len(IncompatibleTrustedRunEngine.instances) == 2
+    failed_engine, fallback_engine = IncompatibleTrustedRunEngine.instances
+    assert failed_engine.trusted_no_missing_diploid is True
+    assert failed_engine.validation_count == 1
+    assert fallback_engine.trusted_no_missing_diploid is False
+    assert fallback_engine.validation_count == 0
+    assert fallback_engine.run_method == "variant_major_buffered"
+    assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_DOSAGE
+    assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.DOSAGE
+    assert mock_manifest_header.call_args.kwargs["trusted_no_missing_diploid"] is False
+    assert telemetry_session.events[0] == (
+        "gpu_genotype_format_resolved",
+        {
+            "requested_gpu_genotype_format": "auto",
+            "resolved_gpu_genotype_format": "dosage",
+            "resolution_reason": "trusted_validation_failed",
+            "fallback_error": "packed8 incompatible",
+        },
+    )
+
+
+def test_binary_explicit_packed8_still_fails_when_trusted_validation_fails() -> None:
+    IncompatibleTrustedRunEngine.instances.clear()
+    pipeline_options = build_default_pipeline_runtime_options()
+
+    with (
+        patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", IncompatibleTrustedRunEngine),
+        patch(
+            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
+        ),
+        patch("g.engine.regenie2_pipeline.outputs.output.initialize_output_run") as mock_initialize_output_run,
+        pytest.raises(ValueError, match="packed8 incompatible"),
+    ):
+        run_test_regenie2_binary_bgen_pipeline(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            staging_depth=3,
+            existing_manifest=None,
+            resume=False,
+            trusted_no_missing_diploid=False,
+            writer_settings=pipeline_options.writer_settings,
+            bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+            score_dtype=pipeline_options.score_dtype,
+            firth_dtype=pipeline_options.firth_dtype,
+            kernel_config=build_default_binary_kernel_config(),
+            gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+            jax_device=types.Device.GPU,
+        )
+
+    assert len(IncompatibleTrustedRunEngine.instances) == 1
+    assert IncompatibleTrustedRunEngine.instances[0].validation_count == 1
+    mock_initialize_output_run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("manifest_gpu_genotype_format", "expected_gpu_genotype_format"),
+    [
+        ("dosage", types.GpuGenotypeFormat.DOSAGE),
+        ("packed8", types.GpuGenotypeFormat.PACKED8),
+    ],
+)
+def test_binary_auto_resume_uses_existing_manifest_genotype_format(
+    manifest_gpu_genotype_format: str,
+    expected_gpu_genotype_format: types.GpuGenotypeFormat,
+) -> None:
+    telemetry_session = RecordingTelemetrySession()
+
+    resolution = pipeline_gpu_format.resolve_single_trait_binary_gpu_genotype_format(
+        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+        existing_manifest={"gpu_genotype_format": manifest_gpu_genotype_format, "committed_chunks": []},
+        resume=True,
+        jax_device=types.Device.GPU,
+        genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
+        chunk_size=32,
+        variant_limit=100,
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+        stage_timing_recorder=None,
+        telemetry_session=typing.cast("typing.Any", telemetry_session),
+    )
+
+    assert resolution.resolved_gpu_genotype_format == expected_gpu_genotype_format
+    assert resolution.prepared_engine is None
+    assert telemetry_session.events == [
+        (
+            "gpu_genotype_format_resolved",
+            {
+                "requested_gpu_genotype_format": "auto",
+                "resolved_gpu_genotype_format": manifest_gpu_genotype_format,
+                "resolution_reason": "resume_manifest",
+            },
+        )
+    ]
 
 
 def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed_chunks() -> None:

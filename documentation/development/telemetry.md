@@ -164,6 +164,10 @@ a run or phenotype group. It records `association_mode`,
 `association_backend_kind`, requested `device`, and `genotype_format`. Current
 backend kinds are `jax_dosage` and `jax_packed8`.
 
+`gpu_genotype_format_resolved` is emitted when `gpu_genotype_format=auto` is
+resolved. It records the requested format, resolved concrete format, and reason;
+fallback events also include the trusted BGEN validation error.
+
 ### Profile
 
 ```toml

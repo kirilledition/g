@@ -84,3 +84,12 @@ def test_plan_association_backend_resolves_current_jax_paths(
         device=jax_device.value,
         genotype_format=gpu_genotype_format.value,
     )
+
+
+def test_plan_association_backend_rejects_unresolved_auto_format() -> None:
+    with pytest.raises(ValueError, match="must be resolved"):
+        backend_planner.plan_association_backend(
+            association_mode=types.AssociationMode.REGENIE2_BINARY,
+            jax_device=types.Device.GPU,
+            gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+        )

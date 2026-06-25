@@ -12,7 +12,7 @@ from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import grouped, multi_group, outputs, telemetry_events
+from g.engine.regenie2_pipeline import gpu_format, grouped, multi_group, outputs, telemetry_events
 from g.io import output
 
 if typing.TYPE_CHECKING:
@@ -224,6 +224,11 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> tuple[Path | None, ...]:
     """Shared implementation for multi-phenotype BGEN pipelines."""
+    resolved_gpu_genotype_format = gpu_format.resolve_auto_to_dosage(
+        requested_gpu_genotype_format=gpu_genotype_format,
+        telemetry_session=telemetry_session,
+        resolution_reason="multi_phenotype",
+    )
     resolved_compute_groups = pipeline_context.resolve_multi_phenotype_compute_groups(
         phenotype_names=phenotype_names,
         sample_mode=sample_mode,
@@ -249,7 +254,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         jax_matmul_precision=jax_matmul_precision,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
-        gpu_genotype_format=gpu_genotype_format,
+        gpu_genotype_format=resolved_gpu_genotype_format,
         correction_plan=correction_plan,
         binary_kernel_config=resolved_kernel_config,
         linear_numerical_config=linear_numerical_config,

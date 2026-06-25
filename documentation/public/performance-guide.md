@@ -49,7 +49,7 @@ Use the current packaged defaults first. Override only with measurements.
 | `--result_in_flight_limit` | Optional cap for result chunks awaiting materialization. |
 | `--dosage_buffer_limit` | Optional cap for reusable native dosage decode buffers. |
 | `--bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
-| `--gpu_genotype_format` | Host-to-device genotype representation for GPU-compatible paths. |
+| `--gpu_genotype_format` | Host-to-device genotype representation for GPU-compatible paths; default `auto` upgrades eligible single-trait binary GPU BGEN runs to packed8. |
 | `--format` | Arrow, Parquet, or REGENIE text materialization. |
 | `--writer_threads` | Output writer worker count. |
 | `--writer_queue_depth` | Output writer queue depth. |
@@ -58,6 +58,11 @@ Use the current packaged defaults first. Override only with measurements.
 | `--firth_candidate_capacity` | Candidate capacity for binary fallback staging. |
 | `--jax_persistent_cache` and `--jax_cache_dir` | JAX compilation cache behavior. |
 | `--telemetry` | Progress, profile, and trace modes. Profile/trace can perturb timing. |
+
+`--gpu_genotype_format auto` resolves to packed8 only for single-trait binary
+GPU REGENIE Step 2 runs when trusted no-missing diploid BGEN validation passes.
+It falls back to dosage for CPU, linear, grouped, multi-phenotype, and
+incompatible BGEN cases. Explicit `packed8` keeps fail-fast validation behavior.
 
 `--native_callback_batch_size` currently applies to variant-major dosage BGEN
 delivery. Packed8 and grouped union delivery reject values above `1`.

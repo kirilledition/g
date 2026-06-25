@@ -415,7 +415,7 @@ def test_packaged_default_toml_decodes_to_typed_config() -> None:
     ("toml_text", "error_match"),
     [
         ("[unknown]\nvalue = true\n", "unknown field"),
-        ("[trait]\nstep = \"two\"\n", "invalid type"),
+        ('[trait]\nstep = "two"\n', "invalid type"),
     ],
 )
 def test_native_toml_schema_rejects_unknown_keys_and_wrong_types(
@@ -441,7 +441,7 @@ def test_native_toml_schema_rejects_removed_jax_x64_option(tmp_path: Path) -> No
 def test_toml_metadata_is_accepted_but_not_an_option(tmp_path: Path) -> None:
     config_path = tmp_path / "effective.toml"
     effective_toml = config.dumps_toml(config.RegenieConfig.from_options(build_valid_quantitative_options()))
-    config_path.write_text(f"{effective_toml}ignored-user-field = \"ignored\"\n", encoding="utf-8")
+    config_path.write_text(f'{effective_toml}ignored-user-field = "ignored"\n', encoding="utf-8")
 
     regenie_config = config.RegenieConfig.from_toml(config_path)
     emitted_payload = tomllib.loads(config.dumps_toml(regenie_config))
@@ -526,7 +526,7 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     )
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT32
     assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
-    assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
+    assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.AUTO
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
     assert regenie_config.g_output.output_statistic_dtype == types.FloatingPointDtype.FLOAT32
@@ -563,6 +563,73 @@ def test_user_toml_overrides_packaged_defaults(tmp_path: Path) -> None:
     assert regenie_config.g_compute.device == types.Device.GPU
     assert regenie_config.g_output.format == types.OutputFormat.ARROW
     assert regenie_config.g_diagnostics.log_filter == "g=debug"
+
+
+def test_gpu_genotype_format_auto_is_accepted_from_python_options() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options["gpu_genotype_format"] = "auto"
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.AUTO
+
+
+def test_gpu_genotype_format_auto_is_accepted_from_toml(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[input]",
+                'bgen = "dataset.bgen"',
+                'phenoFile = "phenotype.tsv"',
+                'phenoCol = "trait"',
+                'pred = "predictions.list"',
+                "[compute]",
+                'gpu_genotype_format = "auto"',
+                "[output]",
+                'out = "results/output"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    regenie_config = config.RegenieConfig.from_toml(config_path)
+
+    assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.AUTO
+
+
+def test_gpu_genotype_format_auto_is_accepted_from_cli(tmp_path: Path) -> None:
+    bgen_path = tmp_path / "dataset.bgen"
+    phenotype_path = tmp_path / "phenotype.tsv"
+    prediction_path = tmp_path / "predictions.list"
+    bgen_path.write_bytes(b"")
+    phenotype_path.write_text("FID IID trait\n", encoding="utf-8")
+    prediction_path.write_text("", encoding="utf-8")
+
+    cli_outcome = g._core.dispatch_cli(
+        [
+            "regenie",
+            "--step",
+            "2",
+            "--qt",
+            "--bgen",
+            str(bgen_path),
+            "--phenoFile",
+            str(phenotype_path),
+            "--phenoCol",
+            "trait",
+            "--pred",
+            str(prediction_path),
+            "--out",
+            str(tmp_path / "results" / "output"),
+            "--gpu_genotype_format",
+            "auto",
+        ]
+    )
+
+    assert cli_outcome.exit_code == 0
+    assert cli_outcome.config is not None
+    assert cli_outcome.config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.AUTO
 
 
 def test_python_options_accept_regenie_text_output_format() -> None:
@@ -816,6 +883,25 @@ def test_config_validation_rejects_unsupported_packed8_uses(
 
     with pytest.raises(ValueError, match=error_match):
         config.RegenieConfig.from_options(raw_options)
+
+
+def test_config_validation_accepts_auto_on_cpu() -> None:
+    raw_options: dict[str, object] = {
+        "step": 2,
+        "bt": True,
+        "bgen": "dataset.bgen",
+        "phenoFile": "phenotype.tsv",
+        "phenoCol": "trait",
+        "pred": "predictions.list",
+        "out": "results/output",
+        "device": "cpu",
+        "gpu_genotype_format": "auto",
+    }
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.g_compute.device == types.Device.CPU
+    assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.AUTO
 
 
 def test_config_validation_accepts_quantitative_single_phenotype_packed8_gpu() -> None:

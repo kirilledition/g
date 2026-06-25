@@ -1322,7 +1322,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
     assert mock_binary_pipeline.call_args.kwargs["native_callback_batch_size"] == 3
     assert mock_binary_pipeline.call_args.kwargs["result_in_flight_limit"] == 7
     assert mock_binary_pipeline.call_args.kwargs["dosage_buffer_limit"] == 8
-    assert mock_binary_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.DOSAGE
+    assert mock_binary_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.AUTO
     assert (
         mock_binary_pipeline.call_args.kwargs["null_logistic_nonconvergence_policy"]
         == types.NullLogisticNonconvergencePolicy.WARN
@@ -1463,7 +1463,7 @@ def test_default_multi_phenotype_plan_dispatches_grouped_multi_phenotype_run() -
 
     mock_multi_pipeline.assert_called_once()
     assert mock_multi_pipeline.call_args.kwargs["sample_mode"] == types.MultiPhenotypeSampleMode.PER_PHENOTYPE
-    assert mock_multi_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.DOSAGE
+    assert mock_multi_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.AUTO
     assert mock_multi_pipeline.call_args.kwargs["phenotype_compute_groups"] == plan.phenotype_compute_groups
     assert tuple(group.group_mode for group in plan.phenotype_compute_groups) == (
         types.PhenotypeComputeGroupMode.PER_PHENOTYPE_COMPATIBLE,

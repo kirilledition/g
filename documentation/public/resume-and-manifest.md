@@ -28,7 +28,8 @@ optional TOML file, and explicit CLI overrides.
 - multi-phenotype sample mode, phenotype compute-group identifier, sample-set
   fingerprint, covariate-design fingerprint, and prediction-alignment
   fingerprint;
-- selected association backend such as `jax_dosage` or `jax_packed8`;
+- selected association backend such as `jax_dosage` or `jax_packed8`, with the
+  resolved concrete GPU genotype format;
 - binary correction plan and binary kernel settings when applicable;
 - trusted BGEN policy, sample-key mode, JAX device/precision policy, dtype
   choices;

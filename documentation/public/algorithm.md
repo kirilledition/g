@@ -731,7 +731,7 @@ Runtime and output parameters:
 | `--device` | No intended change | Selects JAX CPU or GPU execution. |
 | `--staging_depth` | No intended change | Controls how far native chunk delivery can stage callback work. |
 | `--bgen_decode_tile_variant_count` | No intended change | Native BGEN decode tile size. |
-| `--gpu_genotype_format` | No intended change | Selects dosage transfer or packed8 transfer/decode for GPU-compatible paths. |
+| `--gpu_genotype_format` | No intended change | Selects dosage transfer, packed8 transfer/decode, or `auto`; `auto` uses packed8 only for eligible single-trait binary GPU runs after trusted BGEN validation. |
 | `--format` | No | Chooses Arrow, Parquet, or REGENIE-text materialization. |
 | `--resume`, `--resume_mode` | No | Reuses previously committed chunks when the manifest accepts the execution plan. |
 | `--telemetry`, `--log_*`, `--trace_*` | No | Controls diagnostics and logging. Profile and trace modes can add synchronization overhead. |

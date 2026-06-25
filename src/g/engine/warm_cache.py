@@ -18,6 +18,7 @@ from g.compute.regenie2_linear import api as regenie2_linear
 from g.engine.native_dispatch import engine as native_dispatch_engine
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
+from g.engine.regenie2_pipeline import gpu_format as pipeline_gpu_format
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -282,6 +283,11 @@ def warm_regenie2_linear_bgen_cache(
     score_dtype: types.FloatingPointDtype,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for quantitative REGENIE step 2."""
+    resolved_gpu_genotype_format = pipeline_gpu_format.resolve_auto_to_dosage(
+        requested_gpu_genotype_format=gpu_genotype_format,
+        telemetry_session=None,
+        resolution_reason="warm_cache_linear",
+    )
     engine = native_dispatch_engine.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
@@ -332,10 +338,10 @@ def warm_regenie2_linear_bgen_cache(
             phenotype_vector=phenotype_vector,
             variant_count=shape.variant_count,
             is_binary_trait=False,
-            exact_integer_dosage=gpu_genotype_format == types.GpuGenotypeFormat.PACKED8,
+            exact_integer_dosage=resolved_gpu_genotype_format == types.GpuGenotypeFormat.PACKED8,
         )
         native_stats = build_synthetic_native_stats(genotype_matrix_by_variant)
-        if gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
+        if resolved_gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
             result = regenie2_linear.compute_linear_chunk_packed8_donating_inputs(
                 chromosome_state=chromosome_state,
                 packed_probability_pairs_by_variant=encode_variant_major_dosage_to_packed8_probability_pairs(
@@ -359,7 +365,7 @@ def warm_regenie2_linear_bgen_cache(
     signatures = tuple(
         build_linear_warm_cache_signature(
             shape=shape,
-            gpu_genotype_format=gpu_genotype_format,
+            gpu_genotype_format=resolved_gpu_genotype_format,
             score_dtype=score_dtype,
         )
         for shape in shapes
@@ -386,6 +392,11 @@ def warm_regenie2_binary_bgen_cache(
     score_dtype: types.FloatingPointDtype,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
+    resolved_gpu_genotype_format = pipeline_gpu_format.resolve_auto_to_dosage(
+        requested_gpu_genotype_format=gpu_genotype_format,
+        telemetry_session=None,
+        resolution_reason="warm_cache_binary",
+    )
     engine = native_dispatch_engine.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
@@ -438,10 +449,10 @@ def warm_regenie2_binary_bgen_cache(
             phenotype_vector=phenotype_vector,
             variant_count=shape.variant_count,
             is_binary_trait=True,
-            exact_integer_dosage=gpu_genotype_format == types.GpuGenotypeFormat.PACKED8,
+            exact_integer_dosage=resolved_gpu_genotype_format == types.GpuGenotypeFormat.PACKED8,
         )
         native_stats = build_synthetic_native_stats(genotype_matrix_by_variant)
-        if gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
+        if resolved_gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
             packed_probability_pairs_by_variant = encode_variant_major_dosage_to_packed8_probability_pairs(
                 genotype_matrix_by_variant
             )
@@ -493,7 +504,7 @@ def warm_regenie2_binary_bgen_cache(
     signatures = tuple(
         build_binary_warm_cache_signature(
             shape=shape,
-            gpu_genotype_format=gpu_genotype_format,
+            gpu_genotype_format=resolved_gpu_genotype_format,
             score_dtype=score_dtype,
             correction_plan=correction_plan,
             kernel_config=kernel_config,

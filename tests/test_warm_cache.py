@@ -274,7 +274,7 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
         trusted_no_missing_diploid=False,
         trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
         alignment_config=None,
-        gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
+        gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
         score_dtype=types.FloatingPointDtype.FLOAT64,
     )
 

@@ -18,6 +18,59 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def log_association_backend_selected(
+    *,
+    context: pipeline_context.Regenie2PipelineContext,
+    phenotype_name: str | None,
+    phenotype_count: int | None,
+) -> None:
+    """Emit telemetry for the concrete association backend selection."""
+    if context.telemetry_session is None:
+        return
+    telemetry_fields: dict[str, typing.Any] = {
+        "association_mode": context.association_mode.value,
+        "association_backend_kind": context.backend_plan.backend_kind.value,
+        "device": context.backend_plan.jax_device.value,
+        "genotype_format": context.backend_plan.genotype_format.value,
+    }
+    if phenotype_name is not None:
+        telemetry_fields["phenotype"] = phenotype_name
+    if phenotype_count is not None:
+        telemetry_fields["phenotype_count"] = phenotype_count
+    context.telemetry_session.log_event(
+        "association_backend_selected",
+        level="info",
+        **telemetry_fields,
+    )
+
+
+def log_bgen_engine_opened(
+    *,
+    context: pipeline_context.Regenie2PipelineContext,
+    engine: _core.Regenie2RunEngine,
+    phenotype_name: str | None,
+    phenotype_count: int | None,
+) -> None:
+    """Emit telemetry for an opened BGEN engine."""
+    if context.telemetry_session is None:
+        return
+    telemetry_fields: dict[str, typing.Any] = {
+        "association_mode": context.association_mode.value,
+        "association_backend_kind": context.backend_plan.backend_kind.value,
+        "sample_count": int(engine.sample_count),
+        "variant_count": int(engine.variant_count),
+    }
+    if phenotype_name is not None:
+        telemetry_fields["phenotype"] = phenotype_name
+    if phenotype_count is not None:
+        telemetry_fields["phenotype_count"] = phenotype_count
+    context.telemetry_session.log_event(
+        "bgen_engine_opened",
+        level="info",
+        **telemetry_fields,
+    )
+
+
 def open_pipeline_bgen_engine(
     *,
     context: pipeline_context.Regenie2PipelineContext,
@@ -28,22 +81,7 @@ def open_pipeline_bgen_engine(
     """Open the native BGEN engine and emit shared telemetry."""
     engine_start_time = time.perf_counter()
     logger.debug("Opening native BGEN engine for %s pipeline.", pipeline_label)
-    if context.telemetry_session is not None:
-        telemetry_fields: dict[str, typing.Any] = {
-            "association_mode": context.association_mode.value,
-            "association_backend_kind": context.backend_plan.backend_kind.value,
-            "device": context.backend_plan.jax_device.value,
-            "genotype_format": context.backend_plan.genotype_format.value,
-        }
-        if phenotype_name is not None:
-            telemetry_fields["phenotype"] = phenotype_name
-        if phenotype_count is not None:
-            telemetry_fields["phenotype_count"] = phenotype_count
-        context.telemetry_session.log_event(
-            "association_backend_selected",
-            level="info",
-            **telemetry_fields,
-        )
+    log_association_backend_selected(context=context, phenotype_name=phenotype_name, phenotype_count=phenotype_count)
     engine = native_dispatch_engine.build_bgen_run_engine(
         genotype_source_config=context.genotype_source_config,
         chunk_size=context.chunk_size,
@@ -59,22 +97,38 @@ def open_pipeline_bgen_engine(
         engine.sample_count,
         engine.variant_count,
     )
-    if context.telemetry_session is not None:
-        telemetry_fields: dict[str, typing.Any] = {
-            "association_mode": context.association_mode.value,
-            "association_backend_kind": context.backend_plan.backend_kind.value,
-            "sample_count": int(engine.sample_count),
-            "variant_count": int(engine.variant_count),
-        }
-        if phenotype_name is not None:
-            telemetry_fields["phenotype"] = phenotype_name
-        if phenotype_count is not None:
-            telemetry_fields["phenotype_count"] = phenotype_count
-        context.telemetry_session.log_event(
-            "bgen_engine_opened",
-            level="info",
-            **telemetry_fields,
-        )
+    log_bgen_engine_opened(
+        context=context,
+        engine=engine,
+        phenotype_name=phenotype_name,
+        phenotype_count=phenotype_count,
+    )
+    return engine
+
+
+def use_prepared_pipeline_bgen_engine(
+    *,
+    context: pipeline_context.Regenie2PipelineContext,
+    engine: _core.Regenie2RunEngine,
+    pipeline_label: str,
+    phenotype_name: str | None,
+    phenotype_count: int | None,
+) -> _core.Regenie2RunEngine:
+    """Reuse a prevalidated BGEN engine and emit shared telemetry."""
+    logger.debug("Using prevalidated native BGEN engine for %s pipeline.", pipeline_label)
+    log_association_backend_selected(context=context, phenotype_name=phenotype_name, phenotype_count=phenotype_count)
+    logger.debug(
+        "Native BGEN engine opened for %s pipeline: sample_count=%s variant_count=%s.",
+        pipeline_label,
+        engine.sample_count,
+        engine.variant_count,
+    )
+    log_bgen_engine_opened(
+        context=context,
+        engine=engine,
+        phenotype_name=phenotype_name,
+        phenotype_count=phenotype_count,
+    )
     return engine
 
 

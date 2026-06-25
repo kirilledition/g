@@ -235,6 +235,7 @@ string_enum!(NullLogisticNonconvergencePolicyValue {
 });
 
 string_enum!(GpuGenotypeFormatValue {
+    Auto => "auto",
     Dosage => "dosage",
     Packed8 => "packed8",
 });
