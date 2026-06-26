@@ -48,6 +48,7 @@ tooling/
     artifact_format.py
     commands.py
     context.py
+    downloads.py
     g_regenie.py
     hydra_arguments.py
     hydra_compat.py
@@ -73,6 +74,7 @@ tooling/
     workload/
   data/
     fetch.py
+    registry.py
     simulate.py
   debug/
     binary_firth.py
@@ -418,7 +420,8 @@ just install-nsight-tools
 `install-profiling-tools` installs Python and native sampling profilers through
 `uv tool` and Cargo. `install-nsight-tools` installs the Nsight Systems (`nsys`)
 and Nsight Compute (`ncu`) CLIs without root by reading NVIDIA's CUDA package
-index, verifying package SHA256 digests, and extracting the `.deb` payloads into
+index, retrieving packages through `tooling.common.downloads`, verifying package
+SHA256 digests through Pooch, and extracting the `.deb` payloads into
 `.tools/nsight`. It links `nsys` and `ncu` into `.tools/bin`, which
 `tooling/server/server_env.sh` already puts on `PATH`.
 On gauss/landau the recipe defaults `ncu` to the CUDA 12.2-compatible Nsight
@@ -1235,6 +1238,14 @@ GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
 For repeated use, add a dataset profile under `tooling/configs/dataset/` and
 select it with `dataset=my_dataset`.
 
+Network-backed benchmark source files, test fixtures, prediction-list fixtures,
+and external baseline assets should be registered in `tooling.data.registry` and
+retrieved through `tooling.common.downloads`. Pooch owns cache reuse, optional
+SHA-256 validation, and download manifests. The chr22 Dropbox registry currently
+records `expected_sha256: null` because the legacy source list did not include
+published digests; add hashes there when a source is promoted to a pinned
+benchmark fixture.
+
 ## Saved Profiles
 
 Saved profiles live under `tooling/configs/`. There are two kinds:
@@ -1461,6 +1472,20 @@ Build a context at execution time rather than resolving environment-dependent
 paths at import time. This keeps `GWAS_ENGINE_DATA_DIR`, working directory, and
 Hydra `chdir` behavior explicit in reports.
 
+`tooling.common.downloads`
+
+- `DownloadRegistryEntry`
+- `retrieve_file(...)`
+- `retrieve_registry_entry(...)`
+- `build_unzip_processor(...)`
+- `build_untar_processor(...)`
+
+Use this wrapper for tooling downloads, benchmark datasets, fixture registries,
+server-tool archives, and external baseline assets. It delegates retrieval,
+cache reuse, SHA-256 validation, and archive post-processing to Pooch, then
+writes a `.manifest.json` sidecar with URL, expected hash, actual hash, size,
+and `managed_by: pooch`.
+
 `tooling.common.paths`
 
 - `find_repository_root(start_path)`
@@ -1630,8 +1655,9 @@ Use this checklist when adding a new development tool.
 
    Use `tooling.common.context` for environment-sensitive paths, `paths` for
    path resolution, `reports` for versioned JSON and Markdown output, `sweeps`
-   for strict list parsing, `commands` for subprocesses, and `g_regenie` for
-   all `g regenie` CLI/API rendering.
+   for strict list parsing, `commands` for subprocesses, `downloads` for Pooch
+   retrieval/cache/hash/archive behavior, and `g_regenie` for all `g regenie`
+   CLI/API rendering.
 
 5. Add tests.
 

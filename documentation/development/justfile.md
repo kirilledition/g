@@ -89,9 +89,12 @@ also accept the same overrides when run directly with `uv run --no-sync python
 
 ### `setup-data`
 
-- Inputs: network access, baseline tooling, writable `GWAS_ENGINE_DATA_DIR`.
+- Inputs: network access, baseline tooling, writable `GWAS_ENGINE_DATA_DIR`, and
+  the Pooch-backed source registry in `tooling.data.registry`.
 - Output: 1KG chr22 data, simulated phenotypes, covariates, and related local
-  data files under the data directory.
+  data files under the data directory. Downloaded source files also get
+  `.manifest.json` sidecars recording source URL, hash policy, actual SHA256,
+  size, and `managed_by: pooch`.
 - Use when: preparing a fresh checkout for local baselines, comparisons, or
   REGENIE step 2 runs.
 
@@ -122,7 +125,9 @@ also accept the same overrides when run directly with `uv run --no-sync python
 
 - Inputs: internet access and a writable server tool/cache directory.
 - Output: repo-local server command-line tools installed by
-  `-m tooling.cli.server tool.name=bootstrap_tools`.
+  `-m tooling.cli.server tool.name=bootstrap_tools`. Tool archives are retrieved
+  through Pooch, validated against pinned SHA256 digests, and recorded in
+  download manifests before executable install steps run.
 - Use when: bootstrapping a fresh Ubuntu/SLURM server environment.
 
 ### `bootstrap`
@@ -165,11 +170,12 @@ also accept the same overrides when run directly with `uv run --no-sync python
   `tool.enable_nsight_compute=true` for app profiling without root access.
 - Notes: the installer reads the current NVIDIA CUDA package index, picks the
   newest matching Nsight Systems package, picks an Nsight Compute package
-  compatible with `GWAS_ENGINE_NSIGHT_COMPUTE_CUDA_VERSION` when set, verifies
-  SHA256 digests from the index, and does not install system packages. On the
-  gauss/landau setup the recipe defaults that compatibility version to `12.2`
-  and uses NVIDIA's Ubuntu 22.04 CUDA package index by default because it still
-  contains the CUDA 12.2-era Nsight Compute package.
+  compatible with `GWAS_ENGINE_NSIGHT_COMPUTE_CUDA_VERSION` when set, downloads
+  selected `.deb` files through Pooch, verifies SHA256 digests from the index,
+  and does not install system packages. On the gauss/landau setup the recipe
+  defaults that compatibility version to `12.2` and uses NVIDIA's Ubuntu 22.04
+  CUDA package index by default because it still contains the CUDA 12.2-era
+  Nsight Compute package.
 
 ### `install-dev-extension`
 

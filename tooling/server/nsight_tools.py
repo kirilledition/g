@@ -3,11 +3,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import platform
 import re
-import shutil
 import subprocess
 import typing
 import urllib.parse
@@ -17,6 +15,7 @@ from pathlib import Path
 
 import hydra
 
+from tooling.common import downloads as tooling_downloads
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 
@@ -312,43 +311,16 @@ def select_package(
     )
 
 
-def calculate_sha256(download_path: Path) -> str:
-    """Calculate a file SHA256 digest."""
-    sha256_hash = hashlib.sha256()
-    with download_path.open("rb") as file_handle:
-        for chunk in iter(lambda: file_handle.read(1024 * 1024), b""):
-            sha256_hash.update(chunk)
-    return sha256_hash.hexdigest()
-
-
-def verify_sha256(download_path: Path, expected_sha256: str) -> None:
-    """Raise when a downloaded package does not match the repository digest."""
-    actual_sha256 = calculate_sha256(download_path)
-    if actual_sha256 != expected_sha256:
-        message = f"Checksum mismatch for {download_path.name}: expected {expected_sha256}, got {actual_sha256}."
-        raise RuntimeError(message)
-
-
 def download_package(*, repository_url: str, nsight_package: NsightPackage, downloads_directory: Path) -> Path:
-    """Download one package if it is missing or already verified."""
-    downloads_directory.mkdir(parents=True, exist_ok=True)
+    """Download one package through Pooch using the repository digest."""
     download_url = urllib.parse.urljoin(repository_url.rstrip("/") + "/", nsight_package.filename.removeprefix("./"))
     download_path = downloads_directory / Path(nsight_package.filename).name
-    if download_path.exists():
-        verify_sha256(download_path, nsight_package.sha256)
-        print(f"Reusing {download_path}")
-        return download_path
-
-    temporary_download_path = download_path.with_suffix(f"{download_path.suffix}.tmp")
-    print(f"Downloading {download_url}")
-    with (
-        urllib.request.urlopen(download_url, timeout=60) as response,
-        temporary_download_path.open("wb") as file_handle,
-    ):
-        shutil.copyfileobj(response, file_handle)
-    verify_sha256(temporary_download_path, nsight_package.sha256)
-    temporary_download_path.replace(download_path)
-    return download_path
+    downloaded_file = tooling_downloads.retrieve_file(
+        download_url=download_url,
+        destination_path=download_path,
+        expected_sha256=nsight_package.sha256,
+    )
+    return downloaded_file.path
 
 
 def extract_package(*, package_path: Path, nsight_package: NsightPackage, payload_parent: Path) -> Path:
