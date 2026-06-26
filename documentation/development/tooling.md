@@ -185,6 +185,17 @@ machine-readable headline/finalist aggregates to `summary.json`; runs with
 `telemetry.stage_timing_mode=off` mark those diagnostics unavailable instead of
 emitting per-chunk timing artifacts.
 
+The large profile workflow is being split behind the stable CLI. Shared
+deep-profile enums, argument dataclasses, candidate/result models, budget
+models, JAX diagnostics, and baseline-scope records live in
+`tooling.profile_deep.models`. List parsing, workload selector expansion,
+logging perturbation case definitions, and campaign budget accounting live in
+`tooling.profile_deep.budget`. Hydra-to-argument conversion, smoke-mode
+overrides, output directory resolution, REGENIE executable selection, and
+configuration snapshots live in `tooling.profile_deep.config`. The CLI
+re-exports these package-owned symbols for compatibility while orchestration
+code migrates into the package.
+
 `-m tooling.cli.benchmark tool.name=linear_startup`
 
 Benchmarks quantitative REGENIE step 2 startup behavior. By default it measures
