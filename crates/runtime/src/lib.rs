@@ -1,5 +1,6 @@
 #![warn(clippy::pedantic)]
 
+pub mod run_events;
 pub mod run_metadata;
 pub mod runtime_policy;
 pub mod runtime_state;
@@ -8,6 +9,13 @@ pub mod telemetry_policy;
 pub mod telemetry_session;
 pub mod timing;
 
+pub use run_events::{
+    RunArtifactPayload, RunArtifactTelemetryFields, RunCompletedEventPayload, RunCompletedTelemetryFields,
+    RunFailedEventPayload, RunFailedTelemetryFields, RunInterruptedEventPayload, RunInterruptedTelemetryFields,
+    RunTelemetryStringField, build_artifact_telemetry_fields, build_run_completed_telemetry_fields,
+    build_run_failed_telemetry_fields, build_run_interrupted_telemetry_fields, render_artifact_lines,
+    render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
+};
 pub use run_metadata::{
     PhenotypeRunArtifactsInput, RunArtifactsPayload, RunManifestCommandPayload, RunManifestExtensionInput,
     RunManifestExtensionPayload, RunManifestRuntimePayload, build_multi_run_artifacts, build_phenotype_run_artifacts,
