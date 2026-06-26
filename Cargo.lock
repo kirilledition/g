@@ -724,12 +724,11 @@ dependencies = [
  "arrow",
  "chrono",
  "clap",
- "crossbeam-channel",
  "csv",
  "g-genotype",
+ "g-output",
  "memchr",
  "numpy",
- "parquet",
  "pyo3",
  "pyo3-pylogger",
  "rayon",
@@ -752,6 +751,19 @@ dependencies = [
  "flate2",
  "memmap2",
  "rayon",
+ "thiserror",
+]
+
+[[package]]
+name = "g-output"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "criterion",
+ "crossbeam-channel",
+ "parquet",
+ "serde_json",
+ "sha2",
  "thiserror",
 ]
 

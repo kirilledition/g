@@ -5,14 +5,10 @@ use std::sync::Arc;
 
 use arrow::array::{ArrayRef, PrimitiveArray};
 use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64Type, Int32Type};
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
-
-use crate::output::{
+use g_output::{
     CurrentRunManifestHeaderInput, ManifestFileFingerprint as NativeManifestFileFingerprint, NativeChunkHandle,
-    OutputResumeMode, OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
+    NativeChunkStats as NativeOutputChunkStats, OutputFileFormat, OutputResumeMode, OutputWriterError,
+    OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
     build_current_run_manifest_header_json as build_native_current_run_manifest_header_json,
     build_file_content_sha256 as build_native_file_content_sha256,
     build_manifest_file_fingerprint as build_native_manifest_file_fingerprint,
@@ -28,6 +24,10 @@ use crate::output::{
     validate_strict_manifest_chunks as validate_native_strict_manifest_chunks,
     write_run_manifest_json as write_native_run_manifest_json,
 };
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use super::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata};
 
@@ -377,7 +377,7 @@ pub(crate) fn finalize_output_run_chunks(
     association_mode: String,
     output_format: String,
 ) -> PyResult<String> {
-    let native_output_format = crate::output::OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
+    let native_output_format = OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
     finalize_native_output_run_chunks(
         Path::new(&run_directory),
         Path::new(&chunks_directory),
@@ -395,7 +395,7 @@ pub(crate) fn resolve_output_run_paths(
     association_mode: String,
     output_format: String,
 ) -> PyResult<NativeOutputRunPaths> {
-    let native_output_format = crate::output::OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
+    let native_output_format = OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
     let output_run_paths =
         resolve_native_output_run_paths(Path::new(&output_root), &association_mode, native_output_format);
     Ok(NativeOutputRunPaths {
@@ -412,7 +412,7 @@ pub(crate) fn prepare_output_run(
     output_format: String,
     resume: bool,
 ) -> PyResult<NativePreparedOutputRun> {
-    let native_output_format = crate::output::OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
+    let native_output_format = OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
     let prepared_output_run =
         prepare_native_output_run(Path::new(&output_root), &association_mode, native_output_format, resume)
             .map_err(|error| output_writer_error_to_py(error, "prepare_output_run"))?;
@@ -698,7 +698,45 @@ fn build_native_chunk_handle_from_python(
     if variant_stop_index != expected_variant_stop_index {
         return Err(PyValueError::new_err("Variant metadata bounds do not match metadata row count."));
     }
-    Ok(NativeChunkHandle::new(Arc::clone(&metadata.metadata), Arc::clone(&chunk_stats.stats), variant_start_index))
+    Ok(NativeChunkHandle::new(
+        Arc::new(convert_variant_metadata_to_output(&metadata.metadata)),
+        Arc::new(convert_chunk_stats_to_output(&chunk_stats.stats)),
+        variant_start_index,
+    ))
+}
+
+fn convert_variant_metadata_to_output(
+    metadata: &g_genotype::common::VariantMetadataColumns,
+) -> NativeOutputVariantMetadataColumns {
+    NativeOutputVariantMetadataColumns {
+        chromosome: metadata.chromosome.clone(),
+        variant_identifier: metadata.variant_identifier.clone(),
+        position: metadata.position.clone(),
+        allele_one: metadata.allele_one.clone(),
+        allele_two: metadata.allele_two.clone(),
+    }
+}
+
+fn convert_chunk_stats_to_output(chunk_stats: &g_genotype::common::ChunkStats) -> NativeOutputChunkStats {
+    NativeOutputChunkStats {
+        allele_one_frequency: chunk_stats.allele_one_frequency.clone(),
+        observation_count: chunk_stats.observation_count.clone(),
+        has_missing_values: chunk_stats.has_missing_values,
+        dosage_sum: Arc::clone(&chunk_stats.dosage_sum),
+        dosage_square_sum: chunk_stats.dosage_square_sum.clone(),
+        imputed_dosage_square_sum: chunk_stats.imputed_dosage_square_sum.clone(),
+        dosage_variance_numerator: chunk_stats.dosage_variance_numerator.clone(),
+        info_score: chunk_stats.info_score.clone(),
+        allele_count: Arc::clone(&chunk_stats.allele_count),
+        minor_allele_count: chunk_stats.minor_allele_count.clone(),
+        zero_count: chunk_stats.zero_count.clone(),
+        nonzero_count: chunk_stats.nonzero_count.clone(),
+        homozygous_reference_count: chunk_stats.homozygous_reference_count.clone(),
+        heterozygous_count: chunk_stats.heterozygous_count.clone(),
+        homozygous_alternate_count: chunk_stats.homozygous_alternate_count.clone(),
+        is_sparse_candidate: chunk_stats.is_sparse_candidate.clone(),
+        is_rare_sparse_firth_candidate: chunk_stats.is_rare_sparse_firth_candidate.clone(),
+    }
 }
 
 fn validate_trait_major_shape(

@@ -18,9 +18,9 @@ use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
 use serde_json::Value;
 
-use crate::output::manifest;
-use crate::output::schema;
-use crate::output::writer::{self, OutputFileFormat, OutputWriterError};
+use crate::manifest;
+use crate::schema;
+use crate::writer::{self, OutputFileFormat, OutputWriterError};
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 
@@ -660,7 +660,7 @@ mod tests {
     use arrow::array::{ArrayRef, Float32Array, Int32Array, Int64Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
 
-    use crate::output::writer::{self as output_writer, OutputFileFormat};
+    use crate::writer::{self as output_writer, OutputFileFormat};
 
     use super::*;
 

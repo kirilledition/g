@@ -21,16 +21,17 @@ use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
 use serde_json::json;
 
-use crate::output::manifest;
-use crate::output::schema;
-use crate::output::schema::OutputStatisticDtype;
+use crate::manifest;
+use crate::schema;
+use crate::schema::OutputStatisticDtype;
 
 mod types;
 
+pub use types::OutputFileFormat;
 pub use types::OutputWriterError;
 pub(crate) use types::{
-    OutputFileFormat, RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, RegenieStep2ChunkWriteResult,
-    RegenieStep2ChunkWriteTiming, RegenieStep2RecordBatchBuildTiming,
+    RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, RegenieStep2ChunkWriteResult, RegenieStep2ChunkWriteTiming,
+    RegenieStep2RecordBatchBuildTiming,
 };
 
 #[cfg(test)]

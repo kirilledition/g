@@ -1,3 +1,5 @@
+#![allow(clippy::missing_errors_doc)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs::File;
@@ -9,8 +11,8 @@ use std::sync::{Mutex, OnceLock};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::output::resume;
-use crate::output::writer::{OutputFileFormat, OutputWriterError};
+use crate::resume;
+use crate::writer::{OutputFileFormat, OutputWriterError};
 
 const RUN_MANIFEST_FILE_NAME: &str = "run_manifest.json";
 const RUN_MANIFEST_SCHEMA_VERSION: i64 = 9;
@@ -21,30 +23,30 @@ const FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM: &str = "sha256";
 const FILE_FINGERPRINT_METADATA_ONLY: &str = "metadata-only";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct OutputRunPaths {
-    pub(crate) run_directory: PathBuf,
-    pub(crate) chunks_directory: PathBuf,
+pub struct OutputRunPaths {
+    pub run_directory: PathBuf,
+    pub chunks_directory: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PreparedOutputRun {
-    pub(crate) output_run_paths: OutputRunPaths,
-    pub(crate) existing_manifest_json: Option<String>,
+pub struct PreparedOutputRun {
+    pub output_run_paths: OutputRunPaths,
+    pub existing_manifest_json: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct InitializedOutputRun {
-    pub(crate) committed_chunk_identifiers: Vec<i64>,
+pub struct InitializedOutputRun {
+    pub committed_chunk_identifiers: Vec<i64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum OutputResumeMode {
+pub enum OutputResumeMode {
     Fast,
     Strict,
 }
 
 impl OutputResumeMode {
-    pub(crate) fn parse(resume_mode: &str) -> Result<Self, OutputWriterError> {
+    pub fn parse(resume_mode: &str) -> Result<Self, OutputWriterError> {
         match resume_mode {
             "fast" => Ok(Self::Fast),
             "strict" => Ok(Self::Strict),
@@ -56,73 +58,73 @@ impl OutputResumeMode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RunManifestChunkCommit {
-    pub(crate) chunk_identifier: i64,
-    pub(crate) output_format: String,
-    pub(crate) compression: String,
-    pub(crate) variant_start_index: i64,
-    pub(crate) variant_stop_index: i64,
-    pub(crate) row_count: usize,
-    pub(crate) chunk_file_name: String,
+pub struct RunManifestChunkCommit {
+    pub chunk_identifier: i64,
+    pub output_format: String,
+    pub compression: String,
+    pub variant_start_index: i64,
+    pub variant_stop_index: i64,
+    pub row_count: usize,
+    pub chunk_file_name: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ManifestFileFingerprint {
-    pub(crate) path: String,
-    pub(crate) size: u64,
-    pub(crate) mtime_ns: i64,
-    pub(crate) content_hash_algorithm: String,
-    pub(crate) content_sha256: Option<String>,
+pub struct ManifestFileFingerprint {
+    pub path: String,
+    pub size: u64,
+    pub mtime_ns: i64,
+    pub content_hash_algorithm: String,
+    pub content_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
-pub(crate) struct CurrentRunManifestHeaderInput {
-    pub(crate) association_mode: String,
-    pub(crate) association_backend_kind: String,
-    pub(crate) bgen_path: PathBuf,
-    pub(crate) sample_path: Option<PathBuf>,
-    pub(crate) phenotype_path: PathBuf,
-    pub(crate) phenotype_name: String,
-    pub(crate) covariate_path: Option<PathBuf>,
-    pub(crate) covariate_names: Vec<String>,
-    pub(crate) prediction_list_path: PathBuf,
-    pub(crate) prediction_loco_files_json: String,
-    pub(crate) sample_count: i64,
-    pub(crate) variant_count: i64,
-    pub(crate) chunk_size: i64,
-    pub(crate) variant_limit: Option<i64>,
-    pub(crate) binary_correction_plan_method: String,
-    pub(crate) binary_correction_plan_p_threshold: f64,
-    pub(crate) binary_correction_plan_firth_se: bool,
-    pub(crate) trusted_no_missing_diploid: bool,
-    pub(crate) sample_key_mode: String,
-    pub(crate) binary_kernel_config_json: Option<String>,
-    pub(crate) bgen_decode_tile_variant_count: i64,
-    pub(crate) trusted_bgen_validation_mode: String,
-    pub(crate) jax_device: String,
-    pub(crate) jax_enable_x64: bool,
-    pub(crate) jax_matmul_precision: Option<String>,
-    pub(crate) gpu_genotype_format: String,
-    pub(crate) score_dtype: String,
-    pub(crate) firth_dtype: String,
-    pub(crate) multi_phenotype_sample_mode: String,
-    pub(crate) phenotype_compute_group_id: Option<String>,
-    pub(crate) sample_set_fingerprint: Option<String>,
-    pub(crate) covariate_design_fingerprint: Option<String>,
-    pub(crate) prediction_alignment_fingerprint: Option<String>,
-    pub(crate) output_format: String,
-    pub(crate) finalize_parquet: bool,
-    pub(crate) writer_thread_count: i64,
-    pub(crate) writer_queue_depth: i64,
-    pub(crate) chunks_per_arrow_file: i64,
-    pub(crate) arrow_compression: String,
-    pub(crate) parquet_compression: String,
-    pub(crate) output_statistic_dtype: String,
+pub struct CurrentRunManifestHeaderInput {
+    pub association_mode: String,
+    pub association_backend_kind: String,
+    pub bgen_path: PathBuf,
+    pub sample_path: Option<PathBuf>,
+    pub phenotype_path: PathBuf,
+    pub phenotype_name: String,
+    pub covariate_path: Option<PathBuf>,
+    pub covariate_names: Vec<String>,
+    pub prediction_list_path: PathBuf,
+    pub prediction_loco_files_json: String,
+    pub sample_count: i64,
+    pub variant_count: i64,
+    pub chunk_size: i64,
+    pub variant_limit: Option<i64>,
+    pub binary_correction_plan_method: String,
+    pub binary_correction_plan_p_threshold: f64,
+    pub binary_correction_plan_firth_se: bool,
+    pub trusted_no_missing_diploid: bool,
+    pub sample_key_mode: String,
+    pub binary_kernel_config_json: Option<String>,
+    pub bgen_decode_tile_variant_count: i64,
+    pub trusted_bgen_validation_mode: String,
+    pub jax_device: String,
+    pub jax_enable_x64: bool,
+    pub jax_matmul_precision: Option<String>,
+    pub gpu_genotype_format: String,
+    pub score_dtype: String,
+    pub firth_dtype: String,
+    pub multi_phenotype_sample_mode: String,
+    pub phenotype_compute_group_id: Option<String>,
+    pub sample_set_fingerprint: Option<String>,
+    pub covariate_design_fingerprint: Option<String>,
+    pub prediction_alignment_fingerprint: Option<String>,
+    pub output_format: String,
+    pub finalize_parquet: bool,
+    pub writer_thread_count: i64,
+    pub writer_queue_depth: i64,
+    pub chunks_per_arrow_file: i64,
+    pub arrow_compression: String,
+    pub parquet_compression: String,
+    pub output_statistic_dtype: String,
 }
 
 #[allow(clippy::too_many_lines)]
-pub(crate) fn build_current_run_manifest_header_json(
+pub fn build_current_run_manifest_header_json(
     input: CurrentRunManifestHeaderInput,
 ) -> Result<String, OutputWriterError> {
     let bgen_fingerprint = build_required_file_fingerprint(&input.bgen_path, false, "BGEN")?;
@@ -249,7 +251,8 @@ pub(crate) fn build_current_run_manifest_header_json(
     serde_json::to_string(&current_header).map_err(OutputWriterError::runtime)
 }
 
-pub(crate) fn resolve_output_run_paths(
+#[must_use]
+pub fn resolve_output_run_paths(
     output_root: &Path,
     association_mode: &str,
     output_format: OutputFileFormat,
@@ -267,7 +270,7 @@ pub(crate) fn resolve_output_run_paths(
     OutputRunPaths { chunks_directory: run_directory.join(output_directory_name), run_directory }
 }
 
-pub(crate) fn prepare_output_run(
+pub fn prepare_output_run(
     output_root: &Path,
     association_mode: &str,
     output_format: OutputFileFormat,
@@ -288,7 +291,7 @@ pub(crate) fn prepare_output_run(
     Ok(PreparedOutputRun { output_run_paths, existing_manifest_json })
 }
 
-pub(crate) fn load_run_manifest_json(run_directory: &Path) -> Result<Option<String>, OutputWriterError> {
+pub fn load_run_manifest_json(run_directory: &Path) -> Result<Option<String>, OutputWriterError> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     if !manifest_path.exists() {
         return Ok(None);
@@ -298,12 +301,12 @@ pub(crate) fn load_run_manifest_json(run_directory: &Path) -> Result<Option<Stri
     Ok(Some(manifest_json))
 }
 
-pub(crate) fn write_run_manifest_json(run_directory: &Path, manifest_json: &str) -> Result<(), OutputWriterError> {
+pub fn write_run_manifest_json(run_directory: &Path, manifest_json: &str) -> Result<(), OutputWriterError> {
     let manifest = parse_run_manifest_text(manifest_json, None)?;
     write_run_manifest_value(run_directory, &manifest).map_err(OutputWriterError::runtime)
 }
 
-pub(crate) fn validate_run_manifest_compatibility(
+pub fn validate_run_manifest_compatibility(
     manifest_json: &str,
     current_header_json: &str,
 ) -> Result<(), OutputWriterError> {
@@ -312,14 +315,14 @@ pub(crate) fn validate_run_manifest_compatibility(
     validate_manifest_compatibility_values(&manifest, &current_header)
 }
 
-pub(crate) fn read_run_manifest_committed_chunk_identifiers_from_text(
+pub fn read_run_manifest_committed_chunk_identifiers_from_text(
     manifest_json: &str,
 ) -> Result<Vec<i64>, OutputWriterError> {
     let manifest = parse_run_manifest_text(manifest_json, None)?;
     read_run_manifest_committed_chunk_identifiers(&manifest)
 }
 
-pub(crate) fn initialize_output_run(
+pub fn initialize_output_run(
     run_directory: &Path,
     chunks_directory: &Path,
     existing_manifest_json: Option<&str>,
@@ -415,7 +418,7 @@ fn build_optional_file_fingerprint(
         .map(|fingerprint| Some(manifest_file_fingerprint_to_value(&fingerprint)))
 }
 
-pub(crate) fn build_manifest_file_fingerprint(
+pub fn build_manifest_file_fingerprint(
     file_path: &Path,
     include_content_hash: bool,
 ) -> Result<ManifestFileFingerprint, OutputWriterError> {
@@ -448,7 +451,7 @@ pub(crate) fn manifest_file_fingerprint_to_value(file_fingerprint: &ManifestFile
     })
 }
 
-pub(crate) fn build_file_content_sha256(path: &Path) -> Result<String, OutputWriterError> {
+pub fn build_file_content_sha256(path: &Path) -> Result<String, OutputWriterError> {
     let mut file = File::open(path).map_err(OutputWriterError::runtime)?;
     let mut digest = Sha256::new();
     let mut buffer = vec![0_u8; 1024 * 1024];
@@ -462,7 +465,8 @@ pub(crate) fn build_file_content_sha256(path: &Path) -> Result<String, OutputWri
     Ok(encode_sha256_hex(digest))
 }
 
-pub(crate) fn build_manifest_json_sha256(manifest_json: &str) -> String {
+#[must_use]
+pub fn build_manifest_json_sha256(manifest_json: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(manifest_json.as_bytes());
     encode_sha256_hex(digest)

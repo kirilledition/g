@@ -12,9 +12,9 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::reader::{FileReader as ParquetFileReader, SerializedFileReader};
 use serde_json::Value;
 
-use crate::output::manifest;
-use crate::output::schema;
-use crate::output::writer::{self, OutputWriterError};
+use crate::manifest;
+use crate::schema;
+use crate::writer::{self, OutputWriterError};
 
 pub fn scan_committed_chunk_identifiers(chunks_directory: &Path) -> Result<Vec<i64>, OutputWriterError> {
     Ok(scan_committed_chunk_commits(chunks_directory)?
@@ -48,7 +48,7 @@ pub fn validate_strict_manifest_chunks(
     Ok(committed_identifiers.into_iter().collect())
 }
 
-pub(crate) fn repair_strict_manifest_chunk_commits(
+pub fn repair_strict_manifest_chunk_commits(
     chunks_directory: &Path,
     manifest_json: &str,
 ) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
@@ -509,8 +509,8 @@ mod tests {
     use parquet::arrow::ArrowWriter;
     use parquet::file::metadata::KeyValue;
 
-    use crate::output::schema as output_schema;
-    use crate::output::writer as output_writer;
+    use crate::schema as output_schema;
+    use crate::writer as output_writer;
 
     use super::{
         repair_strict_manifest_chunk_commits, scan_committed_chunk_identifiers, validate_strict_manifest_chunks,

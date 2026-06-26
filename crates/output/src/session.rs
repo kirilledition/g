@@ -7,19 +7,48 @@ use arrow::array::{ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array,
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use serde_json::json;
 
-use crate::output::OutputStatisticDtype;
-use crate::output::finalization;
-use crate::output::manifest;
-use crate::output::writer::{
+use crate::OutputStatisticDtype;
+use crate::finalization;
+use crate::manifest;
+use crate::writer::{
     OutputFileFormat, OutputWriterError, RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch,
     RegenieStep2ChunkWriteTiming, build_output_file_name, write_regenie_step2_chunk_job,
 };
-use g_genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
 
 const OUTPUT_STAGE_TIMING_FILE_NAME: &str = "output_stage_timings.json";
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeChunkStats {
+    pub allele_one_frequency: Vec<f32>,
+    pub observation_count: Vec<i32>,
+    pub has_missing_values: bool,
+    pub dosage_sum: Arc<[f32]>,
+    pub dosage_square_sum: Vec<f32>,
+    pub imputed_dosage_square_sum: Vec<f32>,
+    pub dosage_variance_numerator: Vec<f32>,
+    pub info_score: Vec<Option<f32>>,
+    pub allele_count: Arc<[f32]>,
+    pub minor_allele_count: Vec<f32>,
+    pub zero_count: Vec<i32>,
+    pub nonzero_count: Vec<i32>,
+    pub homozygous_reference_count: Vec<i32>,
+    pub heterozygous_count: Vec<i32>,
+    pub homozygous_alternate_count: Vec<i32>,
+    pub is_sparse_candidate: Vec<bool>,
+    pub is_rare_sparse_firth_candidate: Vec<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VariantMetadataColumns {
+    pub chromosome: Vec<String>,
+    pub variant_identifier: Vec<String>,
+    pub position: Vec<i64>,
+    pub allele_one: Vec<String>,
+    pub allele_two: Vec<String>,
+}
+
 #[derive(Clone)]
-pub(crate) struct NativeChunkHandle {
+pub struct NativeChunkHandle {
     pub(crate) metadata: Arc<VariantMetadataColumns>,
     pub(crate) stats: Arc<NativeChunkStats>,
     pub(crate) chunk_identifier: i64,
@@ -54,15 +83,13 @@ impl NativeChunkWriterArrays {
 }
 
 impl NativeChunkHandle {
-    pub(crate) fn new(
-        metadata: Arc<VariantMetadataColumns>,
-        stats: Arc<NativeChunkStats>,
-        chunk_identifier: i64,
-    ) -> Self {
+    #[must_use]
+    pub fn new(metadata: Arc<VariantMetadataColumns>, stats: Arc<NativeChunkStats>, chunk_identifier: i64) -> Self {
         Self { metadata, stats, chunk_identifier, writer_arrays: Arc::new(OnceLock::new()) }
     }
 
-    pub(crate) fn row_count(&self) -> usize {
+    #[must_use]
+    pub fn row_count(&self) -> usize {
         self.metadata.position.len()
     }
 
@@ -594,7 +621,7 @@ impl OutputWriterSession {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn write_regenie2_native_chunk_handle_arrays(
+    pub fn write_regenie2_native_chunk_handle_arrays(
         &self,
         chunk_handle: NativeChunkHandle,
         beta: ArrayRef,
@@ -1007,7 +1034,7 @@ fn run_output_write_task(output_write_task: OutputWriteTask) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::finalization::RegenieStep2FinalizationTiming;
+    use crate::finalization::RegenieStep2FinalizationTiming;
 
     #[test]
     fn stage_timing_accumulator_records_finalization_timing() {

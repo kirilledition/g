@@ -55,7 +55,7 @@ src/g/
 src/config_frontend/             Rust CLI/config frontend, clap, toml/Serde, option specs
 crates/genotype/src/             BGEN mmap/index/decode/preprocess/profile
 src/sample.rs                    sample/phenotype/covariate alignment
-src/output/                      Arrow IPC chunks, Parquet finalization, manifests
+crates/output/src/               Arrow IPC chunks, Parquet finalization, manifests
 src/python/                      PyO3 config/runtime bindings and logging bridge
 ```
 

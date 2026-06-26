@@ -1896,6 +1896,96 @@ def test_output_stage_benchmark_prepares_multi_phenotype_resources(tmp_path: Pat
     assert resources.prediction_list_path.read_text(encoding="utf-8").count(str(loco_path)) == 3
 
 
+def test_output_stage_benchmark_uses_stable_telemetry_log_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Benchmark trials share one telemetry stream within the Python process."""
+    captured_options: list[dict[str, object]] = []
+    phenotype_resources = output_stage_benchmark.PhenotypeResources(
+        phenotype_path=tmp_path / "phenotypes.tsv",
+        phenotype_names=("phenotype_continuous",),
+        prediction_list_path=tmp_path / "predictions.list",
+    )
+
+    def fake_prepare_phenotype_resources(**keyword_arguments: typing.Any) -> output_stage_benchmark.PhenotypeResources:
+        del keyword_arguments
+        return phenotype_resources
+
+    def fake_from_options(options: typing.Mapping[str, typing.Any]) -> object:
+        captured_options.append(dict(options))
+        return object()
+
+    def fake_flatten_artifacts(artifacts: object) -> tuple[object, ...]:
+        del artifacts
+        return ()
+
+    def fake_collect_trial_output_metrics(artifacts: tuple[object, ...]) -> dict[str, object]:
+        del artifacts
+        return {
+            "rust_stage_timing_paths": (),
+            "output_run_directories": (),
+            "final_parquet_paths": (),
+            "chunk_file_count": 0,
+            "chunk_bytes": 0,
+            "final_parquet_bytes": None,
+        }
+
+    def fake_build_output_handoff_timing_metrics(
+        **keyword_arguments: typing.Any,
+    ) -> output_stage_benchmark.OutputHandoffTimingMetrics:
+        del keyword_arguments
+        return output_stage_benchmark.OutputHandoffTimingMetrics(
+            seconds_by_metric={},
+            wall_time_percentage_by_metric={},
+            output_path_percentage_by_metric={},
+        )
+
+    def fake_sum_output_metrics(rust_stage_timing_paths: tuple[Path, ...]) -> dict[str, float]:
+        del rust_stage_timing_paths
+        return {}
+
+    monkeypatch.setattr(output_stage_benchmark, "prepare_phenotype_resources", fake_prepare_phenotype_resources)
+    monkeypatch.setattr(output_stage_benchmark.api.regenie, "from_options", fake_from_options)
+    monkeypatch.setattr(output_stage_benchmark, "flatten_artifacts", fake_flatten_artifacts)
+    monkeypatch.setattr(output_stage_benchmark, "collect_trial_output_metrics", fake_collect_trial_output_metrics)
+    monkeypatch.setattr(
+        output_stage_benchmark,
+        "build_output_handoff_timing_metrics",
+        fake_build_output_handoff_timing_metrics,
+    )
+    monkeypatch.setattr(output_stage_benchmark, "sum_output_metrics", fake_sum_output_metrics)
+
+    benchmark_case = output_stage_benchmark.BenchmarkCase(
+        name="arrow_chunks_single_phenotype",
+        finalize_parquet=False,
+        phenotype_count=1,
+        chunk_size=1024,
+        writer_thread_count=1,
+        writer_queue_depth=1,
+        chunks_per_arrow_file=4,
+        arrow_compression=output_stage_benchmark.types.ArrowCompression.NONE,
+    )
+
+    output_stage_benchmark.run_trial(
+        data_directory=tmp_path / "data",
+        output_directory=tmp_path / "benchmark",
+        device=output_stage_benchmark.types.Device.CPU,
+        variant_limit=None,
+        benchmark_case=benchmark_case,
+        trial_index=0,
+        enable_jax_trace=False,
+    )
+
+    assert len(captured_options) == 1
+    diagnostics_options = typing.cast("dict[str, object]", captured_options[0]["diagnostics"])
+    assert diagnostics_options["log_file"] == tmp_path / "benchmark" / "logs" / "events.jsonl"
+    assert diagnostics_options["stage_timings_json"] == (
+        tmp_path / "benchmark" / "stage_timings" / "arrow_chunks_single_phenotype_trial00.json"
+    )
+    assert (tmp_path / "benchmark" / "logs").is_dir()
+
+
 def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("G_PROFILE_GPU_JAX_CACHE_PARENT", str(tmp_path / "gpu_cache"))
     monkeypatch.setenv("SLURM_JOB_ID", "12345")

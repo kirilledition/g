@@ -27,7 +27,7 @@ sweeps on a login node.
 | CLI and lifecycle | `tests/test_cli.py`, `tests/test_cli_smoke.py` |
 | TOML/options/config | `tests/test_interface.py`, `tests/test_api.py`, `tests/test_preflight.py` |
 | Input parsing and sample alignment | `tests/test_io_source.py`, `tests/test_io_sample.py`, `tests/test_tabular.py` |
-| Output writer, schema, manifest, resume | `tests/test_io_output.py`, Rust tests under `src/output/` |
+| Output writer, schema, manifest, resume | `tests/test_io_output.py`, Rust tests under `crates/output/src/` |
 | Quantitative kernels | `tests/test_regenie2_linear.py`, `tests/test_regenie2_parity.py` |
 | Binary score and Firth kernels | `tests/test_regenie2_binary*.py`, `tests/test_regenie_binary_correction_contract.py` |
 | Pipeline orchestration | `tests/test_regenie2_pipeline.py`, `tests/test_callback_lifecycle.py` |

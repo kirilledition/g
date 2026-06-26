@@ -235,9 +235,19 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
         genotype_observation_count: jax.Array,
         genotype_imputed_dosage_square_sum: jax.Array,
         score_dtype: types.FloatingPointDtype,
+        linear_minimum_variance: float,
+        linear_relative_variance_tolerance: float,
     ) -> FakeChunkResult:
         del chromosome_state
         observed_score_dtypes.append(score_dtype)
+        assert (
+            linear_minimum_variance
+            == warm_cache.regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance
+        )
+        assert (
+            linear_relative_variance_tolerance
+            == warm_cache.regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance
+        )
         observed_shapes.append(typing.cast("tuple[int, int]", genotype_matrix_by_variant.shape))
         expected_column = np.asarray([-1.0, 0.0, 1.0, -1.0, 0.0, 1.0], dtype=np.float32)
         np.testing.assert_allclose(np.asarray(genotype_matrix_by_variant)[0], expected_column)

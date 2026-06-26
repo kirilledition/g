@@ -478,7 +478,9 @@ def run_trial(
     )
     trial_name = f"{benchmark_case.name}_trial{trial_index:02d}"
     output_root = output_directory / "outputs" / trial_name
+    telemetry_log_file = output_directory / "logs" / "events.jsonl"
     python_stage_timing_path = output_directory / "stage_timings" / f"{trial_name}.json"
+    telemetry_log_file.parent.mkdir(parents=True, exist_ok=True)
     python_stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
     compute_options: dict[str, object] = {"device": device.value}
     if variant_limit is not None:
@@ -502,7 +504,7 @@ def run_trial(
             "chunks_per_arrow_file": benchmark_case.chunks_per_arrow_file,
             "arrow_compression": benchmark_case.arrow_compression.value,
         },
-        "diagnostics": {"stage_timings_json": python_stage_timing_path},
+        "diagnostics": {"log_file": telemetry_log_file, "stage_timings_json": python_stage_timing_path},
     }
     if benchmark_case.phenotype_count == 1:
         options["phenoCol"] = phenotype_resources.phenotype_names[0]

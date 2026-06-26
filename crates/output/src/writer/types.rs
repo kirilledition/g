@@ -1,8 +1,8 @@
 use arrow::array::ArrayRef;
 use thiserror::Error;
 
-use crate::output::NativeChunkHandle;
-use crate::output::manifest;
+use crate::NativeChunkHandle;
+use crate::manifest;
 
 #[derive(Debug, Error)]
 pub enum OutputWriterError {
@@ -40,7 +40,8 @@ pub enum OutputFileFormat {
 }
 
 impl OutputFileFormat {
-    pub(crate) fn parse(output_format: &str) -> Result<Self, String> {
+    #[allow(clippy::missing_errors_doc)]
+    pub fn parse(output_format: &str) -> Result<Self, String> {
         match output_format {
             "arrow" => Ok(Self::Arrow),
             "parquet" => Ok(Self::Parquet),

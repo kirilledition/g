@@ -15,6 +15,7 @@ from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import api as regenie2_linear
+from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.engine.native_dispatch import engine as native_dispatch_engine
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
@@ -351,6 +352,10 @@ def warm_regenie2_linear_bgen_cache(
                 genotype_observation_count=native_stats.observation_count,
                 genotype_imputed_dosage_square_sum=native_stats.imputed_dosage_square_sum,
                 score_dtype=score_dtype,
+                linear_minimum_variance=regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
+                linear_relative_variance_tolerance=(
+                    regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance
+                ),
             )
         else:
             result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
@@ -360,6 +365,10 @@ def warm_regenie2_linear_bgen_cache(
                 genotype_observation_count=native_stats.observation_count,
                 genotype_imputed_dosage_square_sum=native_stats.imputed_dosage_square_sum,
                 score_dtype=score_dtype,
+                linear_minimum_variance=regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
+                linear_relative_variance_tolerance=(
+                    regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance
+                ),
             )
         callback_diagnostics.block_until_ready(result.log10_p_value)
     signatures = tuple(

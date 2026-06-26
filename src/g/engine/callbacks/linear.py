@@ -357,6 +357,9 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
             chromosome_state=chromosome_state,
             genotype_matrix=genotype_device_array,
+            genotype_dosage_sum=None,
+            genotype_observation_count=None,
+            genotype_imputed_dosage_square_sum=None,
             score_dtype=self.score_dtype,
             linear_minimum_variance=self.linear_numerical_config.minimum_variance,
             linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,
@@ -505,6 +508,9 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state(
                 chromosome_state=chromosome_state,
                 genotype_matrix=genotype_device_array,
+                genotype_dosage_sum=None,
+                genotype_observation_count=None,
+                genotype_imputed_dosage_square_sum=None,
                 score_dtype=self.score_dtype,
                 linear_minimum_variance=self.linear_numerical_config.minimum_variance,
                 linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,

@@ -137,7 +137,7 @@ The main implementation is split by responsibility:
 - `crates/genotype/src/preprocess.rs`
   - Native chunk summaries, including allele frequency, minor allele count,
     sparse flags, and rare-sparse Firth eligibility.
-- `src/output/schema.rs`, `src/output/writer.rs`, `src/output/finalization.rs`
+- `crates/output/src/schema.rs`, `crates/output/src/writer/`, `crates/output/src/finalization.rs`
   - Arrow IPC and final Parquet schemas, `EXTRA` rendering, chunk metadata, and
     final materialization.
 
