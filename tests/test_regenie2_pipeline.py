@@ -59,6 +59,15 @@ SCORE_ONLY_PLAN = types.BinaryCorrectionPlan(
 )
 
 
+def test_intersect_committed_chunk_identifier_sets_preserves_pipeline_helper_contract() -> None:
+    shared_chunk_identifiers = pipeline_multi_group.intersect_committed_chunk_identifier_sets(
+        ({0, 32, 64}, {32, 64, 96}, {32, 128})
+    )
+
+    assert shared_chunk_identifiers == {32}
+    assert pipeline_multi_group.intersect_committed_chunk_identifier_sets(()) == set()
+
+
 def build_test_genotype_source_config(
     source_path: Path,
     sample_path: Path | None = None,

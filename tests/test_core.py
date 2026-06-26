@@ -90,6 +90,15 @@ def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:
     ]
 
 
+def test_intersect_committed_chunk_identifier_sets_returns_sorted_shared_identifiers() -> None:
+    shared_chunk_identifiers = _core.intersect_committed_chunk_identifier_sets(
+        ((64, 0, 32), (32, 64, 96), (32, 128))
+    )
+
+    assert shared_chunk_identifiers == [32]
+    assert _core.intersect_committed_chunk_identifier_sets(()) == []
+
+
 def test_regenie2_run_engine_required_chromosomes_returns_boundary_labels() -> None:
     engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
 

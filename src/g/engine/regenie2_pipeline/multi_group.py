@@ -27,9 +27,10 @@ def intersect_committed_chunk_identifier_sets(
     committed_chunk_identifier_sets: tuple[set[int], ...],
 ) -> set[int]:
     """Return chunk identifiers already committed by every output in a delivery."""
-    if not committed_chunk_identifier_sets:
-        return set()
-    return set.intersection(*committed_chunk_identifier_sets)
+    native_committed_chunk_identifier_sets = tuple(
+        tuple(committed_chunk_identifier_set) for committed_chunk_identifier_set in committed_chunk_identifier_sets
+    )
+    return set(_core.intersect_committed_chunk_identifier_sets(native_committed_chunk_identifier_sets))
 
 
 def prepare_multi_phenotype_bgen_group_delivery(
