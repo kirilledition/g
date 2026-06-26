@@ -14,7 +14,8 @@ pub(crate) fn plan_association_backend_payload<'py>(
     jax_device: String,
     gpu_genotype_format: String,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let plan = native_host_policy::plan_association_backend(&association_mode, &jax_device, &gpu_genotype_format);
+    let plan = native_host_policy::plan_association_backend(&association_mode, &jax_device, &gpu_genotype_format)
+        .map_err(host_policy_error_to_py)?;
     let payload = PyDict::new(py);
     payload.set_item("backend_kind", plan.backend_kind)?;
     payload.set_item("association_mode", plan.association_mode)?;

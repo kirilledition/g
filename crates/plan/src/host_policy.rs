@@ -15,6 +15,7 @@ const ASSOCIATION_MODE_REGENIE2_LINEAR: &str = "regenie2_linear";
 const BINARY_FALLBACK_METHOD_FIRTH_APPROXIMATE: &str = "firth_approximate";
 const BINARY_FALLBACK_METHOD_SCORE_ONLY: &str = "score_only";
 const DEVICE_GPU: &str = "gpu";
+const GPU_GENOTYPE_FORMAT_DOSAGE: &str = "dosage";
 const GPU_GENOTYPE_FORMAT_PACKED8: &str = "packed8";
 const JAX_CUDA_PLATFORM_NAME: &str = "cuda";
 const JAX_CPU_PLATFORM_NAME: &str = "cpu";
@@ -78,25 +79,27 @@ pub struct JaxRuntimeSetupPayload {
     pub gpu_validation_message: Option<&'static str>,
 }
 
-#[must_use]
 pub fn plan_association_backend(
     association_mode: &str,
     jax_device: &str,
     gpu_genotype_format: &str,
-) -> AssociationBackendPlanPayload {
-    let uses_variant_major_packed8_delivery = gpu_genotype_format == GPU_GENOTYPE_FORMAT_PACKED8;
-    let backend_kind = if uses_variant_major_packed8_delivery {
-        ASSOCIATION_BACKEND_JAX_PACKED8
-    } else {
-        ASSOCIATION_BACKEND_JAX_DOSAGE
+) -> Result<AssociationBackendPlanPayload, HostPolicyError> {
+    let (backend_kind, uses_variant_major_packed8_delivery) = match gpu_genotype_format {
+        GPU_GENOTYPE_FORMAT_DOSAGE => (ASSOCIATION_BACKEND_JAX_DOSAGE, false),
+        GPU_GENOTYPE_FORMAT_PACKED8 => (ASSOCIATION_BACKEND_JAX_PACKED8, true),
+        _ => {
+            return Err(HostPolicyError::Value(
+                "gpu_genotype_format must be resolved to dosage or packed8 before backend planning.".to_string(),
+            ));
+        }
     };
-    AssociationBackendPlanPayload {
+    Ok(AssociationBackendPlanPayload {
         backend_kind,
         association_mode: association_mode.to_string(),
         jax_device: jax_device.to_string(),
         genotype_format: gpu_genotype_format.to_string(),
         uses_variant_major_packed8_delivery,
-    }
+    })
 }
 
 #[must_use]
@@ -303,7 +306,8 @@ mod tests {
 
     #[test]
     fn plans_association_backend_from_concrete_genotype_format() {
-        let dosage_plan = plan_association_backend(ASSOCIATION_MODE_REGENIE2_LINEAR, JAX_CPU_PLATFORM_NAME, "dosage");
+        let dosage_plan =
+            plan_association_backend(ASSOCIATION_MODE_REGENIE2_LINEAR, JAX_CPU_PLATFORM_NAME, "dosage").unwrap();
         assert_eq!(dosage_plan.backend_kind, ASSOCIATION_BACKEND_JAX_DOSAGE);
         assert!(!dosage_plan.uses_variant_major_packed8_delivery);
 
@@ -311,10 +315,18 @@ mod tests {
             ASSOCIATION_MODE_REGENIE2_BINARY,
             JAX_CUDA_PLATFORM_NAME,
             GPU_GENOTYPE_FORMAT_PACKED8,
-        );
+        )
+        .unwrap();
         assert_eq!(packed_plan.backend_kind, ASSOCIATION_BACKEND_JAX_PACKED8);
         assert_eq!(packed_plan.genotype_format, GPU_GENOTYPE_FORMAT_PACKED8);
         assert!(packed_plan.uses_variant_major_packed8_delivery);
+
+        assert_eq!(
+            plan_association_backend(ASSOCIATION_MODE_REGENIE2_BINARY, JAX_CUDA_PLATFORM_NAME, "auto"),
+            Err(HostPolicyError::Value(
+                "gpu_genotype_format must be resolved to dosage or packed8 before backend planning.".to_string(),
+            )),
+        );
     }
 
     #[test]
