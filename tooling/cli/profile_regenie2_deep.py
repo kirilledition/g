@@ -28,12 +28,12 @@ from tooling.benchmark import comparison as comparison_benchmark
 from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_compat as tooling_hydra_compat
-from tooling.common import jax_cache as tooling_jax_cache
 from tooling.common import logging as tooling_logging
 from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.profile_deep import budget as profile_deep_budget
 from tooling.profile_deep import config as profile_deep_config
+from tooling.profile_deep import jax_cache as profile_deep_jax_cache
 from tooling.profile_deep import models as profile_deep_models
 
 if typing.TYPE_CHECKING:
@@ -63,9 +63,9 @@ DEFAULT_OUTPUT_PARENT = profile_deep_config.DEFAULT_OUTPUT_PARENT
 DEFAULT_VARIANT_COUNT = 418_943
 JAX_XLA_AUTOTUNE_CACHE = "xla_gpu_per_fusion_autotune_cache_dir"
 ENABLE_XLA_AUTOTUNE_CACHE = os.environ.get("G_PROFILE_ENABLE_XLA_AUTOTUNE_CACHE") == "1"
-GPU_JAX_CACHE_PARENT_DEFAULT = "/tmp/g-jax-profile-cache"
+GPU_JAX_CACHE_PARENT_DEFAULT = profile_deep_jax_cache.GPU_JAX_CACHE_PARENT_DEFAULT
 JAX_DEBUG_LOG_MODULES = "jax._src.compiler,jax._src.lru_cache"
-JAX_LOG_SAMPLE_LINE_LIMIT = 20
+JAX_LOG_SAMPLE_LINE_LIMIT = profile_deep_jax_cache.JAX_LOG_SAMPLE_LINE_LIMIT
 BINARY_DIAGNOSTIC_UNAVAILABLE_EXACT_TIMING_DISABLED = "exact_stage_timings_disabled"
 BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_MISSING = "stage_timing_file_missing"
 BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_INVALID = "stage_timing_file_invalid"
@@ -144,6 +144,17 @@ profile_configuration_payload = profile_deep_config.profile_configuration_payloa
 apply_smoke_overrides = profile_deep_config.apply_smoke_overrides
 build_arguments_from_config = profile_deep_config.build_arguments_from_config
 build_arguments_from_overrides = profile_deep_config.build_arguments_from_overrides
+resolve_profile_jax_cache_directory = profile_deep_jax_cache.resolve_profile_jax_cache_directory
+collect_jax_cache_snapshot = profile_deep_jax_cache.collect_jax_cache_snapshot
+parse_jax_compile_log = profile_deep_jax_cache.parse_jax_compile_log
+read_jax_compile_log_summary = profile_deep_jax_cache.read_jax_compile_log_summary
+snapshot_delta = profile_deep_jax_cache.snapshot_delta
+build_jax_cache_diagnostics = profile_deep_jax_cache.build_jax_cache_diagnostics
+successful_trials_with_jax_diagnostics = profile_deep_jax_cache.successful_trials_with_jax_diagnostics
+sum_optional_integer_values = profile_deep_jax_cache.sum_optional_integer_values
+compile_log_summary_for_trial = profile_deep_jax_cache.compile_log_summary_for_trial
+build_jax_cold_warm_diagnostics = profile_deep_jax_cache.build_jax_cold_warm_diagnostics
+collect_jax_cache_diagnostics = profile_deep_jax_cache.collect_jax_cache_diagnostics
 
 
 def build_baseline_paths(arguments: ProfileArguments) -> baseline_benchmark.BaselinePaths:
@@ -1396,166 +1407,6 @@ def build_step2_candidates(
     return tuple(candidates)
 
 
-def resolve_profile_jax_cache_directory(candidate: Step2Candidate, cache_directory: Path | None) -> Path | None:
-    """Resolve the actual JAX cache directory used by one profile child."""
-    if cache_directory is None:
-        return None
-    if candidate.device != "gpu":
-        return tooling_jax_cache.resolve_cpu_feature_aware_cache_directory(cache_directory)
-    job_identifier = os.environ.get("SLURM_JOB_ID") or str(os.getpid())
-    gpu_cache_parent = os.environ.get("G_PROFILE_GPU_JAX_CACHE_PARENT", GPU_JAX_CACHE_PARENT_DEFAULT)
-    return Path(gpu_cache_parent) / job_identifier / cache_directory.name
-
-
-def collect_jax_cache_snapshot(cache_directory: Path | None) -> JaxCacheSnapshot | None:
-    """Collect lightweight file-count and byte-size stats for a JAX cache directory."""
-    if cache_directory is None:
-        return None
-    resolved_cache_directory = cache_directory.expanduser()
-    if not resolved_cache_directory.exists():
-        return JaxCacheSnapshot(
-            path=str(resolved_cache_directory),
-            exists=False,
-            file_count=0,
-            total_size_bytes=0,
-        )
-    file_count = 0
-    total_size_bytes = 0
-    try:
-        for cache_path in resolved_cache_directory.rglob("*"):
-            if not cache_path.is_file():
-                continue
-            file_count += 1
-            total_size_bytes += cache_path.stat().st_size
-    except OSError as error:
-        return JaxCacheSnapshot(
-            path=str(resolved_cache_directory),
-            exists=True,
-            file_count=file_count,
-            total_size_bytes=total_size_bytes,
-            error=str(error),
-        )
-    return JaxCacheSnapshot(
-        path=str(resolved_cache_directory),
-        exists=True,
-        file_count=file_count,
-        total_size_bytes=total_size_bytes,
-    )
-
-
-def parse_jax_compile_log(log_text: str) -> JaxCompileLogSummary:
-    """Parse supported JAX compile and persistent-cache log lines from stderr text."""
-    compilation_event_count = 0
-    persistent_cache_event_count = 0
-    persistent_cache_hit_count = 0
-    persistent_cache_miss_count = 0
-    tracing_cache_miss_count = 0
-    cache_miss_explanation_count = 0
-    sample_log_lines: list[str] = []
-    for raw_line in log_text.splitlines():
-        line = raw_line.strip()
-        lower_line = line.lower()
-        has_compilation_event = (
-            "compiling " in lower_line
-            or "finished xla compilation" in lower_line
-            or "tracing + transforming" in lower_line
-            or "lowering " in lower_line
-        )
-        has_persistent_cache_event = "persistent compilation cache" in lower_line
-        has_persistent_cache_hit = has_persistent_cache_event and (
-            "cache hit" in lower_line or "cache_hit" in lower_line
-        )
-        has_persistent_cache_miss = has_persistent_cache_event and (
-            "cache miss" in lower_line or "cache_miss" in lower_line or "not found" in lower_line
-        )
-        has_tracing_cache_miss = "tracing cache miss" in lower_line
-        if has_compilation_event:
-            compilation_event_count += 1
-        if has_persistent_cache_event:
-            persistent_cache_event_count += 1
-        if has_persistent_cache_hit:
-            persistent_cache_hit_count += 1
-        if has_persistent_cache_miss:
-            persistent_cache_miss_count += 1
-        if has_tracing_cache_miss:
-            tracing_cache_miss_count += 1
-        if (has_persistent_cache_miss or has_tracing_cache_miss) and (
-            "because" in lower_line or "explain" in lower_line
-        ):
-            cache_miss_explanation_count += 1
-        if (
-            has_compilation_event
-            or has_persistent_cache_event
-            or has_persistent_cache_hit
-            or has_persistent_cache_miss
-            or has_tracing_cache_miss
-        ) and len(sample_log_lines) < JAX_LOG_SAMPLE_LINE_LIMIT:
-            sample_log_lines.append(line[:500])
-    return JaxCompileLogSummary(
-        compilation_event_count=compilation_event_count,
-        persistent_cache_event_count=persistent_cache_event_count,
-        persistent_cache_hit_count=persistent_cache_hit_count,
-        persistent_cache_miss_count=persistent_cache_miss_count,
-        tracing_cache_miss_count=tracing_cache_miss_count,
-        cache_miss_explanation_count=cache_miss_explanation_count,
-        sample_log_lines=sample_log_lines,
-    )
-
-
-def read_jax_compile_log_summary(stderr_log_path: str) -> JaxCompileLogSummary:
-    """Read a subprocess stderr file and parse JAX compile/cache log counters."""
-    log_path = Path(stderr_log_path)
-    if not log_path.exists():
-        return parse_jax_compile_log("")
-    return parse_jax_compile_log(log_path.read_text(encoding="utf-8", errors="replace"))
-
-
-def snapshot_delta(
-    *,
-    before_snapshot: JaxCacheSnapshot | None,
-    after_snapshot: JaxCacheSnapshot | None,
-    field_name: str,
-) -> int | None:
-    """Return an integer delta for a cache snapshot field."""
-    if before_snapshot is None or after_snapshot is None:
-        return None
-    before_value = getattr(before_snapshot, field_name)
-    after_value = getattr(after_snapshot, field_name)
-    if not isinstance(before_value, int) or not isinstance(after_value, int):
-        return None
-    return after_value - before_value
-
-
-def build_jax_cache_diagnostics(
-    *,
-    cache_directory: Path | None,
-    child_reported_cache_directory: str | None,
-    persistent_cache_used: bool,
-    before_snapshot: JaxCacheSnapshot | None,
-    after_snapshot: JaxCacheSnapshot | None,
-    stderr_log_path: str,
-) -> JaxCacheDiagnostics:
-    """Build one subprocess JAX cache diagnostic payload."""
-    return JaxCacheDiagnostics(
-        cache_directory=str(cache_directory) if cache_directory is not None else None,
-        child_reported_cache_directory=child_reported_cache_directory,
-        persistent_cache_used=persistent_cache_used,
-        before=before_snapshot,
-        after=after_snapshot,
-        file_count_delta=snapshot_delta(
-            before_snapshot=before_snapshot,
-            after_snapshot=after_snapshot,
-            field_name="file_count",
-        ),
-        size_bytes_delta=snapshot_delta(
-            before_snapshot=before_snapshot,
-            after_snapshot=after_snapshot,
-            field_name="total_size_bytes",
-        ),
-        compile_log_summary=read_jax_compile_log_summary(stderr_log_path),
-    )
-
-
 def build_g_trial_environment(
     *,
     candidate: Step2Candidate,
@@ -2298,88 +2149,6 @@ def run_regenie_trial(
     )
 
 
-def successful_trials_with_jax_diagnostics(trials: list[TrialResult]) -> list[TrialResult]:
-    """Return successful trials that include JAX cache diagnostics."""
-    return [
-        trial
-        for trial in trials
-        if trial.status == "success" and trial.wall_time_seconds is not None and trial.jax_cache_diagnostics is not None
-    ]
-
-
-def sum_optional_integer_values(values: typing.Iterable[int | None]) -> int | None:
-    """Sum integer values when at least one value is available."""
-    observed_values = [value for value in values if value is not None]
-    if not observed_values:
-        return None
-    return sum(observed_values)
-
-
-def compile_log_summary_for_trial(trial: TrialResult) -> JaxCompileLogSummary:
-    """Return the parsed JAX compile log summary for a diagnostic trial."""
-    if trial.jax_cache_diagnostics is None:
-        return parse_jax_compile_log("")
-    return trial.jax_cache_diagnostics.compile_log_summary
-
-
-def build_jax_cold_warm_diagnostics(
-    *,
-    warmup_trials: list[TrialResult],
-    trial_results: list[TrialResult],
-) -> JaxColdWarmDiagnostics | None:
-    """Build cold-versus-warm JAX diagnostics for one aggregate result."""
-    successful_trials = successful_trials_with_jax_diagnostics([*warmup_trials, *trial_results])
-    if not successful_trials:
-        return None
-    successful_diagnostics = [
-        trial.jax_cache_diagnostics for trial in successful_trials if trial.jax_cache_diagnostics is not None
-    ]
-    cold_trial = successful_trials[0]
-    warm_trials = successful_trials[1:]
-    cold_diagnostics = successful_diagnostics[0]
-    warm_wall_times = [trial.wall_time_seconds for trial in warm_trials if trial.wall_time_seconds is not None]
-    warm_median_wall_time = statistics.median(warm_wall_times) if warm_wall_times else None
-    warm_mean_wall_time = statistics.fmean(warm_wall_times) if warm_wall_times else None
-    cold_to_warm_speedup_ratio = None
-    if cold_trial.wall_time_seconds is not None and warm_median_wall_time is not None and warm_median_wall_time > 0.0:
-        cold_to_warm_speedup_ratio = cold_trial.wall_time_seconds / warm_median_wall_time
-    warm_diagnostics = [trial.jax_cache_diagnostics for trial in warm_trials if trial.jax_cache_diagnostics is not None]
-    return JaxColdWarmDiagnostics(
-        cache_directory=cold_diagnostics.cache_directory,
-        persistent_cache_used=any(diagnostic.persistent_cache_used for diagnostic in successful_diagnostics),
-        cold_trial_name=cold_trial.name,
-        cold_wall_time_seconds=cold_trial.wall_time_seconds,
-        warm_trial_count=len(warm_trials),
-        warm_median_wall_time_seconds=warm_median_wall_time,
-        warm_mean_wall_time_seconds=warm_mean_wall_time,
-        cold_to_warm_speedup_ratio=cold_to_warm_speedup_ratio,
-        cold_cache_file_count_delta=cold_diagnostics.file_count_delta,
-        warm_cache_file_count_delta=sum_optional_integer_values(
-            diagnostic.file_count_delta for diagnostic in warm_diagnostics
-        ),
-        cold_cache_size_bytes_delta=cold_diagnostics.size_bytes_delta,
-        warm_cache_size_bytes_delta=sum_optional_integer_values(
-            diagnostic.size_bytes_delta for diagnostic in warm_diagnostics
-        ),
-        cold_compilation_event_count=compile_log_summary_for_trial(cold_trial).compilation_event_count,
-        warm_compilation_event_count=sum(
-            compile_log_summary_for_trial(trial).compilation_event_count for trial in warm_trials
-        ),
-        cold_cache_hit_count=compile_log_summary_for_trial(cold_trial).persistent_cache_hit_count,
-        warm_cache_hit_count=sum(
-            compile_log_summary_for_trial(trial).persistent_cache_hit_count for trial in warm_trials
-        ),
-        cold_cache_miss_count=compile_log_summary_for_trial(cold_trial).persistent_cache_miss_count,
-        warm_cache_miss_count=sum(
-            compile_log_summary_for_trial(trial).persistent_cache_miss_count for trial in warm_trials
-        ),
-        cold_tracing_cache_miss_count=compile_log_summary_for_trial(cold_trial).tracing_cache_miss_count,
-        warm_tracing_cache_miss_count=sum(
-            compile_log_summary_for_trial(trial).tracing_cache_miss_count for trial in warm_trials
-        ),
-    )
-
-
 def aggregate_trial_results(
     *,
     name: str,
@@ -2905,16 +2674,6 @@ def build_runtime_comparison_notes(aggregate_results: list[AggregateResult]) -> 
         if g_result.median_wall_time_seconds is None:
             failed.append(f"{comparison_name}: g result did not produce a measured runtime.")
     return RuntimeComparisonNotes(unsupported=unsupported, failed=failed)
-
-
-def collect_jax_cache_diagnostics(aggregate_results: list[AggregateResult]) -> dict[str, dict[str, object]]:
-    """Collect aggregate JAX cache diagnostics keyed by result name."""
-    diagnostics: dict[str, dict[str, object]] = {}
-    for aggregate_result in aggregate_results:
-        if aggregate_result.jax_cold_warm_summary is None:
-            continue
-        diagnostics[aggregate_result.name] = dataclasses.asdict(aggregate_result.jax_cold_warm_summary)
-    return diagnostics
 
 
 REGENIE_STAGE_GROUPS: dict[str, tuple[str, ...]] = {
