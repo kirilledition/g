@@ -764,127 +764,12 @@ def build_current_run_manifest_header(
     )
 
 
-def build_current_run_execution_plan(current_header: CurrentRunManifestHeader) -> dict[str, typing.Any]:
-    """Build normalized manifest fields that determine resume compatibility."""
-    return normalize_execution_plan_value(
-        {
-            "manifest_schema_version": RUN_MANIFEST_SCHEMA_VERSION,
-            "output_schema_version": OUTPUT_SCHEMA_VERSION,
-            "association_mode": current_header.association_mode,
-            "association_backend": current_header.association_backend,
-            "bgen": current_header.bgen,
-            "sample": current_header.sample,
-            "phenotype_file": current_header.phenotype_file,
-            "phenotype_name": current_header.phenotype_name,
-            "covariate_file": current_header.covariate_file,
-            "covariate_names": current_header.covariate_names,
-            "prediction_list": current_header.prediction_list,
-            "prediction_inputs": current_header.prediction_inputs,
-            "sample_count": current_header.sample_count,
-            "variant_count": current_header.variant_count,
-            "chunk_size": current_header.chunk_size,
-            "variant_limit": current_header.variant_limit,
-            "binary_correction_plan": current_header.binary_correction_plan,
-            "binary_kernel_config": current_header.binary_kernel_config,
-            "trusted_no_missing_diploid": current_header.trusted_no_missing_diploid,
-            "trusted_bgen_validation_mode": current_header.trusted_bgen_validation_mode,
-            "sample_key_mode": current_header.sample_key_mode,
-            "bgen_decode_tile_variant_count": current_header.bgen_decode_tile_variant_count,
-            "jax_policy": current_header.jax_policy,
-            "gpu_genotype_format": current_header.gpu_genotype_format,
-            "score_dtype": current_header.score_dtype,
-            "firth_dtype": current_header.firth_dtype,
-            "multi_phenotype_sample_mode": current_header.multi_phenotype_sample_mode,
-            "phenotype_compute_group_id": current_header.phenotype_compute_group_id,
-            "sample_set_fingerprint": current_header.sample_set_fingerprint,
-            "covariate_design_fingerprint": current_header.covariate_design_fingerprint,
-            "prediction_alignment_fingerprint": current_header.prediction_alignment_fingerprint,
-            "output_writer": current_header.output_writer,
-            "resume_policy": RESUME_POLICY,
-        }
-    )
-
-
-def build_native_current_run_manifest_header_mapping(
-    current_header: CurrentRunManifestHeader,
-) -> dict[str, typing.Any] | None:
-    """Build the manifest header through the native JSON boundary when available."""
-    native_build_header = getattr(_core, "build_current_run_manifest_header_json", None)
-    if native_build_header is None:
-        return None
-    binary_kernel_config_json = (
-        None
-        if current_header.binary_kernel_config is None
-        else json.dumps(normalize_execution_plan_value(current_header.binary_kernel_config), sort_keys=True)
-    )
-    prediction_loco_files_json = json.dumps(
-        [
-            prediction_loco_file_fingerprint_to_mapping(loco_file)
-            for loco_file in current_header.prediction_inputs.loco_files
-        ],
-        sort_keys=True,
-    )
-    manifest_json = native_build_header(
-        current_header.association_mode.value,
-        current_header.association_backend.kind,
-        current_header.bgen.path,
-        None if current_header.sample is None else current_header.sample.path,
-        current_header.phenotype_file.path,
-        current_header.phenotype_name,
-        None if current_header.covariate_file is None else current_header.covariate_file.path,
-        list(current_header.covariate_names),
-        current_header.prediction_list.path,
-        prediction_loco_files_json,
-        current_header.sample_count,
-        current_header.variant_count,
-        current_header.chunk_size,
-        current_header.variant_limit,
-        current_header.binary_correction_plan.method,
-        current_header.binary_correction_plan.p_threshold,
-        current_header.binary_correction_plan.firth_se,
-        current_header.trusted_no_missing_diploid,
-        current_header.sample_key_mode.value,
-        binary_kernel_config_json,
-        current_header.bgen_decode_tile_variant_count,
-        current_header.trusted_bgen_validation_mode.value,
-        current_header.jax_policy.device,
-        current_header.jax_policy.enable_x64,
-        None
-        if current_header.jax_policy.matmul_precision == JAX_MATMUL_PRECISION_WHEN_UNSET
-        else current_header.jax_policy.matmul_precision,
-        current_header.gpu_genotype_format.value,
-        current_header.score_dtype.value,
-        current_header.firth_dtype.value,
-        current_header.multi_phenotype_sample_mode.value,
-        current_header.phenotype_compute_group_id,
-        current_header.sample_set_fingerprint,
-        current_header.covariate_design_fingerprint,
-        current_header.prediction_alignment_fingerprint,
-        current_header.output_writer.output_format,
-        current_header.output_writer.finalize_parquet,
-        current_header.output_writer.writer_thread_count,
-        current_header.output_writer.writer_queue_depth,
-        current_header.output_writer.chunks_per_arrow_file,
-        current_header.output_writer.arrow_compression,
-        current_header.output_writer.parquet_compression,
-        current_header.output_writer.result_statistic_dtype,
-    )
-    manifest_header = json.loads(manifest_json)
-    if not isinstance(manifest_header, dict):
-        message = "Native current run manifest header must contain a JSON object."
-        raise ValueError(message)
-    return manifest_header
-
-
 def build_native_prepared_run_manifest_header_mapping(
     current_header: CurrentRunManifestHeader,
-) -> dict[str, typing.Any] | None:
+) -> dict[str, typing.Any]:
     """Build the manifest header from a native prepared-run plan payload."""
-    native_build_header = getattr(_core, "build_prepared_run_manifest_header_json", None)
-    if native_build_header is None:
-        return None
     prepared_run_plan_payload = build_prepared_run_plan_manifest_payload(current_header)
-    manifest_json = native_build_header(
+    manifest_json = _core.build_prepared_run_manifest_header_json(
         json.dumps(prepared_run_plan_payload, sort_keys=True),
     )
     manifest_header = json.loads(manifest_json)
@@ -1015,50 +900,7 @@ def optional_manifest_file_fingerprint_to_prepared_payload(
 
 def current_run_manifest_header_to_mapping(current_header: CurrentRunManifestHeader) -> dict[str, typing.Any]:
     """Serialize a typed current-run manifest header to native JSON fields."""
-    native_prepared_manifest_header = build_native_prepared_run_manifest_header_mapping(current_header)
-    if native_prepared_manifest_header is not None:
-        return native_prepared_manifest_header
-    native_manifest_header = build_native_current_run_manifest_header_mapping(current_header)
-    if native_manifest_header is not None:
-        return native_manifest_header
-    execution_plan = build_current_run_execution_plan(current_header)
-    return {
-        "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
-        "output_schema_version": OUTPUT_SCHEMA_VERSION,
-        "association_mode": str(current_header.association_mode),
-        "association_backend": dataclasses.asdict(current_header.association_backend),
-        "bgen": file_fingerprint_to_mapping(current_header.bgen),
-        "sample": file_fingerprint_to_mapping(current_header.sample),
-        "phenotype_file": file_fingerprint_to_mapping(current_header.phenotype_file),
-        "phenotype_name": current_header.phenotype_name,
-        "covariate_file": file_fingerprint_to_mapping(current_header.covariate_file),
-        "covariate_names": list(current_header.covariate_names),
-        "prediction_list": file_fingerprint_to_mapping(current_header.prediction_list),
-        "prediction_inputs": normalize_execution_plan_value(current_header.prediction_inputs),
-        "sample_count": current_header.sample_count,
-        "variant_count": current_header.variant_count,
-        "chunk_size": current_header.chunk_size,
-        "variant_limit": current_header.variant_limit,
-        "binary_correction_plan": dataclasses.asdict(current_header.binary_correction_plan),
-        "binary_kernel_config": normalize_execution_plan_value(current_header.binary_kernel_config),
-        "trusted_no_missing_diploid": current_header.trusted_no_missing_diploid,
-        "trusted_bgen_validation_mode": str(current_header.trusted_bgen_validation_mode),
-        "sample_key_mode": str(current_header.sample_key_mode),
-        "bgen_decode_tile_variant_count": current_header.bgen_decode_tile_variant_count,
-        "jax_policy": dataclasses.asdict(current_header.jax_policy),
-        "gpu_genotype_format": current_header.gpu_genotype_format.value,
-        "score_dtype": current_header.score_dtype.value,
-        "firth_dtype": current_header.firth_dtype.value,
-        "multi_phenotype_sample_mode": current_header.multi_phenotype_sample_mode.value,
-        "phenotype_compute_group_id": current_header.phenotype_compute_group_id,
-        "sample_set_fingerprint": current_header.sample_set_fingerprint,
-        "covariate_design_fingerprint": current_header.covariate_design_fingerprint,
-        "prediction_alignment_fingerprint": current_header.prediction_alignment_fingerprint,
-        "output_writer": dataclasses.asdict(current_header.output_writer),
-        "resume_policy": RESUME_POLICY,
-        "execution_plan": execution_plan,
-        "execution_plan_hash": build_execution_plan_hash(execution_plan),
-    }
+    return build_native_prepared_run_manifest_header_mapping(current_header)
 
 
 def run_manifest_header_input_to_mapping(current_header: RunManifestHeaderInput) -> dict[str, typing.Any]:
