@@ -33,8 +33,11 @@ just doctor-server
 just dev-bootstrap
 just dev-bootstrap-gpu
 just dev-install
+just dev-install-opt
 just dev-install-perf
+just dev-install-perf-max
 just check-local
+just check-artifact-schema data/profiles/example/report.json
 just test-local
 just docs-build
 ```
@@ -89,6 +92,7 @@ just bench-linear-startup-gpu-parquet
 just bench-binary-hot-gpu
 just bench-binary-hot-gpu-smoke
 just bench-output-stages-gpu
+just bench-rust-build-profiles
 just slurm-gpu-bench-binary-hot
 ```
 

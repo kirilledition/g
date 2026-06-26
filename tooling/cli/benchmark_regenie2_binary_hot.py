@@ -21,6 +21,7 @@ import polars as pl
 import tooling.configuration as tooling_configuration
 from g import api, types
 from g.interface import config
+from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
@@ -1551,6 +1552,179 @@ def build_summary(
     }
 
 
+def build_standard_metrics(
+    *,
+    configuration: BenchmarkConfiguration,
+    run_id: str,
+    trial_results: list[TrialResult],
+) -> list[tooling_artifact_format.MetricRecord]:
+    """Build long-form metrics for binary-hot benchmark results."""
+    metric_records: list[tooling_artifact_format.MetricRecord] = []
+    for trial_index, trial_result in enumerate(trial_results):
+        case_id = trial_result.benchmark_case.name
+        trial_id = f"{case_id}:{trial_result.mode.value}:{trial_index}"
+        dimensions: dict[str, object] = {
+            "trait_type": "binary",
+            "device": "gpu",
+            "phase": trial_result.mode.value,
+            "output_format": "parquet" if trial_result.finalize_parquet else "arrow",
+            "finalize_parquet": trial_result.finalize_parquet,
+            "gpu_genotype_format": trial_result.benchmark_case.gpu_genotype_format.value,
+            "chunk_size": configuration.chunk_size,
+            "variant_limit": configuration.variant_limit,
+            "firth_batch_size": trial_result.benchmark_case.firth_batch_size,
+            "binary_trait_count": trial_result.benchmark_case.binary_trait_count,
+        }
+        metric_records.extend(
+            [
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    trial_id=trial_id,
+                    phase=trial_result.mode.value,
+                    metric_name="wall_time_seconds",
+                    value=trial_result.wall_time_seconds,
+                    unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                    higher_is_better=False,
+                    dimensions=dimensions,
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/trials/{trial_index}/wall_time_seconds",
+                    ),
+                ),
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    trial_id=trial_id,
+                    phase=trial_result.mode.value,
+                    metric_name="output_row_count",
+                    value=trial_result.output_metrics.output_row_count,
+                    unit=tooling_artifact_format.MetricUnit.ROW.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                    higher_is_better=None,
+                    dimensions=dimensions,
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/trials/{trial_index}/output_metrics/output_row_count",
+                    ),
+                ),
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    trial_id=trial_id,
+                    phase=trial_result.mode.value,
+                    metric_name="output_total_bytes",
+                    value=trial_result.output_metrics.chunk_bytes,
+                    unit=tooling_artifact_format.MetricUnit.BYTES.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                    higher_is_better=None,
+                    dimensions=dimensions,
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/trials/{trial_index}/output_metrics/chunk_bytes",
+                    ),
+                ),
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    trial_id=trial_id,
+                    phase=trial_result.mode.value,
+                    metric_name="final_parquet_bytes",
+                    value=trial_result.output_metrics.final_parquet_bytes,
+                    unit=tooling_artifact_format.MetricUnit.BYTES.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                    higher_is_better=None,
+                    dimensions=dimensions,
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/trials/{trial_index}/output_metrics/final_parquet_bytes",
+                    ),
+                ),
+            ]
+        )
+    return metric_records
+
+
+def build_input_file_records(configuration: BenchmarkConfiguration) -> list[tooling_artifact_format.InputFileRecord]:
+    """Build input-file records for binary-hot artifacts."""
+    return [
+        tooling_artifact_format.build_input_file_record(path=configuration.bgen_path, kind="bgen"),
+        tooling_artifact_format.build_input_file_record(path=configuration.sample_path, kind="sample"),
+        tooling_artifact_format.build_input_file_record(path=configuration.phenotype_file, kind="phenotype"),
+        tooling_artifact_format.build_input_file_record(path=configuration.prediction_list, kind="prediction_list"),
+        tooling_artifact_format.build_input_file_record(
+            path=configuration.data_directory / "covariates.txt",
+            kind="covariates",
+        ),
+    ]
+
+
+def write_standard_artifacts(
+    *,
+    configuration: BenchmarkConfiguration,
+    summary: dict[str, typing.Any],
+    trial_results: list[TrialResult],
+    legacy_summary_path: Path,
+    hydra_config: omegaconf.DictConfig | None = None,
+) -> None:
+    """Write Tooling Artifact Format outputs for binary-hot benchmark results."""
+    producer = tooling_artifact_format.build_producer(
+        tool_name="benchmark_regenie2_binary_hot",
+        repository_root=REPOSITORY_ROOT,
+    )
+    run = tooling_artifact_format.build_run_identity(
+        tool_name="benchmark_regenie2_binary_hot",
+        output_directory=configuration.output_directory,
+        status=tooling_artifact_format.ToolArtifactStatus.SUCCESS,
+    )
+    context_snapshot = tooling_artifact_format.build_context_snapshot(
+        output_directory=configuration.output_directory,
+        repository_root=REPOSITORY_ROOT,
+    )
+    metrics = build_standard_metrics(configuration=configuration, run_id=run.run_id, trial_results=trial_results)
+    report = tooling_artifact_format.build_report_envelope(
+        producer=producer,
+        run=run,
+        context=context_snapshot,
+        title="Binary REGENIE Step 2 GPU hot benchmark",
+        configuration=configuration_to_json_dict(configuration),
+        summary={
+            "headline": "Binary GPU hot benchmark completed.",
+            "legacy_summary": summary,
+        },
+        cases=summary["metadata"]["benchmark_cases"],
+        trials=[trial_result_to_json_dict(trial_result) for trial_result in trial_results],
+        metrics=metrics,
+        diagnostics={
+            "binary_diagnostics_by_case": summary["binary_diagnostics_by_case"],
+            "headline": summary["headline"],
+            "headline_by_case": summary["headline_by_case"],
+        },
+    )
+    tooling_artifact_format.write_standard_artifact_bundle(
+        output_directory=configuration.output_directory,
+        report=report,
+        events=[
+            tooling_artifact_format.build_tool_event(
+                tool_name="benchmark_regenie2_binary_hot",
+                run_id=run.run_id,
+                phase="benchmark",
+                event="benchmark_completed",
+                message="Binary-hot benchmark completed.",
+                fields={"trial_count": len(trial_results)},
+            )
+        ],
+        input_files=build_input_file_records(configuration),
+        hydra_config=hydra_config,
+        tool_payload=configuration_to_json_dict(configuration),
+        notes=[
+            "Legacy summary alias preserves the pre-v1 binary-hot summary shape under report.summary.legacy_summary."
+        ],
+    )
+    write_summary(legacy_summary_path, summary)
+
+
 def write_summary(summary_path: Path, summary: dict[str, typing.Any]) -> None:
     """Write a benchmark summary JSON file."""
     tooling_reports.write_versioned_json_report(summary_path, summary, SUMMARY_REPORT_CONTRACT, sort_keys=True)
@@ -1645,7 +1819,7 @@ def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None
     return build_arguments_from_config(config)
 
 
-def run_tool(arguments: BenchmarkArguments) -> None:
+def run_tool(arguments: BenchmarkArguments, hydra_config: omegaconf.DictConfig | None = None) -> None:
     """Run the binary hot benchmark."""
     configuration = build_configuration(arguments)
     trial_specs = build_trial_specs(
@@ -1663,14 +1837,21 @@ def run_tool(arguments: BenchmarkArguments) -> None:
     trial_results = run_benchmark(configuration, trial_specs)
     summary = build_summary(configuration=configuration, trial_results=trial_results)
     summary_path = arguments.json_summary_path or (configuration.output_directory / "regenie2_binary_hot_summary.json")
-    write_summary(summary_path, summary)
+    write_standard_artifacts(
+        configuration=configuration,
+        summary=summary,
+        trial_results=trial_results,
+        legacy_summary_path=summary_path,
+        hydra_config=hydra_config,
+    )
     print(f"Wrote summary: {summary_path}")
+    print(f"Wrote standard report: {configuration.output_directory / 'report.json'}")
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="benchmark_regenie2_binary_hot")
 def hydra_main(config: omegaconf.DictConfig) -> None:
     """Run the binary hot benchmark through Hydra."""
-    run_tool(build_arguments_from_config(config))
+    run_tool(build_arguments_from_config(config), hydra_config=config)
 
 
 def main() -> None:

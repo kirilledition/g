@@ -16,10 +16,13 @@ import tooling.cli.debug as grouped_debug
 import tooling.cli.performance as grouped_performance
 import tooling.cli.profile_regenie2_deep as deep_profile
 import tooling.cli.run_regenie2_matrix as regenie2_matrix
+import tooling.cli.rust_build_profiles as rust_build_profiles
+import tooling.cli.schema_check as schema_check
 import tooling.cli.server as grouped_server
 import tooling.configuration as tooling_configuration
 import tooling.regenie.bgen_reader as regenie_bgen_reader
 from g.interface import config as interface_config
+from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import commands as tooling_commands
 from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
@@ -72,7 +75,7 @@ def test_hydra_tooling_config_accepts_group_overrides() -> None:
 
 
 def test_grouped_hydra_tooling_configs_compose() -> None:
-    config_names = ["benchmark", "data", "debug", "performance", "server"]
+    config_names = ["benchmark", "data", "debug", "performance", "rust_build_profiles", "server"]
 
     for config_name in config_names:
         config = tooling_configuration.compose_config(config_name=config_name, include_hydra_config=True)
@@ -136,6 +139,8 @@ def test_named_justfile_workflow_configs_compose() -> None:
         "bench_linear_startup_gpu_parquet",
         "perf_cpu",
         "perf_gpu",
+        "rust_build_profiles",
+        "schema_check",
         "matrix_chr10",
         "matrix_chr10_dry",
         "matrix_chr10_smoke",
@@ -152,6 +157,7 @@ def test_named_justfile_workflow_configs_compose() -> None:
         "debug_check_internal_init_exports",
         "debug_check_pyo3_stub",
         "debug_check_justfile",
+        "debug_schema_check",
     ]
 
     for config_name in config_names:
@@ -424,6 +430,22 @@ def test_hydra_tooling_config_converts_to_tool_arguments() -> None:
     assert bgen_arguments.chunk_sizes == "4096,8192"
     assert bgen_arguments.trusted_no_missing_diploid_modes == "true,false"
     assert bgen_arguments.json_summary_path == Path("reports/summary.json")
+
+    rust_build_arguments = rust_build_profiles.build_arguments_from_overrides(
+        [
+            "tool.labels=[dev-fast,perf-thin-cgu1]",
+            "tool.output_parent=results/perf/test-rust-build-profiles",
+            "tool.incremental_touch_paths=[src/python/mod.rs]",
+            "tool.run_bgen_reader_smoke=true",
+        ]
+    )
+    assert rust_build_arguments.labels == (
+        rust_build_profiles.BuildProfileLabel.DEV_FAST,
+        rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU1,
+    )
+    assert rust_build_arguments.output_parent == Path("results/perf/test-rust-build-profiles")
+    assert rust_build_arguments.incremental_touch_paths == (Path("src/python/mod.rs"),)
+    assert rust_build_arguments.run_bgen_reader_smoke is True
 
     binary_hot_arguments = binary_hot_benchmark.build_arguments_from_overrides(
         [
@@ -947,6 +969,140 @@ def test_versioned_report_contract_rejects_missing_and_unknown_fields(tmp_path: 
             raise AssertionError(f"Expected report payload to be rejected: {payload!r}")
 
 
+def test_tooling_artifact_bundle_writes_standard_files(tmp_path: Path) -> None:
+    output_directory = tmp_path / "artifact"
+    producer = tooling_artifact_format.ToolProducer(
+        tool_name="test_tool",
+        tool_version=1,
+        repository="kirilledition/g",
+        git_head="abc123",
+        dirty=False,
+        dirty_diff_sha256=None,
+    )
+    run = tooling_artifact_format.ToolRunIdentity(
+        run_id="test-run",
+        created_at="2026-06-26T00:00:00Z",
+        status=tooling_artifact_format.ToolArtifactStatus.SUCCESS,
+        status_reason=None,
+        output_directory=str(output_directory),
+    )
+    context_snapshot = tooling_artifact_format.ToolContextSnapshot(
+        repository_root=str(tmp_path),
+        data_directory=None,
+        output_directory=str(output_directory),
+        cwd=str(tmp_path),
+        hydra_chdir=False,
+        machine_profile=None,
+        hostname="test-host",
+        slurm_job_id=None,
+    )
+    metric_record = tooling_artifact_format.build_metric_record(
+        run_id=run.run_id,
+        case_id="case",
+        metric_name="wall_time_seconds",
+        value=1.25,
+        unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+        aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+        higher_is_better=False,
+    )
+    command_record = tooling_artifact_format.build_command_record(
+        command_id="inline_python",
+        tool_name=producer.tool_name,
+        run_id=run.run_id,
+        phase="test",
+        args=[sys.executable, "-c", "print('hello')"],
+        output_directory=output_directory,
+        status=tooling_artifact_format.ToolArtifactStatus.SUCCESS,
+    )
+    report = tooling_artifact_format.build_report_envelope(
+        producer=producer,
+        run=run,
+        context=context_snapshot,
+        title="Test Tool",
+        configuration={"mode": "test"},
+        metrics=[metric_record],
+    )
+
+    tooling_artifact_format.write_standard_artifact_bundle(
+        output_directory=output_directory,
+        report=report,
+        events=[
+            tooling_artifact_format.build_tool_event(
+                tool_name=producer.tool_name,
+                run_id=run.run_id,
+                phase="test",
+                event="completed",
+                message="completed",
+            )
+        ],
+        commands=[command_record],
+    )
+
+    assert (output_directory / "artifact_manifest.json").is_file()
+    assert (output_directory / "report.json").is_file()
+    assert (output_directory / "summary.md").is_file()
+    assert (output_directory / "metrics.jsonl").is_file()
+    assert (output_directory / "events.jsonl").is_file()
+    assert (output_directory / "commands" / "commands.jsonl").is_file()
+    assert (output_directory / "commands" / "scripts" / "inline_python.py").is_file()
+    assert (
+        schema_check.run_schema_check(
+            schema_check.SchemaCheckArguments(path=output_directory, require_optional_files=True)
+        ).error_messages
+        == ()
+    )
+
+
+def test_schema_check_rejects_wrong_schema_version(tmp_path: Path) -> None:
+    report_path = tmp_path / "report.json"
+    tooling_reports.write_json_report(
+        report_path,
+        {
+            "schema_name": "g.tooling.report",
+            "schema_version": 99,
+            "producer": {},
+            "run": {},
+        },
+    )
+
+    result = schema_check.run_schema_check(
+        schema_check.SchemaCheckArguments(path=report_path, require_optional_files=False)
+    )
+
+    assert result.error_messages
+    assert "Expected schema_version=1" in result.error_messages[0]
+
+
+def test_matrix_dry_run_writes_tooling_artifact_format(tmp_path: Path) -> None:
+    output_directory = tmp_path / "matrix"
+    arguments = regenie2_matrix.build_arguments_from_overrides(
+        [
+            "tool.dry_run=true",
+            f"tool.output_dir={output_directory}",
+            "tool.variant_limit=1000",
+        ]
+    )
+
+    run_results = regenie2_matrix.run_matrix(arguments)
+
+    assert len(run_results) == 6
+    assert {run_result.status for run_result in run_results} == {regenie2_matrix.RunStatus.DRY_RUN}
+    assert (output_directory / "manifest.json").is_file()
+    assert (output_directory / "report.md").is_file()
+    assert (output_directory / "artifact_manifest.json").is_file()
+    assert (output_directory / "report.json").is_file()
+    report_payload = tooling_reports.read_json_report(output_directory / "report.json")
+    assert report_payload["schema_name"] == "g.tooling.report"
+    assert report_payload["run"]["status"] == "dry_run"
+    assert len(tooling_reports.read_jsonl(output_directory / "commands" / "commands.jsonl")) == 6
+    assert (
+        schema_check.run_schema_check(
+            schema_check.SchemaCheckArguments(path=output_directory, require_optional_files=True)
+        ).error_messages
+        == ()
+    )
+
+
 def test_grouped_cli_registries_document_tool_names() -> None:
     assert tooling_registry.registered_tool_names(grouped_benchmark.TOOLS) == (
         "baselines",
@@ -960,6 +1116,8 @@ def test_grouped_cli_registries_document_tool_names() -> None:
         "simulate",
     )
     assert "check_pyo3_stub" in tooling_registry.registered_tool_names(grouped_debug.TOOLS)
+    assert "schema_check" in tooling_registry.registered_tool_names(grouped_debug.TOOLS)
+    assert "schema_check" in tooling_registry.registered_tool_names(grouped_debug.TOOLS)
     assert tooling_registry.registered_tool_names(grouped_performance.TOOLS) == (
         "compare",
         "jax_runtime",
@@ -972,3 +1130,56 @@ def test_tooling_entrypoint_exposes_cli_surface() -> None:
     assert benchmark_bgen_reader.build_arguments_from_overrides is not None
     assert benchmark_bgen_reader.hydra_main is not None
     assert benchmark_bgen_reader.BenchmarkPathMode is regenie_bgen_reader.BenchmarkPathMode
+    assert rust_build_profiles.build_arguments_from_overrides is not None
+    assert rust_build_profiles.hydra_main is not None
+
+
+def test_rust_build_profile_specs_map_expected_cargo_profiles() -> None:
+    assert rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.DEV_FAST].cargo_profile == "dev-fast"
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8].cargo_profile == "perf"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_FAT_CGU1].cargo_profile
+        == "perf-max"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_O2_THIN_CGU8].cargo_profile
+        == "perf-o2"
+    )
+
+
+def test_rust_build_profile_command_environment_contains_target_dir() -> None:
+    spec = rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU1]
+    environment = rust_build_profiles.build_environment(spec, Path("target/rust-build-profiles/perf-thin-cgu1"))
+
+    assert environment["CARGO_TARGET_DIR"] == "target/rust-build-profiles/perf-thin-cgu1"
+    assert environment["RUSTFLAGS"] == "-C target-cpu=native"
+    assert rust_build_profiles.maturin_develop_command(spec) == (
+        "uv",
+        "run",
+        "--no-sync",
+        "maturin",
+        "develop",
+        "--profile",
+        "perf-thin-cgu1",
+        "--uv",
+    )
+
+
+def test_rust_build_profile_touch_restores_source_timestamp(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.rs"
+    source_path.write_text("fn main() {}\n", encoding="utf-8")
+    original_access_time_nanoseconds = 1_700_000_000_000_000_000
+    original_modification_time_nanoseconds = 1_700_000_000_100_000_000
+    os.utime(source_path, ns=(original_access_time_nanoseconds, original_modification_time_nanoseconds))
+    original_stat = source_path.stat()
+
+    timestamp = rust_build_profiles.touch_source_path(source_path)
+    touched_stat = source_path.stat()
+    rust_build_profiles.restore_timestamp(timestamp)
+    restored_stat = source_path.stat()
+
+    assert touched_stat.st_mtime_ns != original_stat.st_mtime_ns
+    assert restored_stat.st_atime_ns == original_stat.st_atime_ns
+    assert restored_stat.st_mtime_ns == original_stat.st_mtime_ns

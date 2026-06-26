@@ -24,6 +24,8 @@ tool:
   output_json: data/debug/tooling_debug.json
   regenie_debug_jsonl: null
   trusted_no_missing_diploid: false
+  path: null
+  require_optional_files: false
 
 hydra:
   job:

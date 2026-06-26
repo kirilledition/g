@@ -365,6 +365,11 @@ node driver restricts GPU performance counters to admin users. The profile
 harness records that pass as skipped with an actionable note; collecting Nsight
 Compute metrics requires the cluster administrator to allow non-admin GPU
 performance counters on the GPU nodes.
+
+Use `just bench-rust-build-profiles` when comparing native extension build
+profiles. The recipe is backed by `tooling/configs/rust_build_profiles.yaml`,
+writes reports under `results/perf/rust-build-profiles`, and configures build
+parallelism through `tooling/server/server_env.sh`.
 Scalene and Memray are Python profilers, so the harness runs them through
 `uv run --no-sync --with ...` when they are not importable in the project
 environment. This keeps JAX, Polars, and the installed `g` package visible to
@@ -1397,6 +1402,9 @@ Hydra `chdir` behavior explicit in reports.
 The JSON helpers handle dataclasses, enums, `Path`, dictionaries, lists, and
 tuples. Durable benchmark/profile reports must include a `schema_version` and
 should be written through a `VersionedReportContract`.
+
+Use `just check-artifact-schema <path>` to validate a Tooling Artifact Format
+directory or JSON file from the command surface.
 
 `tooling.common.sweeps`
 

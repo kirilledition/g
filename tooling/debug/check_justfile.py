@@ -107,6 +107,8 @@ HYDRA_TOOLING_MODULES = (
     "tooling.cli.performance ",
     "tooling.cli.profile_regenie2_deep ",
     "tooling.cli.run_regenie2_matrix ",
+    "tooling.cli.rust_build_profiles ",
+    "tooling.cli.schema_check ",
     "tooling.cli.server ",
     "tooling.cli.tune_regenie2_gpu ",
 )

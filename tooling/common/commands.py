@@ -10,6 +10,8 @@ import time
 import typing
 from dataclasses import dataclass
 
+from tooling.common import artifact_format as tooling_artifact_format
+
 if typing.TYPE_CHECKING:
     import collections.abc
     from pathlib import Path
@@ -408,3 +410,59 @@ def command_result_to_json_dict(result: CommandResult) -> dict[str, object]:
 
     """
     return dataclasses.asdict(result)
+
+
+def command_record_from_result(
+    *,
+    command_id: str,
+    tool_name: str,
+    run_id: str,
+    phase: str,
+    spec: CommandSpec,
+    result: CommandResult,
+    output_directory: Path,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+    wall_time_seconds: float | None = None,
+) -> tooling_artifact_format.CommandRecord:
+    """Convert a command result into a Tooling Artifact Format command record.
+
+    Args:
+        command_id: Stable command identifier.
+        tool_name: Tool name.
+        run_id: Tool run identifier.
+        phase: Tool phase.
+        spec: Command specification.
+        result: Command result.
+        output_directory: Artifact output directory.
+        started_at: Optional start timestamp.
+        finished_at: Optional finish timestamp.
+        wall_time_seconds: Optional wall time.
+
+    Returns:
+        Command ledger record.
+
+    """
+    status = tooling_artifact_format.ToolArtifactStatus.SUCCESS
+    if result.timed_out:
+        status = tooling_artifact_format.ToolArtifactStatus.TIMED_OUT
+    elif result.missing_executable or result.return_code not in (0, None):
+        status = tooling_artifact_format.ToolArtifactStatus.FAILED
+    return tooling_artifact_format.build_command_record(
+        command_id=command_id,
+        tool_name=tool_name,
+        run_id=run_id,
+        phase=phase,
+        args=result.args,
+        output_directory=output_directory,
+        cwd=spec.cwd,
+        environment_overrides=result.environment_overrides,
+        redacted_environment_keys=spec.sensitive_env_keys,
+        stdout_log=spec.stdout_path,
+        stderr_log=spec.stderr_path,
+        status=status,
+        return_code=result.return_code,
+        started_at=started_at,
+        finished_at=finished_at,
+        wall_time_seconds=wall_time_seconds,
+    )
