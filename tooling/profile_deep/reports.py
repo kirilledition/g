@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import typing
+
 import tooling.cli.profile_regenie2_deep as profile_regenie2_deep
+
+if typing.TYPE_CHECKING:
+    from tooling.profile_deep import models as profile_deep_models
 
 
 def build_summary_markdown(
     *,
-    aggregate_results: list[profile_regenie2_deep.AggregateResult],
+    aggregate_results: list[profile_deep_models.AggregateResult],
     comparisons: dict[str, dict[str, float]],
     stage_totals: dict[str, float],
     stage_comparison_rows: list[dict[str, float | str]],
     algorithmic_findings: list[str],
-    comparison_notes: profile_regenie2_deep.RuntimeComparisonNotes | None = None,
-    regenie_baseline_scope: profile_regenie2_deep.RegenieBaselineScope | None = None,
+    comparison_notes: profile_deep_models.RuntimeComparisonNotes | None = None,
+    regenie_baseline_scope: profile_deep_models.RegenieBaselineScope | None = None,
     logging_perturbation_results: list[dict[str, object]] | None = None,
     binary_correction_diagnostics: dict[str, object] | None = None,
 ) -> str:

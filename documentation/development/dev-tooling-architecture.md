@@ -13,6 +13,7 @@ The tooling package now has a small internal framework:
 - `tooling.common.artifact_format` owns Tooling Artifact Format v1 report, manifest, metric, event, command, failure, finding, and comparison models.
 - `tooling.common.g_regenie` owns shared `g regenie` CLI rendering and Python API payload rendering.
 - `tooling.common.downloads` owns Pooch-backed retrieval, cache reuse, SHA-256 validation, archive processors, and download manifests for data and server-tool assets.
+- `tooling.profile_deep.models` owns the deep-profile enums and dataclasses so the profiler package can be split without circular imports through the CLI module.
 
 Benchmark and profiler code should use these contracts instead of rebuilding command vectors, report dictionaries, or grouped dispatch chains by hand.
 

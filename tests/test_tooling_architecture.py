@@ -31,6 +31,7 @@ from tooling.common import paths as tooling_paths
 from tooling.common import registry as tooling_registry
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
+from tooling.profile_deep import models as profile_deep_models
 
 if typing.TYPE_CHECKING:
     import pytest
@@ -1089,6 +1090,15 @@ def test_tooling_entrypoint_exposes_cli_surface() -> None:
     assert benchmark_bgen_reader.BenchmarkPathMode is regenie_bgen_reader.BenchmarkPathMode
     assert rust_build_profiles.build_arguments_from_overrides is not None
     assert rust_build_profiles.hydra_main is not None
+
+
+def test_deep_profile_models_live_in_profile_package() -> None:
+    assert profile_deep_models.ProfileArguments.__module__ == "tooling.profile_deep.models"
+    assert profile_deep_models.Step2Candidate.__module__ == "tooling.profile_deep.models"
+    assert profile_deep_models.CampaignBudget.__module__ == "tooling.profile_deep.models"
+    assert deep_profile.ProfileArguments is profile_deep_models.ProfileArguments
+    assert deep_profile.Step2Candidate is profile_deep_models.Step2Candidate
+    assert deep_profile.CampaignBudget is profile_deep_models.CampaignBudget
 
 
 def test_rust_build_profile_specs_map_expected_cargo_profiles() -> None:

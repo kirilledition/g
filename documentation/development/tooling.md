@@ -85,6 +85,17 @@ tooling/
     linear_regenie_parity.py
   performance/
     jax_runtime.py
+  profile_deep/
+    artifacts.py
+    budget.py
+    commands.py
+    config.py
+    diagnostics.py
+    jax_cache.py
+    models.py
+    profilers.py
+    reports.py
+    runner.py
   regenie/
     bgen_reader.py
   server/
@@ -187,6 +198,12 @@ stage-timing runs add compact binary correction diagnostics to `summary.md` and
 machine-readable headline/finalist aggregates to `summary.json`; runs with
 `telemetry.stage_timing_mode=off` mark those diagnostics unavailable instead of
 emitting per-chunk timing artifacts.
+
+The large profile workflow is being split behind the stable CLI. Shared
+deep-profile enums, argument dataclasses, candidate/result models, budget
+models, JAX diagnostics, and baseline-scope records live in
+`tooling.profile_deep.models`; the CLI re-exports them for compatibility while
+orchestration code migrates into the package.
 
 `-m tooling.cli.benchmark tool.name=linear_startup`
 
