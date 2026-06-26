@@ -62,8 +62,9 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   runtime policy, telemetry path/counter policy, telemetry session
   cap/counter/envelope state, shutdown signal metadata and controller state,
   stage timing state, run metadata payloads, profile summary payloads, and the
-  logging/Rayon process runtime state handle. Root PyO3 adapters still own side
-  effects until runtime handles move fully into Rust.
+  logging/Rayon/JAX process runtime state handle. Root PyO3 adapters still own
+  side effects and Python-only JAX setup until runtime handles move fully into
+  Rust.
 - `crates/interface/src/partial.rs` defines the typed partial TOML surface with Serde,
   optional fields, aliases, and unknown-key rejection.
 - `crates/interface/src/overlay.rs` decodes provenance and overlays defaults, user

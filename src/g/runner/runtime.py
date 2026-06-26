@@ -11,7 +11,6 @@ from pathlib import Path
 from g import _core, types
 from g.jax_runtime import models as jax_runtime_models
 from g.jax_runtime import resolution as jax_runtime_resolution
-from g.jax_runtime import state as jax_runtime_state
 
 if typing.TYPE_CHECKING:
     from g.engine import telemetry
@@ -85,12 +84,14 @@ class RuntimeState:
 def build_process_runtime_state(
     logging_policy: LoggingRuntimePolicy | None,
     rayon_thread_count: int | None,
+    jax_policy: jax_runtime_models.JaxRuntimePolicy | None,
 ) -> _core.NativeRuntimeState:
     """Build a native process runtime state handle.
 
     Args:
         logging_policy: Optional configured logging policy to seed.
         rayon_thread_count: Optional configured Rayon thread count to seed.
+        jax_policy: Optional configured JAX runtime policy to seed.
 
     Returns:
         Native process runtime state handle.
@@ -101,10 +102,12 @@ def build_process_runtime_state(
         process_runtime_state.record_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))
     if rayon_thread_count is not None:
         process_runtime_state.record_rayon_thread_count(rayon_thread_count)
+    if jax_policy is not None:
+        process_runtime_state.record_jax_runtime_policy(jax_runtime_policy_to_native_payload(jax_policy))
     return process_runtime_state
 
 
-PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = build_process_runtime_state(None, None)
+PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = build_process_runtime_state(None, None, None)
 
 
 def record_jax_runtime_diagnostic_event(
@@ -143,8 +146,8 @@ def configure_runtime_before_jax_import(
 ) -> jax_runtime_models.JaxRuntimeSetupReport | None:
     """Configure JAX platform and runtime before compute modules are imported."""
     requested_policy = jax_runtime_resolution.resolve_jax_runtime_policy(compute_config)
-    jax_runtime_state.require_compatible_jax_runtime_policy(requested_policy)
-    if requested_policy == jax_runtime_state.CONFIGURED_JAX_RUNTIME_POLICY:
+    require_compatible_jax_runtime_policy(requested_policy)
+    if requested_policy == configured_jax_runtime_policy():
         return None
 
     def record_diagnostic_event(diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent) -> None:
@@ -155,7 +158,7 @@ def configure_runtime_before_jax_import(
         requested_policy,
         diagnostic_sink=record_diagnostic_event,
     )
-    jax_runtime_state.CONFIGURED_JAX_RUNTIME_POLICY = requested_policy
+    record_jax_runtime_policy(requested_policy)
     return setup_report
 
 
@@ -246,6 +249,37 @@ def logging_runtime_policy_to_native_payload(policy: LoggingRuntimePolicy) -> di
     }
 
 
+def jax_runtime_policy_to_native_payload(policy: jax_runtime_models.JaxRuntimePolicy) -> dict[str, object]:
+    """Adapt a Python JAX runtime policy view to the native payload shape."""
+    return {
+        "device": policy.device.value,
+        "cache_directory": None if policy.cache_directory is None else str(policy.cache_directory),
+        "matmul_precision": None if policy.matmul_precision is None else policy.matmul_precision.value,
+        "persistent_cache": policy.persistent_cache,
+        "persistent_cache_min_entry_size_bytes": policy.persistent_cache_min_entry_size_bytes,
+        "persistent_cache_min_compile_time_seconds": policy.persistent_cache_min_compile_time_seconds,
+        "xla_autotune_cache": policy.xla_autotune_cache,
+        "transfer_guard": policy.transfer_guard,
+    }
+
+
+def jax_runtime_policy_from_native_payload(payload: object) -> jax_runtime_models.JaxRuntimePolicy:
+    """Adapt a native JAX runtime policy payload to the Python dataclass."""
+    policy_payload = native_mapping_payload(payload)
+    return jax_runtime_models.JaxRuntimePolicy(
+        device=types.Device(str(policy_payload["device"])),
+        cache_directory=optional_path_from_native_payload(policy_payload["cache_directory"]),
+        matmul_precision=None
+        if policy_payload["matmul_precision"] is None
+        else types.JaxMatmulPrecision(str(policy_payload["matmul_precision"])),
+        persistent_cache=bool(policy_payload["persistent_cache"]),
+        persistent_cache_min_entry_size_bytes=int(policy_payload["persistent_cache_min_entry_size_bytes"]),
+        persistent_cache_min_compile_time_seconds=int(policy_payload["persistent_cache_min_compile_time_seconds"]),
+        xla_autotune_cache=bool(policy_payload["xla_autotune_cache"]),
+        transfer_guard=bool(policy_payload["transfer_guard"]),
+    )
+
+
 def optional_path_from_native_payload(path_payload: object) -> Path | None:
     """Adapt a native optional path payload to `Path`."""
     if path_payload is None:
@@ -317,11 +351,29 @@ def require_compatible_rayon_thread_count(thread_count: int | None) -> None:
     PROCESS_RUNTIME_STATE.require_compatible_rayon_thread_count(thread_count)
 
 
+def require_compatible_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -> None:
+    """Raise when a run requests incompatible process-global JAX settings."""
+    PROCESS_RUNTIME_STATE.require_compatible_jax_runtime_policy(jax_runtime_policy_to_native_payload(jax_policy))
+
+
+def record_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -> None:
+    """Record the process-global JAX runtime policy configured in this process."""
+    PROCESS_RUNTIME_STATE.record_jax_runtime_policy(jax_runtime_policy_to_native_payload(jax_policy))
+
+
+def configured_jax_runtime_policy() -> jax_runtime_models.JaxRuntimePolicy | None:
+    """Return the process-global JAX runtime policy known to the native state handle."""
+    policy_payload = PROCESS_RUNTIME_STATE.jax_runtime_policy_payload()
+    if policy_payload is None:
+        return None
+    return jax_runtime_policy_from_native_payload(policy_payload)
+
+
 def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> None:
     """Raise when a run conflicts with process-global runtime state."""
     require_compatible_logging_runtime_policy(runtime_policy.logging_policy)
     require_compatible_rayon_thread_count(runtime_policy.rayon_thread_count)
-    jax_runtime_state.require_compatible_jax_runtime_policy(runtime_policy.jax_policy)
+    require_compatible_jax_runtime_policy(runtime_policy.jax_policy)
 
 
 def describe_runtime_state() -> RuntimeState:
@@ -332,7 +384,7 @@ def describe_runtime_state() -> RuntimeState:
         if logging_policy_payload is None
         else logging_runtime_policy_from_native_payload(logging_policy_payload),
         rayon_thread_count=PROCESS_RUNTIME_STATE.rayon_thread_count,
-        jax_policy=jax_runtime_state.CONFIGURED_JAX_RUNTIME_POLICY,
+        jax_policy=configured_jax_runtime_policy(),
     )
 
 

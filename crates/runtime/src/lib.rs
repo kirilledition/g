@@ -14,7 +14,9 @@ pub use run_metadata::{
     build_run_manifest_extension,
 };
 pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_policy, describe_logging_runtime_policy};
-pub use runtime_state::{ProcessRuntimeState, RuntimeCompatibilityError};
+pub use runtime_state::{
+    JaxRuntimePolicyPayload, ProcessRuntimeState, RuntimeCompatibilityError, describe_jax_runtime_policy,
+};
 pub use shutdown::{
     ShutdownControllerState, ShutdownRequestAction, ShutdownRequestDecisionPayload, ShutdownSignalPayload,
     build_shutdown_signal,

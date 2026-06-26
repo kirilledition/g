@@ -83,9 +83,10 @@ def build_binary_config(**overrides: object) -> config.BinaryConfig:
 def build_test_process_runtime_state(
     logging_policy: runner_runtime.LoggingRuntimePolicy | None,
     rayon_thread_count: int | None,
+    jax_policy: jax_runtime_models.JaxRuntimePolicy | None = None,
 ) -> object:
     """Build a native process runtime state handle for isolated tests."""
-    return runner_runtime.build_process_runtime_state(logging_policy, rayon_thread_count)
+    return runner_runtime.build_process_runtime_state(logging_policy, rayon_thread_count, jax_policy)
 
 
 def build_diagnostics_config(**overrides: object) -> config.GDiagnosticsConfig:
@@ -919,7 +920,7 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
         raise AssertionError(f"Unexpected import: {module_name}")
 
     with (
-        patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime.importlib.import_module", side_effect=import_module),
     ):
         runner_runtime.configure_runtime_before_jax_import(
@@ -970,7 +971,7 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
     telemetry_session = typing.cast("telemetry_module.TelemetrySession", RecordingTelemetrySession())
 
     with (
-        patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime.importlib.import_module", side_effect=import_module),
     ):
         runner_runtime.configure_runtime_before_jax_import(build_compute_config(), telemetry_session=telemetry_session)
@@ -1049,7 +1050,7 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
         }
     )
     with (
-        patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
@@ -1085,9 +1086,12 @@ def test_describe_runtime_state_reports_process_global_state() -> None:
     with (
         patch(
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
-            build_test_process_runtime_state(runtime_policy.logging_policy, runtime_policy.rayon_thread_count),
+            build_test_process_runtime_state(
+                runtime_policy.logging_policy,
+                runtime_policy.rayon_thread_count,
+                runtime_policy.jax_policy,
+            ),
         ),
-        patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", runtime_policy.jax_policy),
     ):
         runtime_state = api.describe_runtime_state()
 
@@ -1154,8 +1158,10 @@ def test_regenie_rejects_incompatible_jax_policy_before_output_prepare(tmp_path:
     configured_jax_policy = jax_runtime_resolution.resolve_jax_runtime_policy(configured_config.g_compute)
 
     with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
-        patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", configured_jax_policy),
+        patch(
+            "g.runner.runtime.PROCESS_RUNTIME_STATE",
+            build_test_process_runtime_state(None, None, configured_jax_policy),
+        ),
         patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
         patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),

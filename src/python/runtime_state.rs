@@ -31,6 +31,11 @@ impl NativeRuntimeState {
         state.logging_policy.as_ref().map(|policy| logging_runtime_policy_payload_to_dict(py, policy)).transpose()
     }
 
+    fn jax_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let state = self.lock_state()?;
+        state.jax_policy.as_ref().map(|policy| jax_runtime_policy_payload_to_dict(py, policy)).transpose()
+    }
+
     fn require_compatible_logging_runtime_policy(&self, payload: &Bound<'_, PyAny>) -> PyResult<()> {
         let logging_policy = parse_logging_runtime_policy_payload(payload)?;
         self.lock_state()?
@@ -57,6 +62,19 @@ impl NativeRuntimeState {
 
     fn effective_rayon_thread_count(&self, requested_thread_count: Option<i64>) -> PyResult<Option<i64>> {
         Ok(self.lock_state()?.effective_rayon_thread_count(requested_thread_count))
+    }
+
+    fn require_compatible_jax_runtime_policy(&self, payload: &Bound<'_, PyAny>) -> PyResult<()> {
+        let jax_policy = parse_jax_runtime_policy_payload(payload)?;
+        self.lock_state()?
+            .require_compatible_jax_policy(&jax_policy)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+    }
+
+    fn record_jax_runtime_policy(&self, payload: &Bound<'_, PyAny>) -> PyResult<()> {
+        let jax_policy = parse_jax_runtime_policy_payload(payload)?;
+        self.lock_state()?.record_jax_policy(jax_policy);
+        Ok(())
     }
 }
 
@@ -91,6 +109,25 @@ fn extract_optional_i64(value: &Bound<'_, PyAny>) -> PyResult<Option<i64>> {
     if value.is_none() { Ok(None) } else { Ok(Some(value.extract::<i64>().map_err(PyValueError::new_err)?)) }
 }
 
+fn parse_jax_runtime_policy_payload(
+    payload: &Bound<'_, PyAny>,
+) -> PyResult<native_runtime_state::JaxRuntimePolicyPayload> {
+    Ok(native_runtime_state::JaxRuntimePolicyPayload {
+        device: payload.get_item("device")?.extract::<String>()?,
+        cache_directory: extract_optional_string(&payload.get_item("cache_directory")?)?,
+        matmul_precision: extract_optional_string(&payload.get_item("matmul_precision")?)?,
+        persistent_cache: payload.get_item("persistent_cache")?.extract::<bool>()?,
+        persistent_cache_min_entry_size_bytes: payload
+            .get_item("persistent_cache_min_entry_size_bytes")?
+            .extract::<i64>()?,
+        persistent_cache_min_compile_time_seconds: payload
+            .get_item("persistent_cache_min_compile_time_seconds")?
+            .extract::<i64>()?,
+        xla_autotune_cache: payload.get_item("xla_autotune_cache")?.extract::<bool>()?,
+        transfer_guard: payload.get_item("transfer_guard")?.extract::<bool>()?,
+    })
+}
+
 fn logging_runtime_policy_payload_to_dict<'py>(
     py: Python<'py>,
     payload: &native_runtime_policy::LoggingRuntimePolicyPayload,
@@ -106,5 +143,22 @@ fn logging_runtime_policy_payload_to_dict<'py>(
     python_payload.set_item("trace_file", &payload.trace_file)?;
     python_payload.set_item("trace_filter", &payload.trace_filter)?;
     python_payload.set_item("trace_event_cap", payload.trace_event_cap)?;
+    Ok(python_payload)
+}
+
+fn jax_runtime_policy_payload_to_dict<'py>(
+    py: Python<'py>,
+    payload: &native_runtime_state::JaxRuntimePolicyPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let python_payload = PyDict::new(py);
+    python_payload.set_item("device", &payload.device)?;
+    python_payload.set_item("cache_directory", &payload.cache_directory)?;
+    python_payload.set_item("matmul_precision", &payload.matmul_precision)?;
+    python_payload.set_item("persistent_cache", payload.persistent_cache)?;
+    python_payload.set_item("persistent_cache_min_entry_size_bytes", payload.persistent_cache_min_entry_size_bytes)?;
+    python_payload
+        .set_item("persistent_cache_min_compile_time_seconds", payload.persistent_cache_min_compile_time_seconds)?;
+    python_payload.set_item("xla_autotune_cache", payload.xla_autotune_cache)?;
+    python_payload.set_item("transfer_guard", payload.transfer_guard)?;
     Ok(python_payload)
 }
