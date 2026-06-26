@@ -4,43 +4,85 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.96.0"
 
+[workspace]
+members = ["."]
+default-members = ["."]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.0"
+publish = false
+
 [lib]
 name = "_core"
 # "cdylib" is necessary to produce a shared library for Python to import from.
 crate-type = ["cdylib", "rlib"]
 
-[dependencies]
-# "extension-module" tells pyo3 we want to build an extension module (skips linking against libpython.so)
-# "abi3-py314" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.14.
-pyo3 = { version = "0.28.3", features = ["abi3-py314"] }
-numpy = "0.28.0"
+[workspace.dependencies]
 arrow = { version = "59.0.0", features = ["ipc_compression"] }
-parquet = { version = "59.0.0", default-features = false, features = ["arrow", "zstd"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+clap = { version = "4.6.1", features = ["derive"] }
+criterion = "0.8.2"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 memchr = "2.8.1"
 memmap2 = "0.9.10"
+numpy = "0.28.0"
+parquet = { version = "59.0.0", default-features = false, features = ["arrow", "zstd"] }
+pyo3 = { version = "0.28.3", features = ["abi3-py314"] }
+pyo3-pylogger = { version = "0.5.2", default-features = false, features = ["tracing"] }
 rayon = "1.12.0"
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+sha2 = "0.11.0"
+signal-hook = { version = "0.4.4", default-features = false }
 thiserror = "2.0.18"
+toml = "1.1.2"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-pyo3-pylogger = { version = "0.5.2", default-features = false, features = ["tracing"] }
-clap = { version = "4.6.1", features = ["derive"] }
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
-signal-hook = { version = "0.4.4", default-features = false }
-serde = { version = "1.0.228", features = ["derive"] }
-sha2 = "0.11.0"
-toml = "1.1.2"
+
+[workspace.lints.clippy]
+pedantic = "warn"
+
+[dependencies]
+# "extension-module" tells pyo3 we want to build an extension module (skips linking against libpython.so)
+# "abi3-py314" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.14.
+pyo3 = { workspace = true }
+numpy = { workspace = true }
+arrow = { workspace = true }
+parquet = { workspace = true }
+crossbeam-channel = { workspace = true }
+csv = { workspace = true }
+flate2 = { workspace = true }
+memchr = { workspace = true }
+memmap2 = { workspace = true }
+rayon = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }
+pyo3-pylogger = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
+signal-hook = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+toml = { workspace = true }
 
 [features]
 default = []
 extension-module = ["pyo3/extension-module"]
 
 [dev-dependencies]
-criterion = "0.8.2"
+criterion = { workspace = true }
+
+[lints]
+workspace = true
 
 [[bench]]
 name = "bgen_read"

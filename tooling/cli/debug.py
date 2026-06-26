@@ -14,6 +14,7 @@ from tooling.debug import (
     check_internal_defaults,
     check_internal_init_exports,
     check_pyo3_stub,
+    check_rust_architecture,
     linear_regenie_parity,
 )
 
@@ -30,6 +31,7 @@ class DebugToolName(enum.StrEnum):
     CHECK_INTERNAL_DEFAULTS = "check_internal_defaults"
     CHECK_INTERNAL_INIT_EXPORTS = "check_internal_init_exports"
     CHECK_PYO3_STUB = "check_pyo3_stub"
+    CHECK_RUST_ARCHITECTURE = "check_rust_architecture"
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="debug")
@@ -47,6 +49,11 @@ def hydra_main(config: omegaconf.DictConfig) -> None:
         return
     if tool_name == DebugToolName.CHECK_PYO3_STUB:
         exit_code = check_pyo3_stub.run_tool()
+        if exit_code:
+            raise SystemExit(exit_code)
+        return
+    if tool_name == DebugToolName.CHECK_RUST_ARCHITECTURE:
+        exit_code = check_rust_architecture.run_tool(check_rust_architecture.REPOSITORY_ROOT)
         if exit_code:
             raise SystemExit(exit_code)
         return

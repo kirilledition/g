@@ -31,7 +31,7 @@ dev = [
 ]
 docs = [
     "mkdocstrings-python>=2.0.4",
-    "zensical>=0.0.44",
+    "zensical>=0.0.44,<0.0.45",
 ]
 gpu = ["jax[cuda12]>=0.10.1"]
 
@@ -52,6 +52,9 @@ python-source = "src"
 cache-keys = [
     { file = "pyproject.toml" },
     { file = "src/**/*.rs" },
+    { file = "crates/**/*.rs" },
+    { file = "crates/**/Cargo.toml" },
+    { file = "crates/**/*.toml" },
     { file = "src/interface/config.default.toml" },
     { file = "Cargo.toml" },
     { file = "Cargo.lock" },

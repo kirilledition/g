@@ -69,6 +69,7 @@ configuration, GitHub Pages settings, and documentation workflow behavior.
 | --- | --- |
 | Code style and review rules | [Style Guide](style-guide.md) |
 | Architecture map | [Architecture](architecture.md) |
+| Rust host and multicrate migration | [Rust Migration](rust-migration.md) |
 | CLI/TOML/Python configuration frontend | [Configuration Frontend](configuration-frontend.md) |
 | Native BGEN, sample, output, and manifest boundaries | [Native I/O](native-io.md) |
 | JAX quantitative, binary, and Firth kernels | [Compute Kernels](compute-kernels.md) |

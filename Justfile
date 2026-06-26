@@ -669,7 +669,7 @@ tune-regenie2-gpu *overrides: install-perf-extension
 
 # Run Rust Criterion benchmarks with native performance flags
 benchmark-rust:
-    {{ server_env }} && RUSTFLAGS="-C target-cpu=native" cargo bench
+    {{ server_env }} && RUSTFLAGS="-C target-cpu=native" cargo bench --workspace
 
 # Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU
 profile-regenie-comparison-cpu: setup-data install-perf-extension
@@ -757,17 +757,29 @@ format:
     {{ server_env }} && uv run ruff format .
     {{ server_env }} && cargo fmt
 
+# Check Rust formatting without rewriting files
+rust-format-check:
+    {{ server_env }} && cargo fmt --all --check
+
 # Lint code
 lint:
     {{ server_env }} && uv run ruff check . --fix
+    {{ server_env }} && cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+
+# Check Rust lints without rewriting files
+rust-lint-check:
     {{ server_env }} && cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
 
 # Type check Python code
 typecheck:
     {{ server_env }} && uv run ty check src tests scripts tooling
 
+# Verify Rust workspace dependency boundaries
+check-rust-architecture:
+    uv run python -m tooling.cli.debug tool.name=check_rust_architecture
+
 # Run all checks (format, lint, typecheck, stub sync check, internal policy checks)
-check: format lint typecheck check-core-stub check-internal-defaults check-internal-init-exports
+check: format lint typecheck check-core-stub check-internal-defaults check-internal-init-exports check-rust-architecture
 
 # Check Python formatting without requiring Nix or direct Cargo access
 format-local-check:
@@ -872,6 +884,12 @@ rust-build:
 # Run the Rust test suite
 rust-test:
     {{ server_env }} && cargo test --workspace
+
+# Run non-mutating Rust format, lint, build, tests, and architecture checks
+rust-check: rust-format-check rust-lint-check rust-build rust-test check-rust-architecture
+
+# Run the workspace-level validation lane for Rust migration phases
+workspace-check: rust-check
 
 # Run all checks on the configured CPU SLURM node
 slurm-cpu-check:

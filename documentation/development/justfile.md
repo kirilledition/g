@@ -692,7 +692,7 @@ just perf-compare results/perf/baseline.json results/perf/new.json
 ### `benchmark-rust`
 
 - Inputs: Rust toolchain.
-- Output: Rust Criterion benchmark results.
+- Output: Rust Criterion benchmark results for the Cargo workspace.
 - Use when: measuring Rust-only native components.
 
 ## Profiling
@@ -890,11 +890,23 @@ just profile-chr10-gpu-binary-deep-landau \
 - Output: formatted Python and Rust files.
 - Use when: applying repository formatting.
 
+### `rust-format-check`
+
+- Inputs: Rust toolchain.
+- Output: `cargo fmt --all --check` diagnostics without rewriting files.
+- Use when: checking Rust formatting in migration or CI-equivalent lanes.
+
 ### `lint`
 
 - Inputs: Python environment and Rust toolchain.
 - Output: ruff fixes and Cargo clippy diagnostics.
 - Use when: applying Python lint fixes and checking Rust lints.
+
+### `rust-lint-check`
+
+- Inputs: Rust toolchain.
+- Output: `cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic`.
+- Use when: checking Rust lints without Python lint fixes.
 
 ### `typecheck`
 
@@ -902,10 +914,19 @@ just profile-chr10-gpu-binary-deep-landau \
 - Output: `ty` diagnostics for `src`, `tests`, `scripts`, and `tooling`.
 - Use when: checking Python types.
 
+### `check-rust-architecture`
+
+- Inputs: Python environment and Cargo metadata.
+- Output: failure if an internal crate depends on PyO3/NumPy or on a forbidden
+  internal crate.
+- Use when: validating Cargo workspace dependency boundaries.
+
 ### `check`
 
 - Inputs: same as `format`, `lint`, and `typecheck`.
-- Output: full format/lint/typecheck lane, Rust stub sync check, internal default check, and internal package initializer export check.
+- Output: full format/lint/typecheck lane, Rust stub sync check, internal
+  default check, internal package initializer export check, and Rust workspace
+  architecture check.
 - Use when: running the default local quality gate with Rust tooling available.
 
 ### `format-local-check`
@@ -1031,6 +1052,18 @@ just profile-chr10-gpu-binary-deep-landau \
 - Output: `cargo test --workspace`.
 - Use when: running Rust tests. In a CPU SLURM allocation, dependency and test
   builds inherit `CARGO_BUILD_JOBS`.
+
+### `rust-check`
+
+- Inputs: Rust toolchain, Python environment, and Cargo metadata.
+- Output: non-mutating Rust format, lint, build, test, and architecture checks.
+- Use when: validating a Rust migration slice before broader Python tests.
+
+### `workspace-check`
+
+- Inputs: same as `rust-check`.
+- Output: workspace-level validation lane for Rust migration phases.
+- Use when: checking the Cargo workspace before or after crate extraction.
 
 ### `slurm-cpu-check`
 
