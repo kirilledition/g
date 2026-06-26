@@ -5,6 +5,7 @@ defaults:
   - _self_
 
 tool:
+  name: profile_comparison
   include_gpu: false
   cpu_only: true
   output_dir: data/profiles/regenie_comparison

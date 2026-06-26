@@ -3,9 +3,10 @@ defaults:
   - _self_
 
 tool:
-  name: baselines
+  name: regenie_baseline
   data_directory: ${dataset.data_directory}
-  include_hail: false
+  trait: binary
+  verify_only: false
 
 hydra:
   job:

@@ -20,7 +20,7 @@ Install or make available on `PATH`:
 - `srun`
 - `zstd`
 
-The repo-local bootstrap installs `just`, `cargo`, `rustc`, `plink`, `plink2`, and `regenie` into `.tools/`. Python itself does not need to be preinstalled globally if `uv python install` works in your account.
+The repo-local dev-bootstrap installs `just`, `cargo`, `rustc`, `plink`, `plink2`, and `regenie` into `.tools/`. Python itself does not need to be preinstalled globally if `uv python install` works in your account.
 
 ## Bootstrap
 
@@ -31,16 +31,16 @@ UV_CACHE_DIR=/tmp/g-uv-cache uv run --group dev python -m tooling.cli.server too
 source tooling/server/server_env.sh
 ```
 
-CPU-oriented login-node setup after the first-run bootstrap:
+CPU-oriented login-node setup after the first-run dev-bootstrap:
 
 ```bash
-just bootstrap
+just dev-bootstrap
 ```
 
 GPU-capable environment:
 
 ```bash
-just bootstrap-gpu
+just dev-bootstrap-gpu
 ```
 
 Sanity checks:
@@ -92,14 +92,14 @@ login node.
 Prepare benchmark data only after `plink2` is available:
 
 ```bash
-just setup-data
+just data-prepare
 ```
 
 Generate binary REGENIE step 1 predictions required by binary step 2:
 
 ```bash
-just setup-binary-baseline
-just verify-regenie2-binary-gpu-inputs
+just data-baseline-binary
+just data-verify-binary-gpu-inputs
 ```
 
 ## CPU Workflow Through SLURM
@@ -200,12 +200,12 @@ Run existing repo recipes on the GPU node while keeping `just` as the top-level 
 
 ```bash
 just slurm-gpu-just doctor-jax
-just slurm-regenie2-binary-gpu-smoke
-just verify-regenie2-binary-gpu-smoke-output
-just slurm-regenie2-binary-gpu
-just verify-regenie2-binary-gpu-output
-just slurm-gpu-just benchmark-regenie-comparison-gpu
-just slurm-gpu-just profile-regenie-comparison-gpu
+just slurm-gpu-just matrix-chr22-smoke
+just matrix-chr22-smoke
+just slurm-gpu-just matrix-chr22
+just matrix-chr22
+just slurm-gpu-just legacy-regenie-comparison-gpu
+just slurm-gpu-just legacy-profile-regenie-comparison-gpu
 ```
 
 Run standard performance harness entrypoints:

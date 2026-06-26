@@ -1,0 +1,100 @@
+defaults:
+  - dataset: chr10_local
+  - machine: landau_gpu
+  - workload: regenie2_binary_hot
+  - telemetry: local
+  - sweep: regenie2_binary_hot_default
+  - _self_
+
+tool:
+  chromosome_label: chr10
+  data_dir: ${dataset.data_directory}
+  bed_prefix: 1kg_chr10_full
+  bgen: ${dataset.bgen_file}
+  sample: ${dataset.sample_file}
+  baseline_dir: baselines_chr10
+  linear_phenotype_file: pheno_cont.txt
+  binary_phenotype_file: ${dataset.phenotype_file}
+  covariate_file: covariates.txt
+  binary_prediction_list: ${dataset.prediction_list}
+  linear_prediction_list: baselines_chr10/regenie_step1_qt_pred.list
+  output_parent: data/profiles
+  output_dir: null
+  variant_limit: null
+  dry_run: true
+  include_regenie_baseline: false
+  regenie_executable: null
+  regenie_baseline_trait_types:
+    - quantitative
+  regenie_baseline_variant_limit: null
+  regenie_baseline_warmups: 0
+  regenie_baseline_trials: 1
+  workload_keys:
+    - binary_gpu
+  max_subprocess_runs: 1000
+  max_major_profiler_runs: 64
+  allow_over_budget: false
+  smoke: false
+  skip_deep_profiles: false
+  enable_jax_trace: true
+  enable_jax_memory_profile: true
+  enable_python_cprofile: true
+  enable_py_spy: true
+  enable_scalene: true
+  enable_memray: true
+  enable_linux_perf: true
+  enable_nsight_systems: true
+  enable_nsight_compute: true
+  py_spy_timeout_seconds: 1800
+  scalene_timeout_seconds: 1800
+  memray_timeout_seconds: 1800
+  linux_perf_timeout_seconds: 1200
+  nsight_systems_timeout_seconds: 1800
+  nsight_compute_timeout_seconds: 1800
+  enable_rust_criterion: true
+  enable_logging_perturbation: true
+  rust_benchmarks:
+    - bgen_read
+    - preprocess
+  chunk_sizes:
+    - 2048
+    - 4096
+  staging_depths:
+    - 1
+    - 2
+  native_callback_batch_sizes:
+    - 1
+  result_in_flight_limits:
+    - null
+  dosage_buffer_limits:
+    - null
+  output_writer_thread_counts:
+    - 1
+    - 4
+  writer_queue_depth_multipliers:
+    - 1
+    - 2
+  firth_batch_sizes:
+    - 32
+  bgen_decode_tile_variant_counts:
+    - 64
+    - 128
+  rayon_thread_counts:
+    - 4
+    - 8
+  bgen_benchmark_chunk_size: 8192
+  top_bgen_candidates: 1
+  top_finalists: 2
+  tuning_warmups: 0
+  tuning_trials: 1
+  finalist_warmups: 0
+  finalist_trials: 2
+  headline_warmups: 0
+  headline_trials: 3
+
+hydra:
+  output_subdir: null
+  job:
+    chdir: false
+  run:
+    dir: /tmp/g-hydra-runs

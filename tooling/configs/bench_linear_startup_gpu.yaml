@@ -8,7 +8,7 @@ tool:
   name: linear_startup
   device: ${machine.device}
   chunk_size: 8192
-  finalize_parquet: true
+  finalize_parquet: false
   output_writer_thread_count: 1
   trials: 3
   warmup_trials: 1
@@ -22,5 +22,8 @@ tool:
   json_summary_path: null
 
 hydra:
+  output_subdir: null
   job:
     chdir: false
+  run:
+    dir: /tmp/g-hydra-runs

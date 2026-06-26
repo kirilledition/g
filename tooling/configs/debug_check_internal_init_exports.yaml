@@ -1,4 +1,5 @@
-tool: {}
+tool:
+  name: check_internal_init_exports
 
 hydra:
   job:

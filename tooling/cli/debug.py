@@ -10,12 +10,10 @@ import hydra
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import registry as tooling_registry
 from tooling.debug import (
-    binary_firth,
-    binary_regenie_parity,
     check_internal_defaults,
     check_internal_init_exports,
+    check_justfile,
     check_pyo3_stub,
-    linear_regenie_parity,
 )
 
 if typing.TYPE_CHECKING:
@@ -30,6 +28,7 @@ class DebugToolName(enum.StrEnum):
     LINEAR_REGENIE_PARITY = "linear_regenie_parity"
     CHECK_INTERNAL_DEFAULTS = "check_internal_defaults"
     CHECK_INTERNAL_INIT_EXPORTS = "check_internal_init_exports"
+    CHECK_JUSTFILE = "check_justfile"
     CHECK_PYO3_STUB = "check_pyo3_stub"
 
 
@@ -37,6 +36,48 @@ def build_no_arguments(config: omegaconf.DictConfig) -> None:
     """Build an empty argument payload for fixed guardrail tools."""
     del config
     return
+
+
+def build_binary_firth_arguments(config: omegaconf.DictConfig) -> typing.Any:
+    """Build binary Firth arguments without importing native-facing modules at startup."""
+    from tooling.debug import binary_firth
+
+    return binary_firth.build_arguments_from_config(config)
+
+
+def run_binary_firth(arguments: typing.Any) -> None:
+    """Run the binary Firth debug tool."""
+    from tooling.debug import binary_firth
+
+    binary_firth.run_tool(arguments)
+
+
+def build_binary_regenie_parity_arguments(config: omegaconf.DictConfig) -> typing.Any:
+    """Build binary parity arguments without importing native-facing modules at startup."""
+    from tooling.debug import binary_regenie_parity
+
+    return binary_regenie_parity.build_arguments_from_config(config)
+
+
+def run_binary_regenie_parity(arguments: typing.Any) -> None:
+    """Run the binary REGENIE parity debug tool."""
+    from tooling.debug import binary_regenie_parity
+
+    binary_regenie_parity.run_tool(arguments)
+
+
+def build_linear_regenie_parity_arguments(config: omegaconf.DictConfig) -> typing.Any:
+    """Build linear parity arguments without importing native-facing modules at startup."""
+    from tooling.debug import linear_regenie_parity
+
+    return linear_regenie_parity.build_arguments_from_config(config)
+
+
+def run_linear_regenie_parity(arguments: typing.Any) -> None:
+    """Run the linear REGENIE parity debug tool."""
+    from tooling.debug import linear_regenie_parity
+
+    linear_regenie_parity.run_tool(arguments)
 
 
 def run_check_pyo3_stub(arguments: None) -> None:
@@ -63,24 +104,31 @@ def run_check_internal_init_exports(arguments: None) -> None:
         raise SystemExit(exit_code)
 
 
+def run_check_justfile(arguments: check_justfile.JustfileCheckArguments) -> None:
+    """Run the Justfile command-surface guardrail."""
+    exit_code = check_justfile.run_tool(arguments)
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
 TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
     DebugToolName.BINARY_FIRTH.value: tooling_registry.ToolSpec(
         name=DebugToolName.BINARY_FIRTH.value,
         config_name="debug_binary_firth",
-        build_arguments=binary_firth.build_arguments_from_config,
-        run=binary_firth.run_tool,
+        build_arguments=build_binary_firth_arguments,
+        run=run_binary_firth,
     ),
     DebugToolName.BINARY_REGENIE_PARITY.value: tooling_registry.ToolSpec(
         name=DebugToolName.BINARY_REGENIE_PARITY.value,
         config_name="debug_binary_regenie_parity",
-        build_arguments=binary_regenie_parity.build_arguments_from_config,
-        run=binary_regenie_parity.run_tool,
+        build_arguments=build_binary_regenie_parity_arguments,
+        run=run_binary_regenie_parity,
     ),
     DebugToolName.LINEAR_REGENIE_PARITY.value: tooling_registry.ToolSpec(
         name=DebugToolName.LINEAR_REGENIE_PARITY.value,
         config_name="debug_linear_regenie_parity",
-        build_arguments=linear_regenie_parity.build_arguments_from_config,
-        run=linear_regenie_parity.run_tool,
+        build_arguments=build_linear_regenie_parity_arguments,
+        run=run_linear_regenie_parity,
     ),
     DebugToolName.CHECK_PYO3_STUB.value: tooling_registry.ToolSpec(
         name=DebugToolName.CHECK_PYO3_STUB.value,
@@ -99,6 +147,12 @@ TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
         config_name="debug_check_internal_init_exports",
         build_arguments=build_no_arguments,
         run=run_check_internal_init_exports,
+    ),
+    DebugToolName.CHECK_JUSTFILE.value: tooling_registry.ToolSpec(
+        name=DebugToolName.CHECK_JUSTFILE.value,
+        config_name="debug_check_justfile",
+        build_arguments=check_justfile.build_arguments_from_config,
+        run=run_check_justfile,
     ),
 }
 

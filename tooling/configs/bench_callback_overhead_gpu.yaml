@@ -1,0 +1,28 @@
+defaults:
+  - machine: landau_gpu
+  - telemetry: local
+  - _self_
+
+tool:
+  device: ${machine.device}
+  chunk_count: 10000
+  sample_count: 128
+  variants_per_chunk: 32
+  staging_depth: 1
+  trials: 5
+  warmup_trials: 1
+  stage_timing_modes:
+    - off
+    - aggregate
+  workload_modes:
+    - queue_only
+    - host_to_device
+  synchronize_after_trial: true
+  json_summary_path: ${telemetry.json_summary_path}
+
+hydra:
+  output_subdir: null
+  job:
+    chdir: false
+  run:
+    dir: /tmp/g-hydra-runs

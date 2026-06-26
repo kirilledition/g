@@ -1,4 +1,5 @@
 tool:
+  name: smoke
   output_root: results/perf/smoke
   output_dir: null
   iterations: 48

@@ -22,5 +22,8 @@ tool:
   json_summary_path: null
 
 hydra:
+  output_subdir: null
   job:
     chdir: false
+  run:
+    dir: /tmp/g-hydra-runs
