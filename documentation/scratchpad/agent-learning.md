@@ -50,9 +50,10 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
 - `crates/plan/src/` owns deterministic host policy payloads plus requested and
   prepared run contracts. `crates/interface/src/plan_request.rs` compiles resolved
   config into `RunRequest`; manifest headers now serialize through a Rust-built
-  `PreparedRunPlan` consumed by `g-output`. Python still supplies transitional
-  header fields from legacy execution dataclasses until dynamic preparation moves
-  to Rust.
+  `PreparedRunPlan` consumed by `g-output`. The prepared manifest backend kind is
+  derived in Rust from the resolved genotype format; Python still supplies other
+  transitional header fields from legacy execution dataclasses until dynamic
+  preparation moves to Rust.
 - `crates/input/src/` owns native sample, phenotype, covariate, prediction-list,
   and LOCO prediction alignment; genotype readers keep BGEN-embedded sample
   retrieval and pass identifier views into input code.

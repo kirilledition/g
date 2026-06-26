@@ -754,7 +754,6 @@ def build_current_run_manifest_header_json(
 def build_prepared_run_manifest_header_json(prepared_run_plan_json: str) -> str: ...
 def build_prepared_run_plan_json(
     association_mode: str,
-    association_backend_kind: str,
     bgen_fingerprint_json: str,
     sample_fingerprint_json: str | None,
     phenotype_file_fingerprint_json: str,

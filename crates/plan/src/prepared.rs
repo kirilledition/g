@@ -1,5 +1,8 @@
 //! Canonical prepared-run planning contracts.
 
+use std::error;
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -71,6 +74,42 @@ pub struct AssociationBackendPlan {
     pub association_mode: AssociationMode,
     pub device: Device,
     pub resolved_genotype_format: GpuGenotypeFormat,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PreparedPlanError {
+    UnresolvedGpuGenotypeFormat,
+}
+
+impl fmt::Display for PreparedPlanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnresolvedGpuGenotypeFormat => {
+                write!(formatter, "resolved_gpu_genotype_format must be dosage or packed8, not auto")
+            }
+        }
+    }
+}
+
+impl error::Error for PreparedPlanError {}
+
+/// Build the prepared association backend from resolved execution inputs.
+///
+/// # Errors
+///
+/// Returns [`PreparedPlanError::UnresolvedGpuGenotypeFormat`] when
+/// `resolved_genotype_format` is still `auto`.
+pub fn build_prepared_association_backend_plan(
+    association_mode: AssociationMode,
+    device: Device,
+    resolved_genotype_format: GpuGenotypeFormat,
+) -> Result<AssociationBackendPlan, PreparedPlanError> {
+    let kind = match resolved_genotype_format {
+        GpuGenotypeFormat::Auto => return Err(PreparedPlanError::UnresolvedGpuGenotypeFormat),
+        GpuGenotypeFormat::Dosage => AssociationBackendKind::JaxDosage,
+        GpuGenotypeFormat::Packed8 => AssociationBackendKind::JaxPacked8,
+    };
+    Ok(AssociationBackendPlan { kind, association_mode, device, resolved_genotype_format })
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -147,4 +186,46 @@ pub struct PreparedOutputWriterPlan {
     pub arrow_compression: ArrowCompression,
     pub parquet_compression: ParquetCompression,
     pub output_statistic_dtype: FloatingPointDtype,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_prepared_backend_plan_from_resolved_genotype_format() {
+        let dosage_plan = build_prepared_association_backend_plan(
+            AssociationMode::Regenie2Linear,
+            Device::Cpu,
+            GpuGenotypeFormat::Dosage,
+        )
+        .unwrap();
+        assert_eq!(dosage_plan.kind, AssociationBackendKind::JaxDosage);
+        assert_eq!(dosage_plan.association_mode, AssociationMode::Regenie2Linear);
+        assert_eq!(dosage_plan.device, Device::Cpu);
+        assert_eq!(dosage_plan.resolved_genotype_format, GpuGenotypeFormat::Dosage);
+
+        let packed_plan = build_prepared_association_backend_plan(
+            AssociationMode::Regenie2Binary,
+            Device::Gpu,
+            GpuGenotypeFormat::Packed8,
+        )
+        .unwrap();
+        assert_eq!(packed_plan.kind, AssociationBackendKind::JaxPacked8);
+        assert_eq!(packed_plan.association_mode, AssociationMode::Regenie2Binary);
+        assert_eq!(packed_plan.device, Device::Gpu);
+        assert_eq!(packed_plan.resolved_genotype_format, GpuGenotypeFormat::Packed8);
+    }
+
+    #[test]
+    fn rejects_unresolved_prepared_backend_format() {
+        assert_eq!(
+            build_prepared_association_backend_plan(
+                AssociationMode::Regenie2Linear,
+                Device::Gpu,
+                GpuGenotypeFormat::Auto,
+            ),
+            Err(PreparedPlanError::UnresolvedGpuGenotypeFormat),
+        );
+    }
 }

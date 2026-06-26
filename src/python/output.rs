@@ -545,7 +545,6 @@ pub(crate) fn build_prepared_run_manifest_header_json(prepared_run_plan_json: St
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_prepared_run_plan_json(
     association_mode: String,
-    association_backend_kind: String,
     bgen_fingerprint_json: String,
     sample_fingerprint_json: Option<String>,
     phenotype_file_fingerprint_json: String,
@@ -597,15 +596,12 @@ pub(crate) fn build_prepared_run_plan_json(
     )?;
     let prepared_run_plan = g_plan::PreparedRunPlan {
         association_mode,
-        association_backend: g_plan::AssociationBackendPlan {
-            kind: parse_string_enum::<g_plan::AssociationBackendKind>(
-                "association_backend_kind",
-                &association_backend_kind,
-            )?,
+        association_backend: g_plan::build_prepared_association_backend_plan(
             association_mode,
-            device: jax_device,
-            resolved_genotype_format: resolved_gpu_genotype_format,
-        },
+            jax_device,
+            resolved_gpu_genotype_format,
+        )
+        .map_err(|error| PyValueError::new_err(format!("Invalid prepared association backend plan: {error}")))?,
         input_identity: g_plan::PreparedInputIdentity {
             bgen: parse_json_argument("bgen_fingerprint_json", &bgen_fingerprint_json)?,
             sample: parse_optional_json_argument("sample_fingerprint_json", sample_fingerprint_json)?,

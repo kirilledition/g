@@ -797,7 +797,6 @@ def build_native_prepared_run_plan_json(current_header: CurrentRunManifestHeader
     )
     return _core.build_prepared_run_plan_json(
         current_header.association_mode.value,
-        current_header.association_backend.kind,
         manifest_file_fingerprint_to_json(current_header.bgen),
         optional_manifest_file_fingerprint_to_json(current_header.sample),
         manifest_file_fingerprint_to_json(current_header.phenotype_file),
