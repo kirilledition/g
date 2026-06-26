@@ -663,9 +663,7 @@ def serialize_binary_chunk_diagnostics(
     binary_chunk_diagnostics: tuple[BinaryChunkDiagnosticsSnapshot, ...],
 ) -> tuple[dict[str, int | float], ...]:
     """Serialize binary diagnostic snapshots to JSON-compatible dictionaries."""
-    return tuple(
-        binary_chunk_diagnostics_snapshot_to_mapping(diagnostics) for diagnostics in binary_chunk_diagnostics
-    )
+    return tuple(binary_chunk_diagnostics_snapshot_to_mapping(diagnostics) for diagnostics in binary_chunk_diagnostics)
 
 
 def serialize_null_logistic_diagnostics(

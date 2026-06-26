@@ -28,12 +28,16 @@ pub(crate) struct TelemetryWriterCountersPayload {
     pub(crate) finish_flush_duration_seconds: Option<f64>,
 }
 
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_sign_loss)]
 pub(crate) fn format_timestamp(timestamp_seconds: f64) -> String {
     let whole_seconds = timestamp_seconds.floor() as i64;
     let nanoseconds = (((timestamp_seconds - whole_seconds as f64) * 1_000_000_000.0) as u32).min(999_999_999);
-    DateTime::from_timestamp(whole_seconds, nanoseconds)
-        .map(|timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Micros, true))
-        .unwrap_or_else(|| "1970-01-01T00:00:00.000000Z".to_string())
+    DateTime::from_timestamp(whole_seconds, nanoseconds).map_or_else(
+        || "1970-01-01T00:00:00.000000Z".to_string(),
+        |timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Micros, true),
+    )
 }
 
 pub(crate) fn resolve_output_run_root(output_path: &Path, output_run_directory: Option<&Path>) -> PathBuf {
@@ -84,12 +88,10 @@ pub(crate) fn resolve_telemetry_stream_file(
     if telemetry_mode == "off" {
         return Ok(None);
     }
-    if let (Some(log_file_path), Some(trace_file_path)) = (log_file, trace_file) {
-        if !paths_refer_to_same_file(log_file_path, trace_file_path) {
-            return Err(
-                "log_file and trace_file both configure the unified telemetry stream; use one path.".to_string()
-            );
-        }
+    if let (Some(log_file_path), Some(trace_file_path)) = (log_file, trace_file)
+        && !paths_refer_to_same_file(log_file_path, trace_file_path)
+    {
+        return Err("log_file and trace_file both configure the unified telemetry stream; use one path.".to_string());
     }
     if let Some(path) = log_file {
         return Ok(Some(path.to_path_buf()));

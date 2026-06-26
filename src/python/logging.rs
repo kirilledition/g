@@ -281,6 +281,8 @@ impl NativeTelemetrySession {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::unused_self)]
     pub fn build_event_payload<'py>(
         &self,
         py: Python<'py>,

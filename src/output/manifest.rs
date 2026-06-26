@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
@@ -75,6 +76,7 @@ pub(crate) struct ManifestFileFingerprint {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct CurrentRunManifestHeaderInput {
     pub(crate) association_mode: String,
     pub(crate) association_backend_kind: String,
@@ -449,7 +451,7 @@ pub(crate) fn manifest_file_fingerprint_to_value(file_fingerprint: &ManifestFile
 pub(crate) fn build_file_content_sha256(path: &Path) -> Result<String, OutputWriterError> {
     let mut file = File::open(path).map_err(OutputWriterError::runtime)?;
     let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         let bytes_read = file.read(&mut buffer).map_err(OutputWriterError::runtime)?;
         if bytes_read == 0 {
@@ -474,7 +476,12 @@ fn build_manifest_value_sha256(value: &Value) -> Result<String, OutputWriterErro
 }
 
 fn encode_sha256_hex(digest: Sha256) -> String {
-    digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
+    let digest_bytes = digest.finalize();
+    let mut digest_text = String::with_capacity(digest_bytes.len() * 2);
+    for digest_byte in digest_bytes {
+        write!(&mut digest_text, "{digest_byte:02x}").expect("writing to String must succeed");
+    }
+    digest_text
 }
 
 fn directory_exists_and_is_non_empty(directory_path: &Path) -> Result<bool, OutputWriterError> {

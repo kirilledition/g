@@ -1,6 +1,7 @@
 //! Native callback summary counter state.
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[allow(clippy::struct_field_names)]
 pub(crate) struct BinaryChunkDiagnosticsInput {
     pub(crate) score_only_count: i64,
     pub(crate) score_test_candidate_count: i64,
@@ -22,6 +23,7 @@ pub(crate) struct BinaryChunkDiagnosticsInput {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[allow(clippy::struct_field_names)]
 pub(crate) struct BinaryCorrectionSummaryState {
     pub(crate) chunk_count: i64,
     pub(crate) score_only_count: i64,

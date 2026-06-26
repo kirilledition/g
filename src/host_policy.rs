@@ -104,6 +104,7 @@ pub(crate) fn resolve_association_mode(trait_type: &str) -> &'static str {
     }
 }
 
+#[allow(clippy::fn_params_excessive_bools)]
 pub(crate) fn normalize_binary_correction(
     firth: bool,
     approx: bool,
@@ -155,8 +156,7 @@ pub(crate) fn build_phenotype_compute_groups(
             prediction_alignment_fingerprint: None,
         }]);
     }
-    let phenotype_indices =
-        (0..phenotype_names.len()).map(|phenotype_index| phenotype_index as i64).collect::<Vec<_>>();
+    let phenotype_indices = (0..phenotype_names.len()).map(phenotype_index_to_i64).collect::<Vec<_>>();
     if multi_phenotype_sample_mode == MULTI_PHENOTYPE_SAMPLE_MODE_COMPLETE_CASE {
         return Ok(vec![PhenotypeComputeGroupPayload {
             group_mode: PHENOTYPE_COMPUTE_GROUP_MODE_COMPLETE_CASE,
@@ -173,7 +173,7 @@ pub(crate) fn build_phenotype_compute_groups(
         .enumerate()
         .map(|(phenotype_index, phenotype_name)| PhenotypeComputeGroupPayload {
             group_mode: PHENOTYPE_COMPUTE_GROUP_MODE_PER_PHENOTYPE_COMPATIBLE,
-            phenotype_indices: vec![phenotype_index as i64],
+            phenotype_indices: vec![phenotype_index_to_i64(phenotype_index)],
             phenotype_names: vec![phenotype_name.clone()],
             sample_mode: MULTI_PHENOTYPE_SAMPLE_MODE_PER_PHENOTYPE,
             sample_set_fingerprint: None,
@@ -181,6 +181,10 @@ pub(crate) fn build_phenotype_compute_groups(
             prediction_alignment_fingerprint: None,
         })
         .collect())
+}
+
+fn phenotype_index_to_i64(phenotype_index: usize) -> i64 {
+    i64::try_from(phenotype_index).expect("phenotype count must fit in i64")
 }
 
 pub(crate) fn build_phenotype_compute_group_id(

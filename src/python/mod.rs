@@ -1,3 +1,6 @@
+#![allow(clippy::elidable_lifetime_names)]
+#![allow(clippy::fn_params_excessive_bools)]
+
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;

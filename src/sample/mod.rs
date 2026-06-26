@@ -6,6 +6,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
@@ -291,6 +292,7 @@ pub fn align_grouped_sample_data_from_sample_file(
     align_grouped_sample_data(&inputs)
 }
 
+#[must_use]
 pub fn resolve_single_phenotype_compute_group(
     aligned_sample_data: &AlignedSampleData,
     phenotype_name: String,
@@ -309,6 +311,7 @@ pub fn resolve_single_phenotype_compute_group(
     )
 }
 
+#[must_use]
 pub fn resolve_per_phenotype_compute_group(
     aligned_sample_data: &MultiAlignedSampleData,
     phenotype_indices: Vec<usize>,
@@ -327,6 +330,7 @@ pub fn resolve_per_phenotype_compute_group(
     )
 }
 
+#[must_use]
 pub fn resolve_complete_case_compute_group(
     aligned_sample_data: &MultiAlignedSampleData,
     phenotype_indices: Vec<usize>,
@@ -490,7 +494,7 @@ fn finalize_sha256_hex(fingerprint_hash: Sha256) -> String {
     let digest_bytes = fingerprint_hash.finalize();
     let mut digest_text = String::with_capacity(digest_bytes.len() * 2);
     for digest_byte in digest_bytes {
-        digest_text.push_str(&format!("{digest_byte:02x}"));
+        write!(&mut digest_text, "{digest_byte:02x}").expect("writing to String must succeed");
     }
     digest_text
 }
