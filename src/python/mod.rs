@@ -32,6 +32,7 @@ mod errors;
 mod host_policy;
 mod logging;
 mod output;
+mod preflight;
 mod profile;
 mod run_events;
 mod run_metadata;
@@ -64,6 +65,7 @@ use output::{
     scan_committed_chunk_identifiers, validate_run_manifest_compatibility, validate_strict_manifest_chunks,
     write_regenie2_multi_native_chunk, write_regenie2_multi_native_chunk_f64, write_run_manifest_json,
 };
+use preflight::{build_preflight_report_payload, resolve_preflight_variant_count};
 use profile::build_profile_snapshot_dict;
 use run_events::{
     build_run_completed_telemetry_fields, build_run_failed_telemetry_fields, build_run_interrupted_telemetry_fields,
@@ -774,30 +776,7 @@ impl Regenie2RunEngine {
 
     #[pyo3(signature = (variant_limit=None))]
     fn required_chromosomes(&self, variant_limit: Option<usize>) -> PyResult<Vec<String>> {
-        let variant_count = self.engine.reader().variant_count();
-        let scanned_variant_count = variant_limit.map_or(variant_count, |limit| limit.min(variant_count));
-        if scanned_variant_count == 0 {
-            return Ok(Vec::new());
-        }
-
-        let mut chromosome_labels = Vec::new();
-        for chromosome_boundaries in self.engine.reader().chromosome_boundary_indices().windows(2) {
-            let chromosome_start_index = chromosome_boundaries[0];
-            let chromosome_stop_index = chromosome_boundaries[1].min(scanned_variant_count);
-            if chromosome_start_index >= chromosome_stop_index {
-                continue;
-            }
-            let metadata = self
-                .engine
-                .reader()
-                .variant_metadata_slice(chromosome_start_index, chromosome_start_index + 1)
-                .map_err(|error| convert_bgen_error("read_variant_metadata_slice", error))?;
-            let chromosome_label = metadata.chromosome.into_iter().next().ok_or_else(|| {
-                PyRuntimeError::new_err("Chromosome boundary metadata contained no chromosome label.")
-            })?;
-            chromosome_labels.push(chromosome_label);
-        }
-        Ok(chromosome_labels)
+        self.engine.required_chromosomes(variant_limit).map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
     fn reset_profile(&self) {
@@ -1792,6 +1771,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_phenotype_output_directory_name, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_manifest_extension_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_preflight_report_payload, module)?)?;
     module.add_function(wrap_pyfunction!(normalize_binary_correction_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_association_backend_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;
@@ -1799,6 +1779,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_telemetry_paths_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(format_telemetry_timestamp_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_path_value, module)?)?;

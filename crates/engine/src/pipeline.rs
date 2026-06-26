@@ -7,6 +7,8 @@ use g_genotype::bgen::{BgenError, BgenReaderCore};
 use g_genotype::common::{ChunkSpec, GenotypeError};
 use g_genotype::planner;
 
+use crate::preflight::PreflightError;
+
 pub struct Regenie2RunEngineCore {
     reader: BgenReaderCore,
     chunk_size: usize,
@@ -49,5 +51,37 @@ impl Regenie2RunEngineCore {
             &self.reader.chromosome_boundary_indices(),
             committed_chunk_identifiers,
         )
+    }
+
+    /// Resolve unique chromosome labels represented in the requested scan.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when chromosome boundary metadata cannot be read.
+    pub fn required_chromosomes(&self, variant_limit: Option<usize>) -> Result<Vec<String>, PreflightError> {
+        let variant_count = self.reader.variant_count();
+        let scanned_variant_count = variant_limit.map_or(variant_count, |limit| limit.min(variant_count));
+        if scanned_variant_count == 0 {
+            return Ok(Vec::new());
+        }
+        let mut chromosome_labels = Vec::new();
+        for chromosome_boundaries in self.reader.chromosome_boundary_indices().windows(2) {
+            let chromosome_start_index = chromosome_boundaries[0];
+            let chromosome_stop_index = chromosome_boundaries[1].min(scanned_variant_count);
+            if chromosome_start_index >= chromosome_stop_index {
+                continue;
+            }
+            let metadata = self
+                .reader
+                .variant_metadata_slice(chromosome_start_index, chromosome_start_index + 1)
+                .map_err(|error| PreflightError::ChromosomeMetadata { message: error.to_string() })?;
+            let Some(chromosome_label) = metadata.chromosome.into_iter().next() else {
+                return Err(PreflightError::ChromosomeMetadata {
+                    message: "Chromosome boundary metadata contained no chromosome label.".to_string(),
+                });
+            };
+            chromosome_labels.push(chromosome_label);
+        }
+        Ok(chromosome_labels)
     }
 }

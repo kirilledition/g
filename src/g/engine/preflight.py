@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+import g
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,19 +67,15 @@ def run_regenie2_preflight(
             raise ValueError(message)
         validate_finite_array(f"Prediction values for chromosome {chromosome}", prediction_values)
 
-    warning_messages = build_preflight_warnings(
-        sample_count=sample_count,
-        covariate_count=covariate_count,
-        trusted_no_missing_diploid=trusted_no_missing_diploid,
-    )
-    for warning_message in warning_messages:
-        logger.warning("%s", warning_message)
-    return PreflightReport(
+    preflight_report = build_preflight_report(
         sample_count=sample_count,
         covariate_count=covariate_count,
         chromosome_count=len(required_chromosomes),
-        warning_messages=warning_messages,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
+    for warning_message in preflight_report.warning_messages:
+        logger.warning("%s", warning_message)
+    return preflight_report
 
 
 def run_regenie2_multi_preflight(
@@ -119,19 +117,15 @@ def run_regenie2_multi_preflight(
             raise ValueError(message)
         validate_finite_array(f"Prediction matrix for chromosome {chromosome}", prediction_matrix)
 
-    warning_messages = build_preflight_warnings(
-        sample_count=sample_count,
-        covariate_count=covariate_count,
-        trusted_no_missing_diploid=trusted_no_missing_diploid,
-    )
-    for warning_message in warning_messages:
-        logger.warning("%s", warning_message)
-    return PreflightReport(
+    preflight_report = build_preflight_report(
         sample_count=sample_count,
         covariate_count=covariate_count,
         chromosome_count=len(required_chromosomes),
-        warning_messages=warning_messages,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
+    for warning_message in preflight_report.warning_messages:
+        logger.warning("%s", warning_message)
+    return preflight_report
 
 
 def validate_phenotype_matrix(phenotype_matrix: np.ndarray) -> None:
@@ -189,13 +183,7 @@ def validate_binary_phenotype(phenotype_vector: np.ndarray) -> None:
 def collect_required_chromosomes(engine: typing.Any, variant_limit: int | None) -> tuple[str, ...]:
     """Collect chromosome labels represented in the native BGEN engine."""
     variant_count = int(engine.variant_count)
-    if variant_count <= 0:
-        message = "BGEN input contains no variants."
-        raise ValueError(message)
-    scanned_variant_count = variant_count if variant_limit is None else min(variant_count, variant_limit)
-    if scanned_variant_count <= 0:
-        message = "BGEN scan contains no variants."
-        raise ValueError(message)
+    scanned_variant_count = int(g._core.resolve_preflight_variant_count(variant_count, variant_limit))
     native_required_chromosomes = getattr(engine, "required_chromosomes", None)
     if callable(native_required_chromosomes):
         return tuple(str(chromosome) for chromosome in native_required_chromosomes(variant_limit))
@@ -211,17 +199,26 @@ def collect_required_chromosomes(engine: typing.Any, variant_limit: int | None) 
     return tuple(required_chromosomes)
 
 
-def build_preflight_warnings(
+def build_preflight_report(
     *,
     sample_count: int,
     covariate_count: int,
+    chromosome_count: int,
     trusted_no_missing_diploid: bool,
-) -> tuple[str, ...]:
-    """Build non-fatal preflight warnings."""
-    warning_messages: list[str] = []
-    residual_degrees_of_freedom = sample_count - covariate_count
-    if residual_degrees_of_freedom < 10:
-        warning_messages.append("REGENIE step 2 is running with fewer than 10 residual degrees of freedom.")
-    if trusted_no_missing_diploid:
-        warning_messages.append("Trusted no-missing diploid BGEN path is enabled after compatibility validation.")
-    return tuple(warning_messages)
+) -> PreflightReport:
+    """Build the native-owned preflight report payload."""
+    payload = typing.cast(
+        "dict[str, object]",
+        g._core.build_preflight_report_payload(
+            sample_count,
+            covariate_count,
+            chromosome_count,
+            trusted_no_missing_diploid,
+        ),
+    )
+    return PreflightReport(
+        sample_count=typing.cast("int", payload["sample_count"]),
+        covariate_count=typing.cast("int", payload["covariate_count"]),
+        chromosome_count=typing.cast("int", payload["chromosome_count"]),
+        warning_messages=typing.cast("tuple[str, ...]", payload["warning_messages"]),
+    )

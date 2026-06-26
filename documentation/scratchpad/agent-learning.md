@@ -70,10 +70,13 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   views, a deterministic fake backend, single-batch phase progression,
   injected failure handling for every entered phase, backend trait-method
   failure handling, interruption handling, a Criterion coordinator-overhead
-  benchmark, and the BGEN-backed `Regenie2RunEngineCore`/chunk planning core
-  that used to live under `src/pipeline/`. Production queues, output writer
-  lifecycle, cleanup, telemetry emission, and the PyO3/JAX association backend
-  remain later migration work.
+  benchmark, the BGEN-backed `Regenie2RunEngineCore`/chunk planning core that
+  used to live under `src/pipeline/`, native required-chromosome resolution,
+  and native preflight report/warning/scan-count helpers. Python still owns
+  NumPy array finite/rank/binary-shape validation while those array contracts
+  are being migrated. Production queues, output writer lifecycle, cleanup,
+  telemetry emission, and the PyO3/JAX association backend remain later
+  migration work.
 - `crates/interface/src/partial.rs` defines the typed partial TOML surface with Serde,
   optional fields, aliases, and unknown-key rejection.
 - `crates/interface/src/overlay.rs` decodes provenance and overlays defaults, user
