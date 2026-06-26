@@ -82,33 +82,21 @@ class NativeBgenCallbackRunner(abc.ABC):
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
         """Initialize shared native callback state."""
-        if staging_depth <= 0:
-            message = "staging_depth must be positive."
-            raise ValueError(message)
-        if native_callback_batch_size <= 0:
-            message = "native_callback_batch_size must be positive."
-            raise ValueError(message)
-        if result_in_flight_limit is not None and result_in_flight_limit <= 0:
-            message = "result_in_flight_limit must be positive when provided."
-            raise ValueError(message)
-        if dosage_buffer_limit is not None and dosage_buffer_limit <= 0:
-            message = "dosage_buffer_limit must be positive when provided."
-            raise ValueError(message)
+        queue_limits = _core.resolve_native_callback_queue_limits(
+            staging_depth=staging_depth,
+            native_callback_batch_size=native_callback_batch_size,
+            result_in_flight_limit=result_in_flight_limit,
+            dosage_buffer_limit=dosage_buffer_limit,
+        )
         self.processed_chunk_count = 0
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
         self.current_progress_chromosome: str | None = None
-        self.dosage_queue_depth = staging_depth
-        self.result_queue_depth = staging_depth
-        self.result_in_flight_limit = result_in_flight_limit or self.result_queue_depth + 1
-        self.dosage_buffer_limit = dosage_buffer_limit or self.dosage_queue_depth + 1
-        if self.dosage_buffer_limit < native_callback_batch_size:
-            message = (
-                "native_callback_batch_size must not exceed the effective dosage_buffer_limit "
-                f"({self.dosage_buffer_limit})."
-            )
-            raise ValueError(message)
+        self.dosage_queue_depth = queue_limits.dosage_queue_depth
+        self.result_queue_depth = queue_limits.result_queue_depth
+        self.result_in_flight_limit = queue_limits.result_in_flight_limit
+        self.dosage_buffer_limit = queue_limits.dosage_buffer_limit
         self.native_callback_batch_size = native_callback_batch_size
         self.result_in_flight_slot_count = 0
         self.result_in_flight_slot_lock = threading.Lock()

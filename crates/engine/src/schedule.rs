@@ -5,6 +5,14 @@ use std::collections::BTreeSet;
 const DEFAULT_DELIVERY_CALLBACK_BATCH_SIZE: i64 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeCallbackQueueLimits {
+    pub dosage_queue_depth: usize,
+    pub result_queue_depth: usize,
+    pub result_in_flight_limit: usize,
+    pub dosage_buffer_limit: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BgenDeliveryMethod {
     DosageNativeMultiAlignedSamples,
     DosageNativeAlignedSamples,
@@ -30,12 +38,28 @@ impl BgenDeliveryMethod {
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ScheduleError {
+    #[error("staging_depth must be positive.")]
+    NonPositiveStagingDepth,
     #[error("native_callback_batch_size must be positive.")]
     NonPositiveCallbackBatchSize,
     #[error("native_callback_batch_size > 1 is not supported for packed8 BGEN delivery.")]
     Packed8CallbackBatchSize,
+    #[error("native_callback_batch_size must not exceed the effective dosage_buffer_limit ({dosage_buffer_limit}).")]
+    CallbackBatchSizeExceedsDosageBufferLimit { dosage_buffer_limit: usize },
+    #[error("result_in_flight_limit must be positive when provided.")]
+    NonPositiveResultInFlightLimit,
+    #[error("dosage_buffer_limit must be positive when provided.")]
+    NonPositiveDosageBufferLimit,
+    #[error("staging_depth exceeds platform capacity: {staging_depth}")]
+    StagingDepthOverflow { staging_depth: i64 },
     #[error("native_callback_batch_size exceeds platform capacity: {callback_batch_size}")]
     CallbackBatchSizeOverflow { callback_batch_size: i64 },
+    #[error("result_in_flight_limit exceeds platform capacity: {result_in_flight_limit}")]
+    ResultInFlightLimitOverflow { result_in_flight_limit: i64 },
+    #[error("dosage_buffer_limit exceeds platform capacity: {dosage_buffer_limit}")]
+    DosageBufferLimitOverflow { dosage_buffer_limit: i64 },
+    #[error("queue limit default for staging_depth exceeds platform capacity: {staging_depth}")]
+    QueueLimitDefaultOverflow { staging_depth: usize },
     #[error("Writer finish thread count must be positive.")]
     NonPositiveWriterFinishThreadCount,
     #[error("Writer session count exceeds platform capacity: {session_count}")]
@@ -78,6 +102,63 @@ pub fn resolve_delivery_callback_batch_size(
         return Err(ScheduleError::Packed8CallbackBatchSize);
     }
     Ok(resolved_callback_batch_size)
+}
+
+/// Resolve native callback queue depths and bounded resource limits.
+///
+/// # Errors
+///
+/// Returns an error when a configured limit is non-positive, cannot fit in
+/// `usize`, the default `staging_depth + 1` limit would overflow, or the
+/// callback batch size cannot fit in the effective dosage buffer limit.
+pub fn resolve_native_callback_queue_limits(
+    staging_depth: i64,
+    native_callback_batch_size: i64,
+    result_in_flight_limit: Option<i64>,
+    dosage_buffer_limit: Option<i64>,
+) -> Result<NativeCallbackQueueLimits, ScheduleError> {
+    if staging_depth <= 0 {
+        return Err(ScheduleError::NonPositiveStagingDepth);
+    }
+    if native_callback_batch_size <= 0 {
+        return Err(ScheduleError::NonPositiveCallbackBatchSize);
+    }
+    if matches!(result_in_flight_limit, Some(limit) if limit <= 0) {
+        return Err(ScheduleError::NonPositiveResultInFlightLimit);
+    }
+    if matches!(dosage_buffer_limit, Some(limit) if limit <= 0) {
+        return Err(ScheduleError::NonPositiveDosageBufferLimit);
+    }
+
+    let staging_depth =
+        usize::try_from(staging_depth).map_err(|_| ScheduleError::StagingDepthOverflow { staging_depth })?;
+    let native_callback_batch_size = usize::try_from(native_callback_batch_size)
+        .map_err(|_| ScheduleError::CallbackBatchSizeOverflow { callback_batch_size: native_callback_batch_size })?;
+    let default_limit =
+        staging_depth.checked_add(1).ok_or(ScheduleError::QueueLimitDefaultOverflow { staging_depth })?;
+    let result_in_flight_limit = result_in_flight_limit
+        .map(|limit| {
+            usize::try_from(limit)
+                .map_err(|_| ScheduleError::ResultInFlightLimitOverflow { result_in_flight_limit: limit })
+        })
+        .transpose()?
+        .unwrap_or(default_limit);
+    let dosage_buffer_limit = dosage_buffer_limit
+        .map(|limit| {
+            usize::try_from(limit).map_err(|_| ScheduleError::DosageBufferLimitOverflow { dosage_buffer_limit: limit })
+        })
+        .transpose()?
+        .unwrap_or(default_limit);
+    if dosage_buffer_limit < native_callback_batch_size {
+        return Err(ScheduleError::CallbackBatchSizeExceedsDosageBufferLimit { dosage_buffer_limit });
+    }
+
+    Ok(NativeCallbackQueueLimits {
+        dosage_queue_depth: staging_depth,
+        result_queue_depth: staging_depth,
+        result_in_flight_limit,
+        dosage_buffer_limit,
+    })
 }
 
 #[must_use]
@@ -169,6 +250,52 @@ mod tests {
         assert_eq!(
             resolve_delivery_callback_batch_size(Some(2), true).unwrap_err(),
             ScheduleError::Packed8CallbackBatchSize,
+        );
+    }
+
+    #[test]
+    fn resolves_native_callback_queue_limits() {
+        assert_eq!(
+            resolve_native_callback_queue_limits(3, 1, None, None).unwrap(),
+            NativeCallbackQueueLimits {
+                dosage_queue_depth: 3,
+                result_queue_depth: 3,
+                result_in_flight_limit: 4,
+                dosage_buffer_limit: 4,
+            },
+        );
+        assert_eq!(
+            resolve_native_callback_queue_limits(3, 2, Some(7), Some(8)).unwrap(),
+            NativeCallbackQueueLimits {
+                dosage_queue_depth: 3,
+                result_queue_depth: 3,
+                result_in_flight_limit: 7,
+                dosage_buffer_limit: 8,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_native_callback_queue_limits() {
+        assert_eq!(
+            resolve_native_callback_queue_limits(0, 1, None, None).unwrap_err(),
+            ScheduleError::NonPositiveStagingDepth,
+        );
+        assert_eq!(
+            resolve_native_callback_queue_limits(1, 0, None, None).unwrap_err(),
+            ScheduleError::NonPositiveCallbackBatchSize,
+        );
+        assert_eq!(
+            resolve_native_callback_queue_limits(1, 1, Some(0), None).unwrap_err(),
+            ScheduleError::NonPositiveResultInFlightLimit,
+        );
+        assert_eq!(
+            resolve_native_callback_queue_limits(1, 1, None, Some(0)).unwrap_err(),
+            ScheduleError::NonPositiveDosageBufferLimit,
+        );
+        assert_eq!(
+            resolve_native_callback_queue_limits(1, 3, None, Some(2)).unwrap_err(),
+            ScheduleError::CallbackBatchSizeExceedsDosageBufferLimit { dosage_buffer_limit: 2 },
         );
     }
 

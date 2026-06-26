@@ -74,10 +74,11 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   used to live under `src/pipeline/`, native required-chromosome resolution,
   native preflight report/warning/scan-count helpers, and native
   committed-chunk intersection for multi-output resume scheduling. Native
-  callback batch-size delivery policy, writer-finish thread cleanup policy, and
-  BGEN delivery method selection also live in `g-engine`, with Python only
-  extracting callback/input object attributes, invoking writer sessions, and
-  calling the selected PyO3 engine method. Python still owns NumPy array
+  callback batch-size delivery policy, callback queue-limit policy,
+  writer-finish thread cleanup policy, and BGEN delivery method selection also
+  live in `g-engine`, with Python only extracting callback/input object
+  attributes, invoking writer sessions, and calling the selected PyO3 engine
+  method. Python still owns NumPy array
   finite/rank/binary-shape validation while those array contracts are being
   migrated. Production queues, output writer lifecycle, cleanup, telemetry
   emission, and the PyO3/JAX association backend remain later migration work.

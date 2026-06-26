@@ -92,27 +92,34 @@ def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:
 
 
 def test_intersect_committed_chunk_identifier_sets_returns_sorted_shared_identifiers() -> None:
-    shared_chunk_identifiers = _core.intersect_committed_chunk_identifier_sets(
-        ((64, 0, 32), (32, 64, 96), (32, 128))
-    )
+    shared_chunk_identifiers = _core.intersect_committed_chunk_identifier_sets(((64, 0, 32), (32, 64, 96), (32, 128)))
 
     assert shared_chunk_identifiers == [32]
     assert _core.intersect_committed_chunk_identifier_sets(()) == []
 
 
 def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() -> None:
-    assert _core.resolve_delivery_callback_batch_size(
-        callback_batch_size=None,
-        variant_major_packed8_probability_pairs=False,
-    ) == 1
-    assert _core.resolve_delivery_callback_batch_size(
-        callback_batch_size=2,
-        variant_major_packed8_probability_pairs=False,
-    ) == 2
-    assert _core.resolve_delivery_callback_batch_size(
-        callback_batch_size=1,
-        variant_major_packed8_probability_pairs=True,
-    ) == 1
+    assert (
+        _core.resolve_delivery_callback_batch_size(
+            callback_batch_size=None,
+            variant_major_packed8_probability_pairs=False,
+        )
+        == 1
+    )
+    assert (
+        _core.resolve_delivery_callback_batch_size(
+            callback_batch_size=2,
+            variant_major_packed8_probability_pairs=False,
+        )
+        == 2
+    )
+    assert (
+        _core.resolve_delivery_callback_batch_size(
+            callback_batch_size=1,
+            variant_major_packed8_probability_pairs=True,
+        )
+        == 1
+    )
     with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):
         _core.resolve_delivery_callback_batch_size(
             callback_batch_size=0,
@@ -122,6 +129,64 @@ def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() 
         _core.resolve_delivery_callback_batch_size(
             callback_batch_size=2,
             variant_major_packed8_probability_pairs=True,
+        )
+
+
+def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
+    queue_limits = _core.resolve_native_callback_queue_limits(
+        staging_depth=3,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+    assert queue_limits.dosage_queue_depth == 3
+    assert queue_limits.result_queue_depth == 3
+    assert queue_limits.result_in_flight_limit == 4
+    assert queue_limits.dosage_buffer_limit == 4
+
+    explicit_queue_limits = _core.resolve_native_callback_queue_limits(
+        staging_depth=3,
+        native_callback_batch_size=2,
+        result_in_flight_limit=7,
+        dosage_buffer_limit=8,
+    )
+    assert explicit_queue_limits.result_in_flight_limit == 7
+    assert explicit_queue_limits.dosage_buffer_limit == 8
+
+    with pytest.raises(ValueError, match="staging_depth must be positive"):
+        _core.resolve_native_callback_queue_limits(
+            staging_depth=0,
+            native_callback_batch_size=1,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+        )
+    with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):
+        _core.resolve_native_callback_queue_limits(
+            staging_depth=1,
+            native_callback_batch_size=0,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+        )
+    with pytest.raises(ValueError, match="result_in_flight_limit must be positive"):
+        _core.resolve_native_callback_queue_limits(
+            staging_depth=1,
+            native_callback_batch_size=1,
+            result_in_flight_limit=0,
+            dosage_buffer_limit=None,
+        )
+    with pytest.raises(ValueError, match="dosage_buffer_limit must be positive"):
+        _core.resolve_native_callback_queue_limits(
+            staging_depth=1,
+            native_callback_batch_size=1,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=0,
+        )
+    with pytest.raises(ValueError, match="effective dosage_buffer_limit"):
+        _core.resolve_native_callback_queue_limits(
+            staging_depth=1,
+            native_callback_batch_size=3,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=2,
         )
 
 

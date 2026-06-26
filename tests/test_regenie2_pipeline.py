@@ -2396,6 +2396,71 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
     assert explicit_callback.dosage_buffer_limit == 8
 
 
+def test_native_bgen_callback_runner_uses_native_queue_limit_policy() -> None:
+    class ConcreteCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    resolved_limits = SimpleNamespace(
+        dosage_queue_depth=11,
+        result_queue_depth=12,
+        result_in_flight_limit=13,
+        dosage_buffer_limit=14,
+    )
+    with patch(
+        "g.engine.callbacks.runtime._core.resolve_native_callback_queue_limits",
+        return_value=resolved_limits,
+    ) as mock_resolver:
+        callback = ConcreteCallbackRunner(
+            worker_name="native-policy",
+            staging_depth=3,
+            native_callback_batch_size=5,
+            result_in_flight_limit=7,
+            dosage_buffer_limit=8,
+            stage_timing_recorder=None,
+            telemetry_session=None,
+            output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+        )
+
+    mock_resolver.assert_called_once_with(
+        staging_depth=3,
+        native_callback_batch_size=5,
+        result_in_flight_limit=7,
+        dosage_buffer_limit=8,
+    )
+    assert callback.dosage_queue_depth == 11
+    assert callback.result_queue_depth == 12
+    assert callback.result_in_flight_limit == 13
+    assert callback.dosage_buffer_limit == 14
+    assert callback.dosage_queue.maxsize == 11
+    assert callback.result_queue.maxsize == 12
+    assert callback.free_dosage_buffers.maxsize == 14
+
+
 def test_native_bgen_callback_runner_rejects_batch_size_above_dosage_buffer_limit() -> None:
     class ConcreteCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def compute_preprocessed_chunk(
