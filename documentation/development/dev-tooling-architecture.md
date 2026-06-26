@@ -12,6 +12,8 @@ The tooling package now has a small internal framework:
 - `tooling.common.reports` owns versioned JSON report validation.
 - `tooling.common.artifact_format` owns Tooling Artifact Format v1 report, manifest, metric, event, command, failure, finding, and comparison models.
 - `tooling.common.g_regenie` owns shared `g regenie` CLI rendering and Python API payload rendering.
+- `tooling.common.downloads` owns Pooch-backed retrieval, cache reuse, SHA-256 validation, archive processors, and download manifests for data and server-tool assets.
+- `tooling.profile_deep.models` owns the deep-profile enums and dataclasses so the profiler package can be split without circular imports through the CLI module.
 
 Benchmark and profiler code should use these contracts instead of rebuilding command vectors, report dictionaries, or grouped dispatch chains by hand.
 
@@ -26,6 +28,11 @@ hydra:
 ```
 
 This preserves the current repository-relative behavior of benchmark commands. Dataset paths still honor `GWAS_ENGINE_DATA_DIR`.
+
+Data and server-tool retrieval should go through the shared Pooch wrapper rather
+than calling `urllib`, `zipfile`, or `tarfile` directly. Tool-specific code may
+still own installation steps after retrieval, such as linking executables or
+extracting `.deb` payloads.
 
 The long-form usage and extension guide is `documentation/development/tooling.md`.
 
@@ -44,6 +51,9 @@ uv run --no-sync python -m tooling.cli.rust_build_profiles tool.labels=[dev-fast
 The build-profile harness writes timestamped JSON/Markdown summaries under
 `results/perf/rust-build-profiles/`, stores command logs beside each summary,
 and keeps per-profile Cargo artifacts isolated under `target/rust-build-profiles/`.
+Use `dev-fast-lld`, `dev-fast-mold`, `perf-thin-cgu8-lld`, and
+`perf-thin-cgu8-mold` when comparing alternative linkers against the default
+toolchain linker.
 
 Optional GPU smoke validation should run through SLURM rather than on the head node:
 

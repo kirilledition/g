@@ -10,12 +10,13 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from tooling.common import g_regenie as tooling_g_regenie
+    from tooling.profile_deep import models as profile_deep_models
 
 
 def build_g_step2_regenie_run_spec(
     *,
     baseline_paths: typing.Any,
-    candidate: profile_regenie2_deep.Step2Candidate,
+    candidate: profile_deep_models.Step2Candidate,
     output_prefix: Path,
     variant_limit: int | None,
     jax_cache_directory: Path | None,
@@ -35,7 +36,7 @@ def build_g_step2_regenie_run_spec(
 def build_g_step2_child_command(
     *,
     baseline_paths: typing.Any,
-    candidate: profile_regenie2_deep.Step2Candidate,
+    candidate: profile_deep_models.Step2Candidate,
     output_prefix: Path,
     variant_limit: int | None,
     cache_directory: Path | None = None,

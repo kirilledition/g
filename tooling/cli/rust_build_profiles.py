@@ -31,9 +31,13 @@ class BuildProfileLabel(enum.StrEnum):
     """Build profile labels accepted by the benchmark harness."""
 
     DEV_FAST = "dev-fast"
+    DEV_FAST_LLD = "dev-fast-lld"
+    DEV_FAST_MOLD = "dev-fast-mold"
     DEV_OPT = "dev-opt"
     RELEASE = "release"
     PERF_THIN_CGU8 = "perf-thin-cgu8"
+    PERF_THIN_CGU8_LLD = "perf-thin-cgu8-lld"
+    PERF_THIN_CGU8_MOLD = "perf-thin-cgu8-mold"
     PERF_THIN_CGU1 = "perf-thin-cgu1"
     PERF_FAT_CGU1 = "perf-fat-cgu1"
     PERF_O2_THIN_CGU8 = "perf-o2-thin-cgu8"
@@ -222,6 +226,16 @@ PROFILE_SPECS: dict[BuildProfileLabel, BuildProfileSpec] = {
         cargo_profile="dev-fast",
         rustflags="",
     ),
+    BuildProfileLabel.DEV_FAST_LLD: BuildProfileSpec(
+        label=BuildProfileLabel.DEV_FAST_LLD,
+        cargo_profile="dev-fast",
+        rustflags="-C link-arg=-fuse-ld=lld",
+    ),
+    BuildProfileLabel.DEV_FAST_MOLD: BuildProfileSpec(
+        label=BuildProfileLabel.DEV_FAST_MOLD,
+        cargo_profile="dev-fast",
+        rustflags="-C link-arg=-fuse-ld=mold",
+    ),
     BuildProfileLabel.DEV_OPT: BuildProfileSpec(
         label=BuildProfileLabel.DEV_OPT,
         cargo_profile="dev-opt",
@@ -236,6 +250,16 @@ PROFILE_SPECS: dict[BuildProfileLabel, BuildProfileSpec] = {
         label=BuildProfileLabel.PERF_THIN_CGU8,
         cargo_profile="perf",
         rustflags="-C target-cpu=native",
+    ),
+    BuildProfileLabel.PERF_THIN_CGU8_LLD: BuildProfileSpec(
+        label=BuildProfileLabel.PERF_THIN_CGU8_LLD,
+        cargo_profile="perf",
+        rustflags="-C target-cpu=native -C link-arg=-fuse-ld=lld",
+    ),
+    BuildProfileLabel.PERF_THIN_CGU8_MOLD: BuildProfileSpec(
+        label=BuildProfileLabel.PERF_THIN_CGU8_MOLD,
+        cargo_profile="perf",
+        rustflags="-C target-cpu=native -C link-arg=-fuse-ld=mold",
     ),
     BuildProfileLabel.PERF_THIN_CGU1: BuildProfileSpec(
         label=BuildProfileLabel.PERF_THIN_CGU1,
@@ -645,7 +669,9 @@ def benchmark_profile(
     smoke_timing = None
     bgen_reader_timing = None
     gpu_smoke_timing = None
+    extension_size_bytes = None
     if clean_build.return_code == 0:
+        extension_size_bytes = find_extension_size(repository_root, target_directory)
         runtime_command_reports = build_runtime_command_reports(
             arguments=arguments,
             repository_root=repository_root,
@@ -663,7 +689,7 @@ def benchmark_profile(
         target_directory=str(target_directory),
         clean_build=clean_build,
         incremental_builds=incremental_builds,
-        extension_size_bytes=find_extension_size(repository_root, target_directory),
+        extension_size_bytes=extension_size_bytes,
         import_timing=import_timing,
         smoke_timing=smoke_timing,
         bgen_reader_timing=bgen_reader_timing,
@@ -707,15 +733,17 @@ def build_markdown_report(report: RustBuildProfilesReport) -> str:
         "",
         f"Generated at: `{report.generated_at_utc}`",
         "",
-        "| label | cargo profile | clean | import | smoke | size bytes |",
-        "| --- | --- | ---: | ---: | ---: | ---: |",
+        "| label | cargo profile | rustflags | clean | import | smoke | size bytes |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for profile_report in report.reports:
         size_text = str(profile_report.extension_size_bytes) if profile_report.extension_size_bytes is not None else ""
+        rustflags_text = f"`{profile_report.rustflags}`" if profile_report.rustflags else ""
         lines.append(
             "| "
             f"{profile_report.label} | "
             f"{profile_report.cargo_profile} | "
+            f"{rustflags_text} | "
             f"{command_status_text(profile_report.clean_build)} | "
             f"{command_status_text(profile_report.import_timing)} | "
             f"{command_status_text(profile_report.smoke_timing)} | "

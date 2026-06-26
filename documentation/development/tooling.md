@@ -45,6 +45,7 @@ tooling/
     tune_regenie2_gpu.py
   common/
     commands.py
+    downloads.py
     hydra_arguments.py
     hydra_compat.py
     logging.py
@@ -347,7 +348,8 @@ just dev-install-nsight-tools
 `dev-install-profiling-tools` installs Python and native sampling profilers through
 `uv tool` and Cargo. `dev-install-nsight-tools` installs the Nsight Systems (`nsys`)
 and Nsight Compute (`ncu`) CLIs without root by reading NVIDIA's CUDA package
-index, verifying package SHA256 digests, and extracting the `.deb` payloads into
+index, retrieving packages through `tooling.common.downloads`, verifying package
+SHA256 digests through Pooch, and extracting the `.deb` payloads into
 `.tools/nsight`. It links `nsys` and `ncu` into `.tools/bin`, which
 `tooling/server/server_env.sh` already puts on `PATH`.
 On gauss/landau the recipe defaults `ncu` to the CUDA 12.2-compatible Nsight
@@ -370,6 +372,9 @@ Use `just bench-rust-build-profiles` when comparing native extension build
 profiles. The recipe is backed by `tooling/configs/rust_build_profiles.yaml`,
 writes reports under `results/perf/rust-build-profiles`, and configures build
 parallelism through `tooling/server/server_env.sh`.
+Linker comparison labels are available for `dev-fast` and the routine `perf`
+profile; missing or unsupported linker tooling is recorded as failed rows rather
+than changing the default build path.
 Scalene and Memray are Python profilers, so the harness runs them through
 `uv run --no-sync --with ...` when they are not importable in the project
 environment. This keeps JAX, Polars, and the installed `g` package visible to

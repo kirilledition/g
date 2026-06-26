@@ -402,8 +402,14 @@ environment diff recording, redaction, `cwd=REPOSITORY_ROOT` defaults, and shell
 
 ### P2 - Optional profiler/tool installation needs stricter operational controls
 
-Server downloads should have timeouts, stream to disk, record URL/hash/file size in an install manifest, and
-clean up partial downloads.
+Use Pooch for development-only download and fixture registries: `tooling.data.fetch`, server tool downloads where
+practical, test fixture downloads, benchmark dataset registries, prediction-list fixture registries, and external
+baseline data registries. Pooch should own retrieval, cache reuse, SHA-256 validation, and archive processors such
+as ZIP/tar extraction. Tool-specific code can still own install logic after retrieval, such as linking executables
+or extracting `.deb` payloads.
+
+Server downloads should have timeouts, stream to disk, record URL/hash/file size in an install manifest, and clean
+up partial downloads.
 
 ### P2 - Documentation should be generated or checked against registries
 

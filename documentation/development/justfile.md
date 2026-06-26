@@ -96,6 +96,9 @@ just bench-rust-build-profiles
 just slurm-gpu-bench-binary-hot
 ```
 
+`bench-rust-build-profiles` includes linker comparison labels for `dev-fast`
+and the routine `perf` profile when the requested linker tooling is available.
+
 Historical external baseline comparisons remain available under `legacy-*`:
 
 ```bash
