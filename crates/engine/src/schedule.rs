@@ -44,6 +44,8 @@ pub enum ScheduleError {
     NonPositiveCallbackBatchSize,
     #[error("native_callback_batch_size > 1 is not supported for packed8 BGEN delivery.")]
     Packed8CallbackBatchSize,
+    #[error("native_callback_batch_size > 1 is not supported for grouped union BGEN delivery.")]
+    GroupedUnionCallbackBatchSize,
     #[error("native_callback_batch_size must not exceed the effective dosage_buffer_limit ({dosage_buffer_limit}).")]
     CallbackBatchSizeExceedsDosageBufferLimit { dosage_buffer_limit: usize },
     #[error("result_in_flight_limit must be positive when provided.")]
@@ -100,6 +102,21 @@ pub fn resolve_delivery_callback_batch_size(
         .map_err(|_| ScheduleError::CallbackBatchSizeOverflow { callback_batch_size: requested_callback_batch_size })?;
     if variant_major_packed8_probability_pairs && resolved_callback_batch_size > 1 {
         return Err(ScheduleError::Packed8CallbackBatchSize);
+    }
+    Ok(resolved_callback_batch_size)
+}
+
+/// Resolve the callback batch size for grouped union BGEN delivery.
+///
+/// # Errors
+///
+/// Returns an error when the requested batch size is non-positive, cannot fit
+/// in `usize`, or requests grouped union callback batching, which is not
+/// supported.
+pub fn resolve_grouped_union_callback_batch_size(callback_batch_size: i64) -> Result<usize, ScheduleError> {
+    let resolved_callback_batch_size = resolve_delivery_callback_batch_size(Some(callback_batch_size), false)?;
+    if resolved_callback_batch_size > 1 {
+        return Err(ScheduleError::GroupedUnionCallbackBatchSize);
     }
     Ok(resolved_callback_batch_size)
 }
@@ -250,6 +267,23 @@ mod tests {
         assert_eq!(
             resolve_delivery_callback_batch_size(Some(2), true).unwrap_err(),
             ScheduleError::Packed8CallbackBatchSize,
+        );
+    }
+
+    #[test]
+    fn resolves_grouped_union_callback_batch_size() {
+        assert_eq!(resolve_grouped_union_callback_batch_size(1).unwrap(), 1);
+    }
+
+    #[test]
+    fn rejects_invalid_grouped_union_callback_batch_sizes() {
+        assert_eq!(
+            resolve_grouped_union_callback_batch_size(0).unwrap_err(),
+            ScheduleError::NonPositiveCallbackBatchSize,
+        );
+        assert_eq!(
+            resolve_grouped_union_callback_batch_size(2).unwrap_err(),
+            ScheduleError::GroupedUnionCallbackBatchSize,
         );
     }
 

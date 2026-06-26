@@ -1042,6 +1042,7 @@ def resolve_delivery_callback_batch_size(
     callback_batch_size: int | None,
     variant_major_packed8_probability_pairs: bool,
 ) -> int: ...
+def resolve_grouped_union_callback_batch_size(native_callback_batch_size: int) -> int: ...
 def resolve_native_callback_queue_limits(
     staging_depth: int,
     native_callback_batch_size: int,

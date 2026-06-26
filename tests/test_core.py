@@ -132,6 +132,14 @@ def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() 
         )
 
 
+def test_resolve_grouped_union_callback_batch_size_enforces_native_delivery_policy() -> None:
+    assert _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=1) == 1
+    with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):
+        _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=0)
+    with pytest.raises(ValueError, match="grouped union BGEN delivery"):
+        _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=2)
+
+
 def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
     queue_limits = _core.resolve_native_callback_queue_limits(
         staging_depth=3,

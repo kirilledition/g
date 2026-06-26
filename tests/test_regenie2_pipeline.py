@@ -29,6 +29,7 @@ import g.engine.native_dispatch.models as native_dispatch_models
 import g.engine.native_dispatch.writers as native_dispatch_writers
 import g.engine.regenie2_pipeline.context as pipeline_context
 import g.engine.regenie2_pipeline.gpu_format as pipeline_gpu_format
+import g.engine.regenie2_pipeline.grouped as pipeline_grouped
 import g.engine.regenie2_pipeline.multi_group as pipeline_multi_group
 import g.engine.regenie2_pipeline.multi_trait as pipeline_multi_trait
 import g.engine.regenie2_pipeline.outputs as pipeline_outputs
@@ -5325,6 +5326,33 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
         grouped_run_inputs[0].compute_group.prediction_alignment_fingerprint,
         grouped_run_inputs[0].compute_group.prediction_alignment_fingerprint,
     )
+
+
+def test_grouped_union_delivery_uses_native_callback_batch_size_policy() -> None:
+    with (
+        patch(
+            "g.engine.regenie2_pipeline.grouped._core.resolve_grouped_union_callback_batch_size",
+            side_effect=ValueError("native grouped union policy"),
+        ) as mock_resolver,
+        pytest.raises(ValueError, match="native grouped union policy"),
+    ):
+        pipeline_grouped.run_prepared_grouped_per_phenotype_union_bgen_pipeline(
+            context=typing.cast("typing.Any", object()),
+            engine=typing.cast("typing.Any", object()),
+            grouped_run_inputs=(),
+            phenotype_names=(),
+            output_run_paths_by_phenotype=(),
+            staging_depth=1,
+            native_callback_batch_size=2,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            existing_manifests=(),
+            resume=False,
+            resume_mode=types.ResumeMode.FAST,
+            null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.FAIL,
+        )
+
+    mock_resolver.assert_called_once_with(native_callback_batch_size=2)
 
 
 def test_grouped_per_phenotype_packed8_forces_trusted_delivery_and_manifests() -> None:

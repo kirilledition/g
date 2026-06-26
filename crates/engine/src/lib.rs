@@ -21,6 +21,6 @@ pub use preflight::{
 };
 pub use schedule::{
     BgenDeliveryMethod, NativeCallbackQueueLimits, ScheduleError, intersect_committed_chunk_identifier_sets,
-    resolve_bgen_delivery_method, resolve_delivery_callback_batch_size, resolve_native_callback_queue_limits,
-    resolve_writer_finish_thread_count,
+    resolve_bgen_delivery_method, resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
+    resolve_native_callback_queue_limits, resolve_writer_finish_thread_count,
 };

@@ -54,6 +54,12 @@ pub(crate) fn resolve_delivery_callback_batch_size(
 }
 
 #[pyfunction]
+pub(crate) fn resolve_grouped_union_callback_batch_size(native_callback_batch_size: i64) -> PyResult<usize> {
+    native_schedule::resolve_grouped_union_callback_batch_size(native_callback_batch_size)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
 pub(crate) fn resolve_native_callback_queue_limits(
     staging_depth: i64,
     native_callback_batch_size: i64,

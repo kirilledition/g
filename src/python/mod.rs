@@ -80,7 +80,8 @@ use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runt
 use runtime_state::NativeRuntimeState;
 use schedule::{
     NativeCallbackQueueLimits, intersect_committed_chunk_identifier_sets, resolve_bgen_delivery_method_value,
-    resolve_delivery_callback_batch_size, resolve_native_callback_queue_limits, resolve_writer_finish_thread_count,
+    resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
+    resolve_native_callback_queue_limits, resolve_writer_finish_thread_count,
 };
 use shutdown::{NativeShutdownController, build_shutdown_signal_payload};
 use telemetry_policy::{
@@ -1789,6 +1790,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_bgen_delivery_method_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_delivery_callback_batch_size, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_grouped_union_callback_batch_size, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_native_callback_queue_limits, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_writer_finish_thread_count, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
