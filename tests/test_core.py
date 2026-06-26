@@ -101,13 +101,79 @@ def test_intersect_committed_chunk_identifier_sets_returns_sorted_shared_identif
 
 
 def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() -> None:
-    assert _core.resolve_delivery_callback_batch_size(None, False) == 1
-    assert _core.resolve_delivery_callback_batch_size(2, False) == 2
-    assert _core.resolve_delivery_callback_batch_size(1, True) == 1
+    assert _core.resolve_delivery_callback_batch_size(
+        callback_batch_size=None,
+        variant_major_packed8_probability_pairs=False,
+    ) == 1
+    assert _core.resolve_delivery_callback_batch_size(
+        callback_batch_size=2,
+        variant_major_packed8_probability_pairs=False,
+    ) == 2
+    assert _core.resolve_delivery_callback_batch_size(
+        callback_batch_size=1,
+        variant_major_packed8_probability_pairs=True,
+    ) == 1
     with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):
-        _core.resolve_delivery_callback_batch_size(0, False)
+        _core.resolve_delivery_callback_batch_size(
+            callback_batch_size=0,
+            variant_major_packed8_probability_pairs=False,
+        )
     with pytest.raises(ValueError, match="packed8 BGEN delivery"):
-        _core.resolve_delivery_callback_batch_size(2, True)
+        _core.resolve_delivery_callback_batch_size(
+            callback_batch_size=2,
+            variant_major_packed8_probability_pairs=True,
+        )
+
+
+def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None:
+    assert (
+        _core.resolve_bgen_delivery_method_value(
+            variant_major_packed8_probability_pairs=False,
+            has_native_multi_aligned_sample_data=True,
+            has_native_aligned_sample_data=True,
+        )
+        == "dosage_native_multi_aligned_samples"
+    )
+    assert (
+        _core.resolve_bgen_delivery_method_value(
+            variant_major_packed8_probability_pairs=False,
+            has_native_multi_aligned_sample_data=False,
+            has_native_aligned_sample_data=True,
+        )
+        == "dosage_native_aligned_samples"
+    )
+    assert (
+        _core.resolve_bgen_delivery_method_value(
+            variant_major_packed8_probability_pairs=False,
+            has_native_multi_aligned_sample_data=False,
+            has_native_aligned_sample_data=False,
+        )
+        == "dosage_sample_indices"
+    )
+    assert (
+        _core.resolve_bgen_delivery_method_value(
+            variant_major_packed8_probability_pairs=True,
+            has_native_multi_aligned_sample_data=True,
+            has_native_aligned_sample_data=True,
+        )
+        == "packed8_native_multi_aligned_samples"
+    )
+    assert (
+        _core.resolve_bgen_delivery_method_value(
+            variant_major_packed8_probability_pairs=True,
+            has_native_multi_aligned_sample_data=False,
+            has_native_aligned_sample_data=True,
+        )
+        == "packed8_native_aligned_samples"
+    )
+    assert (
+        _core.resolve_bgen_delivery_method_value(
+            variant_major_packed8_probability_pairs=True,
+            has_native_multi_aligned_sample_data=False,
+            has_native_aligned_sample_data=False,
+        )
+        == "packed8_sample_indices"
+    )
 
 
 def test_resolve_writer_finish_thread_count_enforces_native_cleanup_policy() -> None:

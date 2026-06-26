@@ -1984,6 +1984,50 @@ def test_native_dosage_delivery_defaults_callback_batch_size_in_native_policy() 
     assert engine.callback_batch_size == 1
 
 
+def test_resolve_bgen_delivery_method_uses_native_selection_policy() -> None:
+    run_input = SimpleNamespace(
+        sample_indices=np.asarray([0, 1], dtype=np.int64),
+        native_multi_aligned_sample_data=SimpleNamespace(sample_indices=np.asarray([2, 3], dtype=np.int64)),
+        native_aligned_sample_data=SimpleNamespace(sample_indices=np.asarray([4, 5], dtype=np.int64)),
+    )
+
+    assert (
+        native_dispatch_delivery.resolve_bgen_delivery_method(
+            typing.cast("typing.Any", run_input),
+            variant_major_packed8_probability_pairs=False,
+        )
+        is native_dispatch_delivery.BgenDeliveryMethod.DOSAGE_NATIVE_MULTI_ALIGNED_SAMPLES
+    )
+    assert (
+        native_dispatch_delivery.resolve_bgen_delivery_method(
+            typing.cast("typing.Any", run_input),
+            variant_major_packed8_probability_pairs=True,
+        )
+        is native_dispatch_delivery.BgenDeliveryMethod.PACKED8_NATIVE_MULTI_ALIGNED_SAMPLES
+    )
+
+
+def test_native_dosage_delivery_prefers_native_multi_alignment() -> None:
+    engine = FakeRunEngine("study.bgen", chunk_size=32)
+    callback = SimpleNamespace()
+    run_input = SimpleNamespace(
+        sample_indices=np.asarray([0, 1], dtype=np.int64),
+        native_multi_aligned_sample_data=SimpleNamespace(sample_indices=np.asarray([2, 3], dtype=np.int64)),
+        native_aligned_sample_data=SimpleNamespace(sample_indices=np.asarray([4, 5], dtype=np.int64)),
+    )
+
+    processed_chunk_count = native_dispatch_delivery.run_variant_major_dosage_delivery(
+        engine=typing.cast("typing.Any", engine),
+        run_input=typing.cast("typing.Any", run_input),
+        callback=callback,
+        committed_chunk_identifier_list=[],
+    )
+
+    assert processed_chunk_count == 0
+    assert engine.run_arguments is not None
+    np.testing.assert_array_equal(engine.run_arguments[0], np.asarray([2, 3], dtype=np.int64))
+
+
 def test_native_packed8_delivery_rejects_callback_batch_size_above_one() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32)
     callback = SimpleNamespace(native_callback_batch_size=2)

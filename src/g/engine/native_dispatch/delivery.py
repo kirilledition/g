@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import logging
 import time
 import typing
@@ -16,14 +17,43 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class BgenDeliveryMethod(enum.StrEnum):
+    """Native BGEN delivery method selected by engine scheduling policy."""
+
+    DOSAGE_NATIVE_MULTI_ALIGNED_SAMPLES = "dosage_native_multi_aligned_samples"
+    DOSAGE_NATIVE_ALIGNED_SAMPLES = "dosage_native_aligned_samples"
+    DOSAGE_SAMPLE_INDICES = "dosage_sample_indices"
+    PACKED8_NATIVE_MULTI_ALIGNED_SAMPLES = "packed8_native_multi_aligned_samples"
+    PACKED8_NATIVE_ALIGNED_SAMPLES = "packed8_native_aligned_samples"
+    PACKED8_SAMPLE_INDICES = "packed8_sample_indices"
+
+
 def resolve_native_callback_batch_size(
     callback: object,
+    *,
     variant_major_packed8_probability_pairs: bool,
 ) -> int:
     """Return the validated native callback batch size for one callback object."""
     raw_callback_batch_size = getattr(callback, "native_callback_batch_size", None)
     callback_batch_size = None if raw_callback_batch_size is None else int(raw_callback_batch_size)
     return int(_core.resolve_delivery_callback_batch_size(callback_batch_size, variant_major_packed8_probability_pairs))
+
+
+def resolve_bgen_delivery_method(
+    run_input: models.BgenDeliveryRunInputProtocol,
+    *,
+    variant_major_packed8_probability_pairs: bool,
+) -> BgenDeliveryMethod:
+    """Resolve the native BGEN delivery method for one run input."""
+    native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
+    native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
+    return BgenDeliveryMethod(
+        _core.resolve_bgen_delivery_method_value(
+            variant_major_packed8_probability_pairs,
+            native_multi_aligned_sample_data is not None,
+            native_aligned_sample_data is not None,
+        )
+    )
 
 
 def run_variant_major_packed8_delivery(
@@ -36,7 +66,9 @@ def run_variant_major_packed8_delivery(
     """Run packed8 delivery using native sample alignment when available."""
     resolve_native_callback_batch_size(callback, variant_major_packed8_probability_pairs=True)
     native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
-    if native_multi_aligned_sample_data is not None:
+    native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
+    delivery_method = resolve_bgen_delivery_method(run_input, variant_major_packed8_probability_pairs=True)
+    if delivery_method is BgenDeliveryMethod.PACKED8_NATIVE_MULTI_ALIGNED_SAMPLES:
         return int(
             engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_multi_aligned_samples(
                 native_multi_aligned_sample_data,
@@ -44,8 +76,7 @@ def run_variant_major_packed8_delivery(
                 committed_chunk_identifiers=committed_chunk_identifier_list,
             )
         )
-    native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
-    if native_aligned_sample_data is not None:
+    if delivery_method is BgenDeliveryMethod.PACKED8_NATIVE_ALIGNED_SAMPLES:
         return int(
             engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_aligned_samples(
                 native_aligned_sample_data,
@@ -74,7 +105,9 @@ def run_variant_major_dosage_delivery(
         callback, variant_major_packed8_probability_pairs=False
     )
     native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
-    if native_multi_aligned_sample_data is not None:
+    native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
+    delivery_method = resolve_bgen_delivery_method(run_input, variant_major_packed8_probability_pairs=False)
+    if delivery_method is BgenDeliveryMethod.DOSAGE_NATIVE_MULTI_ALIGNED_SAMPLES:
         return int(
             engine.run_bgen_variant_major_dosage_buffered_chunks_for_native_multi_aligned_samples(
                 native_multi_aligned_sample_data,
@@ -83,8 +116,7 @@ def run_variant_major_dosage_delivery(
                 callback_batch_size=native_callback_batch_size,
             )
         )
-    native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
-    if native_aligned_sample_data is not None:
+    if delivery_method is BgenDeliveryMethod.DOSAGE_NATIVE_ALIGNED_SAMPLES:
         return int(
             engine.run_bgen_variant_major_dosage_buffered_chunks_for_native_aligned_samples(
                 native_aligned_sample_data,

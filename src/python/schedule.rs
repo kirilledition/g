@@ -31,6 +31,21 @@ pub(crate) fn resolve_delivery_callback_batch_size(
 }
 
 #[pyfunction]
+pub(crate) fn resolve_bgen_delivery_method_value(
+    variant_major_packed8_probability_pairs: bool,
+    has_native_multi_aligned_sample_data: bool,
+    has_native_aligned_sample_data: bool,
+) -> String {
+    native_schedule::resolve_bgen_delivery_method(
+        variant_major_packed8_probability_pairs,
+        has_native_multi_aligned_sample_data,
+        has_native_aligned_sample_data,
+    )
+    .as_value()
+    .to_string()
+}
+
+#[pyfunction]
 pub(crate) fn resolve_writer_finish_thread_count(
     writer_session_count: i64,
     requested_thread_count: i64,

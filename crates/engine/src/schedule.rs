@@ -4,6 +4,30 @@ use std::collections::BTreeSet;
 
 const DEFAULT_DELIVERY_CALLBACK_BATCH_SIZE: i64 = 1;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BgenDeliveryMethod {
+    DosageNativeMultiAlignedSamples,
+    DosageNativeAlignedSamples,
+    DosageSampleIndices,
+    Packed8NativeMultiAlignedSamples,
+    Packed8NativeAlignedSamples,
+    Packed8SampleIndices,
+}
+
+impl BgenDeliveryMethod {
+    #[must_use]
+    pub const fn as_value(self) -> &'static str {
+        match self {
+            Self::DosageNativeMultiAlignedSamples => "dosage_native_multi_aligned_samples",
+            Self::DosageNativeAlignedSamples => "dosage_native_aligned_samples",
+            Self::DosageSampleIndices => "dosage_sample_indices",
+            Self::Packed8NativeMultiAlignedSamples => "packed8_native_multi_aligned_samples",
+            Self::Packed8NativeAlignedSamples => "packed8_native_aligned_samples",
+            Self::Packed8SampleIndices => "packed8_sample_indices",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ScheduleError {
     #[error("native_callback_batch_size must be positive.")]
@@ -54,6 +78,26 @@ pub fn resolve_delivery_callback_batch_size(
         return Err(ScheduleError::Packed8CallbackBatchSize);
     }
     Ok(resolved_callback_batch_size)
+}
+
+#[must_use]
+pub const fn resolve_bgen_delivery_method(
+    variant_major_packed8_probability_pairs: bool,
+    has_native_multi_aligned_sample_data: bool,
+    has_native_aligned_sample_data: bool,
+) -> BgenDeliveryMethod {
+    match (
+        variant_major_packed8_probability_pairs,
+        has_native_multi_aligned_sample_data,
+        has_native_aligned_sample_data,
+    ) {
+        (true, true, _) => BgenDeliveryMethod::Packed8NativeMultiAlignedSamples,
+        (true, false, true) => BgenDeliveryMethod::Packed8NativeAlignedSamples,
+        (true, false, false) => BgenDeliveryMethod::Packed8SampleIndices,
+        (false, true, _) => BgenDeliveryMethod::DosageNativeMultiAlignedSamples,
+        (false, false, true) => BgenDeliveryMethod::DosageNativeAlignedSamples,
+        (false, false, false) => BgenDeliveryMethod::DosageSampleIndices,
+    }
 }
 
 /// Resolve the thread count used to finish output writer sessions.
@@ -143,5 +187,21 @@ mod tests {
             resolve_writer_finish_thread_count(1, 0).unwrap_err(),
             ScheduleError::NonPositiveWriterFinishThreadCount,
         );
+    }
+
+    #[test]
+    fn resolves_bgen_delivery_method_with_native_alignment_precedence() {
+        assert_eq!(
+            resolve_bgen_delivery_method(false, true, true),
+            BgenDeliveryMethod::DosageNativeMultiAlignedSamples,
+        );
+        assert_eq!(resolve_bgen_delivery_method(false, false, true), BgenDeliveryMethod::DosageNativeAlignedSamples,);
+        assert_eq!(resolve_bgen_delivery_method(false, false, false), BgenDeliveryMethod::DosageSampleIndices);
+        assert_eq!(
+            resolve_bgen_delivery_method(true, true, true),
+            BgenDeliveryMethod::Packed8NativeMultiAlignedSamples,
+        );
+        assert_eq!(resolve_bgen_delivery_method(true, false, true), BgenDeliveryMethod::Packed8NativeAlignedSamples,);
+        assert_eq!(resolve_bgen_delivery_method(true, false, false), BgenDeliveryMethod::Packed8SampleIndices,);
     }
 }

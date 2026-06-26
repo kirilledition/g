@@ -1023,6 +1023,11 @@ def resolve_preflight_variant_count(variant_count: int, variant_limit: int | Non
 def intersect_committed_chunk_identifier_sets(
     committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
 ) -> list[int]: ...
+def resolve_bgen_delivery_method_value(
+    variant_major_packed8_probability_pairs: bool,
+    has_native_multi_aligned_sample_data: bool,
+    has_native_aligned_sample_data: bool,
+) -> str: ...
 def resolve_delivery_callback_batch_size(
     callback_batch_size: int | None,
     variant_major_packed8_probability_pairs: bool,

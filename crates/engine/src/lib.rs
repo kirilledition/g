@@ -20,6 +20,6 @@ pub use preflight::{
     resolve_scanned_variant_count,
 };
 pub use schedule::{
-    ScheduleError, intersect_committed_chunk_identifier_sets, resolve_delivery_callback_batch_size,
-    resolve_writer_finish_thread_count,
+    BgenDeliveryMethod, ScheduleError, intersect_committed_chunk_identifier_sets, resolve_bgen_delivery_method,
+    resolve_delivery_callback_batch_size, resolve_writer_finish_thread_count,
 };
