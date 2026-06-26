@@ -65,6 +65,13 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   metadata payloads, profile summary payloads, and the logging/Rayon/JAX process
   runtime state handle. Root PyO3 adapters still own side effects and
   Python-only JAX setup until runtime handles move fully into Rust.
+- `crates/engine/src/` now owns the first native coordinator scaffold:
+  `RunPhase`, the `AssociationBackend` trait, typed batch/prediction/group
+  views, a deterministic fake backend, single-batch phase progression,
+  injected failure handling for every entered phase, backend trait-method
+  failure handling, and interruption handling. Production pipeline queues,
+  output writer lifecycle, cleanup, telemetry emission, and the PyO3/JAX
+  association backend remain later migration work.
 - `crates/interface/src/partial.rs` defines the typed partial TOML surface with Serde,
   optional fields, aliases, and unknown-key rejection.
 - `crates/interface/src/overlay.rs` decodes provenance and overlays defaults, user
