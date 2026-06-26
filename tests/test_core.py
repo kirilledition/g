@@ -219,6 +219,27 @@ def test_plan_dosage_buffer_reuse_uses_native_shape_policy() -> None:
     assert _core.plan_dosage_buffer_reuse(buffered_shape=(2, 3), expected_shape=(3, 2)) is None
 
 
+def test_native_dosage_buffer_pool_state_tracks_capacity_and_ownership() -> None:
+    buffer_pool_state = _core.NativeDosageBufferPoolState(buffer_limit=2)
+
+    assert buffer_pool_state.buffer_limit == 2
+    assert buffer_pool_state.allocated_count == 0
+    assert buffer_pool_state.buffer_identifiers == []
+    assert buffer_pool_state.has_available_slot() is True
+    assert buffer_pool_state.register_buffer(11) is True
+    assert buffer_pool_state.owns_buffer(11) is True
+    assert buffer_pool_state.register_buffer(11) is False
+    assert buffer_pool_state.register_buffer(7) is True
+    assert buffer_pool_state.allocated_count == 2
+    assert buffer_pool_state.buffer_identifiers == [7, 11]
+    assert buffer_pool_state.has_available_slot() is False
+    assert buffer_pool_state.register_buffer(13) is False
+    assert buffer_pool_state.discard_buffer(11) is True
+    assert buffer_pool_state.owns_buffer(11) is False
+    assert buffer_pool_state.has_available_slot() is True
+    assert buffer_pool_state.discard_buffer(99) is False
+
+
 def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None:
     assert (
         _core.resolve_bgen_delivery_method_value(

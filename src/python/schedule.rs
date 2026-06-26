@@ -27,6 +27,50 @@ pub(crate) struct NativeDosageBufferReusePlan {
     slice_dimensions: Vec<usize>,
 }
 
+#[pyclass]
+pub(crate) struct NativeDosageBufferPoolState {
+    inner: native_schedule::DosageBufferPoolState,
+}
+
+#[pymethods]
+impl NativeDosageBufferPoolState {
+    #[new]
+    fn new(buffer_limit: usize) -> Self {
+        Self { inner: native_schedule::DosageBufferPoolState::new(buffer_limit) }
+    }
+
+    #[getter]
+    fn buffer_limit(&self) -> usize {
+        self.inner.buffer_limit()
+    }
+
+    #[getter]
+    fn allocated_count(&self) -> usize {
+        self.inner.allocated_count()
+    }
+
+    #[getter]
+    fn buffer_identifiers(&self) -> Vec<usize> {
+        self.inner.buffer_identifiers()
+    }
+
+    fn has_available_slot(&self) -> bool {
+        self.inner.has_available_slot()
+    }
+
+    fn owns_buffer(&self, buffer_identifier: usize) -> bool {
+        self.inner.owns_buffer(buffer_identifier)
+    }
+
+    fn register_buffer(&mut self, buffer_identifier: usize) -> bool {
+        self.inner.register_buffer(buffer_identifier)
+    }
+
+    fn discard_buffer(&mut self, buffer_identifier: usize) -> bool {
+        self.inner.discard_buffer(buffer_identifier)
+    }
+}
+
 impl From<native_schedule::NativeCallbackQueueLimits> for NativeCallbackQueueLimits {
     fn from(queue_limits: native_schedule::NativeCallbackQueueLimits) -> Self {
         Self {

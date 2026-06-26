@@ -79,10 +79,10 @@ use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_t
 use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
 use runtime_state::NativeRuntimeState;
 use schedule::{
-    NativeCallbackQueueLimits, NativeDosageBufferReusePlan, intersect_committed_chunk_identifier_sets,
-    plan_dosage_buffer_reuse, resolve_bgen_delivery_method_value, resolve_delivery_callback_batch_size,
-    resolve_grouped_union_callback_batch_size, resolve_native_callback_queue_limits,
-    resolve_writer_finish_thread_count,
+    NativeCallbackQueueLimits, NativeDosageBufferPoolState, NativeDosageBufferReusePlan,
+    intersect_committed_chunk_identifier_sets, plan_dosage_buffer_reuse, resolve_bgen_delivery_method_value,
+    resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
+    resolve_native_callback_queue_limits, resolve_writer_finish_thread_count,
 };
 use shutdown::{NativeShutdownController, build_shutdown_signal_payload};
 use telemetry_policy::{
@@ -1744,6 +1744,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeAlignedSampleData>()?;
     module.add_class::<NativeBinaryCorrectionSummary>()?;
     module.add_class::<NativeCallbackQueueLimits>()?;
+    module.add_class::<NativeDosageBufferPoolState>()?;
     module.add_class::<NativeDosageBufferReusePlan>()?;
     module.add_class::<NativeGroupedAlignedSampleData>()?;
     module.add_class::<NativeInitializedOutputRun>()?;

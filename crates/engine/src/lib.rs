@@ -20,7 +20,7 @@ pub use preflight::{
     resolve_scanned_variant_count,
 };
 pub use schedule::{
-    BgenDeliveryMethod, DosageBufferReusePlan, NativeCallbackQueueLimits, ScheduleError,
+    BgenDeliveryMethod, DosageBufferPoolState, DosageBufferReusePlan, NativeCallbackQueueLimits, ScheduleError,
     intersect_committed_chunk_identifier_sets, plan_dosage_buffer_reuse, resolve_bgen_delivery_method,
     resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
     resolve_native_callback_queue_limits, resolve_writer_finish_thread_count,

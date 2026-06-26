@@ -1644,9 +1644,8 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         ] = queue.Queue()
         self.result_in_flight_slots = threading.BoundedSemaphore(2)
         self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
-        self.dosage_buffer_count = 0
-        self.dosage_buffer_identifiers: set[int] = set()
         self.dosage_buffer_limit = 2
+        self.dosage_buffer_pool = callback_runtime._core.NativeDosageBufferPoolState(self.dosage_buffer_limit)
         self.worker_error = None
         self.result_worker_error = None
         self.sample_major_metadata: list[object] = []
@@ -2100,6 +2099,23 @@ def test_native_callback_runner_reuses_and_replaces_host_dosage_buffers() -> Non
     assert id(first_limited_buffer) not in limited_callback.dosage_buffer_identifiers
     assert id(second_limited_buffer) in limited_callback.dosage_buffer_identifiers
     assert id(blocked_replacement) in limited_callback.dosage_buffer_identifiers
+
+
+def test_native_callback_runner_uses_native_dosage_buffer_pool_accounting() -> None:
+    callback = ManualCallbackRunner()
+
+    first_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    second_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=4)
+    assert callback.dosage_buffer_pool.allocated_count == 2
+    assert callback.dosage_buffer_pool.has_available_slot() is False
+    assert callback.dosage_buffer_pool.owns_buffer(id(first_buffer)) is True
+    assert callback.dosage_buffer_pool.owns_buffer(id(second_buffer)) is True
+
+    callback.discard_dosage_buffer_slot(first_buffer)
+
+    assert callback.dosage_buffer_pool.allocated_count == 1
+    assert callback.dosage_buffer_pool.has_available_slot() is True
+    assert callback.dosage_buffer_pool.owns_buffer(id(first_buffer)) is False
 
 
 def test_native_callback_runner_reuses_larger_host_dosage_buffer_as_view() -> None:

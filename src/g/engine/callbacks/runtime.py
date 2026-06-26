@@ -112,8 +112,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         )
         self.result_in_flight_slots = threading.BoundedSemaphore(self.result_in_flight_limit)
         self.free_dosage_buffers: queue.Queue[HostGenotypeBuffer] = queue.Queue(maxsize=self.dosage_buffer_limit)
-        self.dosage_buffer_count = 0
-        self.dosage_buffer_identifiers: set[int] = set()
+        self.dosage_buffer_pool = _core.NativeDosageBufferPoolState(self.dosage_buffer_limit)
         self.worker_error: BaseException | None = None
         self.result_worker_error: BaseException | None = None
         self.binary_correction_summary = _core.NativeBinaryCorrectionSummary()
@@ -148,6 +147,16 @@ class NativeBgenCallbackRunner(abc.ABC):
     def worker_threads_have_started(self) -> bool:
         """Return whether callback worker threads have been started."""
         return self.worker_threads_started
+
+    @property
+    def dosage_buffer_count(self) -> int:
+        """Return the native dosage-buffer pool allocation count."""
+        return self.dosage_buffer_pool.allocated_count
+
+    @property
+    def dosage_buffer_identifiers(self) -> set[int]:
+        """Return the native dosage-buffer pool ownership identifiers."""
+        return set(self.dosage_buffer_pool.buffer_identifiers)
 
     def record_stage_duration(self, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage using this runner's timing recorder."""
@@ -1020,10 +1029,10 @@ class NativeBgenCallbackRunner(abc.ABC):
                     )
                     return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
-                if self.dosage_buffer_count < self.dosage_buffer_limit:
+                if self.dosage_buffer_pool.has_available_slot():
                     return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
                 continue
-            if self.dosage_buffer_count < self.dosage_buffer_limit:
+            if self.dosage_buffer_pool.has_available_slot():
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
             with contextlib.suppress(queue.Empty):
                 if self.stage_timing_recorder is None:
@@ -1054,13 +1063,13 @@ class NativeBgenCallbackRunner(abc.ABC):
                     )
                     return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
-                if self.dosage_buffer_count < self.dosage_buffer_limit:
+                if self.dosage_buffer_pool.has_available_slot():
                     return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
 
     def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Return a processed host dosage buffer to the reusable pool."""
         dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
-        if id(dosage_buffer_owner) not in self.dosage_buffer_identifiers:
+        if not self.dosage_buffer_pool.owns_buffer(id(dosage_buffer_owner)):
             return
         try:
             self.free_dosage_buffers.put_nowait(dosage_buffer_owner)
@@ -1088,8 +1097,9 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> HostGenotypeBuffer:
         """Allocate and register one host genotype buffer slot."""
         dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
-        self.dosage_buffer_count += 1
-        self.dosage_buffer_identifiers.add(id(dosage_buffer))
+        if not self.dosage_buffer_pool.register_buffer(id(dosage_buffer)):
+            message = "Native dosage-buffer pool has no available slot for allocation."
+            raise RuntimeError(message)
         self.record_queue_operation(
             queue_name="dosage_buffer_pool",
             operation_name="allocate",
@@ -1102,11 +1112,8 @@ class NativeBgenCallbackRunner(abc.ABC):
     def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Remove one discarded host genotype buffer slot from pool accounting."""
         dosage_buffer_identifier = id(dosage_buffer)
-        if dosage_buffer_identifier not in self.dosage_buffer_identifiers:
+        if not self.dosage_buffer_pool.discard_buffer(dosage_buffer_identifier):
             return
-        self.dosage_buffer_identifiers.remove(dosage_buffer_identifier)
-        if self.dosage_buffer_count > 0:
-            self.dosage_buffer_count -= 1
         self.record_queue_operation(
             queue_name="dosage_buffer_pool",
             operation_name="discard",
@@ -1128,7 +1135,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         if isinstance(dosage_buffer, np.ndarray):
             host_dosage_buffer = typing.cast("HostGenotypeBuffer", dosage_buffer)
             dosage_buffer_owner = self._dosage_buffer_owner(host_dosage_buffer)
-            if id(dosage_buffer_owner) in self.dosage_buffer_identifiers:
+            if self.dosage_buffer_pool.owns_buffer(id(dosage_buffer_owner)):
                 return dosage_buffer_owner
         return None
 

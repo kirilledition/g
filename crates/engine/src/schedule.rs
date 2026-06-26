@@ -18,6 +18,55 @@ pub struct DosageBufferReusePlan {
     pub slice_dimensions: Vec<usize>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DosageBufferPoolState {
+    buffer_limit: usize,
+    buffer_identifiers: BTreeSet<usize>,
+}
+
+impl DosageBufferPoolState {
+    #[must_use]
+    pub fn new(buffer_limit: usize) -> Self {
+        Self { buffer_limit, buffer_identifiers: BTreeSet::new() }
+    }
+
+    #[must_use]
+    pub const fn buffer_limit(&self) -> usize {
+        self.buffer_limit
+    }
+
+    #[must_use]
+    pub fn allocated_count(&self) -> usize {
+        self.buffer_identifiers.len()
+    }
+
+    #[must_use]
+    pub fn buffer_identifiers(&self) -> Vec<usize> {
+        self.buffer_identifiers.iter().copied().collect()
+    }
+
+    #[must_use]
+    pub fn has_available_slot(&self) -> bool {
+        self.allocated_count() < self.buffer_limit
+    }
+
+    #[must_use]
+    pub fn owns_buffer(&self, buffer_identifier: usize) -> bool {
+        self.buffer_identifiers.contains(&buffer_identifier)
+    }
+
+    pub fn register_buffer(&mut self, buffer_identifier: usize) -> bool {
+        if !self.has_available_slot() || self.owns_buffer(buffer_identifier) {
+            return false;
+        }
+        self.buffer_identifiers.insert(buffer_identifier)
+    }
+
+    pub fn discard_buffer(&mut self, buffer_identifier: usize) -> bool {
+        self.buffer_identifiers.remove(&buffer_identifier)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BgenDeliveryMethod {
     DosageNativeMultiAlignedSamples,
@@ -327,6 +376,27 @@ mod tests {
     fn rejects_incompatible_dosage_buffer_reuse_shapes() {
         assert_eq!(plan_dosage_buffer_reuse(&[2, 3], &[2, 3, 1]), None);
         assert_eq!(plan_dosage_buffer_reuse(&[2, 3], &[3, 2]), None);
+    }
+
+    #[test]
+    fn tracks_dosage_buffer_pool_slots() {
+        let mut buffer_pool_state = DosageBufferPoolState::new(2);
+
+        assert_eq!(buffer_pool_state.buffer_limit(), 2);
+        assert_eq!(buffer_pool_state.allocated_count(), 0);
+        assert!(buffer_pool_state.has_available_slot());
+        assert!(buffer_pool_state.register_buffer(11));
+        assert!(buffer_pool_state.owns_buffer(11));
+        assert!(!buffer_pool_state.register_buffer(11));
+        assert!(buffer_pool_state.register_buffer(7));
+        assert_eq!(buffer_pool_state.allocated_count(), 2);
+        assert_eq!(buffer_pool_state.buffer_identifiers(), vec![7, 11]);
+        assert!(!buffer_pool_state.has_available_slot());
+        assert!(!buffer_pool_state.register_buffer(13));
+        assert!(buffer_pool_state.discard_buffer(11));
+        assert!(!buffer_pool_state.owns_buffer(11));
+        assert!(buffer_pool_state.has_available_slot());
+        assert!(!buffer_pool_state.discard_buffer(99));
     }
 
     #[test]
