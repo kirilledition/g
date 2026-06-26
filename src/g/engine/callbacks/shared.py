@@ -11,15 +11,17 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
+from g import _core
+
 if typing.TYPE_CHECKING:
-    from g import _core
     from g.compute.regenie2_binary import api as regenie2_binary
 
-DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
-RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
-GRACEFUL_DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS = 300.0
-GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 300.0
-WORKER_ABORT_STOP_TIMEOUT_SECONDS = 1.0
+WORKER_SHUTDOWN_TIMEOUTS = _core.resolve_native_callback_worker_shutdown_timeouts()
+DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS = WORKER_SHUTDOWN_TIMEOUTS.dosage_worker_join_timeout_seconds
+RESULT_WORKER_JOIN_TIMEOUT_SECONDS = WORKER_SHUTDOWN_TIMEOUTS.result_worker_join_timeout_seconds
+GRACEFUL_DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS = WORKER_SHUTDOWN_TIMEOUTS.graceful_dosage_worker_join_timeout_seconds
+GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS = WORKER_SHUTDOWN_TIMEOUTS.graceful_result_worker_join_timeout_seconds
+WORKER_ABORT_STOP_TIMEOUT_SECONDS = WORKER_SHUTDOWN_TIMEOUTS.worker_abort_stop_timeout_seconds
 logger = logging.getLogger(__name__)
 type HostGenotypeBuffer = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
 type HostOrDeviceFloatArray = jax.Array | npt.NDArray[np.float32]

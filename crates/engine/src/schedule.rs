@@ -141,6 +141,26 @@ impl CallbackWorkerLifecycleState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CallbackWorkerShutdownTimeouts {
+    pub dosage_worker_join_timeout_seconds: f64,
+    pub result_worker_join_timeout_seconds: f64,
+    pub graceful_dosage_worker_join_timeout_seconds: f64,
+    pub graceful_result_worker_join_timeout_seconds: f64,
+    pub worker_abort_stop_timeout_seconds: f64,
+}
+
+#[must_use]
+pub const fn callback_worker_shutdown_timeouts() -> CallbackWorkerShutdownTimeouts {
+    CallbackWorkerShutdownTimeouts {
+        dosage_worker_join_timeout_seconds: 60.0,
+        result_worker_join_timeout_seconds: 60.0,
+        graceful_dosage_worker_join_timeout_seconds: 300.0,
+        graceful_result_worker_join_timeout_seconds: 300.0,
+        worker_abort_stop_timeout_seconds: 1.0,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BgenDeliveryMethod {
     DosageNativeMultiAlignedSamples,
@@ -545,6 +565,20 @@ mod tests {
         assert!(lifecycle_state.mark_started());
         assert!(lifecycle_state.has_started());
         assert!(!lifecycle_state.mark_started());
+    }
+
+    #[test]
+    fn resolves_callback_worker_shutdown_timeouts() {
+        assert_eq!(
+            callback_worker_shutdown_timeouts(),
+            CallbackWorkerShutdownTimeouts {
+                dosage_worker_join_timeout_seconds: 60.0,
+                result_worker_join_timeout_seconds: 60.0,
+                graceful_dosage_worker_join_timeout_seconds: 300.0,
+                graceful_result_worker_join_timeout_seconds: 300.0,
+                worker_abort_stop_timeout_seconds: 1.0,
+            },
+        );
     }
 
     #[test]

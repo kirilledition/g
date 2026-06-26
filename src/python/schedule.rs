@@ -48,6 +48,11 @@ pub(crate) struct NativeCallbackWorkerLifecycleState {
     inner: native_schedule::CallbackWorkerLifecycleState,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerShutdownTimeouts {
+    inner: native_schedule::CallbackWorkerShutdownTimeouts,
+}
+
 #[pymethods]
 impl NativeDosageBufferPoolState {
     #[new]
@@ -134,6 +139,40 @@ impl NativeCallbackWorkerLifecycleState {
     }
 }
 
+#[pymethods]
+impl NativeCallbackWorkerShutdownTimeouts {
+    #[getter]
+    fn dosage_worker_join_timeout_seconds(&self) -> f64 {
+        self.inner.dosage_worker_join_timeout_seconds
+    }
+
+    #[getter]
+    fn result_worker_join_timeout_seconds(&self) -> f64 {
+        self.inner.result_worker_join_timeout_seconds
+    }
+
+    #[getter]
+    fn graceful_dosage_worker_join_timeout_seconds(&self) -> f64 {
+        self.inner.graceful_dosage_worker_join_timeout_seconds
+    }
+
+    #[getter]
+    fn graceful_result_worker_join_timeout_seconds(&self) -> f64 {
+        self.inner.graceful_result_worker_join_timeout_seconds
+    }
+
+    #[getter]
+    fn worker_abort_stop_timeout_seconds(&self) -> f64 {
+        self.inner.worker_abort_stop_timeout_seconds
+    }
+}
+
+impl From<native_schedule::CallbackWorkerShutdownTimeouts> for NativeCallbackWorkerShutdownTimeouts {
+    fn from(worker_shutdown_timeouts: native_schedule::CallbackWorkerShutdownTimeouts) -> Self {
+        Self { inner: worker_shutdown_timeouts }
+    }
+}
+
 impl From<native_schedule::NativeCallbackQueueLimits> for NativeCallbackQueueLimits {
     fn from(queue_limits: native_schedule::NativeCallbackQueueLimits) -> Self {
         Self {
@@ -201,6 +240,11 @@ pub(crate) fn resolve_native_callback_queue_limits(
     )
     .map(Into::into)
     .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn resolve_native_callback_worker_shutdown_timeouts() -> NativeCallbackWorkerShutdownTimeouts {
+    native_schedule::callback_worker_shutdown_timeouts().into()
 }
 
 #[pyfunction]

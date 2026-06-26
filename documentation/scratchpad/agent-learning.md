@@ -78,11 +78,12 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   policy, callback queue-limit policy, variant-major dosage batch handoff
   planning, result in-flight slot accounting, dosage-buffer pool accounting,
   dosage-buffer reuse shape planning, writer-finish thread cleanup policy,
-  callback worker lifecycle start state, and BGEN delivery method selection
-  also live in `g-engine`, with Python only extracting callback/input object
-  attributes, acquiring semaphores, allocating/slicing/owning NumPy buffers,
-  owning thread objects and join calls, invoking writer sessions, and calling
-  the selected PyO3 engine method. Python still owns NumPy array
+  callback worker lifecycle start state, callback worker shutdown timeout
+  policy, and BGEN delivery method selection also live in `g-engine`, with
+  Python only extracting callback/input object attributes, acquiring
+  semaphores, allocating/slicing/owning NumPy buffers, owning thread objects
+  and join calls, invoking writer sessions, and calling the selected PyO3
+  engine method. Python still owns NumPy array
   finite/rank/binary-shape validation while those array contracts are being
   migrated. Production queues, output writer lifecycle, cleanup, telemetry
   emission, and the PyO3/JAX association backend remain later migration work.

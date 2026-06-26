@@ -149,6 +149,16 @@ def test_native_callback_worker_lifecycle_state_tracks_start() -> None:
     assert lifecycle_state.mark_started() is False
 
 
+def test_resolve_native_callback_worker_shutdown_timeouts_returns_native_defaults() -> None:
+    worker_shutdown_timeouts = _core.resolve_native_callback_worker_shutdown_timeouts()
+
+    assert worker_shutdown_timeouts.dosage_worker_join_timeout_seconds == 60.0
+    assert worker_shutdown_timeouts.result_worker_join_timeout_seconds == 60.0
+    assert worker_shutdown_timeouts.graceful_dosage_worker_join_timeout_seconds == 300.0
+    assert worker_shutdown_timeouts.graceful_result_worker_join_timeout_seconds == 300.0
+    assert worker_shutdown_timeouts.worker_abort_stop_timeout_seconds == 1.0
+
+
 def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
     queue_limits = _core.resolve_native_callback_queue_limits(
         staging_depth=3,
