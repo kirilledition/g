@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import enum
 import hashlib
+import json
 import os
 import shutil
 import stat
@@ -60,6 +61,8 @@ JUST_VERSION = "1.51.0"
 RUST_TOOLCHAIN_VERSION = "1.96.0"
 RUSTUP_INIT_SHA256 = "4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
 RUSTUP_INIT_URL = "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init"
+DOWNLOAD_TIMEOUT_SECONDS = 60
+DOWNLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
 TOOL_ARCHIVES = (
     ToolArchive(
         tool_name="just",
@@ -141,19 +144,73 @@ def verify_sha256(download_path: Path, expected_sha256: str) -> None:
         raise RuntimeError(message)
 
 
+def download_manifest_path(download_path: Path) -> Path:
+    """Return the manifest path for a downloaded file."""
+    return download_path.with_name(f"{download_path.name}.manifest.json")
+
+
+def write_download_manifest(
+    *,
+    download_path: Path,
+    download_url: str,
+    expected_sha256: str,
+    actual_sha256: str,
+) -> None:
+    """Write a small manifest for an installed download artifact."""
+    manifest = {
+        "schema_version": 1,
+        "download_url": download_url,
+        "path": str(download_path),
+        "expected_sha256": expected_sha256,
+        "actual_sha256": actual_sha256,
+        "size_bytes": download_path.stat().st_size,
+    }
+    download_manifest_path(download_path).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def stream_download(download_url: str, temporary_download_path: Path) -> None:
+    """Stream a download to a temporary path."""
+    with (
+        urllib.request.urlopen(download_url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response,
+        temporary_download_path.open("wb") as file_handle,
+    ):
+        while True:
+            chunk = response.read(DOWNLOAD_CHUNK_SIZE_BYTES)
+            if not chunk:
+                break
+            file_handle.write(chunk)
+
+
 def download_file(download_url: str, download_path: Path, expected_sha256: str) -> None:
     """Download a file if missing or checksum-invalid."""
     if download_path.exists():
         verify_sha256(download_path, expected_sha256)
+        write_download_manifest(
+            download_path=download_path,
+            download_url=download_url,
+            expected_sha256=expected_sha256,
+            actual_sha256=calculate_sha256(download_path),
+        )
         print(f"Reusing {download_path}")
         return
 
     temporary_download_path = download_path.with_suffix(f"{download_path.suffix}.tmp")
     print(f"Downloading {download_url}")
-    with urllib.request.urlopen(download_url) as response:
-        temporary_download_path.write_bytes(response.read())
-    verify_sha256(temporary_download_path, expected_sha256)
-    temporary_download_path.replace(download_path)
+    try:
+        stream_download(download_url, temporary_download_path)
+        verify_sha256(temporary_download_path, expected_sha256)
+        temporary_download_path.replace(download_path)
+        write_download_manifest(
+            download_path=download_path,
+            download_url=download_url,
+            expected_sha256=expected_sha256,
+            actual_sha256=calculate_sha256(download_path),
+        )
+    except Exception:
+        temporary_download_path.unlink(missing_ok=True)
+        raise
 
 
 def make_executable(executable_path: Path) -> None:

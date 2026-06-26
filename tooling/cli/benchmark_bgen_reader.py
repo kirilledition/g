@@ -19,16 +19,12 @@ import tooling.configuration as tooling_configuration
 from g import _core
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
-from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
 from tooling.regenie import bgen_reader as regenie_bgen_reader
 
 if typing.TYPE_CHECKING:
     import omegaconf
-
-DEFAULT_DATA_DIRECTORY = tooling_paths.configured_data_directory()
-
 
 BenchmarkPathMode = regenie_bgen_reader.BenchmarkPathMode
 SampleSelectionMode = regenie_bgen_reader.SampleSelectionMode

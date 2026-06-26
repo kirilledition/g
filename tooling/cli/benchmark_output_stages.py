@@ -18,14 +18,12 @@ import tooling.configuration as tooling_configuration
 from g import api, types
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
-from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
 
 if typing.TYPE_CHECKING:
     import omegaconf
 
-DEFAULT_DATA_DIRECTORY = tooling_paths.configured_data_directory()
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/output_stages")
 DEFAULT_SINGLE_PHENOTYPE_NAME = "phenotype_continuous"
 OUTPUT_STAGE_TIMING_FILE_NAME = "output_stage_timings.json"

@@ -27,17 +27,37 @@ import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
 import tooling.configuration as tooling_configuration
 from tooling.benchmark import benchmark as baseline_benchmark
 from tooling.benchmark import comparison as comparison_benchmark
+from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import jax_cache as tooling_jax_cache
 from tooling.common import logging as tooling_logging
 from tooling.common import paths as tooling_paths
+from tooling.common import reports as tooling_reports
 
 if typing.TYPE_CHECKING:
     import omegaconf
 
 logger = logging.getLogger(__name__)
 REPOSITORY_ROOT = tooling_paths.find_repository_root(Path(__file__))
+ARTIFACT_MANIFEST_SCHEMA_VERSION = 2
+ARTIFACT_MANIFEST_CONTRACT = tooling_reports.VersionedReportContract(
+    schema_version=ARTIFACT_MANIFEST_SCHEMA_VERSION,
+    required_fields=(
+        "generated_at",
+        "output_directory",
+        "profiler_tools",
+        "input_files",
+        "regenie_baseline_scope",
+        "regenie_baseline_commands",
+        "artifact_paths",
+        "profiler_runs",
+        "skipped_profiles",
+    ),
+    optional_fields=(),
+    schema_field_name="schema_version",
+    reject_unknown_fields=True,
+)
 DEFAULT_OUTPUT_PARENT = Path("data/profiles")
 DEFAULT_VARIANT_COUNT = 418_943
 JAX_XLA_AUTOTUNE_CACHE = "xla_gpu_per_fusion_autotune_cache_dir"
@@ -1179,7 +1199,7 @@ def collect_artifact_manifest(
         baseline_commands = profile_plan.regenie_baseline_commands
         regenie_baseline_scope = profile_plan.regenie_baseline_scope
     return {
-        "schema_version": 2,
+        "schema_version": ARTIFACT_MANIFEST_SCHEMA_VERSION,
         "generated_at": datetime.now(UTC).isoformat(),
         "output_directory": str(output_directory),
         "profiler_tools": serialize_profiler_tool_status(profiler_tool_status),
@@ -1209,7 +1229,12 @@ def write_artifact_manifest(
         summary_payload=summary_payload,
         profile_plan=profile_plan,
     )
-    (output_directory / "artifact_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    tooling_reports.write_versioned_json_report(
+        output_directory / "artifact_manifest.json",
+        manifest,
+        ARTIFACT_MANIFEST_CONTRACT,
+        sort_keys=True,
+    )
 
 
 def command_output(
@@ -2070,31 +2095,20 @@ def build_g_step2_child_command(
     diagnostic_options: dict[str, object] | None = None,
 ) -> list[str]:
     """Build one isolated Python child command for a g REGENIE step 2 run."""
-    phenotype_path = baseline_paths.continuous_phenotype_path
-    phenotype_name = "phenotype_continuous"
-    prediction_path = baseline_paths.regenie_qt_prediction_list_path
-    binary_options_expression = "{}"
-    if candidate.trait_type == "binary":
-        phenotype_path = baseline_paths.binary_phenotype_path
-        phenotype_name = "phenotype_binary"
-        prediction_path = baseline_paths.regenie_prediction_list_path
-        binary_options_expression = '{"firth": True, "approx": True}'
-    variant_limit_expression = "None" if variant_limit is None else str(variant_limit)
     jax_cache_directory = resolve_profile_jax_cache_directory(candidate, cache_directory)
-    jax_cache_directory_expression = "None" if jax_cache_directory is None else repr(str(jax_cache_directory))
-    bgen_tile_expression = (
-        "64" if candidate.bgen_decode_tile_variant_count is None else str(candidate.bgen_decode_tile_variant_count)
+    regenie_run_spec = build_g_step2_regenie_run_spec(
+        baseline_paths=baseline_paths,
+        candidate=candidate,
+        output_prefix=output_prefix,
+        variant_limit=variant_limit,
+        jax_cache_directory=jax_cache_directory,
+        stage_timing_path=stage_timing_path,
     )
-    result_in_flight_limit_expression = (
-        "None" if candidate.result_in_flight_limit is None else str(candidate.result_in_flight_limit)
-    )
-    dosage_buffer_limit_expression = (
-        "None" if candidate.dosage_buffer_limit is None else str(candidate.dosage_buffer_limit)
-    )
-    native_callback_batch_size = candidate.native_callback_batch_size
-    firth_batch_expression = "1024" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
-    rayon_thread_expression = "None" if candidate.rayon_thread_count is None else str(candidate.rayon_thread_count)
-    diagnostic_options_expression = repr(diagnostic_options or {})
+    regenie_options = tooling_g_regenie.render_python_api_options(regenie_run_spec)
+    rendered_diagnostics = typing.cast("dict[str, object]", regenie_options.setdefault("diagnostics", {}))
+    rendered_diagnostics.update(diagnostic_options or {})
+    regenie_options_payload = json.dumps(tooling_reports.to_jsonable(regenie_options), sort_keys=True)
+    jax_cache_directory_payload = str(jax_cache_directory) if jax_cache_directory is not None else None
     child_code = textwrap.dedent(
         """
         import json
@@ -2148,50 +2162,7 @@ def build_g_step2_child_command(
             jax.profiler.start_trace(trace_directory)
         try:
             start_time = time.perf_counter()
-            diagnostics_options = dict({diagnostic_options_expression})
-            if {stage_timing_path!r} is not None:
-                diagnostics_options["stage_timings_json"] = {stage_timing_path!r}
-            compute_options = {{
-                "device": {device!r},
-                "staging_depth": {staging_depth},
-                "native_callback_batch_size": {native_callback_batch_size},
-                "bgen_decode_tile_variant_count": {bgen_tile_expression},
-                "firth_batch_size": {firth_batch_expression},
-                "jax_persistent_cache": True,
-                "jax_persistent_cache_min_entry_size_bytes": -1,
-                "jax_persistent_cache_min_compile_time_seconds": 0,
-                "jax_xla_autotune_cache": {enable_xla_autotune_cache},
-            }}
-            if {variant_limit_expression} is not None:
-                compute_options["variant_limit"] = {variant_limit_expression}
-            if {result_in_flight_limit_expression} is not None:
-                compute_options["result_in_flight_limit"] = {result_in_flight_limit_expression}
-            if {dosage_buffer_limit_expression} is not None:
-                compute_options["dosage_buffer_limit"] = {dosage_buffer_limit_expression}
-            if {jax_cache_directory_expression} is not None:
-                compute_options["jax_cache_dir"] = {jax_cache_directory_expression}
-            regenie_options = {{
-                "step": 2,
-                "bt" if {trait_type!r} == "binary" else "qt": True,
-                "bgen": {bgen_path!r},
-                "sample": {sample_path!r},
-                "phenoFile": {phenotype_path!r},
-                "phenoCol": {phenotype_name!r},
-                "out": {output_prefix!r},
-                "covarFile": {covariate_path!r},
-                "covarColList": "age,sex",
-                "pred": {prediction_path!r},
-                "bsize": {chunk_size},
-                "threads": {rayon_thread_expression},
-                "compute": compute_options,
-                "output": {{
-                    "format": "parquet",
-                    "writer_threads": {writer_thread_count},
-                    "writer_queue_depth": {writer_queue_depth},
-                }},
-                "diagnostics": diagnostics_options,
-                **{binary_options_expression},
-            }}
+            regenie_options = json.loads({regenie_options_payload!r})
             artifacts = api.regenie.from_options(regenie_options)
             wall_time_seconds = time.perf_counter() - start_time
             output_row_count, output_paths = count_artifact_rows(artifacts)
@@ -2207,7 +2178,7 @@ def build_g_step2_child_command(
                 "jax_devices": [str(device) for device in jax.devices()],
                 "jax_probe_device": str(probe_device),
                 "jax_probe_device_platform": getattr(probe_device, "platform", None),
-                "jax_cache_directory": {jax_cache_directory_expression},
+                "jax_cache_directory": {jax_cache_directory_payload!r},
                 "jax_persistent_cache_used": True,
             }}))
         finally:
@@ -2217,33 +2188,103 @@ def build_g_step2_child_command(
     ).format(
         trace_directory=str(trace_directory) if trace_directory is not None else None,
         memory_profile_path=str(memory_profile_path) if memory_profile_path is not None else None,
-        bgen_path=str(baseline_paths.bgen_path),
-        sample_path=str(baseline_paths.sample_path),
-        phenotype_path=str(phenotype_path),
-        phenotype_name=phenotype_name,
-        output_prefix=str(output_prefix),
-        covariate_path=str(baseline_paths.covariate_path),
-        prediction_path=str(prediction_path),
-        trait_type=candidate.trait_type,
-        device=candidate.device,
-        chunk_size=candidate.chunk_size,
-        variant_limit_expression=variant_limit_expression,
-        staging_depth=candidate.staging_depth,
-        native_callback_batch_size=native_callback_batch_size,
-        result_in_flight_limit_expression=result_in_flight_limit_expression,
-        dosage_buffer_limit_expression=dosage_buffer_limit_expression,
-        writer_thread_count=candidate.output_writer_thread_count,
-        writer_queue_depth=candidate.output_writer_queue_depth,
-        bgen_tile_expression=bgen_tile_expression,
-        firth_batch_expression=firth_batch_expression,
-        rayon_thread_expression=rayon_thread_expression,
-        jax_cache_directory_expression=jax_cache_directory_expression,
-        enable_xla_autotune_cache=ENABLE_XLA_AUTOTUNE_CACHE,
-        stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
-        diagnostic_options_expression=diagnostic_options_expression,
-        binary_options_expression=binary_options_expression,
+        regenie_options_payload=regenie_options_payload,
+        jax_cache_directory_payload=jax_cache_directory_payload,
     )
     return [sys.executable, "-c", child_code]
+
+
+def build_g_step2_regenie_run_spec(
+    *,
+    baseline_paths: typing.Any,
+    candidate: Step2Candidate,
+    output_prefix: Path,
+    variant_limit: int | None,
+    jax_cache_directory: Path | None,
+    stage_timing_path: Path | None,
+) -> tooling_g_regenie.RegenieRunSpec:
+    """Build the shared REGENIE run spec for a deep-profile child command."""
+    is_binary_trait = candidate.trait_type == "binary"
+    phenotype_path = (
+        baseline_paths.binary_phenotype_path if is_binary_trait else baseline_paths.continuous_phenotype_path
+    )
+    phenotype_name = "phenotype_binary" if is_binary_trait else "phenotype_continuous"
+    prediction_path = (
+        baseline_paths.regenie_prediction_list_path
+        if is_binary_trait
+        else baseline_paths.regenie_qt_prediction_list_path
+    )
+    return tooling_g_regenie.RegenieRunSpec(
+        trait_kind=(
+            tooling_g_regenie.RegenieTraitKind.BINARY
+            if is_binary_trait
+            else tooling_g_regenie.RegenieTraitKind.QUANTITATIVE
+        ),
+        command_prefix=(sys.executable, "-m", "g", "regenie"),
+        inputs=tooling_g_regenie.RegenieInputSpec(
+            bgen_path=baseline_paths.bgen_path,
+            sample_path=baseline_paths.sample_path,
+            phenotype_path=phenotype_path,
+            phenotype_columns=(phenotype_name,),
+            covariate_path=baseline_paths.covariate_path,
+            covariate_columns=("age", "sex"),
+            prediction_list_path=prediction_path,
+            output_prefix=output_prefix,
+        ),
+        compute=tooling_g_regenie.RegenieComputeOptions(
+            device=tooling_g_regenie.RegenieDevice(candidate.device),
+            bsize=candidate.chunk_size,
+            threads=candidate.rayon_thread_count,
+            staging_depth=candidate.staging_depth,
+            native_callback_batch_size=candidate.native_callback_batch_size,
+            result_in_flight_limit=candidate.result_in_flight_limit,
+            dosage_buffer_limit=candidate.dosage_buffer_limit,
+            variant_limit=variant_limit,
+            trusted_no_missing_diploid=None,
+            trusted_bgen_validation_mode=None,
+            bgen_decode_tile_variant_count=candidate.bgen_decode_tile_variant_count or 64,
+            firth_batch_size=candidate.firth_batch_size or 1024,
+            firth_candidate_capacity=None,
+            gpu_genotype_format=None,
+            jax_cache_dir=jax_cache_directory,
+            jax_persistent_cache=True,
+            jax_persistent_cache_min_entry_size_bytes=-1,
+            jax_persistent_cache_min_compile_time_seconds=0,
+            jax_xla_autotune_cache=ENABLE_XLA_AUTOTUNE_CACHE,
+        ),
+        output=tooling_g_regenie.RegenieOutputOptions(
+            output_format="parquet",
+            output_run_directory=None,
+            writer_threads=candidate.output_writer_thread_count,
+            writer_queue_depth=candidate.output_writer_queue_depth,
+            chunks_per_arrow_file=None,
+            arrow_compression=None,
+            parquet_compression=None,
+            output_statistic_dtype=None,
+            finalize_parquet=None,
+        ),
+        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(
+            telemetry=None,
+            log_dir=None,
+            stage_timings_json=stage_timing_path,
+            profile_summary_json=None,
+            log_file=None,
+            log_filter=None,
+            log_stderr=None,
+            progress_interval_seconds=None,
+            progress_interval_chunks=None,
+        ),
+        binary=(
+            tooling_g_regenie.RegenieBinaryOptions(
+                firth=True,
+                approx=True,
+                firth_se=None,
+                p_threshold=None,
+            )
+            if is_binary_trait
+            else None
+        ),
+    )
 
 
 def build_application_output_run_directory(output_prefix: Path) -> Path:
@@ -3280,22 +3321,32 @@ def candidate_from_aggregate_name(winner_key: str, aggregate_result: AggregateRe
     command = trial.command_arguments
     code = command[2] if len(command) >= 3 and command[1] == "-c" else ""
 
-    def read_int(marker: str, default_value: int) -> int:
-        marker_index = code.find(marker)
-        if marker_index < 0:
-            return default_value
-        value_start = marker_index + len(marker)
-        value_end = code.find(",", value_start)
-        return int(code[value_start:value_end].strip())
-
-    def read_optional_int(marker: str) -> int | None:
+    def read_scalar(marker: str) -> str | None:
         marker_index = code.find(marker)
         if marker_index < 0:
             return None
         value_start = marker_index + len(marker)
-        value_end = code.find(",", value_start)
-        raw_value = code[value_start:value_end].strip()
-        if raw_value == "None":
+        value_end_candidates = [
+            candidate_index
+            for candidate_index in (
+                code.find(",", value_start),
+                code.find("}", value_start),
+                code.find("\n", value_start),
+            )
+            if candidate_index >= 0
+        ]
+        value_end = min(value_end_candidates) if value_end_candidates else len(code)
+        return code[value_start:value_end].strip()
+
+    def read_int(marker: str, default_value: int) -> int:
+        raw_value = read_scalar(marker)
+        if raw_value is None:
+            return default_value
+        return int(raw_value)
+
+    def read_optional_int(marker: str) -> int | None:
+        raw_value = read_scalar(marker)
+        if raw_value is None or raw_value in {"None", "null"}:
             return None
         return int(raw_value)
 

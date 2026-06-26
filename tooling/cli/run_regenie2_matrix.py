@@ -17,6 +17,7 @@ from pathlib import Path
 import hydra
 
 import tooling.configuration as tooling_configuration
+from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import jax_cache as tooling_jax_cache
@@ -27,6 +28,22 @@ from tooling.common import reports as tooling_reports
 logger = logging.getLogger(__name__)
 REPOSITORY_ROOT = tooling_paths.find_repository_root(Path(__file__))
 DEFAULT_OUTPUT_PARENT = Path("data/benchmarks")
+MATRIX_MANIFEST_SCHEMA_VERSION = 1
+MATRIX_MANIFEST_CONTRACT = tooling_reports.VersionedReportContract(
+    schema_version=MATRIX_MANIFEST_SCHEMA_VERSION,
+    required_fields=(
+        "tool",
+        "created_at_utc",
+        "dry_run",
+        "configuration",
+        "previous_manifest_path",
+        "runs",
+        "comparisons",
+    ),
+    optional_fields=(),
+    schema_field_name="schema_version",
+    reject_unknown_fields=True,
+)
 
 if typing.TYPE_CHECKING:
     import omegaconf
@@ -319,27 +336,6 @@ def build_arguments_from_overrides(
     return build_arguments_from_config(config)
 
 
-def append_optional_option(command_arguments: list[str], option_name: str, value: object | None) -> None:
-    """Append an option and value when the value is present."""
-    if value is None:
-        return
-    command_arguments.extend([option_name, str(value)])
-
-
-def append_boolean_flag(
-    command_arguments: list[str],
-    *,
-    enabled: bool,
-    enabled_flag: str,
-    disabled_flag: str | None = None,
-) -> None:
-    """Append a CLI boolean flag."""
-    if enabled:
-        command_arguments.append(enabled_flag)
-    elif disabled_flag is not None:
-        command_arguments.append(disabled_flag)
-
-
 def resolve_jax_cache_directory_for_mode(arguments: MatrixArguments, mode: ExecutionMode) -> Path:
     """Resolve the persistent JAX cache directory for one matrix execution mode."""
     if mode == ExecutionMode.CPU:
@@ -347,45 +343,18 @@ def resolve_jax_cache_directory_for_mode(arguments: MatrixArguments, mode: Execu
     return arguments.jax_cache_directory / "gpu"
 
 
-def build_trait_arguments(arguments: MatrixArguments, trait: TraitKind) -> list[str]:
-    """Build trait-specific g regenie arguments."""
-    if trait == TraitKind.BINARY:
-        command_arguments = [
-            "--bt",
-            "--phenoFile",
-            str(arguments.binary_phenotype_path),
-            "--phenoCol",
-            arguments.binary_phenotype_column,
-            "--pred",
-            str(arguments.binary_prediction_list_path),
-            "--pThresh",
-            str(arguments.binary_p_threshold),
-        ]
-        append_boolean_flag(command_arguments, enabled=arguments.binary_firth, enabled_flag="--firth")
-        append_boolean_flag(command_arguments, enabled=arguments.binary_approx, enabled_flag="--approx")
-        append_optional_option(command_arguments, "--firth_batch_size", arguments.binary_firth_batch_size)
-        append_optional_option(
-            command_arguments,
-            "--firth_candidate_capacity",
-            arguments.binary_firth_candidate_capacity,
-        )
-        return command_arguments
-    return [
-        "--qt",
-        "--phenoFile",
-        str(arguments.linear_phenotype_path),
-        "--phenoCol",
-        arguments.linear_phenotype_column,
-        "--pred",
-        str(arguments.linear_prediction_list_path),
-    ]
-
-
 def output_run_directory_for_spec(arguments: MatrixArguments, output_prefix: Path, trait: TraitKind) -> Path:
     """Infer the single-phenotype output run directory for a spec."""
-    if trait == TraitKind.BINARY:
-        return Path(f"{output_prefix}.g") / f"{arguments.binary_phenotype_column}.regenie2_binary.run"
-    return Path(f"{output_prefix}.g") / f"{arguments.linear_phenotype_column}.regenie2_linear.run"
+    run_spec = build_regenie_run_spec(
+        arguments=arguments,
+        trait=trait,
+        mode=ExecutionMode.CPU,
+        output_prefix=output_prefix,
+        stage_timing_path=Path("stage_timings.json"),
+        profile_summary_path=Path("profile_summary.json"),
+        event_log_path=Path("events.jsonl"),
+    )
+    return tooling_g_regenie.expected_output_run_directory(run_spec)
 
 
 def build_environment_overrides() -> dict[str, str]:
@@ -403,104 +372,119 @@ def build_environment_overrides() -> dict[str, str]:
 
 def build_run_command(arguments: MatrixArguments, spec: RunSpec) -> list[str]:
     """Build the full command arguments for a run spec."""
-    command_arguments = list(arguments.runner_prefix)
-    command_arguments.extend(
-        [
-            "--step",
-            "2",
-            "--bgen",
-            str(arguments.bgen_path),
-            "--sample",
-            str(arguments.sample_path),
-            "--covarFile",
-            str(arguments.covariate_path),
-            "--covarColList",
-            arguments.covariate_columns,
-            "--out",
-            str(spec.output_prefix),
-            "--device",
-            "cpu" if spec.mode == ExecutionMode.CPU else "gpu",
-            "--bsize",
-            str(arguments.chunk_size),
-            "--staging_depth",
-            str(arguments.staging_depth),
-            "--format",
-            arguments.output_format,
-            "--writer_threads",
-            str(arguments.output_writer_thread_count),
-            "--writer_queue_depth",
-            str(arguments.output_writer_queue_depth),
-            "--stage_timings_json",
-            str(spec.stage_timing_path),
-            "--profile_summary_json",
-            str(spec.profile_summary_path),
-            "--log_dir",
-            str(spec.event_log_path.parent),
-            "--log_file",
-            str(spec.event_log_path),
-            "--telemetry",
-            arguments.telemetry_mode,
-            "--log_filter",
-            arguments.log_filter,
-            "--progress_interval_seconds",
-            str(arguments.progress_interval_seconds),
-            "--progress_interval_chunks",
-            str(arguments.progress_interval_chunks),
-            "--trusted_bgen_validation_mode",
-            arguments.trusted_bgen_validation_mode,
-        ]
+    regenie_run_spec = build_regenie_run_spec(
+        arguments=arguments,
+        trait=spec.trait,
+        mode=spec.mode,
+        output_prefix=spec.output_prefix,
+        stage_timing_path=spec.stage_timing_path,
+        profile_summary_path=spec.profile_summary_path,
+        event_log_path=spec.event_log_path,
     )
-    command_arguments.extend(build_trait_arguments(arguments, spec.trait))
-    append_optional_option(command_arguments, "--variant_limit", arguments.variant_limit)
-    append_optional_option(command_arguments, "--threads", arguments.cpu_threads)
-    append_boolean_flag(
-        command_arguments,
-        enabled=arguments.trusted_no_missing_diploid,
-        enabled_flag="--trusted_no_missing_diploid",
-        disabled_flag="--no-trusted_no_missing_diploid",
-    )
-    append_boolean_flag(
-        command_arguments,
-        enabled=arguments.finalize_parquet,
-        enabled_flag="--finalize_parquet",
-        disabled_flag="--no-finalize_parquet",
-    )
-    append_boolean_flag(
-        command_arguments,
-        enabled=arguments.log_stderr,
-        enabled_flag="--log_stderr",
-        disabled_flag="--no-log_stderr",
-    )
+    return tooling_g_regenie.render_g_regenie_cli(regenie_run_spec)
+
+
+def build_regenie_run_spec(
+    *,
+    arguments: MatrixArguments,
+    trait: TraitKind,
+    mode: ExecutionMode,
+    output_prefix: Path,
+    stage_timing_path: Path,
+    profile_summary_path: Path,
+    event_log_path: Path,
+) -> tooling_g_regenie.RegenieRunSpec:
+    """Build the shared REGENIE run spec for one matrix entry."""
     persistent_cache_enabled = (
-        arguments.cpu_jax_persistent_cache if spec.mode == ExecutionMode.CPU else arguments.gpu_jax_persistent_cache
+        arguments.cpu_jax_persistent_cache if mode == ExecutionMode.CPU else arguments.gpu_jax_persistent_cache
     )
-    append_boolean_flag(
-        command_arguments,
-        enabled=persistent_cache_enabled,
-        enabled_flag="--jax_persistent_cache",
-        disabled_flag="--no-jax_persistent_cache",
+    cache_directory = resolve_jax_cache_directory_for_mode(arguments, mode) if persistent_cache_enabled else None
+    is_binary_trait = trait == TraitKind.BINARY
+    phenotype_path = arguments.binary_phenotype_path if is_binary_trait else arguments.linear_phenotype_path
+    phenotype_column = arguments.binary_phenotype_column if is_binary_trait else arguments.linear_phenotype_column
+    prediction_list_path = (
+        arguments.binary_prediction_list_path if is_binary_trait else arguments.linear_prediction_list_path
     )
-    if persistent_cache_enabled:
-        cache_directory = resolve_jax_cache_directory_for_mode(arguments, spec.mode)
-        command_arguments.extend(
-            [
-                "--jax_cache_dir",
-                str(cache_directory),
-                "--jax_persistent_cache_min_entry_size_bytes",
-                str(arguments.jax_persistent_cache_min_entry_size_bytes),
-                "--jax_persistent_cache_min_compile_time_seconds",
-                str(arguments.jax_persistent_cache_min_compile_time_seconds),
-            ]
+    binary_options = (
+        tooling_g_regenie.RegenieBinaryOptions(
+            firth=arguments.binary_firth,
+            approx=arguments.binary_approx,
+            firth_se=None,
+            p_threshold=arguments.binary_p_threshold,
         )
-    if spec.mode != ExecutionMode.CPU:
-        command_arguments.extend(["--gpu_genotype_format", arguments.gpu_genotype_format])
-        append_boolean_flag(
-            command_arguments,
-            enabled=arguments.jax_xla_autotune_cache,
-            enabled_flag="--jax_xla_autotune_cache",
-            disabled_flag="--no-jax_xla_autotune_cache",
-        )
-    return command_arguments
+        if is_binary_trait
+        else None
+    )
+    return tooling_g_regenie.RegenieRunSpec(
+        trait_kind=(
+            tooling_g_regenie.RegenieTraitKind.BINARY
+            if is_binary_trait
+            else tooling_g_regenie.RegenieTraitKind.QUANTITATIVE
+        ),
+        command_prefix=arguments.runner_prefix,
+        inputs=tooling_g_regenie.RegenieInputSpec(
+            bgen_path=arguments.bgen_path,
+            sample_path=arguments.sample_path,
+            phenotype_path=phenotype_path,
+            phenotype_columns=(phenotype_column,),
+            covariate_path=arguments.covariate_path,
+            covariate_columns=tuple(
+                column.strip() for column in arguments.covariate_columns.split(",") if column.strip()
+            ),
+            prediction_list_path=prediction_list_path,
+            output_prefix=output_prefix,
+        ),
+        compute=tooling_g_regenie.RegenieComputeOptions(
+            device=tooling_g_regenie.RegenieDevice.CPU
+            if mode == ExecutionMode.CPU
+            else tooling_g_regenie.RegenieDevice.GPU,
+            bsize=arguments.chunk_size,
+            threads=arguments.cpu_threads,
+            staging_depth=arguments.staging_depth,
+            native_callback_batch_size=None,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            variant_limit=arguments.variant_limit,
+            trusted_no_missing_diploid=arguments.trusted_no_missing_diploid,
+            trusted_bgen_validation_mode=arguments.trusted_bgen_validation_mode,
+            bgen_decode_tile_variant_count=None,
+            firth_batch_size=arguments.binary_firth_batch_size if is_binary_trait else None,
+            firth_candidate_capacity=arguments.binary_firth_candidate_capacity if is_binary_trait else None,
+            gpu_genotype_format=arguments.gpu_genotype_format if mode != ExecutionMode.CPU else None,
+            jax_cache_dir=cache_directory,
+            jax_persistent_cache=persistent_cache_enabled,
+            jax_persistent_cache_min_entry_size_bytes=(
+                arguments.jax_persistent_cache_min_entry_size_bytes if persistent_cache_enabled else None
+            ),
+            jax_persistent_cache_min_compile_time_seconds=(
+                arguments.jax_persistent_cache_min_compile_time_seconds if persistent_cache_enabled else None
+            ),
+            jax_xla_autotune_cache=arguments.jax_xla_autotune_cache if mode != ExecutionMode.CPU else None,
+        ),
+        output=tooling_g_regenie.RegenieOutputOptions(
+            output_format=arguments.output_format,
+            output_run_directory=None,
+            writer_threads=arguments.output_writer_thread_count,
+            writer_queue_depth=arguments.output_writer_queue_depth,
+            chunks_per_arrow_file=None,
+            arrow_compression=None,
+            parquet_compression=None,
+            output_statistic_dtype=None,
+            finalize_parquet=arguments.finalize_parquet,
+        ),
+        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(
+            telemetry=arguments.telemetry_mode,
+            log_dir=event_log_path.parent,
+            stage_timings_json=stage_timing_path,
+            profile_summary_json=profile_summary_path,
+            log_file=event_log_path,
+            log_filter=arguments.log_filter,
+            log_stderr=arguments.log_stderr,
+            progress_interval_seconds=arguments.progress_interval_seconds,
+            progress_interval_chunks=arguments.progress_interval_chunks,
+        ),
+        binary=binary_options,
+    )
 
 
 def build_run_specs(arguments: MatrixArguments) -> list[RunSpec]:
@@ -1002,6 +986,7 @@ def write_reports(
     manifest_path = arguments.output_directory / "manifest.json"
     report_path = arguments.output_directory / "report.md"
     manifest_payload = {
+        "schema_version": MATRIX_MANIFEST_SCHEMA_VERSION,
         "tool": "tooling.cli.run_regenie2_matrix",
         "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "dry_run": arguments.dry_run,
@@ -1010,7 +995,12 @@ def write_reports(
         "runs": [run_result_to_json_dict(run_result) for run_result in run_results],
         "comparisons": [comparison_to_json_dict(comparison) for comparison in comparisons],
     }
-    tooling_reports.write_json_report(manifest_path, manifest_payload, sort_keys=True)
+    tooling_reports.write_versioned_json_report(
+        manifest_path,
+        manifest_payload,
+        MATRIX_MANIFEST_CONTRACT,
+        sort_keys=True,
+    )
     tooling_reports.write_markdown_report(
         report_path,
         build_markdown_report(

@@ -9,6 +9,7 @@ import hydra
 
 from tooling.cli import performance_compare, performance_smoke
 from tooling.common import hydra_compat as tooling_hydra_compat
+from tooling.common import registry as tooling_registry
 from tooling.performance import jax_runtime
 
 if typing.TYPE_CHECKING:
@@ -23,20 +24,32 @@ class PerformanceToolName(enum.StrEnum):
     JAX_RUNTIME = "jax_runtime"
 
 
+TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
+    PerformanceToolName.SMOKE.value: tooling_registry.ToolSpec(
+        name=PerformanceToolName.SMOKE.value,
+        config_name="performance_smoke",
+        build_arguments=performance_smoke.build_arguments_from_config,
+        run=performance_smoke.run_tool,
+    ),
+    PerformanceToolName.COMPARE.value: tooling_registry.ToolSpec(
+        name=PerformanceToolName.COMPARE.value,
+        config_name="performance_compare",
+        build_arguments=performance_compare.build_arguments_from_config,
+        run=performance_compare.run_tool,
+    ),
+    PerformanceToolName.JAX_RUNTIME.value: tooling_registry.ToolSpec(
+        name=PerformanceToolName.JAX_RUNTIME.value,
+        config_name="performance_jax_runtime",
+        build_arguments=jax_runtime.build_arguments_from_config,
+        run=jax_runtime.run_tool,
+    ),
+}
+
+
 @hydra.main(version_base=None, config_path="../configs", config_name="performance")
 def hydra_main(config: omegaconf.DictConfig) -> None:
     """Dispatch a performance tool from Hydra configuration."""
-    tool_name = PerformanceToolName(str(config.tool.name))
-    if tool_name == PerformanceToolName.SMOKE:
-        performance_smoke.run_tool(performance_smoke.build_arguments_from_config(config))
-        return
-    if tool_name == PerformanceToolName.COMPARE:
-        performance_compare.run_tool(performance_compare.build_arguments_from_config(config))
-        return
-    if tool_name == PerformanceToolName.JAX_RUNTIME:
-        jax_runtime.run_tool(jax_runtime.build_arguments_from_config(config))
-        return
-    typing.assert_never(tool_name)
+    tooling_registry.dispatch_tool(config, TOOLS)
 
 
 def main() -> None:

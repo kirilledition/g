@@ -1365,6 +1365,16 @@ assert config.hydra.job.chdir is False
 
 ## Common Helpers
 
+`tooling.common.context`
+
+- `ToolContext`
+- `build_tool_context(config)`
+- resolved repository/data/output path reporting
+
+Build a context at execution time rather than resolving environment-dependent
+paths at import time. This keeps `GWAS_ENGINE_DATA_DIR`, working directory, and
+Hydra `chdir` behavior explicit in reports.
+
 `tooling.common.paths`
 
 - `find_repository_root(start_path)`
@@ -1375,11 +1385,14 @@ assert config.hydra.job.chdir is False
 `tooling.common.reports`
 
 - `write_json_report(path, value, sort_keys=False)`
+- `write_versioned_json_report(path, value, contract)`
+- `read_versioned_json_report(path, contract)`
 - `write_markdown_report(path, markdown_text)`
 - `to_json_text(value)`
 
 The JSON helpers handle dataclasses, enums, `Path`, dictionaries, lists, and
-tuples.
+tuples. Durable benchmark/profile reports must include a `schema_version` and
+should be written through a `VersionedReportContract`.
 
 `tooling.common.sweeps`
 
@@ -1397,7 +1410,33 @@ tuples.
 
 `tooling.common.commands`
 
-Captured subprocess helpers for metadata and diagnostics.
+- `CommandSpec`
+- `CommandResult`
+- `run_command(spec)`
+- legacy `run_captured_command(...)`
+
+Use shell-free argument vectors. The shared runner supports captured output,
+streaming output, timeouts, log files, working directories, missing executable
+handling, and environment redaction.
+
+`tooling.common.g_regenie`
+
+- `RegenieRunSpec`
+- `render_g_regenie_cli(spec)`
+- `render_python_api_options(spec)`
+- `expected_output_run_directory(spec)`
+
+Any tool that launches `g regenie` or calls `api.regenie.from_options()` should
+render through this module so benchmark/profiler commands stay aligned with the
+production config surface.
+
+`tooling.common.registry`
+
+- `ToolSpec`
+- `dispatch_tool(config, registry)`
+- `registered_tool_names(registry)`
+
+Grouped CLIs dispatch through registries rather than hand-written `if` chains.
 
 `tooling.regenie.bgen_reader`
 
@@ -1442,7 +1481,10 @@ Use this checklist when adding a new development tool.
 
 3. Create a module under `tooling/cli/`.
 
-   The standard shape is:
+   The standard shape is still `build_arguments_from_config()`,
+   `build_arguments_from_overrides()`, and `run_tool()`, but new tools should
+   build a `ToolContext`, validate their `tool:` surface, and route subprocesses
+   and reports through the shared helpers:
 
    ```python
    import dataclasses
@@ -1453,7 +1495,9 @@ Use this checklist when adding a new development tool.
    import omegaconf
 
    import tooling.configuration as tooling_configuration
+   from tooling.common import context as tooling_context
    from tooling.common import hydra_arguments as tooling_hydra_arguments
+   from tooling.common import reports as tooling_reports
 
 
    @dataclasses.dataclass(frozen=True)
@@ -1463,9 +1507,10 @@ Use this checklist when adding a new development tool.
 
 
    def build_arguments_from_config(config: omegaconf.DictConfig) -> MyToolArguments:
+       context = tooling_context.build_tool_context(config)
        tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
        return MyToolArguments(
-           output_dir=Path(str(tool_values["output_dir"])),
+           output_dir=context.repository_root / Path(str(tool_values["output_dir"])),
            variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
        )
 
@@ -1479,6 +1524,7 @@ Use this checklist when adding a new development tool.
 
    def run_tool(arguments: MyToolArguments) -> None:
        arguments.output_dir.mkdir(parents=True, exist_ok=True)
+       tooling_reports.write_versioned_json_report(...)
 
 
    @hydra.main(version_base=None, config_path="../configs", config_name="my_tool")
@@ -1496,15 +1542,16 @@ Use this checklist when adding a new development tool.
 
 4. Use shared helpers.
 
-   Use `tooling.common.paths` for repository and data paths, `reports` for JSON
-   and Markdown output, `sweeps` for list parsing, and `commands` for captured
-   metadata commands.
+   Use `tooling.common.context` for environment-sensitive paths, `paths` for
+   path resolution, `reports` for versioned JSON and Markdown output, `sweeps`
+   for strict list parsing, `commands` for subprocesses, and `g_regenie` for
+   all `g regenie` CLI/API rendering.
 
 5. Add tests.
 
    Cover config composition, `build_arguments_from_overrides()`, report
-   serialization, path resolution, and pure expansion logic. Do not run GPU or
-   heavy benchmark workloads in unit tests.
+   schema validation, path resolution, command rendering, and pure expansion
+   logic. Do not run GPU or heavy benchmark workloads in unit tests.
 
 6. Add a Justfile recipe when the workflow is common.
 
@@ -1516,6 +1563,9 @@ Use this checklist when adding a new development tool.
    ```
 
 7. Document the tool in this guide.
+
+8. If the tool belongs to a grouped CLI, register it with
+   `tooling.common.registry.ToolSpec` and add a registry/docs test.
 
    Add its entrypoint, config file, common overrides, report paths, and any
    SLURM smoke command needed for safe validation.

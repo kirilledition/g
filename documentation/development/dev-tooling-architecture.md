@@ -4,6 +4,16 @@ Development-only benchmark and profiling entrypoints live in the top-level `tool
 
 Hydra is used for development tool parameters, saved development configurations, benchmark campaigns, machine profiles, telemetry defaults, and sweep profiles. Production REGENIE configuration remains in `src/g` and continues to use the TOML-backed `RegenieConfig` and `ExecutionPlan` flow.
 
+The tooling package now has a small internal framework:
+
+- `tooling.common.context` resolves repository, data, output, machine, telemetry, cwd, and Hydra path policy at execution time.
+- `tooling.common.registry` owns grouped CLI dispatch tables.
+- `tooling.common.commands` owns shell-free subprocess execution, logs, timeouts, and redacted environment reporting.
+- `tooling.common.reports` owns versioned JSON report validation.
+- `tooling.common.g_regenie` owns shared `g regenie` CLI rendering and Python API payload rendering.
+
+Benchmark and profiler code should use these contracts instead of rebuilding command vectors, report dictionaries, or grouped dispatch chains by hand.
+
 The base tooling config is `tooling/configs/config.yaml`. It sets:
 
 ```yaml

@@ -21,6 +21,7 @@ import polars as pl
 import tooling.configuration as tooling_configuration
 from g import api, types
 from g.interface import config
+from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import paths as tooling_paths
@@ -30,7 +31,6 @@ from tooling.common import sweeps as tooling_sweeps
 if typing.TYPE_CHECKING:
     import omegaconf
 
-DEFAULT_DATA_DIRECTORY = tooling_paths.configured_data_directory()
 DEFAULT_OUTPUT_PARENT = Path("data/profiles")
 DEFAULT_VARIANT_COUNT = 418_943
 REPOSITORY_ROOT = tooling_paths.find_repository_root(Path(__file__))
@@ -48,6 +48,21 @@ BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_MISSING = "stage_timing_file_mis
 BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_INVALID = "stage_timing_file_invalid"
 BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_MISSING = "binary_chunk_diagnostics_missing"
 BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_INVALID = "binary_chunk_diagnostics_invalid"
+SUMMARY_SCHEMA_VERSION = 1
+SUMMARY_REPORT_CONTRACT = tooling_reports.VersionedReportContract(
+    schema_version=SUMMARY_SCHEMA_VERSION,
+    required_fields=(
+        "schema_version",
+        "metadata",
+        "results",
+        "headline",
+        "headline_by_case",
+        "binary_diagnostics_by_case",
+    ),
+    optional_fields=(),
+    schema_field_name="schema_version",
+    reject_unknown_fields=True,
+)
 BINARY_DIAGNOSTIC_COUNT_FIELDS = (
     "score_test_candidate_count",
     "firth_candidate_count",
@@ -874,34 +889,92 @@ def run_regenie2_api_call(
     stage_timing_path: Path | None = None,
 ) -> api.RunArtifacts:
     """Run binary REGENIE step 2 through the public Python API."""
-    phenotype_options: dict[str, object]
-    if len(benchmark_case.phenotype_columns) == 1:
-        phenotype_options = {"phenoCol": benchmark_case.phenotype_columns[0]}
-    else:
-        phenotype_options = {"phenoColList": ",".join(benchmark_case.phenotype_columns)}
-    return api.regenie.from_options(
-        {
-            "step": 2,
-            "bt": True,
-            "bgen": configuration.bgen_path,
-            "sample": configuration.sample_path,
-            "phenoFile": configuration.phenotype_file,
-            **phenotype_options,
-            "out": output_root,
-            "covarFile": configuration.data_directory / "covariates.txt",
-            "covarColList": "age,sex",
-            "pred": configuration.prediction_list,
-            "firth": True,
-            "approx": True,
-            "pThresh": benchmark_case.firth_p_threshold,
-            **build_compute_config(
-                configuration=configuration,
-                benchmark_case=benchmark_case,
-                output_root=output_root,
-                finalize_parquet=trial_spec.finalize_parquet,
-                stage_timing_path=stage_timing_path,
-            ),
-        }
+    regenie_run_spec = build_regenie_run_spec(
+        configuration=configuration,
+        benchmark_case=benchmark_case,
+        output_root=output_root,
+        finalize_parquet=trial_spec.finalize_parquet,
+        stage_timing_path=stage_timing_path,
+    )
+    return api.regenie.from_options(tooling_g_regenie.render_python_api_options(regenie_run_spec))
+
+
+def build_regenie_run_spec(
+    *,
+    configuration: BenchmarkConfiguration,
+    benchmark_case: BenchmarkCase,
+    output_root: Path,
+    finalize_parquet: bool,
+    stage_timing_path: Path | None,
+) -> tooling_g_regenie.RegenieRunSpec:
+    """Build the shared REGENIE run spec for one binary-hot case."""
+    trusted_validation_mode = (
+        types.TrustedBgenValidationMode.ASSUME_VALIDATED
+        if configuration.assume_trusted_validated
+        else types.TrustedBgenValidationMode.CACHE_ON_MISS
+    ).value
+    return tooling_g_regenie.RegenieRunSpec(
+        trait_kind=tooling_g_regenie.RegenieTraitKind.BINARY,
+        command_prefix=(configuration.python_executable, "-m", "g", "regenie"),
+        inputs=tooling_g_regenie.RegenieInputSpec(
+            bgen_path=configuration.bgen_path,
+            sample_path=configuration.sample_path,
+            phenotype_path=configuration.phenotype_file,
+            phenotype_columns=tuple(benchmark_case.phenotype_columns),
+            covariate_path=configuration.data_directory / "covariates.txt",
+            covariate_columns=("age", "sex"),
+            prediction_list_path=configuration.prediction_list,
+            output_prefix=output_root,
+        ),
+        compute=tooling_g_regenie.RegenieComputeOptions(
+            device=tooling_g_regenie.RegenieDevice(configuration.device.value),
+            bsize=configuration.chunk_size,
+            threads=None,
+            staging_depth=configuration.staging_depth,
+            native_callback_batch_size=configuration.native_callback_batch_size,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            variant_limit=configuration.variant_limit,
+            trusted_no_missing_diploid=configuration.trusted_no_missing_diploid,
+            trusted_bgen_validation_mode=trusted_validation_mode,
+            bgen_decode_tile_variant_count=None,
+            firth_batch_size=benchmark_case.firth_batch_size,
+            firth_candidate_capacity=benchmark_case.firth_candidate_capacity,
+            gpu_genotype_format=benchmark_case.gpu_genotype_format.value,
+            jax_cache_dir=configuration.jax_cache_directory,
+            jax_persistent_cache=None,
+            jax_persistent_cache_min_entry_size_bytes=-1,
+            jax_persistent_cache_min_compile_time_seconds=0,
+            jax_xla_autotune_cache=ENABLE_XLA_AUTOTUNE_CACHE,
+        ),
+        output=tooling_g_regenie.RegenieOutputOptions(
+            output_format="parquet" if finalize_parquet else "arrow",
+            output_run_directory=output_root,
+            writer_threads=configuration.output_writer_thread_count,
+            writer_queue_depth=configuration.output_writer_queue_depth,
+            chunks_per_arrow_file=None,
+            arrow_compression=None,
+            parquet_compression=None,
+            output_statistic_dtype=None,
+            finalize_parquet=None,
+        ),
+        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(
+            telemetry="off",
+            log_dir=None,
+            stage_timings_json=stage_timing_path,
+            profile_summary_json=None,
+            log_file=None,
+            log_filter=None,
+            log_stderr=None,
+            progress_interval_seconds=None,
+            progress_interval_chunks=None,
+        ),
+        binary=tooling_g_regenie.RegenieBinaryOptions(
+            firth=True,
+            approx=True,
+            firth_se=None,
+            p_threshold=benchmark_case.firth_p_threshold,
+        ),
     )
 
 
@@ -1457,6 +1530,7 @@ def build_summary(
 ) -> dict[str, typing.Any]:
     """Build a JSON-serializable benchmark summary."""
     return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
         "metadata": collect_metadata(configuration),
         "results": [trial_result_to_json_dict(trial_result) for trial_result in trial_results],
         "headline": build_headline_for_results(trial_results),
@@ -1479,7 +1553,7 @@ def build_summary(
 
 def write_summary(summary_path: Path, summary: dict[str, typing.Any]) -> None:
     """Write a benchmark summary JSON file."""
-    tooling_reports.write_json_report(summary_path, summary, sort_keys=True)
+    tooling_reports.write_versioned_json_report(summary_path, summary, SUMMARY_REPORT_CONTRACT, sort_keys=True)
 
 
 def run_benchmark(configuration: BenchmarkConfiguration, trial_specs: list[TrialSpec]) -> list[TrialResult]:

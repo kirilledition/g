@@ -22,6 +22,7 @@ import tooling.configuration as tooling_configuration
 import tooling.debug.binary_firth as binary_firth_parity
 import tooling.debug.binary_regenie_parity as binary_regenie_debug
 import tooling.debug.linear_regenie_parity as linear_regenie_debug
+from tooling.common import g_regenie as tooling_g_regenie
 
 if typing.TYPE_CHECKING:
     import pytest
@@ -1964,14 +1965,29 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
         variant_limit=1000,
     )
     command_text = command[2]
+    regenie_run_spec = deep_profile.build_g_step2_regenie_run_spec(
+        baseline_paths=baseline_paths,
+        candidate=candidate,
+        output_prefix=Path("data/profiles/out"),
+        variant_limit=1000,
+        jax_cache_directory=None,
+        stage_timing_path=None,
+    )
+    options = tooling_g_regenie.render_python_api_options(regenie_run_spec)
+    compute_options = typing.cast("dict[str, object]", options["compute"])
     assert command[:2] == [sys.executable, "-c"]
-    assert "phenotype_binary" in command_text
-    assert "\"device\": 'cpu'" in command_text
-    assert '"bsize": 4096' in command_text
-    assert '"native_callback_batch_size": 2' in command_text
-    assert 'compute_options["variant_limit"] = 1000' in command_text
-    assert '"firth": True' in command_text
-    assert '"jax_persistent_cache": True' in command_text
+    assert options["bt"] is True
+    assert options["phenoCol"] == "phenotype_binary"
+    assert options["out"] == Path("data/profiles/out")
+    assert options["bsize"] == 4096
+    assert compute_options["device"] == "cpu"
+    assert compute_options["native_callback_batch_size"] == 2
+    assert compute_options["variant_limit"] == 1000
+    assert compute_options["firth_batch_size"] == 32
+    assert compute_options["jax_persistent_cache"] is True
+    assert options["firth"] is True
+    assert options["approx"] is True
+    assert "regenie_options = json.loads" in command_text
     assert "jax_explain_cache_misses" in command_text
     assert "jax_log_compiles" in command_text
     assert "count_artifact_rows" in command_text
@@ -2480,8 +2496,8 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         assert profile_result["application_output_run_directory"] == str(profile_directory / f"{profile_name}.g")
         assert profile_result["stage_timing_path"] == str(expected_stage_timing_path)
         script_text = (profile_directory / f"{profile_name}_child.py").read_text(encoding="utf-8")
-        assert f"\"out\": '{profile_directory / profile_name}'" in script_text
-        assert f"diagnostics_options[\"stage_timings_json\"] = '{expected_stage_timing_path}'" in script_text
+        assert f'"out": "{profile_directory / profile_name}"' in script_text
+        assert f'"stage_timings_json": "{expected_stage_timing_path}"' in script_text
         assert "profile_binary_gpu_profiler" not in script_text
     application_output_run_directories = {
         str(profile["application_output_run_directory"])

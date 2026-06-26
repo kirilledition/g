@@ -25,6 +25,14 @@ if typing.TYPE_CHECKING:
 DEFAULT_OUTPUT_ROOT = Path("results/perf/smoke")
 DEFAULT_ITERATION_COUNT = 48
 DEFAULT_ITEM_COUNT = 4096
+SMOKE_SCHEMA_VERSION = 1
+SMOKE_REPORT_CONTRACT = tooling_reports.VersionedReportContract(
+    schema_version=SMOKE_SCHEMA_VERSION,
+    required_fields=("schema", "metadata", "configuration", "metrics"),
+    optional_fields=(),
+    schema_field_name="schema_version",
+    reject_unknown_fields=True,
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -153,6 +161,7 @@ def build_summary(result: SmokeBenchmarkResult) -> dict[str, typing.Any]:
         if key.startswith(("G_", "GWAS_ENGINE_", "JAX_", "XLA_", "CUDA_", "RAYON_", "SLURM_"))
     }
     return {
+        "schema_version": SMOKE_SCHEMA_VERSION,
         "schema": "g.performance_smoke.v1",
         "metadata": {
             "git_head": command_output(["git", "rev-parse", "HEAD"]),
@@ -191,7 +200,9 @@ def run_tool(arguments: PerformanceSmokeArguments) -> None:
     output_directory = arguments.output_dir or timestamped_output_directory(arguments.output_root)
     result = run_smoke_workload(iteration_count=arguments.iterations, item_count=arguments.items)
     summary_path = output_directory / "performance_smoke_summary.json"
-    tooling_reports.write_json_report(summary_path, build_summary(result), sort_keys=True)
+    tooling_reports.write_versioned_json_report(
+        summary_path, build_summary(result), SMOKE_REPORT_CONTRACT, sort_keys=True
+    )
     print(f"Smoke benchmark wall_time_seconds={result.wall_time_seconds:.6g}")
     print(f"Smoke benchmark peak_memory_bytes={result.peak_memory_bytes}")
     print(f"Smoke benchmark checksum={result.checksum:.6g}")

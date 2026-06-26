@@ -13,6 +13,7 @@ from tooling.benchmark import comparison as regenie_comparison
 from tooling.benchmark import linear_startup, profile_comparison
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
+from tooling.common import registry as tooling_registry
 
 if typing.TYPE_CHECKING:
     import omegaconf
@@ -72,23 +73,38 @@ def build_linear_startup_arguments(config: omegaconf.DictConfig) -> linear_start
     return linear_startup.build_arguments_from_config(config)
 
 
+TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
+    BenchmarkToolName.BASELINES.value: tooling_registry.ToolSpec(
+        name=BenchmarkToolName.BASELINES.value,
+        config_name="benchmark_baselines",
+        build_arguments=build_baseline_arguments,
+        run=baseline_benchmark.run_tool,
+    ),
+    BenchmarkToolName.REGENIE_COMPARISON.value: tooling_registry.ToolSpec(
+        name=BenchmarkToolName.REGENIE_COMPARISON.value,
+        config_name="benchmark_regenie_comparison",
+        build_arguments=build_comparison_arguments,
+        run=regenie_comparison.run_tool,
+    ),
+    BenchmarkToolName.PROFILE_COMPARISON.value: tooling_registry.ToolSpec(
+        name=BenchmarkToolName.PROFILE_COMPARISON.value,
+        config_name="benchmark_profile_comparison",
+        build_arguments=build_profile_comparison_arguments,
+        run=profile_comparison.run_tool,
+    ),
+    BenchmarkToolName.LINEAR_STARTUP.value: tooling_registry.ToolSpec(
+        name=BenchmarkToolName.LINEAR_STARTUP.value,
+        config_name="benchmark_linear_startup",
+        build_arguments=build_linear_startup_arguments,
+        run=linear_startup.run_tool,
+    ),
+}
+
+
 @hydra.main(version_base=None, config_path="../configs", config_name="benchmark")
 def hydra_main(config: omegaconf.DictConfig) -> None:
     """Dispatch a benchmark tool from Hydra configuration."""
-    tool_name = BenchmarkToolName(str(config.tool.name))
-    if tool_name == BenchmarkToolName.BASELINES:
-        baseline_benchmark.run_tool(build_baseline_arguments(config))
-        return
-    if tool_name == BenchmarkToolName.REGENIE_COMPARISON:
-        regenie_comparison.run_tool(build_comparison_arguments(config))
-        return
-    if tool_name == BenchmarkToolName.PROFILE_COMPARISON:
-        profile_comparison.run_tool(build_profile_comparison_arguments(config))
-        return
-    if tool_name == BenchmarkToolName.LINEAR_STARTUP:
-        linear_startup.run_tool(build_linear_startup_arguments(config))
-        return
-    typing.assert_never(tool_name)
+    tooling_registry.dispatch_tool(config, TOOLS)
 
 
 def main() -> None:

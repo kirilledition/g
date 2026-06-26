@@ -4,17 +4,28 @@ import dataclasses
 import enum
 import json
 import os
+import sys
 import typing
 from pathlib import Path
 
+import tooling.cli.benchmark as grouped_benchmark
 import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
 import tooling.cli.benchmark_regenie2_binary_hot as binary_hot_benchmark
+import tooling.cli.data as grouped_data
+import tooling.cli.debug as grouped_debug
+import tooling.cli.performance as grouped_performance
 import tooling.cli.profile_regenie2_deep as deep_profile
 import tooling.cli.run_regenie2_matrix as regenie2_matrix
+import tooling.cli.server as grouped_server
 import tooling.configuration as tooling_configuration
 import tooling.regenie.bgen_reader as regenie_bgen_reader
+from g.interface import config as interface_config
+from tooling.common import commands as tooling_commands
+from tooling.common import g_regenie as tooling_g_regenie
+from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import jax_cache as tooling_jax_cache
 from tooling.common import paths as tooling_paths
+from tooling.common import registry as tooling_registry
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
 
@@ -711,6 +722,211 @@ def test_sweep_and_bgen_mode_parsing() -> None:
         regenie_bgen_reader.SampleSelectionMode.FULL,
         regenie_bgen_reader.SampleSelectionMode.STRIDED_HALF,
     ]
+
+
+def test_sweep_and_boolean_helpers_reject_ambiguous_values() -> None:
+    assert tooling_hydra_arguments.boolean_value("false") is False
+    assert tooling_hydra_arguments.boolean_value("true") is True
+
+    for raw_value in ("default,,4", ",4", "4,"):
+        try:
+            tooling_sweeps.parse_optional_integer_list(raw_value)
+        except ValueError as error:
+            assert "empty entry" in str(error)
+        else:
+            raise AssertionError(f"Expected {raw_value!r} to be rejected.")
+
+    try:
+        tooling_hydra_arguments.boolean_value("maybe")
+    except TypeError as error:
+        assert "Expected a boolean value" in str(error)
+    else:
+        raise AssertionError("Expected ambiguous boolean string to be rejected.")
+
+
+def test_shared_regenie_renderer_produces_valid_binary_cli_and_python_options() -> None:
+    run_spec = tooling_g_regenie.RegenieRunSpec(
+        trait_kind=tooling_g_regenie.RegenieTraitKind.BINARY,
+        command_prefix=("g", "regenie"),
+        inputs=tooling_g_regenie.RegenieInputSpec(
+            bgen_path=Path("data/input.bgen"),
+            sample_path=Path("data/input.sample"),
+            phenotype_path=Path("data/pheno.tsv"),
+            phenotype_columns=("trait",),
+            covariate_path=Path("data/covar.tsv"),
+            covariate_columns=("age", "sex"),
+            prediction_list_path=Path("data/pred.list"),
+            output_prefix=Path("results/output"),
+        ),
+        compute=tooling_g_regenie.RegenieComputeOptions(
+            device=tooling_g_regenie.RegenieDevice.CPU,
+            bsize=4096,
+            threads=2,
+            staging_depth=1,
+            native_callback_batch_size=2,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            variant_limit=100,
+            trusted_no_missing_diploid=True,
+            trusted_bgen_validation_mode="cache_on_miss",
+            bgen_decode_tile_variant_count=64,
+            firth_batch_size=32,
+            firth_candidate_capacity=128,
+            gpu_genotype_format=None,
+            jax_cache_dir=Path("cache/jax"),
+            jax_persistent_cache=True,
+            jax_persistent_cache_min_entry_size_bytes=-1,
+            jax_persistent_cache_min_compile_time_seconds=0,
+            jax_xla_autotune_cache=None,
+        ),
+        output=tooling_g_regenie.RegenieOutputOptions(
+            output_format="parquet",
+            output_run_directory=None,
+            writer_threads=2,
+            writer_queue_depth=4,
+            chunks_per_arrow_file=None,
+            arrow_compression=None,
+            parquet_compression=None,
+            output_statistic_dtype=None,
+            finalize_parquet=False,
+        ),
+        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(
+            telemetry="off",
+            log_dir=Path("logs"),
+            stage_timings_json=Path("logs/stage.json"),
+            profile_summary_json=Path("logs/profile.json"),
+            log_file=Path("logs/events.jsonl"),
+            log_filter="info",
+            log_stderr=False,
+            progress_interval_seconds=1.0,
+            progress_interval_chunks=2,
+        ),
+        binary=tooling_g_regenie.RegenieBinaryOptions(
+            firth=True,
+            approx=True,
+            firth_se=None,
+            p_threshold=0.05,
+        ),
+    )
+
+    command_arguments = tooling_g_regenie.render_g_regenie_cli(run_spec)
+    python_options = tooling_g_regenie.render_python_api_options(run_spec)
+    rendered_config = interface_config.RegenieConfig.from_options(python_options)
+
+    assert "--out" in command_arguments
+    assert not any(argument.startswith("--g-") for argument in command_arguments)
+    assert "--bt" in command_arguments
+    assert "--qt" not in command_arguments
+    assert "--firth" in command_arguments
+    assert "--pred" in command_arguments
+    assert rendered_config.g_output.out == Path("results/output")
+    assert tooling_g_regenie.expected_output_run_directory(run_spec) == (
+        Path("results/output.g") / "trait.regenie2_binary.run"
+    )
+    explicit_output_spec = dataclasses.replace(
+        run_spec,
+        output=dataclasses.replace(
+            run_spec.output,
+            output_run_directory=Path("explicit/run-directory"),
+        ),
+    )
+    assert tooling_g_regenie.expected_output_run_directory(explicit_output_spec) == Path("explicit/run-directory")
+
+
+def test_matrix_commands_use_shared_regenie_contract() -> None:
+    arguments = regenie2_matrix.build_arguments_from_overrides(
+        [
+            "tool.dry_run=true",
+            "tool.variant_limit=1000",
+        ]
+    )
+    for run_spec in regenie2_matrix.build_run_specs(arguments):
+        assert "--out" in run_spec.command_arguments
+        assert not any(argument.startswith("--g-") for argument in run_spec.command_arguments)
+        if run_spec.trait == regenie2_matrix.TraitKind.BINARY:
+            assert "--bt" in run_spec.command_arguments
+            assert "--firth" in run_spec.command_arguments
+        else:
+            assert "--qt" in run_spec.command_arguments
+            assert "--firth" not in run_spec.command_arguments
+
+
+def test_command_runner_records_redacted_environment_and_missing_executable(tmp_path: Path) -> None:
+    stdout_path = tmp_path / "stdout.log"
+    command_spec = tooling_commands.build_command_spec(
+        [sys.executable, "-c", "import os; print(os.environ['VISIBLE_VALUE'])"],
+        env={"VISIBLE_VALUE": "shown", "SECRET_VALUE": "hidden"},
+        stdout_path=stdout_path,
+        sensitive_env_keys=("SECRET_VALUE",),
+    )
+
+    result = tooling_commands.run_command(command_spec)
+    missing_result = tooling_commands.run_command(
+        tooling_commands.build_command_spec(["definitely-not-a-real-gwas-command"]),
+    )
+    streaming_timeout_result = tooling_commands.run_command(
+        tooling_commands.build_command_spec(
+            [
+                sys.executable,
+                "-c",
+                "import sys, time; sys.stdout.write('partial'); sys.stdout.flush(); time.sleep(2)",
+            ],
+            timeout_seconds=0.2,
+            stream=True,
+        )
+    )
+
+    assert result.return_code == 0
+    assert result.stdout.strip() == "shown"
+    assert stdout_path.read_text(encoding="utf-8").strip() == "shown"
+    assert result.environment_overrides["SECRET_VALUE"] == tooling_commands.REDACTED_ENVIRONMENT_VALUE
+    assert missing_result.missing_executable is True
+    assert missing_result.return_code is None
+    assert streaming_timeout_result.timed_out is True
+    assert streaming_timeout_result.stdout == "partial"
+
+
+def test_versioned_report_contract_rejects_missing_and_unknown_fields(tmp_path: Path) -> None:
+    contract = tooling_reports.VersionedReportContract(
+        schema_version=1,
+        required_fields=("name",),
+        optional_fields=("notes",),
+        schema_field_name="schema_version",
+        reject_unknown_fields=True,
+    )
+    report_path = tmp_path / "report.json"
+
+    tooling_reports.write_versioned_json_report(
+        report_path,
+        {"schema_version": 1, "name": "ok"},
+        contract,
+    )
+    assert tooling_reports.read_versioned_json_report(report_path, contract)["name"] == "ok"
+
+    for payload in ({"schema_version": 1}, {"schema_version": 1, "name": "ok", "extra": True}):
+        try:
+            tooling_reports.validate_report_shape(payload, contract)
+        except tooling_reports.ReportSchemaError:
+            pass
+        else:
+            raise AssertionError(f"Expected report payload to be rejected: {payload!r}")
+
+
+def test_grouped_cli_registries_document_tool_names() -> None:
+    assert tooling_registry.registered_tool_names(grouped_benchmark.TOOLS) == (
+        "baselines",
+        "linear_startup",
+        "profile_comparison",
+        "regenie_comparison",
+    )
+    assert tooling_registry.registered_tool_names(grouped_data.TOOLS) == ("fetch", "simulate")
+    assert "check_pyo3_stub" in tooling_registry.registered_tool_names(grouped_debug.TOOLS)
+    assert tooling_registry.registered_tool_names(grouped_performance.TOOLS) == (
+        "compare",
+        "jax_runtime",
+        "smoke",
+    )
+    assert tooling_registry.registered_tool_names(grouped_server.TOOLS) == ("bootstrap_tools", "nsight_tools")
 
 
 def test_tooling_entrypoint_exposes_cli_surface() -> None:

@@ -27,6 +27,7 @@ the current command surface.
 
 Every benchmark result should record:
 
+- schema version;
 - command and full overrides;
 - commit SHA and branch;
 - host or SLURM node;
@@ -38,6 +39,10 @@ Every benchmark result should record:
 - summary metric and confidence signal.
 
 Do not report a speedup without naming the baseline command.
+
+Durable JSON artifacts used for comparison or migration decisions must include
+`schema_version` and should be written through `tooling.common.reports` so
+missing, unknown, or incompatible fields fail early.
 
 ## Login Node Policy
 

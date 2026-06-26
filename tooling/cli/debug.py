@@ -8,6 +8,7 @@ import typing
 import hydra
 
 from tooling.common import hydra_compat as tooling_hydra_compat
+from tooling.common import registry as tooling_registry
 from tooling.debug import (
     binary_firth,
     binary_regenie_parity,
@@ -32,35 +33,80 @@ class DebugToolName(enum.StrEnum):
     CHECK_PYO3_STUB = "check_pyo3_stub"
 
 
+def build_no_arguments(config: omegaconf.DictConfig) -> None:
+    """Build an empty argument payload for fixed guardrail tools."""
+    del config
+    return
+
+
+def run_check_pyo3_stub(arguments: None) -> None:
+    """Run the PyO3 stub guardrail."""
+    del arguments
+    exit_code = check_pyo3_stub.run_tool()
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
+def run_check_internal_defaults(arguments: None) -> None:
+    """Run the internal-defaults guardrail."""
+    del arguments
+    exit_code = check_internal_defaults.run_tool(check_internal_defaults.PRODUCTION_SOURCE_ROOT)
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
+def run_check_internal_init_exports(arguments: None) -> None:
+    """Run the package-initializer guardrail."""
+    del arguments
+    exit_code = check_internal_init_exports.run_tool(check_internal_init_exports.PRODUCTION_PACKAGE_ROOT)
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
+TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
+    DebugToolName.BINARY_FIRTH.value: tooling_registry.ToolSpec(
+        name=DebugToolName.BINARY_FIRTH.value,
+        config_name="debug_binary_firth",
+        build_arguments=binary_firth.build_arguments_from_config,
+        run=binary_firth.run_tool,
+    ),
+    DebugToolName.BINARY_REGENIE_PARITY.value: tooling_registry.ToolSpec(
+        name=DebugToolName.BINARY_REGENIE_PARITY.value,
+        config_name="debug_binary_regenie_parity",
+        build_arguments=binary_regenie_parity.build_arguments_from_config,
+        run=binary_regenie_parity.run_tool,
+    ),
+    DebugToolName.LINEAR_REGENIE_PARITY.value: tooling_registry.ToolSpec(
+        name=DebugToolName.LINEAR_REGENIE_PARITY.value,
+        config_name="debug_linear_regenie_parity",
+        build_arguments=linear_regenie_parity.build_arguments_from_config,
+        run=linear_regenie_parity.run_tool,
+    ),
+    DebugToolName.CHECK_PYO3_STUB.value: tooling_registry.ToolSpec(
+        name=DebugToolName.CHECK_PYO3_STUB.value,
+        config_name="debug_check_pyo3_stub",
+        build_arguments=build_no_arguments,
+        run=run_check_pyo3_stub,
+    ),
+    DebugToolName.CHECK_INTERNAL_DEFAULTS.value: tooling_registry.ToolSpec(
+        name=DebugToolName.CHECK_INTERNAL_DEFAULTS.value,
+        config_name="debug_check_internal_defaults",
+        build_arguments=build_no_arguments,
+        run=run_check_internal_defaults,
+    ),
+    DebugToolName.CHECK_INTERNAL_INIT_EXPORTS.value: tooling_registry.ToolSpec(
+        name=DebugToolName.CHECK_INTERNAL_INIT_EXPORTS.value,
+        config_name="debug_check_internal_init_exports",
+        build_arguments=build_no_arguments,
+        run=run_check_internal_init_exports,
+    ),
+}
+
+
 @hydra.main(version_base=None, config_path="../configs", config_name="debug")
 def hydra_main(config: omegaconf.DictConfig) -> None:
     """Dispatch a debug tool from Hydra configuration."""
-    tool_name = DebugToolName(str(config.tool.name))
-    if tool_name == DebugToolName.BINARY_FIRTH:
-        binary_firth.run_tool(binary_firth.build_arguments_from_config(config))
-        return
-    if tool_name == DebugToolName.BINARY_REGENIE_PARITY:
-        binary_regenie_parity.run_tool(binary_regenie_parity.build_arguments_from_config(config))
-        return
-    if tool_name == DebugToolName.LINEAR_REGENIE_PARITY:
-        linear_regenie_parity.run_tool(linear_regenie_parity.build_arguments_from_config(config))
-        return
-    if tool_name == DebugToolName.CHECK_PYO3_STUB:
-        exit_code = check_pyo3_stub.run_tool()
-        if exit_code:
-            raise SystemExit(exit_code)
-        return
-    if tool_name == DebugToolName.CHECK_INTERNAL_DEFAULTS:
-        exit_code = check_internal_defaults.run_tool(check_internal_defaults.PRODUCTION_SOURCE_ROOT)
-        if exit_code:
-            raise SystemExit(exit_code)
-        return
-    if tool_name == DebugToolName.CHECK_INTERNAL_INIT_EXPORTS:
-        exit_code = check_internal_init_exports.run_tool(check_internal_init_exports.PRODUCTION_PACKAGE_ROOT)
-        if exit_code:
-            raise SystemExit(exit_code)
-        return
-    typing.assert_never(tool_name)
+    tooling_registry.dispatch_tool(config, TOOLS)
 
 
 def main() -> None:
