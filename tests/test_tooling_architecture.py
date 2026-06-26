@@ -31,6 +31,7 @@ from tooling.common import paths as tooling_paths
 from tooling.common import registry as tooling_registry
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
+from tooling.profile_deep import budget as profile_deep_budget
 from tooling.profile_deep import models as profile_deep_models
 
 if typing.TYPE_CHECKING:
@@ -1100,6 +1101,17 @@ def test_deep_profile_models_live_in_profile_package() -> None:
     assert deep_profile.ProfileArguments is profile_deep_models.ProfileArguments
     assert deep_profile.Step2Candidate is profile_deep_models.Step2Candidate
     assert deep_profile.CampaignBudget is profile_deep_models.CampaignBudget
+
+
+def test_deep_profile_budget_helpers_live_in_profile_package() -> None:
+    assert profile_deep_budget.build_campaign_budget.__module__ == "tooling.profile_deep.budget"
+    assert profile_deep_budget.enforce_campaign_budget.__module__ == "tooling.profile_deep.budget"
+    assert profile_deep_budget.parse_profile_workload_keys.__module__ == "tooling.profile_deep.budget"
+    assert profile_deep_budget.build_logging_perturbation_cases.__module__ == "tooling.profile_deep.budget"
+    assert deep_profile.build_campaign_budget is profile_deep_budget.build_campaign_budget
+    assert deep_profile.enforce_campaign_budget is profile_deep_budget.enforce_campaign_budget
+    assert deep_profile.parse_profile_workload_keys is profile_deep_budget.parse_profile_workload_keys
+    assert deep_profile.build_logging_perturbation_cases is profile_deep_budget.build_logging_perturbation_cases
 
 
 def test_rust_build_profile_specs_map_expected_cargo_profiles() -> None:

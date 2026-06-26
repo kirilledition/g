@@ -202,8 +202,10 @@ emitting per-chunk timing artifacts.
 The large profile workflow is being split behind the stable CLI. Shared
 deep-profile enums, argument dataclasses, candidate/result models, budget
 models, JAX diagnostics, and baseline-scope records live in
-`tooling.profile_deep.models`; the CLI re-exports them for compatibility while
-orchestration code migrates into the package.
+`tooling.profile_deep.models`. List parsing, workload selector expansion,
+logging perturbation case definitions, and campaign budget accounting live in
+`tooling.profile_deep.budget`. The CLI re-exports these package-owned symbols
+for compatibility while orchestration code migrates into the package.
 
 `-m tooling.cli.benchmark tool.name=linear_startup`
 
