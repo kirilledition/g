@@ -16,6 +16,7 @@ import tooling.cli.debug as grouped_debug
 import tooling.cli.performance as grouped_performance
 import tooling.cli.profile_regenie2_deep as deep_profile
 import tooling.cli.run_regenie2_matrix as regenie2_matrix
+import tooling.cli.rust_build_profiles as rust_build_profiles
 import tooling.cli.server as grouped_server
 import tooling.configuration as tooling_configuration
 import tooling.regenie.bgen_reader as regenie_bgen_reader
@@ -72,7 +73,7 @@ def test_hydra_tooling_config_accepts_group_overrides() -> None:
 
 
 def test_grouped_hydra_tooling_configs_compose() -> None:
-    config_names = ["benchmark", "data", "debug", "performance", "server"]
+    config_names = ["benchmark", "data", "debug", "performance", "rust_build_profiles", "server"]
 
     for config_name in config_names:
         config = tooling_configuration.compose_config(config_name=config_name, include_hydra_config=True)
@@ -385,6 +386,22 @@ def test_hydra_tooling_config_converts_to_tool_arguments() -> None:
     assert bgen_arguments.chunk_sizes == "4096,8192"
     assert bgen_arguments.trusted_no_missing_diploid_modes == "true,false"
     assert bgen_arguments.json_summary_path == Path("reports/summary.json")
+
+    rust_build_arguments = rust_build_profiles.build_arguments_from_overrides(
+        [
+            "tool.labels=[dev-fast,perf-thin-cgu1]",
+            "tool.output_parent=results/perf/test-rust-build-profiles",
+            "tool.incremental_touch_paths=[src/python/mod.rs]",
+            "tool.run_bgen_reader_smoke=true",
+        ]
+    )
+    assert rust_build_arguments.labels == (
+        rust_build_profiles.BuildProfileLabel.DEV_FAST,
+        rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU1,
+    )
+    assert rust_build_arguments.output_parent == Path("results/perf/test-rust-build-profiles")
+    assert rust_build_arguments.incremental_touch_paths == (Path("src/python/mod.rs"),)
+    assert rust_build_arguments.run_bgen_reader_smoke is True
 
     binary_hot_arguments = binary_hot_benchmark.build_arguments_from_overrides(
         [
@@ -933,3 +950,55 @@ def test_tooling_entrypoint_exposes_cli_surface() -> None:
     assert benchmark_bgen_reader.build_arguments_from_overrides is not None
     assert benchmark_bgen_reader.hydra_main is not None
     assert benchmark_bgen_reader.BenchmarkPathMode is regenie_bgen_reader.BenchmarkPathMode
+    assert rust_build_profiles.build_arguments_from_overrides is not None
+    assert rust_build_profiles.hydra_main is not None
+
+
+def test_rust_build_profile_specs_map_expected_cargo_profiles() -> None:
+    assert rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.DEV_FAST].cargo_profile == "dev-fast"
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8].cargo_profile == "perf"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_FAT_CGU1].cargo_profile
+        == "perf-max"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_O2_THIN_CGU8].cargo_profile
+        == "perf-o2"
+    )
+
+
+def test_rust_build_profile_command_environment_contains_target_dir() -> None:
+    spec = rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU1]
+    environment = rust_build_profiles.build_environment(spec, Path("target/rust-build-profiles/perf-thin-cgu1"))
+
+    assert environment["CARGO_TARGET_DIR"] == "target/rust-build-profiles/perf-thin-cgu1"
+    assert environment["RUSTFLAGS"] == "-C target-cpu=native"
+    assert rust_build_profiles.maturin_develop_command(spec) == (
+        "uv",
+        "run",
+        "--no-sync",
+        "maturin",
+        "develop",
+        "--profile",
+        "perf-thin-cgu1",
+        "--uv",
+    )
+
+
+def test_rust_build_profile_touch_restores_source_timestamp(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.rs"
+    source_path.write_text("fn main() {}\n", encoding="utf-8")
+    original_access_time_nanoseconds = 1_700_000_000_000_000_000
+    original_modification_time_nanoseconds = 1_700_000_000_100_000_000
+    os.utime(source_path, ns=(original_access_time_nanoseconds, original_modification_time_nanoseconds))
+
+    timestamp = rust_build_profiles.touch_source_path(source_path)
+    touched_stat = source_path.stat()
+    rust_build_profiles.restore_timestamp(timestamp)
+    restored_stat = source_path.stat()
+
+    assert touched_stat.st_mtime_ns != original_modification_time_nanoseconds
+    assert restored_stat.st_atime_ns == original_access_time_nanoseconds
+    assert restored_stat.st_mtime_ns == original_modification_time_nanoseconds

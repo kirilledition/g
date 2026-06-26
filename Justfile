@@ -83,9 +83,21 @@ verify-regenie2-binary-gpu-inputs:
 benchmark-baselines: setup-data
     {{ server_env }} && uv run python -m tooling.cli.benchmark tool.name=baselines
 
-# Build and install the Rust extension using the opt-in native performance profile
+# Build and install the Rust extension using the fast local development profile
+install-dev-extension:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop --profile dev-fast --uv
+
+# Build and install the Rust extension using a moderately optimized local profile
+install-dev-opt-extension:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop --profile dev-opt --uv
+
+# Build and install the Rust extension using the routine native performance profile
 install-perf-extension:
-    {{ server_env }} && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf --uv
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf --uv
+
+# Build and install the Rust extension using the expensive maximum performance profile
+install-perf-max-extension:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf-max --uv
 
 # Compare original regenie (all 4 programs) vs g quantitative step2 CPU
 benchmark-regenie-comparison-cpu: setup-data install-perf-extension
@@ -128,7 +140,7 @@ install-profiling-tools:
     {{ server_env }} && uv tool install scalene
     {{ server_env }} && uv tool install memray
     {{ server_env }} && uv tool install xprof
-    {{ server_env }} && cargo install --locked samply flamegraph
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo install --locked samply flamegraph
 
 # Install Nsight Systems and Nsight Compute into the repo-local tool directory
 install-nsight-tools:
@@ -397,6 +409,7 @@ slurm-gpu-shell:
     #!/usr/bin/env bash
     set -euo pipefail
     . tooling/server/server_env.sh
+    repository_root="{{ justfile_directory() }}"
     slurm_arguments=(
       "--ntasks=1"
       "--nodelist={{ slurm_gpu_node }}"
@@ -415,13 +428,15 @@ slurm-gpu-shell:
       read -r -a extra_arguments <<< "{{ slurm_gpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    exec srun "${slurm_arguments[@]}" --pty bash -l
+    printf -v job_command 'cd %q && . tooling/server/server_env.sh && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && exec bash -l' "${repository_root}"
+    exec srun "${slurm_arguments[@]}" --pty bash -lc "${job_command}"
 
 # Run a shell command through SLURM on the configured GPU node
 slurm-gpu-run command:
     #!/usr/bin/env bash
     set -euo pipefail
     . tooling/server/server_env.sh
+    repository_root="{{ justfile_directory() }}"
     command='{{ command }}'
     slurm_arguments=(
       "--ntasks=1"
@@ -441,7 +456,8 @@ slurm-gpu-run command:
       read -r -a extra_arguments <<< "{{ slurm_gpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    exec srun "${slurm_arguments[@]}" bash -lc "${command}"
+    printf -v job_command 'cd %q && . tooling/server/server_env.sh && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && %s' "${repository_root}" "${command}"
+    exec srun "${slurm_arguments[@]}" bash -lc "${job_command}"
 
 # Run another just recipe through SLURM on the configured GPU node
 slurm-gpu-just +just_arguments:
@@ -669,7 +685,11 @@ tune-regenie2-gpu *overrides: install-perf-extension
 
 # Run Rust Criterion benchmarks with native performance flags
 benchmark-rust:
-    {{ server_env }} && RUSTFLAGS="-C target-cpu=native" cargo bench
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" cargo bench
+
+# Compare native extension build profiles and write build/runtime timing reports
+benchmark-rust-build-profiles *overrides:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync python -m tooling.cli.rust_build_profiles {{ overrides }}
 
 # Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU
 profile-regenie-comparison-cpu: setup-data install-perf-extension
@@ -760,7 +780,7 @@ format:
 # Lint code
 lint:
     {{ server_env }} && uv run ruff check . --fix
-    {{ server_env }} && cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
 
 # Type check Python code
 typecheck:
@@ -860,18 +880,18 @@ coverage-python:
 
 # Run Rust line coverage gate
 coverage-rust:
-    {{ server_env }} && cargo llvm-cov --workspace --all-targets --ignore-filename-regex '(^|/)(benches|tests)/' --fail-under-lines 90
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo llvm-cov --workspace --all-targets --ignore-filename-regex '(^|/)(benches|tests)/' --fail-under-lines 90
 
 # Run all coverage gates
 coverage: coverage-python coverage-rust
 
 # Build all Rust targets
 rust-build:
-    {{ server_env }} && cargo build --workspace --all-targets
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo build --workspace --all-targets
 
 # Run the Rust test suite
 rust-test:
-    {{ server_env }} && cargo test --workspace
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo test --workspace
 
 # Run all checks on the configured CPU SLURM node
 slurm-cpu-check:

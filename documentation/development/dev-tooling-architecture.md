@@ -32,6 +32,16 @@ The migrated benchmark and profiling commands are invoked through module executi
 uv run --no-sync python -m tooling.cli.benchmark_bgen_reader
 ```
 
+Native extension build-profile measurements use the same pattern:
+
+```bash
+uv run --no-sync python -m tooling.cli.rust_build_profiles tool.labels=[dev-fast]
+```
+
+The build-profile harness writes timestamped JSON/Markdown summaries under
+`results/perf/rust-build-profiles/`, stores command logs beside each summary,
+and keeps per-profile Cargo artifacts isolated under `target/rust-build-profiles/`.
+
 Optional GPU smoke validation should run through SLURM rather than on the head node:
 
 ```bash
