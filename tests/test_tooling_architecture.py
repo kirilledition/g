@@ -389,7 +389,7 @@ def test_hydra_tooling_config_converts_to_tool_arguments() -> None:
 
     rust_build_arguments = rust_build_profiles.build_arguments_from_overrides(
         [
-            "tool.labels=[dev-fast,perf-thin-cgu1]",
+            "tool.labels=[dev-fast,dev-fast-lld,perf-thin-cgu1]",
             "tool.output_parent=results/perf/test-rust-build-profiles",
             "tool.incremental_touch_paths=[src/python/mod.rs]",
             "tool.run_bgen_reader_smoke=true",
@@ -397,6 +397,7 @@ def test_hydra_tooling_config_converts_to_tool_arguments() -> None:
     )
     assert rust_build_arguments.labels == (
         rust_build_profiles.BuildProfileLabel.DEV_FAST,
+        rust_build_profiles.BuildProfileLabel.DEV_FAST_LLD,
         rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU1,
     )
     assert rust_build_arguments.output_parent == Path("results/perf/test-rust-build-profiles")
@@ -957,7 +958,23 @@ def test_tooling_entrypoint_exposes_cli_surface() -> None:
 def test_rust_build_profile_specs_map_expected_cargo_profiles() -> None:
     assert rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.DEV_FAST].cargo_profile == "dev-fast"
     assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.DEV_FAST_LLD].cargo_profile
+        == "dev-fast"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.DEV_FAST_MOLD].cargo_profile
+        == "dev-fast"
+    )
+    assert (
         rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8].cargo_profile == "perf"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8_LLD].cargo_profile
+        == "perf"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8_MOLD].cargo_profile
+        == "perf"
     )
     assert (
         rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_FAT_CGU1].cargo_profile
@@ -985,6 +1002,14 @@ def test_rust_build_profile_command_environment_contains_target_dir() -> None:
         "perf-thin-cgu1",
         "--uv",
     )
+
+
+def test_rust_build_profile_linker_labels_add_expected_rustflags() -> None:
+    lld_spec = rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8_LLD]
+    mold_spec = rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8_MOLD]
+
+    assert lld_spec.rustflags == "-C target-cpu=native -C link-arg=-fuse-ld=lld"
+    assert mold_spec.rustflags == "-C target-cpu=native -C link-arg=-fuse-ld=mold"
 
 
 def test_rust_build_profile_touch_restores_source_timestamp(tmp_path: Path) -> None:

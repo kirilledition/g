@@ -726,6 +726,11 @@ just perf-compare results/perf/baseline.json results/perf/new.json
 - Use when: measuring clean build time, incremental rebuild time after selected
   Rust source touches, native extension size, import timing, and optional smoke
   commands across the supported profile matrix.
+- Notes: linker comparison labels are available for `dev-fast` and the routine
+  `perf` profile: `dev-fast-lld`, `dev-fast-mold`, `perf-thin-cgu8-lld`, and
+  `perf-thin-cgu8-mold`. They keep the Cargo profile fixed and vary only the
+  linker-related `RUSTFLAGS`, so failed rows document missing or unsupported
+  linker tooling instead of changing the default build path.
 
 ## Profiling
 
