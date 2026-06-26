@@ -438,7 +438,8 @@ def test_prepared_run_plan_payload_preserves_requested_and_resolved_gpu_formats(
         requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
         gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
     )
-    prepared_payload = output.build_prepared_run_plan_manifest_payload(current_header)
+    prepared_payload = json.loads(output.build_native_prepared_run_plan_json(current_header))
+    assert isinstance(prepared_payload, dict)
 
     compute_payload = typing.cast("dict[str, typing.Any]", prepared_payload["compute"])
     assert compute_payload["requested_gpu_genotype_format"] == "auto"
