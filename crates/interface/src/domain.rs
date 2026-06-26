@@ -171,7 +171,8 @@ macro_rules! string_enum {
         }
 
         impl $name {
-            pub(crate) fn as_str(self) -> &'static str {
+            #[must_use]
+            pub fn as_str(self) -> &'static str {
                 match self {
                     $(Self::$variant => $value),+
                 }

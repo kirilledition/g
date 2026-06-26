@@ -11,6 +11,8 @@ import g._core
 from g import types
 from g.interface import config
 
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "crates" / "interface" / "src" / "config.default.toml"
+
 
 def build_valid_quantitative_options() -> dict[str, object]:
     """Build minimal valid quantitative REGENIE options."""
@@ -342,8 +344,7 @@ def test_every_supported_option_has_native_surface_metadata() -> None:
 
 
 def test_packaged_default_catalog_matches_option_policies() -> None:
-    default_config_path = Path(__file__).resolve().parents[1] / "src" / "interface" / "config.default.toml"
-    default_payload = tomllib.loads(default_config_path.read_text(encoding="utf-8"))
+    default_payload = tomllib.loads(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
     known_options_by_section: dict[str, set[str]] = {}
     for option_metadata in g._core.config_option_schema():
         section_name = option_metadata["section"]
@@ -359,8 +360,7 @@ def test_packaged_default_catalog_matches_option_policies() -> None:
 
 
 def test_packaged_default_hash_uses_raw_toml_payload() -> None:
-    default_config_path = Path(__file__).resolve().parents[1] / "src" / "interface" / "config.default.toml"
-    expected_hash = hashlib.sha256(default_config_path.read_bytes()).hexdigest()
+    expected_hash = hashlib.sha256(DEFAULT_CONFIG_PATH.read_bytes()).hexdigest()
     effective_default_payload = tomllib.loads(config.dumps_toml(config.load_packaged_config()))
 
     assert effective_default_payload["metadata"]["default-config-hash"] == expected_hash

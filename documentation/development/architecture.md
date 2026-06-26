@@ -52,7 +52,7 @@ src/g/
 ## Native Runtime
 
 ```text
-src/config_frontend/             Rust CLI/config frontend, clap, toml/Serde, option specs
+crates/interface/src/            Rust CLI/config frontend, clap, toml/Serde, option specs
 crates/genotype/src/             BGEN mmap/index/decode/preprocess/profile
 src/sample.rs                    sample/phenotype/covariate alignment
 crates/output/src/               Arrow IPC chunks, Parquet finalization, manifests

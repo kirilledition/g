@@ -44,12 +44,12 @@ The live configuration contract is documented in
 [Configuration Frontend](../development/configuration-frontend.md). Historical
 config rewrite notes reduce to these rules for the Rust frontend branch:
 
-- `src/interface/config.default.toml` owns user-tunable defaults.
+- `crates/interface/src/config.default.toml` owns user-tunable defaults.
 - Rust owns CLI parsing, TOML decoding, config layering, default loading,
-  validation, effective TOML serialization, and PyO3 config objects.
-- `src/interface/partial.rs` defines the typed partial TOML surface with Serde,
+  validation, and effective TOML serialization; root PyO3 config classes are adapters.
+- `crates/interface/src/partial.rs` defines the typed partial TOML surface with Serde,
   optional fields, aliases, and unknown-key rejection.
-- `src/interface/overlay.rs` decodes provenance and overlays defaults, user
+- `crates/interface/src/overlay.rs` decodes provenance and overlays defaults, user
   TOML, and CLI/Python overrides before resolving complete config data.
 - Runtime subsystems should receive resolved `RegenieConfig` or
   `ExecutionPlan` values, not raw CLI dictionaries, environment variables, or

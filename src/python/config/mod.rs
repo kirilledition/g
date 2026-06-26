@@ -5,9 +5,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyModule};
 
-use crate::interface::{
-    self, BinaryConfigData, CliOutcomeData, GComputeConfigData, GDiagnosticsConfigData, GOutputConfigData,
-    InputConfigData, RegenieConfigData, TraitConfigData,
+use g_interface as interface;
+use g_interface::{
+    BinaryConfigData, CliOutcomeData, GComputeConfigData, GDiagnosticsConfigData, GOutputConfigData, InputConfigData,
+    RegenieConfigData, TraitConfigData,
 };
 
 mod conversion;

@@ -56,7 +56,7 @@ cache-keys = [
     { file = "crates/**/*.rs" },
     { file = "crates/**/Cargo.toml" },
     { file = "crates/**/*.toml" },
-    { file = "src/interface/config.default.toml" },
+    { file = "crates/interface/src/config.default.toml" },
     { file = "Cargo.toml" },
     { file = "Cargo.lock" },
 ]

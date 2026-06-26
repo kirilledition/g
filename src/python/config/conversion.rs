@@ -3,7 +3,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyMapping, PyModule, PyString, PyTuple};
 use toml::{Table, Value};
 
-use crate::interface::{self, ConfigOptionValueKind};
+use g_interface as interface;
+use g_interface::ConfigOptionValueKind;
 
 const NATIVE_CONFIG_SECTION_NAMES: &[&str] =
     &["input", "trait", "binary", "compute", "output", "diagnostics", "metadata"];

@@ -32,11 +32,11 @@ scattered runtime defaults directly. User-controlled behavior flows through
 
 | Source | Owns |
 | --- | --- |
-| `src/interface/options.rs` | Canonical option metadata for CLI names, TOML aliases, flat Python names, and value kinds. |
-| `src/interface/cli/` | CLI parser and CLI-to-config-layer conversion. |
-| `src/interface/toml.rs` | Strict TOML layer decoding and accepted section/key names. |
-| `src/interface/config.default.toml` | Packaged default values for defaultable options. |
-| `src/interface/defaults.rs`, `overlay.rs`, `partial.rs`, `resolved.rs`, `validation.rs`, `run_validation.rs` | Defaults, layer overlay, resolved config construction, validation, and run validation. |
+| `crates/interface/src/options.rs` | Canonical option metadata for CLI names, TOML aliases, flat Python names, and value kinds. |
+| `crates/interface/src/cli/` | CLI parser and CLI-to-config-layer conversion. |
+| `crates/interface/src/toml.rs` | Strict TOML layer decoding and accepted section/key names. |
+| `crates/interface/src/config.default.toml` | Packaged default values for defaultable options. |
+| `crates/interface/src/defaults.rs`, `overlay.rs`, `partial.rs`, `resolved.rs`, `validation.rs`, `run_validation.rs` | Defaults, layer overlay, resolved config construction, validation, and run validation. |
 | `src/python/config/` | PyO3 conversion between Rust-owned config objects and Python classes. |
 | `src/g/interface/config.py` | Thin Python bridge that normalizes Python option dictionaries using Rust metadata. |
 | `src/g/execution_plan.py` | Immutable execution-plan construction from validated config. |
@@ -47,7 +47,7 @@ corresponding tests. Do not introduce a second option table.
 
 ## Defaults Policy
 
-Mutable defaults live in `src/g/config.default.toml`. Do not copy them into
+Mutable defaults live in `crates/interface/src/config.default.toml`. Do not copy them into
 implementation code or user documentation as constants. If a code path needs a
 default, read it through the packaged default config.
 
@@ -56,12 +56,12 @@ configurable defaults do not reappear as production constants.
 
 ## Option Addition Checklist
 
-1. Add or update `ConfigOptionMetadata` in `src/interface/options.rs`.
-2. Add the CLI parser/layer field in `src/interface/cli/` when the option is
+1. Add or update `ConfigOptionMetadata` in `crates/interface/src/options.rs`.
+2. Add the CLI parser/layer field in `crates/interface/src/cli/` when the option is
    accepted on the command line.
-3. Add the TOML/partial/resolved config field in `src/interface/` when the
+3. Add the TOML/partial/resolved config field in `crates/interface/src/` when the
    option is accepted in config files or affects runtime state.
-4. Add a packaged default in `src/interface/config.default.toml` when the option is
+4. Add a packaged default in `crates/interface/src/config.default.toml` when the option is
    defaultable.
 5. Update `src/python/config/` and `src/g/_core.pyi` when the option is exposed
    through Python config objects.
@@ -92,7 +92,7 @@ Trait flags have layer-aware semantics:
 - binary-only options are rejected after the final trait type is known.
 
 Keep these rules centralized in the Rust CLI layer, overlay, and validation
-modules under `src/interface/`. Python should only normalize Python option
+modules under `crates/interface/src/`. Python should only normalize Python option
 dictionaries into the Rust-owned shape before calling the PyO3 config builder.
 
 ## Tests To Update

@@ -53,8 +53,8 @@ on all internal crates and remains the only native Python binding crate.
 
 | Area | Current Python owner | Current Rust helper | Target crate | Target owner | Removal status | Primary tests and benchmarks |
 | --- | --- | --- | --- | --- | --- | --- |
-| CLI/TOML/config frontend | `src/g/cli.py`, `src/g/interface/config.py` | `src/interface/` | `g-interface` | Rust | Python remains adapter | `tests/test_interface.py`, CLI help/package smoke |
-| Execution planning | `src/g/execution_plan.py`, `src/g/engine/backend_planner.py` | `src/interface/run_validation.rs`, native metadata helpers | `g-plan`, then `g-engine` | Rust | Pending | `tests/test_backend_planner.py`, `tests/test_regenie2_pipeline.py` |
+| CLI/TOML/config frontend | `src/g/cli.py`, `src/g/interface/config.py` | `crates/interface/src/` | `g-interface` | Rust | Extracted as native crate; Python remains adapter | `tests/test_interface.py`, CLI help/package smoke |
+| Execution planning | `src/g/execution_plan.py`, `src/g/engine/backend_planner.py` | `crates/interface/src/run_validation.rs`, native metadata helpers | `g-plan`, then `g-engine` | Rust | Pending | `tests/test_backend_planner.py`, `tests/test_regenie2_pipeline.py` |
 | BGEN and genotype preprocessing | Python native-dispatch wrappers | `crates/genotype/src/` | `g-genotype` | Rust | Extracted as leaf crate | Rust genotype tests, `just benchmark-bgen-reader`, `cargo bench -p g-genotype` |
 | Sample and phenotype alignment | `src/g/io/source.py`, pipeline wrappers | `src/sample/` | `g-input` | Rust | Pending | `tests/test_io_sample.py`, `tests/test_tabular.py` |
 | Prediction and LOCO input | `src/g/engine/native_dispatch/loaders.py` | Partial native data views | `g-input` | Rust | Pending | pipeline, parity, and LOCO alignment tests |

@@ -723,9 +723,9 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "chrono",
- "clap",
  "csv",
  "g-genotype",
+ "g-interface",
  "g-output",
  "memchr",
  "numpy",
@@ -752,6 +752,16 @@ dependencies = [
  "memmap2",
  "rayon",
  "thiserror",
+]
+
+[[package]]
+name = "g-interface"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "sha2",
+ "toml",
 ]
 
 [[package]]

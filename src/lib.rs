@@ -2,9 +2,9 @@
 
 pub(crate) mod callback_summary;
 pub use g_genotype as genotype;
+pub use g_interface as interface;
 pub use g_output as output;
 pub(crate) mod host_policy;
-pub mod interface;
 pub mod pipeline;
 pub mod python;
 pub mod regenie;
