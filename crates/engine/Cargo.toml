@@ -9,5 +9,12 @@ publish.workspace = true
 g-genotype = { workspace = true }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "coordinator"
+harness = false
+
 [lints]
 workspace = true

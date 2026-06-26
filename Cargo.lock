@@ -747,6 +747,7 @@ dependencies = [
 name = "g-engine"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "g-genotype",
  "thiserror",
 ]
