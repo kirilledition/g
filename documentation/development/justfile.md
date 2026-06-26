@@ -171,12 +171,34 @@ also accept the same overrides when run directly with `uv run --no-sync python
   and uses NVIDIA's Ubuntu 22.04 CUDA package index by default because it still
   contains the CUDA 12.2-era Nsight Compute package.
 
+### `install-dev-extension`
+
+- Inputs: Rust toolchain, `maturin`, current Python environment.
+- Output: installed native extension built with the `dev-fast` Cargo profile.
+- Use when: iterating on Python tests, CLI smoke tests, and agent work where
+  rebuild speed matters more than native runtime.
+
+### `install-dev-opt-extension`
+
+- Inputs: Rust toolchain, `maturin`, current Python environment.
+- Output: installed native extension built with the `dev-opt` Cargo profile.
+- Use when: local tests need a moderately optimized native extension but full
+  release/LTO builds would waste iteration time.
+
 ### `install-perf-extension`
 
 - Inputs: Rust toolchain, `maturin`, current Python environment.
 - Output: installed native extension built with `RUSTFLAGS="-C target-cpu=native"`
-  and the `perf` Cargo profile.
-- Use when: running performance benchmarks or profiling the native paths.
+  and the routine ThinLTO `perf` Cargo profile.
+- Use when: running standard performance benchmarks or profiling native paths.
+
+### `install-perf-max-extension`
+
+- Inputs: Rust toolchain, `maturin`, current Python environment.
+- Output: installed native extension built with `RUSTFLAGS="-C target-cpu=native"`
+  and the expensive FatLTO `perf-max` Cargo profile.
+- Use when: final benchmark numbers or release-candidate validation need the
+  highest optimization settings.
 
 ## Diagnostics
 
@@ -695,6 +717,16 @@ just perf-compare results/perf/baseline.json results/perf/new.json
 - Output: Rust Criterion benchmark results.
 - Use when: measuring Rust-only native components.
 
+### `benchmark-rust-build-profiles *overrides`
+
+- Inputs: Rust toolchain, `maturin`, current Python environment.
+- Output: JSON and Markdown build-profile summaries under
+  `results/perf/rust-build-profiles/`, with per-command logs and isolated Cargo
+  target directories under `target/rust-build-profiles/`.
+- Use when: measuring clean build time, incremental rebuild time after selected
+  Rust source touches, native extension size, import timing, and optional smoke
+  commands across the supported profile matrix.
+
 ## Profiling
 
 ### `profile-regenie-comparison-cpu`
@@ -1009,7 +1041,8 @@ just profile-chr10-gpu-binary-deep-landau \
 - Output: Rust line coverage report with a 90 percent gate. The report ignores
   `benches/` benchmark harnesses and `tests/` integration-test harness source
   with `--ignore-filename-regex '(^|/)(benches|tests)/'`; production Rust under
-  `src/` remains in the denominator.
+  `src/` remains in the denominator. The recipe configures `CARGO_BUILD_JOBS`
+  from the local or SLURM CPU allocation before invoking Cargo.
 - Use when: checking Rust coverage.
 
 ### `coverage`
@@ -1022,15 +1055,16 @@ just profile-chr10-gpu-binary-deep-landau \
 
 - Inputs: Rust toolchain.
 - Output: `cargo build --workspace --all-targets`.
-- Use when: building all Rust targets. In a CPU SLURM allocation,
-  `CARGO_BUILD_JOBS` is set from the allocation.
+- Use when: building all Rust targets. The recipe configures
+  `CARGO_BUILD_JOBS` from the local or SLURM CPU allocation and uses `sccache`
+  automatically when it is available and `RUSTC_WRAPPER` is unset.
 
 ### `rust-test`
 
 - Inputs: Rust toolchain.
 - Output: `cargo test --workspace`.
-- Use when: running Rust tests. In a CPU SLURM allocation, dependency and test
-  builds inherit `CARGO_BUILD_JOBS`.
+- Use when: running Rust tests. Dependency and test builds inherit the same
+  Cargo job and optional `sccache` setup as `rust-build`.
 
 ### `slurm-cpu-check`
 
