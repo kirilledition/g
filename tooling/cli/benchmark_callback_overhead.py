@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 import json
+import pathlib
 import statistics
 import time
 import typing
@@ -21,13 +22,12 @@ from g.engine import timing
 from g.engine.callbacks import diagnostics as callback_diagnostics
 from g.engine.callbacks import runtime as callback_runtime
 from g.engine.callbacks import transfers as callback_transfers
+from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import reports as tooling_reports
 
 if typing.TYPE_CHECKING:
-    import pathlib
-
     import omegaconf
 
     from g import _core
@@ -489,6 +489,177 @@ def build_summary(arguments: BenchmarkArguments, trial_results: list[TrialResult
     }
 
 
+def callback_arguments_payload(arguments: BenchmarkArguments) -> dict[str, object]:
+    """Build a JSON-ready callback benchmark configuration."""
+    return typing.cast("dict[str, object]", tooling_reports.to_jsonable(dataclasses.asdict(arguments)))
+
+
+def callback_case_identifier(case_summary: CaseSummary) -> str:
+    """Build a stable callback benchmark case identifier."""
+    return f"{case_summary.workload_mode.value}_{case_summary.stage_timing_mode.value}"
+
+
+def build_callback_metrics(
+    *,
+    run_id: str,
+    case_summaries: list[CaseSummary],
+    trial_results: list[TrialResult],
+) -> list[tooling_artifact_format.MetricRecord]:
+    """Build normalized callback-overhead benchmark metrics."""
+    metric_records: list[tooling_artifact_format.MetricRecord] = []
+    for case_index, case_summary in enumerate(case_summaries):
+        case_id = callback_case_identifier(case_summary)
+        dimensions: dict[str, object] = {
+            "workload_mode": case_summary.workload_mode.value,
+            "stage_timing_mode": case_summary.stage_timing_mode.value,
+        }
+        metric_records.extend(
+            [
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    metric_name="wall_time_seconds",
+                    value=case_summary.mean_wall_time_seconds,
+                    unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.MEAN.value,
+                    higher_is_better=False,
+                    dimensions=dimensions,
+                    phase="callback_overhead",
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/cases/{case_index}/mean_wall_time_seconds",
+                    ),
+                ),
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    metric_name="throughput_chunks_per_second",
+                    value=case_summary.mean_chunks_per_second,
+                    unit=tooling_artifact_format.MetricUnit.COUNT.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.MEAN.value,
+                    higher_is_better=True,
+                    dimensions=dimensions,
+                    phase="callback_overhead",
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/cases/{case_index}/mean_chunks_per_second",
+                    ),
+                ),
+            ]
+        )
+    for trial_index, trial_result in enumerate(trial_results):
+        trial_id = (
+            f"{trial_result.workload_mode.value}_{trial_result.stage_timing_mode.value}_{trial_result.trial_index}"
+        )
+        trial_dimensions: dict[str, object] = {
+            "workload_mode": trial_result.workload_mode.value,
+            "stage_timing_mode": trial_result.stage_timing_mode.value,
+            "requested_device": trial_result.requested_device,
+            "jax_backend": trial_result.jax_backend,
+            "chunk_count": trial_result.chunk_count,
+        }
+        metric_records.append(
+            tooling_artifact_format.build_metric_record(
+                run_id=run_id,
+                case_id=f"{trial_result.workload_mode.value}_{trial_result.stage_timing_mode.value}",
+                trial_id=trial_id,
+                metric_name="wall_time_seconds",
+                value=trial_result.wall_time_seconds,
+                unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+                aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                higher_is_better=False,
+                dimensions=trial_dimensions,
+                phase="callback_overhead",
+                source=tooling_artifact_format.MetricSource(
+                    artifact_path="report.json",
+                    json_pointer=f"/trials/{trial_index}/wall_time_seconds",
+                ),
+            )
+        )
+        for stage_name, seconds in sorted(trial_result.stage_totals_seconds.items()):
+            metric_records.append(
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=f"{trial_result.workload_mode.value}_{trial_result.stage_timing_mode.value}",
+                    trial_id=trial_id,
+                    metric_name=f"stage.{stage_name}.seconds",
+                    value=seconds,
+                    unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                    higher_is_better=False,
+                    dimensions=trial_dimensions,
+                    phase="callback_overhead",
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/trials/{trial_index}/stage_totals_seconds/{stage_name}",
+                    ),
+                )
+            )
+    return metric_records
+
+
+def write_standard_callback_artifacts(
+    *,
+    arguments: BenchmarkArguments,
+    summary: dict[str, typing.Any],
+    hydra_config: omegaconf.DictConfig | None = None,
+) -> None:
+    """Write Tooling Artifact Format v1 outputs for callback-overhead benchmarks."""
+    if arguments.json_summary_path is None:
+        return
+    output_directory = arguments.json_summary_path.parent
+    case_summaries = typing.cast("list[CaseSummary]", summary["case_summaries"])
+    trial_results = typing.cast("list[TrialResult]", summary["trial_results"])
+    producer = tooling_artifact_format.build_producer(
+        tool_name="benchmark_callback_overhead",
+        repository_root=pathlib.Path.cwd(),
+    )
+    run = tooling_artifact_format.build_run_identity(
+        tool_name="benchmark_callback_overhead",
+        output_directory=output_directory,
+        status=tooling_artifact_format.ToolArtifactStatus.SUCCESS,
+    )
+    context_snapshot = tooling_artifact_format.build_context_snapshot(
+        output_directory=output_directory,
+        repository_root=pathlib.Path.cwd(),
+    )
+    report = tooling_artifact_format.build_report_envelope(
+        producer=producer,
+        run=run,
+        context=context_snapshot,
+        title="Callback Overhead Benchmark",
+        configuration=callback_arguments_payload(arguments),
+        summary={
+            "headline": "Callback-overhead benchmark completed.",
+            "legacy_summary_path": str(arguments.json_summary_path),
+        },
+        cases=typing.cast("list[dict[str, object]]", tooling_reports.to_jsonable(case_summaries)),
+        trials=typing.cast("list[dict[str, object]]", tooling_reports.to_jsonable(trial_results)),
+        metrics=build_callback_metrics(
+            run_id=run.run_id,
+            case_summaries=case_summaries,
+            trial_results=trial_results,
+        ),
+    )
+    tooling_artifact_format.write_standard_artifact_bundle(
+        output_directory=output_directory,
+        report=report,
+        events=[
+            tooling_artifact_format.build_tool_event(
+                tool_name="benchmark_callback_overhead",
+                run_id=run.run_id,
+                phase="callback_overhead",
+                event="benchmark_completed",
+                message="Callback-overhead benchmark completed.",
+                fields={"trial_count": len(trial_results), "case_count": len(case_summaries)},
+            )
+        ],
+        hydra_config=hydra_config,
+        tool_payload=callback_arguments_payload(arguments),
+        notes=["Configured JSON summary path preserves the pre-v1 callback benchmark shape."],
+    )
+
+
 def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArguments:
     """Build benchmark parameters from a composed Hydra config."""
     tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
@@ -513,20 +684,21 @@ def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None
     return build_arguments_from_config(config)
 
 
-def run_tool(arguments: BenchmarkArguments) -> None:
+def run_tool(arguments: BenchmarkArguments, hydra_config: omegaconf.DictConfig | None = None) -> None:
     """Run the callback-overhead benchmark."""
     trial_results = run_benchmark(arguments)
     summary = build_summary(arguments, trial_results)
     print(json.dumps(tooling_reports.to_jsonable(summary), indent=2, sort_keys=True))
     if arguments.json_summary_path is not None:
         tooling_reports.write_json_report(arguments.json_summary_path, summary, sort_keys=True)
+        write_standard_callback_artifacts(arguments=arguments, summary=summary, hydra_config=hydra_config)
         print(f"Wrote summary: {arguments.json_summary_path}")
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="benchmark_callback_overhead")
 def hydra_main(config: omegaconf.DictConfig) -> None:
     """Run the callback-overhead benchmark through Hydra."""
-    run_tool(build_arguments_from_config(config))
+    run_tool(build_arguments_from_config(config), hydra_config=config)
 
 
 def main() -> None:

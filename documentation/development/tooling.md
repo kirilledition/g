@@ -41,14 +41,19 @@ tooling/
     performance.py
     profile_regenie2_deep.py
     run_regenie2_matrix.py
+    schema_check.py
     server.py
     tune_regenie2_gpu.py
   common/
+    artifact_format.py
     commands.py
+    context.py
+    g_regenie.py
     hydra_arguments.py
     hydra_compat.py
     logging.py
     paths.py
+    registry.py
     reports.py
     sweeps.py
   configs/
@@ -139,6 +144,8 @@ Dispatches repository debug and guardrail tools through `tool.name`. Use
 `tool.name=check_pyo3_stub` for Rust `_core` stub sync,
 `tool.name=check_internal_defaults` for internal default-parameter policy, and
 `tool.name=check_internal_init_exports` for package-initializer export policy.
+Use `tool.name=schema_check tool.path=<artifact_dir>` to validate Tooling
+Artifact Format v1 outputs.
 
 `tooling.cli.benchmark_bgen_reader`
 
@@ -195,9 +202,10 @@ configuration.
 Runs the standard chromosome binary and linear REGENIE step 2 comparison matrix:
 CPU, GPU, and GPU with the JAX persistent cache already populated. Saved configs
 make this directly available for chr10 and chr22. It executes production
-`g regenie` commands in isolated subprocesses, writes a manifest and Markdown
-report, keeps per-run telemetry logs, and compares against the previous matrix
-manifest for the same chromosome prefix.
+`g regenie` commands in isolated subprocesses, writes Tooling Artifact Format
+v1 outputs plus the compatibility `manifest.json` and `report.md`, keeps
+per-run telemetry logs, and compares against the previous matrix manifest for
+the same chromosome prefix.
 
 `tooling.cli.tune_regenie2_gpu`
 
@@ -256,8 +264,9 @@ compilation-heavy work on the `gauss` head node.
 Use the `perf-*` recipes as the stable command surface for optimization tasks:
 
 - `just perf-smoke` is login-node-safe. It runs a tiny deterministic workload,
-  writes `performance_smoke_summary.json` under `results/perf/smoke/`, and
-  validates that JSON summary generation works.
+  writes `performance_smoke_summary.json` and Tooling Artifact Format v1 files
+  under `results/perf/smoke/`, and validates that JSON summary generation
+  works.
 - `just perf-cpu` requires SLURM. It submits the BGEN reader benchmark through
   `slurm-cpu-just` and writes JSON/Markdown summaries under `results/perf/cpu/`.
 - `just perf-gpu` requires SLURM GPU access. It wraps
@@ -267,10 +276,76 @@ Use the `perf-*` recipes as the stable command surface for optimization tasks:
   speed, memory, and numerical metrics from smoke summaries, BGEN reader
   summaries, binary-hot summaries, and matrix manifests. Malformed JSON,
   nonnumeric metric values, or summaries with no common metrics fail with a
-  nonzero exit status.
+  nonzero exit status. Add `tool.output_dir=<dir>` when invoking the underlying
+  Hydra CLI to write `comparisons.json`, `report.json`, and `summary.md`.
 
 All default `perf-*` outputs live under `results/perf`, which is gitignored.
 Set `GWAS_ENGINE_PERF_RESULTS_DIR` to route local artifacts elsewhere.
+
+## Tooling Artifact Format v1
+
+Artifact-producing tools write a three-layer artifact set:
+
+```text
+1. Machine source of truth: JSON / JSONL
+2. Human and agent reading layer: Markdown
+3. Large tabular optional layer: Parquet or CSV only when needed
+```
+
+Markdown is not the source of truth. The canonical artifact directory is:
+
+```text
+<output_dir>/
+├── artifact_manifest.json
+├── report.json
+├── summary.md
+├── events.jsonl
+├── metrics.jsonl
+├── commands/
+│   └── commands.jsonl
+└── config/
+    ├── resolved_hydra.yaml
+    └── resolved_tool.json
+```
+
+`report.json` is the normalized result summary. `metrics.jsonl` is the
+long-form performance metric stream agents should read first. `events.jsonl` is
+the structured chronological event stream. `commands/commands.jsonl` records
+child command arguments, status, return code, environment overrides, logs, and
+wall time when available. Inline `python -c` commands are materialized under
+`commands/scripts/` before being recorded.
+
+Every machine-readable artifact uses a schema envelope with `schema_name`,
+`schema_version`, `producer`, and `run`. Standard statuses are `success`,
+`partial`, `failed`, `skipped`, `unsupported`, `dry_run`, `interrupted`,
+`timed_out`, and `invalid`. Paths inside artifact records are relative to
+`output_directory` unless they describe external inputs.
+
+The currently migrated producers are:
+
+- `tooling.cli.benchmark_regenie2_binary_hot`
+- `tooling.cli.run_regenie2_matrix`
+- `tooling.cli.profile_regenie2_deep`
+- `tooling.cli.benchmark_bgen_reader` when JSON or Markdown summaries are configured
+- `tooling.cli.benchmark_output_stages`
+- `tooling.cli.benchmark_callback_overhead` when a JSON summary is configured
+- `tooling.cli.performance_smoke`
+- `tooling.cli.performance_compare` when `tool.output_dir` is configured
+
+Validate an artifact directory with:
+
+```bash
+uv run --no-sync python -m tooling.cli.schema_check tool.path=results/perf/smoke/smoke_...
+uv run --no-sync python -m tooling.cli.debug tool.name=schema_check tool.path=data/benchmarks/regenie2_chr10_matrix_current
+```
+
+Legacy summaries remain where existing recipes and comparison scripts expect
+them. For example, the matrix runner still writes `manifest.json` and
+`report.md`, binary-hot still writes `regenie2_binary_hot_summary.json`, and
+the deep profiler keeps its pre-v1 rich manifest as
+`legacy_artifact_manifest.v2.json`. New automation should prefer
+`report.json`, `metrics.jsonl`, `commands/commands.jsonl`, and
+`artifact_manifest.json`.
 
 ## Common Tasks
 
@@ -292,9 +367,9 @@ require the external `regenie` executable. Existing binary and quantitative
 step 1 prediction lists must be present.
 
 Start with a dry run. This writes `profile_plan.json` and `profile_plan.md`
-without running workloads. It also writes `artifact_manifest.json`, including
-optional profiler availability, skipped-tool reasons, and the campaign budget
-estimate:
+without running workloads. It also writes Tooling Artifact Format v1 files,
+including `artifact_manifest.json`, `report.json`, `metrics.jsonl`,
+`events.jsonl`, `commands/commands.jsonl`, and `summary.md`:
 
 ```bash
 just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
@@ -423,6 +498,16 @@ just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
 
 The full run writes:
 
+- `artifact_manifest.json`: Tooling Artifact Format v1 artifact index and
+  provenance.
+- `report.json`: normalized machine-readable profile summary and metrics.
+- `metrics.jsonl`: long-form metrics for headline runtimes, stage totals, and
+  dry-run budget counts.
+- `events.jsonl`: structured event stream.
+- `commands/commands.jsonl`: child command ledger with script materialization
+  for inline Python commands.
+- `config/resolved_hydra.yaml` and `config/resolved_tool.json`: resolved
+  configuration snapshots.
 - `tooling.log`: phase-level progress for long-running jobs.
 - `preflight.json`: git, hardware, JAX, Rust, CUDA, REGENIE, and input metadata.
 - `summary.json`: structured run results, comparisons, JAX cache diagnostics,
@@ -431,8 +516,9 @@ The full run writes:
   diagnostic tables plus a JAX compile/cache table with cold-versus-warm
   subprocess timing, persistent-cache path and use, cache file/byte deltas, and
   parsed compile/cache hit/miss log counts.
-- `artifact_manifest.json`: artifact list, profiler availability, per-profiler
-  artifact and application output paths, and skipped profiler reasons.
+- `legacy_artifact_manifest.v2.json`: compatibility copy of the pre-v1
+  profiler-specific manifest with profiler availability, per-profiler artifact
+  and application output paths, and skipped profiler reasons.
 - `logs/*.stdout.log` and `logs/*.stderr.log`: subprocess logs.
   `g` subprocess stderr logs enable documented JAX persistent-cache DEBUG
   logging and compile logging for cache-hit and cache-miss diagnostics.

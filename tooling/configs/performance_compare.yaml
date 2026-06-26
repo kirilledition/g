@@ -1,6 +1,7 @@
 tool:
   baseline_json: null
   new_json: null
+  output_dir: null
 
 hydra:
   job:

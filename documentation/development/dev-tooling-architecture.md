@@ -10,9 +10,12 @@ The tooling package now has a small internal framework:
 - `tooling.common.registry` owns grouped CLI dispatch tables.
 - `tooling.common.commands` owns shell-free subprocess execution, logs, timeouts, and redacted environment reporting.
 - `tooling.common.reports` owns versioned JSON report validation.
+- `tooling.common.artifact_format` owns Tooling Artifact Format v1 report, manifest, metric, event, command, failure, finding, and comparison models.
 - `tooling.common.g_regenie` owns shared `g regenie` CLI rendering and Python API payload rendering.
 
 Benchmark and profiler code should use these contracts instead of rebuilding command vectors, report dictionaries, or grouped dispatch chains by hand.
+
+Artifact-producing tools should write Tooling Artifact Format v1 beside any legacy compatibility summaries. The canonical machine-readable files are `artifact_manifest.json`, `report.json`, `events.jsonl`, `metrics.jsonl`, `commands/commands.jsonl`, `config/resolved_hydra.yaml`, `config/resolved_tool.json`, and `summary.md`. Use `uv run --no-sync python -m tooling.cli.schema_check tool.path=<output_dir>` to validate a completed artifact directory.
 
 The base tooling config is `tooling/configs/config.yaml`. It sets:
 

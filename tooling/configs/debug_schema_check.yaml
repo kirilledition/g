@@ -1,0 +1,7 @@
+tool:
+  path: null
+  require_optional_files: false
+
+hydra:
+  job:
+    chdir: false

@@ -27,6 +27,7 @@ import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
 import tooling.configuration as tooling_configuration
 from tooling.benchmark import benchmark as baseline_benchmark
 from tooling.benchmark import comparison as comparison_benchmark
+from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
@@ -1221,19 +1222,524 @@ def write_artifact_manifest(
     profiler_tool_status: dict[str, ProfilerToolStatus],
     summary_payload: dict[str, typing.Any] | None = None,
     profile_plan: ProfilePlan | None = None,
-) -> None:
-    """Write the profile artifact manifest."""
+) -> Path:
+    """Write the legacy profile artifact manifest."""
     manifest = collect_artifact_manifest(
         output_directory=output_directory,
         profiler_tool_status=profiler_tool_status,
         summary_payload=summary_payload,
         profile_plan=profile_plan,
     )
+    manifest_path = output_directory / "legacy_artifact_manifest.v2.json"
     tooling_reports.write_versioned_json_report(
-        output_directory / "artifact_manifest.json",
+        manifest_path,
         manifest,
         ARTIFACT_MANIFEST_CONTRACT,
         sort_keys=True,
+    )
+    return manifest_path
+
+
+def profile_status_to_artifact_status(status: str) -> tooling_artifact_format.ToolArtifactStatus:
+    """Convert a profile-local status string to the shared artifact status enum."""
+    if status == "success":
+        return tooling_artifact_format.ToolArtifactStatus.SUCCESS
+    if status == "partial":
+        return tooling_artifact_format.ToolArtifactStatus.PARTIAL
+    if status == "failed":
+        return tooling_artifact_format.ToolArtifactStatus.FAILED
+    if status == "skipped":
+        return tooling_artifact_format.ToolArtifactStatus.SKIPPED
+    if status == "unsupported":
+        return tooling_artifact_format.ToolArtifactStatus.UNSUPPORTED
+    if status == "dry_run" or status == "planned":
+        return tooling_artifact_format.ToolArtifactStatus.DRY_RUN
+    return tooling_artifact_format.ToolArtifactStatus.INVALID
+
+
+def profile_command_identifier(raw_name: str, index: int) -> str:
+    """Build a filesystem-safe command identifier."""
+    normalized = "".join(character if character.isalnum() or character in {"-", "_"} else "_" for character in raw_name)
+    if normalized:
+        return normalized
+    return f"profile_command_{index:04d}"
+
+
+def collect_summary_trial_payloads(summary_payload: dict[str, typing.Any] | None) -> list[dict[str, typing.Any]]:
+    """Collect trial-like payloads from a deep-profile summary."""
+    if summary_payload is None:
+        return []
+    trial_payloads: list[dict[str, typing.Any]] = []
+    for payload in typing.cast("list[dict[str, typing.Any]]", summary_payload.get("setup_results", [])):
+        trial_payloads.append(payload)
+    for aggregate_payload in typing.cast("list[dict[str, typing.Any]]", summary_payload.get("headline_results", [])):
+        for field_name in ("warmup_trials", "trials"):
+            trial_payloads.extend(typing.cast("list[dict[str, typing.Any]]", aggregate_payload.get(field_name, [])))
+    deep_profile_results = typing.cast("dict[str, typing.Any]", summary_payload.get("deep_profiles", {}))
+    for profile_payload in typing.cast(
+        "list[dict[str, typing.Any]]", deep_profile_results.get("sampling_profiles", [])
+    ):
+        if isinstance(profile_payload.get("command_arguments"), list):
+            trial_payloads.append(profile_payload)
+    for perturbation_payload in typing.cast(
+        "list[dict[str, typing.Any]]",
+        summary_payload.get("logging_perturbation_results", []),
+    ):
+        trial_payload = perturbation_payload.get("trial")
+        if isinstance(trial_payload, dict):
+            trial_payloads.append(typing.cast("dict[str, typing.Any]", trial_payload))
+    return trial_payloads
+
+
+def build_profile_command_records(
+    *,
+    output_directory: Path,
+    run_id: str,
+    summary_payload: dict[str, typing.Any] | None = None,
+    profile_plan: ProfilePlan | None = None,
+) -> list[tooling_artifact_format.CommandRecord]:
+    """Build command ledger records for deep-profile subprocesses."""
+    command_records: list[tooling_artifact_format.CommandRecord] = []
+    for command_index, trial_payload in enumerate(collect_summary_trial_payloads(summary_payload), start=1):
+        command_arguments = [str(value) for value in trial_payload.get("command_arguments", [])]
+        if not command_arguments:
+            continue
+        raw_name = str(trial_payload.get("name", f"profile_command_{command_index:04d}"))
+        status = profile_status_to_artifact_status(str(trial_payload.get("status", "invalid")))
+        command_records.append(
+            tooling_artifact_format.build_command_record(
+                command_id=profile_command_identifier(raw_name, command_index),
+                tool_name="profile_regenie2_deep",
+                run_id=run_id,
+                phase=str(trial_payload.get("trait_type", "profile")),
+                args=command_arguments,
+                output_directory=output_directory,
+                cwd=REPOSITORY_ROOT,
+                environment_overrides=typing.cast(
+                    "dict[str, str]",
+                    trial_payload.get("environment_overrides", {}),
+                ),
+                stdout_log=Path(str(trial_payload["stdout_log_path"]))
+                if trial_payload.get("stdout_log_path") is not None
+                else None,
+                stderr_log=Path(str(trial_payload["stderr_log_path"]))
+                if trial_payload.get("stderr_log_path") is not None
+                else None,
+                status=status,
+                return_code=None,
+                wall_time_seconds=(
+                    float(trial_payload["wall_time_seconds"])
+                    if isinstance(trial_payload.get("wall_time_seconds"), (int, float))
+                    else None
+                ),
+            )
+        )
+    if profile_plan is not None:
+        next_index = len(command_records) + 1
+        for command_manifest in profile_plan.regenie_baseline_commands:
+            raw_name = str(command_manifest["name"])
+            command_arguments = typing.cast("list[object]", command_manifest["command_arguments"])
+            command_records.append(
+                tooling_artifact_format.build_command_record(
+                    command_id=profile_command_identifier(raw_name, next_index),
+                    tool_name="profile_regenie2_deep",
+                    run_id=run_id,
+                    phase="regenie_baseline",
+                    args=[str(value) for value in command_arguments],
+                    output_directory=output_directory,
+                    cwd=REPOSITORY_ROOT,
+                    status=tooling_artifact_format.ToolArtifactStatus.DRY_RUN,
+                )
+            )
+            next_index += 1
+        for command_arguments in profile_plan.rust_benchmark_commands:
+            command_records.append(
+                tooling_artifact_format.build_command_record(
+                    command_id=profile_command_identifier(f"rust_criterion_{next_index}", next_index),
+                    tool_name="profile_regenie2_deep",
+                    run_id=run_id,
+                    phase="rust_criterion",
+                    args=command_arguments,
+                    output_directory=output_directory,
+                    cwd=REPOSITORY_ROOT,
+                    status=tooling_artifact_format.ToolArtifactStatus.DRY_RUN,
+                )
+            )
+            next_index += 1
+    return command_records
+
+
+def build_profile_input_file_records(
+    *,
+    profile_plan: ProfilePlan | None,
+    summary_payload: dict[str, typing.Any] | None,
+) -> list[tooling_artifact_format.InputFileRecord]:
+    """Build input-file records for profile artifacts."""
+    input_records: list[tooling_artifact_format.InputFileRecord] = []
+    for input_payload in collect_manifest_input_files(profile_plan=profile_plan, summary_payload=summary_payload):
+        path_value = input_payload.get("path")
+        if path_value is None:
+            continue
+        input_records.append(
+            tooling_artifact_format.build_input_file_record(
+                path=Path(str(path_value)),
+                kind="profile_input",
+            )
+        )
+    return input_records
+
+
+def profile_metric_dimensions(aggregate_payload: dict[str, typing.Any]) -> dict[str, object]:
+    """Build metric dimensions for a profile aggregate."""
+    return {
+        "implementation": str(aggregate_payload.get("implementation", "")),
+        "trait_type": str(aggregate_payload.get("trait_type", "")),
+        "device": str(aggregate_payload.get("device", "")),
+        "status": str(aggregate_payload.get("status", "")),
+    }
+
+
+def optional_float(raw_value: typing.Any) -> float | None:
+    """Return a float for numeric values."""
+    if isinstance(raw_value, (int, float)):
+        return float(raw_value)
+    return None
+
+
+def append_profile_summary_metrics(
+    *,
+    metric_records: list[tooling_artifact_format.MetricRecord],
+    run_id: str,
+    summary_payload: dict[str, typing.Any],
+) -> None:
+    """Append normalized metrics from a profile summary payload."""
+    metric_specs = (
+        ("median_wall_time_seconds", "wall_time_seconds", tooling_artifact_format.MetricAggregation.MEDIAN.value),
+        ("mean_wall_time_seconds", "wall_time_seconds", tooling_artifact_format.MetricAggregation.MEAN.value),
+        ("min_wall_time_seconds", "wall_time_seconds", tooling_artifact_format.MetricAggregation.MINIMUM.value),
+        ("max_wall_time_seconds", "wall_time_seconds", tooling_artifact_format.MetricAggregation.MAXIMUM.value),
+        (
+            "standard_deviation_seconds",
+            "wall_time_seconds",
+            tooling_artifact_format.MetricAggregation.STANDARD_DEVIATION.value,
+        ),
+        (
+            "rows_per_second",
+            "throughput_rows_per_second",
+            tooling_artifact_format.MetricAggregation.MEDIAN.value,
+        ),
+    )
+    for aggregate_index, aggregate_payload in enumerate(
+        typing.cast("list[dict[str, typing.Any]]", summary_payload.get("headline_results", []))
+    ):
+        case_id = str(aggregate_payload.get("name", f"headline_{aggregate_index}"))
+        for source_field, metric_name, aggregation in metric_specs:
+            unit = (
+                tooling_artifact_format.MetricUnit.ROW.value
+                if metric_name == "throughput_rows_per_second"
+                else tooling_artifact_format.MetricUnit.SECONDS.value
+            )
+            metric_records.append(
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    metric_name=metric_name,
+                    value=optional_float(aggregate_payload.get(source_field)),
+                    unit=unit,
+                    aggregation=aggregation,
+                    higher_is_better=metric_name == "throughput_rows_per_second",
+                    dimensions=profile_metric_dimensions(aggregate_payload),
+                    phase="headline_trials",
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="summary.json",
+                        json_pointer=f"/headline_results/{aggregate_index}/{source_field}",
+                    ),
+                )
+            )
+    stage_totals = typing.cast("dict[str, typing.Any]", summary_payload.get("stage_totals", {}))
+    for stage_name, seconds in sorted(stage_totals.items()):
+        metric_records.append(
+            tooling_artifact_format.build_metric_record(
+                run_id=run_id,
+                case_id=None,
+                metric_name=f"stage.{stage_name}.seconds",
+                value=optional_float(seconds),
+                unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+                aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                higher_is_better=False,
+                dimensions={},
+                phase="stage_totals",
+                source=tooling_artifact_format.MetricSource(
+                    artifact_path="summary.json",
+                    json_pointer=f"/stage_totals/{stage_name}",
+                ),
+            )
+        )
+
+
+def append_profile_plan_metrics(
+    *,
+    metric_records: list[tooling_artifact_format.MetricRecord],
+    run_id: str,
+    profile_plan: ProfilePlan,
+) -> None:
+    """Append normalized metrics from a dry-run profile plan."""
+    budget_metrics = {
+        "candidate_count": profile_plan.campaign_budget.total_candidate_count,
+        "subprocess_run_count": profile_plan.campaign_budget.total_subprocess_run_count,
+        "major_profiler_run_count": profile_plan.campaign_budget.total_major_profiler_run_count,
+    }
+    for metric_name, metric_value in budget_metrics.items():
+        metric_records.append(
+            tooling_artifact_format.build_metric_record(
+                run_id=run_id,
+                case_id="campaign_budget",
+                metric_name=metric_name,
+                value=metric_value,
+                unit=tooling_artifact_format.MetricUnit.COUNT.value,
+                aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                higher_is_better=None,
+                dimensions={"chromosome_label": profile_plan.chromosome_label},
+                phase="planning",
+                source=tooling_artifact_format.MetricSource(
+                    artifact_path="profile_plan.json",
+                    json_pointer=f"/campaign_budget/{metric_name}",
+                ),
+            )
+        )
+
+
+def build_profile_metrics(
+    *,
+    run_id: str,
+    summary_payload: dict[str, typing.Any] | None = None,
+    profile_plan: ProfilePlan | None = None,
+) -> list[tooling_artifact_format.MetricRecord]:
+    """Build normalized profile metrics."""
+    metric_records: list[tooling_artifact_format.MetricRecord] = []
+    if summary_payload is not None:
+        append_profile_summary_metrics(
+            metric_records=metric_records,
+            run_id=run_id,
+            summary_payload=summary_payload,
+        )
+    if profile_plan is not None:
+        append_profile_plan_metrics(
+            metric_records=metric_records,
+            run_id=run_id,
+            profile_plan=profile_plan,
+        )
+    return metric_records
+
+
+def build_profile_failure_records(
+    summary_payload: dict[str, typing.Any] | None,
+) -> list[tooling_artifact_format.FailureRecord]:
+    """Build structured failure records for profile trials."""
+    failure_records: list[tooling_artifact_format.FailureRecord] = []
+    for failure_index, trial_payload in enumerate(
+        (
+            payload
+            for payload in collect_summary_trial_payloads(summary_payload)
+            if str(payload.get("status", "")) == "failed"
+        ),
+        start=1,
+    ):
+        failure_records.append(
+            tooling_artifact_format.FailureRecord(
+                failure_id=f"F{failure_index:03d}",
+                phase=str(trial_payload.get("trait_type", "profile")),
+                status=tooling_artifact_format.ToolArtifactStatus.FAILED,
+                message=f"Profile trial {trial_payload.get('name', failure_index)} failed.",
+                exception_type=None,
+                stderr_excerpt=None,
+                stdout_log=str(trial_payload.get("stdout_log_path"))
+                if trial_payload.get("stdout_log_path") is not None
+                else None,
+                stderr_log=str(trial_payload.get("stderr_log_path"))
+                if trial_payload.get("stderr_log_path") is not None
+                else None,
+                command_id=profile_command_identifier(str(trial_payload.get("name", "")), failure_index),
+            )
+        )
+    return failure_records
+
+
+def build_profile_cases(
+    summary_payload: dict[str, typing.Any] | None, profile_plan: ProfilePlan | None
+) -> list[dict[str, object]]:
+    """Build report case records for profile artifacts."""
+    if summary_payload is not None:
+        cases: list[dict[str, object]] = []
+        for aggregate_payload in typing.cast(
+            "list[dict[str, typing.Any]]", summary_payload.get("headline_results", [])
+        ):
+            case_payload = dict(aggregate_payload)
+            case_payload.pop("trials", None)
+            case_payload.pop("warmup_trials", None)
+            cases.append(typing.cast("dict[str, object]", case_payload))
+        return cases
+    if profile_plan is None:
+        return []
+    return [
+        {
+            "case_id": section.name,
+            "display_name": section.display_name,
+            "candidate_count": section.candidate_count,
+            "subprocess_run_count": section.subprocess_run_count,
+            "major_profiler_run_count": section.major_profiler_run_count,
+        }
+        for section in profile_plan.campaign_budget.sections
+    ]
+
+
+def build_profile_agent_summary(
+    *,
+    status: tooling_artifact_format.ToolArtifactStatus,
+    summary_payload: dict[str, typing.Any] | None,
+    profile_plan: ProfilePlan | None,
+) -> dict[str, object]:
+    """Build a concise agent-oriented profile summary."""
+    if summary_payload is not None:
+        headline_count = len(typing.cast("list[dict[str, typing.Any]]", summary_payload.get("headline_results", [])))
+        failures = build_profile_failure_records(summary_payload)
+        return {
+            "one_sentence": f"Deep profile completed with {headline_count} headline aggregate results.",
+            "key_observations": [
+                f"Status: {status.value}.",
+                f"Headline aggregate count: {headline_count}.",
+                f"Structured failure count: {len(failures)}.",
+            ],
+            "risks": [failure.message for failure in failures[:5]],
+            "next_actions": [],
+        }
+    if profile_plan is not None:
+        return {
+            "one_sentence": "Deep profile plan was written without executing workloads.",
+            "key_observations": [
+                f"Status: {status.value}.",
+                f"Estimated subprocess runs: {profile_plan.campaign_budget.total_subprocess_run_count}.",
+                f"Estimated major profiler runs: {profile_plan.campaign_budget.total_major_profiler_run_count}.",
+            ],
+            "risks": list(profile_plan.campaign_budget.guidance),
+            "next_actions": [],
+        }
+    return {
+        "one_sentence": f"Deep profile finished with status {status.value}.",
+        "key_observations": [f"Status: {status.value}."],
+        "risks": [],
+        "next_actions": [],
+    }
+
+
+def profile_summary_artifact_status(
+    summary_payload: dict[str, typing.Any],
+) -> tooling_artifact_format.ToolArtifactStatus:
+    """Determine the overall standard status for a completed profile summary."""
+    headline_results = typing.cast("list[dict[str, typing.Any]]", summary_payload.get("headline_results", []))
+    if not headline_results:
+        return tooling_artifact_format.ToolArtifactStatus.FAILED
+    aggregate_statuses = {str(result.get("status", "")) for result in headline_results}
+    if aggregate_statuses == {"success"}:
+        return tooling_artifact_format.ToolArtifactStatus.SUCCESS
+    if "success" in aggregate_statuses or "partial" in aggregate_statuses:
+        return tooling_artifact_format.ToolArtifactStatus.PARTIAL
+    return tooling_artifact_format.ToolArtifactStatus.FAILED
+
+
+def profile_configuration_payload(arguments: ProfileArguments) -> dict[str, object]:
+    """Build a JSON-ready profile configuration snapshot."""
+    return typing.cast("dict[str, object]", tooling_reports.to_jsonable(dataclasses.asdict(arguments)))
+
+
+def write_standard_profile_artifacts(
+    *,
+    arguments: ProfileArguments,
+    output_directory: Path,
+    profiler_tool_status: dict[str, ProfilerToolStatus],
+    status: tooling_artifact_format.ToolArtifactStatus,
+    status_reason: str | None = None,
+    summary_payload: dict[str, typing.Any] | None = None,
+    profile_plan: ProfilePlan | None = None,
+    summary_markdown: str | None = None,
+    hydra_config: omegaconf.DictConfig | None = None,
+) -> None:
+    """Write Tooling Artifact Format v1 artifacts for the deep profiler."""
+    producer = tooling_artifact_format.build_producer(
+        tool_name="profile_regenie2_deep",
+        repository_root=REPOSITORY_ROOT,
+    )
+    run = tooling_artifact_format.build_run_identity(
+        tool_name="profile_regenie2_deep",
+        output_directory=output_directory,
+        status=status,
+        status_reason=status_reason,
+    )
+    context_snapshot = tooling_artifact_format.build_context_snapshot(
+        output_directory=output_directory,
+        repository_root=REPOSITORY_ROOT,
+    )
+    report = tooling_artifact_format.build_report_envelope(
+        producer=producer,
+        run=run,
+        context=context_snapshot,
+        title=f"{arguments.chromosome_label} Deep REGENIE Step 2 Profile",
+        configuration=profile_configuration_payload(arguments),
+        summary={
+            "headline": f"Deep profile finished with status {status.value}.",
+            "agent_summary": build_profile_agent_summary(
+                status=status,
+                summary_payload=summary_payload,
+                profile_plan=profile_plan,
+            ),
+            "legacy_summary_path": "summary.json" if summary_payload is not None else None,
+            "profile_plan_path": "profile_plan.json" if profile_plan is not None else None,
+        },
+        cases=build_profile_cases(summary_payload, profile_plan),
+        trials=typing.cast("list[dict[str, object]]", collect_summary_trial_payloads(summary_payload)),
+        metrics=build_profile_metrics(
+            run_id=run.run_id,
+            summary_payload=summary_payload,
+            profile_plan=profile_plan,
+        ),
+        diagnostics={
+            "profiler_tools": serialize_profiler_tool_status(profiler_tool_status),
+            "legacy_artifact_manifest": "legacy_artifact_manifest.v2.json",
+        },
+        failures=build_profile_failure_records(summary_payload),
+    )
+    events = [
+        tooling_artifact_format.build_tool_event(
+            tool_name="profile_regenie2_deep",
+            run_id=run.run_id,
+            phase="profile",
+            event="profile_artifacts_written",
+            message=f"Deep profile artifacts written with status {status.value}.",
+            fields={
+                "chromosome_label": arguments.chromosome_label,
+                "dry_run": arguments.dry_run,
+                "status_reason": status_reason,
+            },
+        )
+    ]
+    tooling_artifact_format.write_standard_artifact_bundle(
+        output_directory=output_directory,
+        report=report,
+        events=events,
+        commands=build_profile_command_records(
+            output_directory=output_directory,
+            run_id=run.run_id,
+            summary_payload=summary_payload,
+            profile_plan=profile_plan,
+        ),
+        input_files=build_profile_input_file_records(
+            profile_plan=profile_plan,
+            summary_payload=summary_payload,
+        ),
+        summary_markdown=summary_markdown,
+        hydra_config=hydra_config,
+        tool_payload=profile_configuration_payload(arguments),
+        notes=["legacy_artifact_manifest.v2.json preserves the pre-v1 deep-profile manifest shape."],
     )
 
 
@@ -5409,7 +5915,7 @@ def write_profile_plan(plan: ProfilePlan, output_directory: Path) -> None:
     (output_directory / "profile_plan.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def run_tool(arguments: ProfileArguments) -> None:
+def run_tool(arguments: ProfileArguments, hydra_config: omegaconf.DictConfig | None = None) -> None:
     """Run the landau deep profiling campaign."""
     arguments = apply_smoke_overrides(arguments)
     output_directory = build_output_directory(arguments)
@@ -5444,6 +5950,15 @@ def run_tool(arguments: ProfileArguments) -> None:
             profiler_tool_status=profiler_tool_status,
             profile_plan=profile_plan,
         )
+        write_standard_profile_artifacts(
+            arguments=arguments,
+            output_directory=output_directory,
+            profiler_tool_status=profiler_tool_status,
+            status=tooling_artifact_format.ToolArtifactStatus.DRY_RUN,
+            profile_plan=profile_plan,
+            summary_markdown=(output_directory / "profile_plan.md").read_text(encoding="utf-8"),
+            hydra_config=hydra_config,
+        )
         logger.info("Wrote dry-run profile plan under %s", output_directory)
         return
     if campaign_budget_is_over_limit(campaign_budget) and not arguments.allow_over_budget:
@@ -5458,6 +5973,16 @@ def run_tool(arguments: ProfileArguments) -> None:
             output_directory=output_directory,
             profiler_tool_status=profiler_tool_status,
             profile_plan=profile_plan,
+        )
+        write_standard_profile_artifacts(
+            arguments=arguments,
+            output_directory=output_directory,
+            profiler_tool_status=profiler_tool_status,
+            status=tooling_artifact_format.ToolArtifactStatus.INVALID,
+            status_reason="Campaign budget exceeds configured limits.",
+            profile_plan=profile_plan,
+            summary_markdown=(output_directory / "profile_plan.md").read_text(encoding="utf-8"),
+            hydra_config=hydra_config,
         )
     enforce_campaign_budget(arguments, campaign_budget)
     logger.info("Validating profile inputs")
@@ -5573,24 +6098,31 @@ def run_tool(arguments: ProfileArguments) -> None:
         "logging_perturbation_results": logging_perturbation_results,
     }
     (output_directory / "summary.json").write_text(json.dumps(summary_payload, indent=2) + "\n", encoding="utf-8")
-    (output_directory / "summary.md").write_text(
-        build_summary_markdown(
-            aggregate_results=headline_results,
-            comparisons=comparisons,
-            comparison_notes=comparison_notes,
-            regenie_baseline_scope=regenie_baseline_scope,
-            stage_totals=stage_totals,
-            stage_comparison_rows=stage_comparison_rows,
-            algorithmic_findings=algorithmic_findings,
-            logging_perturbation_results=logging_perturbation_results,
-            binary_correction_diagnostics=binary_correction_diagnostics,
-        ),
-        encoding="utf-8",
+    summary_markdown = build_summary_markdown(
+        aggregate_results=headline_results,
+        comparisons=comparisons,
+        comparison_notes=comparison_notes,
+        regenie_baseline_scope=regenie_baseline_scope,
+        stage_totals=stage_totals,
+        stage_comparison_rows=stage_comparison_rows,
+        algorithmic_findings=algorithmic_findings,
+        logging_perturbation_results=logging_perturbation_results,
+        binary_correction_diagnostics=binary_correction_diagnostics,
     )
+    (output_directory / "summary.md").write_text(summary_markdown, encoding="utf-8")
     write_artifact_manifest(
         output_directory=output_directory,
         profiler_tool_status=profiler_tool_status,
         summary_payload=summary_payload,
+    )
+    write_standard_profile_artifacts(
+        arguments=arguments,
+        output_directory=output_directory,
+        profiler_tool_status=profiler_tool_status,
+        status=profile_summary_artifact_status(summary_payload),
+        summary_payload=summary_payload,
+        summary_markdown=summary_markdown,
+        hydra_config=hydra_config,
     )
     logger.info("Wrote deep profile artifacts under %s", output_directory)
 
@@ -5598,7 +6130,7 @@ def run_tool(arguments: ProfileArguments) -> None:
 @hydra.main(version_base=None, config_path="../configs", config_name="profile_regenie2_deep")
 def hydra_main(config: omegaconf.DictConfig) -> None:
     """Run the deep profiling campaign through Hydra."""
-    run_tool(build_arguments_from_config(config))
+    run_tool(build_arguments_from_config(config), hydra_config=config)
 
 
 def main() -> None:
