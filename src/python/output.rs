@@ -541,132 +541,14 @@ pub(crate) fn build_prepared_run_manifest_header_json(prepared_run_plan_json: St
 }
 
 #[pyfunction]
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_prepared_run_plan_json(
-    association_mode: String,
-    bgen_fingerprint_json: String,
-    sample_fingerprint_json: Option<String>,
-    phenotype_file_fingerprint_json: String,
-    phenotype_name: String,
-    covariate_file_fingerprint_json: Option<String>,
-    covariate_names: Vec<String>,
-    prediction_list_fingerprint_json: String,
-    prediction_loco_files_json: String,
-    sample_count: i64,
-    variant_count: i64,
-    chunk_size: i64,
-    variant_limit: Option<i64>,
-    binary_correction_plan_method: String,
-    binary_correction_plan_p_threshold: f64,
-    binary_correction_plan_firth_se: bool,
-    binary_kernel_config_json: Option<String>,
-    trusted_no_missing_diploid: bool,
-    sample_key_mode: String,
-    bgen_decode_tile_variant_count: i64,
-    trusted_bgen_validation_mode: String,
-    jax_device: String,
-    jax_enable_x64: bool,
-    jax_matmul_precision: Option<String>,
-    requested_gpu_genotype_format: String,
-    resolved_gpu_genotype_format: String,
-    score_dtype: String,
-    firth_dtype: String,
-    multi_phenotype_sample_mode: String,
-    phenotype_compute_group_id: Option<String>,
-    sample_set_fingerprint: Option<String>,
-    covariate_design_fingerprint: Option<String>,
-    prediction_alignment_fingerprint: Option<String>,
-    output_format: String,
-    finalize_parquet: bool,
-    writer_thread_count: i64,
-    writer_queue_depth: i64,
-    chunks_per_arrow_file: i64,
-    arrow_compression: String,
-    parquet_compression: String,
-    output_statistic_dtype: String,
-) -> PyResult<String> {
-    let association_mode = parse_string_enum::<g_plan::AssociationMode>("association_mode", &association_mode)?;
-    let jax_device = parse_string_enum::<g_plan::Device>("jax_device", &jax_device)?;
-    let resolved_gpu_genotype_format =
-        parse_string_enum::<g_plan::GpuGenotypeFormat>("resolved_gpu_genotype_format", &resolved_gpu_genotype_format)?;
-    let prediction_list_fingerprint = parse_json_argument::<g_plan::ManifestFileFingerprint>(
-        "prediction_list_fingerprint_json",
-        &prediction_list_fingerprint_json,
+pub(crate) fn build_prepared_run_plan_json(prepared_run_plan_input_json: String) -> PyResult<String> {
+    let prepared_run_plan_input = parse_json_argument::<g_plan::PreparedRunPlanInput>(
+        "prepared_run_plan_input_json",
+        &prepared_run_plan_input_json,
     )?;
-    let prepared_run_plan = g_plan::PreparedRunPlan {
-        association_mode,
-        association_backend: g_plan::build_prepared_association_backend_plan(
-            association_mode,
-            jax_device,
-            resolved_gpu_genotype_format,
-        )
-        .map_err(|error| PyValueError::new_err(format!("Invalid prepared association backend plan: {error}")))?,
-        input_identity: g_plan::PreparedInputIdentity {
-            bgen: parse_json_argument("bgen_fingerprint_json", &bgen_fingerprint_json)?,
-            sample: parse_optional_json_argument("sample_fingerprint_json", sample_fingerprint_json)?,
-            phenotype_file: parse_json_argument("phenotype_file_fingerprint_json", &phenotype_file_fingerprint_json)?,
-            covariate_file: parse_optional_json_argument(
-                "covariate_file_fingerprint_json",
-                covariate_file_fingerprint_json,
-            )?,
-            prediction_list: prediction_list_fingerprint.clone(),
-            prediction_inputs: g_plan::PredictionInputsIdentity {
-                prediction_list: prediction_list_fingerprint,
-                loco_files: parse_json_argument("prediction_loco_files_json", &prediction_loco_files_json)?,
-            },
-        },
-        phenotype_name,
-        covariate_names,
-        sample_count,
-        variant_count,
-        chunk_size,
-        variant_limit,
-        correction: g_plan::CorrectionPlan {
-            method: parse_string_enum("binary_correction_plan_method", &binary_correction_plan_method)?,
-            p_threshold: binary_correction_plan_p_threshold,
-            firth_se: binary_correction_plan_firth_se,
-        },
-        binary_kernel_config: parse_optional_json_argument("binary_kernel_config_json", binary_kernel_config_json)?,
-        compute: g_plan::PreparedComputePlan {
-            trusted_no_missing_diploid,
-            trusted_bgen_validation_mode: parse_string_enum(
-                "trusted_bgen_validation_mode",
-                &trusted_bgen_validation_mode,
-            )?,
-            sample_key_mode: parse_string_enum("sample_key_mode", &sample_key_mode)?,
-            bgen_decode_tile_variant_count,
-            jax_policy: g_plan::JaxPolicyPlan {
-                device: jax_device,
-                enable_x64: jax_enable_x64,
-                matmul_precision: parse_optional_string_enum("jax_matmul_precision", jax_matmul_precision)?,
-            },
-            requested_gpu_genotype_format: parse_string_enum(
-                "requested_gpu_genotype_format",
-                &requested_gpu_genotype_format,
-            )?,
-            resolved_gpu_genotype_format,
-            score_dtype: parse_string_enum("score_dtype", &score_dtype)?,
-            firth_dtype: parse_string_enum("firth_dtype", &firth_dtype)?,
-            sample_mode: parse_string_enum("multi_phenotype_sample_mode", &multi_phenotype_sample_mode)?,
-        },
-        phenotype_compute_group: phenotype_compute_group_id.map(|group_id| g_plan::PreparedPhenotypeComputeGroup {
-            group_id,
-            sample_set_fingerprint,
-            covariate_design_fingerprint,
-            prediction_alignment_fingerprint,
-        }),
-        output_writer: g_plan::PreparedOutputWriterPlan {
-            output_format: parse_string_enum("output_format", &output_format)?,
-            finalize_parquet,
-            writer_thread_count,
-            writer_queue_depth,
-            chunks_per_arrow_file,
-            arrow_compression: parse_string_enum("arrow_compression", &arrow_compression)?,
-            parquet_compression: parse_string_enum("parquet_compression", &parquet_compression)?,
-            output_statistic_dtype: parse_string_enum("output_statistic_dtype", &output_statistic_dtype)?,
-        },
-    };
+    let prepared_run_plan = g_plan::build_prepared_run_plan(prepared_run_plan_input)
+        .map_err(|error| PyValueError::new_err(format!("Invalid prepared run plan input: {error}")))?;
     serde_json::to_string(&prepared_run_plan)
         .map_err(|error| PyRuntimeError::new_err(format!("Could not serialize prepared run plan JSON: {error}")))
 }
@@ -684,28 +566,6 @@ where
 {
     serde_json::from_str(argument_json)
         .map_err(|error| PyValueError::new_err(format!("Invalid {argument_name}: {error}")))
-}
-
-fn parse_optional_json_argument<T>(argument_name: &str, argument_json: Option<String>) -> PyResult<Option<T>>
-where
-    T: DeserializeOwned,
-{
-    argument_json.as_deref().map(|json| parse_json_argument(argument_name, json)).transpose()
-}
-
-fn parse_string_enum<T>(argument_name: &str, value: &str) -> PyResult<T>
-where
-    T: DeserializeOwned,
-{
-    serde_json::from_value(serde_json::Value::String(value.to_string()))
-        .map_err(|error| PyValueError::new_err(format!("Invalid {argument_name}: {error}")))
-}
-
-fn parse_optional_string_enum<T>(argument_name: &str, value: Option<String>) -> PyResult<Option<T>>
-where
-    T: DeserializeOwned,
-{
-    value.as_deref().map(|text| parse_string_enum(argument_name, text)).transpose()
 }
 
 #[pyfunction]

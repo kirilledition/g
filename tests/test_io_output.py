@@ -434,13 +434,16 @@ def test_current_run_manifest_records_gpu_genotype_format(tmp_path: Path) -> Non
 def test_prepared_run_plan_payload_preserves_requested_and_resolved_gpu_formats(tmp_path: Path) -> None:
     current_header = build_test_header_object(
         tmp_path,
-        association_backend_kind=types.AssociationBackendKind.JAX_PACKED8,
+        association_backend_kind=types.AssociationBackendKind.JAX_DOSAGE,
         requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
         gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
     )
     prepared_payload = json.loads(output.build_native_prepared_run_plan_json(current_header))
     assert isinstance(prepared_payload, dict)
 
+    association_backend_payload = typing.cast("dict[str, typing.Any]", prepared_payload["association_backend"])
+    assert association_backend_payload["kind"] == "jax_packed8"
+    assert association_backend_payload["resolved_genotype_format"] == "packed8"
     compute_payload = typing.cast("dict[str, typing.Any]", prepared_payload["compute"])
     assert compute_payload["requested_gpu_genotype_format"] == "auto"
     assert compute_payload["resolved_gpu_genotype_format"] == "packed8"

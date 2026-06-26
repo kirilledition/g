@@ -68,6 +68,23 @@ pub struct PreparedRunPlan {
     pub output_writer: PreparedOutputWriterPlan,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PreparedRunPlanInput {
+    pub association_mode: AssociationMode,
+    pub input_identity: PreparedInputIdentity,
+    pub phenotype_name: String,
+    pub covariate_names: Vec<String>,
+    pub sample_count: i64,
+    pub variant_count: i64,
+    pub chunk_size: i64,
+    pub variant_limit: Option<i64>,
+    pub correction: CorrectionPlan,
+    pub binary_kernel_config: Option<Value>,
+    pub compute: PreparedComputePlan,
+    pub phenotype_compute_group: Option<PreparedPhenotypeComputeGroup>,
+    pub output_writer: PreparedOutputWriterPlan,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AssociationBackendPlan {
     pub kind: AssociationBackendKind,
@@ -110,6 +127,36 @@ pub fn build_prepared_association_backend_plan(
         GpuGenotypeFormat::Packed8 => AssociationBackendKind::JaxPacked8,
     };
     Ok(AssociationBackendPlan { kind, association_mode, device, resolved_genotype_format })
+}
+
+/// Build the canonical prepared run plan from resolved preparation inputs.
+///
+/// # Errors
+///
+/// Returns [`PreparedPlanError::UnresolvedGpuGenotypeFormat`] when the input
+/// compute plan still contains `resolved_gpu_genotype_format=auto`.
+pub fn build_prepared_run_plan(input: PreparedRunPlanInput) -> Result<PreparedRunPlan, PreparedPlanError> {
+    let association_backend = build_prepared_association_backend_plan(
+        input.association_mode,
+        input.compute.jax_policy.device,
+        input.compute.resolved_gpu_genotype_format,
+    )?;
+    Ok(PreparedRunPlan {
+        association_mode: input.association_mode,
+        association_backend,
+        input_identity: input.input_identity,
+        phenotype_name: input.phenotype_name,
+        covariate_names: input.covariate_names,
+        sample_count: input.sample_count,
+        variant_count: input.variant_count,
+        chunk_size: input.chunk_size,
+        variant_limit: input.variant_limit,
+        correction: input.correction,
+        binary_kernel_config: input.binary_kernel_config,
+        compute: input.compute,
+        phenotype_compute_group: input.phenotype_compute_group,
+        output_writer: input.output_writer,
+    })
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -191,6 +238,7 @@ pub struct PreparedOutputWriterPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request::BinaryFallbackMethod;
 
     #[test]
     fn builds_prepared_backend_plan_from_resolved_genotype_format() {
@@ -227,5 +275,84 @@ mod tests {
             ),
             Err(PreparedPlanError::UnresolvedGpuGenotypeFormat),
         );
+    }
+
+    #[test]
+    fn builds_prepared_run_plan_from_input_contract() {
+        let input = build_test_prepared_run_plan_input(GpuGenotypeFormat::Packed8);
+        let prepared_run_plan = build_prepared_run_plan(input).unwrap();
+
+        assert_eq!(prepared_run_plan.association_backend.kind, AssociationBackendKind::JaxPacked8);
+        assert_eq!(prepared_run_plan.association_backend.device, Device::Gpu);
+        assert_eq!(prepared_run_plan.association_backend.resolved_genotype_format, GpuGenotypeFormat::Packed8,);
+        assert_eq!(prepared_run_plan.phenotype_name, "height");
+        assert_eq!(prepared_run_plan.compute.requested_gpu_genotype_format, GpuGenotypeFormat::Auto);
+        assert_eq!(prepared_run_plan.compute.resolved_gpu_genotype_format, GpuGenotypeFormat::Packed8);
+    }
+
+    fn build_test_prepared_run_plan_input(resolved_genotype_format: GpuGenotypeFormat) -> PreparedRunPlanInput {
+        let prediction_list = build_test_file_fingerprint("prediction.list");
+        PreparedRunPlanInput {
+            association_mode: AssociationMode::Regenie2Linear,
+            input_identity: PreparedInputIdentity {
+                bgen: build_test_file_fingerprint("study.bgen"),
+                sample: Some(build_test_file_fingerprint("study.sample")),
+                phenotype_file: build_test_file_fingerprint("phenotypes.tsv"),
+                covariate_file: None,
+                prediction_list: prediction_list.clone(),
+                prediction_inputs: PredictionInputsIdentity {
+                    prediction_list,
+                    loco_files: vec![PredictionLocoFileFingerprint {
+                        phenotype: "height".to_string(),
+                        path: "height.loco".to_string(),
+                        size: 10,
+                        mtime_ns: 20,
+                        content_hash_algorithm: "sha256".to_string(),
+                        content_sha256: "abcd".to_string(),
+                    }],
+                },
+            },
+            phenotype_name: "height".to_string(),
+            covariate_names: vec!["age".to_string()],
+            sample_count: 4,
+            variant_count: 10,
+            chunk_size: 2,
+            variant_limit: None,
+            correction: CorrectionPlan { method: BinaryFallbackMethod::ScoreOnly, p_threshold: 0.05, firth_se: false },
+            binary_kernel_config: None,
+            compute: PreparedComputePlan {
+                trusted_no_missing_diploid: false,
+                trusted_bgen_validation_mode: TrustedBgenValidationMode::CacheOnMiss,
+                sample_key_mode: SampleKeyMode::Iid,
+                bgen_decode_tile_variant_count: 64,
+                jax_policy: JaxPolicyPlan { device: Device::Gpu, enable_x64: true, matmul_precision: None },
+                requested_gpu_genotype_format: GpuGenotypeFormat::Auto,
+                resolved_gpu_genotype_format: resolved_genotype_format,
+                score_dtype: FloatingPointDtype::Float32,
+                firth_dtype: FloatingPointDtype::Float64,
+                sample_mode: PreparedSampleMode::SinglePhenotype,
+            },
+            phenotype_compute_group: None,
+            output_writer: PreparedOutputWriterPlan {
+                output_format: OutputFormat::Parquet,
+                finalize_parquet: false,
+                writer_thread_count: 1,
+                writer_queue_depth: 1,
+                chunks_per_arrow_file: 16,
+                arrow_compression: ArrowCompression::Zstd,
+                parquet_compression: ParquetCompression::None,
+                output_statistic_dtype: FloatingPointDtype::Float32,
+            },
+        }
+    }
+
+    fn build_test_file_fingerprint(path: &str) -> ManifestFileFingerprint {
+        ManifestFileFingerprint {
+            path: path.to_string(),
+            size: 10,
+            mtime_ns: 20,
+            content_hash_algorithm: "metadata-only".to_string(),
+            content_sha256: None,
+        }
     }
 }

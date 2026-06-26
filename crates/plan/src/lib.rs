@@ -13,8 +13,8 @@ pub use host_policy::{
 pub use prepared::{
     AssociationBackendKind, AssociationBackendPlan, JaxPolicyPlan, ManifestFileFingerprint, PredictionInputsIdentity,
     PredictionLocoFileFingerprint, PreparedComputePlan, PreparedInputIdentity, PreparedOutputWriterPlan,
-    PreparedPhenotypeComputeGroup, PreparedPlanError, PreparedRunPlan, PreparedSampleMode,
-    build_prepared_association_backend_plan,
+    PreparedPhenotypeComputeGroup, PreparedPlanError, PreparedRunPlan, PreparedRunPlanInput, PreparedSampleMode,
+    build_prepared_association_backend_plan, build_prepared_run_plan,
 };
 pub use request::{
     ArrowCompression, AssociationMode, BinaryFallbackMethod, ComputeRequest, CorrectionPlan, Device,
