@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import typing
 from dataclasses import dataclass
+from pathlib import Path
 
 from g import _core, types
 from g.compute.regenie2_binary import config as regenie2_binary_config
@@ -11,8 +13,6 @@ from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.io import output, source
 
 if typing.TYPE_CHECKING:
-    from pathlib import Path
-
     from g.interface import config
 
 
@@ -229,63 +229,146 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
 
 def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> RegenieExecutionPlan:
     """Build a complete execution plan from a validated public config."""
-    output_prefix = typing.cast("Path", regenie_config.g_output.out)
-    output_run_root = regenie_config.g_output.output_run_directory or output_prefix.with_name(f"{output_prefix.name}.g")
-    association_mode = resolve_association_mode(regenie_config.trait.trait_type)
-    output_plan = OutputPlan(
-        output_prefix=output_prefix,
-        output_run_root=output_run_root,
-        resume=regenie_config.g_output.resume,
-        resume_mode=regenie_config.g_output.resume_mode,
-        writer_settings=output.OutputWriterSettings(
-            finalize_parquet=regenie_config.g_output.finalize_parquet,
-            writer_thread_count=regenie_config.g_output.writer_threads,
-            writer_queue_depth=regenie_config.g_output.writer_queue_depth,
-            chunks_per_arrow_file=regenie_config.g_output.chunks_per_arrow_file,
-            arrow_compression=regenie_config.g_output.arrow_compression,
-            parquet_compression=regenie_config.g_output.parquet_compression,
-            output_format=regenie_config.g_output.format,
-            output_statistic_dtype=regenie_config.g_output.output_statistic_dtype,
-        ),
-    )
-    kernel_config = build_kernel_config(regenie_config)
+    run_request = compile_run_request_payload(regenie_config)
+    input_request = require_mapping(run_request, "input")
+    association_mode = types.AssociationMode(typing.cast("str", run_request["association_mode"]))
+    output_plan = build_output_plan_from_run_request(run_request)
+    kernel_config = build_kernel_config_from_run_request(regenie_config, run_request)
     phenotype_run_plans = tuple(
-        build_phenotype_run_plan(
-            phenotype_index=phenotype_index,
-            phenotype_name=phenotype_name,
+        build_phenotype_run_plan_from_request(
+            phenotype_run_request=phenotype_run_request,
             association_mode=association_mode,
             output_plan=output_plan,
         )
-        for phenotype_index, phenotype_name in enumerate(regenie_config.input.pheno_columns, start=1)
-    )
-    phenotype_compute_groups = build_phenotype_compute_groups(
-        phenotype_names=tuple(phenotype_run_plan.phenotype_name for phenotype_run_plan in phenotype_run_plans),
-        multi_phenotype_sample_mode=kernel_config.multi_phenotype_sample_mode,
+        for phenotype_run_request in require_mapping_sequence(run_request, "phenotype_runs")
     )
     return RegenieExecutionPlan(
         association_mode=association_mode,
         genotype_source_config=source.GenotypeSourceConfig(
-            source_path=typing.cast("Path", regenie_config.input.bgen),
-            sample_path=regenie_config.input.sample,
+            source_path=Path(typing.cast("str", input_request["bgen_path"])),
+            sample_path=optional_path_from_request(input_request["sample_path"]),
         ),
-        phenotype_path=typing.cast("Path", regenie_config.input.pheno_file),
-        prediction_list_path=typing.cast("Path", regenie_config.input.pred),
-        covariate_path=regenie_config.input.covar_file,
-        covariate_names=regenie_config.input.covar_columns or None,
+        phenotype_path=Path(typing.cast("str", input_request["phenotype_path"])),
+        prediction_list_path=Path(typing.cast("str", input_request["prediction_list_path"])),
+        covariate_path=optional_path_from_request(input_request["covariate_path"]),
+        covariate_names=string_tuple_from_request(input_request["covariate_names"]) or None,
         phenotype_run_plans=phenotype_run_plans,
-        phenotype_compute_groups=phenotype_compute_groups,
-        binary_correction_plan=(
-            normalize_binary_correction_config(regenie_config.binary)
-            if regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
-            else types.BinaryCorrectionPlan(
-                method=types.BinaryFallbackMethod.SCORE_ONLY,
-                p_threshold=0.05,
-                firth_se=False,
-            )
+        phenotype_compute_groups=tuple(
+            adapt_phenotype_compute_group_payload(group_payload)
+            for group_payload in require_mapping_sequence(run_request, "phenotype_compute_groups")
         ),
+        binary_correction_plan=adapt_binary_correction_plan(require_mapping(run_request, "correction")),
         kernel_config=kernel_config,
         output_plan=output_plan,
-        stage_timings_json=regenie_config.g_diagnostics.stage_timings_json,
+        stage_timings_json=optional_path_from_request(run_request["stage_timings_json"]),
+    )
+
+
+def compile_run_request_payload(regenie_config: config.RegenieConfig) -> dict[str, typing.Any]:
+    """Compile a resolved config into the native requested-run payload."""
+    payload = json.loads(_core.compile_run_request_json(regenie_config))
+    if not isinstance(payload, dict):
+        message = "Native run request payload must be a JSON object."
+        raise TypeError(message)
+    return typing.cast("dict[str, typing.Any]", payload)
+
+
+def build_output_plan_from_run_request(run_request: dict[str, typing.Any]) -> OutputPlan:
+    """Adapt the native output writer plan into the existing Python dataclass."""
+    output_request = require_mapping(run_request, "output")
+    return OutputPlan(
+        output_prefix=Path(typing.cast("str", output_request["output_prefix"])),
+        output_run_root=Path(typing.cast("str", output_request["output_run_root"])),
+        resume=typing.cast("bool", output_request["resume"]),
+        resume_mode=types.ResumeMode(typing.cast("str", output_request["resume_mode"])),
+        writer_settings=output.OutputWriterSettings(
+            finalize_parquet=typing.cast("bool", output_request["finalize_parquet"]),
+            writer_thread_count=typing.cast("int", output_request["writer_thread_count"]),
+            writer_queue_depth=typing.cast("int", output_request["writer_queue_depth"]),
+            chunks_per_arrow_file=typing.cast("int", output_request["chunks_per_arrow_file"]),
+            arrow_compression=types.ArrowCompression(typing.cast("str", output_request["arrow_compression"])),
+            parquet_compression=types.ParquetCompression(typing.cast("str", output_request["parquet_compression"])),
+            output_format=types.OutputFormat(typing.cast("str", output_request["output_format"])),
+            output_statistic_dtype=types.FloatingPointDtype(
+                typing.cast("str", output_request["output_statistic_dtype"])
+            ),
+        ),
+    )
+
+
+def build_kernel_config_from_run_request(
+    regenie_config: config.RegenieConfig,
+    run_request: dict[str, typing.Any],
+) -> KernelConfig:
+    """Adapt native requested-run compute fields into the existing kernel config."""
+    compute_request = require_mapping(run_request, "compute")
+    trait_request = require_mapping(run_request, "trait_request")
+    trait_type = types.RegenieTraitType(typing.cast("str", trait_request["trait_type"]))
+    return KernelConfig(
+        chunk_size=typing.cast("int", trait_request["chunk_size"]),
+        device=types.Device(typing.cast("str", compute_request["device"])),
+        staging_depth=typing.cast("int", compute_request["staging_depth"]),
+        native_callback_batch_size=typing.cast("int", compute_request["native_callback_batch_size"]),
+        result_in_flight_limit=typing.cast("int | None", compute_request["result_in_flight_limit"]),
+        dosage_buffer_limit=typing.cast("int | None", compute_request["dosage_buffer_limit"]),
+        variant_limit=typing.cast("int | None", compute_request["variant_limit"]),
+        thread_count=typing.cast("int | None", trait_request["thread_count"]),
+        bgen_decode_tile_variant_count=typing.cast("int", compute_request["bgen_decode_tile_variant_count"]),
+        gpu_genotype_format=types.GpuGenotypeFormat(
+            typing.cast("str", compute_request["requested_gpu_genotype_format"])
+        ),
+        trusted_no_missing_diploid=typing.cast("bool", compute_request["trusted_no_missing_diploid"]),
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode(
+            typing.cast("str", compute_request["trusted_bgen_validation_mode"])
+        ),
+        alignment_config=regenie_config.g_compute,
+        multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode(
+            typing.cast("str", compute_request["multi_phenotype_sample_mode"])
+        ),
+        binary_kernel_config=(
+            build_binary_kernel_config(regenie_config.g_compute)
+            if trait_type == types.RegenieTraitType.BINARY
+            else None
+        ),
+        linear_numerical_config=(
+            regenie2_linear_config.LinearNumericalConfig(
+                minimum_variance=regenie_config.g_compute.linear_minimum_variance,
+                relative_variance_tolerance=regenie_config.g_compute.linear_relative_variance_tolerance,
+            )
+            if trait_type == types.RegenieTraitType.QUANTITATIVE
+            else None
+        ),
+    )
+
+
+def build_phenotype_run_plan_from_request(
+    *,
+    phenotype_run_request: dict[str, typing.Any],
+    association_mode: types.AssociationMode,
+    output_plan: OutputPlan,
+) -> PhenotypeRunPlan:
+    """Prepare output paths from one native phenotype run request."""
+    prepared_output_run = output.prepare_output_run(
+        output_root=output_plan.output_run_root / typing.cast("str", phenotype_run_request["output_directory_name"]),
+        association_mode=association_mode,
+        output_format=output_plan.writer_settings.output_format,
+        resume=output_plan.resume,
+        resume_mode=output_plan.resume_mode,
+    )
+    return PhenotypeRunPlan(
+        phenotype_name=typing.cast("str", phenotype_run_request["phenotype_name"]),
+        output_run_paths=prepared_output_run.output_run_paths,
+        existing_manifest=prepared_output_run.existing_manifest,
+        effective_config_path=prepared_output_run.output_run_paths.run_directory / "effective_config.toml",
+    )
+
+
+def adapt_binary_correction_plan(correction_payload: dict[str, typing.Any]) -> types.BinaryCorrectionPlan:
+    """Adapt native correction payload to the existing Python correction plan."""
+    return types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod(typing.cast("str", correction_payload["method"])),
+        p_threshold=typing.cast("float", correction_payload["p_threshold"]),
+        firth_se=typing.cast("bool", correction_payload["firth_se"]),
     )
 
 
@@ -385,3 +468,51 @@ def adapt_phenotype_compute_group_payload(group_payload: dict[str, object]) -> P
             group_payload["prediction_alignment_fingerprint"],
         ),
     )
+
+
+def require_mapping(payload: dict[str, typing.Any], key: str) -> dict[str, typing.Any]:
+    """Return a nested mapping from a native JSON payload."""
+    value = payload[key]
+    if not isinstance(value, dict):
+        message = f"Native run request field {key!r} must be an object."
+        raise TypeError(message)
+    return typing.cast("dict[str, typing.Any]", value)
+
+
+def require_mapping_sequence(payload: dict[str, typing.Any], key: str) -> tuple[dict[str, typing.Any], ...]:
+    """Return a tuple of nested mappings from a native JSON payload."""
+    value = payload[key]
+    if not isinstance(value, list):
+        message = f"Native run request field {key!r} must be a list."
+        raise TypeError(message)
+    mappings: list[dict[str, typing.Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            message = f"Native run request field {key!r} must contain only objects."
+            raise TypeError(message)
+        mappings.append(typing.cast("dict[str, typing.Any]", item))
+    return tuple(mappings)
+
+
+def optional_path_from_request(value: object) -> Path | None:
+    """Adapt an optional path string from a native JSON payload."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        message = "Native run request optional path must be a string or null."
+        raise TypeError(message)
+    return Path(value)
+
+
+def string_tuple_from_request(value: object) -> tuple[str, ...]:
+    """Adapt a string list from a native JSON payload."""
+    if not isinstance(value, list):
+        message = "Native run request string sequence must be a list."
+        raise TypeError(message)
+    strings: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            message = "Native run request string sequence must contain only strings."
+            raise TypeError(message)
+        strings.append(item)
+    return tuple(strings)

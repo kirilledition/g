@@ -6,6 +6,7 @@ mod domain;
 mod options;
 mod overlay;
 mod partial;
+mod plan_request;
 mod resolved;
 mod run_validation;
 mod toml;
@@ -14,6 +15,7 @@ mod validation;
 pub use cli::{CliOutcomeData, dispatch_cli};
 pub use defaults::load_packaged_config_data;
 pub use options::{ConfigOptionMetadata, ConfigOptionValueKind, config_option_metadata};
+pub use plan_request::compile_run_request;
 pub use resolved::{
     BinaryConfigData, GComputeConfigData, GDiagnosticsConfigData, GOutputConfigData, InputConfigData,
     RegenieConfigData, TraitConfigData,

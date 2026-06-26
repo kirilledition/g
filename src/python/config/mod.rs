@@ -803,6 +803,14 @@ fn validate_regenie_config_for_run(config: &RegenieConfig) -> PyResult<()> {
 }
 
 #[pyfunction]
+fn compile_run_request_json(config: &RegenieConfig) -> PyResult<String> {
+    let run_request = interface::compile_run_request(config.data())
+        .map_err(|error| config_error_to_py("compile_run_request", error))?;
+    serde_json::to_string(&run_request)
+        .map_err(|error| PyValueError::new_err(format!("Failed to serialize run request: {error}.")))
+}
+
+#[pyfunction]
 #[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python list arguments into owned Vec values.")]
 fn dispatch_cli(args: Vec<String>) -> CliOutcome {
     CliOutcome::new(interface::dispatch_cli(&args))
@@ -825,6 +833,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(write_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
+    module.add_function(wrap_pyfunction!(compile_run_request_json, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
     Ok(())
 }
