@@ -208,9 +208,10 @@ logging perturbation case definitions, and campaign budget accounting live in
 overrides, output directory resolution, REGENIE executable selection, and
 configuration snapshots live in `tooling.profile_deep.config`. Profile-specific
 JAX cache directory selection, cache snapshots, compile-log parsing, and
-cold/warm cache diagnostics live in `tooling.profile_deep.jax_cache`. The CLI
-re-exports these package-owned symbols for compatibility while orchestration
-code migrates into the package.
+cold/warm cache diagnostics live in `tooling.profile_deep.jax_cache`. External
+profiler executable/module availability probing lives in
+`tooling.profile_deep.profilers`. The CLI re-exports these package-owned
+symbols for compatibility while orchestration code migrates into the package.
 
 `-m tooling.cli.benchmark tool.name=linear_startup`
 

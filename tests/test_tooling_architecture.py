@@ -35,6 +35,7 @@ from tooling.profile_deep import budget as profile_deep_budget
 from tooling.profile_deep import config as profile_deep_config
 from tooling.profile_deep import jax_cache as profile_deep_jax_cache
 from tooling.profile_deep import models as profile_deep_models
+from tooling.profile_deep import profilers as profile_deep_profilers
 
 if typing.TYPE_CHECKING:
     import pytest
@@ -1138,6 +1139,15 @@ def test_deep_profile_jax_cache_helpers_live_in_profile_package() -> None:
     assert deep_profile.collect_jax_cache_snapshot is profile_deep_jax_cache.collect_jax_cache_snapshot
     assert deep_profile.build_jax_cache_diagnostics is profile_deep_jax_cache.build_jax_cache_diagnostics
     assert deep_profile.build_jax_cold_warm_diagnostics is profile_deep_jax_cache.build_jax_cold_warm_diagnostics
+
+
+def test_deep_profile_profiler_helpers_live_in_profile_package() -> None:
+    assert profile_deep_profilers.executable_is_available.__module__ == "tooling.profile_deep.profilers"
+    assert profile_deep_profilers.build_profiler_tool_status.__module__ == "tooling.profile_deep.profilers"
+    assert profile_deep_profilers.build_uv_injected_profiler_status.__module__ == "tooling.profile_deep.profilers"
+    assert deep_profile.executable_is_available is profile_deep_profilers.executable_is_available
+    assert deep_profile.build_profiler_tool_status is profile_deep_profilers.build_profiler_tool_status
+    assert deep_profile.build_uv_injected_profiler_status is profile_deep_profilers.build_uv_injected_profiler_status
 
 
 def test_rust_build_profile_specs_map_expected_cargo_profiles() -> None:

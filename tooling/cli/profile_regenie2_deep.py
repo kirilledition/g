@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import importlib.util
 import json
 import logging
 import os
@@ -35,6 +34,7 @@ from tooling.profile_deep import budget as profile_deep_budget
 from tooling.profile_deep import config as profile_deep_config
 from tooling.profile_deep import jax_cache as profile_deep_jax_cache
 from tooling.profile_deep import models as profile_deep_models
+from tooling.profile_deep import profilers as profile_deep_profilers
 
 if typing.TYPE_CHECKING:
     import omegaconf
@@ -155,6 +155,10 @@ sum_optional_integer_values = profile_deep_jax_cache.sum_optional_integer_values
 compile_log_summary_for_trial = profile_deep_jax_cache.compile_log_summary_for_trial
 build_jax_cold_warm_diagnostics = profile_deep_jax_cache.build_jax_cold_warm_diagnostics
 collect_jax_cache_diagnostics = profile_deep_jax_cache.collect_jax_cache_diagnostics
+executable_is_available = profile_deep_profilers.executable_is_available
+python_module_is_available = profile_deep_profilers.python_module_is_available
+build_uv_injected_profiler_status = profile_deep_profilers.build_uv_injected_profiler_status
+build_profiler_tool_status = profile_deep_profilers.build_profiler_tool_status
 
 
 def build_baseline_paths(arguments: ProfileArguments) -> baseline_benchmark.BaselinePaths:
@@ -174,14 +178,6 @@ def build_baseline_paths(arguments: ProfileArguments) -> baseline_benchmark.Base
         regenie_prediction_list_path=arguments.regenie_prediction_list_path,
         regenie_qt_prediction_list_path=arguments.regenie_qt_prediction_list_path,
     )
-
-
-def executable_is_available(executable_name: str) -> bool:
-    """Return whether a command or explicit executable path is available."""
-    executable_path = Path(executable_name)
-    if executable_path.is_absolute() or executable_path.parent != Path():
-        return executable_path.exists() and os.access(executable_path, os.X_OK)
-    return shutil.which(executable_name) is not None
 
 
 def resolve_available_regenie_executable(arguments: ProfileArguments) -> str | None:
@@ -205,112 +201,6 @@ def resolved_binary_path(executable_name: str | None) -> str | None:
     if resolved_path is not None:
         return resolved_path
     return executable_name
-
-
-def python_module_is_available(module_name: str) -> bool:
-    """Return whether a module is importable in the active Python environment."""
-    return importlib.util.find_spec(module_name) is not None
-
-
-def build_uv_injected_profiler_status(
-    *,
-    tool_name: str,
-    executable_name: str,
-    module_name: str,
-    enabled: bool,
-) -> ProfilerToolStatus:
-    """Build availability for Python profilers that must see project dependencies."""
-    if python_module_is_available(module_name):
-        return ProfilerToolStatus(
-            tool_name=tool_name,
-            enabled=enabled,
-            available=True,
-            executable_path=sys.executable,
-            notes=f"{module_name} is importable in the project Python environment.",
-        )
-    uv_executable_path = shutil.which("uv")
-    if uv_executable_path is not None:
-        return ProfilerToolStatus(
-            tool_name=tool_name,
-            enabled=enabled,
-            available=True,
-            executable_path=uv_executable_path,
-            notes=(
-                f"{executable_name} will run through uv --no-sync --with {module_name} "
-                "to preserve the project Python environment."
-            ),
-        )
-    return ProfilerToolStatus(
-        tool_name=tool_name,
-        enabled=enabled,
-        available=False,
-        executable_path=None,
-        notes=f"{module_name} is not importable in the project Python environment and uv is not on PATH.",
-    )
-
-
-def build_profiler_tool_status(arguments: ProfileArguments) -> dict[str, ProfilerToolStatus]:
-    """Build profiler tool availability records for the current host."""
-    optional_executable_tools = {
-        "py_spy": ("py-spy", arguments.enable_py_spy),
-        "linux_perf": ("perf", arguments.enable_linux_perf),
-        "nsight_systems": ("nsys", arguments.enable_nsight_systems),
-        "nsight_compute": ("ncu", arguments.enable_nsight_compute),
-    }
-    tool_status = {
-        "python_cprofile": ProfilerToolStatus(
-            tool_name="python_cprofile",
-            enabled=arguments.enable_python_cprofile,
-            available=True,
-            executable_path=sys.executable,
-            notes="Python cProfile is part of the standard library.",
-        ),
-        "jax_trace": ProfilerToolStatus(
-            tool_name="jax_trace",
-            enabled=arguments.enable_jax_trace,
-            available=True,
-            executable_path=None,
-            notes="JAX profiler trace capture is provided by the installed JAX package.",
-        ),
-        "jax_memory_profile": ProfilerToolStatus(
-            tool_name="jax_memory_profile",
-            enabled=arguments.enable_jax_memory_profile,
-            available=True,
-            executable_path=None,
-            notes="JAX device memory capture is provided by the installed JAX package.",
-        ),
-        "rust_criterion": ProfilerToolStatus(
-            tool_name="rust_criterion",
-            enabled=arguments.enable_rust_criterion,
-            available=shutil.which("cargo") is not None,
-            executable_path=shutil.which("cargo"),
-            notes="Rust Criterion benches run through cargo.",
-        ),
-        "scalene": build_uv_injected_profiler_status(
-            tool_name="scalene",
-            executable_name="scalene",
-            module_name="scalene",
-            enabled=arguments.enable_scalene,
-        ),
-        "memray": build_uv_injected_profiler_status(
-            tool_name="memray",
-            executable_name="memray",
-            module_name="memray",
-            enabled=arguments.enable_memray,
-        ),
-    }
-    for tool_name, (executable_name, enabled) in optional_executable_tools.items():
-        executable_path = shutil.which(executable_name)
-        available = executable_path is not None
-        notes = f"{executable_name} is available on PATH." if available else f"{executable_name} is not on PATH."
-        tool_status[tool_name] = ProfilerToolStatus(
-            tool_name=tool_name,
-            enabled=enabled,
-            available=available,
-            executable_path=executable_path,
-            notes=notes,
-        )
-    return tool_status
 
 
 def serialize_profiler_tool_status(tool_status: dict[str, ProfilerToolStatus]) -> dict[str, dict[str, object]]:
