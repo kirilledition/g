@@ -581,6 +581,10 @@ class NativeDosageBufferReusePlan:
     @property
     def slice_dimensions(self) -> list[int]: ...
 
+class NativeVariantMajorDosageBatchHandoffPlan:
+    @property
+    def chunk_count(self) -> int: ...
+
 class NativeDosageBufferPoolState:
     def __init__(self, buffer_limit: int) -> None: ...
     @property
@@ -1083,6 +1087,11 @@ def plan_dosage_buffer_reuse(
     buffered_shape: typing.Sequence[int],
     expected_shape: typing.Sequence[int],
 ) -> NativeDosageBufferReusePlan | None: ...
+def plan_variant_major_dosage_batch_handoff(
+    metadata_count: int,
+    genotype_matrix_by_variant_count: int,
+    chunk_stats_count: int,
+) -> NativeVariantMajorDosageBatchHandoffPlan: ...
 def build_preflight_report_payload(
     sample_count: int,
     covariate_count: int,

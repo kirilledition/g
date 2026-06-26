@@ -406,27 +406,28 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats_batch: collections.abc.Sequence[_core.ChunkStats],
     ) -> None:
         """Enqueue a native batch of variant-major dosage chunks for JAX association."""
-        if not (len(metadata_batch) == len(genotype_matrix_by_variant_batch) == len(chunk_stats_batch)):
-            message = "Variant-major dosage batch inputs must have identical lengths."
-            raise ValueError(message)
-        if not metadata_batch:
-            message = "Variant-major dosage batch must contain at least one chunk."
-            raise ValueError(message)
-        work_item = PreprocessedVariantMajorDosageChunkBatchWorkItem(
-            work_items=tuple(
-                PreprocessedVariantMajorDosageChunkWorkItem(
-                    metadata=metadata,
-                    genotype_matrix_by_variant=genotype_matrix_by_variant,
-                    chunk_stats=chunk_stats,
-                )
-                for metadata, genotype_matrix_by_variant, chunk_stats in zip(
-                    metadata_batch,
-                    genotype_matrix_by_variant_batch,
-                    chunk_stats_batch,
-                    strict=True,
-                )
+        batch_handoff_plan = _core.plan_variant_major_dosage_batch_handoff(
+            metadata_count=len(metadata_batch),
+            genotype_matrix_by_variant_count=len(genotype_matrix_by_variant_batch),
+            chunk_stats_count=len(chunk_stats_batch),
+        )
+        work_items = tuple(
+            PreprocessedVariantMajorDosageChunkWorkItem(
+                metadata=metadata,
+                genotype_matrix_by_variant=genotype_matrix_by_variant,
+                chunk_stats=chunk_stats,
+            )
+            for metadata, genotype_matrix_by_variant, chunk_stats in zip(
+                metadata_batch,
+                genotype_matrix_by_variant_batch,
+                chunk_stats_batch,
+                strict=True,
             )
         )
+        if len(work_items) != batch_handoff_plan.chunk_count:
+            message = "Native variant-major dosage batch handoff plan disagrees with prepared work items."
+            raise RuntimeError(message)
+        work_item = PreprocessedVariantMajorDosageChunkBatchWorkItem(work_items=work_items)
         if self.stage_timing_recorder is None:
             self.put_dosage_work_item(work_item)
             return

@@ -21,7 +21,8 @@ pub use preflight::{
 };
 pub use schedule::{
     BgenDeliveryMethod, DosageBufferPoolState, DosageBufferReusePlan, NativeCallbackQueueLimits,
-    ResultInFlightSlotState, ScheduleError, intersect_committed_chunk_identifier_sets, plan_dosage_buffer_reuse,
+    ResultInFlightSlotState, ScheduleError, VariantMajorDosageBatchHandoffPlan,
+    intersect_committed_chunk_identifier_sets, plan_dosage_buffer_reuse, plan_variant_major_dosage_batch_handoff,
     resolve_bgen_delivery_method, resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
     resolve_native_callback_queue_limits, resolve_writer_finish_thread_count,
 };

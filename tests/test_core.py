@@ -219,6 +219,28 @@ def test_plan_dosage_buffer_reuse_uses_native_shape_policy() -> None:
     assert _core.plan_dosage_buffer_reuse(buffered_shape=(2, 3), expected_shape=(3, 2)) is None
 
 
+def test_plan_variant_major_dosage_batch_handoff_uses_native_batch_policy() -> None:
+    batch_handoff_plan = _core.plan_variant_major_dosage_batch_handoff(
+        metadata_count=2,
+        genotype_matrix_by_variant_count=2,
+        chunk_stats_count=2,
+    )
+    assert batch_handoff_plan.chunk_count == 2
+
+    with pytest.raises(ValueError, match="identical lengths"):
+        _core.plan_variant_major_dosage_batch_handoff(
+            metadata_count=2,
+            genotype_matrix_by_variant_count=1,
+            chunk_stats_count=2,
+        )
+    with pytest.raises(ValueError, match="at least one chunk"):
+        _core.plan_variant_major_dosage_batch_handoff(
+            metadata_count=0,
+            genotype_matrix_by_variant_count=0,
+            chunk_stats_count=0,
+        )
+
+
 def test_native_dosage_buffer_pool_state_tracks_capacity_and_ownership() -> None:
     buffer_pool_state = _core.NativeDosageBufferPoolState(buffer_limit=2)
 

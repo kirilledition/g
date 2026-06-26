@@ -18,6 +18,11 @@ pub struct DosageBufferReusePlan {
     pub slice_dimensions: Vec<usize>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VariantMajorDosageBatchHandoffPlan {
+    pub chunk_count: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DosageBufferPoolState {
     buffer_limit: usize,
@@ -167,6 +172,10 @@ pub enum ScheduleError {
     WriterSessionCountOverflow { session_count: i64 },
     #[error("Writer finish thread count exceeds platform capacity: {thread_count}")]
     WriterFinishThreadCountOverflow { thread_count: i64 },
+    #[error("Variant-major dosage batch inputs must have identical lengths.")]
+    VariantMajorDosageBatchLengthMismatch,
+    #[error("Variant-major dosage batch must contain at least one chunk.")]
+    EmptyVariantMajorDosageBatch,
 }
 
 #[must_use]
@@ -236,6 +245,26 @@ pub fn plan_dosage_buffer_reuse(buffered_shape: &[usize], expected_shape: &[usiz
         requires_slice: buffered_shape != expected_shape,
         slice_dimensions: expected_shape.to_vec(),
     })
+}
+
+/// Plan a variant-major dosage batch handoff into the callback queue.
+///
+/// # Errors
+///
+/// Returns an error when the metadata, genotype matrix, and chunk-stat batches
+/// have different lengths, or when the batch is empty.
+pub fn plan_variant_major_dosage_batch_handoff(
+    metadata_count: usize,
+    genotype_matrix_by_variant_count: usize,
+    chunk_stats_count: usize,
+) -> Result<VariantMajorDosageBatchHandoffPlan, ScheduleError> {
+    if metadata_count != genotype_matrix_by_variant_count || metadata_count != chunk_stats_count {
+        return Err(ScheduleError::VariantMajorDosageBatchLengthMismatch);
+    }
+    if metadata_count == 0 {
+        return Err(ScheduleError::EmptyVariantMajorDosageBatch);
+    }
+    Ok(VariantMajorDosageBatchHandoffPlan { chunk_count: metadata_count })
 }
 
 /// Resolve native callback queue depths and bounded resource limits.
@@ -420,6 +449,26 @@ mod tests {
     fn rejects_incompatible_dosage_buffer_reuse_shapes() {
         assert_eq!(plan_dosage_buffer_reuse(&[2, 3], &[2, 3, 1]), None);
         assert_eq!(plan_dosage_buffer_reuse(&[2, 3], &[3, 2]), None);
+    }
+
+    #[test]
+    fn plans_variant_major_dosage_batch_handoff() {
+        assert_eq!(
+            plan_variant_major_dosage_batch_handoff(2, 2, 2).unwrap(),
+            VariantMajorDosageBatchHandoffPlan { chunk_count: 2 },
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_variant_major_dosage_batch_handoffs() {
+        assert_eq!(
+            plan_variant_major_dosage_batch_handoff(2, 1, 2).unwrap_err(),
+            ScheduleError::VariantMajorDosageBatchLengthMismatch,
+        );
+        assert_eq!(
+            plan_variant_major_dosage_batch_handoff(0, 0, 0).unwrap_err(),
+            ScheduleError::EmptyVariantMajorDosageBatch,
+        );
     }
 
     #[test]

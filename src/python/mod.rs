@@ -80,9 +80,10 @@ use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runt
 use runtime_state::NativeRuntimeState;
 use schedule::{
     NativeCallbackQueueLimits, NativeDosageBufferPoolState, NativeDosageBufferReusePlan, NativeResultInFlightSlotState,
-    intersect_committed_chunk_identifier_sets, plan_dosage_buffer_reuse, resolve_bgen_delivery_method_value,
-    resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
-    resolve_native_callback_queue_limits, resolve_writer_finish_thread_count,
+    NativeVariantMajorDosageBatchHandoffPlan, intersect_committed_chunk_identifier_sets, plan_dosage_buffer_reuse,
+    plan_variant_major_dosage_batch_handoff, resolve_bgen_delivery_method_value, resolve_delivery_callback_batch_size,
+    resolve_grouped_union_callback_batch_size, resolve_native_callback_queue_limits,
+    resolve_writer_finish_thread_count,
 };
 use shutdown::{NativeShutdownController, build_shutdown_signal_payload};
 use telemetry_policy::{
@@ -1736,6 +1737,7 @@ fn convert_variant_metadata_columns_to_tuple(variant_metadata: VariantMetadataCo
 }
 
 #[allow(clippy::missing_errors_doc)]
+#[allow(clippy::too_many_lines)]
 pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     config::register_module(module)?;
     module.add_class::<ChunkSpec>()?;
@@ -1747,6 +1749,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeDosageBufferPoolState>()?;
     module.add_class::<NativeDosageBufferReusePlan>()?;
     module.add_class::<NativeResultInFlightSlotState>()?;
+    module.add_class::<NativeVariantMajorDosageBatchHandoffPlan>()?;
     module.add_class::<NativeGroupedAlignedSampleData>()?;
     module.add_class::<NativeInitializedOutputRun>()?;
     module.add_class::<NativeMultiAlignedSampleData>()?;
@@ -1798,6 +1801,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_native_callback_queue_limits, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_writer_finish_thread_count, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_buffer_reuse, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_variant_major_dosage_batch_handoff, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(format_telemetry_timestamp_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_path_value, module)?)?;

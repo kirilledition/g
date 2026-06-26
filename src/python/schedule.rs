@@ -28,6 +28,12 @@ pub(crate) struct NativeDosageBufferReusePlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeVariantMajorDosageBatchHandoffPlan {
+    #[pyo3(get)]
+    chunk_count: usize,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageBufferPoolState {
     inner: native_schedule::DosageBufferPoolState,
 }
@@ -123,6 +129,12 @@ impl From<native_schedule::DosageBufferReusePlan> for NativeDosageBufferReusePla
     }
 }
 
+impl From<native_schedule::VariantMajorDosageBatchHandoffPlan> for NativeVariantMajorDosageBatchHandoffPlan {
+    fn from(batch_handoff_plan: native_schedule::VariantMajorDosageBatchHandoffPlan) -> Self {
+        Self { chunk_count: batch_handoff_plan.chunk_count }
+    }
+}
+
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn intersect_committed_chunk_identifier_sets(
@@ -176,6 +188,21 @@ pub(crate) fn plan_dosage_buffer_reuse(
     expected_shape: Vec<usize>,
 ) -> Option<NativeDosageBufferReusePlan> {
     native_schedule::plan_dosage_buffer_reuse(&buffered_shape, &expected_shape).map(Into::into)
+}
+
+#[pyfunction]
+pub(crate) fn plan_variant_major_dosage_batch_handoff(
+    metadata_count: usize,
+    genotype_matrix_by_variant_count: usize,
+    chunk_stats_count: usize,
+) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
+    native_schedule::plan_variant_major_dosage_batch_handoff(
+        metadata_count,
+        genotype_matrix_by_variant_count,
+        chunk_stats_count,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
 }
 
 #[pyfunction]

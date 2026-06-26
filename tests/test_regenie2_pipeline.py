@@ -1920,6 +1920,52 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
     assert snapshot.stage_counts["python_callback"] == 2
 
 
+def test_native_callback_runner_uses_native_variant_major_batch_handoff_plan() -> None:
+    callback = ManualCallbackRunner()
+    callback.worker_start_lock = threading.Lock()
+    callback.worker_threads_started = True
+    metadata = build_native_metadata()
+    batch_handoff_plan = SimpleNamespace(chunk_count=1)
+
+    with patch(
+        "g.engine.callbacks.runtime._core.plan_variant_major_dosage_batch_handoff",
+        return_value=batch_handoff_plan,
+    ) as mock_planner:
+        callback.compute_preprocessed_variant_major_dosage_chunk_batch(
+            metadata_batch=(metadata,),
+            genotype_matrix_by_variant_batch=(np.ones((2, 2), dtype=np.float32),),
+            chunk_stats_batch=(typing.cast("typing.Any", SimpleNamespace()),),
+        )
+
+    mock_planner.assert_called_once_with(
+        metadata_count=1,
+        genotype_matrix_by_variant_count=1,
+        chunk_stats_count=1,
+    )
+    queued_work_item = callback.dosage_queue.get_nowait()
+    assert queued_work_item is not None
+    assert isinstance(queued_work_item, callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem)
+    assert len(queued_work_item.work_items) == 1
+
+
+def test_native_callback_runner_rejects_invalid_variant_major_batch_handoffs() -> None:
+    callback = ManualCallbackRunner()
+    metadata = build_native_metadata()
+
+    with pytest.raises(ValueError, match="identical lengths"):
+        callback.compute_preprocessed_variant_major_dosage_chunk_batch(
+            metadata_batch=(metadata,),
+            genotype_matrix_by_variant_batch=(),
+            chunk_stats_batch=(typing.cast("typing.Any", SimpleNamespace()),),
+        )
+    with pytest.raises(ValueError, match="at least one chunk"):
+        callback.compute_preprocessed_variant_major_dosage_chunk_batch(
+            metadata_batch=(),
+            genotype_matrix_by_variant_batch=(),
+            chunk_stats_batch=(),
+        )
+
+
 def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
     callback = ManualCallbackRunner()
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
