@@ -19,4 +19,7 @@ pub use preflight::{
     PreflightError, PreflightReportPayload, build_preflight_report_payload, build_preflight_warnings,
     resolve_scanned_variant_count,
 };
-pub use schedule::{ScheduleError, intersect_committed_chunk_identifier_sets, resolve_delivery_callback_batch_size};
+pub use schedule::{
+    ScheduleError, intersect_committed_chunk_identifier_sets, resolve_delivery_callback_batch_size,
+    resolve_writer_finish_thread_count,
+};

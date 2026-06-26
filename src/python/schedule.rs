@@ -30,6 +30,15 @@ pub(crate) fn resolve_delivery_callback_batch_size(
         .map_err(|error| schedule_error_to_py(&error))
 }
 
+#[pyfunction]
+pub(crate) fn resolve_writer_finish_thread_count(
+    writer_session_count: i64,
+    requested_thread_count: i64,
+) -> PyResult<usize> {
+    native_schedule::resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
 fn schedule_error_to_py(error: &native_schedule::ScheduleError) -> PyErr {
     PyValueError::new_err(error.to_string())
 }

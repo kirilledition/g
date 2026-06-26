@@ -12,6 +12,12 @@ pub enum ScheduleError {
     Packed8CallbackBatchSize,
     #[error("native_callback_batch_size exceeds platform capacity: {callback_batch_size}")]
     CallbackBatchSizeOverflow { callback_batch_size: i64 },
+    #[error("Writer finish thread count must be positive.")]
+    NonPositiveWriterFinishThreadCount,
+    #[error("Writer session count exceeds platform capacity: {session_count}")]
+    WriterSessionCountOverflow { session_count: i64 },
+    #[error("Writer finish thread count exceeds platform capacity: {thread_count}")]
+    WriterFinishThreadCountOverflow { thread_count: i64 },
 }
 
 #[must_use]
@@ -48,6 +54,29 @@ pub fn resolve_delivery_callback_batch_size(
         return Err(ScheduleError::Packed8CallbackBatchSize);
     }
     Ok(resolved_callback_batch_size)
+}
+
+/// Resolve the thread count used to finish output writer sessions.
+///
+/// # Errors
+///
+/// Returns an error when at least one writer must finish and the requested
+/// thread count is non-positive or cannot fit in `usize`.
+pub fn resolve_writer_finish_thread_count(
+    writer_session_count: i64,
+    requested_thread_count: i64,
+) -> Result<usize, ScheduleError> {
+    if writer_session_count <= 0 {
+        return Ok(0);
+    }
+    if requested_thread_count <= 0 {
+        return Err(ScheduleError::NonPositiveWriterFinishThreadCount);
+    }
+    let writer_session_count = usize::try_from(writer_session_count)
+        .map_err(|_| ScheduleError::WriterSessionCountOverflow { session_count: writer_session_count })?;
+    let requested_thread_count = usize::try_from(requested_thread_count)
+        .map_err(|_| ScheduleError::WriterFinishThreadCountOverflow { thread_count: requested_thread_count })?;
+    Ok(writer_session_count.min(requested_thread_count))
 }
 
 #[cfg(test)]
@@ -96,6 +125,23 @@ mod tests {
         assert_eq!(
             resolve_delivery_callback_batch_size(Some(2), true).unwrap_err(),
             ScheduleError::Packed8CallbackBatchSize,
+        );
+    }
+
+    #[test]
+    fn resolves_writer_finish_thread_count() {
+        assert_eq!(resolve_writer_finish_thread_count(0, 0).unwrap(), 0);
+        assert_eq!(resolve_writer_finish_thread_count(-1, 0).unwrap(), 0);
+        assert_eq!(resolve_writer_finish_thread_count(3, 1).unwrap(), 1);
+        assert_eq!(resolve_writer_finish_thread_count(3, 2).unwrap(), 2);
+        assert_eq!(resolve_writer_finish_thread_count(3, 5).unwrap(), 3);
+    }
+
+    #[test]
+    fn rejects_invalid_writer_finish_thread_count_when_writers_exist() {
+        assert_eq!(
+            resolve_writer_finish_thread_count(1, 0).unwrap_err(),
+            ScheduleError::NonPositiveWriterFinishThreadCount,
         );
     }
 }

@@ -698,6 +698,14 @@ def test_finish_writer_sessions_uses_bounded_concurrent_pool() -> None:
     assert maximum_active_finish_count == 2
 
 
+def test_resolve_writer_finish_thread_count_uses_native_cleanup_policy() -> None:
+    assert native_dispatch_writers.resolve_writer_finish_thread_count(0, 0) == 0
+    assert native_dispatch_writers.resolve_writer_finish_thread_count(3, 2) == 2
+    assert native_dispatch_writers.resolve_writer_finish_thread_count(3, 5) == 3
+    with pytest.raises(ValueError, match="Writer finish thread count must be positive"):
+        native_dispatch_writers.resolve_writer_finish_thread_count(1, 0)
+
+
 def test_write_regenie2_native_chunk_records_per_chunk_output_timing() -> None:
     writer_session = FakeWriterSession()
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)

@@ -110,6 +110,14 @@ def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() 
         _core.resolve_delivery_callback_batch_size(2, True)
 
 
+def test_resolve_writer_finish_thread_count_enforces_native_cleanup_policy() -> None:
+    assert _core.resolve_writer_finish_thread_count(0, 0) == 0
+    assert _core.resolve_writer_finish_thread_count(3, 2) == 2
+    assert _core.resolve_writer_finish_thread_count(3, 5) == 3
+    with pytest.raises(ValueError, match="Writer finish thread count must be positive"):
+        _core.resolve_writer_finish_thread_count(1, 0)
+
+
 def test_regenie2_run_engine_required_chromosomes_returns_boundary_labels() -> None:
     engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
 

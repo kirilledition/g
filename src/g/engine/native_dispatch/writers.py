@@ -9,6 +9,7 @@ import time
 import typing
 from pathlib import Path
 
+from g import _core
 from g.engine import shutdown, timing
 
 logger = logging.getLogger(__name__)
@@ -50,12 +51,7 @@ def finish_writer_session(
 
 def resolve_writer_finish_thread_count(writer_session_count: int, requested_thread_count: int) -> int:
     """Return the bounded number of threads used to finish writer sessions."""
-    if writer_session_count <= 0:
-        return 0
-    if requested_thread_count <= 0:
-        message = "Writer finish thread count must be positive."
-        raise ValueError(message)
-    return min(writer_session_count, requested_thread_count)
+    return int(_core.resolve_writer_finish_thread_count(writer_session_count, requested_thread_count))
 
 
 def finish_writer_session_to_path(writer_session: typing.Any) -> Path | None:

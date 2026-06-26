@@ -1027,6 +1027,7 @@ def resolve_delivery_callback_batch_size(
     callback_batch_size: int | None,
     variant_major_packed8_probability_pairs: bool,
 ) -> int: ...
+def resolve_writer_finish_thread_count(writer_session_count: int, requested_thread_count: int) -> int: ...
 def build_preflight_report_payload(
     sample_count: int,
     covariate_count: int,
