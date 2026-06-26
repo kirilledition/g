@@ -4,7 +4,7 @@ use pyo3::exceptions::{PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::host_policy as native_host_policy;
+use g_plan as native_host_policy;
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]

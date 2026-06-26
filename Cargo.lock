@@ -727,6 +727,7 @@ dependencies = [
  "g-input",
  "g-interface",
  "g-output",
+ "g-plan",
  "memchr",
  "numpy",
  "pyo3",
@@ -783,6 +784,14 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+]
+
+[[package]]
+name = "g-plan"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

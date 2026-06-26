@@ -1,5 +1,7 @@
 //! Deterministic host-side planning policy shared through the Python boundary.
 
+#![allow(clippy::missing_errors_doc)]
+
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -28,55 +30,56 @@ const XLA_AUXILIARY_CACHE_DISABLED: &str = "none";
 const XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE: &str = "xla_gpu_per_fusion_autotune_cache_dir";
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum HostPolicyError {
+pub enum HostPolicyError {
     NotImplemented(String),
     Value(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct AssociationBackendPlanPayload {
-    pub(crate) backend_kind: &'static str,
-    pub(crate) association_mode: String,
-    pub(crate) jax_device: String,
-    pub(crate) genotype_format: String,
-    pub(crate) uses_variant_major_packed8_delivery: bool,
+pub struct AssociationBackendPlanPayload {
+    pub backend_kind: &'static str,
+    pub association_mode: String,
+    pub jax_device: String,
+    pub genotype_format: String,
+    pub uses_variant_major_packed8_delivery: bool,
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct BinaryCorrectionPlanPayload {
-    pub(crate) method: &'static str,
-    pub(crate) p_threshold: f64,
-    pub(crate) firth_se: bool,
+pub struct BinaryCorrectionPlanPayload {
+    pub method: &'static str,
+    pub p_threshold: f64,
+    pub firth_se: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct PhenotypeComputeGroupPayload {
-    pub(crate) group_mode: &'static str,
-    pub(crate) phenotype_indices: Vec<i64>,
-    pub(crate) phenotype_names: Vec<String>,
-    pub(crate) sample_mode: &'static str,
-    pub(crate) sample_set_fingerprint: Option<String>,
-    pub(crate) covariate_design_fingerprint: Option<String>,
-    pub(crate) prediction_alignment_fingerprint: Option<String>,
+pub struct PhenotypeComputeGroupPayload {
+    pub group_mode: &'static str,
+    pub phenotype_indices: Vec<i64>,
+    pub phenotype_names: Vec<String>,
+    pub sample_mode: &'static str,
+    pub sample_set_fingerprint: Option<String>,
+    pub covariate_design_fingerprint: Option<String>,
+    pub prediction_alignment_fingerprint: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct JaxRuntimeSetupPayload {
-    pub(crate) requested_device: String,
-    pub(crate) platform_name: &'static str,
-    pub(crate) cache_directory: String,
-    pub(crate) matmul_precision: String,
-    pub(crate) persistent_cache_enabled: bool,
-    pub(crate) persistent_cache_min_entry_size_bytes: i64,
-    pub(crate) persistent_cache_min_compile_time_seconds: i64,
-    pub(crate) xla_auxiliary_cache_mode: &'static str,
-    pub(crate) xla_auxiliary_cache_reason: &'static str,
-    pub(crate) transfer_guard_enabled: bool,
-    pub(crate) gpu_validation_status: &'static str,
-    pub(crate) gpu_validation_message: Option<&'static str>,
+pub struct JaxRuntimeSetupPayload {
+    pub requested_device: String,
+    pub platform_name: &'static str,
+    pub cache_directory: String,
+    pub matmul_precision: String,
+    pub persistent_cache_enabled: bool,
+    pub persistent_cache_min_entry_size_bytes: i64,
+    pub persistent_cache_min_compile_time_seconds: i64,
+    pub xla_auxiliary_cache_mode: &'static str,
+    pub xla_auxiliary_cache_reason: &'static str,
+    pub transfer_guard_enabled: bool,
+    pub gpu_validation_status: &'static str,
+    pub gpu_validation_message: Option<&'static str>,
 }
 
-pub(crate) fn plan_association_backend(
+#[must_use]
+pub fn plan_association_backend(
     association_mode: &str,
     jax_device: &str,
     gpu_genotype_format: &str,
@@ -96,7 +99,8 @@ pub(crate) fn plan_association_backend(
     }
 }
 
-pub(crate) fn resolve_association_mode(trait_type: &str) -> &'static str {
+#[must_use]
+pub fn resolve_association_mode(trait_type: &str) -> &'static str {
     if trait_type == REGENIE_TRAIT_TYPE_BINARY {
         ASSOCIATION_MODE_REGENIE2_BINARY
     } else {
@@ -105,7 +109,7 @@ pub(crate) fn resolve_association_mode(trait_type: &str) -> &'static str {
 }
 
 #[allow(clippy::fn_params_excessive_bools)]
-pub(crate) fn normalize_binary_correction(
+pub fn normalize_binary_correction(
     firth: bool,
     approx: bool,
     spa: bool,
@@ -138,7 +142,7 @@ pub(crate) fn normalize_binary_correction(
     Ok(BinaryCorrectionPlanPayload { method: BINARY_FALLBACK_METHOD_SCORE_ONLY, p_threshold, firth_se: false })
 }
 
-pub(crate) fn build_phenotype_compute_groups(
+pub fn build_phenotype_compute_groups(
     phenotype_names: &[String],
     multi_phenotype_sample_mode: &str,
 ) -> Result<Vec<PhenotypeComputeGroupPayload>, HostPolicyError> {
@@ -187,7 +191,13 @@ fn phenotype_index_to_i64(phenotype_index: usize) -> i64 {
     i64::try_from(phenotype_index).expect("phenotype count must fit in i64")
 }
 
-pub(crate) fn build_phenotype_compute_group_id(
+/// Build a deterministic identifier for one phenotype compute group.
+///
+/// # Panics
+///
+/// Panics only if serializing the internally constructed JSON value fails.
+#[must_use]
+pub fn build_phenotype_compute_group_id(
     group_mode: &str,
     phenotype_indices: &[i64],
     phenotype_names: &[String],
@@ -208,7 +218,8 @@ pub(crate) fn build_phenotype_compute_group_id(
     finalize_sha256_hex(Sha256::digest(group_payload_bytes))
 }
 
-pub(crate) fn build_phenotype_output_directory_name(phenotype_index: i64, phenotype_name: &str) -> String {
+#[must_use]
+pub fn build_phenotype_output_directory_name(phenotype_index: i64, phenotype_name: &str) -> String {
     let mut sanitized_slug = String::new();
     let mut previous_character_was_replaced = false;
     for phenotype_character in phenotype_name.chars() {
@@ -230,7 +241,8 @@ pub(crate) fn build_phenotype_output_directory_name(phenotype_index: i64, phenot
     format!("trait_{phenotype_index:04}_{truncated_slug}")
 }
 
-pub(crate) fn resolve_jax_runtime_setup(
+#[must_use]
+pub fn resolve_jax_runtime_setup(
     requested_device: &str,
     cache_directory: &str,
     matmul_precision: Option<&str>,
@@ -283,4 +295,105 @@ fn finalize_sha256_hex(digest_bytes: sha2::digest::Output<Sha256>) -> String {
         write!(&mut digest_text, "{digest_byte:02x}").expect("writing to a string must succeed");
     }
     digest_text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plans_association_backend_from_concrete_genotype_format() {
+        let dosage_plan = plan_association_backend(ASSOCIATION_MODE_REGENIE2_LINEAR, JAX_CPU_PLATFORM_NAME, "dosage");
+        assert_eq!(dosage_plan.backend_kind, ASSOCIATION_BACKEND_JAX_DOSAGE);
+        assert!(!dosage_plan.uses_variant_major_packed8_delivery);
+
+        let packed_plan = plan_association_backend(
+            ASSOCIATION_MODE_REGENIE2_BINARY,
+            JAX_CUDA_PLATFORM_NAME,
+            GPU_GENOTYPE_FORMAT_PACKED8,
+        );
+        assert_eq!(packed_plan.backend_kind, ASSOCIATION_BACKEND_JAX_PACKED8);
+        assert_eq!(packed_plan.genotype_format, GPU_GENOTYPE_FORMAT_PACKED8);
+        assert!(packed_plan.uses_variant_major_packed8_delivery);
+    }
+
+    #[test]
+    fn normalizes_supported_binary_correction_modes() {
+        let score_only_plan = normalize_binary_correction(false, false, false, 0.05, true).unwrap();
+        assert_eq!(score_only_plan.method, BINARY_FALLBACK_METHOD_SCORE_ONLY);
+        assert!(!score_only_plan.firth_se);
+
+        let approximate_firth_plan = normalize_binary_correction(true, true, false, 0.01, true).unwrap();
+        assert_eq!(approximate_firth_plan.method, BINARY_FALLBACK_METHOD_FIRTH_APPROXIMATE);
+        assert!(approximate_firth_plan.firth_se);
+
+        assert_eq!(
+            normalize_binary_correction(false, true, false, 0.01, false),
+            Err(HostPolicyError::Value("--approx requires --firth.".to_string())),
+        );
+    }
+
+    #[test]
+    fn builds_config_time_phenotype_compute_groups() {
+        let single_groups =
+            build_phenotype_compute_groups(&["height".to_string()], MULTI_PHENOTYPE_SAMPLE_MODE_PER_PHENOTYPE).unwrap();
+        assert_eq!(single_groups.len(), 1);
+        assert_eq!(single_groups[0].group_mode, PHENOTYPE_COMPUTE_GROUP_MODE_SINGLE_PHENOTYPE);
+        assert_eq!(single_groups[0].phenotype_indices, vec![0]);
+
+        let complete_case_groups = build_phenotype_compute_groups(
+            &["height".to_string(), "weight".to_string()],
+            MULTI_PHENOTYPE_SAMPLE_MODE_COMPLETE_CASE,
+        )
+        .unwrap();
+        assert_eq!(complete_case_groups.len(), 1);
+        assert_eq!(complete_case_groups[0].sample_mode, MULTI_PHENOTYPE_SAMPLE_MODE_COMPLETE_CASE);
+        assert_eq!(complete_case_groups[0].phenotype_indices, vec![0, 1]);
+
+        let per_phenotype_groups = build_phenotype_compute_groups(
+            &["height".to_string(), "weight".to_string()],
+            MULTI_PHENOTYPE_SAMPLE_MODE_PER_PHENOTYPE,
+        )
+        .unwrap();
+        assert_eq!(per_phenotype_groups.len(), 2);
+        assert_eq!(per_phenotype_groups[1].phenotype_names, vec!["weight".to_string()]);
+    }
+
+    #[test]
+    fn compute_group_identifier_changes_with_alignment_fingerprints() {
+        let base_identifier = build_phenotype_compute_group_id(
+            PHENOTYPE_COMPUTE_GROUP_MODE_COMPLETE_CASE,
+            &[0, 1],
+            &["height".to_string(), "weight".to_string()],
+            MULTI_PHENOTYPE_SAMPLE_MODE_COMPLETE_CASE,
+            Some("samples-a"),
+            Some("covariates-a"),
+            Some("predictions-a"),
+        );
+        let changed_identifier = build_phenotype_compute_group_id(
+            PHENOTYPE_COMPUTE_GROUP_MODE_COMPLETE_CASE,
+            &[0, 1],
+            &["height".to_string(), "weight".to_string()],
+            MULTI_PHENOTYPE_SAMPLE_MODE_COMPLETE_CASE,
+            Some("samples-b"),
+            Some("covariates-a"),
+            Some("predictions-a"),
+        );
+        assert_eq!(base_identifier.len(), 64);
+        assert_ne!(base_identifier, changed_identifier);
+    }
+
+    #[test]
+    fn resolves_jax_runtime_setup_payload() {
+        let setup = resolve_jax_runtime_setup("gpu", "cache", None, true, 1024, 5, true, true);
+        assert_eq!(setup.platform_name, JAX_CUDA_PLATFORM_NAME);
+        assert_eq!(setup.matmul_precision, JAX_MATMUL_PRECISION_FLOAT32);
+        assert_eq!(setup.xla_auxiliary_cache_mode, XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE);
+        assert!(setup.transfer_guard_enabled);
+
+        let cpu_setup = resolve_jax_runtime_setup("cpu", "cache", Some("highest"), false, 0, 0, true, false);
+        assert_eq!(cpu_setup.platform_name, JAX_CPU_PLATFORM_NAME);
+        assert_eq!(cpu_setup.gpu_validation_status, "skipped");
+        assert_eq!(cpu_setup.matmul_precision, "highest");
+    }
 }

@@ -6,7 +6,7 @@ pub use g_input as input;
 pub use g_input::{regenie, sample};
 pub use g_interface as interface;
 pub use g_output as output;
-pub(crate) mod host_policy;
+pub use g_plan as plan;
 pub mod pipeline;
 pub mod python;
 pub(crate) mod run_metadata;

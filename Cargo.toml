@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.96.0"
 
 [workspace]
-members = [".", "crates/genotype", "crates/input", "crates/interface", "crates/output"]
+members = [".", "crates/genotype", "crates/input", "crates/interface", "crates/output", "crates/plan"]
 default-members = ["."]
 resolver = "3"
 
@@ -32,6 +32,7 @@ g-genotype = { path = "crates/genotype" }
 g-input = { path = "crates/input" }
 g-interface = { path = "crates/interface" }
 g-output = { path = "crates/output" }
+g-plan = { path = "crates/plan" }
 memchr = "2.8.1"
 memmap2 = "0.9.10"
 numpy = "0.28.0"
@@ -62,6 +63,7 @@ g-genotype = { workspace = true }
 g-input = { workspace = true }
 g-interface = { workspace = true }
 g-output = { workspace = true }
+g-plan = { workspace = true }
 memchr = { workspace = true }
 rayon = { workspace = true }
 serde_json = { workspace = true }
