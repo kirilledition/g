@@ -198,6 +198,27 @@ def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> N
         )
 
 
+def test_plan_dosage_buffer_reuse_uses_native_shape_policy() -> None:
+    exact_reuse_plan = _core.plan_dosage_buffer_reuse(
+        buffered_shape=(2, 3),
+        expected_shape=(2, 3),
+    )
+    assert exact_reuse_plan is not None
+    assert exact_reuse_plan.requires_slice is False
+    assert exact_reuse_plan.slice_dimensions == [2, 3]
+
+    sliced_reuse_plan = _core.plan_dosage_buffer_reuse(
+        buffered_shape=(4, 5),
+        expected_shape=(2, 3),
+    )
+    assert sliced_reuse_plan is not None
+    assert sliced_reuse_plan.requires_slice is True
+    assert sliced_reuse_plan.slice_dimensions == [2, 3]
+
+    assert _core.plan_dosage_buffer_reuse(buffered_shape=(2, 3), expected_shape=(2, 3, 1)) is None
+    assert _core.plan_dosage_buffer_reuse(buffered_shape=(2, 3), expected_shape=(3, 2)) is None
+
+
 def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None:
     assert (
         _core.resolve_bgen_delivery_method_value(

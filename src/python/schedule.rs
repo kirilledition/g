@@ -19,6 +19,14 @@ pub(crate) struct NativeCallbackQueueLimits {
     dosage_buffer_limit: usize,
 }
 
+#[pyclass]
+pub(crate) struct NativeDosageBufferReusePlan {
+    #[pyo3(get)]
+    requires_slice: bool,
+    #[pyo3(get)]
+    slice_dimensions: Vec<usize>,
+}
+
 impl From<native_schedule::NativeCallbackQueueLimits> for NativeCallbackQueueLimits {
     fn from(queue_limits: native_schedule::NativeCallbackQueueLimits) -> Self {
         Self {
@@ -27,6 +35,12 @@ impl From<native_schedule::NativeCallbackQueueLimits> for NativeCallbackQueueLim
             result_in_flight_limit: queue_limits.result_in_flight_limit,
             dosage_buffer_limit: queue_limits.dosage_buffer_limit,
         }
+    }
+}
+
+impl From<native_schedule::DosageBufferReusePlan> for NativeDosageBufferReusePlan {
+    fn from(reuse_plan: native_schedule::DosageBufferReusePlan) -> Self {
+        Self { requires_slice: reuse_plan.requires_slice, slice_dimensions: reuse_plan.slice_dimensions }
     }
 }
 
@@ -74,6 +88,15 @@ pub(crate) fn resolve_native_callback_queue_limits(
     )
     .map(Into::into)
     .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_dosage_buffer_reuse(
+    buffered_shape: Vec<usize>,
+    expected_shape: Vec<usize>,
+) -> Option<NativeDosageBufferReusePlan> {
+    native_schedule::plan_dosage_buffer_reuse(&buffered_shape, &expected_shape).map(Into::into)
 }
 
 #[pyfunction]

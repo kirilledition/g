@@ -575,6 +575,12 @@ class NativeCallbackQueueLimits:
     @property
     def dosage_buffer_limit(self) -> int: ...
 
+class NativeDosageBufferReusePlan:
+    @property
+    def requires_slice(self) -> bool: ...
+    @property
+    def slice_dimensions(self) -> list[int]: ...
+
 class NativeStageTimingRecorder:
     exact_stage_timings: bool
     def __init__(self, exact_stage_timings: bool) -> None: ...
@@ -1050,6 +1056,10 @@ def resolve_native_callback_queue_limits(
     dosage_buffer_limit: int | None,
 ) -> NativeCallbackQueueLimits: ...
 def resolve_writer_finish_thread_count(writer_session_count: int, requested_thread_count: int) -> int: ...
+def plan_dosage_buffer_reuse(
+    buffered_shape: typing.Sequence[int],
+    expected_shape: typing.Sequence[int],
+) -> NativeDosageBufferReusePlan | None: ...
 def build_preflight_report_payload(
     sample_count: int,
     covariate_count: int,

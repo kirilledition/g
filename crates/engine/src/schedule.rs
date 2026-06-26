@@ -12,6 +12,12 @@ pub struct NativeCallbackQueueLimits {
     pub dosage_buffer_limit: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DosageBufferReusePlan {
+    pub requires_slice: bool,
+    pub slice_dimensions: Vec<usize>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BgenDeliveryMethod {
     DosageNativeMultiAlignedSamples,
@@ -119,6 +125,24 @@ pub fn resolve_grouped_union_callback_batch_size(callback_batch_size: i64) -> Re
         return Err(ScheduleError::GroupedUnionCallbackBatchSize);
     }
     Ok(resolved_callback_batch_size)
+}
+
+#[must_use]
+pub fn plan_dosage_buffer_reuse(buffered_shape: &[usize], expected_shape: &[usize]) -> Option<DosageBufferReusePlan> {
+    if buffered_shape.len() != expected_shape.len() {
+        return None;
+    }
+    if buffered_shape
+        .iter()
+        .zip(expected_shape)
+        .any(|(buffered_dimension, expected_dimension)| buffered_dimension < expected_dimension)
+    {
+        return None;
+    }
+    Some(DosageBufferReusePlan {
+        requires_slice: buffered_shape != expected_shape,
+        slice_dimensions: expected_shape.to_vec(),
+    })
 }
 
 /// Resolve native callback queue depths and bounded resource limits.
@@ -285,6 +309,24 @@ mod tests {
             resolve_grouped_union_callback_batch_size(2).unwrap_err(),
             ScheduleError::GroupedUnionCallbackBatchSize,
         );
+    }
+
+    #[test]
+    fn plans_dosage_buffer_reuse_for_exact_and_larger_shapes() {
+        assert_eq!(
+            plan_dosage_buffer_reuse(&[2, 3], &[2, 3]).unwrap(),
+            DosageBufferReusePlan { requires_slice: false, slice_dimensions: vec![2, 3] },
+        );
+        assert_eq!(
+            plan_dosage_buffer_reuse(&[4, 5], &[2, 3]).unwrap(),
+            DosageBufferReusePlan { requires_slice: true, slice_dimensions: vec![2, 3] },
+        );
+    }
+
+    #[test]
+    fn rejects_incompatible_dosage_buffer_reuse_shapes() {
+        assert_eq!(plan_dosage_buffer_reuse(&[2, 3], &[2, 3, 1]), None);
+        assert_eq!(plan_dosage_buffer_reuse(&[2, 3], &[3, 2]), None);
     }
 
     #[test]

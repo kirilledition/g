@@ -75,9 +75,10 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   native preflight report/warning/scan-count helpers, and native
   committed-chunk intersection for multi-output resume scheduling. Native
   callback batch-size delivery policy, grouped-union callback batch-size
-  policy, callback queue-limit policy, writer-finish thread cleanup policy, and
-  BGEN delivery method selection also live in `g-engine`, with Python only
-  extracting callback/input object attributes, invoking writer sessions, and
+  policy, callback queue-limit policy, dosage-buffer reuse shape planning,
+  writer-finish thread cleanup policy, and BGEN delivery method selection also
+  live in `g-engine`, with Python only extracting callback/input object
+  attributes, slicing/owning NumPy buffers, invoking writer sessions, and
   calling the selected PyO3 engine method. Python still owns NumPy array
   finite/rank/binary-shape validation while those array contracts are being
   migrated. Production queues, output writer lifecycle, cleanup, telemetry
