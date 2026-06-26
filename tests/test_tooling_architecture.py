@@ -33,6 +33,7 @@ from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
 from tooling.profile_deep import budget as profile_deep_budget
 from tooling.profile_deep import config as profile_deep_config
+from tooling.profile_deep import jax_cache as profile_deep_jax_cache
 from tooling.profile_deep import models as profile_deep_models
 
 if typing.TYPE_CHECKING:
@@ -1124,6 +1125,19 @@ def test_deep_profile_config_helpers_live_in_profile_package() -> None:
     assert deep_profile.build_arguments_from_overrides is profile_deep_config.build_arguments_from_overrides
     assert deep_profile.apply_smoke_overrides is profile_deep_config.apply_smoke_overrides
     assert deep_profile.profile_configuration_payload is profile_deep_config.profile_configuration_payload
+
+
+def test_deep_profile_jax_cache_helpers_live_in_profile_package() -> None:
+    assert profile_deep_jax_cache.resolve_profile_jax_cache_directory.__module__ == "tooling.profile_deep.jax_cache"
+    assert profile_deep_jax_cache.collect_jax_cache_snapshot.__module__ == "tooling.profile_deep.jax_cache"
+    assert profile_deep_jax_cache.build_jax_cache_diagnostics.__module__ == "tooling.profile_deep.jax_cache"
+    assert profile_deep_jax_cache.build_jax_cold_warm_diagnostics.__module__ == "tooling.profile_deep.jax_cache"
+    assert (
+        deep_profile.resolve_profile_jax_cache_directory is profile_deep_jax_cache.resolve_profile_jax_cache_directory
+    )
+    assert deep_profile.collect_jax_cache_snapshot is profile_deep_jax_cache.collect_jax_cache_snapshot
+    assert deep_profile.build_jax_cache_diagnostics is profile_deep_jax_cache.build_jax_cache_diagnostics
+    assert deep_profile.build_jax_cold_warm_diagnostics is profile_deep_jax_cache.build_jax_cold_warm_diagnostics
 
 
 def test_rust_build_profile_specs_map_expected_cargo_profiles() -> None:

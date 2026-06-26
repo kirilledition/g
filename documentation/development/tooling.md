@@ -206,7 +206,9 @@ models, JAX diagnostics, and baseline-scope records live in
 logging perturbation case definitions, and campaign budget accounting live in
 `tooling.profile_deep.budget`. Hydra-to-argument conversion, smoke-mode
 overrides, output directory resolution, REGENIE executable selection, and
-configuration snapshots live in `tooling.profile_deep.config`. The CLI
+configuration snapshots live in `tooling.profile_deep.config`. Profile-specific
+JAX cache directory selection, cache snapshots, compile-log parsing, and
+cold/warm cache diagnostics live in `tooling.profile_deep.jax_cache`. The CLI
 re-exports these package-owned symbols for compatibility while orchestration
 code migrates into the package.
 
