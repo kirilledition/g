@@ -1,4 +1,5 @@
 tool:
+  name: schema_check
   path: null
   require_optional_files: false
 

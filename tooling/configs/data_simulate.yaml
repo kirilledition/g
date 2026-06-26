@@ -3,6 +3,7 @@ defaults:
   - _self_
 
 tool:
+  name: simulate
   data_directory: ${dataset.data_directory}
   family_file: 1kg_chr22_full.fam
 

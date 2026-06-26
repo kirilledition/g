@@ -3,6 +3,7 @@ defaults:
   - _self_
 
 tool:
+  name: fetch
   data_directory: ${dataset.data_directory}
 
 hydra:

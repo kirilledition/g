@@ -1,4 +1,5 @@
-tool: {}
+tool:
+  name: check_pyo3_stub
 
 hydra:
   job:

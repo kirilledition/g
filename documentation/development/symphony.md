@@ -90,8 +90,8 @@ execution:
 ```text
 Labels: symphony, gpu, benchmark, data
 Validation:
-- just verify-regenie2-binary-gpu-inputs
-- GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data just slurm-regenie2-binary-gpu-smoke
+- just data-verify-binary-gpu-inputs
+- GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data just slurm-gpu-just matrix-chr22-smoke
 Expected output:
 - data/regenie2_binary_chr22_gpu_smoke.g/trait_0001_phenotype_binary.regenie2_binary.run/parts/*.parquet
 ```
@@ -230,9 +230,9 @@ directly.
 Use the profiling command ladder:
 
 ```bash
-just profile-app-full-dry-run tool.output_dir=data/profiles/<issue-key>-plan
+just profile-app-full-dry tool.output_dir=data/profiles/<issue-key>-plan
 just slurm-gpu-just profile-app-full-smoke tool.output_dir=data/profiles/<issue-key>-smoke
-just profile-app-full-landau tool.output_dir=data/profiles/<issue-key>-full
+just profile-app-full tool.output_dir=data/profiles/<issue-key>-full
 ```
 
 If the full `landau` profile can exceed the Symphony agent turn timeout, split
@@ -418,8 +418,8 @@ uv run pytest <focused-tests>
 GPU work should use existing SLURM recipes such as:
 
 ```bash
-just slurm-regenie2-binary-gpu-smoke
-just slurm-benchmark-regenie2-binary-hot-gpu
+just slurm-gpu-just matrix-chr22-smoke
+just slurm-gpu-bench-binary-hot
 ```
 
 Benchmark and profiling tasks should prefer smoke or dry-run recipes first, keep

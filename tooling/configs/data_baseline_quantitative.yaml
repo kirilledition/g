@@ -3,10 +3,14 @@ defaults:
   - _self_
 
 tool:
-  name: baselines
+  name: regenie_baseline
   data_directory: ${dataset.data_directory}
-  include_hail: false
+  trait: quantitative
+  verify_only: false
 
 hydra:
+  output_subdir: null
   job:
     chdir: false
+  run:
+    dir: /tmp/g-hydra-runs

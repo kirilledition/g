@@ -1,4 +1,5 @@
 tool:
+  name: bootstrap_tools
   tools_dir: null
 
 hydra:

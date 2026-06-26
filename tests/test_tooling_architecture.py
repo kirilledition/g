@@ -129,6 +129,48 @@ def test_hydra_chr22_matrix_config_composes() -> None:
     assert config.hydra.job.chdir is False
 
 
+def test_named_justfile_workflow_configs_compose() -> None:
+    config_names = [
+        "data_baseline_binary",
+        "data_baseline_quantitative",
+        "data_verify_binary_gpu_inputs",
+        "bench_bgen_reader",
+        "bench_callback_overhead",
+        "bench_callback_overhead_gpu",
+        "bench_binary_hot_gpu",
+        "bench_binary_hot_gpu_smoke",
+        "bench_output_stages_gpu",
+        "bench_linear_startup_gpu",
+        "bench_linear_startup_gpu_parquet",
+        "perf_cpu",
+        "perf_gpu",
+        "rust_build_profiles",
+        "schema_check",
+        "matrix_chr10",
+        "matrix_chr10_dry",
+        "matrix_chr10_smoke",
+        "matrix_chr22",
+        "matrix_chr22_dry",
+        "matrix_chr22_smoke",
+        "profile_app_full",
+        "profile_app_full_dry",
+        "profile_app_full_smoke",
+        "profile_chr10_binary_gpu_full",
+        "profile_chr10_binary_gpu_dry",
+        "profile_chr10_binary_gpu_smoke",
+        "debug_check_internal_defaults",
+        "debug_check_internal_init_exports",
+        "debug_check_pyo3_stub",
+        "debug_check_justfile",
+        "debug_schema_check",
+    ]
+
+    for config_name in config_names:
+        config = tooling_configuration.compose_config(config_name=config_name, include_hydra_config=True)
+        assert "tool" in config
+        assert config.hydra.job.chdir is False
+
+
 def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) -> None:
     arguments = deep_profile.build_arguments_from_overrides(
         [
@@ -891,12 +933,8 @@ def test_command_runner_records_redacted_environment_and_missing_executable(tmp_
     )
     streaming_timeout_result = tooling_commands.run_command(
         tooling_commands.build_command_spec(
-            [
-                sys.executable,
-                "-c",
-                "import sys, time; sys.stdout.write('partial'); sys.stdout.flush(); time.sleep(2)",
-            ],
-            timeout_seconds=0.2,
+            ["/bin/sh", "-c", "printf partial; sleep 2"],
+            timeout_seconds=1.0,
             stream=True,
         )
     )
@@ -1078,8 +1116,13 @@ def test_grouped_cli_registries_document_tool_names() -> None:
         "profile_comparison",
         "regenie_comparison",
     )
-    assert tooling_registry.registered_tool_names(grouped_data.TOOLS) == ("fetch", "simulate")
+    assert tooling_registry.registered_tool_names(grouped_data.TOOLS) == (
+        "fetch",
+        "regenie_baseline",
+        "simulate",
+    )
     assert "check_pyo3_stub" in tooling_registry.registered_tool_names(grouped_debug.TOOLS)
+    assert "schema_check" in tooling_registry.registered_tool_names(grouped_debug.TOOLS)
     assert "schema_check" in tooling_registry.registered_tool_names(grouped_debug.TOOLS)
     assert tooling_registry.registered_tool_names(grouped_performance.TOOLS) == (
         "compare",
@@ -1213,12 +1256,13 @@ def test_rust_build_profile_touch_restores_source_timestamp(tmp_path: Path) -> N
     original_access_time_nanoseconds = 1_700_000_000_000_000_000
     original_modification_time_nanoseconds = 1_700_000_000_100_000_000
     os.utime(source_path, ns=(original_access_time_nanoseconds, original_modification_time_nanoseconds))
+    original_stat = source_path.stat()
 
     timestamp = rust_build_profiles.touch_source_path(source_path)
     touched_stat = source_path.stat()
     rust_build_profiles.restore_timestamp(timestamp)
     restored_stat = source_path.stat()
 
-    assert touched_stat.st_mtime_ns != original_modification_time_nanoseconds
-    assert restored_stat.st_atime_ns == original_access_time_nanoseconds
-    assert restored_stat.st_mtime_ns == original_modification_time_nanoseconds
+    assert touched_stat.st_mtime_ns != original_stat.st_mtime_ns
+    assert restored_stat.st_atime_ns == original_stat.st_atime_ns
+    assert restored_stat.st_mtime_ns == original_stat.st_mtime_ns

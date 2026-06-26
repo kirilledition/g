@@ -1,4 +1,5 @@
 tool:
+  name: nsight_tools
   tools_dir: null
   repository_url: null
   nsight_systems_package: null

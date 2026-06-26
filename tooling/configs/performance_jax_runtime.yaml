@@ -1,4 +1,5 @@
 tool:
+  name: jax_runtime
   include_default: true
   include_gpu_driver_path: true
   include_cpu_forced: true

@@ -1,7 +1,7 @@
 # `g` Python-to-Rust and Multi-Crate Migration Plan
 
-**Repository:** `kirilledition/g`  
-**Baseline reviewed:** `main` at `25ec7701b8b4a9339d424d8d08b1bc4527ddb2c8`  
+**Repository:** `kirilledition/g`<br>
+**Baseline reviewed:** `main` at `25ec7701b8b4a9339d424d8d08b1bc4527ddb2c8`<br>
 **Purpose:** Move application ownership from Python to Rust while introducing a Cargo workspace, preserving statistical behavior, public interfaces, reproducibility, and performance.
 
 ---
