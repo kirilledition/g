@@ -98,8 +98,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.result_in_flight_limit = queue_limits.result_in_flight_limit
         self.dosage_buffer_limit = queue_limits.dosage_buffer_limit
         self.native_callback_batch_size = native_callback_batch_size
-        self.result_in_flight_slot_count = 0
         self.result_in_flight_slot_lock = threading.Lock()
+        self.result_in_flight_slot_state = _core.NativeResultInFlightSlotState(self.result_in_flight_limit)
         self.dosage_queue: queue.Queue[
             PreprocessedDosageChunkWorkItem
             | PreprocessedVariantMajorDosageChunkWorkItem
@@ -157,6 +157,11 @@ class NativeBgenCallbackRunner(abc.ABC):
     def dosage_buffer_identifiers(self) -> set[int]:
         """Return the native dosage-buffer pool ownership identifiers."""
         return set(self.dosage_buffer_pool.buffer_identifiers)
+
+    @property
+    def result_in_flight_slot_count(self) -> int:
+        """Return the native result in-flight occupied slot count."""
+        return self.result_in_flight_slot_state.occupied_count
 
     def record_stage_duration(self, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage using this runner's timing recorder."""
@@ -799,15 +804,21 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.raise_worker_error_if_present()
                 if self.result_in_flight_slots.acquire(timeout=0.1):
                     with self.result_in_flight_slot_lock:
-                        self.result_in_flight_slot_count += 1
+                        if not self.result_in_flight_slot_state.acquire_slot():
+                            self.result_in_flight_slots.release()
+                            message = "Native result in-flight slot state has no available slot."
+                            raise RuntimeError(message)
                     return
         while True:
             self.raise_worker_error_if_present()
             acquire_start_time = time.perf_counter()
             if self.result_in_flight_slots.acquire(timeout=0.1):
                 with self.result_in_flight_slot_lock:
-                    self.result_in_flight_slot_count += 1
-                    current_depth = self.result_in_flight_slot_count
+                    if not self.result_in_flight_slot_state.acquire_slot():
+                        self.result_in_flight_slots.release()
+                        message = "Native result in-flight slot state has no available slot."
+                        raise RuntimeError(message)
+                    current_depth = self.result_in_flight_slot_state.occupied_count
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_in_flight_slots",
                     operation_name="acquire",
@@ -819,7 +830,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 )
                 return
             with self.result_in_flight_slot_lock:
-                current_depth = self.result_in_flight_slot_count
+                current_depth = self.result_in_flight_slot_state.occupied_count
             self.record_bounded_resource_stage_duration(
                 resource_name="result_in_flight_slots",
                 operation_name="producer_blocking",
@@ -834,9 +845,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Release capacity for one completed chunk of GPU result work."""
         self.result_in_flight_slots.release()
         with self.result_in_flight_slot_lock:
-            if self.result_in_flight_slot_count > 0:
-                self.result_in_flight_slot_count -= 1
-            current_depth = self.result_in_flight_slot_count
+            self.result_in_flight_slot_state.release_slot()
+            current_depth = self.result_in_flight_slot_state.occupied_count
         self.record_bounded_resource_operation(
             resource_name="result_in_flight_slots",
             operation_name="release",

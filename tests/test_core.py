@@ -240,6 +240,25 @@ def test_native_dosage_buffer_pool_state_tracks_capacity_and_ownership() -> None
     assert buffer_pool_state.discard_buffer(99) is False
 
 
+def test_native_result_in_flight_slot_state_tracks_capacity() -> None:
+    slot_state = _core.NativeResultInFlightSlotState(slot_limit=2)
+
+    assert slot_state.slot_limit == 2
+    assert slot_state.occupied_count == 0
+    assert slot_state.has_available_slot() is True
+    assert slot_state.acquire_slot() is True
+    assert slot_state.occupied_count == 1
+    assert slot_state.acquire_slot() is True
+    assert slot_state.occupied_count == 2
+    assert slot_state.has_available_slot() is False
+    assert slot_state.acquire_slot() is False
+    assert slot_state.release_slot() is True
+    assert slot_state.occupied_count == 1
+    assert slot_state.release_slot() is True
+    assert slot_state.occupied_count == 0
+    assert slot_state.release_slot() is False
+
+
 def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None:
     assert (
         _core.resolve_bgen_delivery_method_value(

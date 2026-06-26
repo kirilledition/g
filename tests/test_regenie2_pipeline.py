@@ -1643,6 +1643,11 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None
         ] = queue.Queue()
         self.result_in_flight_slots = threading.BoundedSemaphore(2)
+        self.result_in_flight_limit = 2
+        self.result_in_flight_slot_lock = threading.Lock()
+        self.result_in_flight_slot_state = callback_runtime._core.NativeResultInFlightSlotState(
+            self.result_in_flight_limit
+        )
         self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
         self.dosage_buffer_limit = 2
         self.dosage_buffer_pool = callback_runtime._core.NativeDosageBufferPoolState(self.dosage_buffer_limit)
@@ -2876,6 +2881,8 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
     callback.acquire_result_in_flight_slot()
     callback.acquire_result_in_flight_slot()
 
+    assert callback.result_in_flight_slot_state.occupied_count == 2
+    assert callback.result_in_flight_slot_state.has_available_slot() is False
     assert callback.result_in_flight_slots.acquire(blocking=False) is False
 
     callback.put_result_write_item(
@@ -2895,10 +2902,32 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
     callback.finish()
 
     assert callback.result_in_flight_slots.acquire(blocking=False) is True
+    assert callback.result_in_flight_slot_state.occupied_count == 1
     callback.release_result_in_flight_slot()
     callback.release_result_in_flight_slot()
+    assert callback.result_in_flight_slot_state.occupied_count == 0
     assert callback.free_dosage_buffers.get_nowait() is host_dosage_buffer
     assert len(writer_session.native_chunks) == 1
+
+
+def test_native_callback_runner_uses_native_result_in_flight_slot_accounting() -> None:
+    callback = ManualCallbackRunner()
+
+    callback.acquire_result_in_flight_slot()
+    callback.acquire_result_in_flight_slot()
+
+    assert callback.result_in_flight_slot_state.occupied_count == 2
+    assert callback.result_in_flight_slot_state.has_available_slot() is False
+    assert callback.result_in_flight_slot_count == 2
+
+    callback.release_result_in_flight_slot()
+
+    assert callback.result_in_flight_slot_state.occupied_count == 1
+    assert callback.result_in_flight_slot_state.has_available_slot() is True
+
+    callback.release_result_in_flight_slot()
+
+    assert callback.result_in_flight_slot_state.occupied_count == 0
 
 
 def test_result_worker_releases_host_dosage_buffer_before_output_write() -> None:

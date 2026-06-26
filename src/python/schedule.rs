@@ -32,6 +32,11 @@ pub(crate) struct NativeDosageBufferPoolState {
     inner: native_schedule::DosageBufferPoolState,
 }
 
+#[pyclass]
+pub(crate) struct NativeResultInFlightSlotState {
+    inner: native_schedule::ResultInFlightSlotState,
+}
+
 #[pymethods]
 impl NativeDosageBufferPoolState {
     #[new]
@@ -68,6 +73,36 @@ impl NativeDosageBufferPoolState {
 
     fn discard_buffer(&mut self, buffer_identifier: usize) -> bool {
         self.inner.discard_buffer(buffer_identifier)
+    }
+}
+
+#[pymethods]
+impl NativeResultInFlightSlotState {
+    #[new]
+    fn new(slot_limit: usize) -> Self {
+        Self { inner: native_schedule::ResultInFlightSlotState::new(slot_limit) }
+    }
+
+    #[getter]
+    fn slot_limit(&self) -> usize {
+        self.inner.slot_limit()
+    }
+
+    #[getter]
+    fn occupied_count(&self) -> usize {
+        self.inner.occupied_count()
+    }
+
+    fn has_available_slot(&self) -> bool {
+        self.inner.has_available_slot()
+    }
+
+    fn acquire_slot(&mut self) -> bool {
+        self.inner.acquire_slot()
+    }
+
+    fn release_slot(&mut self) -> bool {
+        self.inner.release_slot()
     }
 }
 

@@ -67,6 +67,50 @@ impl DosageBufferPoolState {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResultInFlightSlotState {
+    slot_limit: usize,
+    occupied_count: usize,
+}
+
+impl ResultInFlightSlotState {
+    #[must_use]
+    pub const fn new(slot_limit: usize) -> Self {
+        Self { slot_limit, occupied_count: 0 }
+    }
+
+    #[must_use]
+    pub const fn slot_limit(&self) -> usize {
+        self.slot_limit
+    }
+
+    #[must_use]
+    pub const fn occupied_count(&self) -> usize {
+        self.occupied_count
+    }
+
+    #[must_use]
+    pub const fn has_available_slot(&self) -> bool {
+        self.occupied_count < self.slot_limit
+    }
+
+    pub fn acquire_slot(&mut self) -> bool {
+        if !self.has_available_slot() {
+            return false;
+        }
+        self.occupied_count += 1;
+        true
+    }
+
+    pub fn release_slot(&mut self) -> bool {
+        if self.occupied_count == 0 {
+            return false;
+        }
+        self.occupied_count -= 1;
+        true
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BgenDeliveryMethod {
     DosageNativeMultiAlignedSamples,
@@ -397,6 +441,26 @@ mod tests {
         assert!(!buffer_pool_state.owns_buffer(11));
         assert!(buffer_pool_state.has_available_slot());
         assert!(!buffer_pool_state.discard_buffer(99));
+    }
+
+    #[test]
+    fn tracks_result_in_flight_slots() {
+        let mut slot_state = ResultInFlightSlotState::new(2);
+
+        assert_eq!(slot_state.slot_limit(), 2);
+        assert_eq!(slot_state.occupied_count(), 0);
+        assert!(slot_state.has_available_slot());
+        assert!(slot_state.acquire_slot());
+        assert_eq!(slot_state.occupied_count(), 1);
+        assert!(slot_state.acquire_slot());
+        assert_eq!(slot_state.occupied_count(), 2);
+        assert!(!slot_state.has_available_slot());
+        assert!(!slot_state.acquire_slot());
+        assert!(slot_state.release_slot());
+        assert_eq!(slot_state.occupied_count(), 1);
+        assert!(slot_state.release_slot());
+        assert_eq!(slot_state.occupied_count(), 0);
+        assert!(!slot_state.release_slot());
     }
 
     #[test]
