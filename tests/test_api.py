@@ -80,6 +80,14 @@ def build_binary_config(**overrides: object) -> config.BinaryConfig:
     return config.RegenieConfig.from_options(raw_options).binary
 
 
+def build_test_process_runtime_state(
+    logging_policy: runner_runtime.LoggingRuntimePolicy | None,
+    rayon_thread_count: int | None,
+) -> object:
+    """Build a native process runtime state handle for isolated tests."""
+    return runner_runtime.build_process_runtime_state(logging_policy, rayon_thread_count)
+
+
 def build_diagnostics_config(**overrides: object) -> config.GDiagnosticsConfig:
     """Build packaged diagnostics config with test overrides."""
     return config.RegenieConfig.from_options(build_minimal_options(**overrides)).g_diagnostics
@@ -363,7 +371,7 @@ def test_regenie_completion_event_includes_user_visible_artifacts(tmp_path: Path
     )
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime.initialize_logging"),
         patch("g.runner.runtime.configure_runtime"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
@@ -417,7 +425,7 @@ def test_regenie_runtime_configuration_failure_writes_run_failed_telemetry(tmp_p
     )
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime.initialize_logging"),
         patch("g.runner.runtime.configure_runtime", side_effect=RuntimeError("rayon failed")),
         patch("g.interface.config.validate_config_for_run"),
@@ -461,7 +469,7 @@ def test_regenie_graceful_shutdown_event_preserves_signal_exit(tmp_path: Path) -
     )
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime.initialize_logging"),
         patch("g.runner.runtime.configure_runtime"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
@@ -641,7 +649,7 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
     )
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths=None)
@@ -680,7 +688,7 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
     )
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
@@ -712,7 +720,7 @@ def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path)
     )
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
@@ -738,7 +746,7 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
     )
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
@@ -769,7 +777,7 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
     diagnostics_config = build_diagnostics_config(log_file=tmp_path / "logs" / "second.jsonl")
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(configured_policy, None)),
         patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Logging runtime policy is process-global"),
     ):
@@ -787,7 +795,7 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
             calls.append(("threads", thread_count))
 
     with (
-        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.configure_runtime(
@@ -809,7 +817,7 @@ def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None
             calls.append(("threads", thread_count))
 
     with (
-        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", 4),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
         patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.configure_runtime(
@@ -831,7 +839,7 @@ def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -
             calls.append(("threads", thread_count))
 
     with (
-        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", 4),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
         patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Rayon --threads is process-global"),
     ):
@@ -855,7 +863,7 @@ def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
             raise RuntimeError("global pool already initialized")
 
     with (
-        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Unable to configure Rayon global thread pool"),
     ):
@@ -868,12 +876,12 @@ def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
 
 
 def test_effective_rayon_thread_count_prefers_configured_thread_count() -> None:
-    with patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", 4):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)):
         assert runner_runtime.effective_rayon_thread_count(8) == 4
 
 
 def test_effective_rayon_thread_count_returns_requested_thread_count_without_configuration() -> None:
-    with patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", None):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)):
         assert runner_runtime.effective_rayon_thread_count(8) == 8
 
 
@@ -1075,8 +1083,10 @@ def test_describe_runtime_state_reports_process_global_state() -> None:
     runtime_policy = runner_runtime.build_runtime_policy(regenie_config, telemetry_paths)
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", runtime_policy.logging_policy),
-        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", runtime_policy.rayon_thread_count),
+        patch(
+            "g.runner.runtime.PROCESS_RUNTIME_STATE",
+            build_test_process_runtime_state(runtime_policy.logging_policy, runtime_policy.rayon_thread_count),
+        ),
         patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", runtime_policy.jax_policy),
     ):
         runtime_state = api.describe_runtime_state()
@@ -1103,7 +1113,10 @@ def test_regenie_rejects_incompatible_logging_policy_before_output_prepare(tmp_p
     )
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy.logging_policy),
+        patch(
+            "g.runner.runtime.PROCESS_RUNTIME_STATE",
+            build_test_process_runtime_state(configured_policy.logging_policy, None),
+        ),
         patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
         patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
@@ -1119,8 +1132,7 @@ def test_regenie_rejects_incompatible_rayon_policy_before_output_prepare() -> No
     requested_config = config.RegenieConfig.from_options(build_minimal_options(telemetry="off", threads=8))
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", 4),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
         patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
         patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
@@ -1142,8 +1154,7 @@ def test_regenie_rejects_incompatible_jax_policy_before_output_prepare(tmp_path:
     configured_jax_policy = jax_runtime_resolution.resolve_jax_runtime_policy(configured_config.g_compute)
 
     with (
-        patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner.runtime.CONFIGURED_RAYON_THREAD_COUNT", None),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.jax_runtime.state.CONFIGURED_JAX_RUNTIME_POLICY", configured_jax_policy),
         patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
         patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,

@@ -1,0 +1,110 @@
+//! PyO3 handle for native process runtime state.
+
+use std::sync::{Mutex, MutexGuard};
+
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::prelude::*;
+use pyo3::types::{PyAny, PyDict};
+
+use g_runtime::runtime_policy as native_runtime_policy;
+use g_runtime::runtime_state as native_runtime_state;
+
+#[pyclass]
+pub(crate) struct NativeRuntimeState {
+    state: Mutex<native_runtime_state::ProcessRuntimeState>,
+}
+
+#[pymethods]
+impl NativeRuntimeState {
+    #[new]
+    fn new() -> Self {
+        Self { state: Mutex::new(native_runtime_state::ProcessRuntimeState::default()) }
+    }
+
+    #[getter]
+    fn rayon_thread_count(&self) -> PyResult<Option<i64>> {
+        Ok(self.lock_state()?.rayon_thread_count)
+    }
+
+    fn logging_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let state = self.lock_state()?;
+        state.logging_policy.as_ref().map(|policy| logging_runtime_policy_payload_to_dict(py, policy)).transpose()
+    }
+
+    fn require_compatible_logging_runtime_policy(&self, payload: &Bound<'_, PyAny>) -> PyResult<()> {
+        let logging_policy = parse_logging_runtime_policy_payload(payload)?;
+        self.lock_state()?
+            .require_compatible_logging_policy(&logging_policy)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+    }
+
+    fn record_logging_runtime_policy(&self, payload: &Bound<'_, PyAny>) -> PyResult<()> {
+        let logging_policy = parse_logging_runtime_policy_payload(payload)?;
+        self.lock_state()?.record_logging_policy(logging_policy);
+        Ok(())
+    }
+
+    fn require_compatible_rayon_thread_count(&self, thread_count: Option<i64>) -> PyResult<()> {
+        self.lock_state()?
+            .require_compatible_rayon_thread_count(thread_count)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+    }
+
+    fn record_rayon_thread_count(&self, thread_count: i64) -> PyResult<()> {
+        self.lock_state()?.record_rayon_thread_count(thread_count);
+        Ok(())
+    }
+
+    fn effective_rayon_thread_count(&self, requested_thread_count: Option<i64>) -> PyResult<Option<i64>> {
+        Ok(self.lock_state()?.effective_rayon_thread_count(requested_thread_count))
+    }
+}
+
+impl NativeRuntimeState {
+    fn lock_state(&self) -> PyResult<MutexGuard<'_, native_runtime_state::ProcessRuntimeState>> {
+        self.state.lock().map_err(|_| PyRuntimeError::new_err("Runtime state mutex was poisoned."))
+    }
+}
+
+fn parse_logging_runtime_policy_payload(
+    payload: &Bound<'_, PyAny>,
+) -> PyResult<native_runtime_policy::LoggingRuntimePolicyPayload> {
+    Ok(native_runtime_policy::LoggingRuntimePolicyPayload {
+        log_filter: payload.get_item("log_filter")?.extract::<String>()?,
+        log_file: extract_optional_string(&payload.get_item("log_file")?)?,
+        log_stderr: payload.get_item("log_stderr")?.extract::<bool>()?,
+        log_queue_size: payload.get_item("log_queue_size")?.extract::<i64>()?,
+        log_lossy: payload.get_item("log_lossy")?.extract::<bool>()?,
+        include_source_location: payload.get_item("include_source_location")?.extract::<bool>()?,
+        include_span_events: payload.get_item("include_span_events")?.extract::<bool>()?,
+        trace_file: extract_optional_string(&payload.get_item("trace_file")?)?,
+        trace_filter: payload.get_item("trace_filter")?.extract::<String>()?,
+        trace_event_cap: extract_optional_i64(&payload.get_item("trace_event_cap")?)?,
+    })
+}
+
+fn extract_optional_string(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    if value.is_none() { Ok(None) } else { Ok(Some(value.extract::<String>()?)) }
+}
+
+fn extract_optional_i64(value: &Bound<'_, PyAny>) -> PyResult<Option<i64>> {
+    if value.is_none() { Ok(None) } else { Ok(Some(value.extract::<i64>().map_err(PyValueError::new_err)?)) }
+}
+
+fn logging_runtime_policy_payload_to_dict<'py>(
+    py: Python<'py>,
+    payload: &native_runtime_policy::LoggingRuntimePolicyPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let python_payload = PyDict::new(py);
+    python_payload.set_item("log_filter", &payload.log_filter)?;
+    python_payload.set_item("log_file", &payload.log_file)?;
+    python_payload.set_item("log_stderr", payload.log_stderr)?;
+    python_payload.set_item("log_queue_size", payload.log_queue_size)?;
+    python_payload.set_item("log_lossy", payload.log_lossy)?;
+    python_payload.set_item("include_source_location", payload.include_source_location)?;
+    python_payload.set_item("include_span_events", payload.include_span_events)?;
+    python_payload.set_item("trace_file", &payload.trace_file)?;
+    python_payload.set_item("trace_filter", &payload.trace_filter)?;
+    python_payload.set_item("trace_event_cap", payload.trace_event_cap)?;
+    Ok(python_payload)
+}

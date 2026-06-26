@@ -38,6 +38,7 @@ mod run_events;
 mod run_metadata;
 mod runtime;
 mod runtime_policy;
+mod runtime_state;
 mod shutdown;
 mod telemetry_policy;
 mod timing;
@@ -73,6 +74,7 @@ use run_metadata::{
 };
 use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool};
 use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
+use runtime_state::NativeRuntimeState;
 use shutdown::build_shutdown_signal_payload;
 use telemetry_policy::{
     build_empty_telemetry_writer_counters_payload, format_telemetry_timestamp_value, paths_refer_to_same_file_value,
@@ -1761,6 +1763,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
+    module.add_class::<NativeRuntimeState>()?;
     module.add_class::<NativeStageTimingRecorder>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_class::<Regenie2RunEngine>()?;

@@ -2,6 +2,7 @@
 
 pub mod run_metadata;
 pub mod runtime_policy;
+pub mod runtime_state;
 pub mod shutdown;
 pub mod telemetry_policy;
 pub mod timing;
@@ -12,6 +13,7 @@ pub use run_metadata::{
     build_run_manifest_extension,
 };
 pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_policy, describe_logging_runtime_policy};
+pub use runtime_state::{ProcessRuntimeState, RuntimeCompatibilityError};
 pub use shutdown::{ShutdownSignalPayload, build_shutdown_signal};
 pub use telemetry_policy::{
     TelemetryPathsPayload, TelemetryWriterCountersPayload, build_empty_writer_counters, format_timestamp,

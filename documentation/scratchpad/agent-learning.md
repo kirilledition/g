@@ -60,8 +60,9 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   retrieval and pass identifier views into input code.
 - `crates/runtime/src/` now owns pure runtime policy/state helpers: logging
   runtime policy, telemetry path/counter policy, shutdown signal metadata, stage
-  timing state, run metadata payloads, and profile summary payloads. Root PyO3
-  adapters still own side effects until runtime handles move into Rust.
+  timing state, run metadata payloads, profile summary payloads, and the
+  logging/Rayon process runtime state handle. Root PyO3 adapters still own side
+  effects until runtime handles move fully into Rust.
 - `crates/interface/src/partial.rs` defines the typed partial TOML surface with Serde,
   optional fields, aliases, and unknown-key rejection.
 - `crates/interface/src/overlay.rs` decodes provenance and overlays defaults, user

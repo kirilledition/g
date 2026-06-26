@@ -82,8 +82,29 @@ class RuntimeState:
     jax_policy: jax_runtime_models.JaxRuntimePolicy | None
 
 
-CONFIGURED_LOGGING_RUNTIME_POLICY: LoggingRuntimePolicy | None = None
-CONFIGURED_RAYON_THREAD_COUNT: int | None = None
+def build_process_runtime_state(
+    logging_policy: LoggingRuntimePolicy | None,
+    rayon_thread_count: int | None,
+) -> _core.NativeRuntimeState:
+    """Build a native process runtime state handle.
+
+    Args:
+        logging_policy: Optional configured logging policy to seed.
+        rayon_thread_count: Optional configured Rayon thread count to seed.
+
+    Returns:
+        Native process runtime state handle.
+
+    """
+    process_runtime_state = _core.NativeRuntimeState()
+    if logging_policy is not None:
+        process_runtime_state.record_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))
+    if rayon_thread_count is not None:
+        process_runtime_state.record_rayon_thread_count(rayon_thread_count)
+    return process_runtime_state
+
+
+PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = build_process_runtime_state(None, None)
 
 
 def record_jax_runtime_diagnostic_event(
@@ -209,6 +230,22 @@ def logging_runtime_policy_from_native_payload(payload: object) -> LoggingRuntim
     )
 
 
+def logging_runtime_policy_to_native_payload(policy: LoggingRuntimePolicy) -> dict[str, object]:
+    """Adapt a Python logging runtime policy view to the native payload shape."""
+    return {
+        "log_filter": policy.log_filter,
+        "log_file": None if policy.log_file is None else str(policy.log_file),
+        "log_stderr": policy.log_stderr,
+        "log_queue_size": policy.log_queue_size,
+        "log_lossy": policy.log_lossy,
+        "include_source_location": policy.include_source_location,
+        "include_span_events": policy.include_span_events,
+        "trace_file": None if policy.trace_file is None else str(policy.trace_file),
+        "trace_filter": policy.trace_filter,
+        "trace_event_cap": policy.trace_event_cap,
+    }
+
+
 def optional_path_from_native_payload(path_payload: object) -> Path | None:
     """Adapt a native optional path payload to `Path`."""
     if path_payload is None:
@@ -270,28 +307,14 @@ def describe_logging_runtime_policy(policy: LoggingRuntimePolicy) -> str:
 
 def require_compatible_logging_runtime_policy(logging_policy: LoggingRuntimePolicy) -> None:
     """Raise when a run requests incompatible process-global logging settings."""
-    if CONFIGURED_LOGGING_RUNTIME_POLICY is None or logging_policy == CONFIGURED_LOGGING_RUNTIME_POLICY:
-        return
-    message = (
-        "Logging runtime policy is process-global for this Python process. "
-        f"Configured policy: {describe_logging_runtime_policy(CONFIGURED_LOGGING_RUNTIME_POLICY)}. "
-        f"Requested policy: {describe_logging_runtime_policy(logging_policy)}. "
-        "Start a fresh Python process for incompatible logging settings."
+    PROCESS_RUNTIME_STATE.require_compatible_logging_runtime_policy(
+        logging_runtime_policy_to_native_payload(logging_policy)
     )
-    raise RuntimeError(message)
 
 
 def require_compatible_rayon_thread_count(thread_count: int | None) -> None:
     """Raise when a run requests an incompatible process-global Rayon thread count."""
-    if thread_count is None or CONFIGURED_RAYON_THREAD_COUNT is None or thread_count == CONFIGURED_RAYON_THREAD_COUNT:
-        return
-    message = (
-        "Rayon --threads is process-global for this Python process. "
-        f"Configured thread count: {CONFIGURED_RAYON_THREAD_COUNT}. "
-        f"Requested thread count: {thread_count}. "
-        "Start a fresh Python process for incompatible Rayon settings."
-    )
-    raise RuntimeError(message)
+    PROCESS_RUNTIME_STATE.require_compatible_rayon_thread_count(thread_count)
 
 
 def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> None:
@@ -303,9 +326,12 @@ def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> None:
 
 def describe_runtime_state() -> RuntimeState:
     """Return the process-global runtime state known to this Python process."""
+    logging_policy_payload = PROCESS_RUNTIME_STATE.logging_runtime_policy_payload()
     return RuntimeState(
-        logging_policy=CONFIGURED_LOGGING_RUNTIME_POLICY,
-        rayon_thread_count=CONFIGURED_RAYON_THREAD_COUNT,
+        logging_policy=None
+        if logging_policy_payload is None
+        else logging_runtime_policy_from_native_payload(logging_policy_payload),
+        rayon_thread_count=PROCESS_RUNTIME_STATE.rayon_thread_count,
         jax_policy=jax_runtime_state.CONFIGURED_JAX_RUNTIME_POLICY,
     )
 
@@ -336,8 +362,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> t
 
 def configure_rayon_thread_pool(core_module: typing.Any, thread_count: int) -> None:
     """Configure Rayon global thread count once and reject incompatible repeats."""
-    global CONFIGURED_RAYON_THREAD_COUNT
-    if thread_count == CONFIGURED_RAYON_THREAD_COUNT:
+    if thread_count == PROCESS_RUNTIME_STATE.rayon_thread_count:
         return
     require_compatible_rayon_thread_count(thread_count)
     try:
@@ -348,14 +373,12 @@ def configure_rayon_thread_pool(core_module: typing.Any, thread_count: int) -> N
             f"existing Rayon settings are unknown: {error}"
         )
         raise RuntimeError(message) from error
-    CONFIGURED_RAYON_THREAD_COUNT = thread_count
+    PROCESS_RUNTIME_STATE.record_rayon_thread_count(thread_count)
 
 
 def effective_rayon_thread_count(requested_thread_count: int | None) -> int | None:
     """Return the Rayon thread count known to be effective in this process."""
-    if CONFIGURED_RAYON_THREAD_COUNT is not None:
-        return CONFIGURED_RAYON_THREAD_COUNT
-    return requested_thread_count
+    return PROCESS_RUNTIME_STATE.effective_rayon_thread_count(requested_thread_count)
 
 
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
@@ -371,7 +394,6 @@ def initialize_logging(
     telemetry_paths: telemetry.TelemetryPaths | None,
 ) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""
-    global CONFIGURED_LOGGING_RUNTIME_POLICY
     logging_policy = build_logging_runtime_policy(diagnostics_config, telemetry_paths)
     require_compatible_logging_runtime_policy(logging_policy)
     initialized_logging = _core.initialize_logging(
@@ -387,7 +409,7 @@ def initialize_logging(
         trace_event_cap=logging_policy.trace_event_cap,
     )
     if initialized_logging is False:
-        CONFIGURED_LOGGING_RUNTIME_POLICY = logging_policy
+        PROCESS_RUNTIME_STATE.record_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))
         return
     if initialized_logging is True:
-        CONFIGURED_LOGGING_RUNTIME_POLICY = logging_policy
+        PROCESS_RUNTIME_STATE.record_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))

@@ -140,7 +140,10 @@ def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path:
     telemetry_paths = telemetry.resolve_telemetry_paths(regenie_config)
 
     with (
-        unittest.mock.patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        unittest.mock.patch(
+            "g.runner.runtime.PROCESS_RUNTIME_STATE",
+            runner_runtime.build_process_runtime_state(None, None),
+        ),
         unittest.mock.patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
@@ -177,7 +180,10 @@ def test_initialize_logging_uses_trace_filter_for_trace_unified_stream(tmp_path:
     telemetry_paths = telemetry.resolve_telemetry_paths(regenie_config)
 
     with (
-        unittest.mock.patch("g.runner.runtime.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        unittest.mock.patch(
+            "g.runner.runtime.PROCESS_RUNTIME_STATE",
+            runner_runtime.build_process_runtime_state(None, None),
+        ),
         unittest.mock.patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
