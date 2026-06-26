@@ -47,10 +47,11 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
 - `crates/interface/src/config.default.toml` owns user-tunable defaults.
 - Rust owns CLI parsing, TOML decoding, config layering, default loading,
   validation, and effective TOML serialization; root PyO3 config classes are adapters.
-- `crates/plan/src/` owns deterministic host policy payloads and the requested-run
-  `RunRequest` contract; `crates/interface/src/plan_request.rs` compiles resolved
-  config into that request. Python still adapts the request into legacy execution
-  dataclasses until `PreparedRunPlan` and manifest authority move to Rust.
+- `crates/plan/src/` owns deterministic host policy payloads plus requested and
+  prepared run contracts. `crates/interface/src/plan_request.rs` compiles resolved
+  config into `RunRequest`; manifest headers now serialize through
+  `PreparedRunPlan` consumed by `g-output`. Python still adapts these payloads from
+  legacy execution dataclasses until dynamic preparation moves to Rust.
 - `crates/input/src/` owns native sample, phenotype, covariate, prediction-list,
   and LOCO prediction alignment; genotype readers keep BGEN-embedded sample
   retrieval and pass identifier views into input code.
@@ -77,7 +78,7 @@ Rust:
   BGEN decode/preprocessing
   sample, covariate, phenotype, and prediction alignment primitives
   output writing/finalization
-  manifest/resume validation
+  prepared-plan manifest header construction and manifest/resume validation
   low-overhead telemetry streams
 
 Python:

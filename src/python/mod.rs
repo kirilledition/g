@@ -57,11 +57,11 @@ use output::{
     NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
     build_current_run_manifest_header_json, build_file_content_sha256_value,
     build_manifest_file_fingerprint_mapping_payload, build_manifest_file_fingerprint_payload,
-    build_manifest_json_sha256, finalize_output_run_chunks, initialize_output_run, load_run_manifest_json,
-    prepare_output_run, read_manifest_committed_chunk_identifiers, repair_strict_manifest_chunk_commits,
-    resolve_output_run_paths, scan_committed_chunk_identifiers, validate_run_manifest_compatibility,
-    validate_strict_manifest_chunks, write_regenie2_multi_native_chunk, write_regenie2_multi_native_chunk_f64,
-    write_run_manifest_json,
+    build_manifest_json_sha256, build_prepared_run_manifest_header_json, finalize_output_run_chunks,
+    initialize_output_run, load_run_manifest_json, prepare_output_run, read_manifest_committed_chunk_identifiers,
+    repair_strict_manifest_chunk_commits, resolve_output_run_paths, scan_committed_chunk_identifiers,
+    validate_run_manifest_compatibility, validate_strict_manifest_chunks, write_regenie2_multi_native_chunk,
+    write_regenie2_multi_native_chunk_f64, write_run_manifest_json,
 };
 use profile::build_profile_snapshot_dict;
 use run_events::{
@@ -1770,6 +1770,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(resolve_prediction_loco_paths, module)?)?;
     module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_file_content_sha256_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_mapping_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_payload, module)?)?;

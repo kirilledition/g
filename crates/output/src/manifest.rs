@@ -251,6 +251,141 @@ pub fn build_current_run_manifest_header_json(
     serde_json::to_string(&current_header).map_err(OutputWriterError::runtime)
 }
 
+pub fn build_prepared_run_manifest_header_json(
+    prepared_run_plan: &g_plan::PreparedRunPlan,
+) -> Result<String, OutputWriterError> {
+    let execution_plan = build_prepared_run_execution_plan(prepared_run_plan)?;
+    let current_header = build_prepared_run_manifest_header(prepared_run_plan, &execution_plan)?;
+    serde_json::to_string(&current_header).map_err(OutputWriterError::runtime)
+}
+
+fn build_prepared_run_execution_plan(prepared_run_plan: &g_plan::PreparedRunPlan) -> Result<Value, OutputWriterError> {
+    let input_identity = &prepared_run_plan.input_identity;
+    let phenotype_compute_group = prepared_run_plan.phenotype_compute_group.as_ref();
+    let binary_kernel_config = prepared_run_plan.binary_kernel_config.clone().unwrap_or(Value::Null);
+    let prediction_inputs =
+        serde_json::to_value(&input_identity.prediction_inputs).map_err(OutputWriterError::runtime)?;
+    let binary_correction_plan =
+        serde_json::to_value(&prepared_run_plan.correction).map_err(OutputWriterError::runtime)?;
+    Ok(json!({
+        "manifest_schema_version": RUN_MANIFEST_SCHEMA_VERSION,
+        "output_schema_version": OUTPUT_SCHEMA_VERSION,
+        "association_mode": prepared_run_plan.association_mode.as_str(),
+        "association_backend": build_prepared_association_backend(prepared_run_plan),
+        "bgen": &input_identity.bgen,
+        "sample": &input_identity.sample,
+        "phenotype_file": &input_identity.phenotype_file,
+        "phenotype_name": prepared_run_plan.phenotype_name.as_str(),
+        "covariate_file": &input_identity.covariate_file,
+        "covariate_names": &prepared_run_plan.covariate_names,
+        "prediction_list": &input_identity.prediction_list,
+        "prediction_inputs": prediction_inputs,
+        "sample_count": prepared_run_plan.sample_count,
+        "variant_count": prepared_run_plan.variant_count,
+        "chunk_size": prepared_run_plan.chunk_size,
+        "variant_limit": prepared_run_plan.variant_limit,
+        "binary_correction_plan": binary_correction_plan,
+        "binary_kernel_config": binary_kernel_config,
+        "trusted_no_missing_diploid": prepared_run_plan.compute.trusted_no_missing_diploid,
+        "trusted_bgen_validation_mode": prepared_run_plan.compute.trusted_bgen_validation_mode.as_str(),
+        "sample_key_mode": prepared_run_plan.compute.sample_key_mode.as_str(),
+        "bgen_decode_tile_variant_count": prepared_run_plan.compute.bgen_decode_tile_variant_count,
+        "jax_policy": build_prepared_jax_policy(prepared_run_plan),
+        "gpu_genotype_format": prepared_run_plan.compute.resolved_gpu_genotype_format.as_str(),
+        "score_dtype": prepared_run_plan.compute.score_dtype.as_str(),
+        "firth_dtype": prepared_run_plan.compute.firth_dtype.as_str(),
+        "multi_phenotype_sample_mode": prepared_run_plan.compute.sample_mode.as_str(),
+        "phenotype_compute_group_id": phenotype_compute_group.map(|group| group.group_id.as_str()),
+        "sample_set_fingerprint": phenotype_compute_group.and_then(|group| group.sample_set_fingerprint.as_deref()),
+        "covariate_design_fingerprint": phenotype_compute_group
+            .and_then(|group| group.covariate_design_fingerprint.as_deref()),
+        "prediction_alignment_fingerprint": phenotype_compute_group
+            .and_then(|group| group.prediction_alignment_fingerprint.as_deref()),
+        "output_writer": build_prepared_output_writer(prepared_run_plan),
+        "resume_policy": RESUME_POLICY,
+    }))
+}
+
+fn build_prepared_run_manifest_header(
+    prepared_run_plan: &g_plan::PreparedRunPlan,
+    execution_plan: &Value,
+) -> Result<Value, OutputWriterError> {
+    let phenotype_compute_group = prepared_run_plan.phenotype_compute_group.as_ref();
+    let execution_plan_hash = build_manifest_value_sha256(execution_plan)?;
+    Ok(json!({
+        "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
+        "output_schema_version": OUTPUT_SCHEMA_VERSION,
+        "association_mode": prepared_run_plan.association_mode.as_str(),
+        "association_backend": execution_plan["association_backend"].clone(),
+        "bgen": execution_plan["bgen"].clone(),
+        "sample": execution_plan["sample"].clone(),
+        "phenotype_file": execution_plan["phenotype_file"].clone(),
+        "phenotype_name": prepared_run_plan.phenotype_name.as_str(),
+        "covariate_file": execution_plan["covariate_file"].clone(),
+        "covariate_names": execution_plan["covariate_names"].clone(),
+        "prediction_list": execution_plan["prediction_list"].clone(),
+        "prediction_inputs": execution_plan["prediction_inputs"].clone(),
+        "sample_count": prepared_run_plan.sample_count,
+        "variant_count": prepared_run_plan.variant_count,
+        "chunk_size": prepared_run_plan.chunk_size,
+        "variant_limit": prepared_run_plan.variant_limit,
+        "binary_correction_plan": execution_plan["binary_correction_plan"].clone(),
+        "binary_kernel_config": execution_plan["binary_kernel_config"].clone(),
+        "trusted_no_missing_diploid": prepared_run_plan.compute.trusted_no_missing_diploid,
+        "trusted_bgen_validation_mode": prepared_run_plan.compute.trusted_bgen_validation_mode.as_str(),
+        "sample_key_mode": prepared_run_plan.compute.sample_key_mode.as_str(),
+        "bgen_decode_tile_variant_count": prepared_run_plan.compute.bgen_decode_tile_variant_count,
+        "jax_policy": execution_plan["jax_policy"].clone(),
+        "gpu_genotype_format": prepared_run_plan.compute.resolved_gpu_genotype_format.as_str(),
+        "score_dtype": prepared_run_plan.compute.score_dtype.as_str(),
+        "firth_dtype": prepared_run_plan.compute.firth_dtype.as_str(),
+        "multi_phenotype_sample_mode": prepared_run_plan.compute.sample_mode.as_str(),
+        "phenotype_compute_group_id": phenotype_compute_group.map(|group| group.group_id.as_str()),
+        "sample_set_fingerprint": phenotype_compute_group.and_then(|group| group.sample_set_fingerprint.as_deref()),
+        "covariate_design_fingerprint": phenotype_compute_group
+            .and_then(|group| group.covariate_design_fingerprint.as_deref()),
+        "prediction_alignment_fingerprint": phenotype_compute_group
+            .and_then(|group| group.prediction_alignment_fingerprint.as_deref()),
+        "output_writer": execution_plan["output_writer"].clone(),
+        "resume_policy": RESUME_POLICY,
+        "execution_plan": execution_plan.clone(),
+        "execution_plan_hash": execution_plan_hash,
+    }))
+}
+
+fn build_prepared_association_backend(prepared_run_plan: &g_plan::PreparedRunPlan) -> Value {
+    json!({
+        "kind": prepared_run_plan.association_backend.kind.as_str(),
+        "association_mode": prepared_run_plan.association_backend.association_mode.as_str(),
+        "device": prepared_run_plan.association_backend.device.as_str(),
+        "genotype_format": prepared_run_plan.association_backend.resolved_genotype_format.as_str(),
+    })
+}
+
+fn build_prepared_jax_policy(prepared_run_plan: &g_plan::PreparedRunPlan) -> Value {
+    json!({
+        "device": prepared_run_plan.compute.jax_policy.device.as_str(),
+        "enable_x64": prepared_run_plan.compute.jax_policy.enable_x64,
+        "matmul_precision": prepared_run_plan.compute.jax_policy.matmul_precision.map_or(
+            JAX_MATMUL_PRECISION_WHEN_UNSET,
+            g_plan::JaxMatmulPrecision::as_str,
+        ),
+    })
+}
+
+fn build_prepared_output_writer(prepared_run_plan: &g_plan::PreparedRunPlan) -> Value {
+    json!({
+        "output_format": prepared_run_plan.output_writer.output_format.as_str(),
+        "finalize_parquet": prepared_run_plan.output_writer.finalize_parquet,
+        "writer_thread_count": prepared_run_plan.output_writer.writer_thread_count,
+        "writer_queue_depth": prepared_run_plan.output_writer.writer_queue_depth,
+        "chunks_per_arrow_file": prepared_run_plan.output_writer.chunks_per_arrow_file,
+        "arrow_compression": prepared_run_plan.output_writer.arrow_compression.as_str(),
+        "parquet_compression": prepared_run_plan.output_writer.parquet_compression.as_str(),
+        "result_statistic_dtype": prepared_run_plan.output_writer.output_statistic_dtype.as_str(),
+    })
+}
+
 #[must_use]
 pub fn resolve_output_run_paths(
     output_root: &Path,
@@ -879,6 +1014,213 @@ mod tests {
             row_count: 2,
             chunk_file_name: format!("chunk_{chunk_identifier:09}.arrow"),
         }
+    }
+
+    fn convert_file_fingerprint(fingerprint: ManifestFileFingerprint) -> g_plan::ManifestFileFingerprint {
+        g_plan::ManifestFileFingerprint {
+            path: fingerprint.path,
+            size: fingerprint.size,
+            mtime_ns: fingerprint.mtime_ns,
+            content_hash_algorithm: fingerprint.content_hash_algorithm,
+            content_sha256: fingerprint.content_sha256,
+        }
+    }
+
+    struct TestManifestFiles {
+        root_directory: PathBuf,
+        bgen_path: PathBuf,
+        sample_path: PathBuf,
+        phenotype_path: PathBuf,
+        covariate_path: PathBuf,
+        prediction_list_path: PathBuf,
+        prediction_loco_files: Value,
+    }
+
+    fn create_manifest_fixture_files() -> TestManifestFiles {
+        let root_directory = create_test_directory();
+        let bgen_path = root_directory.join("input.bgen");
+        let sample_path = root_directory.join("input.sample");
+        let phenotype_path = root_directory.join("phenotypes.tsv");
+        let covariate_path = root_directory.join("covariates.tsv");
+        let prediction_list_path = root_directory.join("pred.list");
+        let loco_path = root_directory.join("height.loco");
+        std::fs::write(&bgen_path, "bgen").expect("BGEN fixture should be written");
+        std::fs::write(&sample_path, "sample").expect("sample fixture should be written");
+        std::fs::write(&phenotype_path, "iid height\n1 1.5\n").expect("phenotype fixture should be written");
+        std::fs::write(&covariate_path, "iid age\n1 42\n").expect("covariate fixture should be written");
+        std::fs::write(&prediction_list_path, "height height.loco\n")
+            .expect("prediction list fixture should be written");
+        std::fs::write(&loco_path, "loco").expect("LOCO fixture should be written");
+
+        let loco_fingerprint =
+            build_manifest_file_fingerprint(&loco_path, true).expect("LOCO fingerprint should build");
+        let prediction_loco_files = json!([{
+            "phenotype": "height",
+            "path": loco_fingerprint.path,
+            "size": loco_fingerprint.size,
+            "mtime_ns": loco_fingerprint.mtime_ns,
+            "content_hash_algorithm": loco_fingerprint.content_hash_algorithm,
+            "content_sha256": loco_fingerprint.content_sha256.expect("LOCO hash should be present"),
+        }]);
+        TestManifestFiles {
+            root_directory,
+            bgen_path,
+            sample_path,
+            phenotype_path,
+            covariate_path,
+            prediction_list_path,
+            prediction_loco_files,
+        }
+    }
+
+    fn build_test_current_header_json(test_files: &TestManifestFiles) -> String {
+        build_current_run_manifest_header_json(CurrentRunManifestHeaderInput {
+            association_mode: "regenie2_binary".to_string(),
+            association_backend_kind: "jax_packed8".to_string(),
+            bgen_path: test_files.bgen_path.clone(),
+            sample_path: Some(test_files.sample_path.clone()),
+            phenotype_path: test_files.phenotype_path.clone(),
+            phenotype_name: "height".to_string(),
+            covariate_path: Some(test_files.covariate_path.clone()),
+            covariate_names: vec!["age".to_string()],
+            prediction_list_path: test_files.prediction_list_path.clone(),
+            prediction_loco_files_json: test_files.prediction_loco_files.to_string(),
+            sample_count: 12,
+            variant_count: 34,
+            chunk_size: 8,
+            variant_limit: Some(21),
+            binary_correction_plan_method: "score_only".to_string(),
+            binary_correction_plan_p_threshold: 0.05,
+            binary_correction_plan_firth_se: false,
+            trusted_no_missing_diploid: true,
+            sample_key_mode: "fid_iid".to_string(),
+            binary_kernel_config_json: Some(r#"{"minimum_probability":0.0001}"#.to_string()),
+            bgen_decode_tile_variant_count: 64,
+            trusted_bgen_validation_mode: "cache_on_miss".to_string(),
+            jax_device: "gpu".to_string(),
+            jax_enable_x64: true,
+            jax_matmul_precision: Some("highest".to_string()),
+            gpu_genotype_format: "packed8".to_string(),
+            score_dtype: "float32".to_string(),
+            firth_dtype: "float64".to_string(),
+            multi_phenotype_sample_mode: "single-phenotype".to_string(),
+            phenotype_compute_group_id: None,
+            sample_set_fingerprint: None,
+            covariate_design_fingerprint: None,
+            prediction_alignment_fingerprint: None,
+            output_format: "parquet".to_string(),
+            finalize_parquet: true,
+            writer_thread_count: 2,
+            writer_queue_depth: 4,
+            chunks_per_arrow_file: 8,
+            arrow_compression: "zstd".to_string(),
+            parquet_compression: "zstd".to_string(),
+            output_statistic_dtype: "float32".to_string(),
+        })
+        .expect("current manifest header should build")
+    }
+
+    fn build_test_prepared_run_plan(test_files: &TestManifestFiles) -> g_plan::PreparedRunPlan {
+        let bgen_fingerprint = convert_file_fingerprint(
+            build_manifest_file_fingerprint(&test_files.bgen_path, false).expect("BGEN fingerprint"),
+        );
+        let sample_fingerprint = convert_file_fingerprint(
+            build_manifest_file_fingerprint(&test_files.sample_path, true).expect("sample fingerprint"),
+        );
+        let phenotype_fingerprint = convert_file_fingerprint(
+            build_manifest_file_fingerprint(&test_files.phenotype_path, true).expect("phenotype fingerprint"),
+        );
+        let covariate_fingerprint = convert_file_fingerprint(
+            build_manifest_file_fingerprint(&test_files.covariate_path, true).expect("covariate fingerprint"),
+        );
+        let prediction_list_fingerprint = convert_file_fingerprint(
+            build_manifest_file_fingerprint(&test_files.prediction_list_path, true)
+                .expect("prediction list fingerprint"),
+        );
+        g_plan::PreparedRunPlan {
+            association_mode: g_plan::AssociationMode::Regenie2Binary,
+            association_backend: g_plan::AssociationBackendPlan {
+                kind: g_plan::AssociationBackendKind::JaxPacked8,
+                association_mode: g_plan::AssociationMode::Regenie2Binary,
+                device: g_plan::Device::Gpu,
+                resolved_genotype_format: g_plan::GpuGenotypeFormat::Packed8,
+            },
+            input_identity: g_plan::PreparedInputIdentity {
+                bgen: bgen_fingerprint,
+                sample: Some(sample_fingerprint),
+                phenotype_file: phenotype_fingerprint,
+                covariate_file: Some(covariate_fingerprint),
+                prediction_list: prediction_list_fingerprint.clone(),
+                prediction_inputs: g_plan::PredictionInputsIdentity {
+                    prediction_list: prediction_list_fingerprint,
+                    loco_files: serde_json::from_value(test_files.prediction_loco_files.clone())
+                        .expect("LOCO identity should deserialize"),
+                },
+            },
+            phenotype_name: "height".to_string(),
+            covariate_names: vec!["age".to_string()],
+            sample_count: 12,
+            variant_count: 34,
+            chunk_size: 8,
+            variant_limit: Some(21),
+            correction: g_plan::CorrectionPlan {
+                method: g_plan::BinaryFallbackMethod::ScoreOnly,
+                p_threshold: 0.05,
+                firth_se: false,
+            },
+            binary_kernel_config: Some(json!({"minimum_probability": 0.0001})),
+            compute: build_test_prepared_compute_plan(),
+            phenotype_compute_group: None,
+            output_writer: build_test_prepared_output_writer_plan(),
+        }
+    }
+
+    fn build_test_prepared_compute_plan() -> g_plan::PreparedComputePlan {
+        g_plan::PreparedComputePlan {
+            trusted_no_missing_diploid: true,
+            trusted_bgen_validation_mode: g_plan::TrustedBgenValidationMode::CacheOnMiss,
+            sample_key_mode: g_plan::SampleKeyMode::FidIid,
+            bgen_decode_tile_variant_count: 64,
+            jax_policy: g_plan::JaxPolicyPlan {
+                device: g_plan::Device::Gpu,
+                enable_x64: true,
+                matmul_precision: Some(g_plan::JaxMatmulPrecision::Highest),
+            },
+            requested_gpu_genotype_format: g_plan::GpuGenotypeFormat::Packed8,
+            resolved_gpu_genotype_format: g_plan::GpuGenotypeFormat::Packed8,
+            score_dtype: g_plan::FloatingPointDtype::Float32,
+            firth_dtype: g_plan::FloatingPointDtype::Float64,
+            sample_mode: g_plan::PreparedSampleMode::SinglePhenotype,
+        }
+    }
+
+    fn build_test_prepared_output_writer_plan() -> g_plan::PreparedOutputWriterPlan {
+        g_plan::PreparedOutputWriterPlan {
+            output_format: g_plan::OutputFormat::Parquet,
+            finalize_parquet: true,
+            writer_thread_count: 2,
+            writer_queue_depth: 4,
+            chunks_per_arrow_file: 8,
+            arrow_compression: g_plan::ArrowCompression::Zstd,
+            parquet_compression: g_plan::ParquetCompression::Zstd,
+            output_statistic_dtype: g_plan::FloatingPointDtype::Float32,
+        }
+    }
+
+    #[test]
+    fn prepared_run_plan_manifest_matches_current_header_manifest() {
+        let test_files = create_manifest_fixture_files();
+        let current_header_json = build_test_current_header_json(&test_files);
+        let prepared_run_plan = build_test_prepared_run_plan(&test_files);
+        let prepared_header_json =
+            build_prepared_run_manifest_header_json(&prepared_run_plan).expect("prepared manifest header should build");
+
+        let current_header = serde_json::from_str::<Value>(&current_header_json).expect("current header should parse");
+        let prepared_header =
+            serde_json::from_str::<Value>(&prepared_header_json).expect("prepared header should parse");
+        assert_eq!(prepared_header, current_header);
+
+        std::fs::remove_dir_all(test_files.root_directory).expect("test directory should be removed");
     }
 
     #[test]

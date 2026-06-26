@@ -751,6 +751,7 @@ def build_current_run_manifest_header_json(
     parquet_compression: str,
     output_statistic_dtype: str,
 ) -> str: ...
+def build_prepared_run_manifest_header_json(prepared_run_plan_json: str) -> str: ...
 def resolve_prediction_loco_paths(
     prediction_list_path: str,
     phenotype_names: list[str],

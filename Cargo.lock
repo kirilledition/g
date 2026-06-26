@@ -781,6 +781,7 @@ dependencies = [
  "arrow",
  "criterion",
  "crossbeam-channel",
+ "g-plan",
  "parquet",
  "serde_json",
  "sha2",

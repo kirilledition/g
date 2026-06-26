@@ -13,6 +13,7 @@ use g_output::{
     build_file_content_sha256 as build_native_file_content_sha256,
     build_manifest_file_fingerprint as build_native_manifest_file_fingerprint,
     build_manifest_json_sha256 as build_native_manifest_json_sha256,
+    build_prepared_run_manifest_header_json as build_native_prepared_run_manifest_header_json,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
     initialize_output_run as initialize_native_output_run, load_run_manifest_json as load_native_run_manifest_json,
     prepare_output_run as prepare_native_output_run,
@@ -527,6 +528,15 @@ pub(crate) fn build_current_run_manifest_header_json(
         output_statistic_dtype,
     })
     .map_err(|error| output_writer_error_to_py(error, "build_current_run_manifest_header_json"))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_prepared_run_manifest_header_json(prepared_run_plan_json: String) -> PyResult<String> {
+    let prepared_run_plan = serde_json::from_str::<g_plan::PreparedRunPlan>(&prepared_run_plan_json)
+        .map_err(|error| PyValueError::new_err(format!("Invalid prepared run plan JSON: {error}")))?;
+    build_native_prepared_run_manifest_header_json(&prepared_run_plan)
+        .map_err(|error| output_writer_error_to_py(error, "build_prepared_run_manifest_header_json"))
 }
 
 #[pyfunction]

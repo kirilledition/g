@@ -1,6 +1,6 @@
 //! Canonical requested-run planning contracts.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 macro_rules! string_enum {
     (
@@ -8,7 +8,7 @@ macro_rules! string_enum {
             $($variant:ident => $value:literal),+ $(,)?
         }
     ) => {
-        #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+        #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
         pub enum $name {
             $(
                 #[serde(rename = $value)]
@@ -108,7 +108,7 @@ string_enum!(ParquetCompression {
     None => "none",
 });
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RunRequest {
     pub association_mode: AssociationMode,
     pub input: InputRequest,
@@ -122,7 +122,7 @@ pub struct RunRequest {
     pub stage_timings_json: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct InputRequest {
     pub bgen_path: String,
     pub sample_path: Option<String>,
@@ -133,14 +133,14 @@ pub struct InputRequest {
     pub sample_key_mode: SampleKeyMode,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct TraitRequest {
     pub trait_type: RegenieTraitType,
     pub chunk_size: u32,
     pub thread_count: Option<u32>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct ComputeRequest {
     pub device: Device,
     pub staging_depth: u32,
@@ -157,14 +157,14 @@ pub struct ComputeRequest {
     pub firth_dtype: FloatingPointDtype,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CorrectionPlan {
     pub method: BinaryFallbackMethod,
     pub p_threshold: f64,
     pub firth_se: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct OutputWriterPlan {
     pub output_prefix: String,
     pub output_run_root: String,
@@ -180,7 +180,7 @@ pub struct OutputWriterPlan {
     pub output_statistic_dtype: FloatingPointDtype,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct RuntimePlan {
     pub jax_cache_directory: Option<String>,
     pub jax_matmul_precision: Option<JaxMatmulPrecision>,
@@ -191,14 +191,14 @@ pub struct RuntimePlan {
     pub transfer_guard_enabled: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct PhenotypeRunPlan {
     pub phenotype_index: u32,
     pub phenotype_name: String,
     pub output_directory_name: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct PhenotypeComputeGroup {
     pub group_mode: PhenotypeComputeGroupMode,
     pub phenotype_indices: Vec<u32>,
