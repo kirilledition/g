@@ -139,6 +139,10 @@ def build_test_regenie2_pipeline_context(**keyword_arguments: typing.Any) -> pip
         ),
     )
     keyword_arguments.setdefault("output_initialized_callback", None)
+    keyword_arguments.setdefault(
+        "requested_gpu_genotype_format",
+        keyword_arguments["gpu_genotype_format"],
+    )
     return pipeline_context.build_regenie2_pipeline_context(**keyword_arguments)
 
 

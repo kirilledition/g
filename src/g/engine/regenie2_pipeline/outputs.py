@@ -174,6 +174,7 @@ def build_pipeline_manifest_header(
         trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
         jax_device=context.jax_device,
         jax_matmul_precision=context.jax_matmul_precision,
+        requested_gpu_genotype_format=context.requested_gpu_genotype_format,
         gpu_genotype_format=context.gpu_genotype_format,
         score_dtype=context.score_dtype,
         firth_dtype=context.firth_dtype,

@@ -57,6 +57,7 @@ class Regenie2PipelineContext:
         jax_matmul_precision: Optional JAX matmul precision policy.
         score_dtype: Score-test compute dtype.
         firth_dtype: Firth compute dtype.
+        requested_gpu_genotype_format: User-requested genotype delivery format.
         gpu_genotype_format: Native genotype delivery format.
         backend_plan: Concrete backend selected for association execution.
         correction_plan: Binary correction settings.
@@ -87,6 +88,7 @@ class Regenie2PipelineContext:
     jax_matmul_precision: types.JaxMatmulPrecision | None
     score_dtype: types.FloatingPointDtype
     firth_dtype: types.FloatingPointDtype
+    requested_gpu_genotype_format: types.GpuGenotypeFormat
     gpu_genotype_format: types.GpuGenotypeFormat
     backend_plan: backend_planner.AssociationBackendPlan
     correction_plan: types.BinaryCorrectionPlan
@@ -154,6 +156,7 @@ def build_regenie2_pipeline_context(
     jax_matmul_precision: types.JaxMatmulPrecision | None,
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
+    requested_gpu_genotype_format: types.GpuGenotypeFormat,
     gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
     binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
@@ -194,6 +197,7 @@ def build_regenie2_pipeline_context(
         jax_matmul_precision=jax_matmul_precision,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
+        requested_gpu_genotype_format=requested_gpu_genotype_format,
         gpu_genotype_format=gpu_genotype_format,
         backend_plan=backend_plan,
         correction_plan=correction_plan,

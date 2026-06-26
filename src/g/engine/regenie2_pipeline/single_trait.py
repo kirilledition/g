@@ -344,6 +344,7 @@ def run_regenie2_linear_bgen_pipeline(
         jax_matmul_precision=jax_matmul_precision,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
+        requested_gpu_genotype_format=gpu_genotype_format,
         gpu_genotype_format=resolved_gpu_genotype_format,
         correction_plan=types.BinaryCorrectionPlan(
             method=types.BinaryFallbackMethod.SCORE_ONLY,
@@ -443,6 +444,7 @@ def run_regenie2_binary_bgen_pipeline(
         jax_matmul_precision=jax_matmul_precision,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
+        requested_gpu_genotype_format=gpu_genotype_format_resolution.requested_gpu_genotype_format,
         gpu_genotype_format=gpu_genotype_format_resolution.resolved_gpu_genotype_format,
         correction_plan=correction_plan,
         binary_kernel_config=resolved_kernel_config,

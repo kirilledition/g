@@ -297,6 +297,7 @@ class CurrentRunManifestHeader:
         sample_key_mode: Sample identity matching mode.
         bgen_decode_tile_variant_count: Native BGEN decode tile size.
         jax_policy: JAX backend and precision policy.
+        requested_gpu_genotype_format: User-requested genotype format before resolution.
         gpu_genotype_format: Native genotype format delivered to GPU kernels.
         score_dtype: Score-test compute dtype.
         firth_dtype: Firth compute dtype.
@@ -330,6 +331,7 @@ class CurrentRunManifestHeader:
     sample_key_mode: types.SampleKeyMode
     bgen_decode_tile_variant_count: int
     jax_policy: JaxPolicyManifest
+    requested_gpu_genotype_format: types.GpuGenotypeFormat
     gpu_genotype_format: types.GpuGenotypeFormat
     score_dtype: types.FloatingPointDtype
     firth_dtype: types.FloatingPointDtype
@@ -644,6 +646,7 @@ def build_current_run_manifest_header(
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     jax_device: types.Device,
     jax_matmul_precision: types.JaxMatmulPrecision | None,
+    requested_gpu_genotype_format: types.GpuGenotypeFormat,
     gpu_genotype_format: types.GpuGenotypeFormat,
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
@@ -748,6 +751,7 @@ def build_current_run_manifest_header(
         sample_key_mode=sample_key_mode,
         bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
         jax_policy=jax_policy_manifest,
+        requested_gpu_genotype_format=requested_gpu_genotype_format,
         gpu_genotype_format=gpu_genotype_format,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
@@ -971,7 +975,7 @@ def build_prepared_compute_plan_manifest_payload(
             "enable_x64": current_header.jax_policy.enable_x64,
             "matmul_precision": matmul_precision,
         },
-        "requested_gpu_genotype_format": current_header.gpu_genotype_format.value,
+        "requested_gpu_genotype_format": current_header.requested_gpu_genotype_format.value,
         "resolved_gpu_genotype_format": current_header.gpu_genotype_format.value,
         "score_dtype": current_header.score_dtype.value,
         "firth_dtype": current_header.firth_dtype.value,

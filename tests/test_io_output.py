@@ -275,7 +275,7 @@ def write_native_chunks(
         raise
 
 
-def build_test_header(
+def build_test_header_object(
     tmp_path: Path,
     *,
     association_mode: AssociationMode = AssociationMode.REGENIE2_LINEAR,
@@ -283,6 +283,7 @@ def build_test_header(
     sample_path: Path | None | object = DEFAULT_TEST_INPUT_PATH,
     covariate_path: Path | None | object = DEFAULT_TEST_INPUT_PATH,
     binary_kernel_config: typing.Any | None = None,
+    requested_gpu_genotype_format: types.GpuGenotypeFormat | None = None,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
@@ -294,7 +295,7 @@ def build_test_header(
     covariate_design_fingerprint: str | None = None,
     prediction_alignment_fingerprint: str | None = None,
     write_input_files: bool = True,
-) -> dict[str, typing.Any]:
+) -> output.CurrentRunManifestHeader:
     bgen_path = tmp_path / "study.bgen"
     selected_sample_path = (
         tmp_path / "study.sample" if sample_path is DEFAULT_TEST_INPUT_PATH else typing.cast("Path | None", sample_path)
@@ -323,7 +324,10 @@ def build_test_header(
         loco_path.write_text("FID_IID F1_I1\n22 0.1\n", encoding="utf-8")
         prediction_list_path.write_text("trait  trait.loco\n", encoding="utf-8")
     fingerprint_cache = output.ManifestFileFingerprintCache()
-    current_header = output.build_current_run_manifest_header(
+    effective_requested_gpu_genotype_format = (
+        gpu_genotype_format if requested_gpu_genotype_format is None else requested_gpu_genotype_format
+    )
+    return output.build_current_run_manifest_header(
         association_mode=association_mode,
         association_backend_kind=association_backend_kind,
         bgen_path=bgen_path,
@@ -360,6 +364,7 @@ def build_test_header(
         trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
         jax_device=types.Device.CPU,
         jax_matmul_precision=None,
+        requested_gpu_genotype_format=effective_requested_gpu_genotype_format,
         finalize_parquet=False,
         writer_thread_count=1,
         writer_queue_depth=1,
@@ -368,7 +373,10 @@ def build_test_header(
         parquet_compression=types.ParquetCompression.NONE,
         output_statistic_dtype=output_statistic_dtype,
     )
-    return output.current_run_manifest_header_to_mapping(current_header)
+
+
+def build_test_header(tmp_path: Path, **keyword_arguments: typing.Any) -> dict[str, typing.Any]:
+    return output.current_run_manifest_header_to_mapping(build_test_header_object(tmp_path, **keyword_arguments))
 
 
 def test_current_run_manifest_records_configured_x64_policy(tmp_path: Path) -> None:
@@ -421,6 +429,20 @@ def test_current_run_manifest_records_gpu_genotype_format(tmp_path: Path) -> Non
         "device": "cpu",
         "genotype_format": "packed8",
     }
+
+
+def test_prepared_run_plan_payload_preserves_requested_and_resolved_gpu_formats(tmp_path: Path) -> None:
+    current_header = build_test_header_object(
+        tmp_path,
+        association_backend_kind=types.AssociationBackendKind.JAX_PACKED8,
+        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+        gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+    )
+    prepared_payload = output.build_prepared_run_plan_manifest_payload(current_header)
+
+    compute_payload = typing.cast("dict[str, typing.Any]", prepared_payload["compute"])
+    assert compute_payload["requested_gpu_genotype_format"] == "auto"
+    assert compute_payload["resolved_gpu_genotype_format"] == "packed8"
 
 
 def test_current_run_manifest_hashes_small_control_files(tmp_path: Path) -> None:
