@@ -23,18 +23,17 @@ from pathlib import Path
 import hydra
 
 import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
-import tooling.configuration as tooling_configuration
 from tooling.benchmark import benchmark as baseline_benchmark
 from tooling.benchmark import comparison as comparison_benchmark
 from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import g_regenie as tooling_g_regenie
-from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import jax_cache as tooling_jax_cache
 from tooling.common import logging as tooling_logging
 from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.profile_deep import budget as profile_deep_budget
+from tooling.profile_deep import config as profile_deep_config
 from tooling.profile_deep import models as profile_deep_models
 
 if typing.TYPE_CHECKING:
@@ -60,7 +59,7 @@ ARTIFACT_MANIFEST_CONTRACT = tooling_reports.VersionedReportContract(
     schema_field_name="schema_version",
     reject_unknown_fields=True,
 )
-DEFAULT_OUTPUT_PARENT = Path("data/profiles")
+DEFAULT_OUTPUT_PARENT = profile_deep_config.DEFAULT_OUTPUT_PARENT
 DEFAULT_VARIANT_COUNT = 418_943
 JAX_XLA_AUTOTUNE_CACHE = "xla_gpu_per_fusion_autotune_cache_dir"
 ENABLE_XLA_AUTOTUNE_CACHE = os.environ.get("G_PROFILE_ENABLE_XLA_AUTOTUNE_CACHE") == "1"
@@ -136,16 +135,15 @@ campaign_budget_is_over_limit = profile_deep_budget.campaign_budget_is_over_limi
 build_campaign_budget = profile_deep_budget.build_campaign_budget
 log_campaign_budget = profile_deep_budget.log_campaign_budget
 enforce_campaign_budget = profile_deep_budget.enforce_campaign_budget
-
-
-def resolve_repo_path(value: typing.Any) -> Path:
-    """Resolve a path relative to the repository root."""
-    return tooling_paths.resolve_repo_relative_path(Path(str(value)), REPOSITORY_ROOT)
-
-
-def resolve_data_path(data_directory: Path, value: typing.Any) -> Path:
-    """Resolve one input path relative to the data directory."""
-    return tooling_paths.resolve_data_path(data_directory, Path(str(value)))
+resolve_repo_path = profile_deep_config.resolve_repo_path
+resolve_data_path = profile_deep_config.resolve_data_path
+should_emit_stage_timings = profile_deep_config.should_emit_stage_timings
+build_output_directory = profile_deep_config.build_output_directory
+configured_regenie_executable = profile_deep_config.configured_regenie_executable
+profile_configuration_payload = profile_deep_config.profile_configuration_payload
+apply_smoke_overrides = profile_deep_config.apply_smoke_overrides
+build_arguments_from_config = profile_deep_config.build_arguments_from_config
+build_arguments_from_overrides = profile_deep_config.build_arguments_from_overrides
 
 
 def build_baseline_paths(arguments: ProfileArguments) -> baseline_benchmark.BaselinePaths:
@@ -165,26 +163,6 @@ def build_baseline_paths(arguments: ProfileArguments) -> baseline_benchmark.Base
         regenie_prediction_list_path=arguments.regenie_prediction_list_path,
         regenie_qt_prediction_list_path=arguments.regenie_qt_prediction_list_path,
     )
-
-
-def should_emit_stage_timings(arguments: ProfileArguments) -> bool:
-    """Return whether exact stage timing artifacts should be emitted."""
-    return arguments.stage_timing_mode == ProfileStageTimingMode.EXACT
-
-
-def build_output_directory(arguments: ProfileArguments) -> Path:
-    """Resolve the campaign output directory."""
-    if arguments.output_dir is not None:
-        return arguments.output_dir
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return arguments.output_parent / f"landau_deep_{arguments.chromosome_label}_{timestamp}"
-
-
-def configured_regenie_executable(arguments: ProfileArguments) -> str:
-    """Return the configured original or patched REGENIE executable name."""
-    if arguments.regenie_executable is not None:
-        return arguments.regenie_executable
-    return os.environ.get("REGENIE_BIN", "regenie")
 
 
 def executable_is_available(executable_name: str) -> bool:
@@ -952,11 +930,6 @@ def profile_summary_artifact_status(
     if "success" in aggregate_statuses or "partial" in aggregate_statuses:
         return tooling_artifact_format.ToolArtifactStatus.PARTIAL
     return tooling_artifact_format.ToolArtifactStatus.FAILED
-
-
-def profile_configuration_payload(arguments: ProfileArguments) -> dict[str, object]:
-    """Build a JSON-ready profile configuration snapshot."""
-    return typing.cast("dict[str, object]", tooling_reports.to_jsonable(dataclasses.asdict(arguments)))
 
 
 def write_standard_profile_artifacts(
@@ -4551,137 +4524,6 @@ def run_logging_perturbation_profiles(
         encoding="utf-8",
     )
     return results
-
-
-def apply_smoke_overrides(arguments: ProfileArguments) -> ProfileArguments:
-    """Reduce the campaign size for a landau smoke profile."""
-    if not arguments.smoke:
-        return arguments
-    return dataclasses.replace(
-        arguments,
-        variant_limit=1000 if arguments.variant_limit is None else arguments.variant_limit,
-        chunk_sizes="2048",
-        staging_depths="1",
-        output_writer_thread_counts="1",
-        writer_queue_depth_multipliers="1",
-        firth_batch_sizes="32",
-        bgen_decode_tile_variant_counts="64",
-        rayon_thread_counts="1",
-        top_bgen_candidates=1,
-        top_finalists=1,
-        tuning_warmups=0,
-        tuning_trials=1,
-        finalist_warmups=0,
-        finalist_trials=1,
-        headline_warmups=0,
-        headline_trials=1,
-        regenie_baseline_warmups=0,
-        regenie_baseline_trials=1,
-        py_spy_timeout_seconds=15,
-        scalene_timeout_seconds=15,
-        memray_timeout_seconds=15,
-        linux_perf_timeout_seconds=15,
-        nsight_systems_timeout_seconds=15,
-        nsight_compute_timeout_seconds=15,
-    )
-
-
-def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArguments:
-    """Build profile parameters from a composed Hydra config."""
-    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
-    stage_timing_mode = ProfileStageTimingMode.EXACT
-    if "telemetry" in config:
-        stage_timing_mode = ProfileStageTimingMode(str(config.telemetry.stage_timing_mode))
-    data_directory = resolve_repo_path(tool_values["data_dir"])
-    output_parent = resolve_repo_path(tool_values.get("output_parent", DEFAULT_OUTPUT_PARENT))
-    explicit_output_directory = tooling_hydra_arguments.path_or_none(tool_values.get("output_dir"))
-    if explicit_output_directory is not None:
-        explicit_output_directory = tooling_paths.resolve_repo_relative_path(
-            explicit_output_directory,
-            REPOSITORY_ROOT,
-        )
-        output_parent = explicit_output_directory.parent
-    return ProfileArguments(
-        chromosome_label=str(tool_values["chromosome_label"]),
-        data_directory=data_directory,
-        baseline_directory=resolve_data_path(data_directory, tool_values["baseline_dir"]),
-        bed_prefix=resolve_data_path(data_directory, tool_values["bed_prefix"]),
-        bgen_path=resolve_data_path(data_directory, tool_values["bgen"]),
-        sample_path=resolve_data_path(data_directory, tool_values["sample"]),
-        continuous_phenotype_path=resolve_data_path(data_directory, tool_values["linear_phenotype_file"]),
-        binary_phenotype_path=resolve_data_path(data_directory, tool_values["binary_phenotype_file"]),
-        covariate_path=resolve_data_path(data_directory, tool_values["covariate_file"]),
-        regenie_prediction_list_path=resolve_data_path(data_directory, tool_values["binary_prediction_list"]),
-        regenie_qt_prediction_list_path=resolve_data_path(data_directory, tool_values["linear_prediction_list"]),
-        output_dir=explicit_output_directory,
-        output_parent=output_parent,
-        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
-        dry_run=bool(tool_values["dry_run"]),
-        include_regenie_baseline=bool(tool_values["include_regenie_baseline"]),
-        regenie_executable=(
-            None if tool_values.get("regenie_executable") is None else str(tool_values["regenie_executable"])
-        ),
-        regenie_baseline_trait_types=tooling_hydra_arguments.comma_join(tool_values["regenie_baseline_trait_types"]),
-        regenie_baseline_variant_limit=tooling_hydra_arguments.integer_or_none(
-            tool_values.get("regenie_baseline_variant_limit")
-        ),
-        regenie_baseline_warmups=int(tool_values["regenie_baseline_warmups"]),
-        regenie_baseline_trials=int(tool_values["regenie_baseline_trials"]),
-        workload_keys=tooling_hydra_arguments.comma_join(tool_values["workload_keys"]),
-        max_subprocess_runs=tooling_hydra_arguments.integer_or_none(tool_values.get("max_subprocess_runs")),
-        max_major_profiler_runs=tooling_hydra_arguments.integer_or_none(tool_values.get("max_major_profiler_runs")),
-        allow_over_budget=bool(tool_values["allow_over_budget"]),
-        smoke=bool(tool_values["smoke"]),
-        skip_deep_profiles=bool(tool_values["skip_deep_profiles"]),
-        enable_jax_trace=bool(tool_values["enable_jax_trace"]),
-        enable_jax_memory_profile=bool(tool_values["enable_jax_memory_profile"]),
-        enable_python_cprofile=bool(tool_values["enable_python_cprofile"]),
-        enable_py_spy=bool(tool_values["enable_py_spy"]),
-        enable_scalene=bool(tool_values["enable_scalene"]),
-        enable_memray=bool(tool_values["enable_memray"]),
-        enable_linux_perf=bool(tool_values["enable_linux_perf"]),
-        enable_nsight_systems=bool(tool_values["enable_nsight_systems"]),
-        enable_nsight_compute=bool(tool_values["enable_nsight_compute"]),
-        py_spy_timeout_seconds=int(tool_values["py_spy_timeout_seconds"]),
-        scalene_timeout_seconds=int(tool_values["scalene_timeout_seconds"]),
-        memray_timeout_seconds=int(tool_values["memray_timeout_seconds"]),
-        linux_perf_timeout_seconds=int(tool_values["linux_perf_timeout_seconds"]),
-        nsight_systems_timeout_seconds=int(tool_values["nsight_systems_timeout_seconds"]),
-        nsight_compute_timeout_seconds=int(tool_values["nsight_compute_timeout_seconds"]),
-        enable_rust_criterion=bool(tool_values["enable_rust_criterion"]),
-        enable_logging_perturbation=bool(tool_values["enable_logging_perturbation"]),
-        rust_benchmarks=tooling_hydra_arguments.comma_join(tool_values["rust_benchmarks"]),
-        chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
-        staging_depths=tooling_hydra_arguments.comma_join(tool_values["staging_depths"]),
-        native_callback_batch_sizes=tooling_hydra_arguments.comma_join(tool_values["native_callback_batch_sizes"]),
-        result_in_flight_limits=tooling_hydra_arguments.comma_join(tool_values["result_in_flight_limits"]),
-        dosage_buffer_limits=tooling_hydra_arguments.comma_join(tool_values["dosage_buffer_limits"]),
-        output_writer_thread_counts=tooling_hydra_arguments.comma_join(tool_values["output_writer_thread_counts"]),
-        writer_queue_depth_multipliers=tooling_hydra_arguments.comma_join(
-            tool_values["writer_queue_depth_multipliers"]
-        ),
-        firth_batch_sizes=tooling_hydra_arguments.comma_join(tool_values["firth_batch_sizes"]),
-        bgen_decode_tile_variant_counts=tooling_hydra_arguments.comma_join(
-            tool_values["bgen_decode_tile_variant_counts"]
-        ),
-        rayon_thread_counts=tooling_hydra_arguments.comma_join(tool_values["rayon_thread_counts"]),
-        bgen_benchmark_chunk_size=int(tool_values["bgen_benchmark_chunk_size"]),
-        top_bgen_candidates=int(tool_values["top_bgen_candidates"]),
-        top_finalists=int(tool_values["top_finalists"]),
-        tuning_warmups=int(tool_values["tuning_warmups"]),
-        tuning_trials=int(tool_values["tuning_trials"]),
-        finalist_warmups=int(tool_values["finalist_warmups"]),
-        finalist_trials=int(tool_values["finalist_trials"]),
-        headline_warmups=int(tool_values["headline_warmups"]),
-        headline_trials=int(tool_values["headline_trials"]),
-        stage_timing_mode=stage_timing_mode,
-    )
-
-
-def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None) -> ProfileArguments:
-    """Compose the deep-profile config and return resolved parameters."""
-    config = tooling_configuration.compose_config(config_name="profile_regenie2_deep", overrides=overrides)
-    return build_arguments_from_config(config)
 
 
 def required_profile_input_paths(baseline_paths: baseline_benchmark.BaselinePaths) -> list[Path]:

@@ -15,6 +15,7 @@ The tooling package now has a small internal framework:
 - `tooling.common.downloads` owns Pooch-backed retrieval, cache reuse, SHA-256 validation, archive processors, and download manifests for data and server-tool assets.
 - `tooling.profile_deep.models` owns the deep-profile enums and dataclasses so the profiler package can be split without circular imports through the CLI module.
 - `tooling.profile_deep.budget` owns deep-profile list parsing, workload selector expansion, logging perturbation case definitions, and campaign budget accounting; the CLI only re-exports compatibility aliases.
+- `tooling.profile_deep.config` owns deep-profile Hydra-to-argument conversion, smoke-mode overrides, output directory resolution, REGENIE executable selection, and JSON-ready configuration snapshots.
 
 Benchmark and profiler code should use these contracts instead of rebuilding command vectors, report dictionaries, or grouped dispatch chains by hand.
 

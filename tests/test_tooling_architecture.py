@@ -32,6 +32,7 @@ from tooling.common import registry as tooling_registry
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
 from tooling.profile_deep import budget as profile_deep_budget
+from tooling.profile_deep import config as profile_deep_config
 from tooling.profile_deep import models as profile_deep_models
 
 if typing.TYPE_CHECKING:
@@ -1112,6 +1113,17 @@ def test_deep_profile_budget_helpers_live_in_profile_package() -> None:
     assert deep_profile.enforce_campaign_budget is profile_deep_budget.enforce_campaign_budget
     assert deep_profile.parse_profile_workload_keys is profile_deep_budget.parse_profile_workload_keys
     assert deep_profile.build_logging_perturbation_cases is profile_deep_budget.build_logging_perturbation_cases
+
+
+def test_deep_profile_config_helpers_live_in_profile_package() -> None:
+    assert profile_deep_config.build_arguments_from_config.__module__ == "tooling.profile_deep.config"
+    assert profile_deep_config.build_arguments_from_overrides.__module__ == "tooling.profile_deep.config"
+    assert profile_deep_config.apply_smoke_overrides.__module__ == "tooling.profile_deep.config"
+    assert profile_deep_config.profile_configuration_payload.__module__ == "tooling.profile_deep.config"
+    assert deep_profile.build_arguments_from_config is profile_deep_config.build_arguments_from_config
+    assert deep_profile.build_arguments_from_overrides is profile_deep_config.build_arguments_from_overrides
+    assert deep_profile.apply_smoke_overrides is profile_deep_config.apply_smoke_overrides
+    assert deep_profile.profile_configuration_payload is profile_deep_config.profile_configuration_payload
 
 
 def test_rust_build_profile_specs_map_expected_cargo_profiles() -> None:
