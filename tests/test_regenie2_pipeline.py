@@ -1960,6 +1960,22 @@ def test_native_dosage_delivery_forwards_callback_batch_size() -> None:
     assert engine.callback_batch_size == 2
 
 
+def test_native_dosage_delivery_defaults_callback_batch_size_in_native_policy() -> None:
+    engine = FakeRunEngine("study.bgen", chunk_size=32)
+    callback = SimpleNamespace()
+    run_input = SimpleNamespace(sample_indices=np.asarray([0, 1], dtype=np.int64))
+
+    processed_chunk_count = native_dispatch_delivery.run_variant_major_dosage_delivery(
+        engine=typing.cast("typing.Any", engine),
+        run_input=typing.cast("typing.Any", run_input),
+        callback=callback,
+        committed_chunk_identifier_list=[],
+    )
+
+    assert processed_chunk_count == 0
+    assert engine.callback_batch_size == 1
+
+
 def test_native_packed8_delivery_rejects_callback_batch_size_above_one() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32)
     callback = SimpleNamespace(native_callback_batch_size=2)

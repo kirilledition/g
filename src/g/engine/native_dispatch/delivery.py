@@ -6,24 +6,24 @@ import logging
 import time
 import typing
 
+from g import _core
 from g.engine import shutdown, timing
 from g.engine.native_dispatch import models, writers
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g import _core
-
 logger = logging.getLogger(__name__)
 
 
-def resolve_native_callback_batch_size(callback: object) -> int:
+def resolve_native_callback_batch_size(
+    callback: object,
+    variant_major_packed8_probability_pairs: bool,
+) -> int:
     """Return the validated native callback batch size for one callback object."""
-    native_callback_batch_size = int(getattr(callback, "native_callback_batch_size", 1))
-    if native_callback_batch_size <= 0:
-        message = "native_callback_batch_size must be positive."
-        raise ValueError(message)
-    return native_callback_batch_size
+    raw_callback_batch_size = getattr(callback, "native_callback_batch_size", None)
+    callback_batch_size = None if raw_callback_batch_size is None else int(raw_callback_batch_size)
+    return int(_core.resolve_delivery_callback_batch_size(callback_batch_size, variant_major_packed8_probability_pairs))
 
 
 def run_variant_major_packed8_delivery(
@@ -34,10 +34,7 @@ def run_variant_major_packed8_delivery(
     committed_chunk_identifier_list: list[int],
 ) -> int:
     """Run packed8 delivery using native sample alignment when available."""
-    native_callback_batch_size = resolve_native_callback_batch_size(callback)
-    if native_callback_batch_size > 1:
-        message = "native_callback_batch_size > 1 is not supported for packed8 BGEN delivery."
-        raise ValueError(message)
+    resolve_native_callback_batch_size(callback, variant_major_packed8_probability_pairs=True)
     native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
     if native_multi_aligned_sample_data is not None:
         return int(
@@ -73,7 +70,9 @@ def run_variant_major_dosage_delivery(
     committed_chunk_identifier_list: list[int],
 ) -> int:
     """Run dosage delivery using native sample alignment when available."""
-    native_callback_batch_size = resolve_native_callback_batch_size(callback)
+    native_callback_batch_size = resolve_native_callback_batch_size(
+        callback, variant_major_packed8_probability_pairs=False
+    )
     native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
     if native_multi_aligned_sample_data is not None:
         return int(

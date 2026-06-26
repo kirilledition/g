@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use g_engine::schedule as native_schedule;
@@ -18,4 +19,17 @@ pub(crate) fn intersect_committed_chunk_identifier_sets(
     native_schedule::intersect_committed_chunk_identifier_sets(&native_committed_chunk_identifier_sets)
         .into_iter()
         .collect()
+}
+
+#[pyfunction]
+pub(crate) fn resolve_delivery_callback_batch_size(
+    callback_batch_size: Option<i64>,
+    variant_major_packed8_probability_pairs: bool,
+) -> PyResult<usize> {
+    native_schedule::resolve_delivery_callback_batch_size(callback_batch_size, variant_major_packed8_probability_pairs)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+fn schedule_error_to_py(error: &native_schedule::ScheduleError) -> PyErr {
+    PyValueError::new_err(error.to_string())
 }

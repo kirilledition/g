@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from g import _core
 
@@ -97,6 +98,16 @@ def test_intersect_committed_chunk_identifier_sets_returns_sorted_shared_identif
 
     assert shared_chunk_identifiers == [32]
     assert _core.intersect_committed_chunk_identifier_sets(()) == []
+
+
+def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() -> None:
+    assert _core.resolve_delivery_callback_batch_size(None, False) == 1
+    assert _core.resolve_delivery_callback_batch_size(2, False) == 2
+    assert _core.resolve_delivery_callback_batch_size(1, True) == 1
+    with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):
+        _core.resolve_delivery_callback_batch_size(0, False)
+    with pytest.raises(ValueError, match="packed8 BGEN delivery"):
+        _core.resolve_delivery_callback_batch_size(2, True)
 
 
 def test_regenie2_run_engine_required_chromosomes_returns_boundary_labels() -> None:

@@ -1023,6 +1023,10 @@ def resolve_preflight_variant_count(variant_count: int, variant_limit: int | Non
 def intersect_committed_chunk_identifier_sets(
     committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
 ) -> list[int]: ...
+def resolve_delivery_callback_batch_size(
+    callback_batch_size: int | None,
+    variant_major_packed8_probability_pairs: bool,
+) -> int: ...
 def build_preflight_report_payload(
     sample_count: int,
     covariate_count: int,

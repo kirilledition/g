@@ -78,7 +78,7 @@ use run_metadata::{
 use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool};
 use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
 use runtime_state::NativeRuntimeState;
-use schedule::intersect_committed_chunk_identifier_sets;
+use schedule::{intersect_committed_chunk_identifier_sets, resolve_delivery_callback_batch_size};
 use shutdown::{NativeShutdownController, build_shutdown_signal_payload};
 use telemetry_policy::{
     build_empty_telemetry_writer_counters_payload, format_telemetry_timestamp_value, paths_refer_to_same_file_value,
@@ -1783,6 +1783,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_delivery_callback_batch_size, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(format_telemetry_timestamp_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_path_value, module)?)?;
