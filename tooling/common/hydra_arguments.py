@@ -72,8 +72,28 @@ def float_or_none(value: typing.Any) -> float | None:
 
 
 def boolean_value(value: typing.Any) -> bool:
-    """Convert a resolved config value into a boolean."""
-    return bool(value)
+    """Convert a resolved config value into a boolean.
+
+    Args:
+        value: Resolved config value.
+
+    Returns:
+        Boolean value.
+
+    Raises:
+        TypeError: If the value is not a boolean or explicit boolean string.
+
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized_value = value.strip().lower()
+        if normalized_value in {"true", "1", "yes", "on"}:
+            return True
+        if normalized_value in {"false", "0", "no", "off"}:
+            return False
+    message = f"Expected a boolean value, got {value!r}."
+    raise TypeError(message)
 
 
 def format_scalar_value(value: typing.Any) -> str:

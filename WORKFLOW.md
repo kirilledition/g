@@ -137,8 +137,8 @@ section, and labels before choosing commands:
   `--g-device gpu`, JAX CUDA probes, GPU benchmarks, or GPU profiling. Never run
   these directly on the login node. Use `landau` and the repo's SLURM wrappers,
   for example `just slurm-gpu-just <recipe>`, `just
-  slurm-regenie2-binary-gpu-smoke`, `just
-  slurm-benchmark-regenie2-binary-hot-gpu`, or the issue's explicit
+  slurm-gpu-just matrix-chr22-smoke`, `just
+  slurm-gpu-bench-binary-hot`, or the issue's explicit
   `just slurm-*` command.
 - Benchmark-heavy: labels such as `benchmark`, `optimization`, or `simd`, or
   requests for profiling/timing evidence. Prefer dry-run recipes first when
@@ -147,7 +147,7 @@ section, and labels before choosing commands:
 - Data-heavy: labels such as `data`, validation that needs 1KG fixtures,
   baselines, MatrixTables, or previous benchmark artifacts. Check required input
   paths before submitting work, for example `just
-  verify-regenie2-binary-gpu-inputs` for binary GPU step 2 tasks.
+  data-verify-binary-gpu-inputs` for binary GPU step 2 tasks.
 
 If the issue asks for resource-heavy validation but the needed data, external
 tools, SLURM allocation, or GPU node is unavailable, do not spin, poll, or retry

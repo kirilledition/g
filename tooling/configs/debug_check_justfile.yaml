@@ -1,0 +1,13 @@
+tool:
+  name: check_justfile
+  justfile_path: Justfile
+  documentation_paths:
+    - documentation/development/justfile.md
+    - documentation/development/tooling.md
+    - documentation/development/server-gauss-slurm.md
+    - documentation/development/symphony.md
+    - WORKFLOW.md
+
+hydra:
+  job:
+    chdir: false

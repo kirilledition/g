@@ -4,23 +4,27 @@ from __future__ import annotations
 
 
 def split_comma_separated_values(raw_value: str, option_name: str) -> list[str]:
-    """Split a comma-separated CLI value into non-empty entries.
+    """Split a comma-separated CLI value into stripped entries.
 
     Args:
         raw_value: Raw comma-separated value.
         option_name: Option name used in validation messages.
 
     Returns:
-        Non-empty stripped values.
+        Stripped values.
 
     Raises:
-        ValueError: If no values are present.
+        ValueError: If no values are present or an entry is empty.
 
     """
-    values = [value.strip() for value in raw_value.split(",") if value.strip()]
+    values = [value.strip() for value in raw_value.split(",")]
     if not values:
         message = f"{option_name} must contain at least one value."
         raise ValueError(message)
+    for value_index, value in enumerate(values, start=1):
+        if not value:
+            message = f"{option_name} contains an empty entry at position {value_index}."
+            raise ValueError(message)
     return values
 
 
@@ -35,10 +39,7 @@ def parse_optional_integer_list(raw_values: str) -> list[int | None]:
 
     """
     parsed_values: list[int | None] = []
-    for raw_value in raw_values.split(","):
-        stripped_value = raw_value.strip()
-        if not stripped_value:
-            continue
+    for stripped_value in split_comma_separated_values(raw_values, "optional integer list"):
         if stripped_value.lower() in {"none", "default"}:
             parsed_values.append(None)
             continue
@@ -84,10 +85,8 @@ def parse_boolean_mode_list(raw_values: str) -> list[bool]:
 
     """
     parsed_values: list[bool] = []
-    for raw_value in raw_values.split(","):
-        stripped_value = raw_value.strip().lower()
-        if not stripped_value:
-            continue
+    for raw_value in split_comma_separated_values(raw_values, "boolean mode list"):
+        stripped_value = raw_value.lower()
         if stripped_value in {"true", "trusted", "on", "1", "yes"}:
             parsed_values.append(True)
             continue

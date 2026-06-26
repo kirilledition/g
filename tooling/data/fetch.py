@@ -6,23 +6,19 @@ from __future__ import annotations
 import shutil
 import subprocess
 import typing
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
 import hydra
 
+from tooling.common import downloads as tooling_downloads
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
+from tooling.data import registry as data_registry
 
 if typing.TYPE_CHECKING:
     import omegaconf
 
-DOWNLOAD_URL_BY_SUFFIX = {
-    "pgen.zst": "https://www.dropbox.com/s/w9wwua4pe9em280/chr22_phase3.pgen.zst?dl=1",
-    "pvar.zst": "https://www.dropbox.com/s/3acsdd1sqlj2pa8/chr22_phase3_noannot.pvar.zst?dl=1",
-    "psam": "https://www.dropbox.com/s/6ppo144ikdzery5/phase3_corrected.psam?dl=1",
-}
 TOY_VARIANT_COUNT = 5_000
 DEFAULT_DATA_DIRECTORY = Path("data")
 
@@ -50,21 +46,27 @@ def ensure_command_available(command_name: str) -> None:
         raise RuntimeError(f"Required command '{command_name}' is not available on PATH.")
 
 
-def download_file_if_missing(url: str, destination_path: Path) -> None:
-    """Download a file only when it does not already exist.
+def download_registry_entry(
+    *,
+    registry_entry: tooling_downloads.DownloadRegistryEntry,
+    destination_path: Path,
+) -> None:
+    """Retrieve one registered source file through Pooch.
 
     Args:
-        url: Remote file URL.
+        registry_entry: Named source file registry entry.
         destination_path: Local path where the file will be written.
 
     """
-    if destination_path.exists():
-        print(f"Reusing {destination_path}")
-        return
-
-    print(f"Downloading {destination_path.name}...")
-    with urllib.request.urlopen(url) as response:
-        destination_path.write_bytes(response.read())
+    if destination_path.name != registry_entry.file_name:
+        message = (
+            f"Registry entry {registry_entry.name} expects {registry_entry.file_name}, got {destination_path.name}."
+        )
+        raise ValueError(message)
+    tooling_downloads.retrieve_registry_entry(
+        registry_entry=registry_entry,
+        destination_directory=destination_path.parent,
+    )
 
 
 def run_command(command_arguments: list[str]) -> None:
@@ -136,9 +138,9 @@ def download_source_files(dataset_paths: DatasetPaths) -> None:
 
     """
     dataset_paths.data_directory.mkdir(exist_ok=True)
-    for suffix, download_url in DOWNLOAD_URL_BY_SUFFIX.items():
+    for suffix, registry_entry in data_registry.CHROMOSOME_22_SOURCE_REGISTRY.items():
         destination_path = dataset_paths.full_dataset_prefix.with_suffix(f".{suffix}")
-        download_file_if_missing(download_url, destination_path)
+        download_registry_entry(registry_entry=registry_entry, destination_path=destination_path)
 
 
 def create_plink_binary_files(dataset_paths: DatasetPaths) -> None:

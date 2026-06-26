@@ -75,6 +75,28 @@ gwas_engine_configure_cpu_parallelism() {
   fi
 }
 
+gwas_engine_configure_rust_build_environment() {
+  gwas_engine_configure_cpu_parallelism
+  if [ -z "${RUSTC_WRAPPER:-}" ] && command -v sccache >/dev/null 2>&1; then
+    export RUSTC_WRAPPER="sccache"
+  fi
+  case "${RUSTC_WRAPPER:-}" in
+    sccache | */sccache)
+      export SCCACHE_DIR="${SCCACHE_DIR:-/tmp/g-sccache}"
+      mkdir -p "${SCCACHE_DIR}"
+      ;;
+  esac
+}
+
+gwas_engine_log_rust_build_environment() {
+  echo "GWAS_ENGINE_ALLOCATED_CPU_COUNT=${GWAS_ENGINE_ALLOCATED_CPU_COUNT:-unset}"
+  echo "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-unset}"
+  echo "RUSTC_WRAPPER=${RUSTC_WRAPPER:-unset}"
+  if [ -n "${SCCACHE_DIR:-}" ]; then
+    echo "SCCACHE_DIR=${SCCACHE_DIR}"
+  fi
+}
+
 gwas_engine_configure_parallel_pytest_thread_limits() {
   export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
   export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"

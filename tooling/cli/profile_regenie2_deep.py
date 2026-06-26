@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import dataclasses
-import enum
 import hashlib
 import importlib.util
 import json
@@ -24,27 +23,49 @@ from pathlib import Path
 import hydra
 
 import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
-import tooling.configuration as tooling_configuration
 from tooling.benchmark import benchmark as baseline_benchmark
 from tooling.benchmark import comparison as comparison_benchmark
-from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import artifact_format as tooling_artifact_format
+from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_compat as tooling_hydra_compat
-from tooling.common import jax_cache as tooling_jax_cache
 from tooling.common import logging as tooling_logging
 from tooling.common import paths as tooling_paths
+from tooling.common import reports as tooling_reports
+from tooling.profile_deep import budget as profile_deep_budget
+from tooling.profile_deep import config as profile_deep_config
+from tooling.profile_deep import jax_cache as profile_deep_jax_cache
+from tooling.profile_deep import models as profile_deep_models
 
 if typing.TYPE_CHECKING:
     import omegaconf
 
 logger = logging.getLogger(__name__)
 REPOSITORY_ROOT = tooling_paths.find_repository_root(Path(__file__))
-DEFAULT_OUTPUT_PARENT = Path("data/profiles")
+ARTIFACT_MANIFEST_SCHEMA_VERSION = 2
+ARTIFACT_MANIFEST_CONTRACT = tooling_reports.VersionedReportContract(
+    schema_version=ARTIFACT_MANIFEST_SCHEMA_VERSION,
+    required_fields=(
+        "generated_at",
+        "output_directory",
+        "profiler_tools",
+        "input_files",
+        "regenie_baseline_scope",
+        "regenie_baseline_commands",
+        "artifact_paths",
+        "profiler_runs",
+        "skipped_profiles",
+    ),
+    optional_fields=(),
+    schema_field_name="schema_version",
+    reject_unknown_fields=True,
+)
+DEFAULT_OUTPUT_PARENT = profile_deep_config.DEFAULT_OUTPUT_PARENT
 DEFAULT_VARIANT_COUNT = 418_943
 JAX_XLA_AUTOTUNE_CACHE = "xla_gpu_per_fusion_autotune_cache_dir"
 ENABLE_XLA_AUTOTUNE_CACHE = os.environ.get("G_PROFILE_ENABLE_XLA_AUTOTUNE_CACHE") == "1"
-GPU_JAX_CACHE_PARENT_DEFAULT = "/tmp/g-jax-profile-cache"
+GPU_JAX_CACHE_PARENT_DEFAULT = profile_deep_jax_cache.GPU_JAX_CACHE_PARENT_DEFAULT
 JAX_DEBUG_LOG_MODULES = "jax._src.compiler,jax._src.lru_cache"
-JAX_LOG_SAMPLE_LINE_LIMIT = 20
+JAX_LOG_SAMPLE_LINE_LIMIT = profile_deep_jax_cache.JAX_LOG_SAMPLE_LINE_LIMIT
 BINARY_DIAGNOSTIC_UNAVAILABLE_EXACT_TIMING_DISABLED = "exact_stage_timings_disabled"
 BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_MISSING = "stage_timing_file_missing"
 BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_INVALID = "stage_timing_file_invalid"
@@ -71,654 +92,69 @@ BINARY_DIAGNOSTIC_COUNT_FIELDS = (
 BINARY_CHUNK_OUTLIER_LIMIT = 5
 
 
-class ProfileStageTimingMode(enum.StrEnum):
-    """Stage timing collection mode for deep profile runs."""
-
-    EXACT = "exact"
-    OFF = "off"
-
-
-class ProfileWorkloadKey(enum.StrEnum):
-    """Trait/device workload keys for splittable deep profile campaigns."""
-
-    QUANTITATIVE_CPU = "quantitative_cpu"
-    QUANTITATIVE_GPU = "quantitative_gpu"
-    BINARY_CPU = "binary_cpu"
-    BINARY_GPU = "binary_gpu"
-
-    @property
-    def trait_type(self) -> str:
-        """Return the workload trait type."""
-        return self.value.rsplit("_", maxsplit=1)[0]
-
-    @property
-    def device(self) -> str:
-        """Return the workload device."""
-        return self.value.rsplit("_", maxsplit=1)[1]
-
-
-class ProfileWorkloadSelector(enum.StrEnum):
-    """Accepted workload selection tokens."""
-
-    ALL = "all"
-    QUANTITATIVE = "quantitative"
-    BINARY = "binary"
-    CPU = "cpu"
-    GPU = "gpu"
-    QUANTITATIVE_CPU = "quantitative_cpu"
-    QUANTITATIVE_GPU = "quantitative_gpu"
-    BINARY_CPU = "binary_cpu"
-    BINARY_GPU = "binary_gpu"
-
-
-PROFILE_WORKLOAD_KEYS: tuple[ProfileWorkloadKey, ...] = (
-    ProfileWorkloadKey.QUANTITATIVE_CPU,
-    ProfileWorkloadKey.QUANTITATIVE_GPU,
-    ProfileWorkloadKey.BINARY_CPU,
-    ProfileWorkloadKey.BINARY_GPU,
-)
-
-
-class CampaignBudgetSectionName(enum.StrEnum):
-    """Budget accounting sections in execution order."""
-
-    BGEN_PRE_SWEEP = "bgen_pre_sweep"
-    TUNING = "tuning"
-    FINALISTS = "finalists"
-    HEADLINE_TRIALS = "headline_trials"
-    DEEP_PROFILERS = "deep_profilers"
-    LOGGING_PERTURBATION = "logging_perturbation"
-    RUST_CRITERION = "rust_criterion"
-
-
-CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES: dict[CampaignBudgetSectionName, str] = {
-    CampaignBudgetSectionName.BGEN_PRE_SWEEP: "BGEN pre-sweep",
-    CampaignBudgetSectionName.TUNING: "Tuning",
-    CampaignBudgetSectionName.FINALISTS: "Finalists",
-    CampaignBudgetSectionName.HEADLINE_TRIALS: "Headline trials",
-    CampaignBudgetSectionName.DEEP_PROFILERS: "Deep profilers",
-    CampaignBudgetSectionName.LOGGING_PERTURBATION: "Logging perturbation",
-    CampaignBudgetSectionName.RUST_CRITERION: "Rust Criterion",
-}
-
-
-@dataclasses.dataclass(frozen=True)
-class ProfileArguments:
-    """Resolved deep profile campaign parameters.
-
-    Attributes:
-        chromosome_label: Chromosome label used in reports and logs.
-        data_directory: Directory containing benchmark inputs.
-        baseline_directory: Directory containing baseline step 1 prediction lists.
-        bed_prefix: PLINK BED prefix used by original REGENIE step 1 setup.
-        bgen_path: BGEN path used by step 2 runs.
-        sample_path: Sample path used by step 2 runs.
-        continuous_phenotype_path: Quantitative phenotype table path.
-        binary_phenotype_path: Binary phenotype table path.
-        covariate_path: Covariate table path.
-        regenie_prediction_list_path: Binary step 1 prediction list.
-        regenie_qt_prediction_list_path: Quantitative step 1 prediction list.
-        output_dir: Optional explicit output directory.
-        output_parent: Parent directory for timestamped output directories.
-        variant_limit: Optional variant cap for smoke runs.
-        dry_run: Whether to write a profile plan without running workloads.
-        include_regenie_baseline: Whether headline trials include original REGENIE.
-        regenie_executable: Optional original or patched REGENIE executable for baseline runs.
-        regenie_baseline_trait_types: Comma-separated REGENIE baseline trait types.
-        regenie_baseline_variant_limit: Optional baseline variant cap. Defaults to variant_limit when unset.
-        regenie_baseline_warmups: Warmup count for original REGENIE baseline trials.
-        regenie_baseline_trials: Measured count for original REGENIE baseline trials.
-        workload_keys: Comma-separated trait/device workloads to include.
-        max_subprocess_runs: Maximum planned subprocess runs allowed without override.
-        max_major_profiler_runs: Maximum major profiler runs allowed without override.
-        allow_over_budget: Whether to allow execution over the configured budget.
-        smoke: Whether to use the reduced smoke campaign.
-        skip_deep_profiles: Whether to skip sampling and trace profiles.
-        enable_jax_trace: Whether deep profiles capture JAX profiler traces.
-        enable_jax_memory_profile: Whether deep profiles capture JAX memory profiles.
-        enable_python_cprofile: Whether deep profiles capture cProfile output.
-        enable_py_spy: Whether deep profiles capture py-spy speedscope output when available.
-        enable_scalene: Whether deep profiles capture Scalene CPU/memory output when available.
-        enable_memray: Whether deep profiles capture Memray allocation output when available.
-        enable_linux_perf: Whether deep profiles capture Linux perf native stack data when available.
-        enable_nsight_systems: Whether deep profiles capture Nsight Systems CUDA timelines when available.
-        enable_nsight_compute: Whether deep profiles capture Nsight Compute kernel reports when available.
-        py_spy_timeout_seconds: Timeout seconds for optional py-spy profiler execution.
-        scalene_timeout_seconds: Timeout seconds for optional Scalene profiler execution.
-        memray_timeout_seconds: Timeout seconds for optional Memray profiler execution.
-        linux_perf_timeout_seconds: Timeout seconds for optional Linux perf execution.
-        nsight_systems_timeout_seconds: Timeout seconds for optional Nsight Systems execution.
-        nsight_compute_timeout_seconds: Timeout seconds for optional Nsight Compute execution.
-        enable_rust_criterion: Whether deep profiles run Rust Criterion benches.
-        enable_logging_perturbation: Whether the profile runs telemetry/logging perturbation trials.
-        rust_benchmarks: Comma-separated Rust Criterion benchmark names.
-        chunk_sizes: Comma-separated step 2 chunk-size values.
-        staging_depths: Comma-separated staging-depth values.
-        native_callback_batch_sizes: Comma-separated native callback batch sizes.
-        result_in_flight_limits: Comma-separated result in-flight limits, or default.
-        dosage_buffer_limits: Comma-separated dosage buffer limits, or default.
-        output_writer_thread_counts: Comma-separated writer thread-count values.
-        writer_queue_depth_multipliers: Comma-separated queue-depth multipliers.
-        firth_batch_sizes: Comma-separated binary Firth batch sizes.
-        bgen_decode_tile_variant_counts: Comma-separated BGEN decode tile sizes.
-        rayon_thread_counts: Comma-separated Rayon thread-count values.
-        bgen_benchmark_chunk_size: Chunk size for BGEN pre-sweep cases.
-        top_bgen_candidates: Number of BGEN candidates kept.
-        top_finalists: Number of finalists kept.
-        tuning_warmups: Warmup count for tuning trials.
-        tuning_trials: Measured count for tuning trials.
-        finalist_warmups: Warmup count for finalist trials.
-        finalist_trials: Measured count for finalist trials.
-        headline_warmups: Warmup count for headline trials.
-        headline_trials: Measured count for headline trials.
-        stage_timing_mode: Whether exact stage timing JSON artifacts are emitted.
-
-    """
-
-    chromosome_label: str
-    data_directory: Path
-    baseline_directory: Path
-    bed_prefix: Path
-    bgen_path: Path
-    sample_path: Path
-    continuous_phenotype_path: Path
-    binary_phenotype_path: Path
-    covariate_path: Path
-    regenie_prediction_list_path: Path
-    regenie_qt_prediction_list_path: Path
-    output_dir: Path | None
-    output_parent: Path
-    variant_limit: int | None
-    dry_run: bool
-    include_regenie_baseline: bool
-    regenie_executable: str | None
-    regenie_baseline_trait_types: str
-    regenie_baseline_variant_limit: int | None
-    regenie_baseline_warmups: int
-    regenie_baseline_trials: int
-    workload_keys: str
-    max_subprocess_runs: int | None
-    max_major_profiler_runs: int | None
-    allow_over_budget: bool
-    smoke: bool
-    skip_deep_profiles: bool
-    enable_jax_trace: bool
-    enable_jax_memory_profile: bool
-    enable_python_cprofile: bool
-    enable_py_spy: bool
-    enable_scalene: bool
-    enable_memray: bool
-    enable_linux_perf: bool
-    enable_nsight_systems: bool
-    enable_nsight_compute: bool
-    py_spy_timeout_seconds: int
-    scalene_timeout_seconds: int
-    memray_timeout_seconds: int
-    linux_perf_timeout_seconds: int
-    nsight_systems_timeout_seconds: int
-    nsight_compute_timeout_seconds: int
-    enable_rust_criterion: bool
-    enable_logging_perturbation: bool
-    rust_benchmarks: str
-    chunk_sizes: str
-    staging_depths: str
-    native_callback_batch_sizes: str
-    result_in_flight_limits: str
-    dosage_buffer_limits: str
-    output_writer_thread_counts: str
-    writer_queue_depth_multipliers: str
-    firth_batch_sizes: str
-    bgen_decode_tile_variant_counts: str
-    rayon_thread_counts: str
-    bgen_benchmark_chunk_size: int
-    top_bgen_candidates: int
-    top_finalists: int
-    tuning_warmups: int
-    tuning_trials: int
-    finalist_warmups: int
-    finalist_trials: int
-    headline_warmups: int
-    headline_trials: int
-    stage_timing_mode: ProfileStageTimingMode
-
-
-@dataclasses.dataclass(frozen=True)
-class ProfilerToolStatus:
-    """Availability status for one optional profiling tool.
-
-    Attributes:
-        tool_name: Stable profiler tool name.
-        enabled: Whether the current profile config requests the tool.
-        available: Whether the local executable or built-in profiler is available.
-        executable_path: Resolved executable path when one is required.
-        notes: Human-readable status details.
-
-    """
-
-    tool_name: str
-    enabled: bool
-    available: bool
-    executable_path: str | None
-    notes: str
-
-
-@dataclasses.dataclass(frozen=True)
-class LoggingPerturbationCase:
-    """One telemetry/logging perturbation case.
-
-    Attributes:
-        name: Stable case name used in artifact paths.
-        diagnostic_options: Extra g diagnostics options for the child run.
-
-    """
-
-    name: str
-    diagnostic_options: dict[str, object]
-
-
-@dataclasses.dataclass(frozen=True)
-class Step2Candidate:
-    """One g REGENIE step 2 tuning candidate."""
-
-    trait_type: str
-    device: str
-    chunk_size: int
-    staging_depth: int
-    native_callback_batch_size: int
-    result_in_flight_limit: int | None
-    dosage_buffer_limit: int | None
-    output_writer_thread_count: int
-    output_writer_queue_depth: int
-    bgen_decode_tile_variant_count: int | None
-    rayon_thread_count: int | None
-    firth_batch_size: int | None
-
-
-@dataclasses.dataclass(frozen=True)
-class BgenCandidateSummary:
-    """Measured BGEN reader candidate summary."""
-
-    decode_tile_variant_count: int | None
-    rayon_thread_count: int | None
-    median_seconds: float
-    mean_seconds: float
-    durations_seconds: list[float]
-
-
-@dataclasses.dataclass(frozen=True)
-class JaxCacheSnapshot:
-    """Filesystem snapshot for a JAX persistent-cache directory.
-
-    Attributes:
-        path: Cache directory path.
-        exists: Whether the directory existed when sampled.
-        file_count: Number of regular files below the directory.
-        total_size_bytes: Sum of regular-file sizes below the directory.
-        error: Optional error encountered while walking the directory.
-
-    """
-
-    path: str
-    exists: bool
-    file_count: int
-    total_size_bytes: int
-    error: str | None = None
-
-
-@dataclasses.dataclass(frozen=True)
-class JaxCompileLogSummary:
-    """Parsed JAX compile and persistent-cache log counters.
-
-    Attributes:
-        compilation_event_count: Lines that look like JAX tracing, lowering, or compilation events.
-        persistent_cache_event_count: Lines mentioning the persistent compilation cache.
-        persistent_cache_hit_count: Lines that look like persistent-cache hits.
-        persistent_cache_miss_count: Lines that look like persistent-cache misses.
-        tracing_cache_miss_count: Lines that look like JAX tracing-cache misses.
-        cache_miss_explanation_count: Miss lines that include an explanatory reason.
-        sample_log_lines: Bounded sample of relevant log lines for manual inspection.
-
-    """
-
-    compilation_event_count: int
-    persistent_cache_event_count: int
-    persistent_cache_hit_count: int
-    persistent_cache_miss_count: int
-    tracing_cache_miss_count: int
-    cache_miss_explanation_count: int
-    sample_log_lines: list[str]
-
-
-@dataclasses.dataclass(frozen=True)
-class JaxCacheDiagnostics:
-    """JAX cache and compile diagnostics for one g subprocess.
-
-    Attributes:
-        cache_directory: Cache directory observed by the profiling harness.
-        child_reported_cache_directory: Cache directory echoed by the child process.
-        persistent_cache_used: Whether the run requested the JAX persistent compilation cache.
-        before: Cache snapshot before the subprocess.
-        after: Cache snapshot after the subprocess.
-        file_count_delta: Cache file-count delta from before to after.
-        size_bytes_delta: Cache byte-size delta from before to after.
-        compile_log_summary: Parsed compile/cache counters from stderr.
-
-    """
-
-    cache_directory: str | None
-    child_reported_cache_directory: str | None
-    persistent_cache_used: bool
-    before: JaxCacheSnapshot | None
-    after: JaxCacheSnapshot | None
-    file_count_delta: int | None
-    size_bytes_delta: int | None
-    compile_log_summary: JaxCompileLogSummary
-
-
-@dataclasses.dataclass(frozen=True)
-class JaxColdWarmDiagnostics:
-    """Cold-versus-warm JAX diagnostics for one aggregate result.
-
-    Attributes:
-        cache_directory: Cache directory shared by the subprocess trials.
-        persistent_cache_used: Whether any trial requested the persistent compilation cache.
-        cold_trial_name: First successful g subprocess used as the cold reference.
-        cold_wall_time_seconds: Wall time for the cold reference.
-        warm_trial_count: Number of later successful subprocesses treated as warm trials.
-        warm_median_wall_time_seconds: Median wall time across warm trials.
-        warm_mean_wall_time_seconds: Mean wall time across warm trials.
-        cold_to_warm_speedup_ratio: Cold wall time divided by warm median wall time.
-        cold_cache_file_count_delta: Cache file-count delta for the cold trial.
-        warm_cache_file_count_delta: Sum of cache file-count deltas across warm trials.
-        cold_cache_size_bytes_delta: Cache byte-size delta for the cold trial.
-        warm_cache_size_bytes_delta: Sum of cache byte-size deltas across warm trials.
-        cold_compilation_event_count: Compile/tracing log-event count for the cold trial.
-        warm_compilation_event_count: Sum of compile/tracing log-event counts across warm trials.
-        cold_cache_hit_count: Persistent-cache hit count for the cold trial.
-        warm_cache_hit_count: Sum of persistent-cache hit counts across warm trials.
-        cold_cache_miss_count: Persistent-cache miss count for the cold trial.
-        warm_cache_miss_count: Sum of persistent-cache miss counts across warm trials.
-        cold_tracing_cache_miss_count: Tracing-cache miss count for the cold trial.
-        warm_tracing_cache_miss_count: Sum of tracing-cache miss counts across warm trials.
-
-    """
-
-    cache_directory: str | None
-    persistent_cache_used: bool
-    cold_trial_name: str
-    cold_wall_time_seconds: float | None
-    warm_trial_count: int
-    warm_median_wall_time_seconds: float | None
-    warm_mean_wall_time_seconds: float | None
-    cold_to_warm_speedup_ratio: float | None
-    cold_cache_file_count_delta: int | None
-    warm_cache_file_count_delta: int | None
-    cold_cache_size_bytes_delta: int | None
-    warm_cache_size_bytes_delta: int | None
-    cold_compilation_event_count: int
-    warm_compilation_event_count: int
-    cold_cache_hit_count: int
-    warm_cache_hit_count: int
-    cold_cache_miss_count: int
-    warm_cache_miss_count: int
-    cold_tracing_cache_miss_count: int
-    warm_tracing_cache_miss_count: int
-
-
-@dataclasses.dataclass(frozen=True)
-class CampaignBudgetSection:
-    """Budget estimate for one campaign section.
-
-    Attributes:
-        name: Stable machine-readable section name.
-        display_name: Human-readable section name.
-        candidate_count: Planned cases or configurations in the section.
-        subprocess_run_count: Estimated subprocess executions in the section.
-        major_profiler_run_count: Estimated heavy profiler executions in the section.
-        notes: Explanation for the estimate.
-
-    """
-
-    name: str
-    display_name: str
-    candidate_count: int
-    subprocess_run_count: int
-    major_profiler_run_count: int
-    notes: str
-
-
-@dataclasses.dataclass(frozen=True)
-class CampaignBudget:
-    """Budget estimate for a deep profile campaign.
-
-    Attributes:
-        workload_keys: Trait/device workloads selected for this campaign.
-        max_subprocess_runs: Configured subprocess budget.
-        max_major_profiler_runs: Configured major-profiler budget.
-        total_candidate_count: Total planned cases or configurations.
-        total_subprocess_run_count: Total estimated subprocess executions.
-        total_major_profiler_run_count: Total estimated heavy profiler executions.
-        over_subprocess_budget: Whether the subprocess estimate exceeds the configured budget.
-        over_major_profiler_budget: Whether the profiler estimate exceeds the configured budget.
-        sections: Section-level budget estimates.
-        guidance: Human-readable guidance for reducing or overriding the campaign.
-
-    """
-
-    workload_keys: tuple[str, ...]
-    max_subprocess_runs: int | None
-    max_major_profiler_runs: int | None
-    total_candidate_count: int
-    total_subprocess_run_count: int
-    total_major_profiler_run_count: int
-    over_subprocess_budget: bool
-    over_major_profiler_budget: bool
-    sections: tuple[CampaignBudgetSection, ...]
-    guidance: tuple[str, ...]
-
-
-@dataclasses.dataclass(frozen=True)
-class TrialResult:
-    """One measured process execution."""
-
-    name: str
-    implementation: str
-    trait_type: str
-    device: str
-    status: str
-    wall_time_seconds: float | None
-    output_row_count: int | None
-    stdout_log_path: str
-    stderr_log_path: str
-    command_arguments: list[str]
-    environment_overrides: dict[str, str]
-    output_path: str | None = None
-    stage_timing_path: str | None = None
-    regenie_profile_path: str | None = None
-    profiler_artifact_path: str | None = None
-    application_output_prefix: str | None = None
-    application_output_run_directory: str | None = None
-    device_diagnostics: dict[str, typing.Any] | None = None
-    jax_cache_diagnostics: JaxCacheDiagnostics | None = None
-    notes: str | None = None
-
-
-@dataclasses.dataclass(frozen=True)
-class DeepProfilerRunPaths:
-    """Paths dedicated to one deep profiler's application child process.
-
-    Attributes:
-        application_output_prefix: Prefix passed to the profiled g child as `out`.
-        application_output_run_directory: Expected chunked g output run directory.
-        stage_timing_path: Stage timing JSON path for the profiled child run when exact timing is enabled.
-        profile_script_path: Python script path executed by the profiler wrapper.
-
-    """
-
-    application_output_prefix: Path
-    application_output_run_directory: Path
-    stage_timing_path: Path | None
-    profile_script_path: Path
-
-
-@dataclasses.dataclass(frozen=True)
-class DeepProfilerChildCommand:
-    """Prepared child command and metadata for one deep profiler wrapper.
-
-    Attributes:
-        command_arguments: Python command used as the profiler wrapper target.
-        environment_overrides: Environment overrides for the profiler wrapper.
-        run_paths: Paths dedicated to this profiler's application child process.
-
-    """
-
-    command_arguments: list[str]
-    environment_overrides: dict[str, str]
-    run_paths: DeepProfilerRunPaths
-
-
-@dataclasses.dataclass(frozen=True)
-class AggregateResult:
-    """Aggregate runtime statistics for one benchmark cell."""
-
-    name: str
-    implementation: str
-    trait_type: str
-    device: str
-    status: str
-    trial_count: int
-    warmup_count: int
-    median_wall_time_seconds: float | None
-    mean_wall_time_seconds: float | None
-    min_wall_time_seconds: float | None
-    max_wall_time_seconds: float | None
-    standard_deviation_seconds: float | None
-    rows_per_second: float | None
-    trials: list[TrialResult]
-    warmup_trials: list[TrialResult] = dataclasses.field(default_factory=list)
-    jax_cold_warm_summary: JaxColdWarmDiagnostics | None = None
-
-
-@dataclasses.dataclass(frozen=True)
-class CandidateTuningResults:
-    """Candidate tuning output retained for final reporting.
-
-    Attributes:
-        winners: Fastest finalist aggregate keyed by trait and device.
-        finalist_results_by_key: All measured finalist aggregates keyed by trait and device.
-
-    """
-
-    winners: dict[str, AggregateResult]
-    finalist_results_by_key: dict[str, list[AggregateResult]]
-
-
-@dataclasses.dataclass(frozen=True)
-class BinaryDiagnosticTrialPayload:
-    """Loaded stage timing diagnostics for one binary trial.
-
-    Attributes:
-        trial_name: Trial name from the aggregate result.
-        stage_timing_path: Stage timing JSON path when one was requested.
-        unavailable_reason: Reason diagnostics could not be read.
-        payload: Parsed stage timing payload when available.
-
-    """
-
-    trial_name: str
-    stage_timing_path: str | None
-    unavailable_reason: str | None
-    payload: dict[str, typing.Any] | None
-
-
-@dataclasses.dataclass(frozen=True)
-class ProfilePlan:
-    """Dry-run profile campaign plan.
-
-    Attributes:
-        chromosome_label: Chromosome label selected by Hydra.
-        output_directory: Planned output directory.
-        required_inputs: Input paths and step 1 prediction paths used by real runs.
-        workload_keys: Trait/device workloads selected for this campaign.
-        campaign_budget: Estimated campaign budget and section counts.
-        profiler_modes: Profiler modes requested by config.
-        profiler_tools: Profiler tool availability records.
-        logging_perturbation_cases: Planned telemetry/logging perturbation cases.
-        regenie_baseline_scope: Planned original REGENIE baseline scope.
-        regenie_baseline_commands: Planned original REGENIE baseline commands.
-        rust_benchmark_commands: Rust Criterion benchmark commands.
-        notes: Human-readable plan notes.
-
-    """
-
-    chromosome_label: str
-    output_directory: str
-    required_inputs: list[str]
-    workload_keys: list[str]
-    campaign_budget: CampaignBudget
-    profiler_modes: dict[str, bool]
-    profiler_tools: dict[str, dict[str, object]]
-    logging_perturbation_cases: list[dict[str, object]]
-    regenie_baseline_scope: dict[str, object] | None
-    regenie_baseline_commands: list[dict[str, object]]
-    rust_benchmark_commands: list[list[str]]
-    notes: list[str]
-
-
-class RegenieBaselineScopeStatus(enum.StrEnum):
-    """Status for original REGENIE baseline workload scoping."""
-
-    FULL = "full"
-    BOUNDED = "bounded"
-    UNSUPPORTED = "unsupported"
-
-
-@dataclasses.dataclass(frozen=True)
-class RegenieBaselineScope:
-    """Original REGENIE baseline workload scope.
-
-    Attributes:
-        status: Whether the baseline is full, bounded, or unsupported.
-        variant_limit: Requested bounded variant count.
-        extract_path: Extract-list path used for bounded REGENIE trials.
-        metadata_path: Variant metadata file used to build the extract list.
-        selected_variant_count: Number of variants selected for a bounded run.
-        variant_identifiers: Selected variant identifiers, omitted from serialized reports.
-        notes: Human-readable scoping notes.
-
-    """
-
-    status: RegenieBaselineScopeStatus
-    variant_limit: int | None
-    extract_path: Path | None
-    metadata_path: Path | None
-    selected_variant_count: int | None
-    variant_identifiers: tuple[str, ...]
-    notes: str
-
-
-@dataclasses.dataclass(frozen=True)
-class RuntimeComparisonNotes:
-    """Non-success runtime comparison details.
-
-    Attributes:
-        unsupported: Comparisons skipped because no compatible baseline was available.
-        failed: Comparisons where at least one paired run failed.
-
-    """
-
-    unsupported: list[str]
-    failed: list[str]
-
-
-def resolve_repo_path(value: typing.Any) -> Path:
-    """Resolve a path relative to the repository root."""
-    return tooling_paths.resolve_repo_relative_path(Path(str(value)), REPOSITORY_ROOT)
-
-
-def resolve_data_path(data_directory: Path, value: typing.Any) -> Path:
-    """Resolve one input path relative to the data directory."""
-    return tooling_paths.resolve_data_path(data_directory, Path(str(value)))
+ProfileStageTimingMode = profile_deep_models.ProfileStageTimingMode
+ProfileWorkloadKey = profile_deep_models.ProfileWorkloadKey
+ProfileWorkloadSelector = profile_deep_models.ProfileWorkloadSelector
+PROFILE_WORKLOAD_KEYS = profile_deep_models.PROFILE_WORKLOAD_KEYS
+CampaignBudgetSectionName = profile_deep_models.CampaignBudgetSectionName
+CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES = profile_deep_models.CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES
+ProfileArguments = profile_deep_models.ProfileArguments
+ProfilerToolStatus = profile_deep_models.ProfilerToolStatus
+LoggingPerturbationCase = profile_deep_models.LoggingPerturbationCase
+Step2Candidate = profile_deep_models.Step2Candidate
+BgenCandidateSummary = profile_deep_models.BgenCandidateSummary
+JaxCacheSnapshot = profile_deep_models.JaxCacheSnapshot
+JaxCompileLogSummary = profile_deep_models.JaxCompileLogSummary
+JaxCacheDiagnostics = profile_deep_models.JaxCacheDiagnostics
+JaxColdWarmDiagnostics = profile_deep_models.JaxColdWarmDiagnostics
+CampaignBudgetSection = profile_deep_models.CampaignBudgetSection
+CampaignBudget = profile_deep_models.CampaignBudget
+TrialResult = profile_deep_models.TrialResult
+DeepProfilerRunPaths = profile_deep_models.DeepProfilerRunPaths
+DeepProfilerChildCommand = profile_deep_models.DeepProfilerChildCommand
+AggregateResult = profile_deep_models.AggregateResult
+CandidateTuningResults = profile_deep_models.CandidateTuningResults
+BinaryDiagnosticTrialPayload = profile_deep_models.BinaryDiagnosticTrialPayload
+ProfilePlan = profile_deep_models.ProfilePlan
+RegenieBaselineScopeStatus = profile_deep_models.RegenieBaselineScopeStatus
+RegenieBaselineScope = profile_deep_models.RegenieBaselineScope
+RuntimeComparisonNotes = profile_deep_models.RuntimeComparisonNotes
+parse_int_list = profile_deep_budget.parse_int_list
+parse_optional_int_list = profile_deep_budget.parse_optional_int_list
+parse_string_list = profile_deep_budget.parse_string_list
+parse_regenie_baseline_trait_types = profile_deep_budget.parse_regenie_baseline_trait_types
+parse_profile_workload_keys = profile_deep_budget.parse_profile_workload_keys
+selected_regenie_baseline_trait_types = profile_deep_budget.selected_regenie_baseline_trait_types
+build_queue_depth_values = profile_deep_budget.build_queue_depth_values
+build_logging_perturbation_cases = profile_deep_budget.build_logging_perturbation_cases
+build_campaign_budget_section = profile_deep_budget.build_campaign_budget_section
+count_queue_depth_grid = profile_deep_budget.count_queue_depth_grid
+count_step2_tuning_candidates = profile_deep_budget.count_step2_tuning_candidates
+count_enabled_deep_profiler_modes = profile_deep_budget.count_enabled_deep_profiler_modes
+campaign_budget_is_over_limit = profile_deep_budget.campaign_budget_is_over_limit
+build_campaign_budget = profile_deep_budget.build_campaign_budget
+log_campaign_budget = profile_deep_budget.log_campaign_budget
+enforce_campaign_budget = profile_deep_budget.enforce_campaign_budget
+resolve_repo_path = profile_deep_config.resolve_repo_path
+resolve_data_path = profile_deep_config.resolve_data_path
+should_emit_stage_timings = profile_deep_config.should_emit_stage_timings
+build_output_directory = profile_deep_config.build_output_directory
+configured_regenie_executable = profile_deep_config.configured_regenie_executable
+profile_configuration_payload = profile_deep_config.profile_configuration_payload
+apply_smoke_overrides = profile_deep_config.apply_smoke_overrides
+build_arguments_from_config = profile_deep_config.build_arguments_from_config
+build_arguments_from_overrides = profile_deep_config.build_arguments_from_overrides
+resolve_profile_jax_cache_directory = profile_deep_jax_cache.resolve_profile_jax_cache_directory
+collect_jax_cache_snapshot = profile_deep_jax_cache.collect_jax_cache_snapshot
+parse_jax_compile_log = profile_deep_jax_cache.parse_jax_compile_log
+read_jax_compile_log_summary = profile_deep_jax_cache.read_jax_compile_log_summary
+snapshot_delta = profile_deep_jax_cache.snapshot_delta
+build_jax_cache_diagnostics = profile_deep_jax_cache.build_jax_cache_diagnostics
+successful_trials_with_jax_diagnostics = profile_deep_jax_cache.successful_trials_with_jax_diagnostics
+sum_optional_integer_values = profile_deep_jax_cache.sum_optional_integer_values
+compile_log_summary_for_trial = profile_deep_jax_cache.compile_log_summary_for_trial
+build_jax_cold_warm_diagnostics = profile_deep_jax_cache.build_jax_cold_warm_diagnostics
+collect_jax_cache_diagnostics = profile_deep_jax_cache.collect_jax_cache_diagnostics
 
 
 def build_baseline_paths(arguments: ProfileArguments) -> baseline_benchmark.BaselinePaths:
@@ -738,125 +174,6 @@ def build_baseline_paths(arguments: ProfileArguments) -> baseline_benchmark.Base
         regenie_prediction_list_path=arguments.regenie_prediction_list_path,
         regenie_qt_prediction_list_path=arguments.regenie_qt_prediction_list_path,
     )
-
-
-def parse_int_list(raw_values: str) -> tuple[int, ...]:
-    """Parse a comma-separated list of integers."""
-    parsed_values = tuple(int(value.strip()) for value in raw_values.split(",") if value.strip())
-    if not parsed_values:
-        message = "At least one integer is required."
-        raise ValueError(message)
-    return parsed_values
-
-
-def parse_optional_int_list(raw_values: str) -> tuple[int | None, ...]:
-    """Parse comma-separated integers plus default/null sentinels."""
-    parsed_values: list[int | None] = []
-    for raw_value in raw_values.split(","):
-        value = raw_value.strip()
-        if not value:
-            continue
-        if value in {"default", "none", "null"}:
-            parsed_values.append(None)
-            continue
-        parsed_values.append(int(value))
-    if not parsed_values:
-        message = "At least one integer or default sentinel is required."
-        raise ValueError(message)
-    return tuple(parsed_values)
-
-
-def parse_string_list(raw_values: str) -> tuple[str, ...]:
-    """Parse a comma-separated list of strings."""
-    parsed_values = tuple(value.strip() for value in raw_values.split(",") if value.strip())
-    if not parsed_values:
-        message = "At least one string value is required."
-        raise ValueError(message)
-    return parsed_values
-
-
-def parse_regenie_baseline_trait_types(raw_values: str) -> tuple[str, ...]:
-    """Parse and validate original REGENIE baseline trait types."""
-    trait_types = parse_string_list(raw_values)
-    valid_trait_types = {"quantitative", "binary"}
-    invalid_trait_types = sorted(set(trait_types) - valid_trait_types)
-    if invalid_trait_types:
-        message = f"Unsupported REGENIE baseline trait types: {', '.join(invalid_trait_types)}"
-        raise ValueError(message)
-    return trait_types
-
-
-def parse_profile_workload_keys(raw_values: str) -> tuple[ProfileWorkloadKey, ...]:
-    """Parse and expand workload selection tokens."""
-    selected_workload_keys: list[ProfileWorkloadKey] = []
-    invalid_selectors: list[str] = []
-    for raw_selector in parse_string_list(raw_values):
-        try:
-            selector = ProfileWorkloadSelector(raw_selector)
-        except ValueError:
-            invalid_selectors.append(raw_selector)
-            continue
-        if selector == ProfileWorkloadSelector.ALL:
-            selected_workload_keys.extend(PROFILE_WORKLOAD_KEYS)
-        elif selector == ProfileWorkloadSelector.QUANTITATIVE:
-            selected_workload_keys.extend(
-                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.trait_type == "quantitative"
-            )
-        elif selector == ProfileWorkloadSelector.BINARY:
-            selected_workload_keys.extend(
-                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.trait_type == "binary"
-            )
-        elif selector == ProfileWorkloadSelector.CPU:
-            selected_workload_keys.extend(
-                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.device == "cpu"
-            )
-        elif selector == ProfileWorkloadSelector.GPU:
-            selected_workload_keys.extend(
-                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.device == "gpu"
-            )
-        else:
-            selected_workload_keys.append(ProfileWorkloadKey(selector.value))
-    if invalid_selectors:
-        valid_values = ", ".join(selector.value for selector in ProfileWorkloadSelector)
-        message = (
-            f"Unsupported deep-profile workload selectors: {', '.join(invalid_selectors)}. "
-            f"Valid selectors: {valid_values}."
-        )
-        raise ValueError(message)
-    deduplicated_workload_keys = tuple(dict.fromkeys(selected_workload_keys))
-    if not deduplicated_workload_keys:
-        message = "At least one deep-profile workload key is required."
-        raise ValueError(message)
-    return deduplicated_workload_keys
-
-
-def selected_regenie_baseline_trait_types(arguments: ProfileArguments) -> tuple[str, ...]:
-    """Return REGENIE baseline traits that match the selected workload traits."""
-    requested_trait_types = parse_regenie_baseline_trait_types(arguments.regenie_baseline_trait_types)
-    selected_trait_types = {
-        workload_key.trait_type for workload_key in parse_profile_workload_keys(arguments.workload_keys)
-    }
-    return tuple(trait_type for trait_type in requested_trait_types if trait_type in selected_trait_types)
-
-
-def should_emit_stage_timings(arguments: ProfileArguments) -> bool:
-    """Return whether exact stage timing artifacts should be emitted."""
-    return arguments.stage_timing_mode == ProfileStageTimingMode.EXACT
-
-
-def build_output_directory(arguments: ProfileArguments) -> Path:
-    """Resolve the campaign output directory."""
-    if arguments.output_dir is not None:
-        return arguments.output_dir
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return arguments.output_parent / f"landau_deep_{arguments.chromosome_label}_{timestamp}"
-
-
-def configured_regenie_executable(arguments: ProfileArguments) -> str:
-    """Return the configured original or patched REGENIE executable name."""
-    if arguments.regenie_executable is not None:
-        return arguments.regenie_executable
-    return os.environ.get("REGENIE_BIN", "regenie")
 
 
 def executable_is_available(executable_name: str) -> bool:
@@ -1179,7 +496,7 @@ def collect_artifact_manifest(
         baseline_commands = profile_plan.regenie_baseline_commands
         regenie_baseline_scope = profile_plan.regenie_baseline_scope
     return {
-        "schema_version": 2,
+        "schema_version": ARTIFACT_MANIFEST_SCHEMA_VERSION,
         "generated_at": datetime.now(UTC).isoformat(),
         "output_directory": str(output_directory),
         "profiler_tools": serialize_profiler_tool_status(profiler_tool_status),
@@ -1201,15 +518,520 @@ def write_artifact_manifest(
     profiler_tool_status: dict[str, ProfilerToolStatus],
     summary_payload: dict[str, typing.Any] | None = None,
     profile_plan: ProfilePlan | None = None,
-) -> None:
-    """Write the profile artifact manifest."""
+) -> Path:
+    """Write the legacy profile artifact manifest."""
     manifest = collect_artifact_manifest(
         output_directory=output_directory,
         profiler_tool_status=profiler_tool_status,
         summary_payload=summary_payload,
         profile_plan=profile_plan,
     )
-    (output_directory / "artifact_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    manifest_path = output_directory / "legacy_artifact_manifest.v2.json"
+    tooling_reports.write_versioned_json_report(
+        manifest_path,
+        manifest,
+        ARTIFACT_MANIFEST_CONTRACT,
+        sort_keys=True,
+    )
+    return manifest_path
+
+
+def profile_status_to_artifact_status(status: str) -> tooling_artifact_format.ToolArtifactStatus:
+    """Convert a profile-local status string to the shared artifact status enum."""
+    if status == "success":
+        return tooling_artifact_format.ToolArtifactStatus.SUCCESS
+    if status == "partial":
+        return tooling_artifact_format.ToolArtifactStatus.PARTIAL
+    if status == "failed":
+        return tooling_artifact_format.ToolArtifactStatus.FAILED
+    if status == "skipped":
+        return tooling_artifact_format.ToolArtifactStatus.SKIPPED
+    if status == "unsupported":
+        return tooling_artifact_format.ToolArtifactStatus.UNSUPPORTED
+    if status == "dry_run" or status == "planned":
+        return tooling_artifact_format.ToolArtifactStatus.DRY_RUN
+    return tooling_artifact_format.ToolArtifactStatus.INVALID
+
+
+def profile_command_identifier(raw_name: str, index: int) -> str:
+    """Build a filesystem-safe command identifier."""
+    normalized = "".join(character if character.isalnum() or character in {"-", "_"} else "_" for character in raw_name)
+    if normalized:
+        return normalized
+    return f"profile_command_{index:04d}"
+
+
+def collect_summary_trial_payloads(summary_payload: dict[str, typing.Any] | None) -> list[dict[str, typing.Any]]:
+    """Collect trial-like payloads from a deep-profile summary."""
+    if summary_payload is None:
+        return []
+    trial_payloads: list[dict[str, typing.Any]] = []
+    for payload in typing.cast("list[dict[str, typing.Any]]", summary_payload.get("setup_results", [])):
+        trial_payloads.append(payload)
+    for aggregate_payload in typing.cast("list[dict[str, typing.Any]]", summary_payload.get("headline_results", [])):
+        for field_name in ("warmup_trials", "trials"):
+            trial_payloads.extend(typing.cast("list[dict[str, typing.Any]]", aggregate_payload.get(field_name, [])))
+    deep_profile_results = typing.cast("dict[str, typing.Any]", summary_payload.get("deep_profiles", {}))
+    for profile_payload in typing.cast(
+        "list[dict[str, typing.Any]]", deep_profile_results.get("sampling_profiles", [])
+    ):
+        if isinstance(profile_payload.get("command_arguments"), list):
+            trial_payloads.append(profile_payload)
+    for perturbation_payload in typing.cast(
+        "list[dict[str, typing.Any]]",
+        summary_payload.get("logging_perturbation_results", []),
+    ):
+        trial_payload = perturbation_payload.get("trial")
+        if isinstance(trial_payload, dict):
+            trial_payloads.append(typing.cast("dict[str, typing.Any]", trial_payload))
+    return trial_payloads
+
+
+def build_profile_command_records(
+    *,
+    output_directory: Path,
+    run_id: str,
+    summary_payload: dict[str, typing.Any] | None = None,
+    profile_plan: ProfilePlan | None = None,
+) -> list[tooling_artifact_format.CommandRecord]:
+    """Build command ledger records for deep-profile subprocesses."""
+    command_records: list[tooling_artifact_format.CommandRecord] = []
+    for command_index, trial_payload in enumerate(collect_summary_trial_payloads(summary_payload), start=1):
+        command_arguments = [str(value) for value in trial_payload.get("command_arguments", [])]
+        if not command_arguments:
+            continue
+        raw_name = str(trial_payload.get("name", f"profile_command_{command_index:04d}"))
+        status = profile_status_to_artifact_status(str(trial_payload.get("status", "invalid")))
+        command_records.append(
+            tooling_artifact_format.build_command_record(
+                command_id=profile_command_identifier(raw_name, command_index),
+                tool_name="profile_regenie2_deep",
+                run_id=run_id,
+                phase=str(trial_payload.get("trait_type", "profile")),
+                args=command_arguments,
+                output_directory=output_directory,
+                cwd=REPOSITORY_ROOT,
+                environment_overrides=typing.cast(
+                    "dict[str, str]",
+                    trial_payload.get("environment_overrides", {}),
+                ),
+                stdout_log=Path(str(trial_payload["stdout_log_path"]))
+                if trial_payload.get("stdout_log_path") is not None
+                else None,
+                stderr_log=Path(str(trial_payload["stderr_log_path"]))
+                if trial_payload.get("stderr_log_path") is not None
+                else None,
+                status=status,
+                return_code=None,
+                wall_time_seconds=(
+                    float(trial_payload["wall_time_seconds"])
+                    if isinstance(trial_payload.get("wall_time_seconds"), (int, float))
+                    else None
+                ),
+            )
+        )
+    if profile_plan is not None:
+        next_index = len(command_records) + 1
+        for command_manifest in profile_plan.regenie_baseline_commands:
+            raw_name = str(command_manifest["name"])
+            command_arguments = typing.cast("list[object]", command_manifest["command_arguments"])
+            command_records.append(
+                tooling_artifact_format.build_command_record(
+                    command_id=profile_command_identifier(raw_name, next_index),
+                    tool_name="profile_regenie2_deep",
+                    run_id=run_id,
+                    phase="regenie_baseline",
+                    args=[str(value) for value in command_arguments],
+                    output_directory=output_directory,
+                    cwd=REPOSITORY_ROOT,
+                    status=tooling_artifact_format.ToolArtifactStatus.DRY_RUN,
+                )
+            )
+            next_index += 1
+        for command_arguments in profile_plan.rust_benchmark_commands:
+            command_records.append(
+                tooling_artifact_format.build_command_record(
+                    command_id=profile_command_identifier(f"rust_criterion_{next_index}", next_index),
+                    tool_name="profile_regenie2_deep",
+                    run_id=run_id,
+                    phase="rust_criterion",
+                    args=command_arguments,
+                    output_directory=output_directory,
+                    cwd=REPOSITORY_ROOT,
+                    status=tooling_artifact_format.ToolArtifactStatus.DRY_RUN,
+                )
+            )
+            next_index += 1
+    return command_records
+
+
+def build_profile_input_file_records(
+    *,
+    profile_plan: ProfilePlan | None,
+    summary_payload: dict[str, typing.Any] | None,
+) -> list[tooling_artifact_format.InputFileRecord]:
+    """Build input-file records for profile artifacts."""
+    input_records: list[tooling_artifact_format.InputFileRecord] = []
+    for input_payload in collect_manifest_input_files(profile_plan=profile_plan, summary_payload=summary_payload):
+        path_value = input_payload.get("path")
+        if path_value is None:
+            continue
+        input_records.append(
+            tooling_artifact_format.build_input_file_record(
+                path=Path(str(path_value)),
+                kind="profile_input",
+            )
+        )
+    return input_records
+
+
+def profile_metric_dimensions(aggregate_payload: dict[str, typing.Any]) -> dict[str, object]:
+    """Build metric dimensions for a profile aggregate."""
+    return {
+        "implementation": str(aggregate_payload.get("implementation", "")),
+        "trait_type": str(aggregate_payload.get("trait_type", "")),
+        "device": str(aggregate_payload.get("device", "")),
+        "status": str(aggregate_payload.get("status", "")),
+    }
+
+
+def optional_float(raw_value: typing.Any) -> float | None:
+    """Return a float for numeric values."""
+    if isinstance(raw_value, (int, float)):
+        return float(raw_value)
+    return None
+
+
+def append_profile_summary_metrics(
+    *,
+    metric_records: list[tooling_artifact_format.MetricRecord],
+    run_id: str,
+    summary_payload: dict[str, typing.Any],
+) -> None:
+    """Append normalized metrics from a profile summary payload."""
+    metric_specs = (
+        ("median_wall_time_seconds", "wall_time_seconds", tooling_artifact_format.MetricAggregation.MEDIAN.value),
+        ("mean_wall_time_seconds", "wall_time_seconds", tooling_artifact_format.MetricAggregation.MEAN.value),
+        ("min_wall_time_seconds", "wall_time_seconds", tooling_artifact_format.MetricAggregation.MINIMUM.value),
+        ("max_wall_time_seconds", "wall_time_seconds", tooling_artifact_format.MetricAggregation.MAXIMUM.value),
+        (
+            "standard_deviation_seconds",
+            "wall_time_seconds",
+            tooling_artifact_format.MetricAggregation.STANDARD_DEVIATION.value,
+        ),
+        (
+            "rows_per_second",
+            "throughput_rows_per_second",
+            tooling_artifact_format.MetricAggregation.MEDIAN.value,
+        ),
+    )
+    for aggregate_index, aggregate_payload in enumerate(
+        typing.cast("list[dict[str, typing.Any]]", summary_payload.get("headline_results", []))
+    ):
+        case_id = str(aggregate_payload.get("name", f"headline_{aggregate_index}"))
+        for source_field, metric_name, aggregation in metric_specs:
+            unit = (
+                tooling_artifact_format.MetricUnit.ROW.value
+                if metric_name == "throughput_rows_per_second"
+                else tooling_artifact_format.MetricUnit.SECONDS.value
+            )
+            metric_records.append(
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    metric_name=metric_name,
+                    value=optional_float(aggregate_payload.get(source_field)),
+                    unit=unit,
+                    aggregation=aggregation,
+                    higher_is_better=metric_name == "throughput_rows_per_second",
+                    dimensions=profile_metric_dimensions(aggregate_payload),
+                    phase="headline_trials",
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="summary.json",
+                        json_pointer=f"/headline_results/{aggregate_index}/{source_field}",
+                    ),
+                )
+            )
+    stage_totals = typing.cast("dict[str, typing.Any]", summary_payload.get("stage_totals", {}))
+    for stage_name, seconds in sorted(stage_totals.items()):
+        metric_records.append(
+            tooling_artifact_format.build_metric_record(
+                run_id=run_id,
+                case_id=None,
+                metric_name=f"stage.{stage_name}.seconds",
+                value=optional_float(seconds),
+                unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+                aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                higher_is_better=False,
+                dimensions={},
+                phase="stage_totals",
+                source=tooling_artifact_format.MetricSource(
+                    artifact_path="summary.json",
+                    json_pointer=f"/stage_totals/{stage_name}",
+                ),
+            )
+        )
+
+
+def append_profile_plan_metrics(
+    *,
+    metric_records: list[tooling_artifact_format.MetricRecord],
+    run_id: str,
+    profile_plan: ProfilePlan,
+) -> None:
+    """Append normalized metrics from a dry-run profile plan."""
+    budget_metrics = {
+        "candidate_count": profile_plan.campaign_budget.total_candidate_count,
+        "subprocess_run_count": profile_plan.campaign_budget.total_subprocess_run_count,
+        "major_profiler_run_count": profile_plan.campaign_budget.total_major_profiler_run_count,
+    }
+    for metric_name, metric_value in budget_metrics.items():
+        metric_records.append(
+            tooling_artifact_format.build_metric_record(
+                run_id=run_id,
+                case_id="campaign_budget",
+                metric_name=metric_name,
+                value=metric_value,
+                unit=tooling_artifact_format.MetricUnit.COUNT.value,
+                aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                higher_is_better=None,
+                dimensions={"chromosome_label": profile_plan.chromosome_label},
+                phase="planning",
+                source=tooling_artifact_format.MetricSource(
+                    artifact_path="profile_plan.json",
+                    json_pointer=f"/campaign_budget/{metric_name}",
+                ),
+            )
+        )
+
+
+def build_profile_metrics(
+    *,
+    run_id: str,
+    summary_payload: dict[str, typing.Any] | None = None,
+    profile_plan: ProfilePlan | None = None,
+) -> list[tooling_artifact_format.MetricRecord]:
+    """Build normalized profile metrics."""
+    metric_records: list[tooling_artifact_format.MetricRecord] = []
+    if summary_payload is not None:
+        append_profile_summary_metrics(
+            metric_records=metric_records,
+            run_id=run_id,
+            summary_payload=summary_payload,
+        )
+    if profile_plan is not None:
+        append_profile_plan_metrics(
+            metric_records=metric_records,
+            run_id=run_id,
+            profile_plan=profile_plan,
+        )
+    return metric_records
+
+
+def build_profile_failure_records(
+    summary_payload: dict[str, typing.Any] | None,
+) -> list[tooling_artifact_format.FailureRecord]:
+    """Build structured failure records for profile trials."""
+    failure_records: list[tooling_artifact_format.FailureRecord] = []
+    for failure_index, trial_payload in enumerate(
+        (
+            payload
+            for payload in collect_summary_trial_payloads(summary_payload)
+            if str(payload.get("status", "")) == "failed"
+        ),
+        start=1,
+    ):
+        failure_records.append(
+            tooling_artifact_format.FailureRecord(
+                failure_id=f"F{failure_index:03d}",
+                phase=str(trial_payload.get("trait_type", "profile")),
+                status=tooling_artifact_format.ToolArtifactStatus.FAILED,
+                message=f"Profile trial {trial_payload.get('name', failure_index)} failed.",
+                exception_type=None,
+                stderr_excerpt=None,
+                stdout_log=str(trial_payload.get("stdout_log_path"))
+                if trial_payload.get("stdout_log_path") is not None
+                else None,
+                stderr_log=str(trial_payload.get("stderr_log_path"))
+                if trial_payload.get("stderr_log_path") is not None
+                else None,
+                command_id=profile_command_identifier(str(trial_payload.get("name", "")), failure_index),
+            )
+        )
+    return failure_records
+
+
+def build_profile_cases(
+    summary_payload: dict[str, typing.Any] | None, profile_plan: ProfilePlan | None
+) -> list[dict[str, object]]:
+    """Build report case records for profile artifacts."""
+    if summary_payload is not None:
+        cases: list[dict[str, object]] = []
+        for aggregate_payload in typing.cast(
+            "list[dict[str, typing.Any]]", summary_payload.get("headline_results", [])
+        ):
+            case_payload = dict(aggregate_payload)
+            case_payload.pop("trials", None)
+            case_payload.pop("warmup_trials", None)
+            cases.append(typing.cast("dict[str, object]", case_payload))
+        return cases
+    if profile_plan is None:
+        return []
+    return [
+        {
+            "case_id": section.name,
+            "display_name": section.display_name,
+            "candidate_count": section.candidate_count,
+            "subprocess_run_count": section.subprocess_run_count,
+            "major_profiler_run_count": section.major_profiler_run_count,
+        }
+        for section in profile_plan.campaign_budget.sections
+    ]
+
+
+def build_profile_agent_summary(
+    *,
+    status: tooling_artifact_format.ToolArtifactStatus,
+    summary_payload: dict[str, typing.Any] | None,
+    profile_plan: ProfilePlan | None,
+) -> dict[str, object]:
+    """Build a concise agent-oriented profile summary."""
+    if summary_payload is not None:
+        headline_count = len(typing.cast("list[dict[str, typing.Any]]", summary_payload.get("headline_results", [])))
+        failures = build_profile_failure_records(summary_payload)
+        return {
+            "one_sentence": f"Deep profile completed with {headline_count} headline aggregate results.",
+            "key_observations": [
+                f"Status: {status.value}.",
+                f"Headline aggregate count: {headline_count}.",
+                f"Structured failure count: {len(failures)}.",
+            ],
+            "risks": [failure.message for failure in failures[:5]],
+            "next_actions": [],
+        }
+    if profile_plan is not None:
+        return {
+            "one_sentence": "Deep profile plan was written without executing workloads.",
+            "key_observations": [
+                f"Status: {status.value}.",
+                f"Estimated subprocess runs: {profile_plan.campaign_budget.total_subprocess_run_count}.",
+                f"Estimated major profiler runs: {profile_plan.campaign_budget.total_major_profiler_run_count}.",
+            ],
+            "risks": list(profile_plan.campaign_budget.guidance),
+            "next_actions": [],
+        }
+    return {
+        "one_sentence": f"Deep profile finished with status {status.value}.",
+        "key_observations": [f"Status: {status.value}."],
+        "risks": [],
+        "next_actions": [],
+    }
+
+
+def profile_summary_artifact_status(
+    summary_payload: dict[str, typing.Any],
+) -> tooling_artifact_format.ToolArtifactStatus:
+    """Determine the overall standard status for a completed profile summary."""
+    headline_results = typing.cast("list[dict[str, typing.Any]]", summary_payload.get("headline_results", []))
+    if not headline_results:
+        return tooling_artifact_format.ToolArtifactStatus.FAILED
+    aggregate_statuses = {str(result.get("status", "")) for result in headline_results}
+    if aggregate_statuses == {"success"}:
+        return tooling_artifact_format.ToolArtifactStatus.SUCCESS
+    if "success" in aggregate_statuses or "partial" in aggregate_statuses:
+        return tooling_artifact_format.ToolArtifactStatus.PARTIAL
+    return tooling_artifact_format.ToolArtifactStatus.FAILED
+
+
+def write_standard_profile_artifacts(
+    *,
+    arguments: ProfileArguments,
+    output_directory: Path,
+    profiler_tool_status: dict[str, ProfilerToolStatus],
+    status: tooling_artifact_format.ToolArtifactStatus,
+    status_reason: str | None = None,
+    summary_payload: dict[str, typing.Any] | None = None,
+    profile_plan: ProfilePlan | None = None,
+    summary_markdown: str | None = None,
+    hydra_config: omegaconf.DictConfig | None = None,
+) -> None:
+    """Write Tooling Artifact Format v1 artifacts for the deep profiler."""
+    producer = tooling_artifact_format.build_producer(
+        tool_name="profile_regenie2_deep",
+        repository_root=REPOSITORY_ROOT,
+    )
+    run = tooling_artifact_format.build_run_identity(
+        tool_name="profile_regenie2_deep",
+        output_directory=output_directory,
+        status=status,
+        status_reason=status_reason,
+    )
+    context_snapshot = tooling_artifact_format.build_context_snapshot(
+        output_directory=output_directory,
+        repository_root=REPOSITORY_ROOT,
+    )
+    report = tooling_artifact_format.build_report_envelope(
+        producer=producer,
+        run=run,
+        context=context_snapshot,
+        title=f"{arguments.chromosome_label} Deep REGENIE Step 2 Profile",
+        configuration=profile_configuration_payload(arguments),
+        summary={
+            "headline": f"Deep profile finished with status {status.value}.",
+            "agent_summary": build_profile_agent_summary(
+                status=status,
+                summary_payload=summary_payload,
+                profile_plan=profile_plan,
+            ),
+            "legacy_summary_path": "summary.json" if summary_payload is not None else None,
+            "profile_plan_path": "profile_plan.json" if profile_plan is not None else None,
+        },
+        cases=build_profile_cases(summary_payload, profile_plan),
+        trials=typing.cast("list[dict[str, object]]", collect_summary_trial_payloads(summary_payload)),
+        metrics=build_profile_metrics(
+            run_id=run.run_id,
+            summary_payload=summary_payload,
+            profile_plan=profile_plan,
+        ),
+        diagnostics={
+            "profiler_tools": serialize_profiler_tool_status(profiler_tool_status),
+            "legacy_artifact_manifest": "legacy_artifact_manifest.v2.json",
+        },
+        failures=build_profile_failure_records(summary_payload),
+    )
+    events = [
+        tooling_artifact_format.build_tool_event(
+            tool_name="profile_regenie2_deep",
+            run_id=run.run_id,
+            phase="profile",
+            event="profile_artifacts_written",
+            message=f"Deep profile artifacts written with status {status.value}.",
+            fields={
+                "chromosome_label": arguments.chromosome_label,
+                "dry_run": arguments.dry_run,
+                "status_reason": status_reason,
+            },
+        )
+    ]
+    tooling_artifact_format.write_standard_artifact_bundle(
+        output_directory=output_directory,
+        report=report,
+        events=events,
+        commands=build_profile_command_records(
+            output_directory=output_directory,
+            run_id=run.run_id,
+            summary_payload=summary_payload,
+            profile_plan=profile_plan,
+        ),
+        input_files=build_profile_input_file_records(
+            profile_plan=profile_plan,
+            summary_payload=summary_payload,
+        ),
+        summary_markdown=summary_markdown,
+        hydra_config=hydra_config,
+        tool_payload=profile_configuration_payload(arguments),
+        notes=["legacy_artifact_manifest.v2.json preserves the pre-v1 deep-profile manifest shape."],
+    )
 
 
 def command_output(
@@ -1494,11 +1316,6 @@ def build_regenie_step2_command(
     )
 
 
-def build_queue_depth_values(writer_thread_count: int, queue_depth_multipliers: tuple[int, ...]) -> tuple[int, ...]:
-    """Build queue depths from writer thread count and multipliers."""
-    return tuple(sorted({max(1, writer_thread_count * multiplier) for multiplier in queue_depth_multipliers}))
-
-
 def build_candidate_slug(candidate: Step2Candidate) -> str:
     """Build a stable filename slug for a tuning candidate."""
     candidate_parts = [
@@ -1590,457 +1407,6 @@ def build_step2_candidates(
     return tuple(candidates)
 
 
-def build_campaign_budget_section(
-    *,
-    section_name: CampaignBudgetSectionName,
-    candidate_count: int,
-    subprocess_run_count: int,
-    major_profiler_run_count: int = 0,
-    notes: str,
-) -> CampaignBudgetSection:
-    """Build one campaign budget section."""
-    return CampaignBudgetSection(
-        name=section_name.value,
-        display_name=CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES[section_name],
-        candidate_count=candidate_count,
-        subprocess_run_count=subprocess_run_count,
-        major_profiler_run_count=major_profiler_run_count,
-        notes=notes,
-    )
-
-
-def count_queue_depth_grid(writer_thread_counts: tuple[int, ...], queue_depth_multipliers: tuple[int, ...]) -> int:
-    """Count distinct writer queue-depth settings across writer thread counts."""
-    return sum(
-        len(build_queue_depth_values(writer_thread_count, queue_depth_multipliers))
-        for writer_thread_count in writer_thread_counts
-    )
-
-
-def count_step2_tuning_candidates(
-    *,
-    workload_key: ProfileWorkloadKey,
-    selected_bgen_candidate_count: int,
-    chunk_sizes: tuple[int, ...],
-    staging_depths: tuple[int, ...],
-    native_callback_batch_sizes: tuple[int, ...],
-    result_in_flight_limits: tuple[int | None, ...],
-    dosage_buffer_limits: tuple[int | None, ...],
-    writer_thread_counts: tuple[int, ...],
-    queue_depth_multipliers: tuple[int, ...],
-    firth_batch_sizes: tuple[int, ...],
-    smoke: bool,
-) -> int:
-    """Count step 2 tuning candidates for one selected workload."""
-    queue_depth_count = count_queue_depth_grid(writer_thread_counts, queue_depth_multipliers)
-    candidate_count = (
-        selected_bgen_candidate_count
-        * len(chunk_sizes)
-        * len(staging_depths)
-        * len(native_callback_batch_sizes)
-        * len(result_in_flight_limits)
-        * len(dosage_buffer_limits)
-        * queue_depth_count
-    )
-    if workload_key.trait_type == "binary":
-        candidate_count *= len(firth_batch_sizes)
-    if smoke:
-        return min(candidate_count, 1)
-    return candidate_count
-
-
-def count_enabled_deep_profiler_modes(arguments: ProfileArguments) -> int:
-    """Count profiler subprocess modes run for each selected winner."""
-    mode_count = 0
-    if arguments.enable_jax_trace or arguments.enable_jax_memory_profile:
-        mode_count += 1
-    enabled_modes = (
-        arguments.enable_python_cprofile,
-        arguments.enable_py_spy,
-        arguments.enable_scalene,
-        arguments.enable_memray,
-        arguments.enable_linux_perf,
-        arguments.enable_nsight_systems,
-        arguments.enable_nsight_compute,
-    )
-    return mode_count + sum(1 for enabled in enabled_modes if enabled)
-
-
-def campaign_budget_is_over_limit(campaign_budget: CampaignBudget) -> bool:
-    """Return whether a campaign exceeds either configured budget."""
-    return campaign_budget.over_subprocess_budget or campaign_budget.over_major_profiler_budget
-
-
-def build_campaign_budget(
-    *,
-    arguments: ProfileArguments,
-    output_directory: Path,
-) -> CampaignBudget:
-    """Estimate campaign section counts before executing workloads."""
-    workload_keys = parse_profile_workload_keys(arguments.workload_keys)
-    chunk_sizes = parse_int_list(arguments.chunk_sizes)
-    staging_depths = parse_int_list(arguments.staging_depths)
-    native_callback_batch_sizes = parse_int_list(arguments.native_callback_batch_sizes)
-    result_in_flight_limits = parse_optional_int_list(arguments.result_in_flight_limits)
-    dosage_buffer_limits = parse_optional_int_list(arguments.dosage_buffer_limits)
-    writer_thread_counts = parse_int_list(arguments.output_writer_thread_counts)
-    queue_depth_multipliers = parse_int_list(arguments.writer_queue_depth_multipliers)
-    firth_batch_sizes = parse_int_list(arguments.firth_batch_sizes)
-    bgen_decode_tile_variant_counts = parse_int_list(arguments.bgen_decode_tile_variant_counts)
-    rayon_thread_counts = parse_int_list(arguments.rayon_thread_counts)
-    bgen_candidate_count = len(bgen_decode_tile_variant_counts) * len(rayon_thread_counts)
-    selected_bgen_candidate_count = min(arguments.top_bgen_candidates, bgen_candidate_count)
-    tuning_candidate_counts = [
-        count_step2_tuning_candidates(
-            workload_key=workload_key,
-            selected_bgen_candidate_count=selected_bgen_candidate_count,
-            chunk_sizes=chunk_sizes,
-            staging_depths=staging_depths,
-            native_callback_batch_sizes=native_callback_batch_sizes,
-            result_in_flight_limits=result_in_flight_limits,
-            dosage_buffer_limits=dosage_buffer_limits,
-            writer_thread_counts=writer_thread_counts,
-            queue_depth_multipliers=queue_depth_multipliers,
-            firth_batch_sizes=firth_batch_sizes,
-            smoke=arguments.smoke,
-        )
-        for workload_key in workload_keys
-    ]
-    tuning_candidate_count = sum(tuning_candidate_counts)
-    finalist_candidate_counts = [
-        min(arguments.top_finalists, tuning_candidate_count_for_workload)
-        for tuning_candidate_count_for_workload in tuning_candidate_counts
-    ]
-    finalist_candidate_count = sum(finalist_candidate_counts)
-    expected_winner_count = sum(
-        1
-        for finalist_count in finalist_candidate_counts
-        if finalist_count > 0 and arguments.tuning_trials > 0 and arguments.finalist_trials > 0
-    )
-    regenie_baseline_trait_count = 0
-    if arguments.include_regenie_baseline:
-        regenie_baseline_trait_count = len(selected_regenie_baseline_trait_types(arguments))
-    g_headline_run_count = expected_winner_count * (arguments.headline_warmups + arguments.headline_trials)
-    regenie_headline_run_count = regenie_baseline_trait_count * (
-        arguments.regenie_baseline_warmups + arguments.regenie_baseline_trials
-    )
-    deep_profiler_mode_count = 0 if arguments.skip_deep_profiles else count_enabled_deep_profiler_modes(arguments)
-    deep_profiler_run_count = expected_winner_count * deep_profiler_mode_count
-    logging_case_count = 0
-    if arguments.enable_logging_perturbation:
-        logging_case_count = len(
-            build_logging_perturbation_cases(output_directory=output_directory, smoke=arguments.smoke)
-        )
-    logging_run_count = expected_winner_count * logging_case_count
-    rust_benchmark_count = 0
-    if arguments.enable_rust_criterion and not arguments.skip_deep_profiles:
-        rust_benchmark_count = len(parse_string_list(arguments.rust_benchmarks))
-    sections = (
-        build_campaign_budget_section(
-            section_name=CampaignBudgetSectionName.BGEN_PRE_SWEEP,
-            candidate_count=bgen_candidate_count,
-            subprocess_run_count=bgen_candidate_count,
-            notes=(
-                f"{len(bgen_decode_tile_variant_counts)} BGEN tile values x "
-                f"{len(rayon_thread_counts)} Rayon thread values; each case repeats internally "
-                f"{arguments.tuning_trials} time(s)."
-            ),
-        ),
-        build_campaign_budget_section(
-            section_name=CampaignBudgetSectionName.TUNING,
-            candidate_count=tuning_candidate_count,
-            subprocess_run_count=tuning_candidate_count * (arguments.tuning_warmups + arguments.tuning_trials),
-            notes=(
-                f"{len(workload_keys)} selected workload(s), top {selected_bgen_candidate_count} BGEN candidate(s), "
-                f"{arguments.tuning_warmups} warmup(s), and {arguments.tuning_trials} measured trial(s)."
-            ),
-        ),
-        build_campaign_budget_section(
-            section_name=CampaignBudgetSectionName.FINALISTS,
-            candidate_count=finalist_candidate_count,
-            subprocess_run_count=finalist_candidate_count * (arguments.finalist_warmups + arguments.finalist_trials),
-            notes=(
-                f"Up to {arguments.top_finalists} finalist(s) per selected workload, "
-                f"{arguments.finalist_warmups} warmup(s), and {arguments.finalist_trials} measured trial(s)."
-            ),
-        ),
-        build_campaign_budget_section(
-            section_name=CampaignBudgetSectionName.HEADLINE_TRIALS,
-            candidate_count=expected_winner_count + regenie_baseline_trait_count,
-            subprocess_run_count=g_headline_run_count + regenie_headline_run_count,
-            notes=(
-                f"{expected_winner_count} expected g winner(s) and "
-                f"{regenie_baseline_trait_count} selected REGENIE baseline trait(s)."
-            ),
-        ),
-        build_campaign_budget_section(
-            section_name=CampaignBudgetSectionName.DEEP_PROFILERS,
-            candidate_count=deep_profiler_run_count,
-            subprocess_run_count=deep_profiler_run_count,
-            major_profiler_run_count=deep_profiler_run_count,
-            notes=(
-                "Skipped by tool.skip_deep_profiles=true."
-                if arguments.skip_deep_profiles
-                else f"{deep_profiler_mode_count} profiler mode(s) per expected g winner."
-            ),
-        ),
-        build_campaign_budget_section(
-            section_name=CampaignBudgetSectionName.LOGGING_PERTURBATION,
-            candidate_count=logging_run_count,
-            subprocess_run_count=logging_run_count,
-            notes=(
-                "Disabled by tool.enable_logging_perturbation=false."
-                if not arguments.enable_logging_perturbation
-                else f"{logging_case_count} logging case(s) per expected g winner."
-            ),
-        ),
-        build_campaign_budget_section(
-            section_name=CampaignBudgetSectionName.RUST_CRITERION,
-            candidate_count=rust_benchmark_count,
-            subprocess_run_count=rust_benchmark_count,
-            major_profiler_run_count=rust_benchmark_count,
-            notes=(
-                "Skipped because Rust Criterion is disabled or tool.skip_deep_profiles=true."
-                if rust_benchmark_count == 0
-                else "Each configured Criterion benchmark is one cargo bench subprocess."
-            ),
-        ),
-    )
-    total_candidate_count = sum(section.candidate_count for section in sections)
-    total_subprocess_run_count = sum(section.subprocess_run_count for section in sections)
-    total_major_profiler_run_count = sum(section.major_profiler_run_count for section in sections)
-    over_subprocess_budget = (
-        arguments.max_subprocess_runs is not None and total_subprocess_run_count > arguments.max_subprocess_runs
-    )
-    over_major_profiler_budget = (
-        arguments.max_major_profiler_runs is not None
-        and total_major_profiler_run_count > arguments.max_major_profiler_runs
-    )
-    guidance = (
-        "Run a dry run first and inspect profile_plan.md for the section counts.",
-        "Reduce tool.workload_keys, tool.top_bgen_candidates, tool.top_finalists, trial counts, "
-        "Firth batch sizes, writer counts, BGEN tile values, or Rayon thread counts to fit the budget.",
-        "For an intentional huge campaign, pass tool.allow_over_budget=true and keep the run on an appropriate "
-        "SLURM node.",
-    )
-    return CampaignBudget(
-        workload_keys=tuple(workload_key.value for workload_key in workload_keys),
-        max_subprocess_runs=arguments.max_subprocess_runs,
-        max_major_profiler_runs=arguments.max_major_profiler_runs,
-        total_candidate_count=total_candidate_count,
-        total_subprocess_run_count=total_subprocess_run_count,
-        total_major_profiler_run_count=total_major_profiler_run_count,
-        over_subprocess_budget=over_subprocess_budget,
-        over_major_profiler_budget=over_major_profiler_budget,
-        sections=sections,
-        guidance=guidance,
-    )
-
-
-def log_campaign_budget(campaign_budget: CampaignBudget) -> None:
-    """Log section-level campaign budget estimates."""
-    logger.info(
-        "Estimated campaign budget: candidates=%s subprocess_runs=%s major_profiler_runs=%s",
-        campaign_budget.total_candidate_count,
-        campaign_budget.total_subprocess_run_count,
-        campaign_budget.total_major_profiler_run_count,
-    )
-    for section in campaign_budget.sections:
-        logger.info(
-            "Budget section %s: candidates=%s subprocess_runs=%s major_profiler_runs=%s",
-            section.display_name,
-            section.candidate_count,
-            section.subprocess_run_count,
-            section.major_profiler_run_count,
-        )
-
-
-def enforce_campaign_budget(arguments: ProfileArguments, campaign_budget: CampaignBudget) -> None:
-    """Fail early when a non-dry-run campaign exceeds the configured budget."""
-    if arguments.allow_over_budget or not campaign_budget_is_over_limit(campaign_budget):
-        return
-    budget_messages = [
-        "Deep profile campaign exceeds the configured budget.",
-        (
-            f"Estimated subprocess runs: {campaign_budget.total_subprocess_run_count} "
-            f"(limit: {campaign_budget.max_subprocess_runs})."
-        ),
-        (
-            f"Estimated major profiler runs: {campaign_budget.total_major_profiler_run_count} "
-            f"(limit: {campaign_budget.max_major_profiler_runs})."
-        ),
-        "Section counts:",
-    ]
-    for section in campaign_budget.sections:
-        budget_messages.append(
-            f"- {section.display_name}: candidates={section.candidate_count}, "
-            f"subprocess_runs={section.subprocess_run_count}, "
-            f"major_profiler_runs={section.major_profiler_run_count}"
-        )
-    budget_messages.extend(campaign_budget.guidance)
-    raise ValueError("\n".join(budget_messages))
-
-
-def resolve_profile_jax_cache_directory(candidate: Step2Candidate, cache_directory: Path | None) -> Path | None:
-    """Resolve the actual JAX cache directory used by one profile child."""
-    if cache_directory is None:
-        return None
-    if candidate.device != "gpu":
-        return tooling_jax_cache.resolve_cpu_feature_aware_cache_directory(cache_directory)
-    job_identifier = os.environ.get("SLURM_JOB_ID") or str(os.getpid())
-    gpu_cache_parent = os.environ.get("G_PROFILE_GPU_JAX_CACHE_PARENT", GPU_JAX_CACHE_PARENT_DEFAULT)
-    return Path(gpu_cache_parent) / job_identifier / cache_directory.name
-
-
-def collect_jax_cache_snapshot(cache_directory: Path | None) -> JaxCacheSnapshot | None:
-    """Collect lightweight file-count and byte-size stats for a JAX cache directory."""
-    if cache_directory is None:
-        return None
-    resolved_cache_directory = cache_directory.expanduser()
-    if not resolved_cache_directory.exists():
-        return JaxCacheSnapshot(
-            path=str(resolved_cache_directory),
-            exists=False,
-            file_count=0,
-            total_size_bytes=0,
-        )
-    file_count = 0
-    total_size_bytes = 0
-    try:
-        for cache_path in resolved_cache_directory.rglob("*"):
-            if not cache_path.is_file():
-                continue
-            file_count += 1
-            total_size_bytes += cache_path.stat().st_size
-    except OSError as error:
-        return JaxCacheSnapshot(
-            path=str(resolved_cache_directory),
-            exists=True,
-            file_count=file_count,
-            total_size_bytes=total_size_bytes,
-            error=str(error),
-        )
-    return JaxCacheSnapshot(
-        path=str(resolved_cache_directory),
-        exists=True,
-        file_count=file_count,
-        total_size_bytes=total_size_bytes,
-    )
-
-
-def parse_jax_compile_log(log_text: str) -> JaxCompileLogSummary:
-    """Parse supported JAX compile and persistent-cache log lines from stderr text."""
-    compilation_event_count = 0
-    persistent_cache_event_count = 0
-    persistent_cache_hit_count = 0
-    persistent_cache_miss_count = 0
-    tracing_cache_miss_count = 0
-    cache_miss_explanation_count = 0
-    sample_log_lines: list[str] = []
-    for raw_line in log_text.splitlines():
-        line = raw_line.strip()
-        lower_line = line.lower()
-        has_compilation_event = (
-            "compiling " in lower_line
-            or "finished xla compilation" in lower_line
-            or "tracing + transforming" in lower_line
-            or "lowering " in lower_line
-        )
-        has_persistent_cache_event = "persistent compilation cache" in lower_line
-        has_persistent_cache_hit = has_persistent_cache_event and (
-            "cache hit" in lower_line or "cache_hit" in lower_line
-        )
-        has_persistent_cache_miss = has_persistent_cache_event and (
-            "cache miss" in lower_line or "cache_miss" in lower_line or "not found" in lower_line
-        )
-        has_tracing_cache_miss = "tracing cache miss" in lower_line
-        if has_compilation_event:
-            compilation_event_count += 1
-        if has_persistent_cache_event:
-            persistent_cache_event_count += 1
-        if has_persistent_cache_hit:
-            persistent_cache_hit_count += 1
-        if has_persistent_cache_miss:
-            persistent_cache_miss_count += 1
-        if has_tracing_cache_miss:
-            tracing_cache_miss_count += 1
-        if (has_persistent_cache_miss or has_tracing_cache_miss) and (
-            "because" in lower_line or "explain" in lower_line
-        ):
-            cache_miss_explanation_count += 1
-        if (
-            has_compilation_event
-            or has_persistent_cache_event
-            or has_persistent_cache_hit
-            or has_persistent_cache_miss
-            or has_tracing_cache_miss
-        ) and len(sample_log_lines) < JAX_LOG_SAMPLE_LINE_LIMIT:
-            sample_log_lines.append(line[:500])
-    return JaxCompileLogSummary(
-        compilation_event_count=compilation_event_count,
-        persistent_cache_event_count=persistent_cache_event_count,
-        persistent_cache_hit_count=persistent_cache_hit_count,
-        persistent_cache_miss_count=persistent_cache_miss_count,
-        tracing_cache_miss_count=tracing_cache_miss_count,
-        cache_miss_explanation_count=cache_miss_explanation_count,
-        sample_log_lines=sample_log_lines,
-    )
-
-
-def read_jax_compile_log_summary(stderr_log_path: str) -> JaxCompileLogSummary:
-    """Read a subprocess stderr file and parse JAX compile/cache log counters."""
-    log_path = Path(stderr_log_path)
-    if not log_path.exists():
-        return parse_jax_compile_log("")
-    return parse_jax_compile_log(log_path.read_text(encoding="utf-8", errors="replace"))
-
-
-def snapshot_delta(
-    *,
-    before_snapshot: JaxCacheSnapshot | None,
-    after_snapshot: JaxCacheSnapshot | None,
-    field_name: str,
-) -> int | None:
-    """Return an integer delta for a cache snapshot field."""
-    if before_snapshot is None or after_snapshot is None:
-        return None
-    before_value = getattr(before_snapshot, field_name)
-    after_value = getattr(after_snapshot, field_name)
-    if not isinstance(before_value, int) or not isinstance(after_value, int):
-        return None
-    return after_value - before_value
-
-
-def build_jax_cache_diagnostics(
-    *,
-    cache_directory: Path | None,
-    child_reported_cache_directory: str | None,
-    persistent_cache_used: bool,
-    before_snapshot: JaxCacheSnapshot | None,
-    after_snapshot: JaxCacheSnapshot | None,
-    stderr_log_path: str,
-) -> JaxCacheDiagnostics:
-    """Build one subprocess JAX cache diagnostic payload."""
-    return JaxCacheDiagnostics(
-        cache_directory=str(cache_directory) if cache_directory is not None else None,
-        child_reported_cache_directory=child_reported_cache_directory,
-        persistent_cache_used=persistent_cache_used,
-        before=before_snapshot,
-        after=after_snapshot,
-        file_count_delta=snapshot_delta(
-            before_snapshot=before_snapshot,
-            after_snapshot=after_snapshot,
-            field_name="file_count",
-        ),
-        size_bytes_delta=snapshot_delta(
-            before_snapshot=before_snapshot,
-            after_snapshot=after_snapshot,
-            field_name="total_size_bytes",
-        ),
-        compile_log_summary=read_jax_compile_log_summary(stderr_log_path),
-    )
-
-
 def build_g_trial_environment(
     *,
     candidate: Step2Candidate,
@@ -2070,31 +1436,20 @@ def build_g_step2_child_command(
     diagnostic_options: dict[str, object] | None = None,
 ) -> list[str]:
     """Build one isolated Python child command for a g REGENIE step 2 run."""
-    phenotype_path = baseline_paths.continuous_phenotype_path
-    phenotype_name = "phenotype_continuous"
-    prediction_path = baseline_paths.regenie_qt_prediction_list_path
-    binary_options_expression = "{}"
-    if candidate.trait_type == "binary":
-        phenotype_path = baseline_paths.binary_phenotype_path
-        phenotype_name = "phenotype_binary"
-        prediction_path = baseline_paths.regenie_prediction_list_path
-        binary_options_expression = '{"firth": True, "approx": True}'
-    variant_limit_expression = "None" if variant_limit is None else str(variant_limit)
     jax_cache_directory = resolve_profile_jax_cache_directory(candidate, cache_directory)
-    jax_cache_directory_expression = "None" if jax_cache_directory is None else repr(str(jax_cache_directory))
-    bgen_tile_expression = (
-        "64" if candidate.bgen_decode_tile_variant_count is None else str(candidate.bgen_decode_tile_variant_count)
+    regenie_run_spec = build_g_step2_regenie_run_spec(
+        baseline_paths=baseline_paths,
+        candidate=candidate,
+        output_prefix=output_prefix,
+        variant_limit=variant_limit,
+        jax_cache_directory=jax_cache_directory,
+        stage_timing_path=stage_timing_path,
     )
-    result_in_flight_limit_expression = (
-        "None" if candidate.result_in_flight_limit is None else str(candidate.result_in_flight_limit)
-    )
-    dosage_buffer_limit_expression = (
-        "None" if candidate.dosage_buffer_limit is None else str(candidate.dosage_buffer_limit)
-    )
-    native_callback_batch_size = candidate.native_callback_batch_size
-    firth_batch_expression = "1024" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
-    rayon_thread_expression = "None" if candidate.rayon_thread_count is None else str(candidate.rayon_thread_count)
-    diagnostic_options_expression = repr(diagnostic_options or {})
+    regenie_options = tooling_g_regenie.render_python_api_options(regenie_run_spec)
+    rendered_diagnostics = typing.cast("dict[str, object]", regenie_options.setdefault("diagnostics", {}))
+    rendered_diagnostics.update(diagnostic_options or {})
+    regenie_options_payload = json.dumps(tooling_reports.to_jsonable(regenie_options), sort_keys=True)
+    jax_cache_directory_payload = str(jax_cache_directory) if jax_cache_directory is not None else None
     child_code = textwrap.dedent(
         """
         import json
@@ -2148,50 +1503,7 @@ def build_g_step2_child_command(
             jax.profiler.start_trace(trace_directory)
         try:
             start_time = time.perf_counter()
-            diagnostics_options = dict({diagnostic_options_expression})
-            if {stage_timing_path!r} is not None:
-                diagnostics_options["stage_timings_json"] = {stage_timing_path!r}
-            compute_options = {{
-                "device": {device!r},
-                "staging_depth": {staging_depth},
-                "native_callback_batch_size": {native_callback_batch_size},
-                "bgen_decode_tile_variant_count": {bgen_tile_expression},
-                "firth_batch_size": {firth_batch_expression},
-                "jax_persistent_cache": True,
-                "jax_persistent_cache_min_entry_size_bytes": -1,
-                "jax_persistent_cache_min_compile_time_seconds": 0,
-                "jax_xla_autotune_cache": {enable_xla_autotune_cache},
-            }}
-            if {variant_limit_expression} is not None:
-                compute_options["variant_limit"] = {variant_limit_expression}
-            if {result_in_flight_limit_expression} is not None:
-                compute_options["result_in_flight_limit"] = {result_in_flight_limit_expression}
-            if {dosage_buffer_limit_expression} is not None:
-                compute_options["dosage_buffer_limit"] = {dosage_buffer_limit_expression}
-            if {jax_cache_directory_expression} is not None:
-                compute_options["jax_cache_dir"] = {jax_cache_directory_expression}
-            regenie_options = {{
-                "step": 2,
-                "bt" if {trait_type!r} == "binary" else "qt": True,
-                "bgen": {bgen_path!r},
-                "sample": {sample_path!r},
-                "phenoFile": {phenotype_path!r},
-                "phenoCol": {phenotype_name!r},
-                "out": {output_prefix!r},
-                "covarFile": {covariate_path!r},
-                "covarColList": "age,sex",
-                "pred": {prediction_path!r},
-                "bsize": {chunk_size},
-                "threads": {rayon_thread_expression},
-                "compute": compute_options,
-                "output": {{
-                    "format": "parquet",
-                    "writer_threads": {writer_thread_count},
-                    "writer_queue_depth": {writer_queue_depth},
-                }},
-                "diagnostics": diagnostics_options,
-                **{binary_options_expression},
-            }}
+            regenie_options = json.loads({regenie_options_payload!r})
             artifacts = api.regenie.from_options(regenie_options)
             wall_time_seconds = time.perf_counter() - start_time
             output_row_count, output_paths = count_artifact_rows(artifacts)
@@ -2207,7 +1519,7 @@ def build_g_step2_child_command(
                 "jax_devices": [str(device) for device in jax.devices()],
                 "jax_probe_device": str(probe_device),
                 "jax_probe_device_platform": getattr(probe_device, "platform", None),
-                "jax_cache_directory": {jax_cache_directory_expression},
+                "jax_cache_directory": {jax_cache_directory_payload!r},
                 "jax_persistent_cache_used": True,
             }}))
         finally:
@@ -2217,33 +1529,103 @@ def build_g_step2_child_command(
     ).format(
         trace_directory=str(trace_directory) if trace_directory is not None else None,
         memory_profile_path=str(memory_profile_path) if memory_profile_path is not None else None,
-        bgen_path=str(baseline_paths.bgen_path),
-        sample_path=str(baseline_paths.sample_path),
-        phenotype_path=str(phenotype_path),
-        phenotype_name=phenotype_name,
-        output_prefix=str(output_prefix),
-        covariate_path=str(baseline_paths.covariate_path),
-        prediction_path=str(prediction_path),
-        trait_type=candidate.trait_type,
-        device=candidate.device,
-        chunk_size=candidate.chunk_size,
-        variant_limit_expression=variant_limit_expression,
-        staging_depth=candidate.staging_depth,
-        native_callback_batch_size=native_callback_batch_size,
-        result_in_flight_limit_expression=result_in_flight_limit_expression,
-        dosage_buffer_limit_expression=dosage_buffer_limit_expression,
-        writer_thread_count=candidate.output_writer_thread_count,
-        writer_queue_depth=candidate.output_writer_queue_depth,
-        bgen_tile_expression=bgen_tile_expression,
-        firth_batch_expression=firth_batch_expression,
-        rayon_thread_expression=rayon_thread_expression,
-        jax_cache_directory_expression=jax_cache_directory_expression,
-        enable_xla_autotune_cache=ENABLE_XLA_AUTOTUNE_CACHE,
-        stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
-        diagnostic_options_expression=diagnostic_options_expression,
-        binary_options_expression=binary_options_expression,
+        regenie_options_payload=regenie_options_payload,
+        jax_cache_directory_payload=jax_cache_directory_payload,
     )
     return [sys.executable, "-c", child_code]
+
+
+def build_g_step2_regenie_run_spec(
+    *,
+    baseline_paths: typing.Any,
+    candidate: Step2Candidate,
+    output_prefix: Path,
+    variant_limit: int | None,
+    jax_cache_directory: Path | None,
+    stage_timing_path: Path | None,
+) -> tooling_g_regenie.RegenieRunSpec:
+    """Build the shared REGENIE run spec for a deep-profile child command."""
+    is_binary_trait = candidate.trait_type == "binary"
+    phenotype_path = (
+        baseline_paths.binary_phenotype_path if is_binary_trait else baseline_paths.continuous_phenotype_path
+    )
+    phenotype_name = "phenotype_binary" if is_binary_trait else "phenotype_continuous"
+    prediction_path = (
+        baseline_paths.regenie_prediction_list_path
+        if is_binary_trait
+        else baseline_paths.regenie_qt_prediction_list_path
+    )
+    return tooling_g_regenie.RegenieRunSpec(
+        trait_kind=(
+            tooling_g_regenie.RegenieTraitKind.BINARY
+            if is_binary_trait
+            else tooling_g_regenie.RegenieTraitKind.QUANTITATIVE
+        ),
+        command_prefix=(sys.executable, "-m", "g", "regenie"),
+        inputs=tooling_g_regenie.RegenieInputSpec(
+            bgen_path=baseline_paths.bgen_path,
+            sample_path=baseline_paths.sample_path,
+            phenotype_path=phenotype_path,
+            phenotype_columns=(phenotype_name,),
+            covariate_path=baseline_paths.covariate_path,
+            covariate_columns=("age", "sex"),
+            prediction_list_path=prediction_path,
+            output_prefix=output_prefix,
+        ),
+        compute=tooling_g_regenie.RegenieComputeOptions(
+            device=tooling_g_regenie.RegenieDevice(candidate.device),
+            bsize=candidate.chunk_size,
+            threads=candidate.rayon_thread_count,
+            staging_depth=candidate.staging_depth,
+            native_callback_batch_size=candidate.native_callback_batch_size,
+            result_in_flight_limit=candidate.result_in_flight_limit,
+            dosage_buffer_limit=candidate.dosage_buffer_limit,
+            variant_limit=variant_limit,
+            trusted_no_missing_diploid=None,
+            trusted_bgen_validation_mode=None,
+            bgen_decode_tile_variant_count=candidate.bgen_decode_tile_variant_count or 64,
+            firth_batch_size=candidate.firth_batch_size or 1024,
+            firth_candidate_capacity=None,
+            gpu_genotype_format=None,
+            jax_cache_dir=jax_cache_directory,
+            jax_persistent_cache=True,
+            jax_persistent_cache_min_entry_size_bytes=-1,
+            jax_persistent_cache_min_compile_time_seconds=0,
+            jax_xla_autotune_cache=ENABLE_XLA_AUTOTUNE_CACHE,
+        ),
+        output=tooling_g_regenie.RegenieOutputOptions(
+            output_format="parquet",
+            output_run_directory=None,
+            writer_threads=candidate.output_writer_thread_count,
+            writer_queue_depth=candidate.output_writer_queue_depth,
+            chunks_per_arrow_file=None,
+            arrow_compression=None,
+            parquet_compression=None,
+            output_statistic_dtype=None,
+            finalize_parquet=None,
+        ),
+        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(
+            telemetry=None,
+            log_dir=None,
+            stage_timings_json=stage_timing_path,
+            profile_summary_json=None,
+            log_file=None,
+            log_filter=None,
+            log_stderr=None,
+            progress_interval_seconds=None,
+            progress_interval_chunks=None,
+        ),
+        binary=(
+            tooling_g_regenie.RegenieBinaryOptions(
+                firth=True,
+                approx=True,
+                firth_se=None,
+                p_threshold=None,
+            )
+            if is_binary_trait
+            else None
+        ),
+    )
 
 
 def build_application_output_run_directory(output_prefix: Path) -> Path:
@@ -2767,88 +2149,6 @@ def run_regenie_trial(
     )
 
 
-def successful_trials_with_jax_diagnostics(trials: list[TrialResult]) -> list[TrialResult]:
-    """Return successful trials that include JAX cache diagnostics."""
-    return [
-        trial
-        for trial in trials
-        if trial.status == "success" and trial.wall_time_seconds is not None and trial.jax_cache_diagnostics is not None
-    ]
-
-
-def sum_optional_integer_values(values: typing.Iterable[int | None]) -> int | None:
-    """Sum integer values when at least one value is available."""
-    observed_values = [value for value in values if value is not None]
-    if not observed_values:
-        return None
-    return sum(observed_values)
-
-
-def compile_log_summary_for_trial(trial: TrialResult) -> JaxCompileLogSummary:
-    """Return the parsed JAX compile log summary for a diagnostic trial."""
-    if trial.jax_cache_diagnostics is None:
-        return parse_jax_compile_log("")
-    return trial.jax_cache_diagnostics.compile_log_summary
-
-
-def build_jax_cold_warm_diagnostics(
-    *,
-    warmup_trials: list[TrialResult],
-    trial_results: list[TrialResult],
-) -> JaxColdWarmDiagnostics | None:
-    """Build cold-versus-warm JAX diagnostics for one aggregate result."""
-    successful_trials = successful_trials_with_jax_diagnostics([*warmup_trials, *trial_results])
-    if not successful_trials:
-        return None
-    successful_diagnostics = [
-        trial.jax_cache_diagnostics for trial in successful_trials if trial.jax_cache_diagnostics is not None
-    ]
-    cold_trial = successful_trials[0]
-    warm_trials = successful_trials[1:]
-    cold_diagnostics = successful_diagnostics[0]
-    warm_wall_times = [trial.wall_time_seconds for trial in warm_trials if trial.wall_time_seconds is not None]
-    warm_median_wall_time = statistics.median(warm_wall_times) if warm_wall_times else None
-    warm_mean_wall_time = statistics.fmean(warm_wall_times) if warm_wall_times else None
-    cold_to_warm_speedup_ratio = None
-    if cold_trial.wall_time_seconds is not None and warm_median_wall_time is not None and warm_median_wall_time > 0.0:
-        cold_to_warm_speedup_ratio = cold_trial.wall_time_seconds / warm_median_wall_time
-    warm_diagnostics = [trial.jax_cache_diagnostics for trial in warm_trials if trial.jax_cache_diagnostics is not None]
-    return JaxColdWarmDiagnostics(
-        cache_directory=cold_diagnostics.cache_directory,
-        persistent_cache_used=any(diagnostic.persistent_cache_used for diagnostic in successful_diagnostics),
-        cold_trial_name=cold_trial.name,
-        cold_wall_time_seconds=cold_trial.wall_time_seconds,
-        warm_trial_count=len(warm_trials),
-        warm_median_wall_time_seconds=warm_median_wall_time,
-        warm_mean_wall_time_seconds=warm_mean_wall_time,
-        cold_to_warm_speedup_ratio=cold_to_warm_speedup_ratio,
-        cold_cache_file_count_delta=cold_diagnostics.file_count_delta,
-        warm_cache_file_count_delta=sum_optional_integer_values(
-            diagnostic.file_count_delta for diagnostic in warm_diagnostics
-        ),
-        cold_cache_size_bytes_delta=cold_diagnostics.size_bytes_delta,
-        warm_cache_size_bytes_delta=sum_optional_integer_values(
-            diagnostic.size_bytes_delta for diagnostic in warm_diagnostics
-        ),
-        cold_compilation_event_count=compile_log_summary_for_trial(cold_trial).compilation_event_count,
-        warm_compilation_event_count=sum(
-            compile_log_summary_for_trial(trial).compilation_event_count for trial in warm_trials
-        ),
-        cold_cache_hit_count=compile_log_summary_for_trial(cold_trial).persistent_cache_hit_count,
-        warm_cache_hit_count=sum(
-            compile_log_summary_for_trial(trial).persistent_cache_hit_count for trial in warm_trials
-        ),
-        cold_cache_miss_count=compile_log_summary_for_trial(cold_trial).persistent_cache_miss_count,
-        warm_cache_miss_count=sum(
-            compile_log_summary_for_trial(trial).persistent_cache_miss_count for trial in warm_trials
-        ),
-        cold_tracing_cache_miss_count=compile_log_summary_for_trial(cold_trial).tracing_cache_miss_count,
-        warm_tracing_cache_miss_count=sum(
-            compile_log_summary_for_trial(trial).tracing_cache_miss_count for trial in warm_trials
-        ),
-    )
-
-
 def aggregate_trial_results(
     *,
     name: str,
@@ -3280,22 +2580,32 @@ def candidate_from_aggregate_name(winner_key: str, aggregate_result: AggregateRe
     command = trial.command_arguments
     code = command[2] if len(command) >= 3 and command[1] == "-c" else ""
 
-    def read_int(marker: str, default_value: int) -> int:
-        marker_index = code.find(marker)
-        if marker_index < 0:
-            return default_value
-        value_start = marker_index + len(marker)
-        value_end = code.find(",", value_start)
-        return int(code[value_start:value_end].strip())
-
-    def read_optional_int(marker: str) -> int | None:
+    def read_scalar(marker: str) -> str | None:
         marker_index = code.find(marker)
         if marker_index < 0:
             return None
         value_start = marker_index + len(marker)
-        value_end = code.find(",", value_start)
-        raw_value = code[value_start:value_end].strip()
-        if raw_value == "None":
+        value_end_candidates = [
+            candidate_index
+            for candidate_index in (
+                code.find(",", value_start),
+                code.find("}", value_start),
+                code.find("\n", value_start),
+            )
+            if candidate_index >= 0
+        ]
+        value_end = min(value_end_candidates) if value_end_candidates else len(code)
+        return code[value_start:value_end].strip()
+
+    def read_int(marker: str, default_value: int) -> int:
+        raw_value = read_scalar(marker)
+        if raw_value is None:
+            return default_value
+        return int(raw_value)
+
+    def read_optional_int(marker: str) -> int | None:
+        raw_value = read_scalar(marker)
+        if raw_value is None or raw_value in {"None", "null"}:
             return None
         return int(raw_value)
 
@@ -3364,16 +2674,6 @@ def build_runtime_comparison_notes(aggregate_results: list[AggregateResult]) -> 
         if g_result.median_wall_time_seconds is None:
             failed.append(f"{comparison_name}: g result did not produce a measured runtime.")
     return RuntimeComparisonNotes(unsupported=unsupported, failed=failed)
-
-
-def collect_jax_cache_diagnostics(aggregate_results: list[AggregateResult]) -> dict[str, dict[str, object]]:
-    """Collect aggregate JAX cache diagnostics keyed by result name."""
-    diagnostics: dict[str, dict[str, object]] = {}
-    for aggregate_result in aggregate_results:
-        if aggregate_result.jax_cold_warm_summary is None:
-            continue
-        diagnostics[aggregate_result.name] = dataclasses.asdict(aggregate_result.jax_cold_warm_summary)
-    return diagnostics
 
 
 REGENIE_STAGE_GROUPS: dict[str, tuple[str, ...]] = {
@@ -4929,58 +4229,6 @@ def run_deep_profiles(
     return results
 
 
-def build_logging_perturbation_cases(
-    *,
-    output_directory: Path,
-    smoke: bool,
-) -> tuple[LoggingPerturbationCase, ...]:
-    """Build telemetry/logging perturbation cases for representative winners."""
-    perturbation_directory = output_directory / "logging_perturbation"
-    cases = (
-        LoggingPerturbationCase(
-            name="telemetry_off",
-            diagnostic_options={
-                "telemetry": "off",
-                "log_stderr": False,
-            },
-        ),
-        LoggingPerturbationCase(
-            name="progress_file_lossy",
-            diagnostic_options={
-                "telemetry": "progress",
-                "log_dir": str(perturbation_directory / "progress_file_lossy_logs"),
-                "log_stderr": False,
-                "log_lossy": True,
-                "log_queue_size": 8192,
-            },
-        ),
-        LoggingPerturbationCase(
-            name="profile_file_lossy",
-            diagnostic_options={
-                "telemetry": "profile",
-                "log_dir": str(perturbation_directory / "profile_file_lossy_logs"),
-                "log_stderr": False,
-                "log_lossy": True,
-                "log_queue_size": 8192,
-            },
-        ),
-        LoggingPerturbationCase(
-            name="trace_file_lossy_capped",
-            diagnostic_options={
-                "telemetry": "trace",
-                "log_dir": str(perturbation_directory / "trace_file_lossy_capped_logs"),
-                "log_stderr": False,
-                "log_lossy": True,
-                "log_queue_size": 8192,
-                "trace_event_cap": 100_000,
-            },
-        ),
-    )
-    if smoke:
-        return cases[:2]
-    return cases
-
-
 def run_logging_perturbation_profiles(
     *,
     arguments: ProfileArguments,
@@ -5035,137 +4283,6 @@ def run_logging_perturbation_profiles(
         encoding="utf-8",
     )
     return results
-
-
-def apply_smoke_overrides(arguments: ProfileArguments) -> ProfileArguments:
-    """Reduce the campaign size for a landau smoke profile."""
-    if not arguments.smoke:
-        return arguments
-    return dataclasses.replace(
-        arguments,
-        variant_limit=1000 if arguments.variant_limit is None else arguments.variant_limit,
-        chunk_sizes="2048",
-        staging_depths="1",
-        output_writer_thread_counts="1",
-        writer_queue_depth_multipliers="1",
-        firth_batch_sizes="32",
-        bgen_decode_tile_variant_counts="64",
-        rayon_thread_counts="1",
-        top_bgen_candidates=1,
-        top_finalists=1,
-        tuning_warmups=0,
-        tuning_trials=1,
-        finalist_warmups=0,
-        finalist_trials=1,
-        headline_warmups=0,
-        headline_trials=1,
-        regenie_baseline_warmups=0,
-        regenie_baseline_trials=1,
-        py_spy_timeout_seconds=15,
-        scalene_timeout_seconds=15,
-        memray_timeout_seconds=15,
-        linux_perf_timeout_seconds=15,
-        nsight_systems_timeout_seconds=15,
-        nsight_compute_timeout_seconds=15,
-    )
-
-
-def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArguments:
-    """Build profile parameters from a composed Hydra config."""
-    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
-    stage_timing_mode = ProfileStageTimingMode.EXACT
-    if "telemetry" in config:
-        stage_timing_mode = ProfileStageTimingMode(str(config.telemetry.stage_timing_mode))
-    data_directory = resolve_repo_path(tool_values["data_dir"])
-    output_parent = resolve_repo_path(tool_values.get("output_parent", DEFAULT_OUTPUT_PARENT))
-    explicit_output_directory = tooling_hydra_arguments.path_or_none(tool_values.get("output_dir"))
-    if explicit_output_directory is not None:
-        explicit_output_directory = tooling_paths.resolve_repo_relative_path(
-            explicit_output_directory,
-            REPOSITORY_ROOT,
-        )
-        output_parent = explicit_output_directory.parent
-    return ProfileArguments(
-        chromosome_label=str(tool_values["chromosome_label"]),
-        data_directory=data_directory,
-        baseline_directory=resolve_data_path(data_directory, tool_values["baseline_dir"]),
-        bed_prefix=resolve_data_path(data_directory, tool_values["bed_prefix"]),
-        bgen_path=resolve_data_path(data_directory, tool_values["bgen"]),
-        sample_path=resolve_data_path(data_directory, tool_values["sample"]),
-        continuous_phenotype_path=resolve_data_path(data_directory, tool_values["linear_phenotype_file"]),
-        binary_phenotype_path=resolve_data_path(data_directory, tool_values["binary_phenotype_file"]),
-        covariate_path=resolve_data_path(data_directory, tool_values["covariate_file"]),
-        regenie_prediction_list_path=resolve_data_path(data_directory, tool_values["binary_prediction_list"]),
-        regenie_qt_prediction_list_path=resolve_data_path(data_directory, tool_values["linear_prediction_list"]),
-        output_dir=explicit_output_directory,
-        output_parent=output_parent,
-        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
-        dry_run=bool(tool_values["dry_run"]),
-        include_regenie_baseline=bool(tool_values["include_regenie_baseline"]),
-        regenie_executable=(
-            None if tool_values.get("regenie_executable") is None else str(tool_values["regenie_executable"])
-        ),
-        regenie_baseline_trait_types=tooling_hydra_arguments.comma_join(tool_values["regenie_baseline_trait_types"]),
-        regenie_baseline_variant_limit=tooling_hydra_arguments.integer_or_none(
-            tool_values.get("regenie_baseline_variant_limit")
-        ),
-        regenie_baseline_warmups=int(tool_values["regenie_baseline_warmups"]),
-        regenie_baseline_trials=int(tool_values["regenie_baseline_trials"]),
-        workload_keys=tooling_hydra_arguments.comma_join(tool_values["workload_keys"]),
-        max_subprocess_runs=tooling_hydra_arguments.integer_or_none(tool_values.get("max_subprocess_runs")),
-        max_major_profiler_runs=tooling_hydra_arguments.integer_or_none(tool_values.get("max_major_profiler_runs")),
-        allow_over_budget=bool(tool_values["allow_over_budget"]),
-        smoke=bool(tool_values["smoke"]),
-        skip_deep_profiles=bool(tool_values["skip_deep_profiles"]),
-        enable_jax_trace=bool(tool_values["enable_jax_trace"]),
-        enable_jax_memory_profile=bool(tool_values["enable_jax_memory_profile"]),
-        enable_python_cprofile=bool(tool_values["enable_python_cprofile"]),
-        enable_py_spy=bool(tool_values["enable_py_spy"]),
-        enable_scalene=bool(tool_values["enable_scalene"]),
-        enable_memray=bool(tool_values["enable_memray"]),
-        enable_linux_perf=bool(tool_values["enable_linux_perf"]),
-        enable_nsight_systems=bool(tool_values["enable_nsight_systems"]),
-        enable_nsight_compute=bool(tool_values["enable_nsight_compute"]),
-        py_spy_timeout_seconds=int(tool_values["py_spy_timeout_seconds"]),
-        scalene_timeout_seconds=int(tool_values["scalene_timeout_seconds"]),
-        memray_timeout_seconds=int(tool_values["memray_timeout_seconds"]),
-        linux_perf_timeout_seconds=int(tool_values["linux_perf_timeout_seconds"]),
-        nsight_systems_timeout_seconds=int(tool_values["nsight_systems_timeout_seconds"]),
-        nsight_compute_timeout_seconds=int(tool_values["nsight_compute_timeout_seconds"]),
-        enable_rust_criterion=bool(tool_values["enable_rust_criterion"]),
-        enable_logging_perturbation=bool(tool_values["enable_logging_perturbation"]),
-        rust_benchmarks=tooling_hydra_arguments.comma_join(tool_values["rust_benchmarks"]),
-        chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
-        staging_depths=tooling_hydra_arguments.comma_join(tool_values["staging_depths"]),
-        native_callback_batch_sizes=tooling_hydra_arguments.comma_join(tool_values["native_callback_batch_sizes"]),
-        result_in_flight_limits=tooling_hydra_arguments.comma_join(tool_values["result_in_flight_limits"]),
-        dosage_buffer_limits=tooling_hydra_arguments.comma_join(tool_values["dosage_buffer_limits"]),
-        output_writer_thread_counts=tooling_hydra_arguments.comma_join(tool_values["output_writer_thread_counts"]),
-        writer_queue_depth_multipliers=tooling_hydra_arguments.comma_join(
-            tool_values["writer_queue_depth_multipliers"]
-        ),
-        firth_batch_sizes=tooling_hydra_arguments.comma_join(tool_values["firth_batch_sizes"]),
-        bgen_decode_tile_variant_counts=tooling_hydra_arguments.comma_join(
-            tool_values["bgen_decode_tile_variant_counts"]
-        ),
-        rayon_thread_counts=tooling_hydra_arguments.comma_join(tool_values["rayon_thread_counts"]),
-        bgen_benchmark_chunk_size=int(tool_values["bgen_benchmark_chunk_size"]),
-        top_bgen_candidates=int(tool_values["top_bgen_candidates"]),
-        top_finalists=int(tool_values["top_finalists"]),
-        tuning_warmups=int(tool_values["tuning_warmups"]),
-        tuning_trials=int(tool_values["tuning_trials"]),
-        finalist_warmups=int(tool_values["finalist_warmups"]),
-        finalist_trials=int(tool_values["finalist_trials"]),
-        headline_warmups=int(tool_values["headline_warmups"]),
-        headline_trials=int(tool_values["headline_trials"]),
-        stage_timing_mode=stage_timing_mode,
-    )
-
-
-def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None) -> ProfileArguments:
-    """Compose the deep-profile config and return resolved parameters."""
-    config = tooling_configuration.compose_config(config_name="profile_regenie2_deep", overrides=overrides)
-    return build_arguments_from_config(config)
 
 
 def required_profile_input_paths(baseline_paths: baseline_benchmark.BaselinePaths) -> list[Path]:
@@ -5358,7 +4475,7 @@ def write_profile_plan(plan: ProfilePlan, output_directory: Path) -> None:
     (output_directory / "profile_plan.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def run_tool(arguments: ProfileArguments) -> None:
+def run_tool(arguments: ProfileArguments, hydra_config: omegaconf.DictConfig | None = None) -> None:
     """Run the landau deep profiling campaign."""
     arguments = apply_smoke_overrides(arguments)
     output_directory = build_output_directory(arguments)
@@ -5393,6 +4510,15 @@ def run_tool(arguments: ProfileArguments) -> None:
             profiler_tool_status=profiler_tool_status,
             profile_plan=profile_plan,
         )
+        write_standard_profile_artifacts(
+            arguments=arguments,
+            output_directory=output_directory,
+            profiler_tool_status=profiler_tool_status,
+            status=tooling_artifact_format.ToolArtifactStatus.DRY_RUN,
+            profile_plan=profile_plan,
+            summary_markdown=(output_directory / "profile_plan.md").read_text(encoding="utf-8"),
+            hydra_config=hydra_config,
+        )
         logger.info("Wrote dry-run profile plan under %s", output_directory)
         return
     if campaign_budget_is_over_limit(campaign_budget) and not arguments.allow_over_budget:
@@ -5407,6 +4533,16 @@ def run_tool(arguments: ProfileArguments) -> None:
             output_directory=output_directory,
             profiler_tool_status=profiler_tool_status,
             profile_plan=profile_plan,
+        )
+        write_standard_profile_artifacts(
+            arguments=arguments,
+            output_directory=output_directory,
+            profiler_tool_status=profiler_tool_status,
+            status=tooling_artifact_format.ToolArtifactStatus.INVALID,
+            status_reason="Campaign budget exceeds configured limits.",
+            profile_plan=profile_plan,
+            summary_markdown=(output_directory / "profile_plan.md").read_text(encoding="utf-8"),
+            hydra_config=hydra_config,
         )
     enforce_campaign_budget(arguments, campaign_budget)
     logger.info("Validating profile inputs")
@@ -5522,24 +4658,31 @@ def run_tool(arguments: ProfileArguments) -> None:
         "logging_perturbation_results": logging_perturbation_results,
     }
     (output_directory / "summary.json").write_text(json.dumps(summary_payload, indent=2) + "\n", encoding="utf-8")
-    (output_directory / "summary.md").write_text(
-        build_summary_markdown(
-            aggregate_results=headline_results,
-            comparisons=comparisons,
-            comparison_notes=comparison_notes,
-            regenie_baseline_scope=regenie_baseline_scope,
-            stage_totals=stage_totals,
-            stage_comparison_rows=stage_comparison_rows,
-            algorithmic_findings=algorithmic_findings,
-            logging_perturbation_results=logging_perturbation_results,
-            binary_correction_diagnostics=binary_correction_diagnostics,
-        ),
-        encoding="utf-8",
+    summary_markdown = build_summary_markdown(
+        aggregate_results=headline_results,
+        comparisons=comparisons,
+        comparison_notes=comparison_notes,
+        regenie_baseline_scope=regenie_baseline_scope,
+        stage_totals=stage_totals,
+        stage_comparison_rows=stage_comparison_rows,
+        algorithmic_findings=algorithmic_findings,
+        logging_perturbation_results=logging_perturbation_results,
+        binary_correction_diagnostics=binary_correction_diagnostics,
     )
+    (output_directory / "summary.md").write_text(summary_markdown, encoding="utf-8")
     write_artifact_manifest(
         output_directory=output_directory,
         profiler_tool_status=profiler_tool_status,
         summary_payload=summary_payload,
+    )
+    write_standard_profile_artifacts(
+        arguments=arguments,
+        output_directory=output_directory,
+        profiler_tool_status=profiler_tool_status,
+        status=profile_summary_artifact_status(summary_payload),
+        summary_payload=summary_payload,
+        summary_markdown=summary_markdown,
+        hydra_config=hydra_config,
     )
     logger.info("Wrote deep profile artifacts under %s", output_directory)
 
@@ -5547,7 +4690,7 @@ def run_tool(arguments: ProfileArguments) -> None:
 @hydra.main(version_base=None, config_path="../configs", config_name="profile_regenie2_deep")
 def hydra_main(config: omegaconf.DictConfig) -> None:
     """Run the deep profiling campaign through Hydra."""
-    run_tool(build_arguments_from_config(config))
+    run_tool(build_arguments_from_config(config), hydra_config=config)
 
 
 def main() -> None:

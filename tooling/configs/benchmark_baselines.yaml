@@ -3,6 +3,7 @@ defaults:
   - _self_
 
 tool:
+  name: baselines
   data_directory: ${dataset.data_directory}
   include_hail: false
 

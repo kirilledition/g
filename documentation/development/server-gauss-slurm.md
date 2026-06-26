@@ -20,7 +20,7 @@ Install or make available on `PATH`:
 - `srun`
 - `zstd`
 
-The repo-local bootstrap installs `just`, `cargo`, `rustc`, `plink`, `plink2`, and `regenie` into `.tools/`. Python itself does not need to be preinstalled globally if `uv python install` works in your account.
+The repo-local dev-bootstrap installs `just`, `cargo`, `rustc`, `plink`, `plink2`, and `regenie` into `.tools/`. Python itself does not need to be preinstalled globally if `uv python install` works in your account.
 
 ## Bootstrap
 
@@ -31,16 +31,16 @@ UV_CACHE_DIR=/tmp/g-uv-cache uv run --group dev python -m tooling.cli.server too
 source tooling/server/server_env.sh
 ```
 
-CPU-oriented login-node setup after the first-run bootstrap:
+CPU-oriented login-node setup after the first-run dev-bootstrap:
 
 ```bash
-just bootstrap
+just dev-bootstrap
 ```
 
 GPU-capable environment:
 
 ```bash
-just bootstrap-gpu
+just dev-bootstrap-gpu
 ```
 
 Sanity checks:
@@ -92,14 +92,14 @@ login node.
 Prepare benchmark data only after `plink2` is available:
 
 ```bash
-just setup-data
+just data-prepare
 ```
 
 Generate binary REGENIE step 1 predictions required by binary step 2:
 
 ```bash
-just setup-binary-baseline
-just verify-regenie2-binary-gpu-inputs
+just data-baseline-binary
+just data-verify-binary-gpu-inputs
 ```
 
 ## CPU Workflow Through SLURM
@@ -143,10 +143,12 @@ just slurm-cpu-just rust-test
 Inside CPU SLURM jobs, `tooling/server/server_env.sh` derives
 `GWAS_ENGINE_ALLOCATED_CPU_COUNT` from `SLURM_CPUS_PER_TASK`,
 `SLURM_CPUS_ON_NODE`, or `nproc`; sets `CARGO_BUILD_JOBS` to that count unless
-already configured; and sets `GWAS_ENGINE_PYTEST_WORKERS` for pytest. Python
-tests default to at most 8 xdist workers because the suite imports JAX and the
-native extension, so one pytest worker per core can oversubscribe process-level
-JAX/native thread pools. Override after measuring:
+already configured; and sets `GWAS_ENGINE_PYTEST_WORKERS` for pytest. Rust
+build recipes call `gwas_engine_configure_rust_build_environment`, which also
+uses `sccache` automatically when it is available and `RUSTC_WRAPPER` is unset.
+Python tests default to at most 8 xdist workers because the suite imports JAX
+and the native extension, so one pytest worker per core can oversubscribe
+process-level JAX/native thread pools. Override after measuring:
 
 ```bash
 GWAS_ENGINE_CPU_PYTEST_WORKERS=16 just slurm-cpu-test
@@ -157,16 +159,17 @@ When xdist is active, pytest subprocesses get conservative BLAS/OpenMP thread
 limits to reduce accidental oversubscription. Cargo builds and Rust tests use
 the full allocated CPU count through Cargo's own scheduler.
 
-Rejected CPU-loop changes:
+Build-environment defaults:
 
-- Do not change `RUSTFLAGS`, linker choice, incremental settings, or release/perf
-  profile semantics for validation recipes without benchmark evidence. Native
-  `RUSTFLAGS="-C target-cpu=native"` stays limited to perf/bench recipes.
 - Do not share one global Rust `target/` directory across Symphony worktrees by
   default; that can reduce cold builds but risks cross-worktree contention and
   confusing invalidation during unattended branch work.
 - Do not push every focused test through SLURM; local `check-local`,
   `test-local`, and targeted `uv run pytest ...` remain faster for small edits.
+- Native `RUSTFLAGS="-C target-cpu=native"` stays limited to perf/bench recipes
+  and the build-profile benchmark labels that model perf builds.
+- Set `RUSTC_WRAPPER` explicitly to disable or replace the optional `sccache`
+  default; set `SCCACHE_DIR` to move the cache from `/tmp/g-sccache`.
 
 ## GPU Workflow Through SLURM
 
@@ -200,13 +203,18 @@ Run existing repo recipes on the GPU node while keeping `just` as the top-level 
 
 ```bash
 just slurm-gpu-just doctor-jax
-just slurm-regenie2-binary-gpu-smoke
-just verify-regenie2-binary-gpu-smoke-output
-just slurm-regenie2-binary-gpu
-just verify-regenie2-binary-gpu-output
-just slurm-gpu-just benchmark-regenie-comparison-gpu
-just slurm-gpu-just profile-regenie-comparison-gpu
+just slurm-gpu-just matrix-chr22-smoke
+just matrix-chr22-smoke
+just slurm-gpu-just matrix-chr22
+just matrix-chr22
+just slurm-gpu-just legacy-regenie-comparison-gpu
+just slurm-gpu-just legacy-profile-regenie-comparison-gpu
 ```
+
+`slurm-gpu-run` and `slurm-gpu-shell` start in the repository root and call
+`gwas_engine_configure_rust_build_environment` before the requested command.
+That keeps GPU-side `maturin`, Cargo, clippy, or profiler-tool builds on the
+same `CARGO_BUILD_JOBS` policy used by CPU jobs.
 
 Run standard performance harness entrypoints:
 

@@ -5,6 +5,7 @@ defaults:
   - _self_
 
 tool:
+  name: linear_startup
   device: ${machine.device}
   chunk_size: 8192
   finalize_parquet: true

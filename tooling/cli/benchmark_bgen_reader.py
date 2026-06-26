@@ -17,18 +17,15 @@ import numpy as np
 
 import tooling.configuration as tooling_configuration
 from g import _core
+from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
-from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
 from tooling.regenie import bgen_reader as regenie_bgen_reader
 
 if typing.TYPE_CHECKING:
     import omegaconf
-
-DEFAULT_DATA_DIRECTORY = tooling_paths.configured_data_directory()
-
 
 BenchmarkPathMode = regenie_bgen_reader.BenchmarkPathMode
 SampleSelectionMode = regenie_bgen_reader.SampleSelectionMode
@@ -384,6 +381,212 @@ def write_text_report(path: Path, report: BenchmarkSweepReport) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def benchmark_arguments_payload(arguments: BenchmarkArguments) -> dict[str, object]:
+    """Build a JSON-ready argument snapshot."""
+    return typing.cast("dict[str, object]", tooling_reports.to_jsonable(dataclasses.asdict(arguments)))
+
+
+def bgen_case_identifier(benchmark_case: BenchmarkCaseReport, case_index: int) -> str:
+    """Build a stable case identifier for one BGEN reader benchmark case."""
+    return (
+        f"bgen_case_{case_index:04d}_chunk{benchmark_case.chunk_size}_"
+        f"trusted{str(benchmark_case.trusted_no_missing_diploid).lower()}_"
+        f"{benchmark_case.sample_selection_mode}"
+    )
+
+
+def build_bgen_metrics(
+    *,
+    run_id: str,
+    report: BenchmarkSweepReport,
+) -> list[tooling_artifact_format.MetricRecord]:
+    """Build normalized metrics for a BGEN reader benchmark report."""
+    metric_records: list[tooling_artifact_format.MetricRecord] = []
+    for case_index, benchmark_case in enumerate(report.cases):
+        case_id = bgen_case_identifier(benchmark_case, case_index)
+        for path_index, path_result in enumerate(benchmark_case.path_results):
+            dimensions: dict[str, object] = {
+                "path_mode": path_result.path_mode,
+                "chunk_size": benchmark_case.chunk_size,
+                "variant_limit": benchmark_case.variant_limit,
+                "repeat_count": benchmark_case.repeat_count,
+                "decode_tile_variant_count": benchmark_case.decode_tile_variant_count,
+                "rayon_thread_count": benchmark_case.rayon_thread_count,
+                "trusted_no_missing_diploid": benchmark_case.trusted_no_missing_diploid,
+                "sample_selection_mode": benchmark_case.sample_selection_mode,
+                "selected_sample_count": benchmark_case.selected_sample_count,
+            }
+            metric_records.extend(
+                [
+                    tooling_artifact_format.build_metric_record(
+                        run_id=run_id,
+                        case_id=case_id,
+                        metric_name="wall_time_seconds",
+                        value=path_result.median_seconds,
+                        unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+                        aggregation=tooling_artifact_format.MetricAggregation.MEDIAN.value,
+                        higher_is_better=False,
+                        dimensions=dimensions,
+                        phase="bgen_reader",
+                        source=tooling_artifact_format.MetricSource(
+                            artifact_path="report.json",
+                            json_pointer=f"/cases/{case_index}/path_results/{path_index}/median_seconds",
+                        ),
+                    ),
+                    tooling_artifact_format.build_metric_record(
+                        run_id=run_id,
+                        case_id=case_id,
+                        metric_name="wall_time_seconds",
+                        value=path_result.mean_seconds,
+                        unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+                        aggregation=tooling_artifact_format.MetricAggregation.MEAN.value,
+                        higher_is_better=False,
+                        dimensions=dimensions,
+                        phase="bgen_reader",
+                        source=tooling_artifact_format.MetricSource(
+                            artifact_path="report.json",
+                            json_pointer=f"/cases/{case_index}/path_results/{path_index}/mean_seconds",
+                        ),
+                    ),
+                ]
+            )
+    return metric_records
+
+
+def build_bgen_command_records(
+    *,
+    arguments: BenchmarkArguments,
+    output_directory: Path,
+    run_id: str,
+    report: BenchmarkSweepReport,
+) -> list[tooling_artifact_format.CommandRecord]:
+    """Build command ledger records for BGEN reader subprocess cases."""
+    command_records: list[tooling_artifact_format.CommandRecord] = []
+    for case_index, benchmark_case in enumerate(report.cases):
+        command_arguments = [sys.executable, "-m", "tooling.cli.benchmark_bgen_reader"]
+        command_arguments.extend(
+            tooling_hydra_arguments.build_overrides(
+                {
+                    "tool.bgen": str(arguments.bgen),
+                    "tool.sample": str(arguments.sample) if arguments.sample is not None else None,
+                    "tool.chunk_size": benchmark_case.chunk_size,
+                    "tool.variant_limit": benchmark_case.variant_limit,
+                    "tool.repeat_count": benchmark_case.repeat_count,
+                    "tool.path_modes": arguments.path_modes,
+                    "tool.sample_selection_mode": benchmark_case.sample_selection_mode,
+                    "tool.trusted_no_missing_diploid": benchmark_case.trusted_no_missing_diploid,
+                    "tool.emit_case_json": True,
+                    "tool.json_summary_path": None,
+                    "tool.markdown_summary_path": None,
+                }
+            )
+        )
+        environment_overrides: dict[str, str] = {}
+        if benchmark_case.decode_tile_variant_count is not None:
+            environment_overrides["G_BGEN_DECODE_TILE_VARIANT_COUNT"] = str(benchmark_case.decode_tile_variant_count)
+            command_arguments.append(f"tool.decode_tile_variant_count={benchmark_case.decode_tile_variant_count}")
+        if benchmark_case.rayon_thread_count is not None:
+            environment_overrides["RAYON_NUM_THREADS"] = str(benchmark_case.rayon_thread_count)
+            command_arguments.append(f"tool.rayon_thread_count={benchmark_case.rayon_thread_count}")
+        command_records.append(
+            tooling_artifact_format.build_command_record(
+                command_id=bgen_case_identifier(benchmark_case, case_index),
+                tool_name="benchmark_bgen_reader",
+                run_id=run_id,
+                phase="bgen_reader",
+                args=command_arguments,
+                output_directory=output_directory,
+                cwd=Path.cwd(),
+                environment_overrides=environment_overrides,
+                status=tooling_artifact_format.ToolArtifactStatus.SUCCESS,
+            )
+        )
+    return command_records
+
+
+def resolve_bgen_artifact_output_directory(arguments: BenchmarkArguments) -> Path | None:
+    """Resolve the artifact directory for BGEN reader summary outputs."""
+    if arguments.json_summary_path is not None:
+        return arguments.json_summary_path.parent
+    if arguments.markdown_summary_path is not None:
+        return arguments.markdown_summary_path.parent
+    return None
+
+
+def write_standard_bgen_artifacts(
+    *,
+    arguments: BenchmarkArguments,
+    report: BenchmarkSweepReport,
+    hydra_config: omegaconf.DictConfig | None = None,
+) -> None:
+    """Write Tooling Artifact Format v1 outputs for BGEN reader benchmarks."""
+    output_directory = resolve_bgen_artifact_output_directory(arguments)
+    if output_directory is None:
+        return
+    producer = tooling_artifact_format.build_producer(
+        tool_name="benchmark_bgen_reader",
+        repository_root=Path.cwd(),
+    )
+    run = tooling_artifact_format.build_run_identity(
+        tool_name="benchmark_bgen_reader",
+        output_directory=output_directory,
+        status=tooling_artifact_format.ToolArtifactStatus.SUCCESS,
+    )
+    context_snapshot = tooling_artifact_format.build_context_snapshot(
+        output_directory=output_directory,
+        repository_root=Path.cwd(),
+    )
+    standard_report = tooling_artifact_format.build_report_envelope(
+        producer=producer,
+        run=run,
+        context=context_snapshot,
+        title="BGEN Reader Benchmark",
+        configuration=benchmark_arguments_payload(arguments),
+        summary={
+            "headline": "BGEN reader benchmark completed.",
+            "legacy_json_summary_path": str(arguments.json_summary_path) if arguments.json_summary_path else None,
+        },
+        cases=typing.cast("list[dict[str, object]]", tooling_reports.to_jsonable(report.cases)),
+        metrics=build_bgen_metrics(run_id=run.run_id, report=report),
+    )
+    tooling_artifact_format.write_standard_artifact_bundle(
+        output_directory=output_directory,
+        report=standard_report,
+        events=[
+            tooling_artifact_format.build_tool_event(
+                tool_name="benchmark_bgen_reader",
+                run_id=run.run_id,
+                phase="bgen_reader",
+                event="benchmark_completed",
+                message="BGEN reader benchmark completed.",
+                fields={"case_count": len(report.cases)},
+            )
+        ],
+        commands=build_bgen_command_records(
+            arguments=arguments,
+            output_directory=output_directory,
+            run_id=run.run_id,
+            report=report,
+        ),
+        input_files=[
+            tooling_artifact_format.build_input_file_record(path=arguments.bgen, kind="bgen"),
+            *(
+                [tooling_artifact_format.build_input_file_record(path=arguments.sample, kind="sample")]
+                if arguments.sample is not None
+                else []
+            ),
+        ],
+        summary_markdown=(
+            (arguments.markdown_summary_path.read_text(encoding="utf-8"))
+            if arguments.markdown_summary_path is not None and arguments.markdown_summary_path.is_file()
+            else None
+        ),
+        hydra_config=hydra_config,
+        tool_payload=benchmark_arguments_payload(arguments),
+        notes=["Legacy JSON and Markdown summary paths are preserved when configured."],
+    )
+
+
 def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArguments:
     """Build benchmark parameters from a composed Hydra config."""
     tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
@@ -417,7 +620,7 @@ def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None
     return build_arguments_from_config(config)
 
 
-def run_tool(arguments: BenchmarkArguments) -> None:
+def run_tool(arguments: BenchmarkArguments, hydra_config: omegaconf.DictConfig | None = None) -> None:
     """Run the benchmark with resolved parameters."""
     if arguments.emit_case_json:
         print(tooling_reports.to_json_text(build_case_report(arguments)).strip())
@@ -429,13 +632,14 @@ def run_tool(arguments: BenchmarkArguments) -> None:
         arguments.json_summary_path.write_text(report_json + "\n", encoding="utf-8")
     if arguments.markdown_summary_path is not None:
         write_text_report(arguments.markdown_summary_path, report)
+    write_standard_bgen_artifacts(arguments=arguments, report=report, hydra_config=hydra_config)
     print(report_json)
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="benchmark_bgen_reader")
 def hydra_main(config: omegaconf.DictConfig) -> None:
     """Run the benchmark CLI through Hydra."""
-    run_tool(build_arguments_from_config(config))
+    run_tool(build_arguments_from_config(config), hydra_config=config)
 
 
 def main() -> None:

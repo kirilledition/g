@@ -1,0 +1,6 @@
+tool:
+  name: check_rust_architecture
+
+hydra:
+  job:
+    chdir: false

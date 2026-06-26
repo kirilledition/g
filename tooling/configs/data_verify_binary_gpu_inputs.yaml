@@ -1,0 +1,16 @@
+defaults:
+  - dataset: local_1kg
+  - _self_
+
+tool:
+  name: regenie_baseline
+  data_directory: ${dataset.data_directory}
+  trait: binary
+  verify_only: true
+
+hydra:
+  output_subdir: null
+  job:
+    chdir: false
+  run:
+    dir: /tmp/g-hydra-runs

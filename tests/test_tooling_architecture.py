@@ -4,19 +4,37 @@ import dataclasses
 import enum
 import json
 import os
+import sys
 import typing
 from pathlib import Path
 
+import tooling.cli.benchmark as grouped_benchmark
 import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
 import tooling.cli.benchmark_regenie2_binary_hot as binary_hot_benchmark
+import tooling.cli.data as grouped_data
+import tooling.cli.debug as grouped_debug
+import tooling.cli.performance as grouped_performance
 import tooling.cli.profile_regenie2_deep as deep_profile
 import tooling.cli.run_regenie2_matrix as regenie2_matrix
+import tooling.cli.rust_build_profiles as rust_build_profiles
+import tooling.cli.schema_check as schema_check
+import tooling.cli.server as grouped_server
 import tooling.configuration as tooling_configuration
 import tooling.regenie.bgen_reader as regenie_bgen_reader
+from g.interface import config as interface_config
+from tooling.common import artifact_format as tooling_artifact_format
+from tooling.common import commands as tooling_commands
+from tooling.common import g_regenie as tooling_g_regenie
+from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import jax_cache as tooling_jax_cache
 from tooling.common import paths as tooling_paths
+from tooling.common import registry as tooling_registry
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
+from tooling.profile_deep import budget as profile_deep_budget
+from tooling.profile_deep import config as profile_deep_config
+from tooling.profile_deep import jax_cache as profile_deep_jax_cache
+from tooling.profile_deep import models as profile_deep_models
 
 if typing.TYPE_CHECKING:
     import pytest
@@ -61,7 +79,7 @@ def test_hydra_tooling_config_accepts_group_overrides() -> None:
 
 
 def test_grouped_hydra_tooling_configs_compose() -> None:
-    config_names = ["benchmark", "data", "debug", "performance", "server"]
+    config_names = ["benchmark", "data", "debug", "performance", "rust_build_profiles", "server"]
 
     for config_name in config_names:
         config = tooling_configuration.compose_config(config_name=config_name, include_hydra_config=True)
@@ -108,6 +126,48 @@ def test_hydra_chr22_matrix_config_composes() -> None:
     assert config.tool.dry_run is True
     assert config.tool.variant_limit == 1000
     assert config.hydra.job.chdir is False
+
+
+def test_named_justfile_workflow_configs_compose() -> None:
+    config_names = [
+        "data_baseline_binary",
+        "data_baseline_quantitative",
+        "data_verify_binary_gpu_inputs",
+        "bench_bgen_reader",
+        "bench_callback_overhead",
+        "bench_callback_overhead_gpu",
+        "bench_binary_hot_gpu",
+        "bench_binary_hot_gpu_smoke",
+        "bench_output_stages_gpu",
+        "bench_linear_startup_gpu",
+        "bench_linear_startup_gpu_parquet",
+        "perf_cpu",
+        "perf_gpu",
+        "rust_build_profiles",
+        "schema_check",
+        "matrix_chr10",
+        "matrix_chr10_dry",
+        "matrix_chr10_smoke",
+        "matrix_chr22",
+        "matrix_chr22_dry",
+        "matrix_chr22_smoke",
+        "profile_app_full",
+        "profile_app_full_dry",
+        "profile_app_full_smoke",
+        "profile_chr10_binary_gpu_full",
+        "profile_chr10_binary_gpu_dry",
+        "profile_chr10_binary_gpu_smoke",
+        "debug_check_internal_defaults",
+        "debug_check_internal_init_exports",
+        "debug_check_pyo3_stub",
+        "debug_check_justfile",
+        "debug_schema_check",
+    ]
+
+    for config_name in config_names:
+        config = tooling_configuration.compose_config(config_name=config_name, include_hydra_config=True)
+        assert "tool" in config
+        assert config.hydra.job.chdir is False
 
 
 def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) -> None:
@@ -374,6 +434,23 @@ def test_hydra_tooling_config_converts_to_tool_arguments() -> None:
     assert bgen_arguments.chunk_sizes == "4096,8192"
     assert bgen_arguments.trusted_no_missing_diploid_modes == "true,false"
     assert bgen_arguments.json_summary_path == Path("reports/summary.json")
+
+    rust_build_arguments = rust_build_profiles.build_arguments_from_overrides(
+        [
+            "tool.labels=[dev-fast,dev-fast-lld,perf-thin-cgu1]",
+            "tool.output_parent=results/perf/test-rust-build-profiles",
+            "tool.incremental_touch_paths=[src/python/mod.rs]",
+            "tool.run_bgen_reader_smoke=true",
+        ]
+    )
+    assert rust_build_arguments.labels == (
+        rust_build_profiles.BuildProfileLabel.DEV_FAST,
+        rust_build_profiles.BuildProfileLabel.DEV_FAST_LLD,
+        rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU1,
+    )
+    assert rust_build_arguments.output_parent == Path("results/perf/test-rust-build-profiles")
+    assert rust_build_arguments.incremental_touch_paths == (Path("src/python/mod.rs"),)
+    assert rust_build_arguments.run_bgen_reader_smoke is True
 
     binary_hot_arguments = binary_hot_benchmark.build_arguments_from_overrides(
         [
@@ -713,7 +790,469 @@ def test_sweep_and_bgen_mode_parsing() -> None:
     ]
 
 
+def test_sweep_and_boolean_helpers_reject_ambiguous_values() -> None:
+    assert tooling_hydra_arguments.boolean_value("false") is False
+    assert tooling_hydra_arguments.boolean_value("true") is True
+
+    for raw_value in ("default,,4", ",4", "4,"):
+        try:
+            tooling_sweeps.parse_optional_integer_list(raw_value)
+        except ValueError as error:
+            assert "empty entry" in str(error)
+        else:
+            raise AssertionError(f"Expected {raw_value!r} to be rejected.")
+
+    try:
+        tooling_hydra_arguments.boolean_value("maybe")
+    except TypeError as error:
+        assert "Expected a boolean value" in str(error)
+    else:
+        raise AssertionError("Expected ambiguous boolean string to be rejected.")
+
+
+def test_shared_regenie_renderer_produces_valid_binary_cli_and_python_options() -> None:
+    run_spec = tooling_g_regenie.RegenieRunSpec(
+        trait_kind=tooling_g_regenie.RegenieTraitKind.BINARY,
+        command_prefix=("g", "regenie"),
+        inputs=tooling_g_regenie.RegenieInputSpec(
+            bgen_path=Path("data/input.bgen"),
+            sample_path=Path("data/input.sample"),
+            phenotype_path=Path("data/pheno.tsv"),
+            phenotype_columns=("trait",),
+            covariate_path=Path("data/covar.tsv"),
+            covariate_columns=("age", "sex"),
+            prediction_list_path=Path("data/pred.list"),
+            output_prefix=Path("results/output"),
+        ),
+        compute=tooling_g_regenie.RegenieComputeOptions(
+            device=tooling_g_regenie.RegenieDevice.CPU,
+            bsize=4096,
+            threads=2,
+            staging_depth=1,
+            native_callback_batch_size=2,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            variant_limit=100,
+            trusted_no_missing_diploid=True,
+            trusted_bgen_validation_mode="cache_on_miss",
+            bgen_decode_tile_variant_count=64,
+            firth_batch_size=32,
+            firth_candidate_capacity=128,
+            gpu_genotype_format=None,
+            jax_cache_dir=Path("cache/jax"),
+            jax_persistent_cache=True,
+            jax_persistent_cache_min_entry_size_bytes=-1,
+            jax_persistent_cache_min_compile_time_seconds=0,
+            jax_xla_autotune_cache=None,
+        ),
+        output=tooling_g_regenie.RegenieOutputOptions(
+            output_format="parquet",
+            output_run_directory=None,
+            writer_threads=2,
+            writer_queue_depth=4,
+            chunks_per_arrow_file=None,
+            arrow_compression=None,
+            parquet_compression=None,
+            output_statistic_dtype=None,
+            finalize_parquet=False,
+        ),
+        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(
+            telemetry="off",
+            log_dir=Path("logs"),
+            stage_timings_json=Path("logs/stage.json"),
+            profile_summary_json=Path("logs/profile.json"),
+            log_file=Path("logs/events.jsonl"),
+            log_filter="info",
+            log_stderr=False,
+            progress_interval_seconds=1.0,
+            progress_interval_chunks=2,
+        ),
+        binary=tooling_g_regenie.RegenieBinaryOptions(
+            firth=True,
+            approx=True,
+            firth_se=None,
+            p_threshold=0.05,
+        ),
+    )
+
+    command_arguments = tooling_g_regenie.render_g_regenie_cli(run_spec)
+    python_options = tooling_g_regenie.render_python_api_options(run_spec)
+    rendered_config = interface_config.RegenieConfig.from_options(python_options)
+
+    assert "--out" in command_arguments
+    assert not any(argument.startswith("--g-") for argument in command_arguments)
+    assert "--bt" in command_arguments
+    assert "--qt" not in command_arguments
+    assert "--firth" in command_arguments
+    assert "--pred" in command_arguments
+    assert rendered_config.g_output.out == Path("results/output")
+    assert tooling_g_regenie.expected_output_run_directory(run_spec) == (
+        Path("results/output.g") / "trait.regenie2_binary.run"
+    )
+    explicit_output_spec = dataclasses.replace(
+        run_spec,
+        output=dataclasses.replace(
+            run_spec.output,
+            output_run_directory=Path("explicit/run-directory"),
+        ),
+    )
+    assert tooling_g_regenie.expected_output_run_directory(explicit_output_spec) == Path("explicit/run-directory")
+
+
+def test_matrix_commands_use_shared_regenie_contract() -> None:
+    arguments = regenie2_matrix.build_arguments_from_overrides(
+        [
+            "tool.dry_run=true",
+            "tool.variant_limit=1000",
+        ]
+    )
+    for run_spec in regenie2_matrix.build_run_specs(arguments):
+        assert "--out" in run_spec.command_arguments
+        assert not any(argument.startswith("--g-") for argument in run_spec.command_arguments)
+        if run_spec.trait == regenie2_matrix.TraitKind.BINARY:
+            assert "--bt" in run_spec.command_arguments
+            assert "--firth" in run_spec.command_arguments
+        else:
+            assert "--qt" in run_spec.command_arguments
+            assert "--firth" not in run_spec.command_arguments
+
+
+def test_command_runner_records_redacted_environment_and_missing_executable(tmp_path: Path) -> None:
+    stdout_path = tmp_path / "stdout.log"
+    command_spec = tooling_commands.build_command_spec(
+        [sys.executable, "-c", "import os; print(os.environ['VISIBLE_VALUE'])"],
+        env={"VISIBLE_VALUE": "shown", "SECRET_VALUE": "hidden"},
+        stdout_path=stdout_path,
+        sensitive_env_keys=("SECRET_VALUE",),
+    )
+
+    result = tooling_commands.run_command(command_spec)
+    missing_result = tooling_commands.run_command(
+        tooling_commands.build_command_spec(["definitely-not-a-real-gwas-command"]),
+    )
+    streaming_timeout_result = tooling_commands.run_command(
+        tooling_commands.build_command_spec(
+            ["/bin/sh", "-c", "printf partial; sleep 2"],
+            timeout_seconds=1.0,
+            stream=True,
+        )
+    )
+
+    assert result.return_code == 0
+    assert result.stdout.strip() == "shown"
+    assert stdout_path.read_text(encoding="utf-8").strip() == "shown"
+    assert result.environment_overrides["SECRET_VALUE"] == tooling_commands.REDACTED_ENVIRONMENT_VALUE
+    assert missing_result.missing_executable is True
+    assert missing_result.return_code is None
+    assert streaming_timeout_result.timed_out is True
+    assert streaming_timeout_result.stdout == "partial"
+
+
+def test_versioned_report_contract_rejects_missing_and_unknown_fields(tmp_path: Path) -> None:
+    contract = tooling_reports.VersionedReportContract(
+        schema_version=1,
+        required_fields=("name",),
+        optional_fields=("notes",),
+        schema_field_name="schema_version",
+        reject_unknown_fields=True,
+    )
+    report_path = tmp_path / "report.json"
+
+    tooling_reports.write_versioned_json_report(
+        report_path,
+        {"schema_version": 1, "name": "ok"},
+        contract,
+    )
+    assert tooling_reports.read_versioned_json_report(report_path, contract)["name"] == "ok"
+
+    for payload in ({"schema_version": 1}, {"schema_version": 1, "name": "ok", "extra": True}):
+        try:
+            tooling_reports.validate_report_shape(payload, contract)
+        except tooling_reports.ReportSchemaError:
+            pass
+        else:
+            raise AssertionError(f"Expected report payload to be rejected: {payload!r}")
+
+
+def test_tooling_artifact_bundle_writes_standard_files(tmp_path: Path) -> None:
+    output_directory = tmp_path / "artifact"
+    producer = tooling_artifact_format.ToolProducer(
+        tool_name="test_tool",
+        tool_version=1,
+        repository="kirilledition/g",
+        git_head="abc123",
+        dirty=False,
+        dirty_diff_sha256=None,
+    )
+    run = tooling_artifact_format.ToolRunIdentity(
+        run_id="test-run",
+        created_at="2026-06-26T00:00:00Z",
+        status=tooling_artifact_format.ToolArtifactStatus.SUCCESS,
+        status_reason=None,
+        output_directory=str(output_directory),
+    )
+    context_snapshot = tooling_artifact_format.ToolContextSnapshot(
+        repository_root=str(tmp_path),
+        data_directory=None,
+        output_directory=str(output_directory),
+        cwd=str(tmp_path),
+        hydra_chdir=False,
+        machine_profile=None,
+        hostname="test-host",
+        slurm_job_id=None,
+    )
+    metric_record = tooling_artifact_format.build_metric_record(
+        run_id=run.run_id,
+        case_id="case",
+        metric_name="wall_time_seconds",
+        value=1.25,
+        unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+        aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+        higher_is_better=False,
+    )
+    command_record = tooling_artifact_format.build_command_record(
+        command_id="inline_python",
+        tool_name=producer.tool_name,
+        run_id=run.run_id,
+        phase="test",
+        args=[sys.executable, "-c", "print('hello')"],
+        output_directory=output_directory,
+        status=tooling_artifact_format.ToolArtifactStatus.SUCCESS,
+    )
+    report = tooling_artifact_format.build_report_envelope(
+        producer=producer,
+        run=run,
+        context=context_snapshot,
+        title="Test Tool",
+        configuration={"mode": "test"},
+        metrics=[metric_record],
+    )
+
+    tooling_artifact_format.write_standard_artifact_bundle(
+        output_directory=output_directory,
+        report=report,
+        events=[
+            tooling_artifact_format.build_tool_event(
+                tool_name=producer.tool_name,
+                run_id=run.run_id,
+                phase="test",
+                event="completed",
+                message="completed",
+            )
+        ],
+        commands=[command_record],
+    )
+
+    assert (output_directory / "artifact_manifest.json").is_file()
+    assert (output_directory / "report.json").is_file()
+    assert (output_directory / "summary.md").is_file()
+    assert (output_directory / "metrics.jsonl").is_file()
+    assert (output_directory / "events.jsonl").is_file()
+    assert (output_directory / "commands" / "commands.jsonl").is_file()
+    assert (output_directory / "commands" / "scripts" / "inline_python.py").is_file()
+    assert (
+        schema_check.run_schema_check(
+            schema_check.SchemaCheckArguments(path=output_directory, require_optional_files=True)
+        ).error_messages
+        == ()
+    )
+
+
+def test_schema_check_rejects_wrong_schema_version(tmp_path: Path) -> None:
+    report_path = tmp_path / "report.json"
+    tooling_reports.write_json_report(
+        report_path,
+        {
+            "schema_name": "g.tooling.report",
+            "schema_version": 99,
+            "producer": {},
+            "run": {},
+        },
+    )
+
+    result = schema_check.run_schema_check(
+        schema_check.SchemaCheckArguments(path=report_path, require_optional_files=False)
+    )
+
+    assert result.error_messages
+    assert "Expected schema_version=1" in result.error_messages[0]
+
+
+def test_matrix_dry_run_writes_tooling_artifact_format(tmp_path: Path) -> None:
+    output_directory = tmp_path / "matrix"
+    arguments = regenie2_matrix.build_arguments_from_overrides(
+        [
+            "tool.dry_run=true",
+            f"tool.output_dir={output_directory}",
+            "tool.variant_limit=1000",
+        ]
+    )
+
+    run_results = regenie2_matrix.run_matrix(arguments)
+
+    assert len(run_results) == 6
+    assert {run_result.status for run_result in run_results} == {regenie2_matrix.RunStatus.DRY_RUN}
+    assert (output_directory / "manifest.json").is_file()
+    assert (output_directory / "report.md").is_file()
+    assert (output_directory / "artifact_manifest.json").is_file()
+    assert (output_directory / "report.json").is_file()
+    report_payload = tooling_reports.read_json_report(output_directory / "report.json")
+    assert report_payload["schema_name"] == "g.tooling.report"
+    assert report_payload["run"]["status"] == "dry_run"
+    assert len(tooling_reports.read_jsonl(output_directory / "commands" / "commands.jsonl")) == 6
+    assert (
+        schema_check.run_schema_check(
+            schema_check.SchemaCheckArguments(path=output_directory, require_optional_files=True)
+        ).error_messages
+        == ()
+    )
+
+
+def test_grouped_cli_registries_document_tool_names() -> None:
+    assert tooling_registry.registered_tool_names(grouped_benchmark.TOOLS) == (
+        "baselines",
+        "linear_startup",
+        "profile_comparison",
+        "regenie_comparison",
+    )
+    assert tooling_registry.registered_tool_names(grouped_data.TOOLS) == (
+        "fetch",
+        "regenie_baseline",
+        "simulate",
+    )
+    assert "check_pyo3_stub" in tooling_registry.registered_tool_names(grouped_debug.TOOLS)
+    assert "schema_check" in tooling_registry.registered_tool_names(grouped_debug.TOOLS)
+    assert "schema_check" in tooling_registry.registered_tool_names(grouped_debug.TOOLS)
+    assert tooling_registry.registered_tool_names(grouped_performance.TOOLS) == (
+        "compare",
+        "jax_runtime",
+        "smoke",
+    )
+    assert tooling_registry.registered_tool_names(grouped_server.TOOLS) == ("bootstrap_tools", "nsight_tools")
+
+
 def test_tooling_entrypoint_exposes_cli_surface() -> None:
     assert benchmark_bgen_reader.build_arguments_from_overrides is not None
     assert benchmark_bgen_reader.hydra_main is not None
     assert benchmark_bgen_reader.BenchmarkPathMode is regenie_bgen_reader.BenchmarkPathMode
+    assert rust_build_profiles.build_arguments_from_overrides is not None
+    assert rust_build_profiles.hydra_main is not None
+
+
+def test_deep_profile_models_live_in_profile_package() -> None:
+    assert profile_deep_models.ProfileArguments.__module__ == "tooling.profile_deep.models"
+    assert profile_deep_models.Step2Candidate.__module__ == "tooling.profile_deep.models"
+    assert profile_deep_models.CampaignBudget.__module__ == "tooling.profile_deep.models"
+    assert deep_profile.ProfileArguments is profile_deep_models.ProfileArguments
+    assert deep_profile.Step2Candidate is profile_deep_models.Step2Candidate
+    assert deep_profile.CampaignBudget is profile_deep_models.CampaignBudget
+
+
+def test_deep_profile_budget_helpers_live_in_profile_package() -> None:
+    assert profile_deep_budget.build_campaign_budget.__module__ == "tooling.profile_deep.budget"
+    assert profile_deep_budget.enforce_campaign_budget.__module__ == "tooling.profile_deep.budget"
+    assert profile_deep_budget.parse_profile_workload_keys.__module__ == "tooling.profile_deep.budget"
+    assert profile_deep_budget.build_logging_perturbation_cases.__module__ == "tooling.profile_deep.budget"
+    assert deep_profile.build_campaign_budget is profile_deep_budget.build_campaign_budget
+    assert deep_profile.enforce_campaign_budget is profile_deep_budget.enforce_campaign_budget
+    assert deep_profile.parse_profile_workload_keys is profile_deep_budget.parse_profile_workload_keys
+    assert deep_profile.build_logging_perturbation_cases is profile_deep_budget.build_logging_perturbation_cases
+
+
+def test_deep_profile_config_helpers_live_in_profile_package() -> None:
+    assert profile_deep_config.build_arguments_from_config.__module__ == "tooling.profile_deep.config"
+    assert profile_deep_config.build_arguments_from_overrides.__module__ == "tooling.profile_deep.config"
+    assert profile_deep_config.apply_smoke_overrides.__module__ == "tooling.profile_deep.config"
+    assert profile_deep_config.profile_configuration_payload.__module__ == "tooling.profile_deep.config"
+    assert deep_profile.build_arguments_from_config is profile_deep_config.build_arguments_from_config
+    assert deep_profile.build_arguments_from_overrides is profile_deep_config.build_arguments_from_overrides
+    assert deep_profile.apply_smoke_overrides is profile_deep_config.apply_smoke_overrides
+    assert deep_profile.profile_configuration_payload is profile_deep_config.profile_configuration_payload
+
+
+def test_deep_profile_jax_cache_helpers_live_in_profile_package() -> None:
+    assert profile_deep_jax_cache.resolve_profile_jax_cache_directory.__module__ == "tooling.profile_deep.jax_cache"
+    assert profile_deep_jax_cache.collect_jax_cache_snapshot.__module__ == "tooling.profile_deep.jax_cache"
+    assert profile_deep_jax_cache.build_jax_cache_diagnostics.__module__ == "tooling.profile_deep.jax_cache"
+    assert profile_deep_jax_cache.build_jax_cold_warm_diagnostics.__module__ == "tooling.profile_deep.jax_cache"
+    assert (
+        deep_profile.resolve_profile_jax_cache_directory is profile_deep_jax_cache.resolve_profile_jax_cache_directory
+    )
+    assert deep_profile.collect_jax_cache_snapshot is profile_deep_jax_cache.collect_jax_cache_snapshot
+    assert deep_profile.build_jax_cache_diagnostics is profile_deep_jax_cache.build_jax_cache_diagnostics
+    assert deep_profile.build_jax_cold_warm_diagnostics is profile_deep_jax_cache.build_jax_cold_warm_diagnostics
+
+
+def test_rust_build_profile_specs_map_expected_cargo_profiles() -> None:
+    assert rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.DEV_FAST].cargo_profile == "dev-fast"
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.DEV_FAST_LLD].cargo_profile
+        == "dev-fast"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.DEV_FAST_MOLD].cargo_profile
+        == "dev-fast"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8].cargo_profile == "perf"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8_LLD].cargo_profile
+        == "perf"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8_MOLD].cargo_profile
+        == "perf"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_FAT_CGU1].cargo_profile
+        == "perf-max"
+    )
+    assert (
+        rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_O2_THIN_CGU8].cargo_profile
+        == "perf-o2"
+    )
+
+
+def test_rust_build_profile_command_environment_contains_target_dir() -> None:
+    spec = rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU1]
+    environment = rust_build_profiles.build_environment(spec, Path("target/rust-build-profiles/perf-thin-cgu1"))
+
+    assert environment["CARGO_TARGET_DIR"] == "target/rust-build-profiles/perf-thin-cgu1"
+    assert environment["RUSTFLAGS"] == "-C target-cpu=native"
+    assert rust_build_profiles.maturin_develop_command(spec) == (
+        "uv",
+        "run",
+        "--no-sync",
+        "maturin",
+        "develop",
+        "--profile",
+        "perf-thin-cgu1",
+        "--uv",
+    )
+
+
+def test_rust_build_profile_linker_labels_add_expected_rustflags() -> None:
+    lld_spec = rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8_LLD]
+    mold_spec = rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU8_MOLD]
+
+    assert lld_spec.rustflags == "-C target-cpu=native -C link-arg=-fuse-ld=lld"
+    assert mold_spec.rustflags == "-C target-cpu=native -C link-arg=-fuse-ld=mold"
+
+
+def test_rust_build_profile_touch_restores_source_timestamp(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.rs"
+    source_path.write_text("fn main() {}\n", encoding="utf-8")
+    original_access_time_nanoseconds = 1_700_000_000_000_000_000
+    original_modification_time_nanoseconds = 1_700_000_000_100_000_000
+    os.utime(source_path, ns=(original_access_time_nanoseconds, original_modification_time_nanoseconds))
+    original_stat = source_path.stat()
+
+    timestamp = rust_build_profiles.touch_source_path(source_path)
+    touched_stat = source_path.stat()
+    rust_build_profiles.restore_timestamp(timestamp)
+    restored_stat = source_path.stat()
+
+    assert touched_stat.st_mtime_ns != original_stat.st_mtime_ns
+    assert restored_stat.st_atime_ns == original_stat.st_atime_ns
+    assert restored_stat.st_mtime_ns == original_stat.st_mtime_ns

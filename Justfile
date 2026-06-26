@@ -1,8 +1,7 @@
-# Justfile for GWAS Engine (g)
+# Thin command entrypoints for GWAS Engine (g)
 
 set shell := ["bash", "-cu"]
 
-data_dir := env_var_or_default('GWAS_ENGINE_DATA_DIR', 'data')
 python_version := env_var_or_default('GWAS_ENGINE_PYTHON_VERSION', '3.14')
 tools_dir := env_var_or_default('GWAS_ENGINE_TOOLS_DIR', '.tools')
 cuda_repository_url := env_var_or_default('GWAS_ENGINE_CUDA_REPOSITORY_URL', 'https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64')
@@ -25,14 +24,11 @@ slurm_cpu_cpus_per_task := env_var_or_default('GWAS_ENGINE_CPU_CPUS_PER_TASK', e
 slurm_cpu_memory := env_var_or_default('GWAS_ENGINE_CPU_MEMORY', env_var_or_default('GWAS_ENGINE_SLURM_MEMORY', '128G'))
 slurm_cpu_extra_arguments := env_var_or_default('GWAS_ENGINE_CPU_EXTRA_ARGS', env_var_or_default('GWAS_ENGINE_SLURM_EXTRA_ARGS', ''))
 slurm_cpu_exclusive := env_var_or_default('GWAS_ENGINE_SLURM_EXCLUSIVE', '1')
-perf_results_dir := env_var_or_default('GWAS_ENGINE_PERF_RESULTS_DIR', 'results/perf')
-deep_profile_landau_budget_overrides := 'tool.chunk_sizes=[2048,4096] tool.staging_depths=[1,2] tool.output_writer_thread_counts=[1,4] tool.writer_queue_depth_multipliers=[1,2] tool.firth_batch_sizes=[32] tool.bgen_decode_tile_variant_counts=[64,128] tool.rayon_thread_counts=[4,8] tool.top_bgen_candidates=1 tool.top_finalists=2 tool.tuning_warmups=0 tool.tuning_trials=1 tool.finalist_warmups=0 tool.finalist_trials=2 tool.headline_warmups=0 tool.headline_trials=3 tool.max_subprocess_runs=1000 tool.max_major_profiler_runs=64'
 server_env := '. tooling/server/server_env.sh'
 symphony_elixir_dir := env_var_or_default('SYMPHONY_ELIXIR_DIR', '/mnt/beegfs/kirill/Projects/symphony/elixir')
 symphony_port := env_var_or_default('SYMPHONY_PORT', '4000')
 symphony_worktree_root := env_var_or_default('SYMPHONY_WORKTREE_ROOT', '/mnt/beegfs/kirill/Projects/g-worktrees/symphony')
 
-# Show available recipes and point to the command reference
 default: help
 
 # Show available recipes and command-reference location
@@ -40,259 +36,33 @@ help:
     @printf 'GWAS Engine command reference: documentation/development/justfile.md\n\n'
     @just --list --unsorted
 
-# --- Data Preparation ---
+# --- data ---
 
-# Download local 1KG fixture data and simulate phenotypes
-setup-data:
-    {{ server_env }} && uv run python -m tooling.cli.data tool.name=fetch
-    {{ server_env }} && uv run python -m tooling.cli.data tool.name=simulate
+# Download local 1KG fixture data
+data-fetch:
+    {{ server_env }} && uv run python -m tooling.cli.data --config-name data_fetch
 
-# Generate binary REGENIE step 1 predictions required by g binary step 2
-setup-binary-baseline: setup-data
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    mkdir -p "{{ data_dir }}/baselines"
-    regenie \
-      --step 1 \
-      --bed "{{ data_dir }}/1kg_chr22_full" \
-      --phenoFile "{{ data_dir }}/pheno_bin.txt" \
-      --covarFile "{{ data_dir }}/covariates.txt" \
-      --bt \
-      --cc12 \
-      --force-step1 \
-      --bsize 1000 \
-      --out "{{ data_dir }}/baselines/regenie_step1"
-    test -s "{{ data_dir }}/baselines/regenie_step1_pred.list"
+# Simulate local phenotypes and covariates
+data-simulate: data-fetch
+    {{ server_env }} && uv run python -m tooling.cli.data --config-name data_simulate
 
-# Prepare all local inputs required for binary REGENIE step 2 GPU execution
-setup-regenie2-binary-gpu-inputs: setup-binary-baseline
+# Fetch data and simulate phenotypes
+data-prepare: data-simulate
 
-# Verify local inputs required for binary REGENIE step 2 GPU execution
-verify-regenie2-binary-gpu-inputs:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    test -s "{{ data_dir }}/1kg_chr22_full.bgen"
-    test -s "{{ data_dir }}/1kg_chr22_full.sample"
-    test -s "{{ data_dir }}/pheno_bin.txt"
-    test -s "{{ data_dir }}/covariates.txt"
-    test -s "{{ data_dir }}/baselines/regenie_step1_pred.list"
-    echo "Binary REGENIE step 2 GPU inputs are present."
+# Generate binary REGENIE step 1 predictions
+data-baseline-binary: data-prepare
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.data --config-name data_baseline_binary
 
-# Run PLINK2/Regenie baselines and generate hardware report (excludes slow Hail benchmarks by default)
-benchmark-baselines: setup-data
-    {{ server_env }} && uv run python -m tooling.cli.benchmark tool.name=baselines
+# Generate quantitative REGENIE step 1 predictions
+data-baseline-qt: data-prepare
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.data --config-name data_baseline_quantitative
 
-# Build and install the Rust extension using the opt-in native performance profile
-install-perf-extension:
-    {{ server_env }} && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf --uv
-
-# Compare original regenie (all 4 programs) vs g quantitative step2 CPU
-benchmark-regenie-comparison-cpu: setup-data install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=regenie_comparison tool.cpu_only=true tool.include_gpu=false
-
-# Compare original regenie (all 4 programs) vs g quantitative step2 CPU+GPU
-benchmark-regenie-comparison-gpu: setup-data install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=regenie_comparison tool.cpu_only=false tool.include_gpu=true machine=landau_gpu
-
-# Alias for comparison benchmark (CPU-only default)
-benchmark-regenie-comparison: benchmark-regenie-comparison-cpu
-
-# Run full baselines including Hail (slow - requires cached MatrixTable)
-benchmark-baselines-full: setup-data
-    {{ server_env }} && uv run python -m tooling.cli.benchmark tool.name=baselines tool.include_hail=true
-
-# --- Development ---
-
-# Install repo-local command-line tools for the Ubuntu SLURM server
-setup-server-tools:
-    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/g-uv-cache}" UV_LINK_MODE="${UV_LINK_MODE:-copy}" uv run --group dev python -m tooling.cli.server tool.name=bootstrap_tools
-
-# Bootstrap a CPU-only development environment on the login node
-bootstrap:
-    {{ server_env }} && uv python install {{ python_version }}
-    {{ server_env }} && uv sync --python {{ python_version }} --group dev
-
-# Bootstrap a GPU-capable development environment for JAX CUDA work
-bootstrap-gpu:
-    {{ server_env }} && uv python install {{ python_version }}
-    {{ server_env }} && uv sync --python {{ python_version }} --group dev --group gpu
-
-# Install CUDA-capable Python dependencies into the current environment
-install-gpu-dependencies:
-    {{ server_env }} && uv sync --python {{ python_version }} --group dev --group gpu
-
-# Install optional user-local profiler CLIs used by deep app profiling
-install-profiling-tools:
-    {{ server_env }} && uv tool install py-spy
-    {{ server_env }} && uv tool install scalene
-    {{ server_env }} && uv tool install memray
-    {{ server_env }} && uv tool install xprof
-    {{ server_env }} && cargo install --locked samply flamegraph
-
-# Install Nsight Systems and Nsight Compute into the repo-local tool directory
-install-nsight-tools:
-    {{ server_env }} && uv run --group dev python -m tooling.cli.server tool.name=nsight_tools "tool.repository_url='{{ cuda_repository_url }}'" "tool.nsight_compute_cuda_version='{{ nsight_compute_cuda_version }}'"
-
-# Check local toolchain prerequisites for development on the current host
-doctor:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    required_commands=(uv cargo rustc)
-    for command_name in "${required_commands[@]}"; do
-      if ! command -v "${command_name}" >/dev/null 2>&1; then
-        echo "Missing required command: ${command_name}" >&2
-        exit 1
-      fi
-    done
-    resolved_python_version="$(
-      uv run --python {{ python_version }} python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
-    )"
-    if [[ "${resolved_python_version}" != "{{ python_version }}" ]]; then
-      echo "Resolved Python ${resolved_python_version}, expected {{ python_version }}." >&2
-      exit 1
-    fi
-    echo "Core development toolchain looks usable on this host."
-
-# Check server development prerequisites, local tools, and cache writability
-doctor-server:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    required_commands=(git just uv srun zstd cargo cargo-clippy cargo-fmt rustc rustfmt plink plink2 regenie)
-    for command_name in "${required_commands[@]}"; do
-      if ! command -v "${command_name}" >/dev/null 2>&1; then
-        echo "Missing required server command: ${command_name}" >&2
-        exit 1
-      fi
-    done
-    mkdir -p "${UV_CACHE_DIR}"
-    test -w "${UV_CACHE_DIR}"
-    uv run --python {{ python_version }} python -c 'import sys; print(f"python={sys.version_info.major}.{sys.version_info.minor}")'
-    echo "hostname=$(hostname)"
-    echo "tools_dir={{ tools_dir }}"
-    echo "uv_cache_dir=${UV_CACHE_DIR}"
-    echo "Server development toolchain looks usable on this host."
-
-# Check local Symphony prerequisites without starting the daemon
-symphony-doctor:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
-    if [[ -f "${symphony_env_file}" ]]; then
-      set -a
-      . "${symphony_env_file}"
-      set +a
-    fi
-    if ! command -v python3 >/dev/null 2>&1; then
-      echo "FAIL python3 command: not found on PATH" >&2
-      echo "  Remediation: Install Python 3 or load the server development environment." >&2
-      exit 1
-    fi
-    python3 scripts/symphony_doctor.py \
-      --repository-root "${PWD}" \
-      --symphony-env-file "${symphony_env_file}" \
-      --symphony-elixir-dir "{{symphony_elixir_dir}}" \
-      --symphony-worktree-root "{{symphony_worktree_root}}"
-
-# Serve the Zensical documentation site locally
-docs-serve:
-    uv run --group docs zensical serve
-
-# Build the Zensical documentation site into documentation_rendered_website/
-docs-build:
-    uv run --group docs zensical build --clean
-
-# Run Symphony against the repo workflow template
-symphony-run:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
-    if [[ -f "${symphony_env_file}" ]]; then
-      set -a
-      . "${symphony_env_file}"
-      set +a
-    fi
-    if [[ -z "${LINEAR_API_KEY:-}" ]]; then
-      echo "Missing LINEAR_API_KEY. Add it to ${symphony_env_file}." >&2
-      exit 1
-    fi
-    if [[ -z "${LINEAR_PROJECT_SLUG:-}" ]]; then
-      echo "Missing LINEAR_PROJECT_SLUG. Add it to ${symphony_env_file}." >&2
-      exit 1
-    fi
-    if [[ ! "${LINEAR_PROJECT_SLUG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-      echo "LINEAR_PROJECT_SLUG contains unexpected characters." >&2
-      exit 1
-    fi
-
-    mkdir -p "{{symphony_worktree_root}}"
-    runtime_workflow="${SYMPHONY_RUNTIME_WORKFLOW:-/tmp/g-symphony-${USER:-user}.WORKFLOW.md}"
-    escaped_project_slug="$(printf '%s' "${LINEAR_PROJECT_SLUG}" | sed 's/[#&\\]/\\&/g')"
-    sed "s#__LINEAR_PROJECT_SLUG__#${escaped_project_slug}#g" WORKFLOW.md > "${runtime_workflow}"
-
-    cd "{{symphony_elixir_dir}}"
-    exec mise exec -- ./bin/symphony \
-      --i-understand-that-this-will-be-running-without-the-usual-guardrails \
-      --port "{{symphony_port}}" \
-      "${runtime_workflow}"
-
-# Safely fast-forward the local main checkout after a Symphony direct merge
-symphony-sync-main *arguments:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    repository_root="{{ justfile_directory() }}"
-    cd "${repository_root}"
-    . tooling/server/server_env.sh
-    uv run --no-sync python -m tooling.cli.symphony_sync_main --repository "${repository_root}" {{ arguments }}
-
-# Dry-run stale Symphony worktree and branch cleanup
-symphony-cleanup *arguments:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
-    if [[ -f "${symphony_env_file}" ]]; then
-      set -a
-      . "${symphony_env_file}"
-      set +a
-    fi
-    export SYMPHONY_WORKTREE_ROOT="{{symphony_worktree_root}}"
-    uv run python -m tooling.cli.symphony_cleanup --repository "$PWD" --worktree-root "{{symphony_worktree_root}}" {{ arguments }}
-
-# Apply stale Symphony worktree cleanup after reviewing symphony-cleanup
-symphony-cleanup-apply *arguments:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
-    if [[ -f "${symphony_env_file}" ]]; then
-      set -a
-      . "${symphony_env_file}"
-      set +a
-    fi
-    export SYMPHONY_WORKTREE_ROOT="{{symphony_worktree_root}}"
-    uv run python -m tooling.cli.symphony_cleanup --repository "$PWD" --worktree-root "{{symphony_worktree_root}}" --apply {{ arguments }}
-
-# Check external baseline tools used by data prep and comparison benchmarks
-doctor-baselines:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    required_commands=(plink plink2 regenie)
-    for command_name in "${required_commands[@]}"; do
-      if ! command -v "${command_name}" >/dev/null 2>&1; then
-        echo "Missing required baseline command: ${command_name}" >&2
-        exit 1
-      fi
-    done
-    echo "Baseline benchmark tools are available on PATH."
+# Verify binary GPU step 2 inputs
+data-verify-binary-gpu-inputs:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.data --config-name data_verify_binary_gpu_inputs
 
 # Build the patched REGENIE reference binary with native CPU performance flags
-build-patched-regenie:
+data-build-patched-regenie:
     #!/usr/bin/env bash
     set -euo pipefail
     . tooling/server/server_env.sh
@@ -355,48 +125,227 @@ build-patched-regenie:
     test -x "${output_path}"
     echo "Built patched REGENIE native binary at ${output_path}"
 
-# Build patched REGENIE on all cores of a named SLURM node
-slurm-build-patched-regenie node='':
+# --- development ---
+
+# Install repo-local command-line tools for the Ubuntu SLURM server
+server-setup-tools:
+    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/g-uv-cache}" UV_LINK_MODE="${UV_LINK_MODE:-copy}" uv run --group dev python -m tooling.cli.server --config-name server_bootstrap_tools
+
+# Bootstrap a CPU-only development environment on the login node
+dev-bootstrap:
+    {{ server_env }} && uv python install {{ python_version }}
+    {{ server_env }} && uv sync --python {{ python_version }} --group dev
+
+# Bootstrap a GPU-capable development environment for JAX CUDA work
+dev-bootstrap-gpu:
+    {{ server_env }} && uv python install {{ python_version }}
+    {{ server_env }} && uv sync --python {{ python_version }} --group dev --group gpu
+
+# Install CUDA-capable Python dependencies into the current environment
+dev-install-gpu-dependencies:
+    {{ server_env }} && uv sync --python {{ python_version }} --group dev --group gpu
+
+# Install the native extension for development
+dev-install:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop --profile dev-fast --uv
+
+# Install the native extension using the moderately optimized development profile
+dev-install-opt:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop --profile dev-opt --uv
+
+# Install the native extension using the native performance profile
+dev-install-perf:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf --uv
+
+# Install the native extension using explicit native feature flags
+dev-install-perf-max:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf-max --uv
+
+# Install optional user-local profiler CLIs used by deep app profiling
+dev-install-profiling-tools:
+    {{ server_env }} && uv tool install py-spy
+    {{ server_env }} && uv tool install scalene
+    {{ server_env }} && uv tool install memray
+    {{ server_env }} && uv tool install xprof
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo install --locked samply flamegraph
+
+# Install Nsight Systems and Nsight Compute into the repo-local tool directory
+dev-install-nsight-tools:
+    {{ server_env }} && uv run python -m tooling.cli.server --config-name server_nsight_tools "tool.repository_url='{{ cuda_repository_url }}'" "tool.nsight_compute_cuda_version='{{ nsight_compute_cuda_version }}'"
+
+# Check local toolchain prerequisites for development on the current host
+doctor:
     #!/usr/bin/env bash
     set -euo pipefail
     . tooling/server/server_env.sh
-    build_node="{{ node }}"
-    if [[ -z "${build_node}" ]]; then
-      build_node="${GWAS_ENGINE_REGENIE_BUILD_NODE:-{{ slurm_cpu_node }}}"
+    required_commands=(uv cargo rustc)
+    for command_name in "${required_commands[@]}"; do
+      if ! command -v "${command_name}" >/dev/null 2>&1; then
+        echo "Missing required command: ${command_name}" >&2
+        exit 1
+      fi
+    done
+    resolved_python_version="$(
+      uv run --python {{ python_version }} python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
+    )"
+    if [[ "${resolved_python_version}" != "{{ python_version }}" ]]; then
+      echo "Resolved Python ${resolved_python_version}, expected {{ python_version }}." >&2
+      exit 1
     fi
-    slurm_arguments=(
-      "--nodes=1"
-      "--ntasks=1"
-      "--exclusive"
-      "--mem={{ slurm_cpu_memory }}"
-      "--time={{ slurm_cpu_time_limit }}"
-    )
-    if [[ -n "${build_node}" ]]; then
-      slurm_arguments+=("--nodelist=${build_node}")
-    fi
-    if [[ -n "{{ slurm_cpu_partition }}" ]]; then
-      slurm_arguments+=("--partition={{ slurm_cpu_partition }}")
-    fi
-    if [[ -n "{{ slurm_cpu_account }}" ]]; then
-      slurm_arguments+=("--account={{ slurm_cpu_account }}")
-    fi
-    if [[ -n "{{ slurm_cpu_extra_arguments }}" ]]; then
-      read -r -a extra_arguments <<< "{{ slurm_cpu_extra_arguments }}"
-      slurm_arguments+=("${extra_arguments[@]}")
-    fi
-    repository_root="$(pwd -P)"
-    printf -v quoted_repository_root "%q" "${repository_root}"
-    exec srun "${slurm_arguments[@]}" bash -lc "cd ${quoted_repository_root} && just build-patched-regenie"
+    echo "Core development toolchain looks usable on this host."
+
+# Check server development prerequisites, local tools, and cache writability
+doctor-server:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . tooling/server/server_env.sh
+    required_commands=(git just uv srun zstd cargo cargo-clippy cargo-fmt rustc rustfmt plink plink2 regenie)
+    for command_name in "${required_commands[@]}"; do
+      if ! command -v "${command_name}" >/dev/null 2>&1; then
+        echo "Missing required server command: ${command_name}" >&2
+        exit 1
+      fi
+    done
+    mkdir -p "${UV_CACHE_DIR}"
+    test -w "${UV_CACHE_DIR}"
+    uv run --python {{ python_version }} python -c 'import sys; print(f"python={sys.version_info.major}.{sys.version_info.minor}")'
+    echo "hostname=$(hostname)"
+    echo "tools_dir={{ tools_dir }}"
+    echo "uv_cache_dir=${UV_CACHE_DIR}"
+    echo "Server development toolchain looks usable on this host."
+
+# Check external baseline tools used by data prep and comparison benchmarks
+doctor-baselines:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . tooling/server/server_env.sh
+    required_commands=(plink plink2 regenie)
+    for command_name in "${required_commands[@]}"; do
+      if ! command -v "${command_name}" >/dev/null 2>&1; then
+        echo "Missing required baseline command: ${command_name}" >&2
+        exit 1
+      fi
+    done
+    echo "Baseline benchmark tools are available on PATH."
 
 # Probe JAX runtime on the current host
 doctor-jax:
-    {{ server_env }} && uv run --python {{ python_version }} python -m tooling.cli.performance tool.name=jax_runtime
+    {{ server_env }} && uv run --no-install-project python -m tooling.cli.performance --config-name performance_jax_runtime
+
+# Check local Symphony prerequisites without starting the daemon
+symphony-doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . tooling/server/server_env.sh
+    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
+    if [[ -f "${symphony_env_file}" ]]; then
+      set -a
+      . "${symphony_env_file}"
+      set +a
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo "FAIL python3 command: not found on PATH" >&2
+      echo "  Remediation: Install Python 3 or load the server development environment." >&2
+      exit 1
+    fi
+    python3 scripts/symphony_doctor.py \
+      --repository-root "${PWD}" \
+      --symphony-env-file "${symphony_env_file}" \
+      --symphony-elixir-dir "{{symphony_elixir_dir}}" \
+      --symphony-worktree-root "{{symphony_worktree_root}}"
+
+# --- documentation ---
+
+# Serve the Zensical documentation site locally
+docs-serve:
+    uv sync --group docs --frozen --no-install-project
+    uv run --no-sync zensical serve
+
+# Build the Zensical documentation site into documentation_rendered_website/
+docs-build:
+    uv sync --group docs --frozen --no-install-project
+    uv run --no-sync zensical build --clean
+
+# --- Symphony ---
+
+# Run Symphony against the repo workflow template
+symphony-run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . tooling/server/server_env.sh
+    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
+    if [[ -f "${symphony_env_file}" ]]; then
+      set -a
+      . "${symphony_env_file}"
+      set +a
+    fi
+    if [[ -z "${LINEAR_API_KEY:-}" ]]; then
+      echo "Missing LINEAR_API_KEY. Add it to ${symphony_env_file}." >&2
+      exit 1
+    fi
+    if [[ -z "${LINEAR_PROJECT_SLUG:-}" ]]; then
+      echo "Missing LINEAR_PROJECT_SLUG. Add it to ${symphony_env_file}." >&2
+      exit 1
+    fi
+    if [[ ! "${LINEAR_PROJECT_SLUG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+      echo "LINEAR_PROJECT_SLUG contains unexpected characters." >&2
+      exit 1
+    fi
+    mkdir -p "{{symphony_worktree_root}}"
+    runtime_workflow="${SYMPHONY_RUNTIME_WORKFLOW:-/tmp/g-symphony-${USER:-user}.WORKFLOW.md}"
+    escaped_project_slug="$(printf '%s' "${LINEAR_PROJECT_SLUG}" | sed 's/[#&\\]/\\&/g')"
+    sed "s#__LINEAR_PROJECT_SLUG__#${escaped_project_slug}#g" WORKFLOW.md > "${runtime_workflow}"
+    cd "{{symphony_elixir_dir}}"
+    exec mise exec -- ./bin/symphony \
+      --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+      --port "{{symphony_port}}" \
+      "${runtime_workflow}"
+
+# Safely fast-forward the local main checkout after a Symphony direct merge
+symphony-sync-main *arguments:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repository_root="{{ justfile_directory() }}"
+    cd "${repository_root}"
+    . tooling/server/server_env.sh
+    uv run --no-sync python -m tooling.cli.symphony_sync_main --repository "${repository_root}" {{ arguments }}
+
+# Dry-run stale Symphony worktree and branch cleanup
+symphony-cleanup *arguments:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . tooling/server/server_env.sh
+    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
+    if [[ -f "${symphony_env_file}" ]]; then
+      set -a
+      . "${symphony_env_file}"
+      set +a
+    fi
+    export SYMPHONY_WORKTREE_ROOT="{{symphony_worktree_root}}"
+    uv run python -m tooling.cli.symphony_cleanup --repository "$PWD" --worktree-root "{{symphony_worktree_root}}" {{ arguments }}
+
+# Apply stale Symphony worktree cleanup after reviewing symphony-cleanup
+symphony-cleanup-apply *arguments:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . tooling/server/server_env.sh
+    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
+    if [[ -f "${symphony_env_file}" ]]; then
+      set -a
+      . "${symphony_env_file}"
+      set +a
+    fi
+    export SYMPHONY_WORKTREE_ROOT="{{symphony_worktree_root}}"
+    uv run python -m tooling.cli.symphony_cleanup --repository "$PWD" --worktree-root "{{symphony_worktree_root}}" --apply {{ arguments }}
+
+# --- SLURM substrates ---
 
 # Start an interactive SLURM shell on the configured GPU node
 slurm-gpu-shell:
     #!/usr/bin/env bash
     set -euo pipefail
     . tooling/server/server_env.sh
+    repository_root="{{ justfile_directory() }}"
     slurm_arguments=(
       "--ntasks=1"
       "--nodelist={{ slurm_gpu_node }}"
@@ -415,13 +364,15 @@ slurm-gpu-shell:
       read -r -a extra_arguments <<< "{{ slurm_gpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    exec srun "${slurm_arguments[@]}" --pty bash -l
+    printf -v job_command 'cd %q && . tooling/server/server_env.sh && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && exec bash -l' "${repository_root}"
+    exec srun "${slurm_arguments[@]}" --pty bash -lc "${job_command}"
 
 # Run a shell command through SLURM on the configured GPU node
 slurm-gpu-run command:
     #!/usr/bin/env bash
     set -euo pipefail
     . tooling/server/server_env.sh
+    repository_root="{{ justfile_directory() }}"
     command='{{ command }}'
     slurm_arguments=(
       "--ntasks=1"
@@ -441,7 +392,8 @@ slurm-gpu-run command:
       read -r -a extra_arguments <<< "{{ slurm_gpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    exec srun "${slurm_arguments[@]}" bash -lc "${command}"
+    printf -v job_command 'cd %q && . tooling/server/server_env.sh && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && %s' "${repository_root}" "${command}"
+    exec srun "${slurm_arguments[@]}" bash -lc "${job_command}"
 
 # Run another just recipe through SLURM on the configured GPU node
 slurm-gpu-just +just_arguments:
@@ -473,17 +425,14 @@ slurm-cpu-shell:
       slurm_arguments+=("--account={{ slurm_cpu_account }}")
     fi
     case "{{ slurm_cpu_exclusive }}" in
-      "" | 0 | false | False | no | No)
-        ;;
-      *)
-        slurm_arguments+=("--exclusive")
-        ;;
+      "" | 0 | false | False | no | No) ;;
+      *) slurm_arguments+=("--exclusive") ;;
     esac
     if [[ -n "{{ slurm_cpu_extra_arguments }}" ]]; then
       read -r -a extra_arguments <<< "{{ slurm_cpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    printf -v job_command 'cd %q && . tooling/server/server_env.sh && gwas_engine_configure_cpu_parallelism && echo "GWAS_ENGINE_ALLOCATED_CPU_COUNT=${GWAS_ENGINE_ALLOCATED_CPU_COUNT}" && echo "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}" && echo "GWAS_ENGINE_PYTEST_WORKERS=${GWAS_ENGINE_PYTEST_WORKERS}" && exec bash -l' "${repository_root}"
+    printf -v job_command 'cd %q && . tooling/server/server_env.sh && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && echo "GWAS_ENGINE_ALLOCATED_CPU_COUNT=${GWAS_ENGINE_ALLOCATED_CPU_COUNT}" && echo "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}" && echo "GWAS_ENGINE_PYTEST_WORKERS=${GWAS_ENGINE_PYTEST_WORKERS}" && exec bash -l' "${repository_root}"
     exec srun "${slurm_arguments[@]}" --pty bash -lc "${job_command}"
 
 # Run a shell command through SLURM on the configured CPU node
@@ -510,17 +459,14 @@ slurm-cpu-run command:
       slurm_arguments+=("--account={{ slurm_cpu_account }}")
     fi
     case "{{ slurm_cpu_exclusive }}" in
-      "" | 0 | false | False | no | No)
-        ;;
-      *)
-        slurm_arguments+=("--exclusive")
-        ;;
+      "" | 0 | false | False | no | No) ;;
+      *) slurm_arguments+=("--exclusive") ;;
     esac
     if [[ -n "{{ slurm_cpu_extra_arguments }}" ]]; then
       read -r -a extra_arguments <<< "{{ slurm_cpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    printf -v job_command 'cd %q && . tooling/server/server_env.sh && gwas_engine_configure_cpu_parallelism && %s' "${repository_root}" "${command}"
+    printf -v job_command 'cd %q && . tooling/server/server_env.sh && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && %s' "${repository_root}" "${command}"
     exec srun "${slurm_arguments[@]}" bash -lc "${job_command}"
 
 # Run another just recipe through SLURM on the configured CPU node
@@ -530,180 +476,176 @@ slurm-cpu-just +just_arguments:
     . tooling/server/server_env.sh
     exec just slurm-cpu-run 'just {{ just_arguments }}'
 
-# Run REGENIE step 2 with local baseline predictions
-regenie-linear:
-    {{ server_env }} && uv run g regenie --step 2 --qt --bgen {{ data_dir }}/1kg_chr22_full.bgen --sample {{ data_dir }}/1kg_chr22_full.sample --phenoFile {{ data_dir }}/pheno_cont.txt --phenoCol phenotype_continuous --covarFile {{ data_dir }}/covariates.txt --covarColList age,sex --pred {{ data_dir }}/baselines/regenie_step1_qt_pred.list --out {{ data_dir }}/regenie_linear --format parquet
-
-# Run binary REGENIE step 2 on chr22 with GPU JAX
-regenie2-binary-gpu:
-    {{ server_env }} && uv run g regenie --step 2 --bt --bgen {{ data_dir }}/1kg_chr22_full.bgen --sample {{ data_dir }}/1kg_chr22_full.sample --phenoFile {{ data_dir }}/pheno_bin.txt --phenoCol phenotype_binary --covarFile {{ data_dir }}/covariates.txt --covarColList age,sex --pred {{ data_dir }}/baselines/regenie_step1_pred.list --out {{ data_dir }}/regenie2_binary_chr22_gpu --device gpu --firth --approx --format parquet
-
-# Smoke test binary REGENIE step 2 on a small chr22 variant slice with GPU JAX
-regenie2-binary-gpu-smoke:
-    {{ server_env }} && uv run g regenie --step 2 --bt --bgen {{ data_dir }}/1kg_chr22_full.bgen --sample {{ data_dir }}/1kg_chr22_full.sample --phenoFile {{ data_dir }}/pheno_bin.txt --phenoCol phenotype_binary --covarFile {{ data_dir }}/covariates.txt --covarColList age,sex --pred {{ data_dir }}/baselines/regenie_step1_pred.list --out {{ data_dir }}/regenie2_binary_chr22_gpu_smoke --device gpu --firth --approx --variant_limit 1000 --format parquet
-
-# Run binary REGENIE step 2 through SLURM on the configured GPU node
-slurm-regenie2-binary-gpu:
-    {{ server_env }} && just slurm-gpu-just regenie2-binary-gpu
-
-# Smoke test binary REGENIE step 2 through SLURM on the configured GPU node
-slurm-regenie2-binary-gpu-smoke:
-    {{ server_env }} && just slurm-gpu-just regenie2-binary-gpu-smoke
-
-# Verify binary REGENIE step 2 GPU output artifacts
-verify-regenie2-binary-gpu-output:
+# Build patched REGENIE on all cores of a named SLURM node
+slurm-cpu-build-patched-regenie node='':
     #!/usr/bin/env bash
     set -euo pipefail
-    run_directory="{{ data_dir }}/regenie2_binary_chr22_gpu.g/trait_0001_phenotype_binary.regenie2_binary.run"
-    test -d "${run_directory}/parts"
-    fd --no-ignore --type f --extension parquet . "${run_directory}/parts" | grep -q .
-    echo "Binary REGENIE step 2 GPU output is present."
+    . tooling/server/server_env.sh
+    build_node="{{ node }}"
+    if [[ -z "${build_node}" ]]; then
+      build_node="${GWAS_ENGINE_REGENIE_BUILD_NODE:-{{ slurm_cpu_node }}}"
+    fi
+    export GWAS_ENGINE_CPU_NODE="${build_node}"
+    exec just slurm-cpu-run "GWAS_ENGINE_REGENIE_BUILD_NODE=${build_node} just data-build-patched-regenie"
 
-# Verify binary REGENIE step 2 GPU smoke output artifacts
-verify-regenie2-binary-gpu-smoke-output:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    run_directory="{{ data_dir }}/regenie2_binary_chr22_gpu_smoke.g/trait_0001_phenotype_binary.regenie2_binary.run"
-    test -d "${run_directory}/parts"
-    fd --no-ignore --type f --extension parquet . "${run_directory}/parts" | grep -q .
-    echo "Binary REGENIE step 2 GPU smoke output is present."
-
-# Run CPU/GPU JAX runtime probe
-probe-jax: doctor-jax
+# --- matrices ---
 
 # Dry-run the standard chr10 binary/linear CPU/GPU/cache step 2 matrix
-regenie2-chr10-matrix-dry-run *overrides:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix tool.dry_run=true {{ overrides }}
+matrix-chr10-dry *overrides:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name matrix_chr10_dry {{ overrides }}
 
 # Run the standard chr10 binary/linear CPU/GPU/cache step 2 matrix
-regenie2-chr10-matrix *overrides: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix {{ overrides }}
+matrix-chr10 *overrides: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name matrix_chr10 {{ overrides }}
 
-# Submit the standard chr10 step 2 matrix through SLURM on the configured GPU node
-slurm-regenie2-chr10-matrix *overrides:
-    {{ server_env }} && just slurm-gpu-just regenie2-chr10-matrix {{ overrides }}
+# Run a small chr10 matrix smoke
+matrix-chr10-smoke *overrides: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name matrix_chr10_smoke {{ overrides }}
+
+# Submit the standard chr10 matrix through SLURM on the configured GPU node
+slurm-gpu-matrix-chr10 *overrides:
+    {{ server_env }} && just slurm-gpu-just matrix-chr10 {{ overrides }}
 
 # Dry-run the standard chr22 binary/linear CPU/GPU/cache step 2 matrix
-regenie2-chr22-matrix-dry-run *overrides:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name run_regenie2_chr22_matrix tool.dry_run=true {{ overrides }}
+matrix-chr22-dry *overrides:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name matrix_chr22_dry {{ overrides }}
 
 # Run the standard chr22 binary/linear CPU/GPU/cache step 2 matrix
-regenie2-chr22-matrix *overrides: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name run_regenie2_chr22_matrix {{ overrides }}
+matrix-chr22 *overrides: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name matrix_chr22 {{ overrides }}
 
-# Submit the standard chr22 step 2 matrix through SLURM on the configured GPU node
-slurm-regenie2-chr22-matrix *overrides:
-    {{ server_env }} && just slurm-gpu-just regenie2-chr22-matrix {{ overrides }}
+# Run a small chr22 matrix smoke
+matrix-chr22-smoke *overrides: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name matrix_chr22_smoke {{ overrides }}
+
+# Submit the standard chr22 matrix through SLURM on the configured GPU node
+slurm-gpu-matrix-chr22 *overrides:
+    {{ server_env }} && just slurm-gpu-just matrix-chr22 {{ overrides }}
+
+# --- benchmarks ---
+
+# Run historical external baselines excluding the slow Hail suite
+legacy-baselines: data-prepare
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_baselines
+
+# Run historical external baselines including the slow Hail suite
+legacy-baselines-full: data-prepare
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_baselines tool.include_hail=true
+
+# Compare original regenie vs g quantitative step2 on CPU
+legacy-regenie-comparison-cpu: data-prepare dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_regenie_comparison
+
+# Compare original regenie vs g quantitative step2 with GPU enabled
+legacy-regenie-comparison-gpu: data-prepare dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_regenie_comparison machine=landau_gpu tool.cpu_only=false tool.include_gpu=true
+
+# Profile historical regenie comparison on CPU
+legacy-profile-regenie-comparison-cpu: data-prepare dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_profile_comparison
+
+# Profile historical regenie comparison with GPU enabled
+legacy-profile-regenie-comparison-gpu: data-prepare dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_profile_comparison machine=landau_gpu tool.cpu_only=false tool.include_gpu=true
 
 # Benchmark BGEN float32 read paths
-benchmark-bgen-reader *overrides: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_bgen_reader {{ overrides }}
+bench-bgen-reader *overrides: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_bgen_reader --config-name bench_bgen_reader {{ overrides }}
 
 # Benchmark Python callback overhead without BGEN decode work
-benchmark-callback-overhead *overrides:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_callback_overhead {{ overrides }}
+bench-callback-overhead *overrides:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_callback_overhead --config-name bench_callback_overhead {{ overrides }}
 
 # Benchmark Python callback overhead on the configured GPU machine profile
-benchmark-callback-overhead-gpu *overrides: install-gpu-dependencies
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_callback_overhead machine=landau_gpu {{ overrides }}
+bench-callback-overhead-gpu *overrides: dev-install-gpu-dependencies
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_callback_overhead --config-name bench_callback_overhead_gpu {{ overrides }}
 
 # Benchmark REGENIE step 2 in fresh Python processes
-benchmark-regenie2-linear-fresh-gpu: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=linear_startup machine=landau_gpu tool.device=gpu
+bench-linear-startup-gpu: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name bench_linear_startup_gpu
 
-# Benchmark REGENIE step 2 in fresh Python processes using Parquet dataset output plus finalization
-benchmark-regenie2-linear-fresh-gpu-parquet: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=linear_startup machine=landau_gpu tool.device=gpu tool.finalize_parquet=true
+# Benchmark REGENIE step 2 fresh process startup with Parquet finalization
+bench-linear-startup-gpu-parquet: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name bench_linear_startup_gpu_parquet
 
-# Benchmark binary REGENIE step 2 with cold, same-process hot, chunk-only, and finalized timings
-benchmark-regenie2-binary-hot-gpu *overrides: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot machine=landau_gpu {{ overrides }}
+# Benchmark binary REGENIE step 2 with cold, hot, chunk-only, and finalized timings
+bench-binary-hot-gpu *overrides: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --config-name bench_binary_hot_gpu {{ overrides }}
+
+# Smoke test the binary REGENIE step 2 benchmark harness
+bench-binary-hot-gpu-smoke *overrides: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --config-name bench_binary_hot_gpu_smoke {{ overrides }}
 
 # Benchmark output-stage timings across finalization, phenotype count, and bsize
-benchmark-output-stages-gpu *overrides: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_output_stages machine=landau_gpu {{ overrides }}
-
-# Smoke test binary REGENIE step 2 benchmark harness on a small variant slice
-benchmark-regenie2-binary-hot-gpu-smoke *overrides: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot machine=landau_gpu tool.variant_limit=1000 tool.include_cold_process=false tool.include_finalized_hot=false {{ overrides }}
+bench-output-stages-gpu *overrides: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_output_stages --config-name bench_output_stages_gpu {{ overrides }}
 
 # Submit binary hot benchmark to the configured GPU node
-slurm-benchmark-regenie2-binary-hot-gpu *overrides:
-    {{ server_env }} && just slurm-gpu-just benchmark-regenie2-binary-hot-gpu {{ overrides }}
+slurm-gpu-bench-binary-hot *overrides:
+    {{ server_env }} && just slurm-gpu-just bench-binary-hot-gpu {{ overrides }}
 
 # Submit callback overhead microbenchmark to the configured CPU node
-slurm-benchmark-callback-overhead-cpu *overrides:
-    {{ server_env }} && just slurm-cpu-just benchmark-callback-overhead {{ overrides }}
+slurm-cpu-bench-callback-overhead *overrides:
+    {{ server_env }} && just slurm-cpu-just bench-callback-overhead {{ overrides }}
 
 # Submit callback overhead microbenchmark to the configured GPU node
-slurm-benchmark-callback-overhead-gpu *overrides:
-    {{ server_env }} && just slurm-gpu-just benchmark-callback-overhead-gpu {{ overrides }}
+slurm-gpu-bench-callback-overhead *overrides:
+    {{ server_env }} && just slurm-gpu-just bench-callback-overhead-gpu {{ overrides }}
+
+# --- performance ---
 
 # Run the login-node-safe performance harness smoke benchmark
 perf-smoke *arguments:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.performance tool.name=smoke tool.output_root="{{ perf_results_dir }}/smoke" {{ arguments }}
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.performance --config-name performance_smoke {{ arguments }}
 
 # Submit the standard CPU performance benchmark through the configured CPU SLURM node
 perf-cpu *overrides:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    run_directory="{{ perf_results_dir }}/cpu/bgen_reader_$(date -u +%Y%m%dT%H%M%SZ)"
-    exec just slurm-cpu-just benchmark-bgen-reader "telemetry.json_summary_path=${run_directory}/bgen_reader_summary.json" "telemetry.markdown_summary_path=${run_directory}/bgen_reader_summary.md" {{ overrides }}
+    {{ server_env }} && just slurm-cpu-run '{{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_bgen_reader --config-name perf_cpu {{ overrides }}'
 
-# Submit the standard GPU performance benchmark through the existing GPU SLURM recipe
+# Submit the standard GPU performance benchmark through the configured GPU SLURM node
 perf-gpu *overrides:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    run_directory="{{ perf_results_dir }}/gpu/regenie2_binary_hot_$(date -u +%Y%m%dT%H%M%SZ)"
-    exec just slurm-benchmark-regenie2-binary-hot-gpu "tool.output_dir=${run_directory}" "telemetry.json_summary_path=${run_directory}/regenie2_binary_hot_summary.json" {{ overrides }}
+    {{ server_env }} && just slurm-gpu-run '{{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --config-name perf_gpu {{ overrides }}'
 
 # Compare two benchmark JSON summaries
 perf-compare baseline_json new_json:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.performance tool.name=compare tool.baseline_json='{{ baseline_json }}' tool.new_json='{{ new_json }}'
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.performance --config-name performance_compare tool.baseline_json='{{ baseline_json }}' tool.new_json='{{ new_json }}'
+
+# Run CPU/GPU JAX runtime probe
+perf-jax-runtime:
+    {{ server_env }} && uv run --no-install-project python -m tooling.cli.performance --config-name performance_jax_runtime
 
 # Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
-tune-regenie2-gpu *overrides: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.tune_regenie2_gpu machine=landau_gpu {{ overrides }}
+perf-tune-regenie2-gpu *overrides: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.tune_regenie2_gpu --config-name tune_regenie2_gpu {{ overrides }}
 
-# Run Rust Criterion benchmarks with native performance flags
-benchmark-rust:
-    {{ server_env }} && RUSTFLAGS="-C target-cpu=native" cargo bench --workspace
+# Compare native extension build profiles and write timing reports
+bench-rust-build-profiles *overrides:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync python -m tooling.cli.rust_build_profiles --config-name rust_build_profiles {{ overrides }}
 
-# Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU
-profile-regenie-comparison-cpu: setup-data install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=profile_comparison tool.cpu_only=true tool.include_gpu=false
-
-# Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU+GPU
-profile-regenie-comparison-gpu: setup-data install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=profile_comparison tool.cpu_only=false tool.include_gpu=true machine=landau_gpu
-
-# Alias for unified profiling comparison (CPU-only default)
-profile-regenie-comparison: profile-regenie-comparison-cpu
+# --- profiling ---
 
 # Run the deep REGENIE step 2 profiling harness on the current host
-profile-regenie2-deep *overrides: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu {{ overrides }}
+profile-deep *overrides: dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_regenie2_deep {{ overrides }}
 
 # Write the deep REGENIE step 2 profiling plan without running workloads
-profile-regenie2-deep-dry-run *overrides:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.dry_run=true {{ overrides }}
+profile-deep-dry *overrides:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_regenie2_deep tool.dry_run=true {{ overrides }}
 
 # Smoke test the deep REGENIE step 2 profiling harness on the current host
-profile-regenie2-deep-smoke *overrides: install-gpu-dependencies install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.smoke=true tool.skip_deep_profiles=true tool.enable_rust_criterion=false {{ overrides }}
+profile-deep-smoke *overrides: dev-install-gpu-dependencies dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_regenie2_deep tool.smoke=true tool.skip_deep_profiles=true tool.enable_rust_criterion=false {{ overrides }}
 
 # Write the full app profiling plan without running workloads
-profile-app-full-dry-run *overrides:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false tool.dry_run=true {{ overrides }}
+profile-app-full-dry *overrides:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_app_full_dry {{ overrides }}
 
 # Smoke test the full app profiling bundle on the current host
-profile-app-full-smoke *overrides: install-gpu-dependencies install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false tool.enable_rust_criterion=false tool.smoke=true {{ overrides }}
+profile-app-full-smoke *overrides: dev-install-gpu-dependencies dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_app_full_smoke {{ overrides }}
 
-# Submit one long landau SLURM job for the deep REGENIE step 2 profiling harness
-profile-regenie2-deep-landau *overrides:
+# Submit the full app profiling bundle through SLURM
+profile-app-full *overrides:
     #!/usr/bin/env bash
     set -euo pipefail
     . tooling/server/server_env.sh
@@ -711,10 +653,18 @@ profile-regenie2-deep-landau *overrides:
     export GWAS_ENGINE_SLURM_CPUS_PER_TASK="${GWAS_ENGINE_SLURM_CPUS_PER_TASK:-8}"
     export GWAS_ENGINE_SLURM_MEMORY="${GWAS_ENGINE_SLURM_MEMORY:-64G}"
     export GWAS_ENGINE_SLURM_GPUS_PER_TASK="${GWAS_ENGINE_SLURM_GPUS_PER_TASK:-1}"
-    exec just slurm-gpu-run '. tooling/server/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} {{ overrides }}'
+    exec just slurm-gpu-run '. tooling/server/server_env.sh && just dev-install-gpu-dependencies && just dev-install-perf && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_app_full {{ overrides }}'
 
-# Submit one long landau SLURM job for the full app profiling bundle
-profile-app-full-landau *overrides:
+# Dry-run the chr10 GPU binary profiling campaign
+profile-chr10-binary-gpu-dry *overrides:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_chr10_binary_gpu_dry {{ overrides }}
+
+# Smoke test the chr10 GPU binary profiling campaign
+profile-chr10-binary-gpu-smoke *overrides: dev-install-gpu-dependencies dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_chr10_binary_gpu_smoke {{ overrides }}
+
+# Submit the chr10 GPU binary full profiling campaign through SLURM
+profile-chr10-binary-gpu-full *overrides:
     #!/usr/bin/env bash
     set -euo pipefail
     . tooling/server/server_env.sh
@@ -722,35 +672,9 @@ profile-app-full-landau *overrides:
     export GWAS_ENGINE_SLURM_CPUS_PER_TASK="${GWAS_ENGINE_SLURM_CPUS_PER_TASK:-8}"
     export GWAS_ENGINE_SLURM_MEMORY="${GWAS_ENGINE_SLURM_MEMORY:-64G}"
     export GWAS_ENGINE_SLURM_GPUS_PER_TASK="${GWAS_ENGINE_SLURM_GPUS_PER_TASK:-1}"
-    exec just slurm-gpu-run '. tooling/server/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} {{ overrides }}'
+    exec just slurm-gpu-run '. tooling/server/server_env.sh && just dev-install-gpu-dependencies && just dev-install-perf && just dev-install-profiling-tools && just dev-install-nsight-tools && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_chr10_binary_gpu_full {{ overrides }}'
 
-# --- Focused chr10 GPU binary full profiling suite (memray + scalene + nsight + py-spy + perf + cProfile + JAX + criterion) ---
-
-# Dry-run (plan only) the extensive profiling campaign for g regenie --step 2 --bt --device gpu on chr10.
-# Uses the full set of profilers and the chr10 1KG workload via the deep harness.
-profile-chr10-gpu-binary-deep-dry-run *overrides:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu dataset=chr10_local tool.chromosome_label=chr10 tool.bed_prefix=1kg_chr10_full tool.baseline_dir=baselines_chr10 tool.linear_prediction_list=baselines_chr10/regenie_step1_qt_pred.list tool.binary_prediction_list=baselines_chr10/regenie_step1_pred.list tool.workload_keys=[binary_gpu] tool.include_regenie_baseline=false tool.dry_run=true tool.enable_jax_trace=true tool.enable_jax_memory_profile=true tool.enable_python_cprofile=true tool.enable_py_spy=true tool.enable_scalene=true tool.enable_memray=true tool.enable_linux_perf=true tool.enable_nsight_systems=true tool.enable_nsight_compute=true {{ overrides }}
-
-# Smoke test of the chr10 GPU binary full-suite profiler (small variant cap, reduced trials, nsight compute disabled for speed).
-profile-chr10-gpu-binary-deep-smoke *overrides: install-gpu-dependencies install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu dataset=chr10_local tool.chromosome_label=chr10 tool.bed_prefix=1kg_chr10_full tool.baseline_dir=baselines_chr10 tool.linear_prediction_list=baselines_chr10/regenie_step1_qt_pred.list tool.binary_prediction_list=baselines_chr10/regenie_step1_pred.list tool.workload_keys=[binary_gpu] tool.include_regenie_baseline=false tool.enable_rust_criterion=false tool.smoke=true tool.variant_limit=2000 tool.enable_nsight_compute=false {{ overrides }}
-
-# Run the full extensive profiling suite locally (GPU host required). Enables every supported profiler for the g regenie GPU binary path on chr10.
-profile-chr10-gpu-binary-deep *overrides: install-gpu-dependencies install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu dataset=chr10_local tool.chromosome_label=chr10 tool.bed_prefix=1kg_chr10_full tool.baseline_dir=baselines_chr10 tool.linear_prediction_list=baselines_chr10/regenie_step1_qt_pred.list tool.binary_prediction_list=baselines_chr10/regenie_step1_pred.list tool.workload_keys=[binary_gpu] tool.include_regenie_baseline=false tool.enable_jax_trace=true tool.enable_jax_memory_profile=true tool.enable_python_cprofile=true tool.enable_py_spy=true tool.enable_scalene=true tool.enable_memray=true tool.enable_linux_perf=true tool.enable_nsight_systems=true tool.enable_nsight_compute=true {{ deep_profile_landau_budget_overrides }} {{ overrides }}
-
-# Submit one long landau SLURM job that runs the full profiling suite (memray, scalene, nsight systems + compute, py-spy, linux perf, cProfile, JAX traces, criterion, etc.)
-# on the g regenie GPU binary path using real chr10 data. This is the primary command for "run the full profiling suite on g regenie gpu binary on chr10".
-# The pre-command installs the optional profilers and nsight tools into the job environment. Data fixtures are resolved via explicit GWAS_ENGINE_DATA_DIR because the main worktree owns the large gitignored inputs.
-profile-chr10-gpu-binary-deep-landau *overrides:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    . tooling/server/server_env.sh
-    export GWAS_ENGINE_SLURM_TIME="${GWAS_ENGINE_SLURM_TIME:-12:00:00}"
-    export GWAS_ENGINE_SLURM_CPUS_PER_TASK="${GWAS_ENGINE_SLURM_CPUS_PER_TASK:-8}"
-    export GWAS_ENGINE_SLURM_MEMORY="${GWAS_ENGINE_SLURM_MEMORY:-64G}"
-    export GWAS_ENGINE_SLURM_GPUS_PER_TASK="${GWAS_ENGINE_SLURM_GPUS_PER_TASK:-1}"
-    exec just slurm-gpu-run 'GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data . tooling/server/server_env.sh && just install-gpu-dependencies && just install-perf-extension && just install-profiling-tools && just install-nsight-tools && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu dataset=chr10_local tool.chromosome_label=chr10 tool.bed_prefix=1kg_chr10_full tool.baseline_dir=baselines_chr10 tool.linear_prediction_list=baselines_chr10/regenie_step1_qt_pred.list tool.binary_prediction_list=baselines_chr10/regenie_step1_pred.list tool.workload_keys=[binary_gpu] tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} tool.enable_jax_trace=true tool.enable_jax_memory_profile=true tool.enable_python_cprofile=true tool.enable_py_spy=true tool.enable_scalene=true tool.enable_memray=true tool.enable_linux_perf=true tool.enable_nsight_systems=true tool.enable_nsight_compute=true {{ overrides }}'
+# --- checks and tests ---
 
 # Format code
 format:
@@ -776,16 +700,41 @@ typecheck:
 
 # Verify Rust workspace dependency boundaries
 check-rust-architecture:
-    uv run python -m tooling.cli.debug tool.name=check_rust_architecture
+    {{ server_env }} && uv sync --group dev --frozen --no-install-project
+    {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_rust_architecture
 
-# Run all checks (format, lint, typecheck, stub sync check, internal policy checks)
-check: format lint typecheck check-core-stub check-internal-defaults check-internal-init-exports check-rust-architecture
+# Verify Python type stub exports are in sync with Rust `_core` registrations
+check-core-stub:
+    {{ server_env }} && uv sync --group dev --frozen --no-install-project
+    {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_pyo3_stub
+
+# Verify production Python code does not hide runtime policy in defaults
+check-internal-defaults:
+    {{ server_env }} && uv sync --group dev --frozen --no-install-project
+    {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_internal_defaults
+
+# Verify internal package initializers do not re-export aliases
+check-internal-init-exports:
+    {{ server_env }} && uv sync --group dev --frozen --no-install-project
+    {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_internal_init_exports
+
+# Verify the Justfile remains a thin config-backed command layer
+check-justfile:
+    {{ server_env }} && uv sync --group dev --frozen --no-install-project
+    {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_justfile
+
+# Validate a Tooling Artifact Format artifact directory or JSON file
+check-artifact-schema path:
+    {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.schema_check --config-name schema_check tool.path='{{ path }}'
+
+# Run all checks
+check: format lint typecheck check-core-stub check-internal-defaults check-internal-init-exports check-rust-architecture check-justfile
 
 # Check Python formatting without requiring Nix or direct Cargo access
 format-local-check:
     uv run ruff format --check .
 
-# Lint Python without applying fixes; useful in uv/maturin-only environments
+# Lint Python without applying fixes
 lint-local:
     uv run ruff check .
 
@@ -797,24 +746,12 @@ typecheck-local:
 test-local-focused:
     uv run pytest tests/test_core.py tests/test_io_output.py
 
-# Verify Python type stub exports are in sync with Rust `_core` registrations
-check-core-stub:
-    uv run python -m tooling.cli.debug tool.name=check_pyo3_stub
-
-# Verify production Python code does not hide runtime policy in defaults
-check-internal-defaults:
-    uv run python -m tooling.cli.debug tool.name=check_internal_defaults
-
-# Verify internal package initializers do not re-export aliases
-check-internal-init-exports:
-    uv run python -m tooling.cli.debug tool.name=check_internal_init_exports
-
 # Non-heavy no-Nix test suite
 test-local:
     uv run pytest tests/ -m "not phase0_data and not phase1_parity"
 
-# Local no-Nix verification lane; Rust fmt/clippy still require a full Cargo toolchain
-check-local: format-local-check lint-local typecheck-local test-local-focused check-core-stub check-internal-defaults check-internal-init-exports
+# Local no-Nix verification lane
+check-local: format-local-check lint-local typecheck-local test-local-focused check-core-stub check-internal-defaults check-internal-init-exports check-rust-architecture check-justfile
 
 # Run CI lint checks without installing the project package
 ci-lint:
@@ -872,18 +809,22 @@ coverage-python:
 
 # Run Rust line coverage gate
 coverage-rust:
-    {{ server_env }} && cargo llvm-cov --workspace --all-targets --ignore-filename-regex '(^|/)(benches|tests)/' --fail-under-lines 90
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo llvm-cov --workspace --all-targets --ignore-filename-regex '(^|/)(benches|tests)/' --fail-under-lines 90
 
 # Run all coverage gates
 coverage: coverage-python coverage-rust
 
 # Build all Rust targets
 rust-build:
-    {{ server_env }} && cargo build --workspace --all-targets
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo build --workspace --all-targets
 
 # Run the Rust test suite
 rust-test:
-    {{ server_env }} && cargo test --workspace
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo test --workspace
+
+# Run Rust Criterion benchmarks with native performance flags
+rust-bench:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" cargo bench
 
 # Run non-mutating Rust format, lint, build, tests, and architecture checks
 rust-check: rust-format-check rust-lint-check rust-build rust-test check-rust-architecture

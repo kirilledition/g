@@ -1,1125 +1,169 @@
 # Justfile Command Reference
 
-This document describes the repository `Justfile`: what each recipe does, what
-it consumes, what it produces, and when to use it.
+The repository `Justfile` is a thin, stable entrypoint layer. It names common
+workflows and delegates workflow truth to saved Hydra configs under
+`tooling/configs/`.
 
-Run `just help` for the compact recipe list. Run `just <recipe>` from the
-repository root.
+Run `just help` for the full recipe list.
 
-## Environment
+## Policy
 
-The recipes read these environment variables:
-
-| Variable | Default | Used For |
-| --- | --- | --- |
-| `GWAS_ENGINE_DATA_DIR` | `data` | Local input data and generated benchmark artifacts. |
-| `GWAS_ENGINE_PYTHON_VERSION` | `3.14` | Python version requested by bootstrap and checks. |
-| `GWAS_ENGINE_TOOLS_DIR` | `.tools` | Server-local tool install location reported by `doctor-server`. |
-| `GWAS_ENGINE_REGENIE_PATCHED_SOURCE_DIR` | `reference/regenie-patched` | Patched REGENIE source directory used by `build-patched-regenie`. |
-| `GWAS_ENGINE_REGENIE_PATCHED_OUTPUT_DIR` | `.tools/regenie-patched/native` | Gitignored output directory for the patched REGENIE native binary. |
-| `GWAS_ENGINE_REGENIE_BGEN_PATH` | empty | External BGEN library root for patched REGENIE builds. Falls back to `BGEN_PATH`. |
-| `GWAS_ENGINE_REGENIE_BUILD_NODE` | `GWAS_ENGINE_CPU_NODE` | Default node for `slurm-build-patched-regenie` when no node argument is passed. |
-| `GWAS_ENGINE_REGENIE_BUILD_JOBS` | allocated CPU count | Override for patched REGENIE `make -j`; defaults to `SLURM_CPUS_ON_NODE`, then `SLURM_CPUS_PER_TASK`, then `nproc`. |
-| `GWAS_ENGINE_REGENIE_PERF_FLAGS` | `-march=native -mtune=native -flto -DNDEBUG` | Extra native performance flags appended after required OpenMP flags and the patched REGENIE Makefile defaults. |
-| `GWAS_ENGINE_REGENIE_EXTRA_CFLAGS` | empty | Additional patched REGENIE compile and link flags appended after `GWAS_ENGINE_REGENIE_PERF_FLAGS`. |
-| `GWAS_ENGINE_GPU_NODE` | `landau` | SLURM GPU node. |
-| `GWAS_ENGINE_GPU_PARTITION` | `GWAS_ENGINE_SLURM_PARTITION` or empty | Optional GPU SLURM partition. |
-| `GWAS_ENGINE_GPU_ACCOUNT` | `GWAS_ENGINE_SLURM_ACCOUNT` or empty | Optional GPU SLURM account. |
-| `GWAS_ENGINE_GPU_TIME` | `GWAS_ENGINE_SLURM_TIME` or `04:00:00` | GPU SLURM time limit. |
-| `GWAS_ENGINE_GPU_CPUS_PER_TASK` | `GWAS_ENGINE_SLURM_CPUS_PER_TASK` or `8` | CPU count for GPU SLURM jobs. |
-| `GWAS_ENGINE_GPU_MEMORY` | `GWAS_ENGINE_SLURM_MEMORY` or `64G` | Memory for GPU SLURM jobs. |
-| `GWAS_ENGINE_GPU_GPUS_PER_TASK` | `GWAS_ENGINE_SLURM_GPUS_PER_TASK` or `1` | GPU count for GPU SLURM jobs. |
-| `GWAS_ENGINE_GPU_EXTRA_ARGS` | `GWAS_ENGINE_SLURM_EXTRA_ARGS` or empty | Extra GPU SLURM arguments split by shell words. |
-| `GWAS_ENGINE_CPU_NODE` | `cantor` | SLURM CPU node for full CPU validation and CPU benchmark recipes. |
-| `GWAS_ENGINE_CPU_PARTITION` | `GWAS_ENGINE_SLURM_PARTITION` or empty | Optional CPU SLURM partition. |
-| `GWAS_ENGINE_CPU_ACCOUNT` | `GWAS_ENGINE_SLURM_ACCOUNT` or empty | Optional CPU SLURM account. |
-| `GWAS_ENGINE_CPU_TIME` | `GWAS_ENGINE_SLURM_TIME` or `04:00:00` | CPU SLURM time limit. |
-| `GWAS_ENGINE_CPU_CPUS_PER_TASK` | `GWAS_ENGINE_SLURM_CPUS_PER_TASK` or `40` | CPU count for one CPU SLURM task. |
-| `GWAS_ENGINE_CPU_MEMORY` | `GWAS_ENGINE_SLURM_MEMORY` or `128G` | Memory for CPU SLURM jobs. |
-| `GWAS_ENGINE_CPU_EXTRA_ARGS` | `GWAS_ENGINE_SLURM_EXTRA_ARGS` or empty | Extra CPU SLURM arguments split by shell words. |
-| `GWAS_ENGINE_SLURM_EXCLUSIVE` | `1` | Request `--exclusive` for CPU SLURM jobs unless set to `0`, `false`, or `no`. |
-| `GWAS_ENGINE_CPU_PYTEST_WORKERS` | unset | Override CPU SLURM pytest worker count. |
-| `GWAS_ENGINE_CPU_PYTEST_WORKER_LIMIT` | `8` | Default cap for CPU SLURM pytest workers. |
-| `GWAS_ENGINE_PERF_RESULTS_DIR` | `results/perf` | Local gitignored result root used by `perf-*` recipes. |
-| `SYMPHONY_ELIXIR_DIR` | `/mnt/beegfs/kirill/Projects/symphony/elixir` | Symphony checkout used by `symphony-doctor` and `symphony-run`. |
-| `SYMPHONY_PORT` | `4000` | Port passed to the Symphony daemon. |
-| `SYMPHONY_WORKTREE_ROOT` | `/mnt/beegfs/kirill/Projects/g-worktrees/symphony` | Worktree root for unattended Symphony task branches. |
-
-Most recipes source `tooling/server/server_env.sh`, which sets repo-local tool paths
-and server cache defaults.
-
-Do not run GPU workloads, Rust dependency builds, large benchmark sweeps, or
-large test suites on the `gauss` head node. `just check-local`,
-`just test-local`, `just perf-smoke`, and `just perf-compare` are safe on the
-login node. `just slurm-cpu-*`, `just perf-cpu`, and `just perf-gpu` submit work
-through SLURM.
-
-## Hydra Overrides
-
-Hydra-backed tooling recipes accept trailing overrides. These overrides are the
-public parameter interface for migrated tooling commands:
-
-```bash
-just regenie2-chr10-matrix-dry-run tool.variant_limit=1000
-just slurm-regenie2-chr10-matrix tool.output_dir=data/benchmarks/regenie2_chr10_matrix_current
-just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
-just benchmark-bgen-reader sweep.chunk_sizes=[4096,8192]
+```text
+Environment variables configure the machine.
+Hydra configs configure the workflow.
+Justfile recipes select the workflow.
 ```
 
-Use group overrides for saved profiles, scalar overrides for simple settings,
-and list overrides for sweeps. The corresponding `tooling.cli.*` entrypoints
-also accept the same overrides when run directly with `uv run --no-sync python
--m ...`.
+Environment variables are appropriate for secrets, scheduler-provided state,
+local cache/toolchain roots, and explicit one-off path overrides. They must not
+be the primary source of truth for benchmark grids, profiler modes, dataset or
+chromosome identity, output format, run semantics, or named machine profiles.
 
-## Help
+Hydra-backed recipes accept trailing overrides for ad hoc work, but routine
+workflow behavior belongs in a saved config. Every migrated `tooling.cli.*`
+recipe should use `--config-name`.
 
-### `help`
+## Core Development
 
-- Inputs: none.
-- Output: compact recipe list and pointer to this document.
-- Use when: you need a quick overview of available commands.
-
-### `default`
-
-- Inputs: none.
-- Output: same as `help`.
-- Use when: running bare `just`.
-
-## Data Preparation
-
-### `setup-data`
-
-- Inputs: network access, baseline tooling, writable `GWAS_ENGINE_DATA_DIR`.
-- Output: 1KG chr22 data, simulated phenotypes, covariates, and related local
-  data files under the data directory.
-- Use when: preparing a fresh checkout for local baselines, comparisons, or
-  REGENIE step 2 runs.
-
-### `setup-binary-baseline`
-
-- Inputs: `setup-data`, `regenie` executable on `PATH`, PLINK bed inputs,
-  `pheno_bin.txt`, and `covariates.txt`.
-- Output: `data/baselines/regenie_step1_pred.list` and associated REGENIE step 1
-  files.
-- Use when: binary REGENIE step 2 needs baseline predictions.
-
-### `setup-regenie2-binary-gpu-inputs`
-
-- Inputs: same as `setup-binary-baseline`.
-- Output: all local inputs needed by the binary GPU step 2 recipes.
-- Use when: preparing for `regenie2-binary-gpu` or related GPU smoke runs.
-
-### `verify-regenie2-binary-gpu-inputs`
-
-- Inputs: expected chr22 BGEN/sample, binary phenotype, covariates, and binary
-  step 1 prediction list.
-- Output: success message or a failing `test -s`.
-- Use when: checking that GPU step 2 inputs are present before submitting a job.
-
-## Development Environment
-
-### `setup-server-tools`
-
-- Inputs: internet access and a writable server tool/cache directory.
-- Output: repo-local server command-line tools installed by
-  `-m tooling.cli.server tool.name=bootstrap_tools`.
-- Use when: bootstrapping a fresh Ubuntu/SLURM server environment.
-
-### `bootstrap`
-
-- Inputs: `uv`, requested Python version.
-- Output: CPU-capable dev environment with the `dev` dependency group.
-- Use when: setting up local CPU development.
-
-### `bootstrap-gpu`
-
-- Inputs: `uv`, requested Python version, CUDA-capable host.
-- Output: GPU-capable dev environment with `dev` and `gpu` dependency groups.
-- Use when: preparing a GPU node for JAX CUDA work.
-
-### `install-gpu-dependencies`
-
-- Inputs: existing Python environment and CUDA-capable host.
-- Output: synced `dev` and `gpu` dependencies.
-- Use when: refreshing GPU dependencies before GPU benchmarks or profiles.
-
-### `install-profiling-tools`
-
-- Inputs: internet access, writable user `uv` tool directory, and writable
-  Cargo install directory.
-- Output: optional user-local profiler CLIs for deep app profiling: `py-spy`,
-  `scalene`, `memray`, `xprof`, `samply`, and `flamegraph`.
-- Use when: preparing this machine for the deepest app profiling campaign.
-- Notes: Scalene and Memray can also be injected through
-  `uv run --no-sync --with ...` so they run in the project environment. The
-  profile harness records missing optional tools as skipped profiler results.
-
-### `install-nsight-tools`
-
-- Inputs: internet access, `dpkg-deb`, writable `GWAS_ENGINE_TOOLS_DIR`, and an
-  Ubuntu CUDA package repository for the current host.
-- Output: repo-local Nsight Systems and Nsight Compute CLI tools. The recipe
-  extracts NVIDIA `.deb` payloads under `.tools/nsight` and links `nsys` and
-  `ncu` into `.tools/bin`.
-- Use when: enabling `tool.enable_nsight_systems=true` or
-  `tool.enable_nsight_compute=true` for app profiling without root access.
-- Notes: the installer reads the current NVIDIA CUDA package index, picks the
-  newest matching Nsight Systems package, picks an Nsight Compute package
-  compatible with `GWAS_ENGINE_NSIGHT_COMPUTE_CUDA_VERSION` when set, verifies
-  SHA256 digests from the index, and does not install system packages. On the
-  gauss/landau setup the recipe defaults that compatibility version to `12.2`
-  and uses NVIDIA's Ubuntu 22.04 CUDA package index by default because it still
-  contains the CUDA 12.2-era Nsight Compute package.
-
-### `install-perf-extension`
-
-- Inputs: Rust toolchain, `maturin`, current Python environment.
-- Output: installed native extension built with `RUSTFLAGS="-C target-cpu=native"`
-  and the `perf` Cargo profile.
-- Use when: running performance benchmarks or profiling the native paths.
-
-## Diagnostics
-
-### `doctor`
-
-- Inputs: `uv`, `cargo`, `rustc`.
-- Output: tool availability checks and resolved Python version.
-- Use when: checking local development prerequisites.
-
-### `doctor-server`
-
-- Inputs: server tools including `git`, `just`, `uv`, `srun`, `zstd`, Rust tools,
-  `plink`, `plink2`, and `regenie`.
-- Output: prerequisite checks, host name, tools directory, and uv cache path.
-- Use when: validating a server or SLURM login environment.
-
-### `symphony-doctor`
-
-- Inputs: `git`, `gh`, `codex`, `just`, `uv`, SLURM client commands, `mise`,
-  Linear credentials from `SYMPHONY_ENV_FILE` or `~/.config/g-symphony/env`, a
-  Codex Linear MCP config, a reachable Linear project slug, a reachable GitHub
-  `origin`, a writable Symphony worktree root, and a built Symphony checkout.
-- Output: a redacted pass/fail report for unattended Symphony/Linear task
-  execution. The report validates Linear API auth, Linear MCP auth, Codex MCP
-  config readability, Git/GitHub reachability, `uv`, SLURM command availability,
-  and the Symphony checkout without printing tokens or starting agents.
-- Use when: validating the repo-specific Symphony setup before starting the
-  daemon.
-
-### `symphony-run`
-
-- Inputs: same credentials and Symphony checkout as `symphony-doctor`, plus
-  `WORKFLOW.md`.
-- Output: rendered runtime workflow and a foreground Symphony daemon process.
-- Use when: running the Linear-backed unattended agent workflow for this repo.
-
-### `symphony-sync-main *arguments`
-
-- Inputs: any checkout or worktree in this repository and a reachable `origin`.
-- Output: safe local `main` synchronization report.
-- Use when: fast-forwarding the local `main` checkout after Symphony has pushed
-  a validated task branch directly to `origin/main`. The command locates the
-  main worktree automatically and skips without changing files when local `main`
-  is dirty, checked out elsewhere unexpectedly, or diverged from `origin/main`.
-
-### `symphony-cleanup *arguments`
-
-- Inputs: git worktree metadata, `SYMPHONY_WORKTREE_ROOT`, and optional Linear
-  credentials from `SYMPHONY_ENV_FILE` or `~/.config/g-symphony/env`.
-- Output: dry-run report of stale Symphony worktree, local branch, and remote
-  branch candidates.
-- Use when: reviewing stale completed or canceled Symphony issue worktrees
-  before deleting anything.
-
-### `symphony-cleanup-apply *arguments`
-
-- Inputs: same as `symphony-cleanup`, plus optional deletion controls such as
-  `--delete-local-branches` or `--delete-remote-branches`.
-- Output: cleanup plan and non-forced git deletion command results.
-- Use when: applying a reviewed cleanup plan. Worktree cleanup uses
-  `git worktree remove` without `--force`; branch cleanup remains opt-in.
-
-### `doctor-baselines`
-
-- Inputs: `plink`, `plink2`, `regenie`.
-- Output: baseline tool availability check.
-- Use when: preparing to run external baseline or comparison benchmarks.
-
-### `build-patched-regenie`
-
-- Inputs: patched source under `GWAS_ENGINE_REGENIE_PATCHED_SOURCE_DIR`, a C++
-  compiler, `make`, and an external BGEN library root supplied by
-  `GWAS_ENGINE_REGENIE_BGEN_PATH` or `BGEN_PATH`.
-- Output: patched REGENIE binary at
-  `GWAS_ENGINE_REGENIE_PATCHED_OUTPUT_DIR/regenie`.
-- Use when: building the local patched REGENIE reference with the upstream
-  Makefile's `-O3` and `-ffast-math` flags plus explicit OpenMP, native
-  architecture, native tuning, LTO, and `NDEBUG` flags. The recipe uses all CPUs
-  visible to the job by default and runs `make clean` first so stale objects do
-  not hide changed flags. Set `GWAS_ENGINE_REGENIE_SKIP_CLEAN=1` only for an
-  intentional incremental rebuild. Makefile options such as `MKLROOT`,
-  `OPENBLAS_ROOT`, `HTSLIB_PATH`, `STATIC`, and `HAS_BOOST_IOSTREAM` are
-  forwarded when present in the environment.
-
-Example:
+Use these on the login node when they are lightweight:
 
 ```bash
-GWAS_ENGINE_REGENIE_BGEN_PATH=/path/to/bgen \
-  just build-patched-regenie
+just doctor
+just doctor-server
+just dev-bootstrap
+just dev-bootstrap-gpu
+just dev-install
+just dev-install-opt
+just dev-install-perf
+just dev-install-perf-max
+just check-local
+just check-artifact-schema data/profiles/example/report.json
+just check-rust-architecture
+just rust-check
+just workspace-check
+just test-local
+just docs-build
 ```
 
-### `doctor-jax`
-
-- Inputs: Python environment.
-- Output: JAX runtime/device probe from `-m tooling.cli.performance tool.name=jax_runtime`.
-- Use when: checking CPU/GPU visibility for JAX.
-
-### `probe-jax`
-
-- Inputs: same as `doctor-jax`.
-- Output: same as `doctor-jax`.
-- Use when: you prefer the older probe-oriented recipe name.
-
-## SLURM Helpers
-
-### `slurm-gpu-shell`
-
-- Inputs: SLURM environment and optional `GWAS_ENGINE_GPU_*` variables, with
-  older `GWAS_ENGINE_SLURM_*` variables as fallbacks.
-- Output: interactive shell on the configured GPU node.
-- Use when: debugging GPU environment or running manual commands on `landau`.
-
-### `slurm-gpu-run command`
-
-- Inputs: one shell command string and optional `GWAS_ENGINE_GPU_*` variables,
-  with older `GWAS_ENGINE_SLURM_*` variables as fallbacks.
-- Output: command execution through `bash -lc` inside an `srun` allocation on
-  the configured GPU node.
-- Use when: submitting one GPU command without writing a dedicated recipe.
-
-Example:
+Use SLURM for CPU-heavy validation:
 
 ```bash
-just slurm-gpu-run 'nvidia-smi'
-just slurm-gpu-run 'uv run python -m tooling.cli.performance tool.name=jax_runtime'
+just slurm-cpu-check
+just slurm-cpu-test
+just slurm-cpu-test-full
+just slurm-cpu-rust-build
+just slurm-cpu-rust-test
 ```
 
-### `slurm-gpu-just +just_arguments`
-
-- Inputs: another Just recipe and arguments.
-- Output: that recipe executed inside a GPU SLURM allocation.
-- Use when: running existing recipes on `landau`.
-
-Example:
+## Data
 
 ```bash
-just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke
+just data-fetch
+just data-simulate
+just data-prepare
+just data-baseline-binary
+just data-baseline-qt
+just data-verify-binary-gpu-inputs
 ```
 
-### `slurm-cpu-shell`
+`GWAS_ENGINE_DATA_DIR` may point at a shared data directory, such as the main
+checkout's gitignored `data/` directory from a temporary worktree.
 
-- Inputs: SLURM environment and optional `GWAS_ENGINE_CPU_*` variables.
-- Output: interactive shell on the configured CPU node with
-  `GWAS_ENGINE_ALLOCATED_CPU_COUNT`, `CARGO_BUILD_JOBS`, and
-  `GWAS_ENGINE_PYTEST_WORKERS` printed before the shell starts.
-- Use when: debugging CPU-node environment or manually iterating on expensive
-  CPU validation.
-
-### `slurm-cpu-run command`
-
-- Inputs: one shell command string and optional `GWAS_ENGINE_CPU_*` variables,
-  with older `GWAS_ENGINE_SLURM_*` variables as fallbacks.
-- Output: command execution through `bash -lc` inside a one-node, one-task CPU
-  `srun` allocation. The default node is `GWAS_ENGINE_CPU_NODE=cantor`; set it
-  to an empty string or another node name when the scheduler should choose a
-  different CPU host.
-- Use when: running CPU-heavy commands away from the login node. CPU jobs
-  request `--exclusive` by default; set `GWAS_ENGINE_SLURM_EXCLUSIVE=0` for
-  short smoke commands that do not need a full node.
-
-### `slurm-cpu-just +just_arguments`
-
-- Inputs: another Just recipe and arguments.
-- Output: that recipe executed inside a CPU SLURM allocation.
-- Use when: wrapping existing CPU validation or benchmark recipes while
-  preserving the Justfile interface.
-
-Example:
+## Matrices
 
 ```bash
-just slurm-cpu-run 'cargo build --workspace --all-targets'
-just slurm-cpu-just check
-just slurm-cpu-just test
+just matrix-chr10-dry
+just matrix-chr10-smoke
+just slurm-gpu-matrix-chr10
+just matrix-chr22-dry
+just matrix-chr22-smoke
+just slurm-gpu-matrix-chr22
 ```
 
-Inside CPU jobs, the wrapper sources `tooling/server/server_env.sh`, derives allocated
-CPU count from SLURM, sets `CARGO_BUILD_JOBS` to that count, and defaults pytest
-xdist to at most 8 workers unless `GWAS_ENGINE_CPU_PYTEST_WORKERS` is set.
+The `matrix-*` workflows replace direct hand-written `g regenie` recipes. Use
+smoke configs for bounded validation and full matrix configs for parity or
+performance runs.
 
-### `slurm-build-patched-regenie node=''`
-
-- Inputs: SLURM access, optional node argument, and the same build inputs as
-  `build-patched-regenie`.
-- Output: patched REGENIE native build performed inside an exclusive one-node
-  SLURM allocation. The wrapper defaults to `GWAS_ENGINE_REGENIE_BUILD_NODE`,
-  then `GWAS_ENGINE_CPU_NODE`, and uses `--exclusive` so the build recipe can
-  pick up all node CPUs through `SLURM_CPUS_ON_NODE`.
-- Use when: compiling patched REGENIE without running a heavy build on the
-  login node. Pass `cantor`, `landau`, or another scheduler-visible node name
-  as the first argument.
-
-Examples:
+## Benchmarks
 
 ```bash
-GWAS_ENGINE_REGENIE_BGEN_PATH=/path/to/bgen \
-  just slurm-build-patched-regenie cantor
-
-GWAS_ENGINE_REGENIE_BGEN_PATH=/path/to/bgen \
-  just slurm-build-patched-regenie landau
+just bench-bgen-reader
+just bench-callback-overhead
+just bench-callback-overhead-gpu
+just bench-linear-startup-gpu
+just bench-linear-startup-gpu-parquet
+just bench-binary-hot-gpu
+just bench-binary-hot-gpu-smoke
+just bench-output-stages-gpu
+just bench-rust-build-profiles
+just slurm-gpu-bench-binary-hot
 ```
 
-## Direct REGENIE Runs
+`bench-rust-build-profiles` includes linker comparison labels for `dev-fast`
+and the routine `perf` profile when the requested linker tooling is available.
 
-### `regenie-linear`
-
-- Inputs: continuous phenotype, covariates, BGEN/sample files, and quantitative
-  step 1 predictions.
-- Output: quantitative REGENIE step 2 output under `data/regenie_linear`.
-- Use when: manually running a local quantitative step 2 command through `g`.
-
-### `regenie2-binary-gpu`
-
-- Inputs: binary phenotype, covariates, BGEN/sample files, and binary step 1
-  predictions.
-- Output: binary REGENIE step 2 GPU output under
-  `data/regenie2_binary_chr22_gpu.g/trait_0001_phenotype_binary.regenie2_binary.run`.
-- Use when: running a full chr22 binary GPU step 2 workload.
-
-### `regenie2-binary-gpu-smoke`
-
-- Inputs: same as `regenie2-binary-gpu`.
-- Output: 1,000-variant smoke output under
-  `data/regenie2_binary_chr22_gpu_smoke.g/trait_0001_phenotype_binary.regenie2_binary.run`.
-- Use when: checking binary GPU step 2 behavior quickly.
-
-### `slurm-regenie2-binary-gpu`
-
-- Inputs: same as `regenie2-binary-gpu`, plus SLURM GPU access.
-- Output: full binary GPU step 2 run through SLURM.
-- Use when: running the full workload safely on `landau`.
-
-### `slurm-regenie2-binary-gpu-smoke`
-
-- Inputs: same as `regenie2-binary-gpu-smoke`, plus SLURM GPU access.
-- Output: smoke binary GPU step 2 run through SLURM.
-- Use when: validating GPU step 2 without using the head node.
-
-### `verify-regenie2-binary-gpu-output`
-
-- Inputs: expected full GPU output run directory.
-- Output: success message or failing file checks.
-- Use when: checking that full binary GPU output contains Parquet parts.
-
-### `verify-regenie2-binary-gpu-smoke-output`
-
-- Inputs: expected smoke GPU output run directory.
-- Output: success message or failing file checks.
-- Use when: checking that smoke binary GPU output contains Parquet parts.
-
-### `regenie2-chr10-matrix-dry-run *overrides`
-
-- Inputs: Hydra tooling config `run_regenie2_chr10_matrix` through
-  `tooling.cli.run_regenie2_matrix`, plus optional trailing Hydra overrides.
-- Output: timestamped manifest, Markdown report, and `tooling.log` containing
-  the six `g regenie` commands without executing them.
-- Use when: inspecting the standard chr10 binary/linear CPU/GPU/cache matrix
-  before submitting real work.
-
-Example:
+Historical external baseline comparisons remain available under `legacy-*`:
 
 ```bash
-just regenie2-chr10-matrix-dry-run \
-  tool.variant_limit=1000 \
-  tool.output_dir=data/benchmarks/regenie2_chr10_matrix_plan
+just legacy-baselines
+just legacy-baselines-full
+just legacy-regenie-comparison-cpu
+just legacy-regenie-comparison-gpu
+just legacy-profile-regenie-comparison-cpu
+just legacy-profile-regenie-comparison-gpu
 ```
 
-### `regenie2-chr10-matrix *overrides`
-
-- Inputs: chr10 BGEN/sample files, continuous and binary phenotypes,
-  covariates, chr10 quantitative and binary step 1 prediction lists, installed
-  native perf extension, CPU/GPU-capable runtime, and optional trailing Hydra
-  overrides.
-- Output: `data/benchmarks/regenie2_chr10_matrix_<timestamp>/manifest.json`,
-  `report.md`, `tooling.log`, per-run `events.jsonl`, per-run stage timings,
-  and six output run directories under `runs/`.
-- Use when: running the standard chr10 binary/linear step 2 comparison matrix.
-  Prefer the SLURM wrapper for real GPU work.
-
-### `slurm-regenie2-chr10-matrix *overrides`
-
-- Inputs: same as `regenie2-chr10-matrix`, plus SLURM GPU access.
-- Output: the standard chr10 matrix executed on the configured GPU node.
-- Use when: handling the common agent task "run binary and linear step2 on
-  chr10 on CPU/GPU/GPU cached, save results, and compare to previous run."
-
-Example:
-
-```bash
-GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
-  just slurm-regenie2-chr10-matrix \
-  tool.output_dir=/mnt/beegfs/kirill/Projects/g/data/benchmarks/regenie2_chr10_matrix_current
-```
-
-Historical full-chr10 comparison against the June 2026 logs needs the old
-profile knobs:
-
-```bash
-GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
-GWAS_ENGINE_SLURM_CPUS_PER_TASK=72 \
-  just slurm-regenie2-chr10-matrix \
-  tool.chunk_size=8192 \
-  tool.cpu_threads=72 \
-  tool.binary_firth_batch_size=64 \
-  tool.binary_firth_candidate_capacity=1024 \
-  tool.output_writer_thread_count=4 \
-  tool.output_writer_queue_depth=16 \
-  tool.finalize_parquet=true \
-  tool.telemetry_mode=profile \
-  tool.trusted_no_missing_diploid=false
-```
-
-Use the `Benchmark Artifact Analysis Recipes` section in `documentation/development/tooling.md` for
-the common `jq` commands that summarize manifests, old benchmark reports, hot
-benchmark summaries, profile stage timings, and JSONL progress logs.
-
-### `regenie2-chr22-matrix-dry-run *overrides`
-
-- Inputs: Hydra tooling config `run_regenie2_chr22_matrix` through
-  `tooling.cli.run_regenie2_matrix`, plus optional trailing Hydra overrides.
-- Output: timestamped manifest, Markdown report, and `tooling.log` containing
-  the six chr22 `g regenie` commands without executing them.
-- Use when: inspecting the standard chr22 binary/linear CPU/GPU/cache matrix
-  before submitting real work.
-
-Example:
-
-```bash
-just regenie2-chr22-matrix-dry-run \
-  tool.variant_limit=1000 \
-  tool.output_dir=data/benchmarks/regenie2_chr22_matrix_plan
-```
-
-### `regenie2-chr22-matrix *overrides`
-
-- Inputs: chr22 BGEN/sample files, continuous and binary phenotypes,
-  covariates, chr22 quantitative and binary step 1 prediction lists, installed
-  native perf extension, CPU/GPU-capable runtime, and optional trailing Hydra
-  overrides.
-- Output: `data/benchmarks/regenie2_chr22_matrix_<timestamp>/manifest.json`,
-  `report.md`, `tooling.log`, per-run `events.jsonl`, per-run stage timings,
-  and six output run directories under `runs/`.
-- Use when: running the standard chr22 binary/linear step 2 comparison matrix.
-  Prefer the SLURM wrapper for real GPU work.
-
-### `slurm-regenie2-chr22-matrix *overrides`
-
-- Inputs: same as `regenie2-chr22-matrix`, plus SLURM GPU access.
-- Output: the standard chr22 matrix executed on the configured GPU node.
-- Use when: handling the common agent task for chr22: binary and linear step 2
-  on CPU/GPU/GPU cached, save results, and compare to the previous chr22 run.
-
-Example:
-
-```bash
-GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
-  just slurm-regenie2-chr22-matrix \
-  tool.output_dir=/mnt/beegfs/kirill/Projects/g/data/benchmarks/regenie2_chr22_matrix_current
-```
-
-## Baseline And Comparison Benchmarks
-
-### `benchmark-baselines`
-
-- Inputs: prepared data and external baseline tools.
-- Output: baseline benchmark report from `-m tooling.cli.benchmark tool.name=baselines`, excluding slow
-  Hail runs by default.
-- Use when: refreshing PLINK2/REGENIE baseline timings.
-
-### `benchmark-baselines-full`
-
-- Inputs: same as `benchmark-baselines`, plus cached Hail MatrixTable support.
-- Output: full baseline benchmark report including Hail.
-- Use when: explicitly refreshing slow baseline evidence.
-
-### `benchmark-regenie-comparison-cpu`
-
-- Inputs: data, baseline tools, installed perf extension.
-- Output: original REGENIE versus `g` quantitative step 2 CPU comparison.
-- Use when: checking CPU comparison behavior.
-
-### `benchmark-regenie-comparison-gpu`
-
-- Inputs: data, baseline tools, installed perf extension, GPU access.
-- Output: original REGENIE versus `g` quantitative step 2 CPU/GPU comparison.
-- Use when: checking comparison behavior including GPU. Prefer running through
-  `slurm-gpu-just`.
-
-### `benchmark-regenie-comparison`
-
-- Inputs: same as `benchmark-regenie-comparison-cpu`.
-- Output: CPU comparison benchmark.
-- Use when: you want the default comparison benchmark alias.
-
-## Tooling Benchmarks And Tuning
-
-### `benchmark-bgen-reader *overrides`
-
-- Inputs: installed perf extension and local BGEN data.
-- Output: BGEN reader benchmark JSON printed to stdout, with optional report
-  paths controlled by trailing Hydra overrides.
-- Use when: measuring native BGEN chunk delivery paths.
-
-### `benchmark-regenie2-linear-fresh-gpu`
-
-- Inputs: installed perf extension, GPU access, fresh-process benchmark inputs.
-- Output: REGENIE step 2 fresh-process GPU benchmark report. The underlying
-  Hydra tool accepts overrides such as `tool.same_process_trials=3`,
-  `tool.multi_phenotype_count=4`, and `tool.emit_stage_timings=true`.
-- Use when: measuring linear quantitative startup behavior. Run it through
-  `just slurm-gpu-run` for custom same-process options on `landau`.
-
-### `benchmark-regenie2-linear-fresh-gpu-parquet`
-
-- Inputs: same as `benchmark-regenie2-linear-fresh-gpu`.
-- Output: fresh-process GPU benchmark using Parquet dataset output and
-  finalization.
-- Use when: comparing fresh-process behavior with finalized Parquet output.
-
-### `benchmark-regenie2-binary-hot-gpu *overrides`
-
-- Inputs: installed perf extension, binary step 2 inputs, GPU access, and
-  optional trailing Hydra overrides.
-- Output: binary-hot benchmark artifacts under the tool's output directory and a
-  summary JSON.
-- Use when: measuring cold process, same-process hot, no-final, and finalized
-  binary step 2 timings.
-
-### `benchmark-regenie2-binary-hot-gpu-smoke *overrides`
-
-- Inputs: same as `benchmark-regenie2-binary-hot-gpu`.
-- Output: smaller binary-hot summary for a 1,000-variant slice.
-- Use when: validating the binary-hot harness quickly.
-
-### `slurm-benchmark-regenie2-binary-hot-gpu *overrides`
-
-- Inputs: same as `benchmark-regenie2-binary-hot-gpu`, plus SLURM GPU access.
-- Output: binary-hot benchmark run through SLURM.
-- Use when: running the benchmark on `landau`.
-
-### `perf-smoke *arguments`
-
-- Inputs: Python environment only; no GWAS data and no GPU are required.
-- Output: timestamped smoke summary under
-  `results/perf/smoke/smoke_<timestamp>/performance_smoke_summary.json` by
-  default.
-- Use when: checking the benchmark/report plumbing from the login node. This is
-  intentionally small and safe for `gauss`.
-
-Example:
+## Performance
 
 ```bash
 just perf-smoke
-```
-
-### `perf-cpu *overrides`
-
-- Inputs: SLURM CPU access, local benchmark data, and the native perf extension
-  build prerequisites.
-- Output: BGEN reader JSON and Markdown summaries under
-  `results/perf/cpu/bgen_reader_<timestamp>/`.
-- Use when: collecting a standard CPU-side benchmark without running heavy work
-  on the login node. The recipe submits `benchmark-bgen-reader` through
-  `slurm-cpu-just`.
-
-Example:
-
-```bash
-just perf-cpu sweep.chunk_sizes=[4096,8192]
-```
-
-### `perf-gpu *overrides`
-
-- Inputs: SLURM GPU access, binary step 2 inputs, and GPU-capable dependencies.
-- Output: binary-hot benchmark artifacts and
-  `regenie2_binary_hot_summary.json` under
-  `results/perf/gpu/regenie2_binary_hot_<timestamp>/`.
-- Use when: collecting the standard GPU performance benchmark through the
-  existing `slurm-benchmark-regenie2-binary-hot-gpu` wrapper.
-
-Example:
-
-```bash
-just perf-gpu tool.variant_limit=1000
-```
-
-### `perf-compare baseline_json new_json`
-
-- Inputs: two benchmark JSON summaries.
-- Output: concise Markdown table comparing common speed, memory, and numerical
-  metrics; exits nonzero for malformed JSON or summaries with no common
-  metrics.
-- Use when: comparing smoke outputs, BGEN reader summaries, binary-hot summaries,
-  or matrix manifests.
-
-Example:
-
-```bash
+just perf-cpu
+just perf-gpu
 just perf-compare results/perf/baseline.json results/perf/new.json
+just perf-jax-runtime
+just perf-tune-regenie2-gpu
 ```
 
-### `benchmark-output-stages-gpu *overrides`
-
-- Inputs: installed perf extension, quantitative step 2 inputs, GPU access.
-- Output: output-stage benchmark JSON and Markdown summaries.
-- Use when: measuring writer/finalization bottlenecks.
-
-### `tune-regenie2-gpu *overrides`
-
-- Inputs: installed perf extension, data, baseline tools, GPU access.
-- Output: GPU tuning artifacts under `data/benchmarks/regenie2_gpu_tuning`.
-- Use when: sweeping BGEN, compute, writer, and finalist knobs for step 2.
-
-### `benchmark-rust`
-
-- Inputs: Rust toolchain.
-- Output: Rust Criterion benchmark results for the Cargo workspace.
-- Use when: measuring Rust-only native components.
+`perf-smoke` and `perf-compare` are login-node-safe. `perf-cpu` and `perf-gpu`
+submit through SLURM and use saved benchmark configs for output locations.
 
 ## Profiling
 
-### `profile-regenie-comparison-cpu`
-
-- Inputs: data, baseline tools, installed perf extension.
-- Output: profile comparison for original REGENIE and `g` quantitative step 2 on
-  CPU.
-- Use when: profiling the CPU comparison path.
-
-### `profile-regenie-comparison-gpu`
-
-- Inputs: data, baseline tools, installed perf extension, GPU access.
-- Output: profile comparison including GPU.
-- Use when: profiling the GPU comparison path. Prefer SLURM.
-
-### `profile-regenie-comparison`
-
-- Inputs: same as `profile-regenie-comparison-cpu`.
-- Output: CPU profile comparison.
-- Use when: you want the default profile-comparison alias.
-
-### `profile-app-full-dry-run *overrides`
-
-- Inputs: Hydra profile config and optional trailing overrides.
-- Output: `profile_plan.json`, `profile_plan.md`, `artifact_manifest.json`, and
-  `tooling.log` under the configured profile output directory.
-- Use when: checking the full app profiling plan before submitting a long run.
-- Notes: sets `tool.include_regenie_baseline=false`; existing step 1 prediction
-  lists must be present. The plan includes optional profiler availability,
-  logging perturbation cases, section-level candidate/case counts, subprocess
-  estimates, and budget-limit status.
-
-Example:
-
 ```bash
-just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
+just profile-deep-dry
+just profile-deep-smoke
+just profile-app-full-dry
+just profile-app-full-smoke
+just profile-app-full
+just profile-chr10-binary-gpu-dry
+just profile-chr10-binary-gpu-smoke
+just profile-chr10-binary-gpu-full
 ```
 
-### `profile-app-full-smoke *overrides`
+The full profile recipes submit GPU work through SLURM. The chr10 binary GPU
+full profile uses `profile_chr10_binary_gpu_full.yaml`, which contains the
+previous profiler selection and campaign budget settings that used to live in
+the Justfile.
 
-- Inputs: data, baseline tools, GPU dependency group, installed perf extension,
-  GPU access, and optional trailing Hydra overrides.
-- Output: reduced full-profile artifacts under `data/profiles/landau_deep_*` or
-  the configured `tool.output_dir`.
-- Use when: validating JAX trace, cProfile, py-spy, perf, stage-timing, and
-  summary artifact generation on a small workload. Smoke mode also validates a
-  reduced telemetry/logging perturbation matrix.
-- Notes: sets `tool.include_regenie_baseline=false`; use
-  `tool.include_regenie_baseline=true` only when external `regenie` is available.
-  Also sets `tool.enable_rust_criterion=false` so smoke checks stay short.
-
-Example:
+## SLURM Substrates
 
 ```bash
-just slurm-gpu-just profile-app-full-smoke tool.output_dir=data/profiles/app_profile_smoke
+just slurm-cpu-shell
+just slurm-cpu-run 'cargo build --workspace --all-targets'
+just slurm-cpu-just check
+just slurm-gpu-shell
+just slurm-gpu-run 'nvidia-smi'
+just slurm-gpu-just bench-binary-hot-gpu-smoke
 ```
 
-### `profile-app-full-landau *overrides`
-
-- Inputs: data, baseline tools, SLURM GPU access, and optional trailing Hydra
-  overrides.
-- Output: full app profiling bundle on `landau`; defaults to 12 hours, 8 CPUs,
-  64G memory, and 1 GPU unless overridden through `GWAS_ENGINE_SLURM_*`.
-- Use when: profiling the app end to end for bottleneck analysis.
-- Notes: sets `tool.include_regenie_baseline=false`; use
-  `tool.include_regenie_baseline=true` only when external `regenie` is available.
-  The recipe applies the bounded 2026-06-08 full-profile grid by default: chunk
-  sizes `[2048,4096]`, staging depths `[1,2]`, writer counts `[1,4]`, queue
-  multipliers `[1,2]`, Firth batch `[32]`, BGEN tiles `[64,128]`, Rayon
-  `[4,8]`, top BGEN candidates `1`, top finalists `2`, and reduced trial
-  counts. Use `tool.workload_keys` to split by trait/device.
-
-The run captures JAX traces, JAX device-memory profiles, Python cProfile,
-py-spy speedscope profiles when available, optional Scalene/Memray/Nsight
-passes when enabled and available, Linux perf data when available, Rust
-Criterion benches, stage timings, telemetry/logging perturbation runs,
-subprocess logs, `artifact_manifest.json`, `summary.json`, and `summary.md`.
-The artifact manifest includes per-profiler artifact paths and isolated
-application output run directories so profiler reruns do not collide.
-
-Example:
-
-```bash
-just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
-```
-
-### `profile-regenie2-deep *overrides`
-
-- Inputs: data, baseline tools, installed perf extension, GPU access.
-- Output: deep profiling artifacts under `data/profiles/landau_deep_*` unless an
-  explicit output directory is configured.
-- Use when: running the lower-level full profile harness on the current host.
-
-### `profile-regenie2-deep-dry-run *overrides`
-
-- Inputs: repository config only; workloads are not executed.
-- Output: `profile_plan.json`, `profile_plan.md`, and `artifact_manifest.json`.
-- Use when: inspecting paired original or patched REGENIE baseline commands and
-  input files before submitting bounded profiling work. The plan includes
-  candidate/case counts and subprocess estimates for BGEN pre-sweep, tuning,
-  finalists, headline trials, deep profilers, logging perturbation, and Rust
-  Criterion.
-
-### `profile-regenie2-deep-smoke *overrides`
-
-- Inputs: same as `profile-regenie2-deep`, plus the GPU dependency group for
-  GPU smoke cells.
-- Output: reduced deep-profile smoke artifacts.
-- Use when: validating only sweeps/headlines without deep profiler captures or
-  Rust Criterion.
-
-### `profile-regenie2-deep-landau *overrides`
-
-- Inputs: data, baseline tools, SLURM GPU access.
-- Output: long deep-profile campaign on `landau`; defaults to 12 hours, 8 CPUs,
-  64G memory, and 1 GPU unless overridden through `GWAS_ENGINE_SLURM_*`.
-- Use when: running the lower-level full profile harness on the GPU node. The
-  recipe applies the bounded 2026-06-08 full-profile grid by default: chunk
-  sizes `[2048,4096]`, staging depths `[1,2]`, writer counts `[1,4]`, queue
-  multipliers `[1,2]`, Firth batch `[32]`, BGEN tiles `[64,128]`, Rayon
-  `[4,8]`, top BGEN candidates `1`, top finalists `2`, and reduced trial
-  counts. Pass `tool.workload_keys=[binary_gpu]`,
-  `tool.workload_keys=[binary_cpu]`, `tool.workload_keys=[quantitative_gpu]`,
-  or `tool.workload_keys=[quantitative_cpu]` to split the campaign.
-
-### `profile-chr10-gpu-binary-deep-dry-run *overrides`
-
-- Inputs: repository config only (no workloads executed).
-- Output: `profile_plan.json`, `profile_plan.md`, `artifact_manifest.json`
-  showing the exact plan for the g regenie GPU binary path on chr10 with every
-  profiler enabled.
-- Use when: inspecting what the full extensive profiling suite would do
-  (memray, scalene, nsight-systems, nsight-compute, py-spy, linux perf,
-  cProfile, JAX trace + device memory, Rust Criterion, etc.) without running
-  anything. Uses `dataset=chr10_local` + `workload_keys=[binary_gpu]` +
-  `include_regenie_baseline=false` + all `enable_*` profilers turned on.
-
-```bash
-just profile-chr10-gpu-binary-deep-dry-run tool.output_dir=data/profiles/chr10_gpu_binary_plan
-```
-
-### `profile-chr10-gpu-binary-deep-smoke *overrides`
-
-- Inputs: data (chr10 fixtures via the main checkout or
-  `GWAS_ENGINE_DATA_DIR`), GPU deps, perf extension, optional overrides.
-- Output: reduced smoke artifacts under the requested (or default) profile dir.
-- Use when: quickly validating the harness, command construction, and
-  artifact layout for the chr10 GPU binary full-suite case. Nsight Compute is
-  disabled in smoke for speed; a small `variant_limit` is applied.
-
-```bash
-just profile-chr10-gpu-binary-deep-smoke tool.output_dir=data/profiles/chr10_gpu_binary_smoke
-```
-
-### `profile-chr10-gpu-binary-deep *overrides`
-
-- Inputs: data, baseline tools, installed perf extension, GPU access, and
-  optional overrides.
-- Output: full deep-profile campaign artifacts (including per-profiler
-  captures) for the g regenie `--step 2 --bt --device gpu` (Firth/approx)
-  binary path on the chr10 1KG workload.
-- Use when: running the extensive multi-tool profiling suite on the current
-  (GPU-capable) host. All supported profilers are forced on; the landau
-  budget grid and `binary_gpu` only workload are used by default.
-
-### `profile-chr10-gpu-binary-deep-landau *overrides`
-
-- Inputs: data (chr10 + baselines_chr10 via explicit
-  `GWAS_ENGINE_DATA_DIR`), baseline tools, SLURM GPU access (landau).
-- Output: one long SLURM job on `landau` that executes the complete profiling
-  suite (memray allocations, scalene, nsys CUDA timelines, ncu kernel reports,
-  py-spy, linux perf, cProfile, JAX traces/memory, criterion, logging
-  perturbation, stage timings, cold/warm diagnostics, artifact manifest, etc.)
-  against the production `g regenie` GPU binary code path on real chr10 data.
-- Use when: this is the primary command requested for "run the full profiling
-  suite on g regenie gpu binary on chr10". The recipe automatically performs
-  the prerequisite `install-*` steps for GPU, perf, profiling tools, and
-  nsight inside the job. Defaults to a 12 h time limit with the standard
-  bounded landau grid. Artifacts appear under `data/profiles/...` inside the
-  main checkout (or an explicit `tool.output_dir`).
-
-```bash
-export GWAS_ENGINE_SLURM_TIME=12:00:00
-just profile-chr10-gpu-binary-deep-landau \
-  tool.output_dir=data/profiles/chr10_gpu_binary_full_$(date -u +%Y%m%dT%H%M%SZ)
-```
-
-## Formatting, Linting, Type Checking, And Tests
-
-### `format`
-
-- Inputs: Python environment and Rust toolchain.
-- Output: formatted Python and Rust files.
-- Use when: applying repository formatting.
-
-### `rust-format-check`
-
-- Inputs: Rust toolchain.
-- Output: `cargo fmt --all --check` diagnostics without rewriting files.
-- Use when: checking Rust formatting in migration or CI-equivalent lanes.
-
-### `lint`
-
-- Inputs: Python environment and Rust toolchain.
-- Output: ruff fixes and Cargo clippy diagnostics.
-- Use when: applying Python lint fixes and checking Rust lints.
-
-### `rust-lint-check`
-
-- Inputs: Rust toolchain.
-- Output: `cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic`.
-- Use when: checking Rust lints without Python lint fixes.
-
-### `typecheck`
-
-- Inputs: Python environment.
-- Output: `ty` diagnostics for `src`, `tests`, `scripts`, and `tooling`.
-- Use when: checking Python types.
-
-### `check-rust-architecture`
-
-- Inputs: Python environment and Cargo metadata.
-- Output: failure if an internal crate depends on PyO3/NumPy or on a forbidden
-  internal crate.
-- Use when: validating Cargo workspace dependency boundaries.
-
-### `check`
-
-- Inputs: same as `format`, `lint`, and `typecheck`.
-- Output: full format/lint/typecheck lane, Rust stub sync check, internal
-  default check, internal package initializer export check, and Rust workspace
-  architecture check.
-- Use when: running the default local quality gate with Rust tooling available.
-
-### `format-local-check`
-
-- Inputs: Python environment.
-- Output: ruff format check only.
-- Use when: checking formatting without Nix or direct Cargo access.
-
-### `lint-local`
-
-- Inputs: Python environment.
-- Output: ruff diagnostics without fixes.
-- Use when: checking Python lint locally.
-
-### `typecheck-local`
-
-- Inputs: Python environment.
-- Output: `ty` diagnostics.
-- Use when: type checking without the full Rust/Nix lane.
-
-### `test-local-focused`
-
-- Inputs: Python environment and native extension build support.
-- Output: focused pytest results for core and output tests.
-- Use when: running a quick no-Nix smoke suite.
-
-### `test-local`
-
-- Inputs: Python environment and native extension build support.
-- Output: non-heavy pytest suite excluding `phase0_data` and `phase1_parity`.
-- Use when: running broader local tests without data/parity workloads.
-
-### `check-local`
-
-- Inputs: Python environment and native extension build support.
-- Output: local format check, lint, typecheck, focused tests, Rust stub sync check, internal default check, and internal package initializer export check.
-- Use when: running a no-Nix verification lane.
-
-### `check-internal-init-exports`
-
-- Inputs: Python environment.
-- Output: failure if internal `src/g/**/__init__.py` files define `__all__`, import/re-export symbols, or assign aliases.
-- Use when: changing package initializer files or reviewing internal module boundaries.
-
-### `ci-lint`
-
-- Inputs: frozen lockfile and dev dependencies.
-- Output: ruff diagnostics in a no-install-project CI environment.
-- Use when: reproducing CI lint behavior.
-
-### `ci-typecheck`
-
-- Inputs: frozen lockfile and dev dependencies.
-- Output: `ty` diagnostics in a no-install-project CI environment.
-- Use when: reproducing CI typecheck behavior.
-
-### `ci-test`
-
-- Inputs: frozen lockfile and installed project.
-- Output: pytest results excluding heavy data/parity suites.
-- Use when: reproducing CI test behavior.
-
-### `test`
-
-- Inputs: full Python test environment.
-- Output: full pytest run. When `GWAS_ENGINE_PYTEST_WORKERS` is set to a value
-  greater than 1, the recipe adds `pytest-xdist -n <workers>`.
-- Use when: intentionally running all tests. Prefer `just slurm-cpu-just test`
-  or `just slurm-cpu-test-full` for full-suite runs on the gauss server.
-
-### `test-cpu`
-
-- Inputs: full Python test environment and optional
-  `GWAS_ENGINE_PYTEST_WORKERS`.
-- Output: pytest results excluding `phase0_data` and `phase1_parity`; uses
-  xdist when worker count is configured.
-- Use when: running the CPU validation suite without local data/parity
-  workloads, usually through `just slurm-cpu-test`.
-
-### `test-full`
-
-- Inputs: same as `test`.
-- Output: same as `test`.
-- Use when: making the full-suite intent explicit in `just slurm-cpu-test-full`.
-
-### `coverage-python`
-
-- Inputs: full Python test environment and optional
-  `GWAS_ENGINE_PYTEST_WORKERS`.
-- Output: Python coverage report with a 90 percent gate; uses xdist when worker
-  count is configured. Coverage omits only verified Python package-marker or
-  re-export-boilerplate `__init__.py` files; lazy public API behavior in
-  `src/g/__init__.py` remains measured. Annotation-only
-  `if typing.TYPE_CHECKING:` blocks are excluded from reporting.
-- Use when: checking Python coverage, preferably through `slurm-cpu-coverage`
-  for full CPU validation.
-
-### `coverage-rust`
-
-- Inputs: Rust toolchain with `cargo llvm-cov`.
-- Output: Rust line coverage report with a 90 percent gate. The report ignores
-  `benches/` benchmark harnesses and `tests/` integration-test harness source
-  with `--ignore-filename-regex '(^|/)(benches|tests)/'`; production Rust under
-  `src/` remains in the denominator.
-- Use when: checking Rust coverage.
-
-### `coverage`
-
-- Inputs: same as `coverage-python` and `coverage-rust`.
-- Output: both coverage gates.
-- Use when: running complete coverage validation.
-
-### `rust-build`
-
-- Inputs: Rust toolchain.
-- Output: `cargo build --workspace --all-targets`.
-- Use when: building all Rust targets. In a CPU SLURM allocation,
-  `CARGO_BUILD_JOBS` is set from the allocation.
-
-### `rust-test`
-
-- Inputs: Rust toolchain.
-- Output: `cargo test --workspace`.
-- Use when: running Rust tests. In a CPU SLURM allocation, dependency and test
-  builds inherit `CARGO_BUILD_JOBS`.
-
-### `rust-check`
-
-- Inputs: Rust toolchain, Python environment, and Cargo metadata.
-- Output: non-mutating Rust format, lint, build, test, and architecture checks.
-- Use when: validating a Rust migration slice before broader Python tests.
-
-### `workspace-check`
-
-- Inputs: same as `rust-check`.
-- Output: workspace-level validation lane for Rust migration phases.
-- Use when: checking the Cargo workspace before or after crate extraction.
-
-### `slurm-cpu-check`
-
-- Inputs: CPU SLURM access.
-- Output: `just check` executed on the configured CPU node.
-- Use when: running format, lint, clippy, and typecheck validation without
-  compiling Rust on the login node.
-
-### `slurm-cpu-test`
-
-- Inputs: CPU SLURM access.
-- Output: `test-cpu` executed on the configured CPU node.
-- Use when: running the non-data Python suite with bounded pytest parallelism.
-
-### `slurm-cpu-test-full`
-
-- Inputs: CPU SLURM access and optional local phase data.
-- Output: `test-full` executed on the configured CPU node.
-- Use when: running the full Python suite, including data/parity tests when
-  present.
-
-### `slurm-cpu-rust-build`
-
-- Inputs: CPU SLURM access and Rust toolchain.
-- Output: `rust-build` executed on the configured CPU node.
-- Use when: compiling all Rust targets with allocated CPU build jobs.
-
-### `slurm-cpu-rust-test`
-
-- Inputs: CPU SLURM access and Rust toolchain.
-- Output: `rust-test` executed on the configured CPU node.
-- Use when: running Rust tests with allocated CPU build jobs.
-
-### `slurm-cpu-coverage`
-
-- Inputs: CPU SLURM access and `cargo-llvm-cov` for Rust coverage.
-- Output: Python and Rust coverage gates executed on the configured CPU node.
-- Use when: full coverage is needed without running coverage workloads on the
-  login node.
-
-## Dependency Upgrades
-
-### `upgrade-python-deps`
-
-- Inputs: network access and Python package indexes.
-- Output: updated/synced Python dependencies for dev and GPU groups.
-- Use when: intentionally upgrading Python dependencies.
-
-### `upgrade-nix-lock`
-
-- Inputs: network access and Nix.
-- Output: updated `flake.lock`.
-- Use when: intentionally upgrading Nix inputs.
-
-### `upgrade-deps`
-
-- Inputs: same as `upgrade-python-deps` and `upgrade-nix-lock`.
-- Output: upgraded Python dependencies and Nix lockfile.
-- Use when: performing a coordinated dependency refresh.
+The SLURM wrappers are execution substrates. Workflow choices should still live
+in saved configs or named Just recipes.
+
+## Guardrails
+
+`just check-rust-architecture` verifies Cargo workspace dependency boundaries
+for the Rust migration. `just check-justfile` verifies that the command surface
+stays config-backed and that maintained docs do not reference removed recipe
+names. Both are included in `just check` and `just check-local`; `just
+rust-check` and `just workspace-check` keep a Rust-focused validation lane for
+multicrate migration phases.

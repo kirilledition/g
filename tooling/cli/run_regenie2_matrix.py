@@ -17,6 +17,8 @@ from pathlib import Path
 import hydra
 
 import tooling.configuration as tooling_configuration
+from tooling.common import artifact_format as tooling_artifact_format
+from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import jax_cache as tooling_jax_cache
@@ -27,6 +29,22 @@ from tooling.common import reports as tooling_reports
 logger = logging.getLogger(__name__)
 REPOSITORY_ROOT = tooling_paths.find_repository_root(Path(__file__))
 DEFAULT_OUTPUT_PARENT = Path("data/benchmarks")
+MATRIX_MANIFEST_SCHEMA_VERSION = 1
+MATRIX_MANIFEST_CONTRACT = tooling_reports.VersionedReportContract(
+    schema_version=MATRIX_MANIFEST_SCHEMA_VERSION,
+    required_fields=(
+        "tool",
+        "created_at_utc",
+        "dry_run",
+        "configuration",
+        "previous_manifest_path",
+        "runs",
+        "comparisons",
+    ),
+    optional_fields=(),
+    schema_field_name="schema_version",
+    reject_unknown_fields=True,
+)
 
 if typing.TYPE_CHECKING:
     import omegaconf
@@ -319,27 +337,6 @@ def build_arguments_from_overrides(
     return build_arguments_from_config(config)
 
 
-def append_optional_option(command_arguments: list[str], option_name: str, value: object | None) -> None:
-    """Append an option and value when the value is present."""
-    if value is None:
-        return
-    command_arguments.extend([option_name, str(value)])
-
-
-def append_boolean_flag(
-    command_arguments: list[str],
-    *,
-    enabled: bool,
-    enabled_flag: str,
-    disabled_flag: str | None = None,
-) -> None:
-    """Append a CLI boolean flag."""
-    if enabled:
-        command_arguments.append(enabled_flag)
-    elif disabled_flag is not None:
-        command_arguments.append(disabled_flag)
-
-
 def resolve_jax_cache_directory_for_mode(arguments: MatrixArguments, mode: ExecutionMode) -> Path:
     """Resolve the persistent JAX cache directory for one matrix execution mode."""
     if mode == ExecutionMode.CPU:
@@ -347,45 +344,18 @@ def resolve_jax_cache_directory_for_mode(arguments: MatrixArguments, mode: Execu
     return arguments.jax_cache_directory / "gpu"
 
 
-def build_trait_arguments(arguments: MatrixArguments, trait: TraitKind) -> list[str]:
-    """Build trait-specific g regenie arguments."""
-    if trait == TraitKind.BINARY:
-        command_arguments = [
-            "--bt",
-            "--phenoFile",
-            str(arguments.binary_phenotype_path),
-            "--phenoCol",
-            arguments.binary_phenotype_column,
-            "--pred",
-            str(arguments.binary_prediction_list_path),
-            "--pThresh",
-            str(arguments.binary_p_threshold),
-        ]
-        append_boolean_flag(command_arguments, enabled=arguments.binary_firth, enabled_flag="--firth")
-        append_boolean_flag(command_arguments, enabled=arguments.binary_approx, enabled_flag="--approx")
-        append_optional_option(command_arguments, "--firth_batch_size", arguments.binary_firth_batch_size)
-        append_optional_option(
-            command_arguments,
-            "--firth_candidate_capacity",
-            arguments.binary_firth_candidate_capacity,
-        )
-        return command_arguments
-    return [
-        "--qt",
-        "--phenoFile",
-        str(arguments.linear_phenotype_path),
-        "--phenoCol",
-        arguments.linear_phenotype_column,
-        "--pred",
-        str(arguments.linear_prediction_list_path),
-    ]
-
-
 def output_run_directory_for_spec(arguments: MatrixArguments, output_prefix: Path, trait: TraitKind) -> Path:
     """Infer the single-phenotype output run directory for a spec."""
-    if trait == TraitKind.BINARY:
-        return Path(f"{output_prefix}.g") / f"{arguments.binary_phenotype_column}.regenie2_binary.run"
-    return Path(f"{output_prefix}.g") / f"{arguments.linear_phenotype_column}.regenie2_linear.run"
+    run_spec = build_regenie_run_spec(
+        arguments=arguments,
+        trait=trait,
+        mode=ExecutionMode.CPU,
+        output_prefix=output_prefix,
+        stage_timing_path=Path("stage_timings.json"),
+        profile_summary_path=Path("profile_summary.json"),
+        event_log_path=Path("events.jsonl"),
+    )
+    return tooling_g_regenie.expected_output_run_directory(run_spec)
 
 
 def build_environment_overrides() -> dict[str, str]:
@@ -403,104 +373,119 @@ def build_environment_overrides() -> dict[str, str]:
 
 def build_run_command(arguments: MatrixArguments, spec: RunSpec) -> list[str]:
     """Build the full command arguments for a run spec."""
-    command_arguments = list(arguments.runner_prefix)
-    command_arguments.extend(
-        [
-            "--step",
-            "2",
-            "--bgen",
-            str(arguments.bgen_path),
-            "--sample",
-            str(arguments.sample_path),
-            "--covarFile",
-            str(arguments.covariate_path),
-            "--covarColList",
-            arguments.covariate_columns,
-            "--out",
-            str(spec.output_prefix),
-            "--device",
-            "cpu" if spec.mode == ExecutionMode.CPU else "gpu",
-            "--bsize",
-            str(arguments.chunk_size),
-            "--staging_depth",
-            str(arguments.staging_depth),
-            "--format",
-            arguments.output_format,
-            "--writer_threads",
-            str(arguments.output_writer_thread_count),
-            "--writer_queue_depth",
-            str(arguments.output_writer_queue_depth),
-            "--stage_timings_json",
-            str(spec.stage_timing_path),
-            "--profile_summary_json",
-            str(spec.profile_summary_path),
-            "--log_dir",
-            str(spec.event_log_path.parent),
-            "--log_file",
-            str(spec.event_log_path),
-            "--telemetry",
-            arguments.telemetry_mode,
-            "--log_filter",
-            arguments.log_filter,
-            "--progress_interval_seconds",
-            str(arguments.progress_interval_seconds),
-            "--progress_interval_chunks",
-            str(arguments.progress_interval_chunks),
-            "--trusted_bgen_validation_mode",
-            arguments.trusted_bgen_validation_mode,
-        ]
+    regenie_run_spec = build_regenie_run_spec(
+        arguments=arguments,
+        trait=spec.trait,
+        mode=spec.mode,
+        output_prefix=spec.output_prefix,
+        stage_timing_path=spec.stage_timing_path,
+        profile_summary_path=spec.profile_summary_path,
+        event_log_path=spec.event_log_path,
     )
-    command_arguments.extend(build_trait_arguments(arguments, spec.trait))
-    append_optional_option(command_arguments, "--variant_limit", arguments.variant_limit)
-    append_optional_option(command_arguments, "--threads", arguments.cpu_threads)
-    append_boolean_flag(
-        command_arguments,
-        enabled=arguments.trusted_no_missing_diploid,
-        enabled_flag="--trusted_no_missing_diploid",
-        disabled_flag="--no-trusted_no_missing_diploid",
-    )
-    append_boolean_flag(
-        command_arguments,
-        enabled=arguments.finalize_parquet,
-        enabled_flag="--finalize_parquet",
-        disabled_flag="--no-finalize_parquet",
-    )
-    append_boolean_flag(
-        command_arguments,
-        enabled=arguments.log_stderr,
-        enabled_flag="--log_stderr",
-        disabled_flag="--no-log_stderr",
-    )
+    return tooling_g_regenie.render_g_regenie_cli(regenie_run_spec)
+
+
+def build_regenie_run_spec(
+    *,
+    arguments: MatrixArguments,
+    trait: TraitKind,
+    mode: ExecutionMode,
+    output_prefix: Path,
+    stage_timing_path: Path,
+    profile_summary_path: Path,
+    event_log_path: Path,
+) -> tooling_g_regenie.RegenieRunSpec:
+    """Build the shared REGENIE run spec for one matrix entry."""
     persistent_cache_enabled = (
-        arguments.cpu_jax_persistent_cache if spec.mode == ExecutionMode.CPU else arguments.gpu_jax_persistent_cache
+        arguments.cpu_jax_persistent_cache if mode == ExecutionMode.CPU else arguments.gpu_jax_persistent_cache
     )
-    append_boolean_flag(
-        command_arguments,
-        enabled=persistent_cache_enabled,
-        enabled_flag="--jax_persistent_cache",
-        disabled_flag="--no-jax_persistent_cache",
+    cache_directory = resolve_jax_cache_directory_for_mode(arguments, mode) if persistent_cache_enabled else None
+    is_binary_trait = trait == TraitKind.BINARY
+    phenotype_path = arguments.binary_phenotype_path if is_binary_trait else arguments.linear_phenotype_path
+    phenotype_column = arguments.binary_phenotype_column if is_binary_trait else arguments.linear_phenotype_column
+    prediction_list_path = (
+        arguments.binary_prediction_list_path if is_binary_trait else arguments.linear_prediction_list_path
     )
-    if persistent_cache_enabled:
-        cache_directory = resolve_jax_cache_directory_for_mode(arguments, spec.mode)
-        command_arguments.extend(
-            [
-                "--jax_cache_dir",
-                str(cache_directory),
-                "--jax_persistent_cache_min_entry_size_bytes",
-                str(arguments.jax_persistent_cache_min_entry_size_bytes),
-                "--jax_persistent_cache_min_compile_time_seconds",
-                str(arguments.jax_persistent_cache_min_compile_time_seconds),
-            ]
+    binary_options = (
+        tooling_g_regenie.RegenieBinaryOptions(
+            firth=arguments.binary_firth,
+            approx=arguments.binary_approx,
+            firth_se=None,
+            p_threshold=arguments.binary_p_threshold,
         )
-    if spec.mode != ExecutionMode.CPU:
-        command_arguments.extend(["--gpu_genotype_format", arguments.gpu_genotype_format])
-        append_boolean_flag(
-            command_arguments,
-            enabled=arguments.jax_xla_autotune_cache,
-            enabled_flag="--jax_xla_autotune_cache",
-            disabled_flag="--no-jax_xla_autotune_cache",
-        )
-    return command_arguments
+        if is_binary_trait
+        else None
+    )
+    return tooling_g_regenie.RegenieRunSpec(
+        trait_kind=(
+            tooling_g_regenie.RegenieTraitKind.BINARY
+            if is_binary_trait
+            else tooling_g_regenie.RegenieTraitKind.QUANTITATIVE
+        ),
+        command_prefix=arguments.runner_prefix,
+        inputs=tooling_g_regenie.RegenieInputSpec(
+            bgen_path=arguments.bgen_path,
+            sample_path=arguments.sample_path,
+            phenotype_path=phenotype_path,
+            phenotype_columns=(phenotype_column,),
+            covariate_path=arguments.covariate_path,
+            covariate_columns=tuple(
+                column.strip() for column in arguments.covariate_columns.split(",") if column.strip()
+            ),
+            prediction_list_path=prediction_list_path,
+            output_prefix=output_prefix,
+        ),
+        compute=tooling_g_regenie.RegenieComputeOptions(
+            device=tooling_g_regenie.RegenieDevice.CPU
+            if mode == ExecutionMode.CPU
+            else tooling_g_regenie.RegenieDevice.GPU,
+            bsize=arguments.chunk_size,
+            threads=arguments.cpu_threads,
+            staging_depth=arguments.staging_depth,
+            native_callback_batch_size=None,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=None,
+            variant_limit=arguments.variant_limit,
+            trusted_no_missing_diploid=arguments.trusted_no_missing_diploid,
+            trusted_bgen_validation_mode=arguments.trusted_bgen_validation_mode,
+            bgen_decode_tile_variant_count=None,
+            firth_batch_size=arguments.binary_firth_batch_size if is_binary_trait else None,
+            firth_candidate_capacity=arguments.binary_firth_candidate_capacity if is_binary_trait else None,
+            gpu_genotype_format=arguments.gpu_genotype_format if mode != ExecutionMode.CPU else None,
+            jax_cache_dir=cache_directory,
+            jax_persistent_cache=persistent_cache_enabled,
+            jax_persistent_cache_min_entry_size_bytes=(
+                arguments.jax_persistent_cache_min_entry_size_bytes if persistent_cache_enabled else None
+            ),
+            jax_persistent_cache_min_compile_time_seconds=(
+                arguments.jax_persistent_cache_min_compile_time_seconds if persistent_cache_enabled else None
+            ),
+            jax_xla_autotune_cache=arguments.jax_xla_autotune_cache if mode != ExecutionMode.CPU else None,
+        ),
+        output=tooling_g_regenie.RegenieOutputOptions(
+            output_format=arguments.output_format,
+            output_run_directory=None,
+            writer_threads=arguments.output_writer_thread_count,
+            writer_queue_depth=arguments.output_writer_queue_depth,
+            chunks_per_arrow_file=None,
+            arrow_compression=None,
+            parquet_compression=None,
+            output_statistic_dtype=None,
+            finalize_parquet=arguments.finalize_parquet,
+        ),
+        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(
+            telemetry=arguments.telemetry_mode,
+            log_dir=event_log_path.parent,
+            stage_timings_json=stage_timing_path,
+            profile_summary_json=profile_summary_path,
+            log_file=event_log_path,
+            log_filter=arguments.log_filter,
+            log_stderr=arguments.log_stderr,
+            progress_interval_seconds=arguments.progress_interval_seconds,
+            progress_interval_chunks=arguments.progress_interval_chunks,
+        ),
+        binary=binary_options,
+    )
 
 
 def build_run_specs(arguments: MatrixArguments) -> list[RunSpec]:
@@ -903,6 +888,353 @@ def comparison_to_json_dict(comparison: MetricComparison) -> dict[str, typing.An
     return dataclasses.asdict(comparison)
 
 
+def run_status_to_artifact_status(run_status: RunStatus) -> tooling_artifact_format.ToolArtifactStatus:
+    """Convert matrix run status to the shared artifact status enum."""
+    if run_status == RunStatus.DRY_RUN:
+        return tooling_artifact_format.ToolArtifactStatus.DRY_RUN
+    if run_status == RunStatus.FAILED:
+        return tooling_artifact_format.ToolArtifactStatus.FAILED
+    return tooling_artifact_format.ToolArtifactStatus.SUCCESS
+
+
+def matrix_artifact_status(
+    arguments: MatrixArguments, run_results: list[RunResult]
+) -> tooling_artifact_format.ToolArtifactStatus:
+    """Determine the overall matrix artifact status."""
+    if arguments.dry_run:
+        return tooling_artifact_format.ToolArtifactStatus.DRY_RUN
+    if any(run_result.status == RunStatus.FAILED for run_result in run_results):
+        return tooling_artifact_format.ToolArtifactStatus.FAILED
+    return tooling_artifact_format.ToolArtifactStatus.SUCCESS
+
+
+def standard_metric_unit(metric_name: str) -> str:
+    """Return the standard unit for a matrix metric."""
+    if metric_name == "wall_time_seconds" or metric_name.startswith("stage."):
+        return tooling_artifact_format.MetricUnit.SECONDS.value
+    if metric_name == "output_row_count":
+        return tooling_artifact_format.MetricUnit.ROW.value
+    if metric_name.endswith("_bytes"):
+        return tooling_artifact_format.MetricUnit.BYTES.value
+    if metric_name.endswith("_count"):
+        return tooling_artifact_format.MetricUnit.COUNT.value
+    return tooling_artifact_format.MetricUnit.COUNT.value
+
+
+def standard_metric_name(metric_name: str) -> str:
+    """Normalize matrix metric names for Tooling Artifact Format v1."""
+    if metric_name.startswith("stage.") and not metric_name.endswith(".seconds"):
+        return f"{metric_name}.seconds"
+    return metric_name
+
+
+def build_matrix_metric_dimensions(arguments: MatrixArguments, run_result: RunResult) -> dict[str, object]:
+    """Build shared metric dimensions for one matrix run."""
+    return {
+        "chromosome_label": arguments.chromosome_label,
+        "trait_type": run_result.trait.value,
+        "mode": run_result.mode.value,
+        "device": "cpu" if run_result.mode == ExecutionMode.CPU else "gpu",
+        "jax_persistent_cache": run_result.mode == ExecutionMode.GPU_CACHED,
+        "chunk_size": arguments.chunk_size,
+        "variant_limit": arguments.variant_limit,
+        "output_format": arguments.output_format,
+        "finalize_parquet": arguments.finalize_parquet,
+        "gpu_genotype_format": arguments.gpu_genotype_format if run_result.mode != ExecutionMode.CPU else None,
+    }
+
+
+def build_matrix_metrics(
+    *,
+    arguments: MatrixArguments,
+    run_id: str,
+    run_results: list[RunResult],
+) -> list[tooling_artifact_format.MetricRecord]:
+    """Build long-form matrix metrics."""
+    metric_records: list[tooling_artifact_format.MetricRecord] = []
+    for run_index, run_result in enumerate(run_results):
+        metrics = numeric_result_metrics(run_result)
+        metrics.update(
+            {
+                "output_file_count": (
+                    float(run_result.output_file_count) if run_result.output_file_count is not None else None
+                ),
+                "committed_chunk_count": (
+                    float(run_result.committed_chunk_count) if run_result.committed_chunk_count is not None else None
+                ),
+                "final_parquet_bytes": (
+                    float(run_result.final_parquet_bytes) if run_result.final_parquet_bytes is not None else None
+                ),
+            }
+        )
+        for metric_name, metric_value in metrics.items():
+            normalized_metric_name = standard_metric_name(metric_name)
+            json_pointer = f"/trials/{run_index}/{metric_name.replace('.', '/')}"
+            metric_records.append(
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=run_result.name,
+                    trial_id=run_result.name,
+                    phase=run_result.mode.value,
+                    metric_name=normalized_metric_name,
+                    value=metric_value,
+                    unit=standard_metric_unit(normalized_metric_name),
+                    aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                    higher_is_better=False
+                    if normalized_metric_name == "wall_time_seconds" or normalized_metric_name.startswith("stage.")
+                    else None,
+                    dimensions=build_matrix_metric_dimensions(arguments, run_result),
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=json_pointer,
+                    ),
+                )
+            )
+    return metric_records
+
+
+def build_matrix_events(
+    *,
+    arguments: MatrixArguments,
+    run_id: str,
+    run_results: list[RunResult],
+) -> list[tooling_artifact_format.ToolEventRecord]:
+    """Build matrix event records."""
+    events = [
+        tooling_artifact_format.build_tool_event(
+            tool_name="run_regenie2_matrix",
+            run_id=run_id,
+            phase="matrix",
+            event="matrix_completed",
+            message=f"{arguments.chromosome_label} matrix completed.",
+            fields={
+                "run_count": len(run_results),
+                "dry_run": arguments.dry_run,
+                "status": matrix_artifact_status(arguments, run_results).value,
+            },
+        )
+    ]
+    for run_result in run_results:
+        events.append(
+            tooling_artifact_format.build_tool_event(
+                tool_name="run_regenie2_matrix",
+                run_id=run_id,
+                phase=run_result.mode.value,
+                event="matrix_run_completed",
+                message=f"Matrix run {run_result.name} finished with status {run_result.status.value}.",
+                fields={
+                    "run_name": run_result.name,
+                    "trait_type": run_result.trait.value,
+                    "mode": run_result.mode.value,
+                    "return_code": run_result.return_code,
+                    "wall_time_seconds": run_result.wall_time_seconds,
+                },
+            )
+        )
+    return events
+
+
+def build_matrix_command_records(
+    *,
+    run_id: str,
+    output_directory: Path,
+    run_results: list[RunResult],
+) -> list[tooling_artifact_format.CommandRecord]:
+    """Build command ledger records for matrix subprocesses."""
+    command_records: list[tooling_artifact_format.CommandRecord] = []
+    environment_overrides = build_environment_overrides()
+    for run_result in run_results:
+        command_records.append(
+            tooling_artifact_format.build_command_record(
+                command_id=run_result.name,
+                tool_name="run_regenie2_matrix",
+                run_id=run_id,
+                phase=run_result.mode.value,
+                args=run_result.command_arguments,
+                output_directory=output_directory,
+                cwd=REPOSITORY_ROOT,
+                environment_overrides=environment_overrides,
+                status=run_status_to_artifact_status(run_result.status),
+                return_code=run_result.return_code,
+                wall_time_seconds=run_result.wall_time_seconds,
+            )
+        )
+    return command_records
+
+
+def build_matrix_input_records(arguments: MatrixArguments) -> list[tooling_artifact_format.InputFileRecord]:
+    """Build input-file records for a matrix run."""
+    return [
+        tooling_artifact_format.build_input_file_record(path=arguments.bgen_path, kind="bgen"),
+        tooling_artifact_format.build_input_file_record(path=arguments.sample_path, kind="sample"),
+        tooling_artifact_format.build_input_file_record(path=arguments.covariate_path, kind="covariates"),
+        tooling_artifact_format.build_input_file_record(
+            path=arguments.linear_phenotype_path,
+            kind="linear_phenotype",
+        ),
+        tooling_artifact_format.build_input_file_record(
+            path=arguments.linear_prediction_list_path,
+            kind="linear_prediction_list",
+        ),
+        tooling_artifact_format.build_input_file_record(
+            path=arguments.binary_phenotype_path,
+            kind="binary_phenotype",
+        ),
+        tooling_artifact_format.build_input_file_record(
+            path=arguments.binary_prediction_list_path,
+            kind="binary_prediction_list",
+        ),
+    ]
+
+
+def build_matrix_failure_records(run_results: list[RunResult]) -> list[tooling_artifact_format.FailureRecord]:
+    """Build structured failure records for failed matrix runs."""
+    failures: list[tooling_artifact_format.FailureRecord] = []
+    for failure_index, run_result in enumerate(
+        (result for result in run_results if result.status == RunStatus.FAILED),
+        start=1,
+    ):
+        failures.append(
+            tooling_artifact_format.FailureRecord(
+                failure_id=f"F{failure_index:03d}",
+                phase=run_result.mode.value,
+                status=tooling_artifact_format.ToolArtifactStatus.FAILED,
+                message=f"Matrix run {run_result.name} failed.",
+                exception_type=None,
+                stderr_excerpt=None,
+                stdout_log=None,
+                stderr_log=None,
+                command_id=run_result.name,
+            )
+        )
+    return failures
+
+
+def comparison_judgement(comparison: MetricComparison) -> tooling_artifact_format.ComparisonJudgement:
+    """Classify a matrix metric comparison."""
+    if comparison.current_value is None or comparison.previous_value is None or comparison.ratio is None:
+        return tooling_artifact_format.ComparisonJudgement.INCONCLUSIVE
+    if comparison.metric == "output_row_count" and comparison.current_value != comparison.previous_value:
+        return tooling_artifact_format.ComparisonJudgement.REGRESSION
+    if comparison.metric != "wall_time_seconds" and not comparison.metric.startswith("stage."):
+        return tooling_artifact_format.ComparisonJudgement.NEUTRAL
+    percent_change = (comparison.ratio - 1.0) * 100.0
+    if percent_change <= -2.0:
+        return tooling_artifact_format.ComparisonJudgement.IMPROVEMENT
+    if percent_change >= 2.0:
+        return tooling_artifact_format.ComparisonJudgement.REGRESSION
+    return tooling_artifact_format.ComparisonJudgement.NEUTRAL
+
+
+def build_standard_comparison_rows(comparisons: list[MetricComparison]) -> list[dict[str, object]]:
+    """Build first-class comparison rows."""
+    rows: list[dict[str, object]] = []
+    for comparison in comparisons:
+        normalized_metric_name = standard_metric_name(comparison.metric)
+        percent_change = None
+        if comparison.ratio is not None:
+            percent_change = (comparison.ratio - 1.0) * 100.0
+        rows.append(
+            {
+                "metric_name": normalized_metric_name,
+                "case_id": comparison.run_name,
+                "dimensions": {},
+                "baseline_value": comparison.previous_value,
+                "current_value": comparison.current_value,
+                "unit": standard_metric_unit(normalized_metric_name),
+                "delta": comparison.delta,
+                "ratio": comparison.ratio,
+                "percent_change": percent_change,
+                "higher_is_better": False
+                if normalized_metric_name == "wall_time_seconds" or normalized_metric_name.startswith("stage.")
+                else None,
+                "judgement": comparison_judgement(comparison).value,
+            }
+        )
+    return rows
+
+
+def build_comparison_report(
+    *,
+    producer: tooling_artifact_format.ToolProducer,
+    run: tooling_artifact_format.ToolRunIdentity,
+    previous_manifest_path: Path | None,
+    comparisons: list[MetricComparison],
+) -> tooling_artifact_format.ComparisonReport | None:
+    """Build a standard comparison report when previous results exist."""
+    if not comparisons:
+        return None
+    comparison_rows = build_standard_comparison_rows(comparisons)
+    regression_count = sum(
+        1
+        for comparison_row in comparison_rows
+        if comparison_row["judgement"] == tooling_artifact_format.ComparisonJudgement.REGRESSION.value
+    )
+    improvement_count = sum(
+        1
+        for comparison_row in comparison_rows
+        if comparison_row["judgement"] == tooling_artifact_format.ComparisonJudgement.IMPROVEMENT.value
+    )
+    neutral_count = sum(
+        1
+        for comparison_row in comparison_rows
+        if comparison_row["judgement"] == tooling_artifact_format.ComparisonJudgement.NEUTRAL.value
+    )
+    return tooling_artifact_format.ComparisonReport(
+        schema_name="g.tooling.comparison",
+        schema_version=tooling_artifact_format.SCHEMA_VERSION,
+        producer=producer,
+        run=run,
+        baseline={
+            "label": "previous",
+            "report_path": str(previous_manifest_path) if previous_manifest_path is not None else None,
+            "git_head": None,
+        },
+        current={
+            "label": "current",
+            "report_path": "report.json",
+            "git_head": producer.git_head,
+        },
+        thresholds=[
+            {
+                "metric_name": "wall_time_seconds",
+                "max_regression_percent": 2.0,
+                "scope": {},
+            }
+        ],
+        comparisons=comparison_rows,
+        summary={
+            "status": run.status.value,
+            "regression_count": regression_count,
+            "improvement_count": improvement_count,
+            "neutral_count": neutral_count,
+        },
+    )
+
+
+def build_matrix_agent_summary(
+    *,
+    arguments: MatrixArguments,
+    run_results: list[RunResult],
+    comparisons: list[MetricComparison],
+) -> dict[str, object]:
+    """Build an agent-oriented matrix summary."""
+    failed_runs = [run_result.name for run_result in run_results if run_result.status == RunStatus.FAILED]
+    key_observations = [
+        f"Recorded {len(run_results)} matrix run results.",
+        f"Dry run: {str(arguments.dry_run).lower()}.",
+    ]
+    if comparisons:
+        key_observations.append(f"Compared {len(comparisons)} metric values against the previous manifest.")
+    risks = [f"Failed runs: {', '.join(failed_runs)}."] if failed_runs else []
+    return {
+        "one_sentence": f"{arguments.chromosome_label} matrix finished with {len(failed_runs)} failed runs.",
+        "key_observations": key_observations,
+        "risks": risks,
+        "next_actions": [],
+    }
+
+
 def format_optional_float(value: float | None) -> str:
     """Format an optional float for Markdown."""
     if value is None:
@@ -997,11 +1329,13 @@ def write_reports(
     run_results: list[RunResult],
     previous_manifest_path: Path | None,
     comparisons: list[MetricComparison],
+    hydra_config: omegaconf.DictConfig | None = None,
 ) -> None:
     """Write JSON and Markdown reports for the matrix run."""
     manifest_path = arguments.output_directory / "manifest.json"
     report_path = arguments.output_directory / "report.md"
     manifest_payload = {
+        "schema_version": MATRIX_MANIFEST_SCHEMA_VERSION,
         "tool": "tooling.cli.run_regenie2_matrix",
         "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "dry_run": arguments.dry_run,
@@ -1010,21 +1344,98 @@ def write_reports(
         "runs": [run_result_to_json_dict(run_result) for run_result in run_results],
         "comparisons": [comparison_to_json_dict(comparison) for comparison in comparisons],
     }
-    tooling_reports.write_json_report(manifest_path, manifest_payload, sort_keys=True)
-    tooling_reports.write_markdown_report(
-        report_path,
-        build_markdown_report(
-            arguments=arguments,
+    tooling_reports.write_versioned_json_report(
+        manifest_path,
+        manifest_payload,
+        MATRIX_MANIFEST_CONTRACT,
+        sort_keys=True,
+    )
+    producer = tooling_artifact_format.build_producer(
+        tool_name="run_regenie2_matrix",
+        repository_root=REPOSITORY_ROOT,
+    )
+    status = matrix_artifact_status(arguments, run_results)
+    status_reason = None
+    if status == tooling_artifact_format.ToolArtifactStatus.FAILED:
+        status_reason = "One or more matrix runs failed."
+    run = tooling_artifact_format.build_run_identity(
+        tool_name="run_regenie2_matrix",
+        output_directory=arguments.output_directory,
+        status=status,
+        status_reason=status_reason,
+    )
+    context_snapshot = tooling_artifact_format.build_context_snapshot(
+        output_directory=arguments.output_directory,
+        repository_root=REPOSITORY_ROOT,
+    )
+    metrics = build_matrix_metrics(arguments=arguments, run_id=run.run_id, run_results=run_results)
+    comparison_report = build_comparison_report(
+        producer=producer,
+        run=run,
+        previous_manifest_path=previous_manifest_path,
+        comparisons=comparisons,
+    )
+    report = tooling_artifact_format.build_report_envelope(
+        producer=producer,
+        run=run,
+        context=context_snapshot,
+        title=f"{arguments.chromosome_label} REGENIE Step 2 Matrix",
+        configuration=arguments_to_json_dict(arguments),
+        summary={
+            "headline": f"{arguments.chromosome_label} matrix finished with status {status.value}.",
+            "agent_summary": build_matrix_agent_summary(
+                arguments=arguments,
+                run_results=run_results,
+                comparisons=comparisons,
+            ),
+            "legacy_manifest": manifest_payload,
+        },
+        cases=[
+            {
+                "case_id": run_result.name,
+                "trait_type": run_result.trait.value,
+                "mode": run_result.mode.value,
+            }
+            for run_result in run_results
+        ],
+        trials=[run_result_to_json_dict(run_result) for run_result in run_results],
+        metrics=metrics,
+        comparisons=build_standard_comparison_rows(comparisons),
+        diagnostics={
+            "previous_manifest_path": str(previous_manifest_path) if previous_manifest_path is not None else None,
+            "legacy_comparison_count": len(comparisons),
+        },
+        failures=build_matrix_failure_records(run_results),
+    )
+    markdown_report = build_markdown_report(
+        arguments=arguments,
+        run_results=run_results,
+        previous_manifest_path=previous_manifest_path,
+        comparisons=comparisons,
+    )
+    tooling_artifact_format.write_standard_artifact_bundle(
+        output_directory=arguments.output_directory,
+        report=report,
+        events=build_matrix_events(arguments=arguments, run_id=run.run_id, run_results=run_results),
+        commands=build_matrix_command_records(
+            run_id=run.run_id,
+            output_directory=arguments.output_directory,
             run_results=run_results,
-            previous_manifest_path=previous_manifest_path,
-            comparisons=comparisons,
         ),
+        input_files=build_matrix_input_records(arguments),
+        summary_markdown=markdown_report,
+        comparisons=comparison_report,
+        hydra_config=hydra_config,
+        tool_payload=arguments_to_json_dict(arguments),
+        legacy_markdown_aliases=(report_path,),
+        notes=["Legacy manifest.json preserves the pre-v1 matrix manifest shape."],
     )
     logger.info("Wrote manifest: %s", manifest_path)
     logger.info("Wrote report: %s", report_path)
+    logger.info("Wrote standard report: %s", arguments.output_directory / "report.json")
 
 
-def run_matrix(arguments: MatrixArguments) -> list[RunResult]:
+def run_matrix(arguments: MatrixArguments, hydra_config: omegaconf.DictConfig | None = None) -> list[RunResult]:
     """Run the matrix and write reports."""
     arguments.output_directory.mkdir(parents=True, exist_ok=True)
     if arguments.validate_inputs and not arguments.dry_run:
@@ -1051,6 +1462,7 @@ def run_matrix(arguments: MatrixArguments) -> list[RunResult]:
         run_results=run_results,
         previous_manifest_path=previous_manifest_path,
         comparisons=comparisons,
+        hydra_config=hydra_config,
     )
     if any(run_result.status == RunStatus.FAILED for run_result in run_results):
         message = f"One or more {arguments.chromosome_label} matrix runs failed."
@@ -1063,7 +1475,7 @@ def hydra_main(config: omegaconf.DictConfig) -> None:
     """Hydra entrypoint for the chromosome matrix runner."""
     arguments = build_arguments_from_config(config)
     tooling_logging.configure_tool_logging(arguments.output_directory / "tooling.log")
-    run_matrix(arguments)
+    run_matrix(arguments, hydra_config=config)
 
 
 def main() -> None:

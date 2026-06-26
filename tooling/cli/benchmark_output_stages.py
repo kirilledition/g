@@ -16,16 +16,15 @@ import polars as pl
 
 import tooling.configuration as tooling_configuration
 from g import api, types
+from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
-from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
 
 if typing.TYPE_CHECKING:
     import omegaconf
 
-DEFAULT_DATA_DIRECTORY = tooling_paths.configured_data_directory()
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/output_stages")
 DEFAULT_SINGLE_PHENOTYPE_NAME = "phenotype_continuous"
 OUTPUT_STAGE_TIMING_FILE_NAME = "output_stage_timings.json"
@@ -777,6 +776,195 @@ def build_markdown_summary(summary: dict[str, typing.Any]) -> str:
     return "\n".join(lines)
 
 
+def output_stage_arguments_payload(arguments: BenchmarkArguments) -> dict[str, object]:
+    """Build a JSON-ready output-stage configuration payload."""
+    return typing.cast("dict[str, object]", tooling_reports.to_jsonable(dataclasses.asdict(arguments)))
+
+
+def output_stage_dimensions(case_summary: dict[str, typing.Any]) -> dict[str, object]:
+    """Build standard metric dimensions for one output-stage case."""
+    return {
+        "finalize_parquet": bool(case_summary["finalize_parquet"]),
+        "phenotype_count": int(case_summary["phenotype_count"]),
+        "chunk_size": int(case_summary["chunk_size"]),
+        "writer_thread_count": int(case_summary["writer_thread_count"]),
+        "writer_queue_depth": int(case_summary["writer_queue_depth"]),
+        "chunks_per_arrow_file": int(case_summary["chunks_per_arrow_file"]),
+        "arrow_compression": str(case_summary["arrow_compression"]),
+    }
+
+
+def build_output_stage_metrics(
+    *,
+    run_id: str,
+    summary: dict[str, typing.Any],
+) -> list[tooling_artifact_format.MetricRecord]:
+    """Build normalized output-stage benchmark metrics."""
+    metric_records: list[tooling_artifact_format.MetricRecord] = []
+    case_summaries = typing.cast("list[dict[str, typing.Any]]", summary["case_summaries"])
+    for case_index, case_summary in enumerate(case_summaries):
+        case_id = str(case_summary["case_name"])
+        dimensions = output_stage_dimensions(case_summary)
+        metric_records.extend(
+            [
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    metric_name="wall_time_seconds",
+                    value=float(case_summary["mean_wall_time_seconds"]),
+                    unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.MEAN.value,
+                    higher_is_better=False,
+                    dimensions=dimensions,
+                    phase="output_stage",
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/cases/{case_index}/mean_wall_time_seconds",
+                    ),
+                ),
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    metric_name="output_file_count",
+                    value=float(case_summary["mean_chunk_file_count"]),
+                    unit=tooling_artifact_format.MetricUnit.COUNT.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.MEAN.value,
+                    higher_is_better=None,
+                    dimensions=dimensions,
+                    phase="output_stage",
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/cases/{case_index}/mean_chunk_file_count",
+                    ),
+                ),
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    metric_name="output_total_bytes",
+                    value=float(case_summary["mean_chunk_bytes"]),
+                    unit=tooling_artifact_format.MetricUnit.BYTES.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.MEAN.value,
+                    higher_is_better=None,
+                    dimensions=dimensions,
+                    phase="output_stage",
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/cases/{case_index}/mean_chunk_bytes",
+                    ),
+                ),
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    metric_name="final_parquet_bytes",
+                    value=case_summary["mean_final_parquet_bytes"],
+                    unit=tooling_artifact_format.MetricUnit.BYTES.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.MEAN.value,
+                    higher_is_better=None,
+                    dimensions=dimensions,
+                    phase="output_stage",
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/cases/{case_index}/mean_final_parquet_bytes",
+                    ),
+                ),
+            ]
+        )
+        mean_handoff_timing_seconds = typing.cast(
+            "dict[str, float]",
+            case_summary["mean_handoff_timing_seconds"],
+        )
+        for stage_name, seconds in sorted(mean_handoff_timing_seconds.items()):
+            metric_records.append(
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=case_id,
+                    metric_name=f"stage.{stage_name}.seconds",
+                    value=seconds,
+                    unit=tooling_artifact_format.MetricUnit.SECONDS.value,
+                    aggregation=tooling_artifact_format.MetricAggregation.MEAN.value,
+                    higher_is_better=False,
+                    dimensions=dimensions,
+                    phase="output_stage",
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=f"/cases/{case_index}/mean_handoff_timing_seconds/{stage_name}",
+                    ),
+                )
+            )
+    return metric_records
+
+
+def write_standard_output_stage_artifacts(
+    *,
+    arguments: BenchmarkArguments,
+    summary: dict[str, typing.Any],
+    summary_path: Path,
+    markdown_summary: str,
+    hydra_config: omegaconf.DictConfig | None = None,
+) -> None:
+    """Write Tooling Artifact Format v1 outputs for the output-stage benchmark."""
+    producer = tooling_artifact_format.build_producer(
+        tool_name="benchmark_output_stages",
+        repository_root=Path.cwd(),
+    )
+    run = tooling_artifact_format.build_run_identity(
+        tool_name="benchmark_output_stages",
+        output_directory=arguments.output_dir,
+        status=tooling_artifact_format.ToolArtifactStatus.SUCCESS,
+    )
+    context_snapshot = tooling_artifact_format.build_context_snapshot(
+        output_directory=arguments.output_dir,
+        repository_root=Path.cwd(),
+    )
+    case_summaries = typing.cast("list[dict[str, object]]", summary["case_summaries"])
+    report = tooling_artifact_format.build_report_envelope(
+        producer=producer,
+        run=run,
+        context=context_snapshot,
+        title="Output Stage Benchmark",
+        configuration=output_stage_arguments_payload(arguments),
+        summary={
+            "headline": str(summary["recommendation"]),
+            "legacy_summary_path": str(summary_path),
+        },
+        cases=case_summaries,
+        trials=typing.cast("list[dict[str, object]]", summary["trial_results"]),
+        metrics=build_output_stage_metrics(run_id=run.run_id, summary=summary),
+        diagnostics={
+            "ranked_bottlenecks": summary["ranked_bottlenecks"],
+            "metadata": summary["metadata"],
+        },
+    )
+    tooling_artifact_format.write_standard_artifact_bundle(
+        output_directory=arguments.output_dir,
+        report=report,
+        events=[
+            tooling_artifact_format.build_tool_event(
+                tool_name="benchmark_output_stages",
+                run_id=run.run_id,
+                phase="output_stage",
+                event="benchmark_completed",
+                message="Output-stage benchmark completed.",
+                fields={"case_count": len(case_summaries)},
+            )
+        ],
+        input_files=[
+            tooling_artifact_format.build_input_file_record(
+                path=arguments.data_dir / "pheno_cont.txt",
+                kind="phenotype",
+            ),
+            tooling_artifact_format.build_input_file_record(
+                path=arguments.data_dir / "baselines/regenie_step1_qt_pred.list",
+                kind="prediction_list",
+            ),
+        ],
+        summary_markdown=markdown_summary,
+        hydra_config=hydra_config,
+        tool_payload=output_stage_arguments_payload(arguments),
+        notes=["Configured summary paths preserve the pre-v1 output-stage benchmark shape."],
+    )
+
+
 def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArguments:
     """Build benchmark parameters from a composed Hydra config."""
     tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
@@ -809,7 +997,7 @@ def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None
     return build_arguments_from_config(config)
 
 
-def run_tool(arguments: BenchmarkArguments) -> None:
+def run_tool(arguments: BenchmarkArguments, hydra_config: omegaconf.DictConfig | None = None) -> None:
     """Run the output-stage benchmark matrix."""
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     device = types.Device(arguments.device)
@@ -844,7 +1032,15 @@ def run_tool(arguments: BenchmarkArguments) -> None:
     summary_path = arguments.json_summary_path or (arguments.output_dir / "summary.json")
     tooling_reports.write_json_report(summary_path, summary, sort_keys=True)
     markdown_summary_path = arguments.markdown_summary_path or (arguments.output_dir / "summary.md")
-    tooling_reports.write_markdown_report(markdown_summary_path, build_markdown_summary(summary))
+    markdown_summary = build_markdown_summary(summary)
+    tooling_reports.write_markdown_report(markdown_summary_path, markdown_summary)
+    write_standard_output_stage_artifacts(
+        arguments=arguments,
+        summary=summary,
+        summary_path=summary_path,
+        markdown_summary=markdown_summary,
+        hydra_config=hydra_config,
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
     print(f"Wrote summary: {summary_path}")
     print(f"Wrote Markdown summary: {markdown_summary_path}")
@@ -853,7 +1049,7 @@ def run_tool(arguments: BenchmarkArguments) -> None:
 @hydra.main(version_base=None, config_path="../configs", config_name="benchmark_output_stages")
 def hydra_main(config: omegaconf.DictConfig) -> None:
     """Run the output-stage benchmark through Hydra."""
-    run_tool(build_arguments_from_config(config))
+    run_tool(build_arguments_from_config(config), hydra_config=config)
 
 
 def main() -> None:

@@ -14,7 +14,7 @@ campaigns, machine profiles, workload profiles, telemetry defaults, report
 writing, and reusable benchmark adapters.
 
 `tooling/` is intentionally not listed in `tool.maturin.python-packages` and is
-not exposed through `[project.scripts]`. Packaged users continue to receive only
+not exposed through the `project.scripts` table. Packaged users continue to receive only
 `src/g` and the public `g` entrypoints.
 
 Do not put production REGENIE behavior, public API types, or packaged CLI
@@ -45,6 +45,7 @@ tooling/
     tune_regenie2_gpu.py
   common/
     commands.py
+    downloads.py
     hydra_arguments.py
     hydra_compat.py
     logging.py
@@ -99,6 +100,11 @@ uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot machine=lan
 uv run --no-sync python -m tooling.cli.data tool.name=fetch
 uv run --no-sync python -m tooling.cli.benchmark tool.name=regenie_comparison tool.cpu_only=true
 ```
+
+Routine workflows should use saved configs via `--config-name`; ad hoc Hydra
+overrides are for local experimentation and one-off narrowing. The Justfile
+therefore names workflows, while files under `tooling/configs/` own datasets,
+chromosomes, benchmark grids, profiler modes, and output policies.
 
 Use `--cfg job` to inspect the composed tool config:
 
@@ -179,6 +185,19 @@ machine-readable headline/finalist aggregates to `summary.json`; runs with
 `telemetry.stage_timing_mode=off` mark those diagnostics unavailable instead of
 emitting per-chunk timing artifacts.
 
+The large profile workflow is being split behind the stable CLI. Shared
+deep-profile enums, argument dataclasses, candidate/result models, budget
+models, JAX diagnostics, and baseline-scope records live in
+`tooling.profile_deep.models`. List parsing, workload selector expansion,
+logging perturbation case definitions, and campaign budget accounting live in
+`tooling.profile_deep.budget`. Hydra-to-argument conversion, smoke-mode
+overrides, output directory resolution, REGENIE executable selection, and
+configuration snapshots live in `tooling.profile_deep.config`. Profile-specific
+JAX cache directory selection, cache snapshots, compile-log parsing, and
+cold/warm cache diagnostics live in `tooling.profile_deep.jax_cache`. The CLI
+re-exports these package-owned symbols for compatibility while orchestration
+code migrates into the package.
+
 `-m tooling.cli.benchmark tool.name=linear_startup`
 
 Benchmarks quantitative REGENIE step 2 startup behavior. By default it measures
@@ -210,21 +229,21 @@ candidates, and finalists for quantitative and binary trait modes.
 Prefer Justfile recipes for common workflows:
 
 ```bash
-just benchmark-bgen-reader
-just benchmark-regenie2-binary-hot-gpu tool.variant_limit=1000
-just benchmark-output-stages-gpu tool.trials=1
-just benchmark-regenie2-binary-hot-gpu-smoke telemetry.stage_timing_mode=exact
+just bench-bgen-reader
+just bench-binary-hot-gpu tool.variant_limit=1000
+just bench-output-stages-gpu tool.trials=1
+just bench-binary-hot-gpu-smoke telemetry.stage_timing_mode=exact
 just perf-smoke
 just perf-cpu sweep.chunk_sizes=[4096,8192]
 just perf-gpu tool.variant_limit=1000
 just perf-compare results/perf/baseline.json results/perf/new.json
-just regenie2-chr10-matrix-dry-run tool.output_dir=data/benchmarks/regenie2_chr10_matrix_plan
-just slurm-regenie2-chr10-matrix tool.output_dir=data/benchmarks/regenie2_chr10_matrix_current
-just regenie2-chr22-matrix-dry-run tool.output_dir=data/benchmarks/regenie2_chr22_matrix_plan
-just slurm-regenie2-chr22-matrix tool.output_dir=data/benchmarks/regenie2_chr22_matrix_current
-just tune-regenie2-gpu tool.trials=1
-just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
-just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
+just matrix-chr10-dry tool.output_dir=data/benchmarks/regenie2_chr10_matrix_plan
+just slurm-gpu-matrix-chr10 tool.output_dir=data/benchmarks/regenie2_chr10_matrix_current
+just matrix-chr22-dry tool.output_dir=data/benchmarks/regenie2_chr22_matrix_plan
+just slurm-gpu-matrix-chr22 tool.output_dir=data/benchmarks/regenie2_chr22_matrix_current
+just perf-tune-regenie2-gpu tool.trials=1
+just profile-app-full-dry tool.output_dir=data/profiles/app_profile_plan
+just profile-app-full tool.output_dir=data/profiles/app_profile_current
 ```
 
 The full Justfile command reference is `documentation/development/justfile.md`. It covers recipe
@@ -234,18 +253,18 @@ Hydra-backed Justfile recipes accept trailing Hydra overrides. Use this form for
 routine agent work instead of adding shell flags:
 
 ```bash
-just regenie2-chr10-matrix-dry-run tool.variant_limit=1000
-just slurm-regenie2-chr10-matrix tool.variant_limit=1000 tool.output_dir=data/benchmarks/regenie2_chr10_matrix_smoke
-just regenie2-chr22-matrix-dry-run tool.variant_limit=1000
-just slurm-regenie2-chr22-matrix tool.variant_limit=1000 tool.output_dir=data/benchmarks/regenie2_chr22_matrix_smoke
+just matrix-chr10-dry tool.variant_limit=1000
+just slurm-gpu-matrix-chr10 tool.variant_limit=1000 tool.output_dir=data/benchmarks/regenie2_chr10_matrix_smoke
+just matrix-chr22-dry tool.variant_limit=1000
+just slurm-gpu-matrix-chr22 tool.variant_limit=1000 tool.output_dir=data/benchmarks/regenie2_chr22_matrix_smoke
 ```
 
 GPU recipes should run through SLURM on `landau`:
 
 ```bash
-just slurm-benchmark-regenie2-binary-hot-gpu
-just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke
-just profile-app-full-landau
+just slurm-gpu-bench-binary-hot
+just slurm-gpu-just bench-binary-hot-gpu-smoke
+just profile-app-full
 ```
 
 Do not run GPU workloads, heavy benchmark sweeps, large test suites, or
@@ -261,7 +280,7 @@ Use the `perf-*` recipes as the stable command surface for optimization tasks:
 - `just perf-cpu` requires SLURM. It submits the BGEN reader benchmark through
   `slurm-cpu-just` and writes JSON/Markdown summaries under `results/perf/cpu/`.
 - `just perf-gpu` requires SLURM GPU access. It wraps
-  `slurm-benchmark-regenie2-binary-hot-gpu` and writes binary-hot artifacts under
+  `slurm-gpu-bench-binary-hot` and writes binary-hot artifacts under
   `results/perf/gpu/`.
 - `just perf-compare BASE.json NEW.json` is login-node-safe. It compares common
   speed, memory, and numerical metrics from smoke summaries, BGEN reader
@@ -270,8 +289,7 @@ Use the `perf-*` recipes as the stable command surface for optimization tasks:
   nonzero exit status.
 
 All default `perf-*` outputs live under `results/perf`, which is gitignored.
-Set `GWAS_ENGINE_PERF_RESULTS_DIR` to route local artifacts elsewhere.
-
+Set `
 ## Common Tasks
 
 ### Full App Profiling
@@ -297,14 +315,14 @@ optional profiler availability, skipped-tool reasons, and the campaign budget
 estimate:
 
 ```bash
-just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
+just profile-app-full-dry tool.output_dir=data/profiles/app_profile_plan
 ```
 
 Use the REGENIE-focused dry run when planning paired original or patched
 REGENIE comparisons:
 
 ```bash
-just profile-regenie2-deep-dry-run \
+just profile-deep-dry \
   tool.include_regenie_baseline=true \
   tool.output_dir=data/profiles/regenie_pair_plan
 ```
@@ -322,7 +340,7 @@ workload keys `quantitative_cpu`, `quantitative_gpu`, `binary_cpu`, and
 `binary_gpu`:
 
 ```bash
-just profile-regenie2-deep-dry-run \
+just profile-deep-dry \
   tool.workload_keys=[binary_gpu] \
   tool.output_dir=data/profiles/binary_gpu_plan
 ```
@@ -336,14 +354,15 @@ Install optional user-local profiler tools before a deep campaign when the host
 does not already provide them:
 
 ```bash
-just install-profiling-tools
-just install-nsight-tools
+just dev-install-profiling-tools
+just dev-install-nsight-tools
 ```
 
-`install-profiling-tools` installs Python and native sampling profilers through
-`uv tool` and Cargo. `install-nsight-tools` installs the Nsight Systems (`nsys`)
+`dev-install-profiling-tools` installs Python and native sampling profilers through
+`uv tool` and Cargo. `dev-install-nsight-tools` installs the Nsight Systems (`nsys`)
 and Nsight Compute (`ncu`) CLIs without root by reading NVIDIA's CUDA package
-index, verifying package SHA256 digests, and extracting the `.deb` payloads into
+index, retrieving packages through `tooling.common.downloads`, verifying package
+SHA256 digests through Pooch, and extracting the `.deb` payloads into
 `.tools/nsight`. It links `nsys` and `ncu` into `.tools/bin`, which
 `tooling/server/server_env.sh` already puts on `PATH`.
 On gauss/landau the recipe defaults `ncu` to the CUDA 12.2-compatible Nsight
@@ -361,6 +380,14 @@ node driver restricts GPU performance counters to admin users. The profile
 harness records that pass as skipped with an actionable note; collecting Nsight
 Compute metrics requires the cluster administrator to allow non-admin GPU
 performance counters on the GPU nodes.
+
+Use `just bench-rust-build-profiles` when comparing native extension build
+profiles. The recipe is backed by `tooling/configs/rust_build_profiles.yaml`,
+writes reports under `results/perf/rust-build-profiles`, and configures build
+parallelism through `tooling/server/server_env.sh`.
+Linker comparison labels are available for `dev-fast` and the routine `perf`
+profile; missing or unsupported linker tooling is recorded as failed rows rather
+than changing the default build path.
 Scalene and Memray are Python profilers, so the harness runs them through
 `uv run --no-sync --with ...` when they are not importable in the project
 environment. This keeps JAX, Polars, and the installed `g` package visible to
@@ -382,15 +409,15 @@ just slurm-gpu-just profile-app-full-smoke tool.output_dir=data/profiles/app_pro
 
 The smoke recipe sets `tool.enable_rust_criterion=false` so it validates the
 JAX/Python/native-profiler workflow without spending time in Criterion. The
-full `profile-app-full-landau` recipe keeps Criterion enabled.
+full `profile-app-full` recipe keeps Criterion enabled.
 
-The `profile-app-full-landau` and `profile-regenie2-deep-landau` recipes use a
+The `profile-app-full` and `profile-app-full` recipes use a
 bounded 12-hour `landau` default instead of the broad exploratory grid. This is
 the practical recipe used for the successful `data/profiles/deep-20260608-final-full`
 campaign:
 
 ```bash
-just profile-app-full-landau \
+just profile-app-full \
   tool.output_dir=data/profiles/deep-20260608-final-full \
   tool.chunk_sizes=[2048,4096] \
   tool.staging_depths=[1,2] \
@@ -412,13 +439,13 @@ just profile-app-full-landau \
 With all four workload keys selected and original REGENIE disabled, this plan is
 about 130 subprocess runs and 18 major profiler or Criterion runs. Override
 `tool.workload_keys` to split the same bounded campaign across multiple jobs,
-for example `tool.workload_keys=[binary_gpu]` on one node and
-`tool.workload_keys=[quantitative_gpu]` on another.
+for example <code>tool.workload_keys=[binary_gpu]</code> on one node and
+<code>tool.workload_keys=[quantitative_gpu]</code> on another.
 
 Run the full profile bundle on `landau`:
 
 ```bash
-just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
+just profile-app-full tool.output_dir=data/profiles/app_profile_current
 ```
 
 The full run writes:
@@ -506,7 +533,7 @@ The defaults profile chr22 through `dataset=local_1kg`. To profile chr10 with
 the same harness, use the chr10 dataset and matching baseline paths:
 
 ```bash
-just profile-app-full-dry-run \
+just profile-app-full-dry \
   dataset=chr10_local \
   tool.chromosome_label=chr10 \
   tool.bed_prefix=1kg_chr10_full \
@@ -522,13 +549,13 @@ nsight-compute, py-spy, linux perf, cProfile, JAX trace/memory, and Rust
 Criterion:
 
 ```bash
-just profile-chr10-gpu-binary-deep-dry-run tool.output_dir=...
-just profile-chr10-gpu-binary-deep-landau tool.output_dir=...
+just profile-chr10-binary-gpu-dry tool.output_dir=...
+just profile-chr10-binary-gpu-full tool.output_dir=...
 ```
 
-The `-landau` variant is the primary command that submits the full suite as a
-single long SLURM job on the `landau` GPU node. It also ensures the optional
-profiler and nsight tools are installed inside the job. See
+The full recipe submits the suite as a long GPU SLURM job using the configured
+machine profile. It also ensures the optional profiler and nsight tools are
+installed inside the job. See
 `documentation/development/justfile.md` for full descriptions.
 
 Useful overrides:
@@ -553,25 +580,25 @@ Useful overrides:
 - `tool.nsight_compute_timeout_seconds=1800`: limit optional Nsight Compute wall-clock run time.
 - `tool.enable_logging_perturbation=false`: skip telemetry/logging perturbation
   trials when reproducing a narrower benchmark.
-- `tool.workload_keys=[binary_cpu,binary_gpu]`: tune only selected `g`
+- <code>tool.workload_keys=[binary_cpu,binary_gpu]</code>: tune only selected `g`
   trait/device workloads. Defaults to all four quantitative/binary CPU/GPU
   workloads.
-- `tool.result_in_flight_limits=[default,4]`: include explicit result
+- <code>tool.result_in_flight_limits=[default,4]</code>: include explicit result
   in-flight slot limits in the candidate grid. `default` keeps the runtime
   derived capacity of `staging_depth + 1`.
-- `tool.dosage_buffer_limits=[default,4]`: include explicit reusable native
+- <code>tool.dosage_buffer_limits=[default,4]</code>: include explicit reusable native
   dosage buffer pool limits in the candidate grid. `default` keeps the runtime
   derived capacity of `staging_depth + 1`.
 - `tool.native_callback_batch_size=2`: set the opt-in native-to-Python dosage
   callback handoff batch size for binary hot benchmark trials.
-- `tool.native_callback_batch_sizes=[2]`: restrict deep-profile tuning to the
+- <code>tool.native_callback_batch_sizes=[2]</code>: restrict deep-profile tuning to the
   same callback handoff batch size.
-- `tool.rust_benchmarks=[bgen_read]`: limit Rust Criterion benches.
+- <code>tool.rust_benchmarks=[bgen_read]</code>: limit Rust Criterion benches.
 - `tool.include_regenie_baseline=true`: also run original REGENIE headline
   trials when `regenie` is available.
 - `tool.regenie_executable=/path/to/regenie`: use a specific original or
   patched REGENIE binary instead of `REGENIE_BIN`/`regenie`.
-- `tool.regenie_baseline_trait_types=[quantitative,binary]`: choose which
+- <code>tool.regenie_baseline_trait_types=[quantitative,binary]</code>: choose which
   REGENIE traits get paired baseline trials. The default is the faster
   quantitative pair.
 - `tool.regenie_baseline_trials=1`: keep paired REGENIE runtime evidence small;
@@ -634,21 +661,21 @@ profile harness. GPU and `gpu_cached` commands continue to share
 First inspect the commands without running heavy work:
 
 ```bash
-just regenie2-chr10-matrix-dry-run tool.output_dir=data/benchmarks/regenie2_chr10_matrix_current
+just matrix-chr10-dry tool.output_dir=data/benchmarks/regenie2_chr10_matrix_current
 ```
 
 Use a stable output directory when you want to tail logs while the job runs:
 
 ```bash
 GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
-  just slurm-regenie2-chr10-matrix tool.output_dir=/mnt/beegfs/kirill/Projects/g/data/benchmarks/regenie2_chr10_matrix_current
+  just slurm-gpu-matrix-chr10 tool.output_dir=/mnt/beegfs/kirill/Projects/g/data/benchmarks/regenie2_chr10_matrix_current
 ```
 
 For the normal timestamped run on `landau`, use:
 
 ```bash
 GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
-  just slurm-regenie2-chr10-matrix
+  just slurm-gpu-matrix-chr10
 ```
 
 Do not run the real matrix on the head node. The dry-run recipe is safe on the
@@ -665,7 +692,7 @@ full-chromosome data points:
 ```bash
 GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
 GWAS_ENGINE_SLURM_CPUS_PER_TASK=72 \
-  just slurm-regenie2-chr10-matrix \
+  just slurm-gpu-matrix-chr10 \
   tool.chunk_size=8192 \
   tool.cpu_threads=72 \
   tool.binary_firth_batch_size=64 \
@@ -708,14 +735,14 @@ same `tool.variant_limit` scope other than the current run and compares matching
 run names. To force a specific baseline:
 
 ```bash
-just regenie2-chr10-matrix-dry-run \
+just matrix-chr10-dry \
   tool.previous_manifest_path=data/benchmarks/regenie2_chr10_matrix_baseline/manifest.json
 ```
 
 For smoke validation, cap variants:
 
 ```bash
-just regenie2-chr10-matrix-dry-run \
+just matrix-chr10-dry \
   tool.variant_limit=1000 \
   tool.output_dir=data/benchmarks/regenie2_chr10_matrix_smoke
 ```
@@ -723,7 +750,7 @@ just regenie2-chr10-matrix-dry-run \
 Then submit the same override through SLURM without `tool.dry_run=true`:
 
 ```bash
-just slurm-regenie2-chr10-matrix \
+just slurm-gpu-matrix-chr10 \
   tool.variant_limit=1000 \
   tool.output_dir=data/benchmarks/regenie2_chr10_matrix_smoke
 ```
@@ -737,21 +764,21 @@ baseline predictions in `data/baselines/regenie_step1_qt_pred.list`.
 First inspect the commands:
 
 ```bash
-just regenie2-chr22-matrix-dry-run tool.output_dir=data/benchmarks/regenie2_chr22_matrix_current
+just matrix-chr22-dry tool.output_dir=data/benchmarks/regenie2_chr22_matrix_current
 ```
 
 Run on `landau` with a stable output directory:
 
 ```bash
 GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
-  just slurm-regenie2-chr22-matrix tool.output_dir=/mnt/beegfs/kirill/Projects/g/data/benchmarks/regenie2_chr22_matrix_current
+  just slurm-gpu-matrix-chr22 tool.output_dir=/mnt/beegfs/kirill/Projects/g/data/benchmarks/regenie2_chr22_matrix_current
 ```
 
 For a normal timestamped chr22 run:
 
 ```bash
 GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
-  just slurm-regenie2-chr22-matrix
+  just slurm-gpu-matrix-chr22
 ```
 
 chr22 output directories use the `regenie2_chr22_matrix_*` prefix. Previous-run
@@ -761,11 +788,11 @@ matrix manifests.
 For smoke validation:
 
 ```bash
-just regenie2-chr22-matrix-dry-run \
+just matrix-chr22-dry \
   tool.variant_limit=1000 \
   tool.output_dir=data/benchmarks/regenie2_chr22_matrix_smoke
 
-just slurm-regenie2-chr22-matrix \
+just slurm-gpu-matrix-chr22 \
   tool.variant_limit=1000 \
   tool.output_dir=data/benchmarks/regenie2_chr22_matrix_smoke
 ```
@@ -974,13 +1001,13 @@ uv run --no-sync python -m tooling.cli.benchmark_callback_overhead \
 SLURM recipes:
 
 ```bash
-just slurm-benchmark-callback-overhead-cpu \
+just slurm-cpu-bench-callback-overhead \
   tool.chunk_count=1000 \
   tool.trials=1 \
   'tool.stage_timing_modes=[off,aggregate]' \
   'tool.workload_modes=[queue_only,host_to_device]'
 
-just slurm-benchmark-callback-overhead-gpu \
+just slurm-gpu-bench-callback-overhead \
   tool.chunk_count=1000 \
   tool.trials=1 \
   'tool.stage_timing_modes=[off,aggregate]' \
@@ -989,16 +1016,16 @@ just slurm-benchmark-callback-overhead-gpu \
 
 Modes:
 
-- `tool.workload_modes=[queue_only]` measures Python queue delivery and callback
+- <code>tool.workload_modes=[queue_only]</code> measures Python queue delivery and callback
   dispatch without JAX transfer.
-- `tool.workload_modes=[host_to_device]` additionally calls the production
+- <code>tool.workload_modes=[host_to_device]</code> additionally calls the production
   `put_genotype_matrix_on_device` helper for each chunk and synchronizes the
   last transfer by default.
-- `tool.stage_timing_modes=[off]` matches the normal production path with no
+- <code>tool.stage_timing_modes=[off]</code> matches the normal production path with no
   timing recorder.
-- `tool.stage_timing_modes=[aggregate]` collects stage and queue totals without
+- <code>tool.stage_timing_modes=[aggregate]</code> collects stage and queue totals without
   exact transfer blocking.
-- `tool.stage_timing_modes=[exact]` is available for diagnostic parity with
+- <code>tool.stage_timing_modes=[exact]</code> is available for diagnostic parity with
   end-to-end stage timing JSON, but it perturbs transfer/compute timing most.
 
 The GPU recipe installs the `gpu` dependency group inside the SLURM allocation
@@ -1031,7 +1058,7 @@ uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot \
 The Justfile recipe is:
 
 ```bash
-just benchmark-regenie2-binary-hot-gpu-smoke tool.variant_limit=1000
+just bench-binary-hot-gpu-smoke tool.variant_limit=1000
 ```
 
 ### Binary-Hot Packed8 Workload
@@ -1065,7 +1092,7 @@ uv run --no-sync python -m tooling.cli.benchmark_output_stages \
 ### Full App Profile Smoke
 
 ```bash
-just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
+just profile-app-full-dry tool.output_dir=data/profiles/app_profile_plan
 just slurm-gpu-just profile-app-full-smoke tool.output_dir=data/profiles/app_profile_smoke
 ```
 
@@ -1217,7 +1244,7 @@ not the default entrypoint config for any specific tool.
 - `sample_file: 1kg_chr22_full.sample`
 - `phenotype_file: pheno_bin.txt`
 - `prediction_list: baselines/regenie_step1_pred.list`
-- `phenotype_columns: [phenotype_binary]`
+- <code>phenotype_columns: [phenotype_binary]</code>
 
 Use this for local 1KG chr22 data and binary step 2 baseline predictions.
 
@@ -1228,7 +1255,7 @@ Use this for local 1KG chr22 data and binary step 2 baseline predictions.
 - `sample_file: 1kg_chr10_full.sample`
 - `phenotype_file: pheno_bin.txt`
 - `prediction_list: baselines_chr10/regenie_step1_pred.list`
-- `phenotype_columns: [phenotype_binary]`
+- <code>phenotype_columns: [phenotype_binary]</code>
 
 Use this for local 1KG chr10 data and binary step 2 baseline predictions.
 
@@ -1307,25 +1334,25 @@ names.
 
 `sweep/bgen_reader_default.yaml`
 
-- `chunk_sizes: [8192]`
-- `path_modes: [variant_major_buffered]`
-- `sample_selection_modes: [full]`
+- <code>chunk_sizes: [8192]</code>
+- <code>path_modes: [variant_major_buffered]</code>
+- <code>sample_selection_modes: [full]</code>
 - `decode_tile_variant_counts: []`
 - `rayon_thread_counts: []`
-- `trusted_no_missing_diploid_modes: [false]`
-- `storage_modes: [variant_major]`
-- `fallback_density_scenarios: [default]`
+- <code>trusted_no_missing_diploid_modes: [false]</code>
+- <code>storage_modes: [variant_major]</code>
+- <code>fallback_density_scenarios: [default]</code>
 
 `sweep/regenie2_binary_hot_default.yaml`
 
-- `chunk_sizes: [1000]`
-- `path_modes: [variant_major_buffered]`
-- `sample_selection_modes: [full]`
+- <code>chunk_sizes: [1000]</code>
+- <code>path_modes: [variant_major_buffered]</code>
+- <code>sample_selection_modes: [full]</code>
 - `decode_tile_variant_counts: []`
 - `rayon_thread_counts: []`
-- `trusted_no_missing_diploid_modes: [true]`
-- `storage_modes: [variant_major]`
-- `fallback_density_scenarios: [default]`
+- <code>trusted_no_missing_diploid_modes: [true]</code>
+- <code>storage_modes: [variant_major]</code>
+- <code>fallback_density_scenarios: [default]</code>
 
 The binary-hot tool uses `sweep.storage_modes` and
 `sweep.fallback_density_scenarios`. The other fields are kept available for
@@ -1365,6 +1392,16 @@ assert config.hydra.job.chdir is False
 
 ## Common Helpers
 
+`tooling.common.context`
+
+- `ToolContext`
+- `build_tool_context(config)`
+- resolved repository/data/output path reporting
+
+Build a context at execution time rather than resolving environment-dependent
+paths at import time. This keeps `GWAS_ENGINE_DATA_DIR`, working directory, and
+Hydra `chdir` behavior explicit in reports.
+
 `tooling.common.paths`
 
 - `find_repository_root(start_path)`
@@ -1375,11 +1412,17 @@ assert config.hydra.job.chdir is False
 `tooling.common.reports`
 
 - `write_json_report(path, value, sort_keys=False)`
+- `write_versioned_json_report(path, value, contract)`
+- `read_versioned_json_report(path, contract)`
 - `write_markdown_report(path, markdown_text)`
 - `to_json_text(value)`
 
 The JSON helpers handle dataclasses, enums, `Path`, dictionaries, lists, and
-tuples.
+tuples. Durable benchmark/profile reports must include a `schema_version` and
+should be written through a `VersionedReportContract`.
+
+Use `just check-artifact-schema <path>` to validate a Tooling Artifact Format
+directory or JSON file from the command surface.
 
 `tooling.common.sweeps`
 
@@ -1397,7 +1440,33 @@ tuples.
 
 `tooling.common.commands`
 
-Captured subprocess helpers for metadata and diagnostics.
+- `CommandSpec`
+- `CommandResult`
+- `run_command(spec)`
+- legacy `run_captured_command(...)`
+
+Use shell-free argument vectors. The shared runner supports captured output,
+streaming output, timeouts, log files, working directories, missing executable
+handling, and environment redaction.
+
+`tooling.common.g_regenie`
+
+- `RegenieRunSpec`
+- `render_g_regenie_cli(spec)`
+- `render_python_api_options(spec)`
+- `expected_output_run_directory(spec)`
+
+Any tool that launches `g regenie` or calls `api.regenie.from_options()` should
+render through this module so benchmark/profiler commands stay aligned with the
+production config surface.
+
+`tooling.common.registry`
+
+- `ToolSpec`
+- `dispatch_tool(config, registry)`
+- `registered_tool_names(registry)`
+
+Grouped CLIs dispatch through registries rather than hand-written `if` chains.
 
 `tooling.regenie.bgen_reader`
 
@@ -1442,7 +1511,10 @@ Use this checklist when adding a new development tool.
 
 3. Create a module under `tooling/cli/`.
 
-   The standard shape is:
+   The standard shape is still `build_arguments_from_config()`,
+   `build_arguments_from_overrides()`, and `run_tool()`, but new tools should
+   build a `ToolContext`, validate their `tool:` surface, and route subprocesses
+   and reports through the shared helpers:
 
    ```python
    import dataclasses
@@ -1453,7 +1525,9 @@ Use this checklist when adding a new development tool.
    import omegaconf
 
    import tooling.configuration as tooling_configuration
+   from tooling.common import context as tooling_context
    from tooling.common import hydra_arguments as tooling_hydra_arguments
+   from tooling.common import reports as tooling_reports
 
 
    @dataclasses.dataclass(frozen=True)
@@ -1463,9 +1537,10 @@ Use this checklist when adding a new development tool.
 
 
    def build_arguments_from_config(config: omegaconf.DictConfig) -> MyToolArguments:
+       context = tooling_context.build_tool_context(config)
        tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
        return MyToolArguments(
-           output_dir=Path(str(tool_values["output_dir"])),
+           output_dir=context.repository_root / Path(str(tool_values["output_dir"])),
            variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
        )
 
@@ -1479,6 +1554,7 @@ Use this checklist when adding a new development tool.
 
    def run_tool(arguments: MyToolArguments) -> None:
        arguments.output_dir.mkdir(parents=True, exist_ok=True)
+       tooling_reports.write_versioned_json_report(...)
 
 
    @hydra.main(version_base=None, config_path="../configs", config_name="my_tool")
@@ -1496,15 +1572,16 @@ Use this checklist when adding a new development tool.
 
 4. Use shared helpers.
 
-   Use `tooling.common.paths` for repository and data paths, `reports` for JSON
-   and Markdown output, `sweeps` for list parsing, and `commands` for captured
-   metadata commands.
+   Use `tooling.common.context` for environment-sensitive paths, `paths` for
+   path resolution, `reports` for versioned JSON and Markdown output, `sweeps`
+   for strict list parsing, `commands` for subprocesses, and `g_regenie` for
+   all `g regenie` CLI/API rendering.
 
 5. Add tests.
 
    Cover config composition, `build_arguments_from_overrides()`, report
-   serialization, path resolution, and pure expansion logic. Do not run GPU or
-   heavy benchmark workloads in unit tests.
+   schema validation, path resolution, command rendering, and pure expansion
+   logic. Do not run GPU or heavy benchmark workloads in unit tests.
 
 6. Add a Justfile recipe when the workflow is common.
 
@@ -1516,6 +1593,9 @@ Use this checklist when adding a new development tool.
    ```
 
 7. Document the tool in this guide.
+
+8. If the tool belongs to a grouped CLI, register it with
+   `tooling.common.registry.ToolSpec` and add a registry/docs test.
 
    Add its entrypoint, config file, common overrides, report paths, and any
    SLURM smoke command needed for safe validation.
@@ -1601,8 +1681,8 @@ uv run --no-sync pytest tests/test_regenie_comparison_scripts.py tests/test_tool
 Optional GPU smoke on `landau`:
 
 ```bash
-just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke
-just slurm-gpu-just profile-regenie2-deep-smoke
+just slurm-gpu-just bench-binary-hot-gpu-smoke
+just slurm-gpu-just profile-deep-smoke
 ```
 
 Do not run GPU smoke commands on the head node.
@@ -1614,5 +1694,5 @@ Do not run GPU smoke commands on the head node.
 - Put stable defaults in YAML, not in the executable module.
 - Keep tool parameters in frozen dataclasses.
 - Keep generated data and reports under ignored data/profile directories.
-- Keep `tooling/` out of package discovery and `[project.scripts]`.
+- Keep `tooling/` out of package discovery and the `project.scripts` table.
 - Do not add migrated-tool wrappers under `scripts/`.
