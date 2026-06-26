@@ -128,8 +128,8 @@ simple contiguous byte-decoding problem.
 Path:
 
 ```text
-src/genotype/bgen/trusted.rs
-src/genotype/bgen/simd.rs
+crates/genotype/src/bgen/trusted.rs
+crates/genotype/src/bgen/simd.rs
 ```
 
 Shape:
@@ -171,8 +171,8 @@ Single 16,384-variant native profile:
 Path:
 
 ```text
-src/genotype/bgen/decode.rs
-src/genotype/bgen/simd.rs
+crates/genotype/src/bgen/decode/mod.rs
+crates/genotype/src/bgen/simd.rs
 ```
 
 Shape:
@@ -204,8 +204,8 @@ the trusted path.
 Path:
 
 ```text
-src/genotype/bgen/trusted.rs
-src/genotype/bgen/simd.rs
+crates/genotype/src/bgen/trusted.rs
+crates/genotype/src/bgen/simd.rs
 ```
 
 `all_samples_present_diploid` now uses AVX2 to compare 32 bytes at a time against byte value `2`, falling back to the
@@ -225,9 +225,9 @@ Decision: kept as a small AVX2-only improvement with scalar fallback.
 Path:
 
 ```text
-src/genotype/bgen/sample_selection.rs
-src/genotype/bgen/decode.rs
-src/genotype/bgen/trusted.rs
+crates/genotype/src/bgen/sample_selection.rs
+crates/genotype/src/bgen/decode/mod.rs
+crates/genotype/src/bgen/trusted.rs
 ```
 
 The sample-selection builder records `contiguous_file_index_start` when selected file indices form one monotonic
@@ -260,8 +260,8 @@ lookup path.
 Path:
 
 ```text
-src/genotype/preprocess.rs
-benches/preprocess.rs
+crates/genotype/src/preprocess.rs
+crates/genotype/benches/preprocess.rs
 ```
 
 The variant-major summarizer now uses AVX2 masks over contiguous `f32` rows to compute sums, square sums, observation

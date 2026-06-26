@@ -11,7 +11,7 @@ use super::profile::{ThreadLocalProfileSnapshot, elapsed_nanoseconds};
 use super::sample_selection::SampleSelection;
 use super::simd;
 use super::{BgenError, CompressionType};
-use crate::genotype::preprocess;
+use crate::preprocess;
 
 fn selected_sample_count_to_i32(selected_sample_count: usize) -> Result<i32, BgenError> {
     i32::try_from(selected_sample_count).map_err(|_| {

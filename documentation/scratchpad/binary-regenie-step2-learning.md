@@ -134,7 +134,7 @@ The main implementation is split by responsibility:
   - Shared Firth line-search and step-halving helpers.
 - `src/g/compute/regenie2_binary/firth/types.py`
   - Firth solver state and result containers.
-- `src/genotype/preprocess.rs`
+- `crates/genotype/src/preprocess.rs`
   - Native chunk summaries, including allele frequency, minor allele count,
     sparse flags, and rare-sparse Firth eligibility.
 - `src/output/schema.rs`, `src/output/writer.rs`, `src/output/finalization.rs`
@@ -396,7 +396,7 @@ if dt_thr->is_sparse && mac < 50:
 
 `g` mirrors that through native metadata:
 
-- `src/genotype/preprocess.rs` computes `is_sparse_candidate` from zero density
+- `crates/genotype/src/preprocess.rs` computes `is_sparse_candidate` from zero density
   after REGENIE-style allele flipping.
 - It computes `minor_allele_count = min(allele_count, reference_allele_count)`.
 - It sets `is_rare_sparse_firth_candidate` when the sparse flag is true and

@@ -12,7 +12,7 @@ delivery, output writing, manifest handling, and resume.
 
 | Path | Responsibility |
 | --- | --- |
-| `src/genotype/` | BGEN mmap/index/decode/preprocess/profile and genotype source planning. |
+| `crates/genotype/src/` | BGEN mmap/index/decode/preprocess/profile and genotype source planning. |
 | `src/sample.rs` | Sample, phenotype, covariate, and prediction alignment. |
 | `src/output/` | Arrow IPC chunks, Parquet parts/finalization, REGENIE text, manifests, resume, and writer sessions. |
 | `src/python/` | PyO3 bindings for native runtime, output, and logging. |
@@ -92,7 +92,7 @@ Native I/O changes usually need tests in:
 - `tests/test_io_output.py`;
 - `tests/test_io_source.py`;
 - `tests/test_io_sample.py`;
-- Rust unit tests under `src/genotype/` or `src/output/`;
+- Rust unit tests under `crates/genotype/src/` or `src/output/`;
 - pipeline tests when callback delivery or writer sessions change.
 
 Output contract changes also require [Output Files](../public/output-files.md)

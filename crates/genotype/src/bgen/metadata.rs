@@ -1,4 +1,4 @@
-use crate::genotype::common::VariantMetadataColumns;
+use crate::common::VariantMetadataColumns;
 
 #[derive(Debug)]
 pub(super) struct VariantRecord {

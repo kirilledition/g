@@ -6,8 +6,8 @@ use arrow::ipc::reader::FileReader as ArrowFileReader;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::reader::{FileReader as ParquetFileReader, SerializedFileReader};
 
-use crate::genotype::common::{ChunkStats, VariantMetadataColumns};
 use crate::output::{NativeChunkHandle, finalization, manifest};
+use g_genotype::common::{ChunkStats, VariantMetadataColumns};
 
 use super::*;
 

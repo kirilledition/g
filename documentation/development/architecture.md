@@ -53,7 +53,7 @@ src/g/
 
 ```text
 src/config_frontend/             Rust CLI/config frontend, clap, toml/Serde, option specs
-src/genotype/                    BGEN mmap/index/decode/preprocess/profile
+crates/genotype/src/             BGEN mmap/index/decode/preprocess/profile
 src/sample.rs                    sample/phenotype/covariate alignment
 src/output/                      Arrow IPC chunks, Parquet finalization, manifests
 src/python/                      PyO3 config/runtime bindings and logging bridge

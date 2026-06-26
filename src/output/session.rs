@@ -7,7 +7,6 @@ use arrow::array::{ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array,
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use serde_json::json;
 
-use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
 use crate::output::OutputStatisticDtype;
 use crate::output::finalization;
 use crate::output::manifest;
@@ -15,6 +14,7 @@ use crate::output::writer::{
     OutputFileFormat, OutputWriterError, RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch,
     RegenieStep2ChunkWriteTiming, build_output_file_name, write_regenie_step2_chunk_job,
 };
+use g_genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
 
 const OUTPUT_STAGE_TIMING_FILE_NAME: &str = "output_stage_timings.json";
 

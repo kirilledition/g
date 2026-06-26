@@ -1,5 +1,5 @@
-use _core::genotype::preprocess;
 use criterion::{Criterion, criterion_group, criterion_main};
+use g_genotype::preprocess;
 use std::hint;
 
 fn dense_variant_major_dosages(selected_variant_count: usize, selected_sample_count: usize) -> Vec<f32> {

@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::genotype::common::{ChunkSpec, GenotypeError};
+use crate::common::{ChunkSpec, GenotypeError};
 
 #[must_use]
 pub fn resolve_total_variant_count(variant_count: usize, variant_limit: Option<usize>) -> usize {
@@ -104,7 +104,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::plan_chromosome_homogeneous_chunks;
-    use crate::genotype::common::ChunkSpec;
+    use crate::common::ChunkSpec;
 
     #[test]
     fn planner_splits_chunks_at_chromosome_boundaries() {

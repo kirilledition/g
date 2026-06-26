@@ -1,7 +1,7 @@
 #![warn(clippy::pedantic)]
 
 pub(crate) mod callback_summary;
-pub mod genotype;
+pub use g_genotype as genotype;
 pub(crate) mod host_policy;
 pub mod interface;
 pub mod output;

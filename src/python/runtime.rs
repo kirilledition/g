@@ -1,7 +1,7 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::genotype::bgen::set_bgen_decode_tile_variant_count;
+use g_genotype::bgen::set_bgen_decode_tile_variant_count;
 
 use super::errors;
 

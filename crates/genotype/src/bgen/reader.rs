@@ -9,8 +9,8 @@ use std::time::Instant;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
 
-use crate::genotype::common::{ChunkStats, GenotypeError, GenotypeReaderCore, VariantMetadataColumns};
-use crate::genotype::preprocess;
+use crate::common::{ChunkStats, GenotypeError, GenotypeReaderCore, VariantMetadataColumns};
+use crate::preprocess;
 
 use super::decode::{
     DosageTileDecodeResult, ThreadScratch, VariantMajorTileDecodeResult, VariantMajorTileStatsMut,

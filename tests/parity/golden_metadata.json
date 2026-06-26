@@ -231,7 +231,7 @@
       "expected_output_path": null,
       "g_command_options": {},
       "validation_nodes": [
-        "src/genotype/bgen/decode.rs::tests::variant_major_decode_covers_eight_bit_identity_subset_and_imputation_paths",
+        "crates/genotype/src/bgen/decode/mod.rs::tests::variant_major_decode_covers_eight_bit_identity_subset_and_imputation_paths",
         "tests/test_regenie2_linear.py::TestComputeRegenie2LinearChunk::test_variant_major_kernel_matches_sample_major_with_native_square_sums",
         "tests/test_regenie2_binary.py::test_variant_major_score_only_bt_matches_sample_major_with_covariates_loco_and_edge_genotypes"
       ],

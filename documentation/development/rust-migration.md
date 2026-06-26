@@ -55,7 +55,7 @@ on all internal crates and remains the only native Python binding crate.
 | --- | --- | --- | --- | --- | --- | --- |
 | CLI/TOML/config frontend | `src/g/cli.py`, `src/g/interface/config.py` | `src/interface/` | `g-interface` | Rust | Python remains adapter | `tests/test_interface.py`, CLI help/package smoke |
 | Execution planning | `src/g/execution_plan.py`, `src/g/engine/backend_planner.py` | `src/interface/run_validation.rs`, native metadata helpers | `g-plan`, then `g-engine` | Rust | Pending | `tests/test_backend_planner.py`, `tests/test_regenie2_pipeline.py` |
-| BGEN and genotype preprocessing | Python native-dispatch wrappers | `src/genotype/` | `g-genotype` | Rust | Ready for leaf extraction | Rust genotype tests, `just benchmark-bgen-reader`, `cargo bench` |
+| BGEN and genotype preprocessing | Python native-dispatch wrappers | `crates/genotype/src/` | `g-genotype` | Rust | Extracted as leaf crate | Rust genotype tests, `just benchmark-bgen-reader`, `cargo bench -p g-genotype` |
 | Sample and phenotype alignment | `src/g/io/source.py`, pipeline wrappers | `src/sample/` | `g-input` | Rust | Pending | `tests/test_io_sample.py`, `tests/test_tabular.py` |
 | Prediction and LOCO input | `src/g/engine/native_dispatch/loaders.py` | Partial native data views | `g-input` | Rust | Pending | pipeline, parity, and LOCO alignment tests |
 | Output, manifest, and resume | `src/g/io/output.py`, callbacks/writers wrappers | `src/output/` | `g-output` | Rust | Pending extraction | `tests/test_io_output.py`, `just benchmark-output-stages-gpu` |

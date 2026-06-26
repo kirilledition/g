@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.96.0"
 
 [workspace]
-members = ["."]
+members = [".", "crates/genotype"]
 default-members = ["."]
 resolver = "3"
 
@@ -28,6 +28,7 @@ criterion = "0.8.2"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
+g-genotype = { path = "crates/genotype" }
 memchr = "2.8.1"
 memmap2 = "0.9.10"
 numpy = "0.28.0"
@@ -57,9 +58,8 @@ arrow = { workspace = true }
 parquet = { workspace = true }
 crossbeam-channel = { workspace = true }
 csv = { workspace = true }
-flate2 = { workspace = true }
+g-genotype = { workspace = true }
 memchr = { workspace = true }
-memmap2 = { workspace = true }
 rayon = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -78,19 +78,8 @@ toml = { workspace = true }
 default = []
 extension-module = ["pyo3/extension-module"]
 
-[dev-dependencies]
-criterion = { workspace = true }
-
 [lints]
 workspace = true
-
-[[bench]]
-name = "bgen_read"
-harness = false
-
-[[bench]]
-name = "preprocess"
-harness = false
 
 [profile.perf]
 inherits = "release"

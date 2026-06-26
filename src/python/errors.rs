@@ -1,9 +1,9 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::genotype::bgen::BgenError;
-use crate::genotype::common::GenotypeError;
 use crate::regenie::PredictionError;
+use g_genotype::bgen::BgenError;
+use g_genotype::common::GenotypeError;
 
 pub(super) fn convert_bgen_error(operation: &str, error: BgenError) -> PyErr {
     let (error_class, message) = match &error {

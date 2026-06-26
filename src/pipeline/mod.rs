@@ -5,9 +5,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::genotype::bgen::{BgenError, BgenReaderCore};
-use crate::genotype::common::{ChunkSpec, GenotypeError};
-use crate::genotype::planner;
+use g_genotype::bgen::{BgenError, BgenReaderCore};
+use g_genotype::common::{ChunkSpec, GenotypeError};
+use g_genotype::planner;
 
 pub struct Regenie2RunEngineCore {
     reader: BgenReaderCore,

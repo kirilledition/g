@@ -849,6 +849,6 @@ approximate-Firth candidates.
     [BGEN v1.2 specification](https://www.chg.ox.ac.uk/~gav/bgen_format/spec/v1.2.html),
     sections "Genotype data block (Layout 2)", "Probability data storage",
     "Per-sample order of stored probabilities", and "Representation of
-    probabilities". Implementation places: `src/genotype/bgen/decode.rs` for
-    decoding and `src/genotype/preprocess.rs` for missing-value imputation,
+    probabilities". Implementation places: `crates/genotype/src/bgen/decode/mod.rs` for
+    decoding and `crates/genotype/src/preprocess.rs` for missing-value imputation,
     observed genotype counts, allele frequency, and INFO.

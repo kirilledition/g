@@ -14,9 +14,6 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::genotype::common::{ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunkStats, VariantMetadataColumns};
-use crate::genotype::planner;
-use crate::genotype::preprocess;
 use crate::pipeline::Regenie2RunEngineCore;
 use crate::regenie::{
     MultiPredictionSource as NativeMultiPredictionSource, PredictionSource,
@@ -26,6 +23,9 @@ use crate::sample::{
     AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, GroupedAlignedSampleData, MultiAlignedSampleData,
     MultiAlignmentInputs, ResolvedPhenotypeComputeGroup, SampleKeyMode,
 };
+use g_genotype::common::{ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunkStats, VariantMetadataColumns};
+use g_genotype::planner;
+use g_genotype::preprocess;
 
 mod callback_summary;
 mod config;

@@ -724,12 +724,10 @@ dependencies = [
  "arrow",
  "chrono",
  "clap",
- "criterion",
  "crossbeam-channel",
  "csv",
- "flate2",
+ "g-genotype",
  "memchr",
- "memmap2",
  "numpy",
  "parquet",
  "pyo3",
@@ -744,6 +742,17 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "g-genotype"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "flate2",
+ "memmap2",
+ "rayon",
+ "thiserror",
 ]
 
 [[package]]

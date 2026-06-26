@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use crate::genotype::common::{ChunkStats, GenotypeError};
+use crate::common::{ChunkStats, GenotypeError};
 
 const NONZERO_DOSAGE_THRESHOLD: f32 = 1.0e-4;
 const HETEROZYGOUS_DOSAGE_THRESHOLD: f32 = 0.5;

@@ -11,7 +11,7 @@ use super::sample_selection::SampleSelection;
 use super::simd;
 use super::trusted;
 use super::{BgenError, CompressionType};
-use crate::genotype::preprocess;
+use crate::preprocess;
 
 mod config;
 

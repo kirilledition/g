@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::genotype::preprocess;
+use crate::preprocess;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const AVX2_SAMPLE_COUNT: usize = 8;
