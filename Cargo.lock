@@ -802,6 +802,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "signal-hook",
+ "tracing",
 ]
 
 [[package]]

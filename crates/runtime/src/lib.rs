@@ -5,6 +5,7 @@ pub mod runtime_policy;
 pub mod runtime_state;
 pub mod shutdown;
 pub mod telemetry_policy;
+pub mod telemetry_session;
 pub mod timing;
 
 pub use run_metadata::{
@@ -21,6 +22,10 @@ pub use shutdown::{
 pub use telemetry_policy::{
     TelemetryPathsPayload, TelemetryWriterCountersPayload, build_empty_writer_counters, format_timestamp,
     paths_refer_to_same_file, resolve_output_run_root, resolve_telemetry_paths, resolve_telemetry_stream_file,
+};
+pub use telemetry_session::{
+    TelemetryCapAction, TelemetryEventCapState, TelemetryEventEnvelope, TelemetryWriterCounterSnapshot,
+    build_telemetry_event_envelope,
 };
 pub use timing::{
     ChunkStageSummary, ChunkStageTiming, NullLogisticDiagnosticValue, NullLogisticSummary, NumericDiagnosticValue,

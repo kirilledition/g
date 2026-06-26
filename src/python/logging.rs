@@ -6,10 +6,11 @@ use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use g_runtime::telemetry_session as native_telemetry_session;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -35,44 +36,17 @@ struct SharedTelemetryWriter {
 #[derive(Clone)]
 struct TelemetryWriterFactory {
     writer: NonBlocking,
-    event_cap_state: Arc<TelemetryEventCapState>,
+    event_cap_state: Arc<native_telemetry_session::TelemetryEventCapState>,
 }
 
 struct TelemetryLineWriter {
     writer: NonBlocking,
-    event_cap_state: Arc<TelemetryEventCapState>,
+    event_cap_state: Arc<native_telemetry_session::TelemetryEventCapState>,
     line_buffer: Vec<u8>,
 }
 
-struct TelemetryEventCapState {
-    path: PathBuf,
-    event_cap: Option<usize>,
-    lossy: bool,
-    written_event_count: AtomicUsize,
-    dropped_event_count: AtomicUsize,
-    exceeded: AtomicBool,
-}
-
-enum TelemetryCapAction {
-    Write,
-    Drop,
-}
-
-#[derive(Clone)]
-struct TelemetryWriterCounterSnapshot {
-    accepted_event_count: usize,
-    written_event_count: usize,
-    dropped_event_count: usize,
-    cap_dropped_event_count: usize,
-    queue_dropped_event_count: usize,
-    event_cap_exceeded: bool,
-    lossy: bool,
-    event_cap: Option<usize>,
-    finish_flush_duration_seconds: Option<f64>,
-}
-
 impl TelemetryWriterFactory {
-    fn new(writer: NonBlocking, event_cap_state: TelemetryEventCapState) -> Self {
+    fn new(writer: NonBlocking, event_cap_state: native_telemetry_session::TelemetryEventCapState) -> Self {
         Self { writer, event_cap_state: Arc::new(event_cap_state) }
     }
 
@@ -92,7 +66,10 @@ impl TelemetryWriterFactory {
         Ok(())
     }
 
-    fn counter_snapshot(&self, finish_flush_duration_seconds: Option<f64>) -> TelemetryWriterCounterSnapshot {
+    fn counter_snapshot(
+        &self,
+        finish_flush_duration_seconds: Option<f64>,
+    ) -> native_telemetry_session::TelemetryWriterCounterSnapshot {
         self.event_cap_state
             .counter_snapshot(self.writer.error_counter().dropped_lines(), finish_flush_duration_seconds)
     }
@@ -113,19 +90,17 @@ impl<'a> MakeWriter<'a> for TelemetryWriterFactory {
 impl TelemetryLineWriter {
     fn write_complete_line(&mut self, line: &[u8]) -> io::Result<()> {
         match self.event_cap_state.reserve_event()? {
-            TelemetryCapAction::Write => self.writer.write_all(line),
-            TelemetryCapAction::Drop => Ok(()),
+            native_telemetry_session::TelemetryCapAction::Write => self.writer.write_all(line),
+            native_telemetry_session::TelemetryCapAction::Drop => Ok(()),
         }
     }
 }
 
 impl io::Write for TelemetryLineWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        if self.event_cap_state.event_cap.is_none() {
+        if !self.event_cap_state.has_event_cap() {
             let event_count = memchr::memchr_iter(b'\n', buffer).count();
-            if event_count > 0 {
-                self.event_cap_state.written_event_count.fetch_add(event_count, Ordering::Relaxed);
-            }
+            self.event_cap_state.record_uncapped_event_count(event_count);
             self.writer.write_all(buffer)?;
             return Ok(buffer.len());
         }
@@ -147,112 +122,12 @@ impl io::Write for TelemetryLineWriter {
     }
 }
 
-impl TelemetryEventCapState {
-    fn new(path: &Path, event_cap: Option<usize>, lossy: bool) -> Self {
-        Self {
-            path: path.to_path_buf(),
-            event_cap,
-            lossy,
-            written_event_count: AtomicUsize::new(0),
-            dropped_event_count: AtomicUsize::new(0),
-            exceeded: AtomicBool::new(false),
-        }
-    }
-
-    fn reserve_event(&self) -> io::Result<TelemetryCapAction> {
-        let Some(event_cap) = self.event_cap else {
-            self.written_event_count.fetch_add(1, Ordering::Relaxed);
-            return Ok(TelemetryCapAction::Write);
-        };
-
-        loop {
-            let written_event_count = self.written_event_count.load(Ordering::Acquire);
-            if written_event_count >= event_cap {
-                self.mark_exceeded();
-                if self.lossy {
-                    self.dropped_event_count.fetch_add(1, Ordering::Relaxed);
-                    return Ok(TelemetryCapAction::Drop);
-                }
-                return Err(io::Error::other(self.cap_exceeded_error_message()));
-            }
-            if self
-                .written_event_count
-                .compare_exchange_weak(
-                    written_event_count,
-                    written_event_count + 1,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-            {
-                return Ok(TelemetryCapAction::Write);
-            }
-        }
-    }
-
-    fn mark_exceeded(&self) {
-        if !self.exceeded.swap(true, Ordering::AcqRel) && self.lossy {
-            tracing::warn!(
-                target: "g.logging",
-                g_event = "native_telemetry_event_cap_exceeded",
-                event_cap = self.event_cap.unwrap_or(0),
-                lossy = self.lossy,
-                path = %self.path.display(),
-                message = %self.cap_exceeded_drop_message(),
-                "Tracing writer reached event cap and started dropping events."
-            );
-        }
-    }
-
-    fn should_fail_for_cap_exceeded(&self) -> bool {
-        self.exceeded.load(Ordering::Acquire) && !self.lossy
-    }
-
-    fn counter_snapshot(
-        &self,
-        queue_dropped_event_count: usize,
-        finish_flush_duration_seconds: Option<f64>,
-    ) -> TelemetryWriterCounterSnapshot {
-        let accepted_event_count = self.written_event_count.load(Ordering::Acquire);
-        let cap_dropped_event_count = self.dropped_event_count.load(Ordering::Acquire);
-        TelemetryWriterCounterSnapshot {
-            accepted_event_count,
-            written_event_count: accepted_event_count.saturating_sub(queue_dropped_event_count),
-            dropped_event_count: cap_dropped_event_count.saturating_add(queue_dropped_event_count),
-            cap_dropped_event_count,
-            queue_dropped_event_count,
-            event_cap_exceeded: self.exceeded.load(Ordering::Acquire),
-            lossy: self.lossy,
-            event_cap: self.event_cap,
-            finish_flush_duration_seconds,
-        }
-    }
-
-    fn cap_exceeded_error_message(&self) -> String {
-        let event_cap = self.event_cap.unwrap_or(0);
-        format!(
-            "Trace telemetry event cap exceeded at {event_cap} events for {}. \
-             Increase --trace_event_cap or set --trace_event_cap 0 to disable the cap for intentional deep traces. \
-             Use --log_lossy to drop events after the cap instead of failing.",
-            self.path.display()
-        )
-    }
-
-    fn cap_exceeded_drop_message(&self) -> String {
-        let event_cap = self.event_cap.unwrap_or(0);
-        format!(
-            "Trace telemetry event cap reached at {event_cap} events for {}; dropping additional trace events because log_lossy is enabled.",
-            self.path.display()
-        )
-    }
-}
-
 #[pyclass]
 pub struct NativeTelemetrySession {
     path: PathBuf,
     writer: Mutex<Option<TelemetryWriterFactory>>,
     guard: Mutex<Option<WorkerGuard>>,
-    last_counter_snapshot: Mutex<Option<TelemetryWriterCounterSnapshot>>,
+    last_counter_snapshot: Mutex<Option<native_telemetry_session::TelemetryWriterCounterSnapshot>>,
 }
 
 #[pymethods]
@@ -301,16 +176,19 @@ impl NativeTelemetrySession {
         let writer_guard =
             self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
         if let Some(writer) = writer_guard.as_ref() {
-            return writer.counter_snapshot(None).to_py_dict(py);
+            return telemetry_writer_counter_snapshot_to_py_dict(py, &writer.counter_snapshot(None));
         }
         let last_counter_snapshot = self
             .last_counter_snapshot
             .lock()
             .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
         let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
-            return TelemetryWriterCounterSnapshot::empty().to_py_dict(py);
+            return telemetry_writer_counter_snapshot_to_py_dict(
+                py,
+                &native_telemetry_session::TelemetryWriterCounterSnapshot::empty(),
+            );
         };
-        counter_snapshot.to_py_dict(py)
+        telemetry_writer_counter_snapshot_to_py_dict(py, counter_snapshot)
     }
 
     pub fn finish<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -330,9 +208,12 @@ impl NativeTelemetrySession {
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
             let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
-                return TelemetryWriterCounterSnapshot::empty().to_py_dict(py);
+                return telemetry_writer_counter_snapshot_to_py_dict(
+                    py,
+                    &native_telemetry_session::TelemetryWriterCounterSnapshot::empty(),
+                );
             };
-            return counter_snapshot.to_py_dict(py);
+            return telemetry_writer_counter_snapshot_to_py_dict(py, counter_snapshot);
         };
 
         let counter_snapshot = writer.counter_snapshot(Some(finish_flush_duration_seconds));
@@ -342,7 +223,7 @@ impl NativeTelemetrySession {
             .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
         *last_counter_snapshot = Some(counter_snapshot.clone());
         writer.fail_if_lossless_cap_exceeded()?;
-        counter_snapshot.to_py_dict(py)
+        telemetry_writer_counter_snapshot_to_py_dict(py, &counter_snapshot)
     }
 }
 
@@ -358,16 +239,24 @@ pub fn build_telemetry_event_payload<'py>(
     thread_name: &str,
     fields: &Bound<'py, PyDict>,
 ) -> PyResult<Bound<'py, PyDict>> {
+    let envelope = native_telemetry_session::build_telemetry_event_envelope(
+        run_id,
+        event,
+        level,
+        timestamp,
+        process_identifier,
+        thread_name,
+    );
     let payload = PyDict::new(py);
-    payload.set_item("schema_version", 1)?;
-    payload.set_item("run_id", run_id)?;
-    payload.set_item("ts", timestamp)?;
-    payload.set_item("level", level.to_uppercase())?;
-    payload.set_item("source", "python")?;
-    payload.set_item("target", "g.engine.telemetry")?;
-    payload.set_item("event", event)?;
-    payload.set_item("pid", process_identifier)?;
-    payload.set_item("thread_name", thread_name)?;
+    payload.set_item("schema_version", envelope.schema_version)?;
+    payload.set_item("run_id", envelope.run_id)?;
+    payload.set_item("ts", envelope.timestamp)?;
+    payload.set_item("level", envelope.level)?;
+    payload.set_item("source", envelope.source)?;
+    payload.set_item("target", envelope.target)?;
+    payload.set_item("event", envelope.event)?;
+    payload.set_item("pid", envelope.process_identifier)?;
+    payload.set_item("thread_name", envelope.thread_name)?;
     for (key, value) in fields {
         if !value.is_none() {
             payload.set_item(key, value)?;
@@ -376,34 +265,21 @@ pub fn build_telemetry_event_payload<'py>(
     Ok(payload)
 }
 
-impl TelemetryWriterCounterSnapshot {
-    fn empty() -> Self {
-        Self {
-            accepted_event_count: 0,
-            written_event_count: 0,
-            dropped_event_count: 0,
-            cap_dropped_event_count: 0,
-            queue_dropped_event_count: 0,
-            event_cap_exceeded: false,
-            lossy: true,
-            event_cap: None,
-            finish_flush_duration_seconds: None,
-        }
-    }
-
-    fn to_py_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let counters = PyDict::new(py);
-        counters.set_item("accepted_event_count", self.accepted_event_count)?;
-        counters.set_item("written_event_count", self.written_event_count)?;
-        counters.set_item("dropped_event_count", self.dropped_event_count)?;
-        counters.set_item("cap_dropped_event_count", self.cap_dropped_event_count)?;
-        counters.set_item("queue_dropped_event_count", self.queue_dropped_event_count)?;
-        counters.set_item("event_cap_exceeded", self.event_cap_exceeded)?;
-        counters.set_item("lossy", self.lossy)?;
-        counters.set_item("event_cap", self.event_cap)?;
-        counters.set_item("finish_flush_duration_seconds", self.finish_flush_duration_seconds)?;
-        Ok(counters)
-    }
+fn telemetry_writer_counter_snapshot_to_py_dict<'py>(
+    py: Python<'py>,
+    snapshot: &native_telemetry_session::TelemetryWriterCounterSnapshot,
+) -> PyResult<Bound<'py, PyDict>> {
+    let counters = PyDict::new(py);
+    counters.set_item("accepted_event_count", snapshot.accepted_event_count)?;
+    counters.set_item("written_event_count", snapshot.written_event_count)?;
+    counters.set_item("dropped_event_count", snapshot.dropped_event_count)?;
+    counters.set_item("cap_dropped_event_count", snapshot.cap_dropped_event_count)?;
+    counters.set_item("queue_dropped_event_count", snapshot.queue_dropped_event_count)?;
+    counters.set_item("event_cap_exceeded", snapshot.event_cap_exceeded)?;
+    counters.set_item("lossy", snapshot.lossy)?;
+    counters.set_item("event_cap", snapshot.event_cap)?;
+    counters.set_item("finish_flush_duration_seconds", snapshot.finish_flush_duration_seconds)?;
+    Ok(counters)
 }
 
 #[pyfunction]
@@ -637,7 +513,7 @@ fn build_telemetry_file_writer(
     event_cap: Option<usize>,
 ) -> PyResult<(TelemetryWriterFactory, WorkerGuard)> {
     let (writer, guard) = build_log_file_writer(path, log_queue_size, log_lossy)?;
-    let event_cap_state = TelemetryEventCapState::new(path, event_cap, log_lossy);
+    let event_cap_state = native_telemetry_session::TelemetryEventCapState::new(path, event_cap, log_lossy);
     Ok((TelemetryWriterFactory::new(writer, event_cap_state), guard))
 }
 
