@@ -480,6 +480,19 @@ class StageTimingRecorder:
         """Return an immutable copy of the current timings."""
         return adapt_stage_timing_snapshot_payload(self.native_recorder.snapshot_payload())
 
+    def derived_metrics_payload(self) -> dict[str, float]:
+        """Build native derived metrics from the current timing state."""
+        return dict(typing.cast("typing.Mapping[str, float]", self.native_recorder.derived_metrics_payload()))
+
+    def profile_summary_payload(self, *, run_id: str | None) -> dict[str, object]:
+        """Build native aggregate profile summary payload from the current timing state."""
+        return dict(
+            typing.cast(
+                "typing.Mapping[str, object]",
+                self.native_recorder.profile_summary_payload(run_id),
+            )
+        )
+
 
 def adapt_stage_timing_snapshot_payload(snapshot_payload: dict[str, object]) -> StageTimingSnapshot:
     """Adapt a native timing snapshot payload to the public Python shape."""
@@ -604,7 +617,7 @@ def write_stage_timing_snapshot(
         "null_logistic_diagnostics": serialize_null_logistic_diagnostics(snapshot.null_logistic_diagnostics),
         "queue_backpressure": serialize_queue_backpressure(snapshot.queue_backpressure),
         "transfer_metadata": serialize_transfer_metadata(snapshot.transfer_metadata),
-        "derived_metrics": build_derived_metrics(snapshot),
+        "derived_metrics": stage_timing_recorder.derived_metrics_payload(),
     }
     stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
     stage_timing_path.write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
@@ -621,22 +634,7 @@ def write_profile_summary(
         return
     if profile_summary_path is None:
         return
-    snapshot = stage_timing_recorder.snapshot()
-    payload = {
-        "schema_version": 1,
-        "run_id": run_id,
-        "stage_totals_seconds": snapshot.stage_totals_seconds,
-        "stage_counts": snapshot.stage_counts,
-        "native_bgen_profile": snapshot.native_bgen_profile,
-        "derived_metrics": build_derived_metrics(snapshot),
-        "chunk_stage_summary": build_chunk_stage_summary(snapshot.chunk_stage_timings),
-        "binary_chunk_summary": build_binary_chunk_summary(snapshot.binary_chunk_diagnostics),
-        "queue_backpressure": serialize_queue_backpressure(snapshot.queue_backpressure),
-        "transfer_metadata": serialize_transfer_metadata(snapshot.transfer_metadata),
-        "null_logistic_summary": {
-            "chromosome_count": len(snapshot.null_logistic_diagnostics),
-        },
-    }
+    payload = stage_timing_recorder.profile_summary_payload(run_id=run_id)
     profile_summary_path.parent.mkdir(parents=True, exist_ok=True)
     profile_summary_path.write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
 

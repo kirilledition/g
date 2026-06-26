@@ -6,7 +6,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::telemetry_policy as native_telemetry_policy;
+use g_runtime::telemetry_policy as native_telemetry_policy;
 
 #[pyfunction]
 pub(crate) fn format_telemetry_timestamp_value(timestamp_seconds: f64) -> String {

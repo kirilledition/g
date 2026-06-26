@@ -722,12 +722,12 @@ name = "g"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "chrono",
  "g-genotype",
  "g-input",
  "g-interface",
  "g-output",
  "g-plan",
+ "g-runtime",
  "memchr",
  "numpy",
  "pyo3",
@@ -736,7 +736,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "signal-hook",
  "toml",
  "tracing",
  "tracing-appender",
@@ -795,6 +794,14 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "g-runtime"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "signal-hook",
 ]
 
 [[package]]

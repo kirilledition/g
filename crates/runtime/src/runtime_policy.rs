@@ -2,22 +2,23 @@
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
-pub(crate) struct LoggingRuntimePolicyPayload {
-    pub(crate) log_filter: String,
-    pub(crate) log_file: Option<String>,
-    pub(crate) log_stderr: bool,
-    pub(crate) log_queue_size: i64,
-    pub(crate) log_lossy: bool,
-    pub(crate) include_source_location: bool,
-    pub(crate) include_span_events: bool,
-    pub(crate) trace_file: Option<String>,
-    pub(crate) trace_filter: String,
-    pub(crate) trace_event_cap: Option<i64>,
+pub struct LoggingRuntimePolicyPayload {
+    pub log_filter: String,
+    pub log_file: Option<String>,
+    pub log_stderr: bool,
+    pub log_queue_size: i64,
+    pub log_lossy: bool,
+    pub include_source_location: bool,
+    pub include_span_events: bool,
+    pub trace_file: Option<String>,
+    pub trace_filter: String,
+    pub trace_event_cap: Option<i64>,
 }
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::fn_params_excessive_bools)]
-pub(crate) fn build_logging_runtime_policy(
+#[must_use]
+pub fn build_logging_runtime_policy(
     log_filter: String,
     log_file: Option<String>,
     log_stderr: bool,
@@ -51,7 +52,8 @@ pub(crate) fn build_logging_runtime_policy(
     }
 }
 
-pub(crate) fn describe_logging_runtime_policy(policy: &LoggingRuntimePolicyPayload) -> String {
+#[must_use]
+pub fn describe_logging_runtime_policy(policy: &LoggingRuntimePolicyPayload) -> String {
     format!(
         "log-filter={}, log-file={}, log-stderr={}, log-queue-size={}, log-lossy={}, \
          include-source-location={}, include-span-events={}, trace-file={}, trace-filter={}, trace-event-cap={}",
@@ -78,4 +80,32 @@ fn optional_i64_text(value: Option<i64>) -> String {
 
 fn python_bool(value: bool) -> &'static str {
     if value { "True" } else { "False" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_stream_owns_trace_file_and_filter_policy() {
+        let policy = build_logging_runtime_policy(
+            "info".to_string(),
+            Some("run.log".to_string()),
+            true,
+            256,
+            false,
+            true,
+            false,
+            Some("trace.jsonl".to_string()),
+            "debug".to_string(),
+            Some(100),
+            "profile",
+            Some("events.jsonl".to_string()),
+        );
+
+        assert_eq!(policy.log_file, None);
+        assert_eq!(policy.trace_file, Some("events.jsonl".to_string()));
+        assert_eq!(policy.trace_filter, "info");
+        assert_eq!(policy.trace_event_cap, None);
+    }
 }

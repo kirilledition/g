@@ -8,30 +8,31 @@ const EVENTS_JSONL_FILE_NAME: &str = "events.jsonl";
 const PROFILE_SUMMARY_JSON_FILE_NAME: &str = "profile.summary.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TelemetryPathsPayload {
-    pub(crate) log_dir: Option<String>,
-    pub(crate) stream_file: Option<String>,
-    pub(crate) profile_summary_json: Option<String>,
-    pub(crate) stage_timings_json: Option<String>,
+pub struct TelemetryPathsPayload {
+    pub log_dir: Option<String>,
+    pub stream_file: Option<String>,
+    pub profile_summary_json: Option<String>,
+    pub stage_timings_json: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct TelemetryWriterCountersPayload {
-    pub(crate) accepted_event_count: i64,
-    pub(crate) written_event_count: i64,
-    pub(crate) dropped_event_count: i64,
-    pub(crate) cap_dropped_event_count: i64,
-    pub(crate) queue_dropped_event_count: i64,
-    pub(crate) event_cap_exceeded: bool,
-    pub(crate) lossy: bool,
-    pub(crate) event_cap: Option<i64>,
-    pub(crate) finish_flush_duration_seconds: Option<f64>,
+pub struct TelemetryWriterCountersPayload {
+    pub accepted_event_count: i64,
+    pub written_event_count: i64,
+    pub dropped_event_count: i64,
+    pub cap_dropped_event_count: i64,
+    pub queue_dropped_event_count: i64,
+    pub event_cap_exceeded: bool,
+    pub lossy: bool,
+    pub event_cap: Option<i64>,
+    pub finish_flush_duration_seconds: Option<f64>,
 }
 
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::cast_precision_loss)]
 #[allow(clippy::cast_sign_loss)]
-pub(crate) fn format_timestamp(timestamp_seconds: f64) -> String {
+#[must_use]
+pub fn format_timestamp(timestamp_seconds: f64) -> String {
     let whole_seconds = timestamp_seconds.floor() as i64;
     let nanoseconds = (((timestamp_seconds - whole_seconds as f64) * 1_000_000_000.0) as u32).min(999_999_999);
     DateTime::from_timestamp(whole_seconds, nanoseconds).map_or_else(
@@ -40,7 +41,8 @@ pub(crate) fn format_timestamp(timestamp_seconds: f64) -> String {
     )
 }
 
-pub(crate) fn resolve_output_run_root(output_path: &Path, output_run_directory: Option<&Path>) -> PathBuf {
+#[must_use]
+pub fn resolve_output_run_root(output_path: &Path, output_run_directory: Option<&Path>) -> PathBuf {
     if let Some(run_directory) = output_run_directory {
         return run_directory.to_path_buf();
     }
@@ -50,7 +52,12 @@ pub(crate) fn resolve_output_run_root(output_path: &Path, output_run_directory: 
     ))
 }
 
-pub(crate) fn resolve_telemetry_paths(
+/// Resolve all telemetry file-system paths for one run.
+///
+/// # Errors
+///
+/// Returns an error when telemetry stream path options conflict.
+pub fn resolve_telemetry_paths(
     output_path: &Path,
     output_run_directory: Option<&Path>,
     telemetry_mode: &str,
@@ -79,7 +86,12 @@ pub(crate) fn resolve_telemetry_paths(
     })
 }
 
-pub(crate) fn resolve_telemetry_stream_file(
+/// Resolve the unified telemetry event stream path.
+///
+/// # Errors
+///
+/// Returns an error when `log_file` and `trace_file` point to different files.
+pub fn resolve_telemetry_stream_file(
     telemetry_mode: &str,
     log_dir: Option<&Path>,
     log_file: Option<&Path>,
@@ -102,11 +114,13 @@ pub(crate) fn resolve_telemetry_stream_file(
     Ok(log_dir.map(|directory| directory.join(EVENTS_JSONL_FILE_NAME)))
 }
 
-pub(crate) fn paths_refer_to_same_file(first_path: &Path, second_path: &Path) -> bool {
+#[must_use]
+pub fn paths_refer_to_same_file(first_path: &Path, second_path: &Path) -> bool {
     normalize_path_for_comparison(first_path) == normalize_path_for_comparison(second_path)
 }
 
-pub(crate) fn build_empty_writer_counters() -> TelemetryWriterCountersPayload {
+#[must_use]
+pub fn build_empty_writer_counters() -> TelemetryWriterCountersPayload {
     TelemetryWriterCountersPayload {
         accepted_event_count: 0,
         written_event_count: 0,
@@ -148,4 +162,44 @@ fn normalize_path_for_comparison(path: &Path) -> PathBuf {
         }
     }
     normalized_path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_profile_paths_under_default_log_directory() {
+        let paths = resolve_telemetry_paths(
+            Path::new("results/output"),
+            None,
+            "profile",
+            None,
+            None,
+            None,
+            None,
+            Some(Path::new("stage-timings.json")),
+        )
+        .unwrap();
+
+        assert_eq!(paths.log_dir, Some("results/output.g/logs".to_string()));
+        assert_eq!(paths.stream_file, Some("results/output.g/logs/events.jsonl".to_string()));
+        assert_eq!(paths.profile_summary_json, Some("results/output.g/logs/profile.summary.json".to_string()));
+        assert_eq!(paths.stage_timings_json, Some("stage-timings.json".to_string()));
+    }
+
+    #[test]
+    fn rejects_conflicting_telemetry_stream_files() {
+        let stream_file = resolve_telemetry_stream_file(
+            "trace",
+            Some(Path::new("logs")),
+            Some(Path::new("events.jsonl")),
+            Some(Path::new("trace.jsonl")),
+        );
+
+        assert_eq!(
+            stream_file,
+            Err("log_file and trace_file both configure the unified telemetry stream; use one path.".to_string()),
+        );
+    }
 }

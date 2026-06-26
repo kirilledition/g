@@ -7,13 +7,9 @@ pub use g_input::{regenie, sample};
 pub use g_interface as interface;
 pub use g_output as output;
 pub use g_plan as plan;
+pub use g_runtime as runtime;
 pub mod pipeline;
 pub mod python;
-pub(crate) mod run_metadata;
-pub(crate) mod runtime_policy;
-pub(crate) mod shutdown;
-pub(crate) mod telemetry_policy;
-pub(crate) mod timing;
 pub(crate) mod trusted_validation;
 
 use pyo3::prelude::*;

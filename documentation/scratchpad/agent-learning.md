@@ -58,6 +58,10 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
 - `crates/input/src/` owns native sample, phenotype, covariate, prediction-list,
   and LOCO prediction alignment; genotype readers keep BGEN-embedded sample
   retrieval and pass identifier views into input code.
+- `crates/runtime/src/` now owns pure runtime policy/state helpers: logging
+  runtime policy, telemetry path/counter policy, shutdown signal metadata, stage
+  timing state, run metadata payloads, and profile summary payloads. Root PyO3
+  adapters still own side effects until runtime handles move into Rust.
 - `crates/interface/src/partial.rs` defines the typed partial TOML surface with Serde,
   optional fields, aliases, and unknown-key rejection.
 - `crates/interface/src/overlay.rs` decodes provenance and overlays defaults, user

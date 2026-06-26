@@ -3,13 +3,19 @@
 use signal_hook::consts::signal;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ShutdownSignalPayload {
-    pub(crate) number: i32,
-    pub(crate) name: String,
-    pub(crate) exit_code: i32,
+pub struct ShutdownSignalPayload {
+    pub number: i32,
+    pub name: String,
+    pub exit_code: i32,
 }
 
-pub(crate) fn build_shutdown_signal(signal_number: i32) -> Result<ShutdownSignalPayload, String> {
+/// Build deterministic shutdown metadata for a Unix signal number.
+///
+/// # Errors
+///
+/// Returns an error when `signal_number` is not one of the supported Linux
+/// signal constants.
+pub fn build_shutdown_signal(signal_number: i32) -> Result<ShutdownSignalPayload, String> {
     let signal_name =
         linux_signal_name(signal_number).ok_or_else(|| format!("{signal_number} is not a valid Signals"))?;
     Ok(ShutdownSignalPayload { number: signal_number, name: signal_name.to_string(), exit_code: 128 + signal_number })
@@ -47,5 +53,20 @@ fn linux_signal_name(signal_number: i32) -> Option<&'static str> {
         signal::SIGIO => Some("SIGIO"),
         signal::SIGSYS => Some("SIGSYS"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_shutdown_signal_metadata() {
+        let payload = build_shutdown_signal(signal::SIGTERM).unwrap();
+
+        assert_eq!(payload.number, signal::SIGTERM);
+        assert_eq!(payload.name, "SIGTERM");
+        assert_eq!(payload.exit_code, 128 + signal::SIGTERM);
+        assert!(build_shutdown_signal(0).is_err());
     }
 }

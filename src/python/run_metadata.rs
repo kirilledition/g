@@ -3,7 +3,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::run_metadata as native_run_metadata;
+use g_runtime::run_metadata as native_run_metadata;
 
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]

@@ -3,7 +3,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::runtime_policy as native_runtime_policy;
+use g_runtime::runtime_policy as native_runtime_policy;
 
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
