@@ -7,6 +7,7 @@ import typing
 
 import hydra
 
+from tooling.cli import schema_check
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import registry as tooling_registry
 from tooling.debug import (
@@ -31,6 +32,7 @@ class DebugToolName(enum.StrEnum):
     CHECK_INTERNAL_DEFAULTS = "check_internal_defaults"
     CHECK_INTERNAL_INIT_EXPORTS = "check_internal_init_exports"
     CHECK_PYO3_STUB = "check_pyo3_stub"
+    SCHEMA_CHECK = "schema_check"
 
 
 def build_no_arguments(config: omegaconf.DictConfig) -> None:
@@ -99,6 +101,12 @@ TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
         config_name="debug_check_internal_init_exports",
         build_arguments=build_no_arguments,
         run=run_check_internal_init_exports,
+    ),
+    DebugToolName.SCHEMA_CHECK.value: tooling_registry.ToolSpec(
+        name=DebugToolName.SCHEMA_CHECK.value,
+        config_name="debug_schema_check",
+        build_arguments=schema_check.build_arguments_from_config,
+        run=schema_check.run_tool,
     ),
 }
 

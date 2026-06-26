@@ -17,6 +17,7 @@ from pathlib import Path
 import hydra
 
 import tooling.configuration as tooling_configuration
+from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
@@ -887,6 +888,353 @@ def comparison_to_json_dict(comparison: MetricComparison) -> dict[str, typing.An
     return dataclasses.asdict(comparison)
 
 
+def run_status_to_artifact_status(run_status: RunStatus) -> tooling_artifact_format.ToolArtifactStatus:
+    """Convert matrix run status to the shared artifact status enum."""
+    if run_status == RunStatus.DRY_RUN:
+        return tooling_artifact_format.ToolArtifactStatus.DRY_RUN
+    if run_status == RunStatus.FAILED:
+        return tooling_artifact_format.ToolArtifactStatus.FAILED
+    return tooling_artifact_format.ToolArtifactStatus.SUCCESS
+
+
+def matrix_artifact_status(
+    arguments: MatrixArguments, run_results: list[RunResult]
+) -> tooling_artifact_format.ToolArtifactStatus:
+    """Determine the overall matrix artifact status."""
+    if arguments.dry_run:
+        return tooling_artifact_format.ToolArtifactStatus.DRY_RUN
+    if any(run_result.status == RunStatus.FAILED for run_result in run_results):
+        return tooling_artifact_format.ToolArtifactStatus.FAILED
+    return tooling_artifact_format.ToolArtifactStatus.SUCCESS
+
+
+def standard_metric_unit(metric_name: str) -> str:
+    """Return the standard unit for a matrix metric."""
+    if metric_name == "wall_time_seconds" or metric_name.startswith("stage."):
+        return tooling_artifact_format.MetricUnit.SECONDS.value
+    if metric_name == "output_row_count":
+        return tooling_artifact_format.MetricUnit.ROW.value
+    if metric_name.endswith("_bytes"):
+        return tooling_artifact_format.MetricUnit.BYTES.value
+    if metric_name.endswith("_count"):
+        return tooling_artifact_format.MetricUnit.COUNT.value
+    return tooling_artifact_format.MetricUnit.COUNT.value
+
+
+def standard_metric_name(metric_name: str) -> str:
+    """Normalize matrix metric names for Tooling Artifact Format v1."""
+    if metric_name.startswith("stage.") and not metric_name.endswith(".seconds"):
+        return f"{metric_name}.seconds"
+    return metric_name
+
+
+def build_matrix_metric_dimensions(arguments: MatrixArguments, run_result: RunResult) -> dict[str, object]:
+    """Build shared metric dimensions for one matrix run."""
+    return {
+        "chromosome_label": arguments.chromosome_label,
+        "trait_type": run_result.trait.value,
+        "mode": run_result.mode.value,
+        "device": "cpu" if run_result.mode == ExecutionMode.CPU else "gpu",
+        "jax_persistent_cache": run_result.mode == ExecutionMode.GPU_CACHED,
+        "chunk_size": arguments.chunk_size,
+        "variant_limit": arguments.variant_limit,
+        "output_format": arguments.output_format,
+        "finalize_parquet": arguments.finalize_parquet,
+        "gpu_genotype_format": arguments.gpu_genotype_format if run_result.mode != ExecutionMode.CPU else None,
+    }
+
+
+def build_matrix_metrics(
+    *,
+    arguments: MatrixArguments,
+    run_id: str,
+    run_results: list[RunResult],
+) -> list[tooling_artifact_format.MetricRecord]:
+    """Build long-form matrix metrics."""
+    metric_records: list[tooling_artifact_format.MetricRecord] = []
+    for run_index, run_result in enumerate(run_results):
+        metrics = numeric_result_metrics(run_result)
+        metrics.update(
+            {
+                "output_file_count": (
+                    float(run_result.output_file_count) if run_result.output_file_count is not None else None
+                ),
+                "committed_chunk_count": (
+                    float(run_result.committed_chunk_count) if run_result.committed_chunk_count is not None else None
+                ),
+                "final_parquet_bytes": (
+                    float(run_result.final_parquet_bytes) if run_result.final_parquet_bytes is not None else None
+                ),
+            }
+        )
+        for metric_name, metric_value in metrics.items():
+            normalized_metric_name = standard_metric_name(metric_name)
+            json_pointer = f"/trials/{run_index}/{metric_name.replace('.', '/')}"
+            metric_records.append(
+                tooling_artifact_format.build_metric_record(
+                    run_id=run_id,
+                    case_id=run_result.name,
+                    trial_id=run_result.name,
+                    phase=run_result.mode.value,
+                    metric_name=normalized_metric_name,
+                    value=metric_value,
+                    unit=standard_metric_unit(normalized_metric_name),
+                    aggregation=tooling_artifact_format.MetricAggregation.EXACT.value,
+                    higher_is_better=False
+                    if normalized_metric_name == "wall_time_seconds" or normalized_metric_name.startswith("stage.")
+                    else None,
+                    dimensions=build_matrix_metric_dimensions(arguments, run_result),
+                    source=tooling_artifact_format.MetricSource(
+                        artifact_path="report.json",
+                        json_pointer=json_pointer,
+                    ),
+                )
+            )
+    return metric_records
+
+
+def build_matrix_events(
+    *,
+    arguments: MatrixArguments,
+    run_id: str,
+    run_results: list[RunResult],
+) -> list[tooling_artifact_format.ToolEventRecord]:
+    """Build matrix event records."""
+    events = [
+        tooling_artifact_format.build_tool_event(
+            tool_name="run_regenie2_matrix",
+            run_id=run_id,
+            phase="matrix",
+            event="matrix_completed",
+            message=f"{arguments.chromosome_label} matrix completed.",
+            fields={
+                "run_count": len(run_results),
+                "dry_run": arguments.dry_run,
+                "status": matrix_artifact_status(arguments, run_results).value,
+            },
+        )
+    ]
+    for run_result in run_results:
+        events.append(
+            tooling_artifact_format.build_tool_event(
+                tool_name="run_regenie2_matrix",
+                run_id=run_id,
+                phase=run_result.mode.value,
+                event="matrix_run_completed",
+                message=f"Matrix run {run_result.name} finished with status {run_result.status.value}.",
+                fields={
+                    "run_name": run_result.name,
+                    "trait_type": run_result.trait.value,
+                    "mode": run_result.mode.value,
+                    "return_code": run_result.return_code,
+                    "wall_time_seconds": run_result.wall_time_seconds,
+                },
+            )
+        )
+    return events
+
+
+def build_matrix_command_records(
+    *,
+    run_id: str,
+    output_directory: Path,
+    run_results: list[RunResult],
+) -> list[tooling_artifact_format.CommandRecord]:
+    """Build command ledger records for matrix subprocesses."""
+    command_records: list[tooling_artifact_format.CommandRecord] = []
+    environment_overrides = build_environment_overrides()
+    for run_result in run_results:
+        command_records.append(
+            tooling_artifact_format.build_command_record(
+                command_id=run_result.name,
+                tool_name="run_regenie2_matrix",
+                run_id=run_id,
+                phase=run_result.mode.value,
+                args=run_result.command_arguments,
+                output_directory=output_directory,
+                cwd=REPOSITORY_ROOT,
+                environment_overrides=environment_overrides,
+                status=run_status_to_artifact_status(run_result.status),
+                return_code=run_result.return_code,
+                wall_time_seconds=run_result.wall_time_seconds,
+            )
+        )
+    return command_records
+
+
+def build_matrix_input_records(arguments: MatrixArguments) -> list[tooling_artifact_format.InputFileRecord]:
+    """Build input-file records for a matrix run."""
+    return [
+        tooling_artifact_format.build_input_file_record(path=arguments.bgen_path, kind="bgen"),
+        tooling_artifact_format.build_input_file_record(path=arguments.sample_path, kind="sample"),
+        tooling_artifact_format.build_input_file_record(path=arguments.covariate_path, kind="covariates"),
+        tooling_artifact_format.build_input_file_record(
+            path=arguments.linear_phenotype_path,
+            kind="linear_phenotype",
+        ),
+        tooling_artifact_format.build_input_file_record(
+            path=arguments.linear_prediction_list_path,
+            kind="linear_prediction_list",
+        ),
+        tooling_artifact_format.build_input_file_record(
+            path=arguments.binary_phenotype_path,
+            kind="binary_phenotype",
+        ),
+        tooling_artifact_format.build_input_file_record(
+            path=arguments.binary_prediction_list_path,
+            kind="binary_prediction_list",
+        ),
+    ]
+
+
+def build_matrix_failure_records(run_results: list[RunResult]) -> list[tooling_artifact_format.FailureRecord]:
+    """Build structured failure records for failed matrix runs."""
+    failures: list[tooling_artifact_format.FailureRecord] = []
+    for failure_index, run_result in enumerate(
+        (result for result in run_results if result.status == RunStatus.FAILED),
+        start=1,
+    ):
+        failures.append(
+            tooling_artifact_format.FailureRecord(
+                failure_id=f"F{failure_index:03d}",
+                phase=run_result.mode.value,
+                status=tooling_artifact_format.ToolArtifactStatus.FAILED,
+                message=f"Matrix run {run_result.name} failed.",
+                exception_type=None,
+                stderr_excerpt=None,
+                stdout_log=None,
+                stderr_log=None,
+                command_id=run_result.name,
+            )
+        )
+    return failures
+
+
+def comparison_judgement(comparison: MetricComparison) -> tooling_artifact_format.ComparisonJudgement:
+    """Classify a matrix metric comparison."""
+    if comparison.current_value is None or comparison.previous_value is None or comparison.ratio is None:
+        return tooling_artifact_format.ComparisonJudgement.INCONCLUSIVE
+    if comparison.metric == "output_row_count" and comparison.current_value != comparison.previous_value:
+        return tooling_artifact_format.ComparisonJudgement.REGRESSION
+    if comparison.metric != "wall_time_seconds" and not comparison.metric.startswith("stage."):
+        return tooling_artifact_format.ComparisonJudgement.NEUTRAL
+    percent_change = (comparison.ratio - 1.0) * 100.0
+    if percent_change <= -2.0:
+        return tooling_artifact_format.ComparisonJudgement.IMPROVEMENT
+    if percent_change >= 2.0:
+        return tooling_artifact_format.ComparisonJudgement.REGRESSION
+    return tooling_artifact_format.ComparisonJudgement.NEUTRAL
+
+
+def build_standard_comparison_rows(comparisons: list[MetricComparison]) -> list[dict[str, object]]:
+    """Build first-class comparison rows."""
+    rows: list[dict[str, object]] = []
+    for comparison in comparisons:
+        normalized_metric_name = standard_metric_name(comparison.metric)
+        percent_change = None
+        if comparison.ratio is not None:
+            percent_change = (comparison.ratio - 1.0) * 100.0
+        rows.append(
+            {
+                "metric_name": normalized_metric_name,
+                "case_id": comparison.run_name,
+                "dimensions": {},
+                "baseline_value": comparison.previous_value,
+                "current_value": comparison.current_value,
+                "unit": standard_metric_unit(normalized_metric_name),
+                "delta": comparison.delta,
+                "ratio": comparison.ratio,
+                "percent_change": percent_change,
+                "higher_is_better": False
+                if normalized_metric_name == "wall_time_seconds" or normalized_metric_name.startswith("stage.")
+                else None,
+                "judgement": comparison_judgement(comparison).value,
+            }
+        )
+    return rows
+
+
+def build_comparison_report(
+    *,
+    producer: tooling_artifact_format.ToolProducer,
+    run: tooling_artifact_format.ToolRunIdentity,
+    previous_manifest_path: Path | None,
+    comparisons: list[MetricComparison],
+) -> tooling_artifact_format.ComparisonReport | None:
+    """Build a standard comparison report when previous results exist."""
+    if not comparisons:
+        return None
+    comparison_rows = build_standard_comparison_rows(comparisons)
+    regression_count = sum(
+        1
+        for comparison_row in comparison_rows
+        if comparison_row["judgement"] == tooling_artifact_format.ComparisonJudgement.REGRESSION.value
+    )
+    improvement_count = sum(
+        1
+        for comparison_row in comparison_rows
+        if comparison_row["judgement"] == tooling_artifact_format.ComparisonJudgement.IMPROVEMENT.value
+    )
+    neutral_count = sum(
+        1
+        for comparison_row in comparison_rows
+        if comparison_row["judgement"] == tooling_artifact_format.ComparisonJudgement.NEUTRAL.value
+    )
+    return tooling_artifact_format.ComparisonReport(
+        schema_name="g.tooling.comparison",
+        schema_version=tooling_artifact_format.SCHEMA_VERSION,
+        producer=producer,
+        run=run,
+        baseline={
+            "label": "previous",
+            "report_path": str(previous_manifest_path) if previous_manifest_path is not None else None,
+            "git_head": None,
+        },
+        current={
+            "label": "current",
+            "report_path": "report.json",
+            "git_head": producer.git_head,
+        },
+        thresholds=[
+            {
+                "metric_name": "wall_time_seconds",
+                "max_regression_percent": 2.0,
+                "scope": {},
+            }
+        ],
+        comparisons=comparison_rows,
+        summary={
+            "status": run.status.value,
+            "regression_count": regression_count,
+            "improvement_count": improvement_count,
+            "neutral_count": neutral_count,
+        },
+    )
+
+
+def build_matrix_agent_summary(
+    *,
+    arguments: MatrixArguments,
+    run_results: list[RunResult],
+    comparisons: list[MetricComparison],
+) -> dict[str, object]:
+    """Build an agent-oriented matrix summary."""
+    failed_runs = [run_result.name for run_result in run_results if run_result.status == RunStatus.FAILED]
+    key_observations = [
+        f"Recorded {len(run_results)} matrix run results.",
+        f"Dry run: {str(arguments.dry_run).lower()}.",
+    ]
+    if comparisons:
+        key_observations.append(f"Compared {len(comparisons)} metric values against the previous manifest.")
+    risks = [f"Failed runs: {', '.join(failed_runs)}."] if failed_runs else []
+    return {
+        "one_sentence": f"{arguments.chromosome_label} matrix finished with {len(failed_runs)} failed runs.",
+        "key_observations": key_observations,
+        "risks": risks,
+        "next_actions": [],
+    }
+
+
 def format_optional_float(value: float | None) -> str:
     """Format an optional float for Markdown."""
     if value is None:
@@ -981,6 +1329,7 @@ def write_reports(
     run_results: list[RunResult],
     previous_manifest_path: Path | None,
     comparisons: list[MetricComparison],
+    hydra_config: omegaconf.DictConfig | None = None,
 ) -> None:
     """Write JSON and Markdown reports for the matrix run."""
     manifest_path = arguments.output_directory / "manifest.json"
@@ -1001,20 +1350,92 @@ def write_reports(
         MATRIX_MANIFEST_CONTRACT,
         sort_keys=True,
     )
-    tooling_reports.write_markdown_report(
-        report_path,
-        build_markdown_report(
-            arguments=arguments,
+    producer = tooling_artifact_format.build_producer(
+        tool_name="run_regenie2_matrix",
+        repository_root=REPOSITORY_ROOT,
+    )
+    status = matrix_artifact_status(arguments, run_results)
+    status_reason = None
+    if status == tooling_artifact_format.ToolArtifactStatus.FAILED:
+        status_reason = "One or more matrix runs failed."
+    run = tooling_artifact_format.build_run_identity(
+        tool_name="run_regenie2_matrix",
+        output_directory=arguments.output_directory,
+        status=status,
+        status_reason=status_reason,
+    )
+    context_snapshot = tooling_artifact_format.build_context_snapshot(
+        output_directory=arguments.output_directory,
+        repository_root=REPOSITORY_ROOT,
+    )
+    metrics = build_matrix_metrics(arguments=arguments, run_id=run.run_id, run_results=run_results)
+    comparison_report = build_comparison_report(
+        producer=producer,
+        run=run,
+        previous_manifest_path=previous_manifest_path,
+        comparisons=comparisons,
+    )
+    report = tooling_artifact_format.build_report_envelope(
+        producer=producer,
+        run=run,
+        context=context_snapshot,
+        title=f"{arguments.chromosome_label} REGENIE Step 2 Matrix",
+        configuration=arguments_to_json_dict(arguments),
+        summary={
+            "headline": f"{arguments.chromosome_label} matrix finished with status {status.value}.",
+            "agent_summary": build_matrix_agent_summary(
+                arguments=arguments,
+                run_results=run_results,
+                comparisons=comparisons,
+            ),
+            "legacy_manifest": manifest_payload,
+        },
+        cases=[
+            {
+                "case_id": run_result.name,
+                "trait_type": run_result.trait.value,
+                "mode": run_result.mode.value,
+            }
+            for run_result in run_results
+        ],
+        trials=[run_result_to_json_dict(run_result) for run_result in run_results],
+        metrics=metrics,
+        comparisons=build_standard_comparison_rows(comparisons),
+        diagnostics={
+            "previous_manifest_path": str(previous_manifest_path) if previous_manifest_path is not None else None,
+            "legacy_comparison_count": len(comparisons),
+        },
+        failures=build_matrix_failure_records(run_results),
+    )
+    markdown_report = build_markdown_report(
+        arguments=arguments,
+        run_results=run_results,
+        previous_manifest_path=previous_manifest_path,
+        comparisons=comparisons,
+    )
+    tooling_artifact_format.write_standard_artifact_bundle(
+        output_directory=arguments.output_directory,
+        report=report,
+        events=build_matrix_events(arguments=arguments, run_id=run.run_id, run_results=run_results),
+        commands=build_matrix_command_records(
+            run_id=run.run_id,
+            output_directory=arguments.output_directory,
             run_results=run_results,
-            previous_manifest_path=previous_manifest_path,
-            comparisons=comparisons,
         ),
+        input_files=build_matrix_input_records(arguments),
+        summary_markdown=markdown_report,
+        comparisons=comparison_report,
+        hydra_config=hydra_config,
+        tool_payload=arguments_to_json_dict(arguments),
+        legacy_markdown_aliases=(report_path,),
+        notes=["Legacy manifest.json preserves the pre-v1 matrix manifest shape."],
     )
     logger.info("Wrote manifest: %s", manifest_path)
     logger.info("Wrote report: %s", report_path)
+    logger.info("Wrote standard report: %s", arguments.output_directory / "report.json")
 
 
-def run_matrix(arguments: MatrixArguments) -> list[RunResult]:
+def run_matrix(arguments: MatrixArguments, hydra_config: omegaconf.DictConfig | None = None) -> list[RunResult]:
     """Run the matrix and write reports."""
     arguments.output_directory.mkdir(parents=True, exist_ok=True)
     if arguments.validate_inputs and not arguments.dry_run:
@@ -1041,6 +1462,7 @@ def run_matrix(arguments: MatrixArguments) -> list[RunResult]:
         run_results=run_results,
         previous_manifest_path=previous_manifest_path,
         comparisons=comparisons,
+        hydra_config=hydra_config,
     )
     if any(run_result.status == RunStatus.FAILED for run_result in run_results):
         message = f"One or more {arguments.chromosome_label} matrix runs failed."
@@ -1053,7 +1475,7 @@ def hydra_main(config: omegaconf.DictConfig) -> None:
     """Hydra entrypoint for the chromosome matrix runner."""
     arguments = build_arguments_from_config(config)
     tooling_logging.configure_tool_logging(arguments.output_directory / "tooling.log")
-    run_matrix(arguments)
+    run_matrix(arguments, hydra_config=config)
 
 
 def main() -> None:

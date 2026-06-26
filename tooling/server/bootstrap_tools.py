@@ -4,22 +4,18 @@
 from __future__ import annotations
 
 import enum
-import hashlib
-import json
 import os
 import shutil
 import stat
 import subprocess
-import tarfile
 import tempfile
 import typing
-import urllib.request
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import hydra
 
+from tooling.common import downloads as tooling_downloads
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 
@@ -61,8 +57,6 @@ JUST_VERSION = "1.51.0"
 RUST_TOOLCHAIN_VERSION = "1.96.0"
 RUSTUP_INIT_SHA256 = "4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
 RUSTUP_INIT_URL = "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init"
-DOWNLOAD_TIMEOUT_SECONDS = 60
-DOWNLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
 TOOL_ARCHIVES = (
     ToolArchive(
         tool_name="just",
@@ -122,95 +116,17 @@ class BootstrapToolsArguments:
     tools_dir: Path | None
 
 
+@dataclass(frozen=True)
+class RetrievedToolArchive:
+    """Downloaded archive and extracted executable member paths."""
+
+    archive_path: Path
+    member_paths: dict[str, Path]
+
+
 def resolve_tools_directory() -> Path:
     """Resolve the repo-local tools directory."""
     return Path(os.environ.get("GWAS_ENGINE_TOOLS_DIR", str(DEFAULT_TOOLS_DIRECTORY))).expanduser().resolve()
-
-
-def calculate_sha256(download_path: Path) -> str:
-    """Calculate a file SHA256 digest."""
-    sha256_hash = hashlib.sha256()
-    with download_path.open("rb") as file_handle:
-        for chunk in iter(lambda: file_handle.read(1024 * 1024), b""):
-            sha256_hash.update(chunk)
-    return sha256_hash.hexdigest()
-
-
-def verify_sha256(download_path: Path, expected_sha256: str) -> None:
-    """Raise when a file SHA256 digest does not match."""
-    actual_sha256 = calculate_sha256(download_path)
-    if actual_sha256 != expected_sha256:
-        message = f"Checksum mismatch for {download_path.name}: expected {expected_sha256}, got {actual_sha256}."
-        raise RuntimeError(message)
-
-
-def download_manifest_path(download_path: Path) -> Path:
-    """Return the manifest path for a downloaded file."""
-    return download_path.with_name(f"{download_path.name}.manifest.json")
-
-
-def write_download_manifest(
-    *,
-    download_path: Path,
-    download_url: str,
-    expected_sha256: str,
-    actual_sha256: str,
-) -> None:
-    """Write a small manifest for an installed download artifact."""
-    manifest = {
-        "schema_version": 1,
-        "download_url": download_url,
-        "path": str(download_path),
-        "expected_sha256": expected_sha256,
-        "actual_sha256": actual_sha256,
-        "size_bytes": download_path.stat().st_size,
-    }
-    download_manifest_path(download_path).write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
-
-def stream_download(download_url: str, temporary_download_path: Path) -> None:
-    """Stream a download to a temporary path."""
-    with (
-        urllib.request.urlopen(download_url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response,
-        temporary_download_path.open("wb") as file_handle,
-    ):
-        while True:
-            chunk = response.read(DOWNLOAD_CHUNK_SIZE_BYTES)
-            if not chunk:
-                break
-            file_handle.write(chunk)
-
-
-def download_file(download_url: str, download_path: Path, expected_sha256: str) -> None:
-    """Download a file if missing or checksum-invalid."""
-    if download_path.exists():
-        verify_sha256(download_path, expected_sha256)
-        write_download_manifest(
-            download_path=download_path,
-            download_url=download_url,
-            expected_sha256=expected_sha256,
-            actual_sha256=calculate_sha256(download_path),
-        )
-        print(f"Reusing {download_path}")
-        return
-
-    temporary_download_path = download_path.with_suffix(f"{download_path.suffix}.tmp")
-    print(f"Downloading {download_url}")
-    try:
-        stream_download(download_url, temporary_download_path)
-        verify_sha256(temporary_download_path, expected_sha256)
-        temporary_download_path.replace(download_path)
-        write_download_manifest(
-            download_path=download_path,
-            download_url=download_url,
-            expected_sha256=expected_sha256,
-            actual_sha256=calculate_sha256(download_path),
-        )
-    except Exception:
-        temporary_download_path.unlink(missing_ok=True)
-        raise
 
 
 def make_executable(executable_path: Path) -> None:
@@ -231,42 +147,71 @@ def install_binary(binary_bytes: bytes, binary_path: Path) -> None:
     temporary_path.replace(binary_path)
 
 
-def read_zip_member(archive_path: Path, archive_member_name: str) -> bytes:
-    """Read one binary member from a ZIP archive."""
-    with zipfile.ZipFile(archive_path) as zip_file:
-        return zip_file.read(archive_member_name)
-
-
-def read_tar_gzip_member(archive_path: Path, archive_member_name: str) -> bytes:
-    """Read one binary member from a gzipped tar archive."""
-    with tarfile.open(archive_path, mode="r:gz") as tar_file:
-        tar_member = tar_file.getmember(archive_member_name)
-        extracted_file = tar_file.extractfile(tar_member)
-        if extracted_file is None:
-            message = f"Archive member {archive_member_name} is not a file."
-            raise RuntimeError(message)
-        return extracted_file.read()
-
-
-def read_archive_member(tool_archive: ToolArchive, archive_path: Path, archive_member_name: str) -> bytes:
-    """Read one executable payload from a supported archive."""
+def build_archive_processor(
+    *,
+    tool_archive: ToolArchive,
+    extract_directory: Path,
+) -> tooling_downloads.DownloadProcessor | None:
+    """Build the Pooch processor for a supported archive."""
+    member_names = tuple(binary_member.archive_member_name for binary_member in tool_archive.binary_members)
     if tool_archive.archive_format == ArchiveFormat.ZIP:
-        return read_zip_member(archive_path, archive_member_name)
+        return tooling_downloads.build_unzip_processor(members=member_names, extract_directory=extract_directory)
     if tool_archive.archive_format == ArchiveFormat.TAR_GZIP:
-        return read_tar_gzip_member(archive_path, archive_member_name)
+        return tooling_downloads.build_untar_processor(members=member_names, extract_directory=extract_directory)
     if tool_archive.archive_format == ArchiveFormat.RAW:
-        return archive_path.read_bytes()
+        return None
     message = f"Unsupported archive format: {tool_archive.archive_format}."
     raise ValueError(message)
 
 
+def find_extracted_member_path(
+    *,
+    processed_paths: tuple[Path, ...],
+    extract_directory: Path,
+    archive_member_name: str,
+) -> Path:
+    """Find one extracted archive member returned by Pooch."""
+    for processed_path in processed_paths:
+        if processed_path.name == archive_member_name or processed_path.as_posix().endswith(archive_member_name):
+            return processed_path
+    fallback_path = extract_directory / archive_member_name
+    if fallback_path.exists():
+        return fallback_path
+    processed_listing = ", ".join(str(processed_path) for processed_path in processed_paths)
+    message = f"Archive member {archive_member_name} was not extracted. Processed paths: {processed_listing}"
+    raise RuntimeError(message)
+
+
+def retrieve_tool_archive(tool_archive: ToolArchive, downloads_directory: Path) -> RetrievedToolArchive:
+    """Retrieve and process one pinned tool archive through Pooch."""
+    archive_path = downloads_directory / tool_archive.archive_filename
+    extract_directory = downloads_directory / f"{tool_archive.archive_filename}.contents"
+    processor = build_archive_processor(tool_archive=tool_archive, extract_directory=extract_directory)
+    downloaded_file = tooling_downloads.retrieve_file(
+        download_url=tool_archive.download_url,
+        destination_path=archive_path,
+        expected_sha256=tool_archive.expected_sha256,
+        processor=processor,
+    )
+    member_paths: dict[str, Path] = {}
+    for binary_member in tool_archive.binary_members:
+        if tool_archive.archive_format == ArchiveFormat.RAW:
+            member_paths[binary_member.archive_member_name] = downloaded_file.path
+        else:
+            member_paths[binary_member.archive_member_name] = find_extracted_member_path(
+                processed_paths=downloaded_file.processed_paths,
+                extract_directory=extract_directory,
+                archive_member_name=binary_member.archive_member_name,
+            )
+    return RetrievedToolArchive(archive_path=downloaded_file.path, member_paths=member_paths)
+
+
 def install_tool_archive(tool_archive: ToolArchive, downloads_directory: Path, bin_directory: Path) -> None:
     """Download, verify, and install one pinned tool archive."""
-    archive_path = downloads_directory / tool_archive.archive_filename
-    download_file(tool_archive.download_url, archive_path, tool_archive.expected_sha256)
+    retrieved_archive = retrieve_tool_archive(tool_archive, downloads_directory)
     for binary_member in tool_archive.binary_members:
         binary_path = bin_directory / binary_member.installed_name
-        binary_bytes = read_archive_member(tool_archive, archive_path, binary_member.archive_member_name)
+        binary_bytes = retrieved_archive.member_paths[binary_member.archive_member_name].read_bytes()
         install_binary(binary_bytes, binary_path)
         print(f"Installed {tool_archive.tool_name}: {binary_path}")
 
@@ -308,7 +253,11 @@ def install_rust_toolchain(tools_directory: Path, downloads_directory: Path) -> 
         return
 
     rustup_init_path = downloads_directory / "rustup-init"
-    download_file(RUSTUP_INIT_URL, rustup_init_path, RUSTUP_INIT_SHA256)
+    tooling_downloads.retrieve_file(
+        download_url=RUSTUP_INIT_URL,
+        destination_path=rustup_init_path,
+        expected_sha256=RUSTUP_INIT_SHA256,
+    )
     make_executable(rustup_init_path)
     subprocess.run(
         [

@@ -10,9 +10,13 @@ The tooling package now has a small internal framework:
 - `tooling.common.registry` owns grouped CLI dispatch tables.
 - `tooling.common.commands` owns shell-free subprocess execution, logs, timeouts, and redacted environment reporting.
 - `tooling.common.reports` owns versioned JSON report validation.
+- `tooling.common.artifact_format` owns Tooling Artifact Format v1 report, manifest, metric, event, command, failure, finding, and comparison models.
 - `tooling.common.g_regenie` owns shared `g regenie` CLI rendering and Python API payload rendering.
+- `tooling.common.downloads` owns Pooch-backed retrieval, cache reuse, SHA-256 validation, archive processors, and download manifests for data and server-tool assets.
 
 Benchmark and profiler code should use these contracts instead of rebuilding command vectors, report dictionaries, or grouped dispatch chains by hand.
+
+Artifact-producing tools should write Tooling Artifact Format v1 beside any legacy compatibility summaries. The canonical machine-readable files are `artifact_manifest.json`, `report.json`, `events.jsonl`, `metrics.jsonl`, `commands/commands.jsonl`, `config/resolved_hydra.yaml`, `config/resolved_tool.json`, and `summary.md`. Use `uv run --no-sync python -m tooling.cli.schema_check tool.path=<output_dir>` to validate a completed artifact directory.
 
 The base tooling config is `tooling/configs/config.yaml`. It sets:
 
@@ -23,6 +27,11 @@ hydra:
 ```
 
 This preserves the current repository-relative behavior of benchmark commands. Dataset paths still honor `GWAS_ENGINE_DATA_DIR`.
+
+Data and server-tool retrieval should go through the shared Pooch wrapper rather
+than calling `urllib`, `zipfile`, or `tarfile` directly. Tool-specific code may
+still own installation steps after retrieval, such as linking executables or
+extracting `.deb` payloads.
 
 The long-form usage and extension guide is `documentation/development/tooling.md`.
 
