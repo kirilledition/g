@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import signal
 import typing
 from dataclasses import dataclass
@@ -13,6 +14,13 @@ if typing.TYPE_CHECKING:
 
 NATIVE_BUILD_SHUTDOWN_SIGNAL_PAYLOAD = getattr(g._core, "build_shutdown_signal_payload", None)
 NATIVE_SHUTDOWN_SIGNAL_CACHE: dict[int, ShutdownSignal]
+
+
+class ShutdownRequestAction(enum.StrEnum):
+    """Native shutdown decision action."""
+
+    GRACEFUL = "graceful"
+    FORCE = "force"
 
 
 @dataclass(frozen=True)
@@ -74,12 +82,20 @@ class GracefulShutdownController:
         """Initialize the controller."""
         self.handled_signals = handled_signals or (signal.SIGINT, signal.SIGTERM)
         self.previous_handlers: dict[signal.Signals, typing.Any] = {}
-        self.requested_signal: ShutdownSignal | None = None
+        self.native_controller = g._core.NativeShutdownController()
         self.handlers_installed = False
+
+    @property
+    def requested_signal(self) -> ShutdownSignal | None:
+        """Return the shutdown signal currently recorded by the native handle."""
+        signal_payload = self.native_controller.requested_signal_payload()
+        if signal_payload is None:
+            return None
+        return shutdown_signal_from_native_payload(signal_payload)
 
     def __enter__(self) -> GracefulShutdownController:
         """Install signal handlers and return this controller."""
-        self.requested_signal = None
+        self.native_controller.reset()
         self.previous_handlers = {}
         for handled_signal in self.handled_signals:
             self.previous_handlers[handled_signal] = signal.getsignal(handled_signal)
@@ -96,14 +112,14 @@ class GracefulShutdownController:
         """Restore previous signal handlers."""
         del exception_type, exception_value, traceback
         self.restore_previous_handlers()
-        self.requested_signal = None
+        self.native_controller.reset()
 
     def handle_signal(self, signal_number: int, frame: python_types.FrameType | None) -> None:
         """Request graceful shutdown on first signal and fast abort on the second."""
         del frame
-        shutdown_signal = build_shutdown_signal(signal_number)
-        if self.requested_signal is None:
-            self.requested_signal = shutdown_signal
+        decision_payload = native_mapping_payload(self.native_controller.request_shutdown_payload(signal_number))
+        shutdown_signal = shutdown_signal_from_native_payload(decision_payload["signal"])
+        if ShutdownRequestAction(str(decision_payload["action"])) == ShutdownRequestAction.GRACEFUL:
             raise GracefulShutdownRequested(shutdown_signal)
         self.restore_previous_handlers()
         raise_second_signal_exception(shutdown_signal)

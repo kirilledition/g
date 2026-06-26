@@ -14,7 +14,10 @@ pub use run_metadata::{
 };
 pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_policy, describe_logging_runtime_policy};
 pub use runtime_state::{ProcessRuntimeState, RuntimeCompatibilityError};
-pub use shutdown::{ShutdownSignalPayload, build_shutdown_signal};
+pub use shutdown::{
+    ShutdownControllerState, ShutdownRequestAction, ShutdownRequestDecisionPayload, ShutdownSignalPayload,
+    build_shutdown_signal,
+};
 pub use telemetry_policy::{
     TelemetryPathsPayload, TelemetryWriterCountersPayload, build_empty_writer_counters, format_timestamp,
     paths_refer_to_same_file, resolve_output_run_root, resolve_telemetry_paths, resolve_telemetry_stream_file,

@@ -9,6 +9,55 @@ pub struct ShutdownSignalPayload {
     pub exit_code: i32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShutdownRequestAction {
+    Graceful,
+    Force,
+}
+
+impl ShutdownRequestAction {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Graceful => "graceful",
+            Self::Force => "force",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShutdownRequestDecisionPayload {
+    pub action: ShutdownRequestAction,
+    pub signal: ShutdownSignalPayload,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ShutdownControllerState {
+    pub requested_signal: Option<ShutdownSignalPayload>,
+}
+
+impl ShutdownControllerState {
+    /// Record a handled shutdown signal and return the resulting action.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `signal_number` is not a supported Linux signal.
+    pub fn request_shutdown(&mut self, signal_number: i32) -> Result<ShutdownRequestDecisionPayload, String> {
+        let signal = build_shutdown_signal(signal_number)?;
+        let action = if self.requested_signal.is_none() {
+            self.requested_signal = Some(signal.clone());
+            ShutdownRequestAction::Graceful
+        } else {
+            ShutdownRequestAction::Force
+        };
+        Ok(ShutdownRequestDecisionPayload { action, signal })
+    }
+
+    pub fn reset(&mut self) {
+        self.requested_signal = None;
+    }
+}
+
 /// Build deterministic shutdown metadata for a Unix signal number.
 ///
 /// # Errors
@@ -68,5 +117,21 @@ mod tests {
         assert_eq!(payload.name, "SIGTERM");
         assert_eq!(payload.exit_code, 128 + signal::SIGTERM);
         assert!(build_shutdown_signal(0).is_err());
+    }
+
+    #[test]
+    fn shutdown_controller_tracks_first_and_repeated_signal() {
+        let mut controller = ShutdownControllerState::default();
+
+        let first_decision = controller.request_shutdown(signal::SIGINT).unwrap();
+        let second_decision = controller.request_shutdown(signal::SIGTERM).unwrap();
+
+        assert_eq!(first_decision.action, ShutdownRequestAction::Graceful);
+        assert_eq!(first_decision.signal.name, "SIGINT");
+        assert_eq!(second_decision.action, ShutdownRequestAction::Force);
+        assert_eq!(second_decision.signal.name, "SIGTERM");
+        assert_eq!(controller.requested_signal.as_ref().unwrap().name, "SIGINT");
+        controller.reset();
+        assert_eq!(controller.requested_signal, None);
     }
 }
