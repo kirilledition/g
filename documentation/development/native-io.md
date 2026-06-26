@@ -13,7 +13,7 @@ delivery, output writing, manifest handling, and resume.
 | Path | Responsibility |
 | --- | --- |
 | `crates/genotype/src/` | BGEN mmap/index/decode/preprocess/profile and genotype source planning. |
-| `src/sample.rs` | Sample, phenotype, covariate, and prediction alignment. |
+| `crates/input/src/` | Sample, phenotype, covariate, prediction-list, and LOCO prediction alignment. |
 | `crates/output/src/` | Arrow IPC chunks, Parquet parts/finalization, REGENIE text, manifests, resume, and writer sessions. |
 | `src/python/` | PyO3 bindings for native runtime, output, and logging. |
 | `src/g/io/source.py` | Python BGEN source configuration. |
@@ -39,7 +39,7 @@ not parse file formats.
 
 Native alignment resolves:
 
-- BGEN/sample file sample identities;
+- sample file identities and identifier views supplied by genotype readers;
 - phenotype and covariate rows;
 - Step 1 prediction rows;
 - sample-key mode;
@@ -92,7 +92,7 @@ Native I/O changes usually need tests in:
 - `tests/test_io_output.py`;
 - `tests/test_io_source.py`;
 - `tests/test_io_sample.py`;
-- Rust unit tests under `crates/genotype/src/` or `crates/output/src/`;
+- Rust unit tests under `crates/genotype/src/`, `crates/input/src/`, or `crates/output/src/`;
 - pipeline tests when callback delivery or writer sessions change.
 
 Output contract changes also require [Output Files](../public/output-files.md)

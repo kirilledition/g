@@ -47,6 +47,9 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
 - `crates/interface/src/config.default.toml` owns user-tunable defaults.
 - Rust owns CLI parsing, TOML decoding, config layering, default loading,
   validation, and effective TOML serialization; root PyO3 config classes are adapters.
+- `crates/input/src/` owns native sample, phenotype, covariate, prediction-list,
+  and LOCO prediction alignment; genotype readers keep BGEN-embedded sample
+  retrieval and pass identifier views into input code.
 - `crates/interface/src/partial.rs` defines the typed partial TOML surface with Serde,
   optional fields, aliases, and unknown-key rejection.
 - `crates/interface/src/overlay.rs` decodes provenance and overlays defaults, user

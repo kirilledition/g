@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.96.0"
 
 [workspace]
-members = [".", "crates/genotype", "crates/interface", "crates/output"]
+members = [".", "crates/genotype", "crates/input", "crates/interface", "crates/output"]
 default-members = ["."]
 resolver = "3"
 
@@ -29,6 +29,7 @@ crossbeam-channel = "0.5.15"
 csv = "1.4.0"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 g-genotype = { path = "crates/genotype" }
+g-input = { path = "crates/input" }
 g-interface = { path = "crates/interface" }
 g-output = { path = "crates/output" }
 memchr = "2.8.1"
@@ -57,14 +58,13 @@ pedantic = "warn"
 pyo3 = { workspace = true }
 numpy = { workspace = true }
 arrow = { workspace = true }
-csv = { workspace = true }
 g-genotype = { workspace = true }
+g-input = { workspace = true }
 g-interface = { workspace = true }
 g-output = { workspace = true }
 memchr = { workspace = true }
 rayon = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }

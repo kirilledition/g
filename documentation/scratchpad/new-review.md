@@ -108,7 +108,7 @@ That is the correct resume/reproducibility mindset.
 
 ## 5. Native sample alignment is in the right place
 
-`src/sample.rs` owns sample/phenotype/covariate alignment and has native structures for single phenotype, multi phenotype, phenotype groups, and grouped aligned sample data. 
+`crates/input/src/sample/` owns sample/phenotype/covariate alignment and has native structures for single phenotype, multi phenotype, phenotype groups, and grouped aligned sample data.
 
 It uses a native streaming tabular reader structure rather than Python DataFrames. 
 
