@@ -43,6 +43,11 @@ pub(crate) struct NativeResultInFlightSlotState {
     inner: native_schedule::ResultInFlightSlotState,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerLifecycleState {
+    inner: native_schedule::CallbackWorkerLifecycleState,
+}
+
 #[pymethods]
 impl NativeDosageBufferPoolState {
     #[new]
@@ -109,6 +114,23 @@ impl NativeResultInFlightSlotState {
 
     fn release_slot(&mut self) -> bool {
         self.inner.release_slot()
+    }
+}
+
+#[pymethods]
+impl NativeCallbackWorkerLifecycleState {
+    #[new]
+    fn new() -> Self {
+        Self { inner: native_schedule::CallbackWorkerLifecycleState::new() }
+    }
+
+    #[getter]
+    fn has_started(&self) -> bool {
+        self.inner.has_started()
+    }
+
+    fn mark_started(&mut self) -> bool {
+        self.inner.mark_started()
     }
 }
 

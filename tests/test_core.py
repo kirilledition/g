@@ -140,6 +140,15 @@ def test_resolve_grouped_union_callback_batch_size_enforces_native_delivery_poli
         _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=2)
 
 
+def test_native_callback_worker_lifecycle_state_tracks_start() -> None:
+    lifecycle_state = _core.NativeCallbackWorkerLifecycleState()
+
+    assert lifecycle_state.has_started is False
+    assert lifecycle_state.mark_started() is True
+    assert lifecycle_state.has_started is True
+    assert lifecycle_state.mark_started() is False
+
+
 def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
     queue_limits = _core.resolve_native_callback_queue_limits(
         staging_depth=3,

@@ -1648,6 +1648,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         self.result_in_flight_slot_state = callback_runtime._core.NativeResultInFlightSlotState(
             self.result_in_flight_limit
         )
+        self.worker_lifecycle_state = callback_runtime._core.NativeCallbackWorkerLifecycleState()
         self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
         self.dosage_buffer_limit = 2
         self.dosage_buffer_pool = callback_runtime._core.NativeDosageBufferPoolState(self.dosage_buffer_limit)
@@ -1686,6 +1687,11 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
     ) -> None:
         del packed_probability_pairs_by_variant, chunk_stats
         self.packed_metadata.append(variant_metadata)
+
+
+def mark_callback_workers_started(callback: typing.Any) -> None:
+    callback.worker_lifecycle_state = callback_runtime._core.NativeCallbackWorkerLifecycleState()
+    assert callback.worker_lifecycle_state.mark_started() is True
 
 
 def test_native_callback_runner_records_chromosome_progress_transitions() -> None:
@@ -1923,7 +1929,7 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
 def test_native_callback_runner_uses_native_variant_major_batch_handoff_plan() -> None:
     callback = ManualCallbackRunner()
     callback.worker_start_lock = threading.Lock()
-    callback.worker_threads_started = True
+    mark_callback_workers_started(callback)
     metadata = build_native_metadata()
     batch_handoff_plan = SimpleNamespace(chunk_count=1)
 
@@ -2262,7 +2268,7 @@ def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> No
     callback.result_queue = result_queue
     callback.result_worker_error = RuntimeError("writer failed")
     callback.result_worker_thread = result_worker_thread
-    callback.worker_threads_started = True
+    mark_callback_workers_started(callback)
 
     try:
         callback.stop_result_worker(timeout_seconds=None)
@@ -2283,7 +2289,7 @@ def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> No
     callback.dosage_queue = dosage_queue
     callback.worker_error = RuntimeError("dosage failed")
     callback.worker_thread = worker_thread
-    callback.worker_threads_started = True
+    mark_callback_workers_started(callback)
 
     try:
         callback.stop_dosage_worker(timeout_seconds=None)
@@ -2306,7 +2312,7 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
     callback.result_queue = result_queue
     callback.result_worker_error = None
     callback.result_worker_thread = result_worker_thread
-    callback.worker_threads_started = True
+    mark_callback_workers_started(callback)
 
     try:
         with (
@@ -2329,7 +2335,7 @@ def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
     callback.dosage_queue = dosage_queue
     callback.worker_error = None
     callback.worker_thread = worker_thread
-    callback.worker_threads_started = True
+    mark_callback_workers_started(callback)
 
     try:
         with (
@@ -2348,7 +2354,7 @@ def test_join_result_worker_raises_when_worker_does_not_stop() -> None:
     result_worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
     callback.result_worker_thread = result_worker_thread
-    callback.worker_threads_started = True
+    mark_callback_workers_started(callback)
 
     try:
         with (
@@ -2367,7 +2373,7 @@ def test_join_dosage_worker_raises_when_worker_does_not_stop() -> None:
     worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
     callback.worker_thread = worker_thread
-    callback.worker_threads_started = True
+    mark_callback_workers_started(callback)
 
     try:
         with (

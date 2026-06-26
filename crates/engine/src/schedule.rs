@@ -116,6 +116,31 @@ impl ResultInFlightSlotState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CallbackWorkerLifecycleState {
+    started: bool,
+}
+
+impl CallbackWorkerLifecycleState {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { started: false }
+    }
+
+    #[must_use]
+    pub const fn has_started(&self) -> bool {
+        self.started
+    }
+
+    pub fn mark_started(&mut self) -> bool {
+        if self.started {
+            return false;
+        }
+        self.started = true;
+        true
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BgenDeliveryMethod {
     DosageNativeMultiAlignedSamples,
@@ -510,6 +535,16 @@ mod tests {
         assert!(slot_state.release_slot());
         assert_eq!(slot_state.occupied_count(), 0);
         assert!(!slot_state.release_slot());
+    }
+
+    #[test]
+    fn tracks_callback_worker_lifecycle_start() {
+        let mut lifecycle_state = CallbackWorkerLifecycleState::new();
+
+        assert!(!lifecycle_state.has_started());
+        assert!(lifecycle_state.mark_started());
+        assert!(lifecycle_state.has_started());
+        assert!(!lifecycle_state.mark_started());
     }
 
     #[test]

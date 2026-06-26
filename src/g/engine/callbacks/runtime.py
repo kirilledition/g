@@ -128,7 +128,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             daemon=True,
         )
         self.worker_start_lock = threading.Lock()
-        self.worker_threads_started = False
+        self.worker_lifecycle_state = _core.NativeCallbackWorkerLifecycleState()
 
     @property
     def binary_correction_summary_chunk_count(self) -> int:
@@ -142,7 +142,12 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             self.result_worker_thread.start()
             self.worker_thread.start()
-            self.worker_threads_started = True
+            self.worker_lifecycle_state.mark_started()
+
+    @property
+    def worker_threads_started(self) -> bool:
+        """Return whether callback worker threads have been started."""
+        return self.worker_lifecycle_state.has_started
 
     def worker_threads_have_started(self) -> bool:
         """Return whether callback worker threads have been started."""
