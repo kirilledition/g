@@ -1,7 +1,5 @@
 //! Native pipeline orchestration building blocks.
 
-#![allow(clippy::missing_errors_doc)]
-
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -16,6 +14,12 @@ pub struct Regenie2RunEngineCore {
 }
 
 impl Regenie2RunEngineCore {
+    /// Open a BGEN-backed run engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the BGEN reader cannot open or validate the
+    /// requested file.
     pub fn open_bgen(
         bgen_path: &Path,
         chunk_size: usize,
@@ -26,10 +30,17 @@ impl Regenie2RunEngineCore {
         Ok(Self { reader, chunk_size, variant_limit })
     }
 
-    pub fn reader(&self) -> &BgenReaderCore {
+    #[must_use]
+    pub const fn reader(&self) -> &BgenReaderCore {
         &self.reader
     }
 
+    /// Plan chromosome-homogeneous genotype chunks for this run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when chunk sizing, variant limits, or committed chunk
+    /// identifiers are inconsistent with the opened reader.
     pub fn plan_chunks(&self, committed_chunk_identifiers: &BTreeSet<usize>) -> Result<Vec<ChunkSpec>, GenotypeError> {
         planner::plan_chromosome_homogeneous_chunks(
             self.reader.variant_count(),

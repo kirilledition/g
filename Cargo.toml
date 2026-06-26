@@ -70,6 +70,7 @@ pedantic = "warn"
 pyo3 = { workspace = true }
 numpy = { workspace = true }
 arrow = { workspace = true }
+g-engine = { workspace = true }
 g-genotype = { workspace = true }
 g-input = { workspace = true }
 g-interface = { workspace = true }

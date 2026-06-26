@@ -722,6 +722,7 @@ name = "g"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "g-engine",
  "g-genotype",
  "g-input",
  "g-interface",
@@ -746,6 +747,7 @@ dependencies = [
 name = "g-engine"
 version = "0.1.0"
 dependencies = [
+ "g-genotype",
  "thiserror",
 ]
 

@@ -14,7 +14,6 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::pipeline::Regenie2RunEngineCore;
 use crate::regenie::{
     MultiPredictionSource as NativeMultiPredictionSource, PredictionSource,
     resolve_prediction_loco_paths as resolve_native_prediction_loco_paths,
@@ -46,6 +45,7 @@ mod trusted_validation;
 
 use callback_summary::NativeBinaryCorrectionSummary;
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
+use g_engine::Regenie2RunEngineCore;
 use host_policy::{
     build_phenotype_compute_group_id_value, build_phenotype_compute_groups_payload,
     build_phenotype_output_directory_name, normalize_binary_correction_payload, plan_association_backend_payload,
