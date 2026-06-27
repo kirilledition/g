@@ -75,6 +75,36 @@ HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
 DEFAULT_TEST_INPUT_PATH: typing.Final[object] = object()
 
 
+def build_test_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:
+    """Build a native runtime compatibility token for output side-effect tests."""
+    runtime_state = _core.NativeRuntimeState()
+    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+        log_filter="info",
+        log_file=None,
+        log_stderr=False,
+        log_queue_size=1024,
+        log_lossy=True,
+        include_source_location=False,
+        include_span_events=False,
+        trace_file=None,
+        trace_filter="info",
+        trace_event_cap=None,
+        telemetry_mode="off",
+        telemetry_stream_file=None,
+    )
+    jax_policy_payload: dict[str, object] = {
+        "device": "cpu",
+        "cache_directory": None,
+        "matmul_precision": None,
+        "persistent_cache": True,
+        "persistent_cache_min_entry_size_bytes": 0,
+        "persistent_cache_min_compile_time_seconds": 0,
+        "xla_autotune_cache": False,
+        "transfer_guard": False,
+    }
+    return runtime_state.require_compatible_runtime_policy(logging_policy_payload, None, jax_policy_payload)
+
+
 def resolve_test_output_run_paths(
     output_root: Path,
     association_mode: AssociationMode,
@@ -103,6 +133,7 @@ def prepare_test_output_run(
         output_format=output_format,
         resume=resume,
         resume_mode=resume_mode,
+        runtime_compatibility_token=build_test_runtime_compatibility_token(),
     )
 
 
@@ -660,6 +691,7 @@ def initialize_test_output_run(
         current_header=current_header,
         resume=resume,
         resume_mode=resume_mode,
+        runtime_compatibility_token=build_test_runtime_compatibility_token(),
     )
 
 
@@ -770,6 +802,7 @@ def test_initialize_output_run_uses_existing_manifest_when_current_manifest_is_m
         current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
         resume=False,
         resume_mode=types.ResumeMode.FAST,
+        runtime_compatibility_token=build_test_runtime_compatibility_token(),
     )
 
     written_manifest = json.loads(output.get_run_manifest_path(output_run_paths).read_text(encoding="utf-8"))
@@ -803,6 +836,7 @@ def test_initialize_output_run_uses_prepared_manifest_without_reload(
         current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
         resume=False,
         resume_mode=types.ResumeMode.FAST,
+        runtime_compatibility_token=build_test_runtime_compatibility_token(),
     )
 
     written_manifest = json.loads(output.get_run_manifest_path(output_run_paths).read_text(encoding="utf-8"))
@@ -822,6 +856,7 @@ def test_initialize_output_run_rejects_existing_manifest_with_invalid_commits(tm
             current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
             resume=False,
             resume_mode=types.ResumeMode.FAST,
+            runtime_compatibility_token=build_test_runtime_compatibility_token(),
         )
 
 
@@ -836,6 +871,7 @@ def test_initialize_output_run_rejects_resume_without_manifest(tmp_path: Path) -
             current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
             resume=True,
             resume_mode=types.ResumeMode.FAST,
+            runtime_compatibility_token=build_test_runtime_compatibility_token(),
         )
 
 

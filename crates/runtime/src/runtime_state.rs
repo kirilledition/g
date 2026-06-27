@@ -25,6 +25,11 @@ pub struct ProcessRuntimeState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeCompatibilityToken {
+    _private: (),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeCompatibilityError {
     message: String,
 }
@@ -45,6 +50,24 @@ impl fmt::Display for RuntimeCompatibilityError {
 impl Error for RuntimeCompatibilityError {}
 
 impl ProcessRuntimeState {
+    /// Require all process-global runtime settings to be compatible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any requested process-global runtime setting
+    /// conflicts with previously configured state.
+    pub fn require_compatible_runtime_policy(
+        &self,
+        logging_policy: &LoggingRuntimePolicyPayload,
+        requested_rayon_thread_count: Option<i64>,
+        jax_policy: &JaxRuntimePolicyPayload,
+    ) -> Result<RuntimeCompatibilityToken, RuntimeCompatibilityError> {
+        self.require_compatible_logging_policy(logging_policy)?;
+        self.require_compatible_rayon_thread_count(requested_rayon_thread_count)?;
+        self.require_compatible_jax_policy(jax_policy)?;
+        Ok(RuntimeCompatibilityToken { _private: () })
+    }
+
     /// Require logging compatibility with previously configured process state.
     ///
     /// # Errors
@@ -227,5 +250,19 @@ mod tests {
         assert!(error.to_string().contains("JAX runtime is already configured"));
         assert!(error.to_string().contains("jax-cache-dir=/tmp/first-cache"));
         assert!(error.to_string().contains("jax-cache-dir=/tmp/second-cache"));
+    }
+
+    #[test]
+    fn issues_runtime_compatibility_token_after_all_checks_pass() {
+        let mut state = ProcessRuntimeState::default();
+        state.record_logging_policy(build_policy("info"));
+        state.record_rayon_thread_count(4);
+        state.record_jax_policy(build_jax_policy(Some("/tmp/cache")));
+
+        let token = state
+            .require_compatible_runtime_policy(&build_policy("info"), Some(4), &build_jax_policy(Some("/tmp/cache")))
+            .expect("matching process-global policy should issue a token");
+
+        assert_eq!(token, RuntimeCompatibilityToken { _private: () });
     }
 }

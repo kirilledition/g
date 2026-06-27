@@ -10,6 +10,11 @@ use g_runtime::runtime_policy as native_runtime_policy;
 use g_runtime::runtime_state as native_runtime_state;
 
 #[pyclass]
+pub(crate) struct NativeRuntimeCompatibilityToken {
+    token: native_runtime_state::RuntimeCompatibilityToken,
+}
+
+#[pyclass]
 pub(crate) struct NativeRuntimeState {
     state: Mutex<native_runtime_state::ProcessRuntimeState>,
 }
@@ -34,6 +39,21 @@ impl NativeRuntimeState {
     fn jax_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         let state = self.lock_state()?;
         state.jax_policy.as_ref().map(|policy| jax_runtime_policy_payload_to_dict(py, policy)).transpose()
+    }
+
+    fn require_compatible_runtime_policy(
+        &self,
+        logging_policy_payload: &Bound<'_, PyAny>,
+        rayon_thread_count: Option<i64>,
+        jax_policy_payload: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeRuntimeCompatibilityToken> {
+        let logging_policy = parse_logging_runtime_policy_payload(logging_policy_payload)?;
+        let jax_policy = parse_jax_runtime_policy_payload(jax_policy_payload)?;
+        let token = self
+            .lock_state()?
+            .require_compatible_runtime_policy(&logging_policy, rayon_thread_count, &jax_policy)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(NativeRuntimeCompatibilityToken { token })
     }
 
     fn require_compatible_logging_runtime_policy(&self, payload: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -75,6 +95,12 @@ impl NativeRuntimeState {
         let jax_policy = parse_jax_runtime_policy_payload(payload)?;
         self.lock_state()?.record_jax_policy(jax_policy);
         Ok(())
+    }
+}
+
+impl NativeRuntimeCompatibilityToken {
+    pub(crate) fn native_token(&self) -> &native_runtime_state::RuntimeCompatibilityToken {
+        &self.token
     }
 }
 

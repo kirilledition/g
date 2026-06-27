@@ -177,6 +177,50 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
         )
 
 
+def test_native_runtime_state_issues_compatibility_token() -> None:
+    runtime_state = _core.NativeRuntimeState()
+    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+        log_filter="info",
+        log_file=None,
+        log_stderr=False,
+        log_queue_size=1024,
+        log_lossy=True,
+        include_source_location=False,
+        include_span_events=False,
+        trace_file=None,
+        trace_filter="info",
+        trace_event_cap=None,
+        telemetry_mode="off",
+        telemetry_stream_file=None,
+    )
+    jax_policy_payload: dict[str, object] = {
+        "device": "cpu",
+        "cache_directory": None,
+        "matmul_precision": None,
+        "persistent_cache": True,
+        "persistent_cache_min_entry_size_bytes": 0,
+        "persistent_cache_min_compile_time_seconds": 0,
+        "xla_autotune_cache": False,
+        "transfer_guard": False,
+    }
+
+    runtime_token = runtime_state.require_compatible_runtime_policy(
+        logging_policy_payload,
+        None,
+        jax_policy_payload,
+    )
+
+    assert isinstance(runtime_token, _core.NativeRuntimeCompatibilityToken)
+
+    runtime_state.record_jax_runtime_policy({**jax_policy_payload, "cache_directory": "/tmp/first-cache"})
+    with pytest.raises(RuntimeError, match="JAX runtime is already configured"):
+        runtime_state.require_compatible_runtime_policy(
+            logging_policy_payload,
+            None,
+            {**jax_policy_payload, "cache_directory": "/tmp/second-cache"},
+        )
+
+
 def test_native_jax_runtime_setup_diagnostic_payloads() -> None:
     diagnostic_payloads = _core.build_jax_runtime_setup_diagnostic_payloads(
         requested_device="gpu",

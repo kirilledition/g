@@ -94,6 +94,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         current_headers_by_trait=current_headers,
         resume=resume,
         resume_mode=resume_mode,
+        runtime_compatibility_token=context.runtime_compatibility_token,
     )
     outputs.notify_output_runs_initialized(context=context, phenotype_names=compute_group.phenotype_names)
     committed_chunk_identifier_sets = initialized_outputs

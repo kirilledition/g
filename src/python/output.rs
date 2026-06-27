@@ -31,7 +31,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use serde::de::DeserializeOwned;
 
-use super::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata};
+use super::{
+    ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata, runtime_state::NativeRuntimeCompatibilityToken,
+};
 
 #[pyclass]
 pub(crate) struct OutputWriterSession {
@@ -413,7 +415,9 @@ pub(crate) fn prepare_output_run(
     association_mode: String,
     output_format: String,
     resume: bool,
+    runtime_compatibility_token: PyRef<'_, NativeRuntimeCompatibilityToken>,
 ) -> PyResult<NativePreparedOutputRun> {
+    let _runtime_compatibility_token = runtime_compatibility_token.native_token();
     let native_output_format = OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
     let prepared_output_run =
         prepare_native_output_run(Path::new(&output_root), &association_mode, native_output_format, resume)
@@ -625,7 +629,9 @@ pub(crate) fn initialize_output_run(
     current_header_json: String,
     resume: bool,
     resume_mode: String,
+    runtime_compatibility_token: PyRef<'_, NativeRuntimeCompatibilityToken>,
 ) -> PyResult<NativeInitializedOutputRun> {
+    let _runtime_compatibility_token = runtime_compatibility_token.native_token();
     let native_resume_mode = OutputResumeMode::parse(&resume_mode)
         .map_err(|error| output_writer_error_to_py(error, "parse_output_resume_mode"))?;
     let initialized_output_run = initialize_native_output_run(

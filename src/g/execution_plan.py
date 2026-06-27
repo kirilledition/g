@@ -227,7 +227,11 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
     )
 
 
-def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> RegenieExecutionPlan:
+def build_regenie_execution_plan(
+    regenie_config: config.RegenieConfig,
+    *,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
+) -> RegenieExecutionPlan:
     """Build a complete execution plan from a validated public config."""
     run_request = compile_run_request_payload(regenie_config)
     input_request = require_mapping(run_request, "input")
@@ -239,6 +243,7 @@ def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> Regeni
             phenotype_run_request=phenotype_run_request,
             association_mode=association_mode,
             output_plan=output_plan,
+            runtime_compatibility_token=runtime_compatibility_token,
         )
         for phenotype_run_request in require_mapping_sequence(run_request, "phenotype_runs")
     )
@@ -346,6 +351,7 @@ def build_phenotype_run_plan_from_request(
     phenotype_run_request: dict[str, typing.Any],
     association_mode: types.AssociationMode,
     output_plan: OutputPlan,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> PhenotypeRunPlan:
     """Prepare output paths from one native phenotype run request."""
     prepared_output_run = output.prepare_output_run(
@@ -354,6 +360,7 @@ def build_phenotype_run_plan_from_request(
         output_format=output_plan.writer_settings.output_format,
         resume=output_plan.resume,
         resume_mode=output_plan.resume_mode,
+        runtime_compatibility_token=runtime_compatibility_token,
     )
     return PhenotypeRunPlan(
         phenotype_name=typing.cast("str", phenotype_run_request["phenotype_name"]),
@@ -431,6 +438,7 @@ def build_phenotype_run_plan(
     phenotype_name: str,
     association_mode: types.AssociationMode,
     output_plan: OutputPlan,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> PhenotypeRunPlan:
     """Prepare output paths and resume manifest state for one phenotype."""
     output_directory_name = build_phenotype_output_directory_name(phenotype_index, phenotype_name)
@@ -440,6 +448,7 @@ def build_phenotype_run_plan(
         output_format=output_plan.writer_settings.output_format,
         resume=output_plan.resume,
         resume_mode=output_plan.resume_mode,
+        runtime_compatibility_token=runtime_compatibility_token,
     )
     return PhenotypeRunPlan(
         phenotype_name=phenotype_name,

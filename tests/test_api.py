@@ -101,6 +101,20 @@ def build_test_process_runtime_state(
     return runner_runtime.build_process_runtime_state(logging_policy, rayon_thread_count, jax_policy)
 
 
+def build_test_runtime_compatibility_token(
+    regenie_config: config.RegenieConfig,
+) -> _core.NativeRuntimeCompatibilityToken:
+    """Build a native compatibility token for direct execution-plan tests."""
+    telemetry_paths = telemetry_module.resolve_telemetry_paths(regenie_config)
+    runtime_policy = runner_runtime.build_runtime_policy(regenie_config, telemetry_paths)
+    runtime_state = typing.cast("_core.NativeRuntimeState", build_test_process_runtime_state(None, None))
+    return runtime_state.require_compatible_runtime_policy(
+        runner_runtime.logging_runtime_policy_to_native_payload(runtime_policy.logging_policy),
+        runtime_policy.rayon_thread_count,
+        runner_runtime.jax_runtime_policy_to_native_payload(runtime_policy.jax_policy),
+    )
+
+
 def build_diagnostics_config(**overrides: object) -> config.GDiagnosticsConfig:
     """Build packaged diagnostics config with test overrides."""
     return config.RegenieConfig.from_options(build_minimal_options(**overrides)).g_diagnostics
@@ -209,7 +223,10 @@ def test_execution_plan_uses_safe_phenotype_output_directories() -> None:
     with patch(
         "g.execution_plan.output.prepare_output_run", return_value=prepared_output_run
     ) as mock_prepare_output_run:
-        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        plan = execution_plan.build_regenie_execution_plan(
+            regenie_config,
+            runtime_compatibility_token=build_test_runtime_compatibility_token(regenie_config),
+        )
 
     assert tuple(phenotype_plan.phenotype_name for phenotype_plan in plan.phenotype_run_plans) == (
         "../bad",
@@ -1329,6 +1346,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
         }
     )
     run_paths = output.OutputRunPaths(Path("run"), Path("run/chunks"))
+    runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
 
     with (
         patch(
@@ -1337,12 +1355,16 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
         ),
         patch("g.runner.runtime.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
     ):
-        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        plan = execution_plan.build_regenie_execution_plan(
+            regenie_config,
+            runtime_compatibility_token=runtime_compatibility_token,
+        )
         runner_execution.dispatch_one_phenotype_engine_pipeline(
             plan=plan,
             phenotype_run_plan=plan.phenotype_run_plans[0],
             stage_timing_recorder=None,
             telemetry_session=None,
+            runtime_compatibility_token=runtime_compatibility_token,
             output_initialized_callback=lambda phenotype_names: None,
         )
 
@@ -1389,11 +1411,16 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
         ),
         patch("g.runner.runtime.run_regenie2_multi_phenotype_binary_bgen_pipeline") as mock_binary_pipeline,
     ):
-        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
+        plan = execution_plan.build_regenie_execution_plan(
+            regenie_config,
+            runtime_compatibility_token=runtime_compatibility_token,
+        )
         runner_execution.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=None,
             telemetry_session=None,
+            runtime_compatibility_token=runtime_compatibility_token,
             output_initialized_callback=lambda phenotype_names: None,
         )
 
@@ -1474,6 +1501,7 @@ def test_default_multi_phenotype_plan_dispatches_grouped_multi_phenotype_run() -
         }
     )
     run_paths = output.OutputRunPaths(Path("run"), Path("run/chunks"))
+    runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
 
     with (
         patch(
@@ -1482,12 +1510,16 @@ def test_default_multi_phenotype_plan_dispatches_grouped_multi_phenotype_run() -
         ),
         patch("g.runner.runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
     ):
-        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        plan = execution_plan.build_regenie_execution_plan(
+            regenie_config,
+            runtime_compatibility_token=runtime_compatibility_token,
+        )
         runner_execution.dispatch_execution_plan(
             regenie_config=regenie_config,
             plan=plan,
             stage_timing_recorder=None,
             telemetry_session=None,
+            runtime_compatibility_token=runtime_compatibility_token,
         )
 
     mock_multi_pipeline.assert_called_once()
@@ -1532,11 +1564,16 @@ def test_multi_phenotype_plan_dispatch_forwards_packed8_genotype_format() -> Non
         ),
         patch("g.runner.runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
     ):
-        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
+        plan = execution_plan.build_regenie_execution_plan(
+            regenie_config,
+            runtime_compatibility_token=runtime_compatibility_token,
+        )
         runner_execution.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=None,
             telemetry_session=None,
+            runtime_compatibility_token=runtime_compatibility_token,
             output_initialized_callback=lambda phenotype_names: None,
         )
 
@@ -1576,7 +1613,11 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
             output.PreparedOutputRun(run_paths[1], existing_manifests[1]),
         ),
     ):
-        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
+        plan = execution_plan.build_regenie_execution_plan(
+            regenie_config,
+            runtime_compatibility_token=runtime_compatibility_token,
+        )
 
     assert tuple(phenotype_plan.output_run_paths for phenotype_plan in plan.phenotype_run_plans) == run_paths
     assert tuple(phenotype_plan.existing_manifest for phenotype_plan in plan.phenotype_run_plans) == existing_manifests
@@ -1585,6 +1626,7 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
             plan=plan,
             stage_timing_recorder=None,
             telemetry_session=None,
+            runtime_compatibility_token=runtime_compatibility_token,
             output_initialized_callback=lambda phenotype_names: None,
         )
 
@@ -1611,7 +1653,10 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
         "g.execution_plan.output.prepare_output_run",
         return_value=output.PreparedOutputRun(run_paths, None),
     ):
-        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        plan = execution_plan.build_regenie_execution_plan(
+            regenie_config,
+            runtime_compatibility_token=build_test_runtime_compatibility_token(regenie_config),
+        )
 
     runner_metadata.extend_run_manifest(plan=plan, phenotype_run_plan=plan.phenotype_run_plans[0])
 

@@ -34,7 +34,7 @@ import g.engine.regenie2_pipeline.multi_group as pipeline_multi_group
 import g.engine.regenie2_pipeline.multi_trait as pipeline_multi_trait
 import g.engine.regenie2_pipeline.outputs as pipeline_outputs
 import g.engine.regenie2_pipeline.single_trait as pipeline_single_trait
-from g import execution_plan, types
+from g import _core, execution_plan, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import result as regenie2_binary_result
@@ -58,6 +58,36 @@ SCORE_ONLY_PLAN = types.BinaryCorrectionPlan(
     p_threshold=0.05,
     firth_se=False,
 )
+
+
+def build_test_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:
+    """Build a native runtime compatibility token for pipeline tests."""
+    runtime_state = _core.NativeRuntimeState()
+    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+        log_filter="info",
+        log_file=None,
+        log_stderr=False,
+        log_queue_size=1024,
+        log_lossy=True,
+        include_source_location=False,
+        include_span_events=False,
+        trace_file=None,
+        trace_filter="info",
+        trace_event_cap=None,
+        telemetry_mode="off",
+        telemetry_stream_file=None,
+    )
+    jax_policy_payload: dict[str, object] = {
+        "device": "cpu",
+        "cache_directory": None,
+        "matmul_precision": None,
+        "persistent_cache": True,
+        "persistent_cache_min_entry_size_bytes": 0,
+        "persistent_cache_min_compile_time_seconds": 0,
+        "xla_autotune_cache": False,
+        "transfer_guard": False,
+    }
+    return runtime_state.require_compatible_runtime_policy(logging_policy_payload, None, jax_policy_payload)
 
 
 def test_intersect_committed_chunk_identifier_sets_preserves_pipeline_helper_contract() -> None:
@@ -153,6 +183,7 @@ def build_test_regenie2_pipeline_context(**keyword_arguments: typing.Any) -> pip
         "requested_gpu_genotype_format",
         keyword_arguments["gpu_genotype_format"],
     )
+    keyword_arguments.setdefault("runtime_compatibility_token", build_test_runtime_compatibility_token())
     return pipeline_context.build_regenie2_pipeline_context(**keyword_arguments)
 
 
@@ -298,6 +329,7 @@ def _add_single_pipeline_defaults(keyword_arguments: dict[str, typing.Any]) -> N
     keyword_arguments.setdefault("stage_timing_recorder", None)
     keyword_arguments.setdefault("telemetry_session", None)
     keyword_arguments.setdefault("alignment_config", None)
+    keyword_arguments.setdefault("runtime_compatibility_token", build_test_runtime_compatibility_token())
     keyword_arguments.setdefault("output_initialized_callback", None)
 
 
@@ -335,6 +367,7 @@ def _add_multi_pipeline_defaults(keyword_arguments: dict[str, typing.Any]) -> No
     keyword_arguments.setdefault("alignment_config", None)
     keyword_arguments.setdefault("sample_mode", None)
     keyword_arguments.setdefault("phenotype_compute_groups", None)
+    keyword_arguments.setdefault("runtime_compatibility_token", build_test_runtime_compatibility_token())
     keyword_arguments.setdefault("output_initialized_callback", None)
 
 
@@ -4435,6 +4468,7 @@ def test_multi_resume_manifest_mismatch_does_not_partially_initialize_outputs(tm
             current_headers_by_trait=(first_header, second_current_header),
             resume=True,
             resume_mode=types.ResumeMode.FAST,
+            runtime_compatibility_token=build_test_runtime_compatibility_token(),
         )
 
     assert output.get_run_manifest_path(first_output_run_paths).read_bytes() == first_manifest_bytes

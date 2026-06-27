@@ -7,7 +7,7 @@ import time
 import typing
 from dataclasses import dataclass
 
-from g import execution_plan, types
+from g import _core, execution_plan, types
 from g.engine import run_events, shutdown, telemetry, timing
 from g.interface import config
 from g.runner import metadata, runtime
@@ -50,6 +50,7 @@ class CommonEngineDispatchRequest:
         stage_timing_recorder: Optional stage timing recorder.
         telemetry_session: Optional telemetry session.
         alignment_config: Sample alignment settings.
+        runtime_compatibility_token: Native token proving process-global runtime checks passed.
         output_initialized_callback: Callback after manifest initialization.
 
     """
@@ -78,6 +79,7 @@ class CommonEngineDispatchRequest:
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: telemetry.TelemetrySession | None
     alignment_config: typing.Any
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
 
 
@@ -93,7 +95,7 @@ def regenie(
     try:
         config.validate_config_for_run(regenie_config)
         runtime_policy = runtime.build_runtime_policy(regenie_config, active_telemetry_session.paths)
-        runtime.require_compatible_runtime_policy(runtime_policy)
+        runtime_compatibility_token = runtime.require_compatible_runtime_policy(runtime_policy)
         if initialize_logging_on_entry:
             runtime.initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
         association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
@@ -108,7 +110,11 @@ def regenie(
         )
         logger.info("Starting REGENIE run.")
         runtime.configure_runtime(regenie_config.g_compute, regenie_config.trait)
-        artifacts = run_validated_regenie_config(regenie_config, telemetry_session=active_telemetry_session)
+        artifacts = run_validated_regenie_config(
+            regenie_config,
+            telemetry_session=active_telemetry_session,
+            runtime_compatibility_token=runtime_compatibility_token,
+        )
     except shutdown.GracefulShutdownRequested as shutdown_request:
         interrupted_event = run_events.build_run_interrupted_event(shutdown_request)
         active_telemetry_session.log_event(
@@ -150,6 +156,7 @@ def regenie(
 def run_validated_regenie_config(
     regenie_config: config.RegenieConfig,
     telemetry_session: telemetry.TelemetrySession | None,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> RunArtifacts:
     """Plan, execute, and finalize a validated REGENIE-compatible config."""
     api_entry_start_time = time.perf_counter()
@@ -171,7 +178,10 @@ def run_validated_regenie_config(
         timing.record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
         output_start_time = time.perf_counter()
         logger.debug("Building REGENIE execution plan.")
-        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        plan = execution_plan.build_regenie_execution_plan(
+            regenie_config,
+            runtime_compatibility_token=runtime_compatibility_token,
+        )
         if telemetry_session is not None:
             telemetry_session.log_event(
                 "execution_plan_prepared",
@@ -191,6 +201,7 @@ def run_validated_regenie_config(
             plan=plan,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
+            runtime_compatibility_token=runtime_compatibility_token,
         )
         logger.debug("Finalizing REGENIE execution plan.")
         return metadata.finalize_execution_plan(
@@ -216,6 +227,7 @@ def dispatch_execution_plan(
     plan: execution_plan.RegenieExecutionPlan,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> tuple[Path | None, ...]:
     """Dispatch an execution plan to the native engine layer."""
     output_initialized_callback = metadata.build_output_initialized_metadata_callback(
@@ -229,6 +241,7 @@ def dispatch_execution_plan(
             plan=plan,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
+            runtime_compatibility_token=runtime_compatibility_token,
             output_initialized_callback=output_initialized_callback,
         )
     logger.debug("Dispatching single-phenotype native engine pipeline.")
@@ -238,6 +251,7 @@ def dispatch_execution_plan(
             phenotype_run_plan=plan.phenotype_run_plans[0],
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
+            runtime_compatibility_token=runtime_compatibility_token,
             output_initialized_callback=output_initialized_callback,
         ),
     )
@@ -248,6 +262,7 @@ def build_common_engine_dispatch_request(
     plan: execution_plan.RegenieExecutionPlan,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> CommonEngineDispatchRequest:
     """Build shared engine dispatch arguments."""
@@ -276,6 +291,7 @@ def build_common_engine_dispatch_request(
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
         alignment_config=plan.kernel_config.alignment_config,
+        runtime_compatibility_token=runtime_compatibility_token,
         output_initialized_callback=output_initialized_callback,
     )
 
@@ -286,6 +302,7 @@ def dispatch_one_phenotype_engine_pipeline(
     phenotype_run_plan: execution_plan.PhenotypeRunPlan,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> Path | None:
     """Dispatch one phenotype to the native linear or binary pipeline."""
@@ -293,6 +310,7 @@ def dispatch_one_phenotype_engine_pipeline(
         plan=plan,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
+        runtime_compatibility_token=runtime_compatibility_token,
         output_initialized_callback=output_initialized_callback,
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
@@ -331,6 +349,7 @@ def dispatch_one_phenotype_engine_pipeline(
             stage_timing_recorder=common_request.stage_timing_recorder,
             telemetry_session=common_request.telemetry_session,
             alignment_config=common_request.alignment_config,
+            runtime_compatibility_token=common_request.runtime_compatibility_token,
             output_initialized_callback=common_request.output_initialized_callback,
         )
         metadata.log_writer_finished(
@@ -371,6 +390,7 @@ def dispatch_one_phenotype_engine_pipeline(
         stage_timing_recorder=common_request.stage_timing_recorder,
         telemetry_session=common_request.telemetry_session,
         alignment_config=common_request.alignment_config,
+        runtime_compatibility_token=common_request.runtime_compatibility_token,
         output_initialized_callback=common_request.output_initialized_callback,
     )
     metadata.log_writer_finished(
@@ -387,6 +407,7 @@ def dispatch_multi_phenotype_engine_pipeline(
     plan: execution_plan.RegenieExecutionPlan,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> tuple[Path | None, ...]:
     """Dispatch multiple phenotypes to the shared native pipeline."""
@@ -394,6 +415,7 @@ def dispatch_multi_phenotype_engine_pipeline(
         plan=plan,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
+        runtime_compatibility_token=runtime_compatibility_token,
         output_initialized_callback=output_initialized_callback,
     )
     phenotype_names = tuple(phenotype_run_plan.phenotype_name for phenotype_run_plan in plan.phenotype_run_plans)
@@ -439,6 +461,7 @@ def dispatch_multi_phenotype_engine_pipeline(
             stage_timing_recorder=common_request.stage_timing_recorder,
             telemetry_session=common_request.telemetry_session,
             alignment_config=common_request.alignment_config,
+            runtime_compatibility_token=common_request.runtime_compatibility_token,
             sample_mode=plan.kernel_config.multi_phenotype_sample_mode,
             phenotype_compute_groups=plan.phenotype_compute_groups,
             output_initialized_callback=common_request.output_initialized_callback,
@@ -475,6 +498,7 @@ def dispatch_multi_phenotype_engine_pipeline(
             stage_timing_recorder=common_request.stage_timing_recorder,
             telemetry_session=common_request.telemetry_session,
             alignment_config=common_request.alignment_config,
+            runtime_compatibility_token=common_request.runtime_compatibility_token,
             sample_mode=plan.kernel_config.multi_phenotype_sample_mode,
             phenotype_compute_groups=plan.phenotype_compute_groups,
             output_initialized_callback=common_request.output_initialized_callback,

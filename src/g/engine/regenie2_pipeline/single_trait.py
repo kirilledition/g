@@ -260,6 +260,7 @@ def run_single_trait_bgen_pipeline(
         current_headers_by_trait=(current_header,),
         resume=resume,
         resume_mode=resume_mode,
+        runtime_compatibility_token=context.runtime_compatibility_token,
     )
     outputs.notify_output_runs_initialized(context=context, phenotype_names=(phenotype_name,))
     writer_sessions = outputs.create_pipeline_writer_sessions(
@@ -321,6 +322,7 @@ def run_regenie2_linear_bgen_pipeline(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
@@ -361,6 +363,7 @@ def run_regenie2_linear_bgen_pipeline(
             phenotype_names=(phenotype_name,),
             multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         ),
+        runtime_compatibility_token=runtime_compatibility_token,
         output_initialized_callback=output_initialized_callback,
     )
     return run_single_trait_bgen_pipeline(
@@ -413,6 +416,7 @@ def run_regenie2_binary_bgen_pipeline(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
@@ -457,6 +461,7 @@ def run_regenie2_binary_bgen_pipeline(
             phenotype_names=(phenotype_name,),
             multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         ),
+        runtime_compatibility_token=runtime_compatibility_token,
         output_initialized_callback=output_initialized_callback,
     )
     return run_single_trait_bgen_pipeline(

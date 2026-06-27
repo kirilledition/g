@@ -932,6 +932,7 @@ def initialize_output_run(
     current_header: RunManifestHeaderInput,
     resume: bool,
     resume_mode: types.ResumeMode,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> InitializedOutputRun:
     """Validate/write the manifest header and return accepted committed chunks."""
     current_header_mapping = run_manifest_header_input_to_mapping(current_header)
@@ -942,6 +943,7 @@ def initialize_output_run(
         json.dumps(current_header_mapping, sort_keys=True),
         resume,
         resume_mode.value,
+        runtime_compatibility_token,
     )
     committed_chunk_identifiers = frozenset(
         int(chunk_identifier) for chunk_identifier in native_initialized_output_run.committed_chunk_identifiers
@@ -958,6 +960,7 @@ def prepare_output_run(
     output_format: types.OutputFormat,
     resume: bool,
     resume_mode: types.ResumeMode,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> PreparedOutputRun:
     """Prepare a chunked output run directory and load existing manifest state."""
     del resume_mode
@@ -966,6 +969,7 @@ def prepare_output_run(
         association_mode.value,
         output_format.value,
         resume,
+        runtime_compatibility_token,
     )
     output_run_paths = OutputRunPaths(
         run_directory=Path(native_prepared_output_run.run_directory),

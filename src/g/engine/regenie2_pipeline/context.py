@@ -6,7 +6,7 @@ import logging
 import typing
 from dataclasses import dataclass
 
-from g import execution_plan, types
+from g import _core, execution_plan, types
 from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.engine import backend_planner, telemetry, timing
 from g.io import output
@@ -69,6 +69,7 @@ class Regenie2PipelineContext:
         input_fingerprint_cache: Run-scoped input fingerprint cache.
         alignment_config: Optional sample alignment settings.
         phenotype_compute_groups: Planned phenotype compute groups.
+        runtime_compatibility_token: Native token proving runtime checks passed.
         output_initialized_callback: Callback invoked after output manifests
             validate successfully for one or more phenotypes.
 
@@ -100,6 +101,7 @@ class Regenie2PipelineContext:
     input_fingerprint_cache: output.ManifestFileFingerprintCache
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...]
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
 
     @property
@@ -166,6 +168,7 @@ def build_regenie2_pipeline_context(
     telemetry_session: telemetry.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...],
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> Regenie2PipelineContext:
     """Build a resolved lifecycle context for a REGENIE step 2 run."""
@@ -209,6 +212,7 @@ def build_regenie2_pipeline_context(
         input_fingerprint_cache=output.ManifestFileFingerprintCache(),
         alignment_config=alignment_config,
         phenotype_compute_groups=phenotype_compute_groups,
+        runtime_compatibility_token=runtime_compatibility_token,
         output_initialized_callback=output_initialized_callback,
     )
 

@@ -207,6 +207,7 @@ def initialize_pipeline_output_runs(
     current_headers_by_trait: tuple[output.RunManifestHeaderInput, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> tuple[set[int], ...]:
     """Validate/write output manifests and return committed chunk sets."""
     if resume:
@@ -223,6 +224,7 @@ def initialize_pipeline_output_runs(
             current_header=current_header,
             resume=resume,
             resume_mode=resume_mode,
+            runtime_compatibility_token=runtime_compatibility_token,
         )
         for output_run_paths, existing_manifest, current_header in zip(
             output_run_paths_by_trait,

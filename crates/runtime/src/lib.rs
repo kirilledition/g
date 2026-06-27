@@ -30,7 +30,8 @@ pub use run_metadata::{
 };
 pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_policy, describe_logging_runtime_policy};
 pub use runtime_state::{
-    JaxRuntimePolicyPayload, ProcessRuntimeState, RuntimeCompatibilityError, describe_jax_runtime_policy,
+    JaxRuntimePolicyPayload, ProcessRuntimeState, RuntimeCompatibilityError, RuntimeCompatibilityToken,
+    describe_jax_runtime_policy,
 };
 pub use shutdown::{
     ShutdownControllerState, ShutdownRequestAction, ShutdownRequestDecisionPayload, ShutdownSignalPayload,

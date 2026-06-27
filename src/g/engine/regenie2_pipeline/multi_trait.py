@@ -6,7 +6,7 @@ import logging
 import time
 import typing
 
-from g import execution_plan, types
+from g import _core, execution_plan, types
 from g.engine import telemetry, timing
 from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
@@ -56,6 +56,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
@@ -98,6 +99,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
         alignment_config=alignment_config,
+        runtime_compatibility_token=runtime_compatibility_token,
         sample_mode=sample_mode,
         phenotype_compute_groups=phenotype_compute_groups,
         output_initialized_callback=output_initialized_callback,
@@ -138,6 +140,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
@@ -177,6 +180,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
         alignment_config=alignment_config,
+        runtime_compatibility_token=runtime_compatibility_token,
         sample_mode=sample_mode,
         phenotype_compute_groups=phenotype_compute_groups,
         output_initialized_callback=output_initialized_callback,
@@ -217,6 +221,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
     association_mode: types.AssociationMode,
@@ -264,6 +269,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         telemetry_session=telemetry_session,
         alignment_config=alignment_config,
         phenotype_compute_groups=resolved_compute_groups,
+        runtime_compatibility_token=runtime_compatibility_token,
         output_initialized_callback=output_initialized_callback,
     )
     if sample_mode == types.MultiPhenotypeSampleMode.PER_PHENOTYPE:

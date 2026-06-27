@@ -321,11 +321,13 @@ def configured_jax_runtime_policy() -> jax_runtime_models.JaxRuntimePolicy | Non
     return jax_runtime_policy_from_native_payload(policy_payload)
 
 
-def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> None:
-    """Raise when a run conflicts with process-global runtime state."""
-    require_compatible_logging_runtime_policy(runtime_policy.logging_policy)
-    require_compatible_rayon_thread_count(runtime_policy.rayon_thread_count)
-    require_compatible_jax_runtime_policy(runtime_policy.jax_policy)
+def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> _core.NativeRuntimeCompatibilityToken:
+    """Return a native token after process-global runtime checks pass."""
+    return PROCESS_RUNTIME_STATE.require_compatible_runtime_policy(
+        logging_runtime_policy_to_native_payload(runtime_policy.logging_policy),
+        runtime_policy.rayon_thread_count,
+        jax_runtime_policy_to_native_payload(runtime_policy.jax_policy),
+    )
 
 
 def describe_runtime_state() -> RuntimeState:
