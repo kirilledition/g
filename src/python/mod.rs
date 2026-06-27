@@ -84,6 +84,7 @@ use output::{
 };
 use preflight::{
     build_preflight_report_payload, resolve_preflight_variant_count, validate_binary_phenotype_case_control_counts,
+    validate_binary_phenotype_coding, validate_covariate_matrix_rank, validate_finite_array,
     validate_multi_prediction_preflight_shape, validate_multi_trait_preflight_shape_payload,
     validate_single_prediction_preflight_shape, validate_single_trait_preflight_shape_payload,
 };
@@ -1857,6 +1858,9 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_single_trait_preflight_shape_payload, module)?)?;
     module.add_function(wrap_pyfunction!(validate_multi_trait_preflight_shape_payload, module)?)?;
     module.add_function(wrap_pyfunction!(validate_binary_phenotype_case_control_counts, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_finite_array, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_covariate_matrix_rank, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_binary_phenotype_coding, module)?)?;
     module.add_function(wrap_pyfunction!(validate_single_prediction_preflight_shape, module)?)?;
     module.add_function(wrap_pyfunction!(validate_multi_prediction_preflight_shape, module)?)?;
     module.add_function(wrap_pyfunction!(normalize_binary_correction_payload, module)?)?;

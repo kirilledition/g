@@ -43,6 +43,12 @@ pub enum PreflightError {
     CovariateSampleCountMismatch,
     #[error("Sample count must exceed the number of covariate degrees of freedom.")]
     NonPositiveResidualDegreesOfFreedom,
+    #[error("{label} contains non-finite values.")]
+    NonFiniteArray { label: String },
+    #[error("Covariate matrix is rank deficient.")]
+    CovariateMatrixRankDeficient,
+    #[error("Binary phenotype must be coded as 0/1 after alignment.")]
+    BinaryPhenotypeCoding,
     #[error("Binary phenotype must contain at least one case and one control.")]
     BinaryPhenotypeMissingClass,
     #[error(
@@ -168,6 +174,44 @@ pub fn validate_multi_trait_preflight_shape_payload(
         sample_count: phenotype_sample_count,
         covariate_count,
     })
+}
+
+/// Validate deterministic finite-array preflight policy.
+///
+/// # Errors
+///
+/// Returns an error when the caller reports non-finite array values.
+pub fn validate_finite_array(label: &str, all_values_finite: bool) -> Result<(), PreflightError> {
+    if all_values_finite {
+        return Ok(());
+    }
+    Err(PreflightError::NonFiniteArray { label: label.to_string() })
+}
+
+/// Validate deterministic covariate matrix rank policy.
+///
+/// # Errors
+///
+/// Returns an error when the covariate matrix rank is smaller than the number of covariate columns.
+pub fn validate_covariate_matrix_rank(covariate_rank: i64, covariate_count: i64) -> Result<(), PreflightError> {
+    validate_non_negative_count("covariate matrix rank", covariate_rank)?;
+    validate_non_negative_count("covariate count", covariate_count)?;
+    if covariate_rank < covariate_count {
+        return Err(PreflightError::CovariateMatrixRankDeficient);
+    }
+    Ok(())
+}
+
+/// Validate deterministic binary phenotype coding policy.
+///
+/// # Errors
+///
+/// Returns an error when a binary phenotype contains a value other than 0 or 1 after alignment.
+pub fn validate_binary_phenotype_coding(is_binary_coded: bool) -> Result<(), PreflightError> {
+    if is_binary_coded {
+        return Ok(());
+    }
+    Err(PreflightError::BinaryPhenotypeCoding)
 }
 
 /// Validate deterministic binary phenotype case/control counts.
@@ -386,6 +430,20 @@ mod tests {
             validate_binary_phenotype_case_control_counts(1, 0).unwrap_err(),
             PreflightError::BinaryPhenotypeMissingClass,
         );
+    }
+
+    #[test]
+    fn validates_array_finiteness_rank_and_binary_coding_policy() {
+        validate_finite_array("Phenotype", true).unwrap();
+        validate_covariate_matrix_rank(2, 2).unwrap();
+        validate_binary_phenotype_coding(true).unwrap();
+
+        assert_eq!(
+            validate_finite_array("Prediction values for chromosome 2", false).unwrap_err(),
+            PreflightError::NonFiniteArray { label: "Prediction values for chromosome 2".to_string() },
+        );
+        assert_eq!(validate_covariate_matrix_rank(1, 2).unwrap_err(), PreflightError::CovariateMatrixRankDeficient,);
+        assert_eq!(validate_binary_phenotype_coding(false).unwrap_err(), PreflightError::BinaryPhenotypeCoding,);
     }
 
     #[test]

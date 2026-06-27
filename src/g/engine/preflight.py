@@ -160,26 +160,19 @@ def run_regenie2_multi_preflight(
 
 def validate_finite_array(label: str, values: np.ndarray) -> None:
     """Validate that an array contains only finite values."""
-    if np.isfinite(values).all():
-        return
-    message = f"{label} contains non-finite values."
-    raise ValueError(message)
+    g._core.validate_finite_array(label, bool(np.isfinite(values).all()))
 
 
 def validate_covariate_matrix_rank(covariate_matrix: np.ndarray, covariate_count: int) -> None:
     """Validate covariate matrix rank after native shape checks."""
     rank = int(np.linalg.matrix_rank(covariate_matrix))
-    if rank < covariate_count:
-        message = "Covariate matrix is rank deficient."
-        raise ValueError(message)
+    g._core.validate_covariate_matrix_rank(rank, covariate_count)
 
 
 def validate_binary_phenotype(phenotype_vector: np.ndarray) -> None:
     """Validate binary phenotype coding and case/control counts."""
     unique_values = {float(value) for value in np.unique(phenotype_vector)}
-    if not unique_values.issubset({0.0, 1.0}):
-        message = "Binary phenotype must be coded as 0/1 after alignment."
-        raise ValueError(message)
+    g._core.validate_binary_phenotype_coding(unique_values.issubset({0.0, 1.0}))
     control_count = int(np.count_nonzero(phenotype_vector == 0.0))
     case_count = int(np.count_nonzero(phenotype_vector == 1.0))
     g._core.validate_binary_phenotype_case_control_counts(case_count, control_count)

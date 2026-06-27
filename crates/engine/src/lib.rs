@@ -34,9 +34,10 @@ pub use phase::RunPhase;
 pub use pipeline::Regenie2RunEngineCore;
 pub use preflight::{
     PreflightError, PreflightReportPayload, build_preflight_report_payload, build_preflight_warnings,
-    resolve_scanned_variant_count, validate_binary_phenotype_case_control_counts,
-    validate_multi_prediction_preflight_shape, validate_multi_trait_preflight_shape_payload,
-    validate_single_prediction_preflight_shape, validate_single_trait_preflight_shape_payload,
+    resolve_scanned_variant_count, validate_binary_phenotype_case_control_counts, validate_binary_phenotype_coding,
+    validate_covariate_matrix_rank, validate_finite_array, validate_multi_prediction_preflight_shape,
+    validate_multi_trait_preflight_shape_payload, validate_single_prediction_preflight_shape,
+    validate_single_trait_preflight_shape_payload,
 };
 pub use preparation::{
     PipelineResumeCompatibilityError, initialize_pipeline_output_runs, validate_pipeline_resume_compatibility,

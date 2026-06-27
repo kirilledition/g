@@ -100,6 +100,22 @@ pub(crate) fn validate_binary_phenotype_case_control_counts(case_count: i64, con
 }
 
 #[pyfunction]
+pub(crate) fn validate_finite_array(label: &str, all_values_finite: bool) -> PyResult<()> {
+    native_preflight::validate_finite_array(label, all_values_finite).map_err(|error| preflight_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn validate_covariate_matrix_rank(covariate_rank: i64, covariate_count: i64) -> PyResult<()> {
+    native_preflight::validate_covariate_matrix_rank(covariate_rank, covariate_count)
+        .map_err(|error| preflight_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn validate_binary_phenotype_coding(is_binary_coded: bool) -> PyResult<()> {
+    native_preflight::validate_binary_phenotype_coding(is_binary_coded).map_err(|error| preflight_error_to_py(&error))
+}
+
+#[pyfunction]
 pub(crate) fn validate_single_prediction_preflight_shape(
     chromosome: &str,
     prediction_shape: Vec<i64>,

@@ -200,11 +200,23 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
 
 def test_native_preflight_binary_and_prediction_shape_policy() -> None:
     _core.validate_binary_phenotype_case_control_counts(case_count=1, control_count=2)
+    _core.validate_finite_array("Phenotype", all_values_finite=True)
+    _core.validate_covariate_matrix_rank(covariate_rank=2, covariate_count=2)
+    _core.validate_binary_phenotype_coding(is_binary_coded=True)
     _core.validate_single_prediction_preflight_shape("1", (3,), sample_count=3)
     _core.validate_multi_prediction_preflight_shape("2", (2, 3), trait_count=2, sample_count=3)
 
     with pytest.raises(ValueError, match="Binary phenotype must contain at least one case and one control"):
         _core.validate_binary_phenotype_case_control_counts(case_count=0, control_count=2)
+
+    with pytest.raises(ValueError, match="Phenotype contains non-finite values"):
+        _core.validate_finite_array("Phenotype", all_values_finite=False)
+
+    with pytest.raises(ValueError, match="Covariate matrix is rank deficient"):
+        _core.validate_covariate_matrix_rank(covariate_rank=1, covariate_count=2)
+
+    with pytest.raises(ValueError, match="Binary phenotype must be coded as 0/1 after alignment"):
+        _core.validate_binary_phenotype_coding(is_binary_coded=False)
 
     with pytest.raises(ValueError, match="Prediction sample count for chromosome 1 is 2, expected 3"):
         _core.validate_single_prediction_preflight_shape("1", (2,), sample_count=3)
