@@ -368,18 +368,21 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> t
 
 def configure_rayon_thread_pool(core_module: typing.Any, thread_count: int) -> None:
     """Configure Rayon global thread count once and reject incompatible repeats."""
-    if thread_count == PROCESS_RUNTIME_STATE.rayon_thread_count:
+    configuration_plan = PROCESS_RUNTIME_STATE.plan_rayon_thread_pool_configuration(thread_count)
+    if not configuration_plan.should_configure:
         return
-    require_compatible_rayon_thread_count(thread_count)
+    planned_thread_count = configuration_plan.thread_count
+    if planned_thread_count is None:
+        raise RuntimeError("Native Rayon configuration plan requested configuration without a thread count.")
     try:
-        core_module.configure_rayon_global_thread_pool(thread_count)
+        core_module.configure_rayon_global_thread_pool(planned_thread_count)
     except RuntimeError as error:
         message = (
-            f"Unable to configure Rayon global thread pool for --threads={thread_count}; "
+            f"Unable to configure Rayon global thread pool for --threads={planned_thread_count}; "
             f"existing Rayon settings are unknown: {error}"
         )
         raise RuntimeError(message) from error
-    PROCESS_RUNTIME_STATE.record_rayon_thread_count(thread_count)
+    PROCESS_RUNTIME_STATE.record_rayon_thread_count(planned_thread_count)
 
 
 def effective_rayon_thread_count(requested_thread_count: int | None) -> int | None:

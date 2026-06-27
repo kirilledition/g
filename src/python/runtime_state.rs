@@ -15,8 +15,26 @@ pub(crate) struct NativeRuntimeCompatibilityToken {
 }
 
 #[pyclass]
+pub(crate) struct NativeRayonThreadPoolConfigurationPlan {
+    inner: native_runtime_state::RayonThreadPoolConfigurationPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeRuntimeState {
     state: Mutex<native_runtime_state::ProcessRuntimeState>,
+}
+
+#[pymethods]
+impl NativeRayonThreadPoolConfigurationPlan {
+    #[getter]
+    fn should_configure(&self) -> bool {
+        self.inner.should_configure
+    }
+
+    #[getter]
+    fn thread_count(&self) -> Option<i64> {
+        self.inner.thread_count
+    }
 }
 
 #[pymethods]
@@ -78,6 +96,17 @@ impl NativeRuntimeState {
     fn record_rayon_thread_count(&self, thread_count: i64) -> PyResult<()> {
         self.lock_state()?.record_rayon_thread_count(thread_count);
         Ok(())
+    }
+
+    fn plan_rayon_thread_pool_configuration(
+        &self,
+        thread_count: i64,
+    ) -> PyResult<NativeRayonThreadPoolConfigurationPlan> {
+        let plan = self
+            .lock_state()?
+            .plan_rayon_thread_pool_configuration(thread_count)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(NativeRayonThreadPoolConfigurationPlan { inner: plan })
     }
 
     fn effective_rayon_thread_count(&self, requested_thread_count: Option<i64>) -> PyResult<Option<i64>> {

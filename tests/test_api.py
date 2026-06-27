@@ -858,6 +858,43 @@ def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None
     assert calls == [("tile", 32)]
 
 
+def test_configure_runtime_uses_native_rayon_configuration_plan() -> None:
+    calls: list[tuple[str, int | str]] = []
+    plan_calls: list[int] = []
+
+    class FakeRayonConfigurationPlan:
+        def __init__(self, *, should_configure: bool, thread_count: int | None) -> None:
+            self.should_configure = should_configure
+            self.thread_count = thread_count
+
+    class FakeProcessRuntimeState:
+        def plan_rayon_thread_pool_configuration(self, thread_count: int) -> FakeRayonConfigurationPlan:
+            plan_calls.append(thread_count)
+            return FakeRayonConfigurationPlan(should_configure=False, thread_count=None)
+
+        def record_rayon_thread_count(self, thread_count: int) -> None:
+            raise AssertionError(f"unexpected Rayon thread-count recording: {thread_count}")
+
+    class FakeCoreModule:
+        def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
+            calls.append(("tile", tile_variant_count))
+
+        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
+            calls.append(("threads", thread_count))
+
+    with (
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()),
+        patch("g.runner.runtime._core", FakeCoreModule()),
+    ):
+        runner_runtime.configure_runtime(
+            build_compute_config(bgen_decode_tile_variant_count=32),
+            build_trait_config(threads=4),
+        )
+
+    assert plan_calls == [4]
+    assert calls == [("tile", 32)]
+
+
 def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -> None:
     calls: list[tuple[str, int | str]] = []
 

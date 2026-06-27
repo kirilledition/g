@@ -30,6 +30,12 @@ pub struct RuntimeCompatibilityToken {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RayonThreadPoolConfigurationPlan {
+    pub should_configure: bool,
+    pub thread_count: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeCompatibilityError {
     message: String,
 }
@@ -125,6 +131,23 @@ impl ProcessRuntimeState {
 
     pub fn record_rayon_thread_count(&mut self, thread_count: i64) {
         self.rayon_thread_count = Some(thread_count);
+    }
+
+    /// Plan process-global Rayon thread-pool configuration for one request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the requested thread count conflicts with a
+    /// previously configured Rayon global thread count.
+    pub fn plan_rayon_thread_pool_configuration(
+        &self,
+        requested_thread_count: i64,
+    ) -> Result<RayonThreadPoolConfigurationPlan, RuntimeCompatibilityError> {
+        self.require_compatible_rayon_thread_count(Some(requested_thread_count))?;
+        if self.rayon_thread_count == Some(requested_thread_count) {
+            return Ok(RayonThreadPoolConfigurationPlan { should_configure: false, thread_count: None });
+        }
+        Ok(RayonThreadPoolConfigurationPlan { should_configure: true, thread_count: Some(requested_thread_count) })
     }
 
     #[must_use]
@@ -238,6 +261,23 @@ mod tests {
 
         assert!(error.to_string().contains("Rayon --threads is process-global"));
         assert_eq!(state.effective_rayon_thread_count(Some(8)), Some(4));
+    }
+
+    #[test]
+    fn plans_rayon_thread_pool_configuration_from_process_state() {
+        let mut state = ProcessRuntimeState::default();
+
+        assert_eq!(
+            state.plan_rayon_thread_pool_configuration(4).unwrap(),
+            RayonThreadPoolConfigurationPlan { should_configure: true, thread_count: Some(4) },
+        );
+
+        state.record_rayon_thread_count(4);
+        assert_eq!(
+            state.plan_rayon_thread_pool_configuration(4).unwrap(),
+            RayonThreadPoolConfigurationPlan { should_configure: false, thread_count: None },
+        );
+        assert!(state.plan_rayon_thread_pool_configuration(8).unwrap_err().to_string().contains("Rayon --threads"));
     }
 
     #[test]

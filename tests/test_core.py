@@ -422,6 +422,22 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
         )
 
 
+def test_native_runtime_state_plans_rayon_thread_pool_configuration() -> None:
+    runtime_state = _core.NativeRuntimeState()
+
+    configure_plan = runtime_state.plan_rayon_thread_pool_configuration(4)
+    runtime_state.record_rayon_thread_count(4)
+    skip_plan = runtime_state.plan_rayon_thread_pool_configuration(4)
+
+    assert isinstance(configure_plan, _core.NativeRayonThreadPoolConfigurationPlan)
+    assert configure_plan.should_configure is True
+    assert configure_plan.thread_count == 4
+    assert skip_plan.should_configure is False
+    assert skip_plan.thread_count is None
+    with pytest.raises(RuntimeError, match="Rayon --threads is process-global"):
+        runtime_state.plan_rayon_thread_pool_configuration(8)
+
+
 def test_native_rayon_thread_pool_rejects_zero_thread_count() -> None:
     with pytest.raises(ValueError, match="Rayon thread count must be positive"):
         _core.configure_rayon_global_thread_pool(0)
