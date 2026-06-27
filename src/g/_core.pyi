@@ -695,6 +695,12 @@ class NativeCallbackWorkerShutdownTimeouts:
     @property
     def worker_abort_stop_timeout_seconds(self) -> float: ...
 
+class NativeCallbackWorkerJoinPlan:
+    @property
+    def should_join(self) -> bool: ...
+    @property
+    def timeout_seconds(self) -> float: ...
+
 class NativeDosageBufferPoolState:
     def __init__(self, buffer_limit: int) -> None: ...
     @property
@@ -1205,6 +1211,14 @@ def resolve_native_callback_queue_limits(
     dosage_buffer_limit: int | None,
 ) -> NativeCallbackQueueLimits: ...
 def resolve_native_callback_worker_shutdown_timeouts() -> NativeCallbackWorkerShutdownTimeouts: ...
+def plan_dosage_callback_worker_join(
+    timeout_seconds: float | None,
+    has_started: bool,
+) -> NativeCallbackWorkerJoinPlan: ...
+def plan_result_callback_worker_join(
+    timeout_seconds: float | None,
+    has_started: bool,
+) -> NativeCallbackWorkerJoinPlan: ...
 def plan_callback_queue_operation_observation(
     queue_name: str,
     operation_name: str,

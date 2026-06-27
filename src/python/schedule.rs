@@ -83,6 +83,11 @@ pub(crate) struct NativeCallbackWorkerShutdownTimeouts {
     inner: native_schedule::CallbackWorkerShutdownTimeouts,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerJoinPlan {
+    inner: native_schedule::CallbackWorkerJoinPlan,
+}
+
 #[pymethods]
 impl NativeDosageBufferPoolState {
     #[new]
@@ -194,6 +199,19 @@ impl NativeCallbackWorkerShutdownTimeouts {
     #[getter]
     fn worker_abort_stop_timeout_seconds(&self) -> f64 {
         self.inner.worker_abort_stop_timeout_seconds
+    }
+}
+
+#[pymethods]
+impl NativeCallbackWorkerJoinPlan {
+    #[getter]
+    fn should_join(&self) -> bool {
+        self.inner.should_join
+    }
+
+    #[getter]
+    fn timeout_seconds(&self) -> f64 {
+        self.inner.timeout_seconds
     }
 }
 
@@ -321,6 +339,12 @@ impl From<native_schedule::CallbackWorkerShutdownTimeouts> for NativeCallbackWor
     }
 }
 
+impl From<native_schedule::CallbackWorkerJoinPlan> for NativeCallbackWorkerJoinPlan {
+    fn from(join_plan: native_schedule::CallbackWorkerJoinPlan) -> Self {
+        Self { inner: join_plan }
+    }
+}
+
 impl From<native_schedule::NativeCallbackQueueLimits> for NativeCallbackQueueLimits {
     fn from(queue_limits: native_schedule::NativeCallbackQueueLimits) -> Self {
         Self {
@@ -429,6 +453,22 @@ pub(crate) fn resolve_native_callback_queue_limits(
 #[pyfunction]
 pub(crate) fn resolve_native_callback_worker_shutdown_timeouts() -> NativeCallbackWorkerShutdownTimeouts {
     native_schedule::callback_worker_shutdown_timeouts().into()
+}
+
+#[pyfunction]
+pub(crate) fn plan_dosage_callback_worker_join(
+    timeout_seconds: Option<f64>,
+    has_started: bool,
+) -> NativeCallbackWorkerJoinPlan {
+    native_schedule::plan_dosage_callback_worker_join(timeout_seconds, has_started).into()
+}
+
+#[pyfunction]
+pub(crate) fn plan_result_callback_worker_join(
+    timeout_seconds: Option<f64>,
+    has_started: bool,
+) -> NativeCallbackWorkerJoinPlan {
+    native_schedule::plan_result_callback_worker_join(timeout_seconds, has_started).into()
 }
 
 #[pyfunction]

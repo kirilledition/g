@@ -27,14 +27,15 @@ pub use preflight::{
 };
 pub use schedule::{
     BgenDeliveryMethod, CallbackQueueOperationObservationPlan, CallbackQueueStageObservationPlan,
-    CallbackWorkerLifecycleState, CallbackWorkerShutdownTimeouts, DosageBufferPoolState, DosageBufferReusePlan,
-    MultiTraitOutputWritePlan, NativeCallbackQueueLimits, ResultInFlightSlotState, ScheduleError,
-    SingleTraitOutputWritePlan, VariantMajorDosageBatchHandoffPlan, WriterFinishExecutionPlan,
+    CallbackWorkerJoinPlan, CallbackWorkerLifecycleState, CallbackWorkerShutdownTimeouts, DosageBufferPoolState,
+    DosageBufferReusePlan, MultiTraitOutputWritePlan, NativeCallbackQueueLimits, ResultInFlightSlotState,
+    ScheduleError, SingleTraitOutputWritePlan, VariantMajorDosageBatchHandoffPlan, WriterFinishExecutionPlan,
     callback_worker_backpressure_poll_timeout_seconds, callback_worker_shutdown_timeouts,
     intersect_committed_chunk_identifier_sets, plan_callback_queue_operation_observation,
-    plan_callback_queue_stage_observation, plan_dosage_buffer_reuse, plan_multi_trait_output_write,
-    plan_single_trait_output_write, plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution,
-    resolve_bgen_delivery_method, resolve_callback_worker_stop_poll_timeout_seconds,
-    resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
-    resolve_native_callback_queue_limits, resolve_writer_finish_thread_count, should_attempt_callback_worker_stop,
+    plan_callback_queue_stage_observation, plan_dosage_buffer_reuse, plan_dosage_callback_worker_join,
+    plan_multi_trait_output_write, plan_result_callback_worker_join, plan_single_trait_output_write,
+    plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method,
+    resolve_callback_worker_stop_poll_timeout_seconds, resolve_delivery_callback_batch_size,
+    resolve_grouped_union_callback_batch_size, resolve_native_callback_queue_limits,
+    resolve_writer_finish_thread_count, should_attempt_callback_worker_stop,
 };

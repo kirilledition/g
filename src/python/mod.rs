@@ -85,17 +85,19 @@ use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runt
 use runtime_state::NativeRuntimeState;
 use schedule::{
     NativeCallbackQueueLimits, NativeCallbackQueueOperationObservationPlan, NativeCallbackQueueStageObservationPlan,
-    NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts, NativeDosageBufferPoolState,
-    NativeDosageBufferReusePlan, NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan,
-    NativeResultInFlightSlotState, NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan,
-    NativeWriterFinishExecutionPlan, intersect_committed_chunk_identifier_sets,
-    plan_callback_queue_operation_observation, plan_callback_queue_stage_observation, plan_dosage_buffer_reuse,
-    plan_multi_trait_chunk_write, plan_multi_trait_output_write, plan_single_trait_output_write,
-    plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method_value,
-    resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
-    resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
-    resolve_native_callback_queue_limits, resolve_native_callback_worker_shutdown_timeouts,
-    resolve_writer_finish_thread_count, should_attempt_callback_worker_stop,
+    NativeCallbackWorkerJoinPlan, NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts,
+    NativeDosageBufferPoolState, NativeDosageBufferReusePlan, NativeMultiTraitChunkWritePlan,
+    NativeMultiTraitOutputWritePlan, NativeResultInFlightSlotState, NativeSingleTraitOutputWritePlan,
+    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    intersect_committed_chunk_identifier_sets, plan_callback_queue_operation_observation,
+    plan_callback_queue_stage_observation, plan_dosage_buffer_reuse, plan_dosage_callback_worker_join,
+    plan_multi_trait_chunk_write, plan_multi_trait_output_write, plan_result_callback_worker_join,
+    plan_single_trait_output_write, plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution,
+    resolve_bgen_delivery_method_value, resolve_callback_worker_backpressure_poll_timeout_seconds,
+    resolve_callback_worker_stop_poll_timeout_seconds, resolve_delivery_callback_batch_size,
+    resolve_grouped_union_callback_batch_size, resolve_native_callback_queue_limits,
+    resolve_native_callback_worker_shutdown_timeouts, resolve_writer_finish_thread_count,
+    should_attempt_callback_worker_stop,
 };
 use shutdown::{NativeShutdownController, build_shutdown_signal_payload};
 use telemetry_policy::{
@@ -1764,6 +1766,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackQueueLimits>()?;
     module.add_class::<NativeCallbackQueueOperationObservationPlan>()?;
     module.add_class::<NativeCallbackQueueStageObservationPlan>()?;
+    module.add_class::<NativeCallbackWorkerJoinPlan>()?;
     module.add_class::<NativeCallbackWorkerLifecycleState>()?;
     module.add_class::<NativeCallbackWorkerShutdownTimeouts>()?;
     module.add_class::<NativeDosageBufferPoolState>()?;
@@ -1832,8 +1835,10 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_callback_queue_operation_observation, module)?)?;
     module.add_function(wrap_pyfunction!(plan_callback_queue_stage_observation, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_buffer_reuse, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_join, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_output_write, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_result_callback_worker_join, module)?)?;
     module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_variant_major_dosage_batch_handoff, module)?)?;
     module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;

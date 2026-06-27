@@ -947,14 +947,17 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def join_dosage_worker(self, timeout_seconds: float | None) -> None:
         """Join the dosage worker with a bounded shutdown wait."""
-        if not self.worker_threads_have_started():
+        join_plan = _core.plan_dosage_callback_worker_join(
+            timeout_seconds=timeout_seconds,
+            has_started=self.worker_threads_have_started(),
+        )
+        if not join_plan.should_join:
             return
-        effective_timeout_seconds = DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
-        self.worker_thread.join(timeout=effective_timeout_seconds)
+        self.worker_thread.join(timeout=join_plan.timeout_seconds)
         if self.worker_thread.is_alive():
             raise NativeBgenWorkerShutdownError(
                 worker_name=self.worker_thread.name,
-                timeout_seconds=effective_timeout_seconds,
+                timeout_seconds=join_plan.timeout_seconds,
             )
 
     def stop_result_worker(self, timeout_seconds: float | None) -> None:
@@ -989,14 +992,17 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def join_result_worker(self, timeout_seconds: float | None) -> None:
         """Join the result writer worker with a bounded shutdown wait."""
-        if not self.worker_threads_have_started():
+        join_plan = _core.plan_result_callback_worker_join(
+            timeout_seconds=timeout_seconds,
+            has_started=self.worker_threads_have_started(),
+        )
+        if not join_plan.should_join:
             return
-        effective_timeout_seconds = RESULT_WORKER_JOIN_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
-        self.result_worker_thread.join(timeout=effective_timeout_seconds)
+        self.result_worker_thread.join(timeout=join_plan.timeout_seconds)
         if self.result_worker_thread.is_alive():
             raise NativeBgenWorkerShutdownError(
                 worker_name=self.result_worker_thread.name,
-                timeout_seconds=effective_timeout_seconds,
+                timeout_seconds=join_plan.timeout_seconds,
             )
 
     def acquire_dosage_buffer(self, sample_count: int, variant_count: int) -> npt.NDArray[np.float32]:

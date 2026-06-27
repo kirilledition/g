@@ -258,6 +258,29 @@ def test_should_attempt_callback_worker_stop_uses_native_lifecycle_policy() -> N
     )
 
 
+def test_plan_callback_worker_join_uses_native_timeout_policy() -> None:
+    dosage_join_plan = _core.plan_dosage_callback_worker_join(
+        timeout_seconds=None,
+        has_started=True,
+    )
+    assert dosage_join_plan.should_join is True
+    assert dosage_join_plan.timeout_seconds == 60.0
+
+    result_join_plan = _core.plan_result_callback_worker_join(
+        timeout_seconds=0.25,
+        has_started=True,
+    )
+    assert result_join_plan.should_join is True
+    assert result_join_plan.timeout_seconds == 0.25
+
+    unstarted_join_plan = _core.plan_result_callback_worker_join(
+        timeout_seconds=None,
+        has_started=False,
+    )
+    assert unstarted_join_plan.should_join is False
+    assert unstarted_join_plan.timeout_seconds == 60.0
+
+
 def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
     queue_limits = _core.resolve_native_callback_queue_limits(
         staging_depth=3,
