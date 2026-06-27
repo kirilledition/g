@@ -107,7 +107,8 @@ use schedule::{
 use shutdown::{NativeShutdownController, build_shutdown_signal_payload};
 use telemetry_policy::{
     build_empty_telemetry_writer_counters_payload, format_telemetry_timestamp_value, paths_refer_to_same_file_value,
-    resolve_telemetry_output_run_root_value, resolve_telemetry_paths_payload, resolve_telemetry_stream_file_value,
+    resolve_telemetry_output_run_root_value, resolve_telemetry_paths_payload, resolve_telemetry_session_policy_payload,
+    resolve_telemetry_stream_file_value,
 };
 use timing::NativeStageTimingRecorder;
 use trusted_validation::{
@@ -1828,6 +1829,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_telemetry_output_run_root_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_telemetry_paths_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_telemetry_session_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;

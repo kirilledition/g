@@ -7,7 +7,7 @@ import unittest.mock
 
 import pytest
 
-from g import types
+from g import _core, types
 from g.engine import telemetry
 from g.interface import config
 from g.runner import runtime as runner_runtime
@@ -321,6 +321,53 @@ def test_telemetry_session_builds_current_event_payload_natively(tmp_path: Path)
     assert event_payload["thread_name"] == "MainThread"
     assert event_payload["kept_field"] == "value"
     assert "omitted_field" not in event_payload
+
+
+def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+
+    off_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.OFF,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=10,
+        run_id="run-1",
+    )
+    profile_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=10,
+        run_id="run-2",
+    )
+    profile_session.close()
+
+    assert dict(_core.resolve_telemetry_session_policy_payload("trace", 10)) == {
+        "enabled": True,
+        "profile_enabled": True,
+        "event_cap": 10,
+    }
+    assert dict(_core.resolve_telemetry_session_policy_payload("trace", 0)) == {
+        "enabled": True,
+        "profile_enabled": True,
+        "event_cap": None,
+    }
+    assert not off_session.enabled
+    assert not off_session.profile_enabled
+    assert off_session.native_telemetry_session is None
+    assert profile_session.enabled
+    assert profile_session.profile_enabled
 
 
 def test_telemetry_progress_throttle_emits_after_chunk_interval(tmp_path: Path) -> None:

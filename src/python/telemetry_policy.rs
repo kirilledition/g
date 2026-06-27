@@ -99,3 +99,18 @@ pub(crate) fn build_empty_telemetry_writer_counters_payload<'py>(py: Python<'py>
     payload.set_item("finish_flush_duration_seconds", counters.finish_flush_duration_seconds)?;
     Ok(payload)
 }
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn resolve_telemetry_session_policy_payload<'py>(
+    py: Python<'py>,
+    telemetry_mode: String,
+    trace_event_cap: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let policy = native_telemetry_policy::resolve_telemetry_session_policy(&telemetry_mode, trace_event_cap);
+    let payload = PyDict::new(py);
+    payload.set_item("enabled", policy.enabled)?;
+    payload.set_item("profile_enabled", policy.profile_enabled)?;
+    payload.set_item("event_cap", policy.event_cap)?;
+    Ok(payload)
+}

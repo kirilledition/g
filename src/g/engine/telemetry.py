@@ -12,6 +12,8 @@ from g import _core, types
 TelemetryCounterValue = bool | float | int | None
 TelemetryWriterCounters = dict[str, TelemetryCounterValue]
 TelemetryCloseMetadata = dict[str, TelemetryWriterCounters]
+TelemetrySessionPolicyValue = bool | int | None
+TelemetrySessionPolicy = dict[str, TelemetrySessionPolicyValue]
 
 if typing.TYPE_CHECKING:
     from g.interface import config
@@ -67,11 +69,16 @@ class TelemetrySession:
         self.mode = mode
         self.paths = paths
         self.run_id = run_id or _core.generate_telemetry_run_id_value()
+        self.session_policy = typing.cast(
+            "TelemetrySessionPolicy",
+            native_mapping_payload(_core.resolve_telemetry_session_policy_payload(mode.value, trace_event_cap)),
+        )
         self.native_progress_throttle = _core.NativeTelemetryProgressThrottle(
             progress_interval_seconds,
             progress_interval_chunks,
         )
-        native_event_cap = trace_event_cap if mode == types.TelemetryMode.TRACE and trace_event_cap > 0 else None
+        event_cap_payload = self.session_policy["event_cap"]
+        native_event_cap = None if event_cap_payload is None else int(event_cap_payload)
         self.native_telemetry_session = (
             _core.NativeTelemetrySession(
                 str(paths.stream_file),
@@ -86,12 +93,12 @@ class TelemetrySession:
     @property
     def enabled(self) -> bool:
         """Return whether this session writes telemetry."""
-        return self.mode != types.TelemetryMode.OFF
+        return bool(self.session_policy["enabled"])
 
     @property
     def profile_enabled(self) -> bool:
         """Return whether profiling-grade telemetry is enabled."""
-        return self.mode in {types.TelemetryMode.PROFILE, types.TelemetryMode.TRACE}
+        return bool(self.session_policy["profile_enabled"])
 
     @property
     def close_metadata(self) -> TelemetryCloseMetadata | None:
@@ -118,7 +125,7 @@ class TelemetrySession:
 
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
-        if self.mode == types.TelemetryMode.OFF:
+        if not self.enabled:
             return
         if not self.should_emit_progress(processed_chunk_count):
             return

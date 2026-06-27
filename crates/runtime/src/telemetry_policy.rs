@@ -28,6 +28,13 @@ pub struct TelemetryWriterCountersPayload {
     pub finish_flush_duration_seconds: Option<f64>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetrySessionPolicyPayload {
+    pub enabled: bool,
+    pub profile_enabled: bool,
+    pub event_cap: Option<i64>,
+}
+
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::cast_precision_loss)]
 #[allow(clippy::cast_sign_loss)]
@@ -134,6 +141,15 @@ pub fn build_empty_writer_counters() -> TelemetryWriterCountersPayload {
     }
 }
 
+#[must_use]
+pub fn resolve_telemetry_session_policy(telemetry_mode: &str, trace_event_cap: i64) -> TelemetrySessionPolicyPayload {
+    TelemetrySessionPolicyPayload {
+        enabled: telemetry_mode != "off",
+        profile_enabled: matches!(telemetry_mode, "profile" | "trace"),
+        event_cap: if telemetry_mode == "trace" && trace_event_cap > 0 { Some(trace_event_cap) } else { None },
+    }
+}
+
 fn optional_path_string(path: Option<&Path>) -> Option<String> {
     path.map(|value| value.display().to_string())
 }
@@ -200,6 +216,30 @@ mod tests {
         assert_eq!(
             stream_file,
             Err("log_file and trace_file both configure the unified telemetry stream; use one path.".to_string()),
+        );
+    }
+
+    #[test]
+    fn resolves_telemetry_session_policy() {
+        assert_eq!(
+            resolve_telemetry_session_policy("off", 10),
+            TelemetrySessionPolicyPayload { enabled: false, profile_enabled: false, event_cap: None },
+        );
+        assert_eq!(
+            resolve_telemetry_session_policy("progress", 10),
+            TelemetrySessionPolicyPayload { enabled: true, profile_enabled: false, event_cap: None },
+        );
+        assert_eq!(
+            resolve_telemetry_session_policy("profile", 10),
+            TelemetrySessionPolicyPayload { enabled: true, profile_enabled: true, event_cap: None },
+        );
+        assert_eq!(
+            resolve_telemetry_session_policy("trace", 10),
+            TelemetrySessionPolicyPayload { enabled: true, profile_enabled: true, event_cap: Some(10) },
+        );
+        assert_eq!(
+            resolve_telemetry_session_policy("trace", 0),
+            TelemetrySessionPolicyPayload { enabled: true, profile_enabled: true, event_cap: None },
         );
     }
 }
