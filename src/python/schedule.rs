@@ -88,6 +88,11 @@ pub(crate) struct NativeCallbackWorkerJoinPlan {
     inner: native_schedule::CallbackWorkerJoinPlan,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerStopPlan {
+    inner: native_schedule::CallbackWorkerStopPlan,
+}
+
 #[pymethods]
 impl NativeDosageBufferPoolState {
     #[new]
@@ -207,6 +212,19 @@ impl NativeCallbackWorkerJoinPlan {
     #[getter]
     fn should_join(&self) -> bool {
         self.inner.should_join
+    }
+
+    #[getter]
+    fn timeout_seconds(&self) -> f64 {
+        self.inner.timeout_seconds
+    }
+}
+
+#[pymethods]
+impl NativeCallbackWorkerStopPlan {
+    #[getter]
+    fn should_stop(&self) -> bool {
+        self.inner.should_stop
     }
 
     #[getter]
@@ -345,6 +363,12 @@ impl From<native_schedule::CallbackWorkerJoinPlan> for NativeCallbackWorkerJoinP
     }
 }
 
+impl From<native_schedule::CallbackWorkerStopPlan> for NativeCallbackWorkerStopPlan {
+    fn from(stop_plan: native_schedule::CallbackWorkerStopPlan) -> Self {
+        Self { inner: stop_plan }
+    }
+}
+
 impl From<native_schedule::NativeCallbackQueueLimits> for NativeCallbackQueueLimits {
     fn from(queue_limits: native_schedule::NativeCallbackQueueLimits) -> Self {
         Self {
@@ -469,6 +493,28 @@ pub(crate) fn plan_result_callback_worker_join(
     has_started: bool,
 ) -> NativeCallbackWorkerJoinPlan {
     native_schedule::plan_result_callback_worker_join(timeout_seconds, has_started).into()
+}
+
+#[pyfunction]
+pub(crate) fn plan_dosage_callback_worker_stop(
+    timeout_seconds: Option<f64>,
+    has_started: bool,
+    has_worker_error: bool,
+    is_worker_alive: bool,
+) -> NativeCallbackWorkerStopPlan {
+    native_schedule::plan_dosage_callback_worker_stop(timeout_seconds, has_started, has_worker_error, is_worker_alive)
+        .into()
+}
+
+#[pyfunction]
+pub(crate) fn plan_result_callback_worker_stop(
+    timeout_seconds: Option<f64>,
+    has_started: bool,
+    has_worker_error: bool,
+    is_worker_alive: bool,
+) -> NativeCallbackWorkerStopPlan {
+    native_schedule::plan_result_callback_worker_stop(timeout_seconds, has_started, has_worker_error, is_worker_alive)
+        .into()
 }
 
 #[pyfunction]

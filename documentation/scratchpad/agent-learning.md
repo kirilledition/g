@@ -80,7 +80,7 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   in-flight slot accounting, dosage-buffer pool accounting, dosage-buffer reuse
   shape planning, writer-finish thread cleanup/execution planning, output write
   method planning, callback worker lifecycle start state, callback worker
-  shutdown timeout and join-planning policy, callback worker stop poll-timeout
+  shutdown timeout and stop/join-planning policy, callback worker stop poll-timeout
   policy, callback worker stop-attempt decision policy, and BGEN delivery
   method selection also live in `g-engine`; the same crate also owns the
   callback worker backpressure poll-timeout policy, binary correction summary

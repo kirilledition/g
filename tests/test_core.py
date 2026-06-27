@@ -281,6 +281,35 @@ def test_plan_callback_worker_join_uses_native_timeout_policy() -> None:
     assert unstarted_join_plan.timeout_seconds == 60.0
 
 
+def test_plan_callback_worker_stop_uses_native_timeout_policy() -> None:
+    dosage_stop_plan = _core.plan_dosage_callback_worker_stop(
+        timeout_seconds=None,
+        has_started=True,
+        has_worker_error=False,
+        is_worker_alive=True,
+    )
+    assert dosage_stop_plan.should_stop is True
+    assert dosage_stop_plan.timeout_seconds == 60.0
+
+    result_stop_plan = _core.plan_result_callback_worker_stop(
+        timeout_seconds=0.25,
+        has_started=True,
+        has_worker_error=False,
+        is_worker_alive=True,
+    )
+    assert result_stop_plan.should_stop is True
+    assert result_stop_plan.timeout_seconds == 0.25
+
+    failed_worker_stop_plan = _core.plan_result_callback_worker_stop(
+        timeout_seconds=None,
+        has_started=True,
+        has_worker_error=True,
+        is_worker_alive=True,
+    )
+    assert failed_worker_stop_plan.should_stop is False
+    assert failed_worker_stop_plan.timeout_seconds == 60.0
+
+
 def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
     queue_limits = _core.resolve_native_callback_queue_limits(
         staging_depth=3,

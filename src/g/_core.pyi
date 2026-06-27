@@ -701,6 +701,12 @@ class NativeCallbackWorkerJoinPlan:
     @property
     def timeout_seconds(self) -> float: ...
 
+class NativeCallbackWorkerStopPlan:
+    @property
+    def should_stop(self) -> bool: ...
+    @property
+    def timeout_seconds(self) -> float: ...
+
 class NativeDosageBufferPoolState:
     def __init__(self, buffer_limit: int) -> None: ...
     @property
@@ -1219,6 +1225,18 @@ def plan_result_callback_worker_join(
     timeout_seconds: float | None,
     has_started: bool,
 ) -> NativeCallbackWorkerJoinPlan: ...
+def plan_dosage_callback_worker_stop(
+    timeout_seconds: float | None,
+    has_started: bool,
+    has_worker_error: bool,
+    is_worker_alive: bool,
+) -> NativeCallbackWorkerStopPlan: ...
+def plan_result_callback_worker_stop(
+    timeout_seconds: float | None,
+    has_started: bool,
+    has_worker_error: bool,
+    is_worker_alive: bool,
+) -> NativeCallbackWorkerStopPlan: ...
 def plan_callback_queue_operation_observation(
     queue_name: str,
     operation_name: str,
