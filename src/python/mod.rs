@@ -86,9 +86,11 @@ use runtime_state::NativeRuntimeState;
 use schedule::{
     NativeCallbackQueueLimits, NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts,
     NativeDosageBufferPoolState, NativeDosageBufferReusePlan, NativeMultiTraitChunkWritePlan,
-    NativeResultInFlightSlotState, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    NativeMultiTraitOutputWritePlan, NativeResultInFlightSlotState, NativeSingleTraitOutputWritePlan,
+    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
     intersect_committed_chunk_identifier_sets, plan_dosage_buffer_reuse, plan_multi_trait_chunk_write,
-    plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method_value,
+    plan_multi_trait_output_write, plan_single_trait_output_write, plan_variant_major_dosage_batch_handoff,
+    plan_writer_finish_execution, resolve_bgen_delivery_method_value,
     resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
     resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
     resolve_native_callback_queue_limits, resolve_native_callback_worker_shutdown_timeouts,
@@ -1764,7 +1766,9 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeDosageBufferPoolState>()?;
     module.add_class::<NativeDosageBufferReusePlan>()?;
     module.add_class::<NativeMultiTraitChunkWritePlan>()?;
+    module.add_class::<NativeMultiTraitOutputWritePlan>()?;
     module.add_class::<NativeResultInFlightSlotState>()?;
+    module.add_class::<NativeSingleTraitOutputWritePlan>()?;
     module.add_class::<NativeVariantMajorDosageBatchHandoffPlan>()?;
     module.add_class::<NativeWriterFinishExecutionPlan>()?;
     module.add_class::<NativeGroupedAlignedSampleData>()?;
@@ -1824,6 +1828,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(should_attempt_callback_worker_stop, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_buffer_reuse, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_multi_trait_output_write, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_variant_major_dosage_batch_handoff, module)?)?;
     module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;

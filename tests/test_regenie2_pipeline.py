@@ -648,6 +648,33 @@ def test_write_regenie2_native_chunk_downcasts_float64_statistics_before_writing
     np.testing.assert_array_equal(written_chunk["extra_code"], extra_code)
 
 
+def test_write_regenie2_native_chunk_uses_native_output_write_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    writer_session = FakeWriterSession()
+    write_plan_calls: list[dict[str, object]] = []
+
+    def plan_single_trait_output_write(**kwargs: object) -> SimpleNamespace:
+        write_plan_calls.append(kwargs)
+        return SimpleNamespace(method_name="write_regenie2_native_chunk")
+
+    monkeypatch.setattr(callback_writers._core, "plan_single_trait_output_write", plan_single_trait_output_write)
+
+    callback_writers.write_regenie2_native_chunk_with_optional_timing(
+        writer_session=writer_session,
+        metadata=typing.cast("typing.Any", SimpleNamespace()),
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        beta=typing.cast("typing.Any", np.asarray([0.1, 0.2], dtype=np.float64)),
+        standard_error=typing.cast("typing.Any", np.asarray([0.3, 0.4], dtype=np.float64)),
+        chi_squared=typing.cast("typing.Any", np.asarray([1.0, 2.0], dtype=np.float64)),
+        log10_p_value=typing.cast("typing.Any", np.asarray([3.0, 4.0], dtype=np.float64)),
+        extra_code=None,
+        stage_timing_recorder=None,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT64,
+    )
+
+    assert write_plan_calls == [{"is_native_writer_session": False, "output_statistic_dtype": "float64"}]
+    assert len(writer_session.native_chunks) == 1
+
+
 def test_finish_writer_sessions_uses_bounded_concurrent_pool() -> None:
     release_finish = threading.Event()
     started_finishes: queue.Queue[str] = queue.Queue()
@@ -716,6 +743,24 @@ def test_plan_writer_finish_execution_uses_native_cleanup_policy() -> None:
     assert finish_plan.uses_parallel_finish is True
 
 
+def test_plan_output_write_methods_use_native_cleanup_policy() -> None:
+    single_write_plan = callback_writers._core.plan_single_trait_output_write(
+        is_native_writer_session=True,
+        output_statistic_dtype="float64",
+    )
+    assert single_write_plan.method_name == "write_regenie2_native_chunk_f64"
+    assert single_write_plan.uses_float64_native_writer is True
+
+    multi_write_plan = callback_writers._core.plan_multi_trait_output_write(
+        active_trait_count=2,
+        all_writer_sessions_native=True,
+        output_statistic_dtype="float64",
+    )
+    assert multi_write_plan.active_trait_count == 2
+    assert multi_write_plan.use_native_multi_writer is True
+    assert multi_write_plan.uses_float64_native_writer is True
+
+
 def test_write_regenie2_native_chunk_records_per_chunk_output_timing() -> None:
     writer_session = FakeWriterSession()
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
@@ -781,6 +826,45 @@ def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_ext
     written_chunk = writer_sessions[0].native_chunks[0]
     np.testing.assert_array_equal(written_chunk["extra_code"], np.asarray(extra_code[0]))
     np.testing.assert_array_equal(written_chunk["beta"], np.asarray([0.1, 0.2], dtype=np.float32))
+
+
+def test_write_regenie2_multi_native_chunk_uses_native_output_write_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    writer_sessions = (FakeWriterSession(), FakeWriterSession())
+    metadata = build_native_metadata()
+    write_plan_calls: list[dict[str, object]] = []
+
+    def plan_multi_trait_output_write(**kwargs: object) -> SimpleNamespace:
+        write_plan_calls.append(kwargs)
+        return SimpleNamespace(
+            active_trait_count=2,
+            use_native_multi_writer=False,
+            uses_float64_native_writer=False,
+        )
+
+    monkeypatch.setattr(callback_writers._core, "plan_multi_trait_output_write", plan_multi_trait_output_write)
+
+    callback_writers.write_regenie2_multi_native_chunk_with_optional_timing(
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=(set(), set()),
+        metadata=metadata,
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+        standard_error=jnp.asarray([[1.1, 1.2], [1.3, 1.4]], dtype=jnp.float32),
+        chi_squared=jnp.asarray([[2.1, 2.2], [2.3, 2.4]], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([[3.1, 3.2], [3.3, 3.4]], dtype=jnp.float32),
+        extra_code=None,
+        stage_timing_recorder=None,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+    )
+
+    assert write_plan_calls == [
+        {
+            "active_trait_count": 2,
+            "all_writer_sessions_native": False,
+            "output_statistic_dtype": "float32",
+        }
+    ]
+    assert tuple(len(writer_session.native_chunks) for writer_session in writer_sessions) == (1, 1)
 
 
 def test_write_regenie2_multi_native_chunk_materializes_only_active_trait_rows(

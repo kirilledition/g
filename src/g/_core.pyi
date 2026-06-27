@@ -645,6 +645,20 @@ class NativeWriterFinishExecutionPlan:
     @property
     def uses_parallel_finish(self) -> bool: ...
 
+class NativeSingleTraitOutputWritePlan:
+    @property
+    def method_name(self) -> str: ...
+    @property
+    def uses_float64_native_writer(self) -> bool: ...
+
+class NativeMultiTraitOutputWritePlan:
+    @property
+    def active_trait_count(self) -> int: ...
+    @property
+    def use_native_multi_writer(self) -> bool: ...
+    @property
+    def uses_float64_native_writer(self) -> bool: ...
+
 class NativeCallbackWorkerLifecycleState:
     def __init__(self) -> None: ...
     @property
@@ -1183,6 +1197,15 @@ def plan_writer_finish_execution(
     writer_session_count: int,
     requested_thread_count: int,
 ) -> NativeWriterFinishExecutionPlan: ...
+def plan_single_trait_output_write(
+    is_native_writer_session: bool,
+    output_statistic_dtype: str,
+) -> NativeSingleTraitOutputWritePlan: ...
+def plan_multi_trait_output_write(
+    active_trait_count: int,
+    all_writer_sessions_native: bool,
+    output_statistic_dtype: str,
+) -> NativeMultiTraitOutputWritePlan: ...
 def plan_dosage_buffer_reuse(
     buffered_shape: typing.Sequence[int],
     expected_shape: typing.Sequence[int],

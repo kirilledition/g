@@ -481,6 +481,48 @@ def test_plan_writer_finish_execution_uses_native_cleanup_policy() -> None:
         _core.plan_writer_finish_execution(writer_session_count=1, requested_thread_count=0)
 
 
+def test_plan_output_write_methods_use_native_dtype_policy() -> None:
+    native_float64_write_plan = _core.plan_single_trait_output_write(
+        is_native_writer_session=True,
+        output_statistic_dtype="float64",
+    )
+    assert native_float64_write_plan.method_name == "write_regenie2_native_chunk_f64"
+    assert native_float64_write_plan.uses_float64_native_writer is True
+
+    fallback_float64_write_plan = _core.plan_single_trait_output_write(
+        is_native_writer_session=False,
+        output_statistic_dtype="float64",
+    )
+    assert fallback_float64_write_plan.method_name == "write_regenie2_native_chunk"
+    assert fallback_float64_write_plan.uses_float64_native_writer is False
+
+    native_multi_write_plan = _core.plan_multi_trait_output_write(
+        active_trait_count=2,
+        all_writer_sessions_native=True,
+        output_statistic_dtype="float64",
+    )
+    assert native_multi_write_plan.active_trait_count == 2
+    assert native_multi_write_plan.use_native_multi_writer is True
+    assert native_multi_write_plan.uses_float64_native_writer is True
+
+    fallback_multi_write_plan = _core.plan_multi_trait_output_write(
+        active_trait_count=2,
+        all_writer_sessions_native=False,
+        output_statistic_dtype="float64",
+    )
+    assert fallback_multi_write_plan.use_native_multi_writer is False
+    assert fallback_multi_write_plan.uses_float64_native_writer is False
+
+    with pytest.raises(ValueError, match="Unsupported public statistic output dtype"):
+        _core.plan_single_trait_output_write(is_native_writer_session=True, output_statistic_dtype="float16")
+    with pytest.raises(ValueError, match="Unsupported public statistic output dtype"):
+        _core.plan_multi_trait_output_write(
+            active_trait_count=1,
+            all_writer_sessions_native=True,
+            output_statistic_dtype="float16",
+        )
+
+
 def test_regenie2_run_engine_required_chromosomes_returns_boundary_labels() -> None:
     engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
 

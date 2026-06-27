@@ -5,6 +5,10 @@ use std::collections::BTreeSet;
 const DEFAULT_DELIVERY_CALLBACK_BATCH_SIZE: i64 = 1;
 const CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS: f64 = 0.1;
 const CALLBACK_WORKER_STOP_POLL_TIMEOUT_CAP_SECONDS: f64 = 0.1;
+const OUTPUT_STATISTIC_DTYPE_FLOAT32: &str = "float32";
+const OUTPUT_STATISTIC_DTYPE_FLOAT64: &str = "float64";
+const REGENIE2_NATIVE_CHUNK_WRITE_METHOD: &str = "write_regenie2_native_chunk";
+const REGENIE2_NATIVE_CHUNK_WRITE_F64_METHOD: &str = "write_regenie2_native_chunk_f64";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeCallbackQueueLimits {
@@ -59,6 +63,19 @@ impl WriterFinishExecutionPlan {
     pub const fn uses_parallel_finish(&self) -> bool {
         self.thread_count > 1
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SingleTraitOutputWritePlan {
+    pub method_name: String,
+    pub uses_float64_native_writer: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MultiTraitOutputWritePlan {
+    pub active_trait_count: usize,
+    pub use_native_multi_writer: bool,
+    pub uses_float64_native_writer: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -288,6 +305,8 @@ pub enum ScheduleError {
         "Committed chunk identifier set count ({committed_set_count}) must match writer session count ({writer_session_count})."
     )]
     MultiTraitCommittedChunkSetCountMismatch { writer_session_count: usize, committed_set_count: usize },
+    #[error("Unsupported public statistic output dtype: {output_statistic_dtype}")]
+    UnsupportedOutputStatisticDtype { output_statistic_dtype: String },
 }
 
 #[must_use]
@@ -525,6 +544,52 @@ pub fn plan_writer_finish_execution(
             .map_err(|_| ScheduleError::WriterSessionCountOverflow { session_count: writer_session_count })?
     };
     Ok(WriterFinishExecutionPlan { writer_session_count, thread_count })
+}
+
+fn output_statistic_dtype_is_float64(output_statistic_dtype: &str) -> Result<bool, ScheduleError> {
+    match output_statistic_dtype {
+        OUTPUT_STATISTIC_DTYPE_FLOAT32 => Ok(false),
+        OUTPUT_STATISTIC_DTYPE_FLOAT64 => Ok(true),
+        _ => Err(ScheduleError::UnsupportedOutputStatisticDtype {
+            output_statistic_dtype: output_statistic_dtype.to_string(),
+        }),
+    }
+}
+
+/// Plan the Python method used for one single-trait output write.
+///
+/// # Errors
+///
+/// Returns an error when the output statistic dtype is unsupported.
+pub fn plan_single_trait_output_write(
+    is_native_writer_session: bool,
+    output_statistic_dtype: &str,
+) -> Result<SingleTraitOutputWritePlan, ScheduleError> {
+    let is_float64_output_dtype = output_statistic_dtype_is_float64(output_statistic_dtype)?;
+    let uses_float64_native_writer = is_native_writer_session && is_float64_output_dtype;
+    let method_name = if uses_float64_native_writer {
+        REGENIE2_NATIVE_CHUNK_WRITE_F64_METHOD
+    } else {
+        REGENIE2_NATIVE_CHUNK_WRITE_METHOD
+    }
+    .to_string();
+    Ok(SingleTraitOutputWritePlan { method_name, uses_float64_native_writer })
+}
+
+/// Plan the native bulk writer path for one multi-trait output write.
+///
+/// # Errors
+///
+/// Returns an error when the output statistic dtype is unsupported.
+pub fn plan_multi_trait_output_write(
+    active_trait_count: usize,
+    all_writer_sessions_native: bool,
+    output_statistic_dtype: &str,
+) -> Result<MultiTraitOutputWritePlan, ScheduleError> {
+    let is_float64_output_dtype = output_statistic_dtype_is_float64(output_statistic_dtype)?;
+    let use_native_multi_writer = active_trait_count > 0 && all_writer_sessions_native;
+    let uses_float64_native_writer = use_native_multi_writer && is_float64_output_dtype;
+    Ok(MultiTraitOutputWritePlan { active_trait_count, use_native_multi_writer, uses_float64_native_writer })
 }
 
 #[cfg(test)]
@@ -827,6 +892,71 @@ mod tests {
             ScheduleError::NonPositiveWriterFinishThreadCount,
         );
         assert_eq!(plan_writer_finish_execution(1, 0).unwrap_err(), ScheduleError::NonPositiveWriterFinishThreadCount,);
+    }
+
+    #[test]
+    fn plans_single_trait_output_write_method() {
+        assert_eq!(
+            plan_single_trait_output_write(true, "float64").unwrap(),
+            SingleTraitOutputWritePlan {
+                method_name: REGENIE2_NATIVE_CHUNK_WRITE_F64_METHOD.to_string(),
+                uses_float64_native_writer: true,
+            },
+        );
+        assert_eq!(
+            plan_single_trait_output_write(true, "float32").unwrap(),
+            SingleTraitOutputWritePlan {
+                method_name: REGENIE2_NATIVE_CHUNK_WRITE_METHOD.to_string(),
+                uses_float64_native_writer: false,
+            },
+        );
+        assert_eq!(
+            plan_single_trait_output_write(false, "float64").unwrap(),
+            SingleTraitOutputWritePlan {
+                method_name: REGENIE2_NATIVE_CHUNK_WRITE_METHOD.to_string(),
+                uses_float64_native_writer: false,
+            },
+        );
+    }
+
+    #[test]
+    fn plans_multi_trait_output_write_method() {
+        assert_eq!(
+            plan_multi_trait_output_write(2, true, "float64").unwrap(),
+            MultiTraitOutputWritePlan {
+                active_trait_count: 2,
+                use_native_multi_writer: true,
+                uses_float64_native_writer: true,
+            },
+        );
+        assert_eq!(
+            plan_multi_trait_output_write(2, false, "float64").unwrap(),
+            MultiTraitOutputWritePlan {
+                active_trait_count: 2,
+                use_native_multi_writer: false,
+                uses_float64_native_writer: false,
+            },
+        );
+        assert_eq!(
+            plan_multi_trait_output_write(0, true, "float64").unwrap(),
+            MultiTraitOutputWritePlan {
+                active_trait_count: 0,
+                use_native_multi_writer: false,
+                uses_float64_native_writer: false,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_output_statistic_dtype_for_output_write_plans() {
+        assert_eq!(
+            plan_single_trait_output_write(true, "float16").unwrap_err(),
+            ScheduleError::UnsupportedOutputStatisticDtype { output_statistic_dtype: "float16".to_string() },
+        );
+        assert_eq!(
+            plan_multi_trait_output_write(1, true, "float16").unwrap_err(),
+            ScheduleError::UnsupportedOutputStatisticDtype { output_statistic_dtype: "float16".to_string() },
+        );
     }
 
     #[test]

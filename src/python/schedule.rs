@@ -44,6 +44,16 @@ pub(crate) struct NativeWriterFinishExecutionPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeSingleTraitOutputWritePlan {
+    inner: native_schedule::SingleTraitOutputWritePlan,
+}
+
+#[pyclass]
+pub(crate) struct NativeMultiTraitOutputWritePlan {
+    inner: native_schedule::MultiTraitOutputWritePlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageBufferPoolState {
     inner: native_schedule::DosageBufferPoolState,
 }
@@ -223,6 +233,37 @@ impl NativeWriterFinishExecutionPlan {
     }
 }
 
+#[pymethods]
+impl NativeSingleTraitOutputWritePlan {
+    #[getter]
+    fn method_name(&self) -> &str {
+        &self.inner.method_name
+    }
+
+    #[getter]
+    fn uses_float64_native_writer(&self) -> bool {
+        self.inner.uses_float64_native_writer
+    }
+}
+
+#[pymethods]
+impl NativeMultiTraitOutputWritePlan {
+    #[getter]
+    fn active_trait_count(&self) -> usize {
+        self.inner.active_trait_count
+    }
+
+    #[getter]
+    fn use_native_multi_writer(&self) -> bool {
+        self.inner.use_native_multi_writer
+    }
+
+    #[getter]
+    fn uses_float64_native_writer(&self) -> bool {
+        self.inner.uses_float64_native_writer
+    }
+}
+
 impl From<native_schedule::CallbackWorkerShutdownTimeouts> for NativeCallbackWorkerShutdownTimeouts {
     fn from(worker_shutdown_timeouts: native_schedule::CallbackWorkerShutdownTimeouts) -> Self {
         Self { inner: worker_shutdown_timeouts }
@@ -261,6 +302,18 @@ impl From<native_schedule::MultiTraitChunkWritePlan> for NativeMultiTraitChunkWr
 impl From<native_schedule::WriterFinishExecutionPlan> for NativeWriterFinishExecutionPlan {
     fn from(finish_plan: native_schedule::WriterFinishExecutionPlan) -> Self {
         Self { inner: finish_plan }
+    }
+}
+
+impl From<native_schedule::SingleTraitOutputWritePlan> for NativeSingleTraitOutputWritePlan {
+    fn from(write_plan: native_schedule::SingleTraitOutputWritePlan) -> Self {
+        Self { inner: write_plan }
+    }
+}
+
+impl From<native_schedule::MultiTraitOutputWritePlan> for NativeMultiTraitOutputWritePlan {
+    fn from(write_plan: native_schedule::MultiTraitOutputWritePlan) -> Self {
+        Self { inner: write_plan }
     }
 }
 
@@ -410,6 +463,33 @@ pub(crate) fn plan_writer_finish_execution(
     native_schedule::plan_writer_finish_execution(writer_session_count, requested_thread_count)
         .map(Into::into)
         .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_single_trait_output_write(
+    is_native_writer_session: bool,
+    output_statistic_dtype: String,
+) -> PyResult<NativeSingleTraitOutputWritePlan> {
+    native_schedule::plan_single_trait_output_write(is_native_writer_session, &output_statistic_dtype)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_multi_trait_output_write(
+    active_trait_count: usize,
+    all_writer_sessions_native: bool,
+    output_statistic_dtype: String,
+) -> PyResult<NativeMultiTraitOutputWritePlan> {
+    native_schedule::plan_multi_trait_output_write(
+        active_trait_count,
+        all_writer_sessions_native,
+        &output_statistic_dtype,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
 }
 
 fn schedule_error_to_py(error: &native_schedule::ScheduleError) -> PyErr {
