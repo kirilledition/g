@@ -37,7 +37,9 @@ pub use preflight::{
     validate_multi_prediction_preflight_shape, validate_multi_trait_preflight_shape_payload,
     validate_single_prediction_preflight_shape, validate_single_trait_preflight_shape_payload,
 };
-pub use preparation::{PipelineResumeCompatibilityError, validate_pipeline_resume_compatibility};
+pub use preparation::{
+    PipelineResumeCompatibilityError, initialize_pipeline_output_runs, validate_pipeline_resume_compatibility,
+};
 pub use schedule::{
     BgenDeliveryMethod, CallbackQueueOperationObservationPlan, CallbackQueueStageObservationPlan,
     CallbackWorkerAbortPlan, CallbackWorkerFinishPlan, CallbackWorkerJoinPlan, CallbackWorkerLifecycleState,

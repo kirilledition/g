@@ -90,6 +90,13 @@ def build_test_runtime_compatibility_token() -> _core.NativeRuntimeCompatibility
     return runtime_state.require_compatible_runtime_policy(logging_policy_payload, None, jax_policy_payload)
 
 
+def build_native_initialized_chunk_identifier_sets(
+    *committed_chunk_identifier_sequences: typing.Iterable[int],
+) -> list[list[int]]:
+    """Build the native output-initialization return shape."""
+    return [list(committed_chunk_identifiers) for committed_chunk_identifiers in committed_chunk_identifier_sequences]
+
+
 def test_intersect_committed_chunk_identifier_sets_preserves_pipeline_helper_contract() -> None:
     shared_chunk_identifiers = pipeline_multi_group.intersect_committed_chunk_identifier_sets(
         ({0, 32, 64}, {32, 64, 96}, {32, 128})
@@ -4319,10 +4326,9 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             return_value={"header": "current"},
         ) as mock_manifest_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            side_effect=lambda **kwargs: (
-                preparation_order.append("manifest")
-                or output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0}))
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            side_effect=lambda *args, **kwargs: (
+                preparation_order.append("manifest") or build_native_initialized_chunk_identifier_sets((64, 0))
             ),
         ),
         patch(
@@ -4409,7 +4415,9 @@ def test_single_trait_preflight_failure_does_not_initialize_output_or_writer(tmp
             side_effect=ValueError("invalid preflight"),
         ) as mock_preflight,
         patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
-        patch("g.engine.regenie2_pipeline.outputs.output.initialize_output_run") as mock_initialize_output_run,
+        patch(
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs"
+        ) as mock_initialize_output_runs,
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session") as mock_create_writer_session,
         pytest.raises(ValueError, match="invalid preflight"),
     ):
@@ -4434,7 +4442,7 @@ def test_single_trait_preflight_failure_does_not_initialize_output_or_writer(tmp
 
     mock_preflight.assert_called_once()
     mock_manifest_header.assert_not_called()
-    mock_initialize_output_run.assert_not_called()
+    mock_initialize_output_runs.assert_not_called()
     mock_create_writer_session.assert_not_called()
     assert not output.get_run_manifest_path(output_run_paths).exists()
 
@@ -4496,8 +4504,8 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
         patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((64, 0)),
         ),
         patch(
             "g.compute.regenie2_linear.api.prepare_regenie2_linear_state",
@@ -4716,10 +4724,9 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             return_value={"header": "current"},
         ) as mock_manifest_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            side_effect=lambda **kwargs: (
-                preparation_order.append("manifest")
-                or output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0}))
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            side_effect=lambda *args, **kwargs: (
+                preparation_order.append("manifest") or build_native_initialized_chunk_identifier_sets((64, 0))
             ),
         ),
         patch(
@@ -4787,8 +4794,8 @@ def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> No
             return_value={"header": "current"},
         ),
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((64, 0)),
         ),
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_binary_state",
@@ -4844,8 +4851,8 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
         patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((64, 0)),
         ),
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_binary_state",
@@ -4912,8 +4919,8 @@ def test_binary_gpu_auto_uses_packed8_when_trusted_validation_succeeds() -> None
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
         patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((64, 0)),
         ),
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_binary_state",
@@ -4986,8 +4993,8 @@ def test_binary_gpu_auto_falls_back_to_dosage_when_trusted_validation_fails() ->
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
         patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((64, 0)),
         ),
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_binary_state",
@@ -5051,7 +5058,9 @@ def test_binary_explicit_packed8_still_fails_when_trusted_validation_fails() -> 
             "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.regenie2_pipeline.outputs.output.initialize_output_run") as mock_initialize_output_run,
+        patch(
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs"
+        ) as mock_initialize_output_runs,
         pytest.raises(ValueError, match="packed8 incompatible"),
     ):
         run_test_regenie2_binary_bgen_pipeline(
@@ -5079,7 +5088,7 @@ def test_binary_explicit_packed8_still_fails_when_trusted_validation_fails() -> 
 
     assert len(IncompatibleTrustedRunEngine.instances) == 1
     assert IncompatibleTrustedRunEngine.instances[0].validation_count == 1
-    mock_initialize_output_run.assert_not_called()
+    mock_initialize_output_runs.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -5160,7 +5169,6 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     writer_sessions = [FakeWriterSession(), FakeWriterSession()]
     run_input = build_native_multi_run_input()
     preparation_order: list[str] = []
-    initialized_chunk_sets = [frozenset({0, 32}), frozenset({32, 64})]
     pipeline_options = build_default_pipeline_runtime_options()
 
     def record_preflight(*args: object, **kwargs: object) -> None:
@@ -5191,10 +5199,10 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ),
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            side_effect=lambda **kwargs: (
-                preparation_order.append("manifest")
-                or output.InitializedOutputRun(committed_chunk_identifiers=initialized_chunk_sets.pop(0))
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            side_effect=lambda *args, **kwargs: (
+                preparation_order.extend(("manifest", "manifest"))
+                or build_native_initialized_chunk_identifier_sets((0, 32), (32, 64))
             ),
         ),
         patch(
@@ -5269,7 +5277,9 @@ def test_multi_preflight_failure_does_not_initialize_outputs_or_writers(tmp_path
             side_effect=ValueError("invalid multi preflight"),
         ) as mock_run_multi_preflight,
         patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_manifest_header,
-        patch("g.engine.regenie2_pipeline.outputs.output.initialize_output_run") as mock_initialize_output_run,
+        patch(
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs"
+        ) as mock_initialize_output_runs,
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session") as mock_create_writer_session,
         pytest.raises(ValueError, match="invalid multi preflight"),
     ):
@@ -5296,7 +5306,7 @@ def test_multi_preflight_failure_does_not_initialize_outputs_or_writers(tmp_path
 
     mock_run_multi_preflight.assert_called_once()
     mock_manifest_header.assert_not_called()
-    mock_initialize_output_run.assert_not_called()
+    mock_initialize_output_runs.assert_not_called()
     mock_create_writer_session.assert_not_called()
     assert not output.get_run_manifest_path(output_run_paths_by_phenotype[0]).exists()
     assert not output.get_run_manifest_path(output_run_paths_by_phenotype[1]).exists()
@@ -5308,7 +5318,6 @@ def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes(
     writer_session_for_trait_b = FakeWriterSession()
     pending_writer_sessions = [writer_session_for_trait_a, writer_session_for_trait_b]
     run_input = build_native_multi_run_input()
-    initialized_chunk_sets = [frozenset({0, 32}), frozenset({32, 64})]
     pipeline_options = build_default_pipeline_runtime_options()
     chromosome_state = SimpleNamespace(adjusted_residual_matrix=jnp.asarray([[0.0, 0.0]], dtype=jnp.float32))
 
@@ -5332,10 +5341,8 @@ def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes(
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ),
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            side_effect=lambda **kwargs: output.InitializedOutputRun(
-                committed_chunk_identifiers=initialized_chunk_sets.pop(0)
-            ),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((0, 32), (32, 64)),
         ),
         patch(
             "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
@@ -5408,7 +5415,6 @@ def test_multi_binary_pipeline_opens_engine_once_and_skips_only_shared_committed
     FakeRunEngine.instances.clear()
     writer_sessions = [FakeWriterSession(), FakeWriterSession()]
     run_input = build_native_multi_run_input()
-    initialized_chunk_sets = [frozenset({0, 32}), frozenset({32, 64})]
     kernel_config = build_default_binary_kernel_config()
     pipeline_options = build_default_pipeline_runtime_options()
 
@@ -5432,10 +5438,8 @@ def test_multi_binary_pipeline_opens_engine_once_and_skips_only_shared_committed
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ),
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            side_effect=lambda **kwargs: output.InitializedOutputRun(
-                committed_chunk_identifiers=initialized_chunk_sets.pop(0)
-            ),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((0, 32), (32, 64)),
         ),
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_multi_binary_state",
@@ -5515,8 +5519,8 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
         ),
         patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_build_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((), ()),
         ),
         patch(
             "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
@@ -5638,8 +5642,8 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ) as mock_build_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((), ()),
         ),
         patch(
             "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
@@ -5773,8 +5777,8 @@ def test_grouped_per_phenotype_packed8_forces_trusted_delivery_and_manifests() -
         ),
         patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_build_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((), ()),
         ),
         patch(
             "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
@@ -5873,8 +5877,8 @@ def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ),
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((), ()),
         ),
         patch(
             "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
@@ -5962,8 +5966,8 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ) as mock_build_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((), ()),
         ),
         patch(
             "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
@@ -6080,8 +6084,8 @@ def test_grouped_per_phenotype_pipeline_keeps_multi_pass_when_union_not_cheaper(
             side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
         ),
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((), ()),
         ),
         patch(
             "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
@@ -6151,8 +6155,8 @@ def test_multi_binary_complete_case_packed8_preserves_kernel_config_and_manifest
         ),
         patch("g.engine.regenie2_pipeline.outputs.output.build_current_run_manifest_header") as mock_build_header,
         patch(
-            "g.engine.regenie2_pipeline.outputs.output.initialize_output_run",
-            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+            "g.engine.regenie2_pipeline.outputs._core.initialize_pipeline_output_runs",
+            return_value=build_native_initialized_chunk_identifier_sets((), ()),
         ),
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_multi_binary_state",

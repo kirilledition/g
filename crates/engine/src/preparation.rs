@@ -11,6 +11,11 @@ pub enum PipelineResumeCompatibilityError {
          manifest_count={manifest_count}, header_count={header_count}."
     )]
     MismatchedInputCounts { chunks_directory_count: usize, manifest_count: usize, header_count: usize },
+    #[error(
+        "Pipeline output run directory count must match chunks directory count: run_directory_count={run_directory_count}, \
+         chunks_directory_count={chunks_directory_count}."
+    )]
+    MismatchedOutputRunDirectoryCount { run_directory_count: usize, chunks_directory_count: usize },
     #[error("Resume requires run_manifest.json.")]
     MissingManifest,
     #[error(transparent)]
@@ -29,9 +34,79 @@ pub fn validate_pipeline_resume_compatibility(
     current_header_json_values: Vec<String>,
     resume_mode: OutputResumeMode,
 ) -> Result<(), PipelineResumeCompatibilityError> {
-    let chunks_directory_count = chunks_directories.len();
-    let manifest_count = existing_manifest_json_values.len();
-    let header_count = current_header_json_values.len();
+    validate_pipeline_input_counts(
+        chunks_directories.len(),
+        existing_manifest_json_values.len(),
+        current_header_json_values.len(),
+    )?;
+
+    validate_pipeline_resume_compatibility_after_count_check(
+        chunks_directories,
+        existing_manifest_json_values,
+        current_header_json_values,
+        resume_mode,
+    )
+}
+
+/// Initialize all output runs after validating every resume manifest.
+///
+/// # Errors
+///
+/// Returns an error when input counts differ, all-manifest resume validation fails, or any output initialization fails.
+pub fn initialize_pipeline_output_runs(
+    run_directories: Vec<PathBuf>,
+    chunks_directories: Vec<PathBuf>,
+    existing_manifest_json_values: Vec<Option<String>>,
+    current_header_json_values: Vec<String>,
+    resume: bool,
+    resume_mode: OutputResumeMode,
+) -> Result<Vec<Vec<i64>>, PipelineResumeCompatibilityError> {
+    validate_pipeline_input_counts(
+        chunks_directories.len(),
+        existing_manifest_json_values.len(),
+        current_header_json_values.len(),
+    )?;
+    if run_directories.len() != chunks_directories.len() {
+        return Err(PipelineResumeCompatibilityError::MismatchedOutputRunDirectoryCount {
+            run_directory_count: run_directories.len(),
+            chunks_directory_count: chunks_directories.len(),
+        });
+    }
+
+    if resume {
+        validate_pipeline_resume_compatibility_after_count_check(
+            chunks_directories.clone(),
+            existing_manifest_json_values.clone(),
+            current_header_json_values.clone(),
+            resume_mode,
+        )?;
+    }
+
+    let mut committed_chunk_identifier_sets = Vec::with_capacity(run_directories.len());
+    for (((run_directory, chunks_directory), existing_manifest_json), current_header_json) in run_directories
+        .into_iter()
+        .zip(chunks_directories)
+        .zip(existing_manifest_json_values)
+        .zip(current_header_json_values)
+    {
+        let initialized_output_run = g_output::initialize_output_run(
+            &run_directory,
+            &chunks_directory,
+            existing_manifest_json.as_deref(),
+            &current_header_json,
+            resume,
+            resume_mode,
+        )?;
+        committed_chunk_identifier_sets.push(initialized_output_run.committed_chunk_identifiers);
+    }
+    Ok(committed_chunk_identifier_sets)
+}
+
+fn validate_pipeline_input_counts(
+    chunks_directory_count: usize,
+    manifest_count: usize,
+    header_count: usize,
+) -> Result<(), PipelineResumeCompatibilityError> {
     if chunks_directory_count != manifest_count || chunks_directory_count != header_count {
         return Err(PipelineResumeCompatibilityError::MismatchedInputCounts {
             chunks_directory_count,
@@ -39,7 +114,15 @@ pub fn validate_pipeline_resume_compatibility(
             header_count,
         });
     }
+    Ok(())
+}
 
+fn validate_pipeline_resume_compatibility_after_count_check(
+    chunks_directories: Vec<PathBuf>,
+    existing_manifest_json_values: Vec<Option<String>>,
+    current_header_json_values: Vec<String>,
+    resume_mode: OutputResumeMode,
+) -> Result<(), PipelineResumeCompatibilityError> {
     for ((chunks_directory, existing_manifest_json), current_header_json) in
         chunks_directories.into_iter().zip(existing_manifest_json_values).zip(current_header_json_values)
     {
@@ -134,5 +217,51 @@ mod tests {
         .unwrap();
 
         std::fs::remove_dir_all(chunks_directory).expect("test chunks directory should be removed");
+    }
+
+    #[test]
+    fn initializes_pipeline_outputs_after_resume_preflight() {
+        let unique_suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("current time should be after Unix epoch")
+            .as_nanos();
+        let run_directory = std::env::temp_dir().join(format!("g-engine-output-init-test-{unique_suffix}"));
+        let chunks_directory = run_directory.join("chunks");
+        std::fs::create_dir_all(&chunks_directory).expect("test output directory should be created");
+
+        let committed_chunks_manifest = r#"{"schema_version":7,"chunk_size":32,"committed_chunks":[{"chunk_identifier":2,"variant_start_index":2,"variant_stop_index":4,"row_count":2,"chunk_file_name":"chunk_2.arrow"}]}"#.to_string();
+        let current_header = r#"{"schema_version":7,"chunk_size":32}"#.to_string();
+        let committed_chunk_identifier_sets = initialize_pipeline_output_runs(
+            vec![run_directory.clone()],
+            vec![chunks_directory],
+            vec![Some(committed_chunks_manifest)],
+            vec![current_header],
+            true,
+            OutputResumeMode::Fast,
+        )
+        .unwrap();
+
+        assert_eq!(committed_chunk_identifier_sets, vec![vec![2]]);
+        assert!(run_directory.join("run_manifest.json").exists());
+        std::fs::remove_dir_all(run_directory).expect("test output directory should be removed");
+    }
+
+    #[test]
+    fn rejects_pipeline_output_initialization_mismatched_counts() {
+        let error = initialize_pipeline_output_runs(
+            vec![PathBuf::from("run")],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            false,
+            OutputResumeMode::Fast,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Pipeline output run directory count must match chunks directory count: \
+             run_directory_count=1, chunks_directory_count=0.",
+        );
     }
 }

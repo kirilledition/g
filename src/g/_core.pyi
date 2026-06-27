@@ -1481,6 +1481,15 @@ def validate_pipeline_resume_compatibility(
     current_header_json_values: typing.Sequence[str],
     resume_mode: str,
 ) -> None: ...
+def initialize_pipeline_output_runs(
+    run_directories: typing.Sequence[str],
+    chunks_directories: typing.Sequence[str],
+    existing_manifest_json_values: typing.Sequence[str | None],
+    current_header_json_values: typing.Sequence[str],
+    resume: bool,
+    resume_mode: str,
+    runtime_compatibility_token: NativeRuntimeCompatibilityToken,
+) -> list[list[int]]: ...
 def validate_single_trait_preflight_shape_payload(
     phenotype_sample_count: int,
     covariate_dimension_count: int,

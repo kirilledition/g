@@ -211,31 +211,26 @@ def initialize_pipeline_output_runs(
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> tuple[set[int], ...]:
     """Validate/write output manifests and return committed chunk sets."""
-    if resume:
-        validate_pipeline_resume_compatibility(
-            output_run_paths_by_trait=output_run_paths_by_trait,
-            existing_manifests_by_trait=existing_manifests_by_trait,
-            current_headers_by_trait=current_headers_by_trait,
-            resume_mode=resume_mode,
-        )
-    initialized_output_runs = tuple(
-        output.initialize_output_run(
-            output_run_paths=output_run_paths,
-            existing_manifest=existing_manifest,
-            current_header=current_header,
-            resume=resume,
-            resume_mode=resume_mode,
-            runtime_compatibility_token=runtime_compatibility_token,
-        )
-        for output_run_paths, existing_manifest, current_header in zip(
-            output_run_paths_by_trait,
-            existing_manifests_by_trait,
-            current_headers_by_trait,
-            strict=True,
-        )
+    committed_chunk_identifier_sets = _core.initialize_pipeline_output_runs(
+        tuple(str(output_run_paths.run_directory) for output_run_paths in output_run_paths_by_trait),
+        tuple(str(output_run_paths.chunks_directory) for output_run_paths in output_run_paths_by_trait),
+        tuple(
+            None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True)
+            for existing_manifest in existing_manifests_by_trait
+        ),
+        tuple(
+            json.dumps(output.run_manifest_header_input_to_mapping(current_header), sort_keys=True)
+            for current_header in current_headers_by_trait
+        ),
+        resume,
+        resume_mode.value,
+        runtime_compatibility_token,
     )
+    if resume:
+        for committed_chunk_identifier_set in committed_chunk_identifier_sets:
+            logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifier_set))
     return tuple(
-        set(initialized_output_run.committed_chunk_identifiers) for initialized_output_run in initialized_output_runs
+        {int(chunk_identifier) for chunk_identifier in chunk_set} for chunk_set in committed_chunk_identifier_sets
     )
 
 

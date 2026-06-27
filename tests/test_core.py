@@ -24,6 +24,39 @@ def run_logging_subprocess(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def build_native_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:
+    runtime_state = _core.NativeRuntimeState()
+    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+        log_filter="info",
+        log_file=None,
+        log_stderr=False,
+        log_queue_size=1024,
+        log_lossy=True,
+        include_source_location=False,
+        include_span_events=False,
+        trace_file=None,
+        trace_filter="info",
+        trace_event_cap=None,
+        telemetry_mode="off",
+        telemetry_stream_file=None,
+    )
+    jax_policy_payload: dict[str, object] = {
+        "device": "cpu",
+        "cache_directory": None,
+        "matmul_precision": None,
+        "persistent_cache": True,
+        "persistent_cache_min_entry_size_bytes": 0,
+        "persistent_cache_min_compile_time_seconds": 0,
+        "xla_autotune_cache": False,
+        "transfer_guard": False,
+    }
+    return runtime_state.require_compatible_runtime_policy(
+        logging_policy_payload,
+        None,
+        jax_policy_payload,
+    )
+
+
 def test_initialize_logging_is_idempotent_and_writes_python_and_rust_jsonl(tmp_path: Path) -> None:
     log_path = tmp_path / "g.jsonl"
 
@@ -229,6 +262,43 @@ def test_native_pipeline_resume_compatibility_validates_all_manifests(tmp_path: 
             current_header_json_values=(incompatible_header_json,),
             resume_mode="fast",
         )
+
+
+def test_native_pipeline_output_initialization_returns_committed_sets(tmp_path: Path) -> None:
+    run_directory = tmp_path / "run"
+    chunks_directory = run_directory / "chunks"
+    chunks_directory.mkdir(parents=True)
+    existing_manifest_json = json.dumps(
+        {
+            "schema_version": 7,
+            "chunk_size": 32,
+            "committed_chunks": [
+                {
+                    "chunk_identifier": 2,
+                    "variant_start_index": 2,
+                    "variant_stop_index": 4,
+                    "row_count": 2,
+                    "chunk_file_name": "chunk_2.arrow",
+                }
+            ],
+        },
+        sort_keys=True,
+    )
+    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
+
+    committed_chunk_identifier_sets = _core.initialize_pipeline_output_runs(
+        run_directories=(str(run_directory),),
+        chunks_directories=(str(chunks_directory),),
+        existing_manifest_json_values=(existing_manifest_json,),
+        current_header_json_values=(current_header_json,),
+        resume=True,
+        resume_mode="fast",
+        runtime_compatibility_token=build_native_runtime_compatibility_token(),
+    )
+
+    assert committed_chunk_identifier_sets == [[2]]
+    written_manifest = json.loads((run_directory / "run_manifest.json").read_text(encoding="utf-8"))
+    assert written_manifest["committed_chunks"][0]["chunk_identifier"] == 2
 
 
 def test_native_effective_trusted_no_missing_diploid_policy() -> None:
