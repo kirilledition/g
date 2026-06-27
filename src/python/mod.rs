@@ -84,13 +84,13 @@ use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_t
 use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
 use runtime_state::NativeRuntimeState;
 use schedule::{
-    NativeCallbackQueueLimits, NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts,
-    NativeDosageBufferPoolState, NativeDosageBufferReusePlan, NativeMultiTraitChunkWritePlan,
-    NativeMultiTraitOutputWritePlan, NativeResultInFlightSlotState, NativeSingleTraitOutputWritePlan,
-    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
-    intersect_committed_chunk_identifier_sets, plan_dosage_buffer_reuse, plan_multi_trait_chunk_write,
-    plan_multi_trait_output_write, plan_single_trait_output_write, plan_variant_major_dosage_batch_handoff,
-    plan_writer_finish_execution, resolve_bgen_delivery_method_value,
+    NativeCallbackQueueLimits, NativeCallbackQueueStageObservationPlan, NativeCallbackWorkerLifecycleState,
+    NativeCallbackWorkerShutdownTimeouts, NativeDosageBufferPoolState, NativeDosageBufferReusePlan,
+    NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan, NativeResultInFlightSlotState,
+    NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    intersect_committed_chunk_identifier_sets, plan_callback_queue_stage_observation, plan_dosage_buffer_reuse,
+    plan_multi_trait_chunk_write, plan_multi_trait_output_write, plan_single_trait_output_write,
+    plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method_value,
     resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
     resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
     resolve_native_callback_queue_limits, resolve_native_callback_worker_shutdown_timeouts,
@@ -1761,6 +1761,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackProgressState>()?;
     module.add_class::<NativeCallbackProgressUpdate>()?;
     module.add_class::<NativeCallbackQueueLimits>()?;
+    module.add_class::<NativeCallbackQueueStageObservationPlan>()?;
     module.add_class::<NativeCallbackWorkerLifecycleState>()?;
     module.add_class::<NativeCallbackWorkerShutdownTimeouts>()?;
     module.add_class::<NativeDosageBufferPoolState>()?;
@@ -1826,6 +1827,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_native_callback_worker_shutdown_timeouts, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_writer_finish_thread_count, module)?)?;
     module.add_function(wrap_pyfunction!(should_attempt_callback_worker_stop, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_queue_stage_observation, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_buffer_reuse, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_output_write, module)?)?;

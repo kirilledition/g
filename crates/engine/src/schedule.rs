@@ -9,6 +9,14 @@ const OUTPUT_STATISTIC_DTYPE_FLOAT32: &str = "float32";
 const OUTPUT_STATISTIC_DTYPE_FLOAT64: &str = "float64";
 const REGENIE2_NATIVE_CHUNK_WRITE_METHOD: &str = "write_regenie2_native_chunk";
 const REGENIE2_NATIVE_CHUNK_WRITE_F64_METHOD: &str = "write_regenie2_native_chunk_f64";
+const DOSAGE_QUEUE_NAME: &str = "dosage_queue";
+const RESULT_QUEUE_NAME: &str = "result_queue";
+const DOSAGE_BUFFER_POOL_NAME: &str = "dosage_buffer_pool";
+const RESULT_IN_FLIGHT_SLOTS_NAME: &str = "result_in_flight_slots";
+const QUEUE_PUT_OPERATION: &str = "put";
+const QUEUE_PRODUCER_BLOCKING_OPERATION: &str = "producer_blocking";
+const QUEUE_CONSUMER_WAIT_OPERATION: &str = "consumer_wait";
+const RESULT_SLOT_ACQUIRE_OPERATION: &str = "acquire";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeCallbackQueueLimits {
@@ -76,6 +84,14 @@ pub struct MultiTraitOutputWritePlan {
     pub active_trait_count: usize,
     pub use_native_multi_writer: bool,
     pub uses_float64_native_writer: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CallbackQueueStageObservationPlan {
+    pub queue_name: String,
+    pub operation_name: String,
+    pub stage_name: String,
+    pub blocked_seconds: f64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -307,6 +323,8 @@ pub enum ScheduleError {
     MultiTraitCommittedChunkSetCountMismatch { writer_session_count: usize, committed_set_count: usize },
     #[error("Unsupported public statistic output dtype: {output_statistic_dtype}")]
     UnsupportedOutputStatisticDtype { output_statistic_dtype: String },
+    #[error("Unsupported callback queue stage operation: {queue_name}.{operation_name}")]
+    UnsupportedCallbackQueueStageOperation { queue_name: String, operation_name: String },
 }
 
 #[must_use]
@@ -590,6 +608,47 @@ pub fn plan_multi_trait_output_write(
     let use_native_multi_writer = active_trait_count > 0 && all_writer_sessions_native;
     let uses_float64_native_writer = use_native_multi_writer && is_float64_output_dtype;
     Ok(MultiTraitOutputWritePlan { active_trait_count, use_native_multi_writer, uses_float64_native_writer })
+}
+
+fn resolve_callback_queue_stage_name(queue_name: &str, operation_name: &str) -> Option<&'static str> {
+    match (queue_name, operation_name) {
+        (DOSAGE_QUEUE_NAME, QUEUE_PUT_OPERATION) => Some("callback_queue_put"),
+        (DOSAGE_QUEUE_NAME, QUEUE_PRODUCER_BLOCKING_OPERATION) => Some("callback_queue_producer_blocking"),
+        (DOSAGE_QUEUE_NAME, QUEUE_CONSUMER_WAIT_OPERATION) => Some("callback_queue_consumer_wait"),
+        (RESULT_QUEUE_NAME, QUEUE_PUT_OPERATION) => Some("result_queue_put"),
+        (RESULT_QUEUE_NAME, QUEUE_PRODUCER_BLOCKING_OPERATION) => Some("result_queue_producer_blocking"),
+        (RESULT_QUEUE_NAME, QUEUE_CONSUMER_WAIT_OPERATION) => Some("result_queue_consumer_wait"),
+        (DOSAGE_BUFFER_POOL_NAME, QUEUE_CONSUMER_WAIT_OPERATION) => Some("dosage_buffer_pool_consumer_wait"),
+        (RESULT_IN_FLIGHT_SLOTS_NAME, RESULT_SLOT_ACQUIRE_OPERATION) => Some("result_in_flight_slot_acquire"),
+        (RESULT_IN_FLIGHT_SLOTS_NAME, QUEUE_PRODUCER_BLOCKING_OPERATION) => Some("result_in_flight_producer_blocking"),
+        _ => None,
+    }
+}
+
+/// Plan one timed callback queue or bounded-resource observation.
+///
+/// # Errors
+///
+/// Returns an error when the queue/resource and operation pair does not have a
+/// canonical callback timing stage.
+pub fn plan_callback_queue_stage_observation(
+    queue_name: &str,
+    operation_name: &str,
+    elapsed_seconds: f64,
+    blocked: bool,
+) -> Result<CallbackQueueStageObservationPlan, ScheduleError> {
+    let Some(stage_name) = resolve_callback_queue_stage_name(queue_name, operation_name) else {
+        return Err(ScheduleError::UnsupportedCallbackQueueStageOperation {
+            queue_name: queue_name.to_string(),
+            operation_name: operation_name.to_string(),
+        });
+    };
+    Ok(CallbackQueueStageObservationPlan {
+        queue_name: queue_name.to_string(),
+        operation_name: operation_name.to_string(),
+        stage_name: stage_name.to_string(),
+        blocked_seconds: if blocked { elapsed_seconds } else { 0.0 },
+    })
 }
 
 #[cfg(test)]
@@ -956,6 +1015,39 @@ mod tests {
         assert_eq!(
             plan_multi_trait_output_write(1, true, "float16").unwrap_err(),
             ScheduleError::UnsupportedOutputStatisticDtype { output_statistic_dtype: "float16".to_string() },
+        );
+    }
+
+    #[test]
+    fn plans_callback_queue_stage_observations() {
+        assert_eq!(
+            plan_callback_queue_stage_observation("dosage_queue", "put", 0.25, false).unwrap(),
+            CallbackQueueStageObservationPlan {
+                queue_name: "dosage_queue".to_string(),
+                operation_name: "put".to_string(),
+                stage_name: "callback_queue_put".to_string(),
+                blocked_seconds: 0.0,
+            },
+        );
+        assert_eq!(
+            plan_callback_queue_stage_observation("result_in_flight_slots", "producer_blocking", 0.5, true).unwrap(),
+            CallbackQueueStageObservationPlan {
+                queue_name: "result_in_flight_slots".to_string(),
+                operation_name: "producer_blocking".to_string(),
+                stage_name: "result_in_flight_producer_blocking".to_string(),
+                blocked_seconds: 0.5,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_callback_queue_stage_observations() {
+        assert_eq!(
+            plan_callback_queue_stage_observation("unknown_queue", "put", 0.25, false).unwrap_err(),
+            ScheduleError::UnsupportedCallbackQueueStageOperation {
+                queue_name: "unknown_queue".to_string(),
+                operation_name: "put".to_string(),
+            },
         );
     }
 

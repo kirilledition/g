@@ -257,7 +257,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         *,
         queue_name: str,
         operation_name: str,
-        stage_name: str,
         observed_queue: queue.Queue[typing.Any],
         start_time: float,
         blocked: bool,
@@ -266,15 +265,20 @@ class NativeBgenCallbackRunner(abc.ABC):
         elapsed_seconds = time.perf_counter() - start_time
         if self.stage_timing_recorder is None:
             return
-        self.stage_timing_recorder.add_stage_duration(stage_name, elapsed_seconds)
-        blocked_seconds = elapsed_seconds if blocked else 0.0
-        self.stage_timing_recorder.add_queue_backpressure_observation(
+        observation_plan = _core.plan_callback_queue_stage_observation(
             queue_name=queue_name,
             operation_name=operation_name,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+        self.stage_timing_recorder.add_stage_duration(observation_plan.stage_name, elapsed_seconds)
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=observation_plan.queue_name,
+            operation_name=observation_plan.operation_name,
             queue_depth=observed_queue.qsize(),
             queue_capacity=observed_queue.maxsize,
             elapsed_seconds=elapsed_seconds,
-            blocked_seconds=blocked_seconds,
+            blocked_seconds=observation_plan.blocked_seconds,
         )
 
     def record_bounded_resource_operation(
@@ -306,7 +310,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         operation_name: str,
         current_depth: int,
         capacity: int,
-        stage_name: str,
         start_time: float,
         blocked: bool,
     ) -> None:
@@ -314,15 +317,20 @@ class NativeBgenCallbackRunner(abc.ABC):
         elapsed_seconds = time.perf_counter() - start_time
         if self.stage_timing_recorder is None:
             return
-        self.stage_timing_recorder.add_stage_duration(stage_name, elapsed_seconds)
-        blocked_seconds = elapsed_seconds if blocked else 0.0
-        self.stage_timing_recorder.add_queue_backpressure_observation(
+        observation_plan = _core.plan_callback_queue_stage_observation(
             queue_name=resource_name,
             operation_name=operation_name,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+        self.stage_timing_recorder.add_stage_duration(observation_plan.stage_name, elapsed_seconds)
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=observation_plan.queue_name,
+            operation_name=observation_plan.operation_name,
             queue_depth=current_depth,
             queue_capacity=capacity,
             elapsed_seconds=elapsed_seconds,
-            blocked_seconds=blocked_seconds,
+            blocked_seconds=observation_plan.blocked_seconds,
         )
 
     @abc.abstractmethod
@@ -495,7 +503,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_queue_stage_duration(
                     queue_name="dosage_queue",
                     operation_name="consumer_wait",
-                    stage_name="callback_queue_consumer_wait",
                     observed_queue=self.dosage_queue,
                     start_time=get_start_time,
                     blocked=True,
@@ -679,7 +686,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_queue_stage_duration(
                     queue_name="result_queue",
                     operation_name="consumer_wait",
-                    stage_name="result_queue_consumer_wait",
                     observed_queue=self.result_queue,
                     start_time=get_start_time,
                     blocked=True,
@@ -762,7 +768,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_queue_stage_duration(
                     queue_name="dosage_queue",
                     operation_name="put",
-                    stage_name="callback_queue_put",
                     observed_queue=self.dosage_queue,
                     start_time=put_start_time,
                     blocked=False,
@@ -772,7 +777,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_queue_stage_duration(
                     queue_name="dosage_queue",
                     operation_name="producer_blocking",
-                    stage_name="callback_queue_producer_blocking",
                     observed_queue=self.dosage_queue,
                     start_time=put_start_time,
                     blocked=True,
@@ -810,7 +814,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_queue_stage_duration(
                     queue_name="result_queue",
                     operation_name="put",
-                    stage_name="result_queue_put",
                     observed_queue=self.result_queue,
                     start_time=put_start_time,
                     blocked=False,
@@ -820,7 +823,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_queue_stage_duration(
                     queue_name="result_queue",
                     operation_name="producer_blocking",
-                    stage_name="result_queue_producer_blocking",
                     observed_queue=self.result_queue,
                     start_time=put_start_time,
                     blocked=True,
@@ -854,7 +856,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                     operation_name="acquire",
                     current_depth=current_depth,
                     capacity=self.result_in_flight_limit,
-                    stage_name="result_in_flight_slot_acquire",
                     start_time=acquire_start_time,
                     blocked=False,
                 )
@@ -866,7 +867,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 operation_name="producer_blocking",
                 current_depth=current_depth,
                 capacity=self.result_in_flight_limit,
-                stage_name="result_in_flight_producer_blocking",
                 start_time=acquire_start_time,
                 blocked=True,
             )
@@ -1088,7 +1088,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                     self.record_queue_stage_duration(
                         queue_name="dosage_buffer_pool",
                         operation_name="consumer_wait",
-                        stage_name="dosage_buffer_pool_consumer_wait",
                         observed_queue=self.free_dosage_buffers,
                         start_time=buffer_wait_start_time,
                         blocked=True,

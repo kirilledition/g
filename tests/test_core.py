@@ -316,6 +316,36 @@ def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> N
         )
 
 
+def test_plan_callback_queue_stage_observation_uses_native_timing_policy() -> None:
+    queue_observation_plan = _core.plan_callback_queue_stage_observation(
+        queue_name="dosage_queue",
+        operation_name="put",
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    assert queue_observation_plan.queue_name == "dosage_queue"
+    assert queue_observation_plan.operation_name == "put"
+    assert queue_observation_plan.stage_name == "callback_queue_put"
+    assert queue_observation_plan.blocked_seconds == 0.0
+
+    blocked_observation_plan = _core.plan_callback_queue_stage_observation(
+        queue_name="result_in_flight_slots",
+        operation_name="producer_blocking",
+        elapsed_seconds=0.5,
+        blocked=True,
+    )
+    assert blocked_observation_plan.stage_name == "result_in_flight_producer_blocking"
+    assert blocked_observation_plan.blocked_seconds == 0.5
+
+    with pytest.raises(ValueError, match="Unsupported callback queue stage operation"):
+        _core.plan_callback_queue_stage_observation(
+            queue_name="unknown_queue",
+            operation_name="put",
+            elapsed_seconds=0.25,
+            blocked=False,
+        )
+
+
 def test_plan_dosage_buffer_reuse_uses_native_shape_policy() -> None:
     exact_reuse_plan = _core.plan_dosage_buffer_reuse(
         buffered_shape=(2, 3),

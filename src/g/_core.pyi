@@ -575,6 +575,16 @@ class NativeCallbackQueueLimits:
     @property
     def dosage_buffer_limit(self) -> int: ...
 
+class NativeCallbackQueueStageObservationPlan:
+    @property
+    def queue_name(self) -> str: ...
+    @property
+    def operation_name(self) -> str: ...
+    @property
+    def stage_name(self) -> str: ...
+    @property
+    def blocked_seconds(self) -> float: ...
+
 class NativeCallbackChunkIdentity:
     @property
     def chunk_identifier(self) -> int: ...
@@ -1187,6 +1197,12 @@ def resolve_native_callback_queue_limits(
     dosage_buffer_limit: int | None,
 ) -> NativeCallbackQueueLimits: ...
 def resolve_native_callback_worker_shutdown_timeouts() -> NativeCallbackWorkerShutdownTimeouts: ...
+def plan_callback_queue_stage_observation(
+    queue_name: str,
+    operation_name: str,
+    elapsed_seconds: float,
+    blocked: bool,
+) -> NativeCallbackQueueStageObservationPlan: ...
 def plan_multi_trait_chunk_write(
     writer_session_count: int,
     chunk_identifier: int,

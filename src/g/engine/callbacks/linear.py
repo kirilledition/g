@@ -433,7 +433,6 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 self.record_queue_stage_duration(
                     queue_name="result_queue",
                     operation_name="consumer_wait",
-                    stage_name="result_queue_consumer_wait",
                     observed_queue=self.result_queue,
                     start_time=get_start_time,
                     blocked=True,
