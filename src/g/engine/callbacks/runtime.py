@@ -798,10 +798,10 @@ class NativeBgenCallbackRunner(abc.ABC):
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
         if self.worker_error is not None:
-            message = f"native pipeline callback worker failed: {self.worker_error}"
+            message = _core.format_dosage_callback_worker_error_message(str(self.worker_error))
             raise RuntimeError(message) from self.worker_error
         if self.result_worker_error is not None:
-            message = f"native pipeline result writer worker failed: {self.result_worker_error}"
+            message = _core.format_result_callback_worker_error_message(str(self.result_worker_error))
             raise RuntimeError(message) from self.result_worker_error
 
     def put_result_write_item(

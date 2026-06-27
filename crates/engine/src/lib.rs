@@ -32,6 +32,7 @@ pub use schedule::{
     DosageBufferReusePlan, MultiTraitOutputWritePlan, NativeCallbackQueueLimits, ResultInFlightSlotState,
     ScheduleError, SingleTraitOutputWritePlan, VariantMajorDosageBatchHandoffPlan, WriterFinishExecutionPlan,
     callback_worker_backpressure_poll_timeout_seconds, callback_worker_shutdown_timeouts,
+    format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
     intersect_committed_chunk_identifier_sets, plan_callback_queue_operation_observation,
     plan_callback_queue_stage_observation, plan_callback_worker_abort, plan_callback_worker_finish,
     plan_callback_worker_stop_poll, plan_dosage_buffer_reuse, plan_dosage_callback_worker_join,

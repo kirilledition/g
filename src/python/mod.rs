@@ -90,6 +90,7 @@ use schedule::{
     NativeCallbackWorkerStopPollPlan, NativeDosageBufferPoolState, NativeDosageBufferReusePlan,
     NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan, NativeResultInFlightSlotState,
     NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
     intersect_committed_chunk_identifier_sets, plan_callback_queue_operation_observation,
     plan_callback_queue_stage_observation, plan_callback_worker_abort, plan_callback_worker_finish,
     plan_callback_worker_stop_poll, plan_dosage_buffer_reuse, plan_dosage_callback_worker_join,
@@ -1843,6 +1844,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_callback_worker_abort, module)?)?;
     module.add_function(wrap_pyfunction!(plan_callback_worker_finish, module)?)?;
     module.add_function(wrap_pyfunction!(plan_callback_worker_stop_poll, module)?)?;
+    module.add_function(wrap_pyfunction!(format_dosage_callback_worker_error_message, module)?)?;
+    module.add_function(wrap_pyfunction!(format_result_callback_worker_error_message, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_buffer_reuse, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_join, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_stop, module)?)?;

@@ -351,6 +351,17 @@ def test_plan_callback_worker_stop_poll_uses_native_loop_policy() -> None:
     assert expired_poll_plan.poll_timeout_seconds == 0.0
 
 
+def test_format_callback_worker_error_messages_uses_native_policy() -> None:
+    assert (
+        _core.format_dosage_callback_worker_error_message("dosage failed")
+        == "native pipeline callback worker failed: dosage failed"
+    )
+    assert (
+        _core.format_result_callback_worker_error_message("writer failed")
+        == "native pipeline result writer worker failed: writer failed"
+    )
+
+
 def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
     queue_limits = _core.resolve_native_callback_queue_limits(
         staging_depth=3,

@@ -2334,14 +2334,16 @@ def test_native_callback_runner_surfaces_worker_and_writer_errors() -> None:
     callback = ManualCallbackRunner()
     callback.worker_error = ValueError("dosage failed")
 
-    with pytest.raises(RuntimeError, match="callback worker failed"):
+    with pytest.raises(RuntimeError, match="callback worker failed") as dosage_error:
         callback.raise_worker_error_if_present()
+    assert str(dosage_error.value) == "native pipeline callback worker failed: dosage failed"
 
     callback.worker_error = None
     callback.result_worker_error = ValueError("writer failed")
 
-    with pytest.raises(RuntimeError, match="result writer worker failed"):
+    with pytest.raises(RuntimeError, match="result writer worker failed") as writer_error:
         callback.raise_worker_error_if_present()
+    assert str(writer_error.value) == "native pipeline result writer worker failed: writer failed"
 
 
 def test_base_native_callback_runner_compute_methods_are_abstract() -> None:

@@ -81,12 +81,13 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   in-flight slot accounting, dosage-buffer pool accounting, dosage-buffer reuse
   shape planning, writer-finish thread cleanup/execution planning, output write
   method planning, callback worker lifecycle start state, callback worker
-  shutdown timeout, stop/join-planning, finish/abort shutdown, and stop-loop
-  poll policy, callback worker stop-attempt decision policy, and BGEN delivery
-  method selection also live in `g-engine`; the same crate also owns the
-  callback worker backpressure poll-timeout policy, binary correction summary
-  counter accumulation, and callback progress/chunk identity state. Native
-  multi-trait committed-chunk write selection is also owned by `g-engine`.
+  shutdown timeout, stop/join-planning, finish/abort shutdown, stop-loop poll
+  policy, callback worker stop-attempt decision policy, failure message
+  formatting, and BGEN delivery method selection also live in `g-engine`; the
+  same crate also owns the callback worker backpressure poll-timeout policy,
+  binary correction summary counter accumulation, and callback progress/chunk
+  identity state. Native multi-trait committed-chunk write selection is also
+  owned by `g-engine`.
   Python only extracts callback/input object attributes, acquires semaphores,
   allocates/slices/owns NumPy buffers, owns thread objects and join calls,
   invokes writer sessions, owns summary payload emission, and calls the

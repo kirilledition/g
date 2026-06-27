@@ -409,6 +409,16 @@ pub fn plan_callback_worker_stop_poll(
     }
 }
 
+#[must_use]
+pub fn format_dosage_callback_worker_error_message(error_message: &str) -> String {
+    format!("native pipeline callback worker failed: {error_message}")
+}
+
+#[must_use]
+pub fn format_result_callback_worker_error_message(error_message: &str) -> String {
+    format!("native pipeline result writer worker failed: {error_message}")
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BgenDeliveryMethod {
     DosageNativeMultiAlignedSamples,
@@ -1137,6 +1147,18 @@ mod tests {
         assert_eq!(
             plan_callback_worker_stop_poll(-1.0, true, false, true),
             CallbackWorkerStopPollPlan { should_stop: true, poll_timeout_seconds: 0.0 },
+        );
+    }
+
+    #[test]
+    fn formats_callback_worker_failure_messages() {
+        assert_eq!(
+            format_dosage_callback_worker_error_message("dosage failed"),
+            "native pipeline callback worker failed: dosage failed",
+        );
+        assert_eq!(
+            format_result_callback_worker_error_message("writer failed"),
+            "native pipeline result writer worker failed: writer failed",
         );
     }
 

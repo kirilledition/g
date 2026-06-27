@@ -626,6 +626,20 @@ pub(crate) fn plan_callback_worker_stop_poll(
 }
 
 #[pyfunction]
+#[must_use]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn format_dosage_callback_worker_error_message(error_message: String) -> String {
+    native_schedule::format_dosage_callback_worker_error_message(&error_message)
+}
+
+#[pyfunction]
+#[must_use]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn format_result_callback_worker_error_message(error_message: String) -> String {
+    native_schedule::format_result_callback_worker_error_message(&error_message)
+}
+
+#[pyfunction]
 pub(crate) fn resolve_callback_worker_backpressure_poll_timeout_seconds() -> f64 {
     native_schedule::callback_worker_backpressure_poll_timeout_seconds()
 }
