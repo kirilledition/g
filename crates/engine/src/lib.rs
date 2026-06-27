@@ -7,6 +7,7 @@ pub mod callback_summary;
 pub mod coordinator;
 pub mod effects;
 pub mod fake_backend;
+pub mod fake_effects;
 pub mod phase;
 pub mod pipeline;
 pub mod preflight;
@@ -26,6 +27,7 @@ pub use callback_summary::{BinaryChunkDiagnosticsInput, BinaryCorrectionSummaryS
 pub use coordinator::{EngineCoordinator, EngineError, EngineRunInput, EngineRunReport, InjectedCoordinatorFailure};
 pub use effects::{EngineEffectError, EngineEffectOperation, EngineRunEffects, NoopEngineRunEffects};
 pub use fake_backend::{FakeBackend, FakeBackendFailure, FakeChromosomeState, FakeGroupState};
+pub use fake_effects::{FakeEngineRunEffects, FakeOutputState, FakeRunEffectState};
 pub use phase::RunPhase;
 pub use pipeline::Regenie2RunEngineCore;
 pub use preflight::{

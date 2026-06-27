@@ -283,92 +283,7 @@ fn should_abort_outputs_after_failure(phase: RunPhase) -> bool {
 mod tests {
     use super::*;
     use crate::fake_backend::{FakeBackend, FakeBackendFailure};
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    enum EffectEvent {
-        Phase(RunPhase),
-        OpenInputs,
-        AlignInputs,
-        ValidatePreflight,
-        ValidateOutputCompatibility,
-        ConstructWriters,
-        WriteBatch,
-        DrainWriters,
-        FinalizeOutputs,
-        AbortOutputs(RunPhase),
-    }
-
-    #[derive(Debug, Default)]
-    struct RecordingEffects {
-        failure: Option<EngineEffectOperation>,
-        events: Vec<EffectEvent>,
-        written_results: Vec<AssociationBatchResult>,
-    }
-
-    impl RecordingEffects {
-        fn fail_at(failure: EngineEffectOperation) -> Self {
-            Self { failure: Some(failure), events: Vec::new(), written_results: Vec::new() }
-        }
-
-        fn maybe_fail(&self, operation: EngineEffectOperation) -> Result<(), EngineEffectError> {
-            if self.failure == Some(operation) {
-                return Err(EngineEffectError::new(format!("forced {operation} failure")));
-            }
-            Ok(())
-        }
-    }
-
-    impl EngineRunEffects for RecordingEffects {
-        fn emit_phase_event(&mut self, phase: RunPhase) -> Result<(), EngineEffectError> {
-            self.events.push(EffectEvent::Phase(phase));
-            self.maybe_fail(EngineEffectOperation::TelemetryEvent)
-        }
-
-        fn open_inputs(&mut self) -> Result<(), EngineEffectError> {
-            self.events.push(EffectEvent::OpenInputs);
-            self.maybe_fail(EngineEffectOperation::InputOpen)
-        }
-
-        fn align_inputs(&mut self) -> Result<(), EngineEffectError> {
-            self.events.push(EffectEvent::AlignInputs);
-            self.maybe_fail(EngineEffectOperation::InputAlignment)
-        }
-
-        fn validate_preflight(&mut self) -> Result<(), EngineEffectError> {
-            self.events.push(EffectEvent::ValidatePreflight);
-            self.maybe_fail(EngineEffectOperation::PreflightValidation)
-        }
-
-        fn validate_output_compatibility(&mut self) -> Result<(), EngineEffectError> {
-            self.events.push(EffectEvent::ValidateOutputCompatibility);
-            self.maybe_fail(EngineEffectOperation::OutputCompatibility)
-        }
-
-        fn construct_writers(&mut self) -> Result<(), EngineEffectError> {
-            self.events.push(EffectEvent::ConstructWriters);
-            self.maybe_fail(EngineEffectOperation::WriterConstruction)
-        }
-
-        fn write_batch_result(&mut self, result: &AssociationBatchResult) -> Result<(), EngineEffectError> {
-            self.events.push(EffectEvent::WriteBatch);
-            self.written_results.push(result.clone());
-            self.maybe_fail(EngineEffectOperation::OutputWrite)
-        }
-
-        fn drain_writers(&mut self) -> Result<(), EngineEffectError> {
-            self.events.push(EffectEvent::DrainWriters);
-            self.maybe_fail(EngineEffectOperation::WriterDrain)
-        }
-
-        fn finalize_outputs(&mut self) -> Result<(), EngineEffectError> {
-            self.events.push(EffectEvent::FinalizeOutputs);
-            self.maybe_fail(EngineEffectOperation::OutputFinalization)
-        }
-
-        fn abort_outputs(&mut self, phase: RunPhase) {
-            self.events.push(EffectEvent::AbortOutputs(phase));
-        }
-    }
+    use crate::fake_effects::FakeEngineRunEffects;
 
     fn build_input() -> EngineRunInput<'static> {
         EngineRunInput::new(
@@ -408,71 +323,65 @@ mod tests {
     #[test]
     fn coordinator_executes_native_side_effect_hooks() {
         let mut coordinator = EngineCoordinator::new(FakeBackend::succeed());
-        let mut effects = RecordingEffects::default();
+        let mut effects = FakeEngineRunEffects::succeed();
 
         let report = coordinator.run_single_batch_with_effects(&build_input(), &mut effects).unwrap();
 
         assert_eq!(report.result.variant_count, 4);
-        assert_eq!(effects.written_results, vec![report.result]);
+        assert_eq!(effects.state().output.written_results, vec![report.result]);
+        assert_eq!(effects.state().phase_events, report.phase_history[1..]);
         assert_eq!(
-            effects.events,
+            effects.state().completed_operations,
             vec![
-                EffectEvent::Phase(RunPhase::InputsOpened),
-                EffectEvent::OpenInputs,
-                EffectEvent::Phase(RunPhase::InputsAligned),
-                EffectEvent::AlignInputs,
-                EffectEvent::Phase(RunPhase::PreflightValidated),
-                EffectEvent::ValidatePreflight,
-                EffectEvent::Phase(RunPhase::OutputsInitialized),
-                EffectEvent::ValidateOutputCompatibility,
-                EffectEvent::ConstructWriters,
-                EffectEvent::Phase(RunPhase::Running),
-                EffectEvent::WriteBatch,
-                EffectEvent::Phase(RunPhase::Draining),
-                EffectEvent::DrainWriters,
-                EffectEvent::Phase(RunPhase::Finalizing),
-                EffectEvent::FinalizeOutputs,
-                EffectEvent::Phase(RunPhase::Completed),
+                EngineEffectOperation::InputOpen,
+                EngineEffectOperation::InputAlignment,
+                EngineEffectOperation::PreflightValidation,
+                EngineEffectOperation::OutputCompatibility,
+                EngineEffectOperation::WriterConstruction,
+                EngineEffectOperation::OutputWrite,
+                EngineEffectOperation::WriterDrain,
+                EngineEffectOperation::OutputFinalization,
             ],
         );
+        assert_eq!(effects.state().output.aborted_phase, None);
     }
 
     #[test]
     fn coordinator_records_backend_prepare_failure() {
         let mut coordinator = EngineCoordinator::new(FakeBackend::fail_at(FakeBackendFailure::PrepareGroup));
-        let mut effects = RecordingEffects::default();
+        let mut effects = FakeEngineRunEffects::succeed();
 
         let error = coordinator.run_single_batch_with_effects(&build_input(), &mut effects).unwrap_err();
 
         assert!(matches!(error, EngineError::Backend { phase: RunPhase::Running, .. }));
         assert_eq!(coordinator.phase(), RunPhase::Failed);
         assert_eq!(coordinator.phase_history().last(), Some(&RunPhase::Failed));
-        assert!(effects.events.contains(&EffectEvent::AbortOutputs(RunPhase::Running)));
+        assert_eq!(effects.state().output.aborted_phase, Some(RunPhase::Running));
     }
 
     #[test]
     fn coordinator_records_backend_chromosome_failure() {
         let mut coordinator = EngineCoordinator::new(FakeBackend::fail_at(FakeBackendFailure::PrepareChromosome));
-        let mut effects = RecordingEffects::default();
+        let mut effects = FakeEngineRunEffects::succeed();
 
         let error = coordinator.run_single_batch_with_effects(&build_input(), &mut effects).unwrap_err();
 
         assert!(matches!(error, EngineError::Backend { phase: RunPhase::Running, .. }));
         assert_eq!(coordinator.phase(), RunPhase::Failed);
         assert_eq!(coordinator.phase_history().last(), Some(&RunPhase::Failed));
-        assert!(effects.events.contains(&EffectEvent::AbortOutputs(RunPhase::Running)));
+        assert_eq!(effects.state().output.aborted_phase, Some(RunPhase::Running));
     }
 
     #[test]
     fn coordinator_records_backend_batch_failure() {
         let mut coordinator = EngineCoordinator::new(FakeBackend::fail_at(FakeBackendFailure::ComputeBatch));
-        let mut effects = RecordingEffects::default();
+        let mut effects = FakeEngineRunEffects::succeed();
 
         let error = coordinator.run_single_batch_with_effects(&build_input(), &mut effects).unwrap_err();
 
         assert!(matches!(error, EngineError::Backend { phase: RunPhase::Running, .. }));
         assert_eq!(coordinator.phase(), RunPhase::Failed);
-        assert!(effects.events.contains(&EffectEvent::AbortOutputs(RunPhase::Running)));
+        assert_eq!(effects.state().output.aborted_phase, Some(RunPhase::Running));
     }
 
     #[test]
@@ -506,7 +415,7 @@ mod tests {
     #[test]
     fn coordinator_records_side_effect_failure_and_aborts_initialized_outputs() {
         let mut coordinator = EngineCoordinator::new(FakeBackend::succeed());
-        let mut effects = RecordingEffects::fail_at(EngineEffectOperation::OutputWrite);
+        let mut effects = FakeEngineRunEffects::fail_at(EngineEffectOperation::OutputWrite);
 
         let error = coordinator.run_single_batch_with_effects(&build_input(), &mut effects).unwrap_err();
 
@@ -515,11 +424,11 @@ mod tests {
             EngineError::Effect {
                 phase: RunPhase::Running,
                 operation: EngineEffectOperation::OutputWrite,
-                source: EngineEffectError::new("forced output_write failure"),
+                source: EngineEffectError::new("fake engine side effect failed during output_write"),
             },
         );
         assert_eq!(coordinator.phase(), RunPhase::Failed);
-        assert!(effects.events.contains(&EffectEvent::AbortOutputs(RunPhase::Running)));
+        assert_eq!(effects.state().output.aborted_phase, Some(RunPhase::Running));
     }
 
     #[test]
@@ -536,7 +445,7 @@ mod tests {
             (EngineEffectOperation::OutputFinalization, RunPhase::Finalizing, true),
         ] {
             let mut coordinator = EngineCoordinator::new(FakeBackend::succeed());
-            let mut effects = RecordingEffects::fail_at(operation);
+            let mut effects = FakeEngineRunEffects::fail_at(operation);
 
             let error = coordinator.run_single_batch_with_effects(&build_input(), &mut effects).unwrap_err();
 
@@ -545,14 +454,11 @@ mod tests {
                 EngineError::Effect {
                     phase,
                     operation,
-                    source: EngineEffectError::new(format!("forced {operation} failure")),
+                    source: EngineEffectError::new(format!("fake engine side effect failed during {operation}")),
                 }
             );
             assert_eq!(coordinator.phase(), RunPhase::Failed);
-            assert_eq!(
-                effects.events.iter().any(|event| matches!(event, EffectEvent::AbortOutputs(_))),
-                aborts_outputs,
-            );
+            assert_eq!(effects.state().output.aborted_phase.is_some(), aborts_outputs,);
         }
     }
 
