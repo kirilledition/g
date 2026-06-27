@@ -45,6 +45,12 @@ struct TelemetryLineWriter {
     line_buffer: Vec<u8>,
 }
 
+#[pyclass]
+pub struct NativeTelemetryProgressThrottle {
+    start_time: Instant,
+    state: Mutex<native_telemetry_session::TelemetryProgressThrottleState>,
+}
+
 impl TelemetryWriterFactory {
     fn new(writer: NonBlocking, event_cap_state: native_telemetry_session::TelemetryEventCapState) -> Self {
         Self { writer, event_cap_state: Arc::new(event_cap_state) }
@@ -119,6 +125,27 @@ impl io::Write for TelemetryLineWriter {
             self.write_complete_line(&complete_line)?;
         }
         self.writer.flush()
+    }
+}
+
+#[pymethods]
+impl NativeTelemetryProgressThrottle {
+    #[new]
+    pub fn new(progress_interval_seconds: f64, progress_interval_chunks: i64) -> Self {
+        Self {
+            start_time: Instant::now(),
+            state: Mutex::new(native_telemetry_session::TelemetryProgressThrottleState::new(
+                progress_interval_seconds,
+                progress_interval_chunks,
+            )),
+        }
+    }
+
+    pub fn should_emit_progress(&self, processed_chunk_count: i64) -> PyResult<bool> {
+        let current_time_seconds = self.start_time.elapsed().as_secs_f64();
+        let mut state =
+            self.state.lock().map_err(|_| PyRuntimeError::new_err("Telemetry progress mutex was poisoned."))?;
+        Ok(state.should_emit_progress_at(processed_chunk_count, current_time_seconds))
     }
 }
 

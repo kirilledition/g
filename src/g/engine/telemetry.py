@@ -59,13 +59,12 @@ class TelemetrySession:
         """Initialize a run telemetry session."""
         self.mode = mode
         self.paths = paths
-        self.progress_interval_seconds = progress_interval_seconds
-        self.progress_interval_chunks = progress_interval_chunks
         self.run_id = run_id or uuid.uuid4().hex
-        self.lock = threading.Lock()
-        self.last_progress_time = 0.0
-        self.last_progress_chunk_count = 0
         self.close_metadata: TelemetryCloseMetadata | None = None
+        self.native_progress_throttle = _core.NativeTelemetryProgressThrottle(
+            progress_interval_seconds,
+            progress_interval_chunks,
+        )
         native_event_cap = trace_event_cap if mode == types.TelemetryMode.TRACE and trace_event_cap > 0 else None
         self.native_telemetry_session = (
             _core.NativeTelemetrySession(
@@ -111,19 +110,7 @@ class TelemetrySession:
 
     def should_emit_progress(self, processed_chunk_count: int) -> bool:
         """Return whether a progress event should be emitted now."""
-        current_time = time.monotonic()
-        with self.lock:
-            elapsed_seconds = current_time - self.last_progress_time
-            elapsed_chunks = processed_chunk_count - self.last_progress_chunk_count
-            if (
-                self.last_progress_time > 0.0
-                and elapsed_seconds < self.progress_interval_seconds
-                and elapsed_chunks < self.progress_interval_chunks
-            ):
-                return False
-            self.last_progress_time = current_time
-            self.last_progress_chunk_count = processed_chunk_count
-            return True
+        return self.native_progress_throttle.should_emit_progress(processed_chunk_count)
 
     def build_event_payload(self, *, event: str, level: str, **fields: object) -> dict[str, object]:
         """Build a schema-versioned telemetry event payload."""

@@ -34,8 +34,8 @@ pub use telemetry_policy::{
     paths_refer_to_same_file, resolve_output_run_root, resolve_telemetry_paths, resolve_telemetry_stream_file,
 };
 pub use telemetry_session::{
-    TelemetryCapAction, TelemetryEventCapState, TelemetryEventEnvelope, TelemetryWriterCounterSnapshot,
-    build_telemetry_event_envelope,
+    TelemetryCapAction, TelemetryEventCapState, TelemetryEventEnvelope, TelemetryProgressThrottleState,
+    TelemetryWriterCounterSnapshot, build_telemetry_event_envelope,
 };
 pub use timing::{
     ChunkStageSummary, ChunkStageTiming, NullLogisticDiagnosticValue, NullLogisticSummary, NumericDiagnosticValue,

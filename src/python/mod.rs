@@ -59,7 +59,8 @@ use host_policy::{
     resolve_association_mode_value, resolve_jax_runtime_setup_payload,
 };
 use logging::{
-    NativeTelemetrySession, build_telemetry_event_payload, emit_diagnostic_event, initialize_logging, shutdown_logging,
+    NativeTelemetryProgressThrottle, NativeTelemetrySession, build_telemetry_event_payload, emit_diagnostic_event,
+    initialize_logging, shutdown_logging,
 };
 use output::{
     NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
@@ -1797,6 +1798,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
     module.add_class::<MultiRegeniePredictionSource>()?;
+    module.add_class::<NativeTelemetryProgressThrottle>()?;
     module.add_class::<NativeTelemetrySession>()?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(resolve_prediction_loco_paths, module)?)?;

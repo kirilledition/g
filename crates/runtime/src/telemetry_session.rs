@@ -46,6 +46,14 @@ pub struct TelemetryEventEnvelope {
     pub thread_name: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TelemetryProgressThrottleState {
+    progress_interval_seconds: f64,
+    progress_interval_chunks: i64,
+    last_progress_time_seconds: Option<f64>,
+    last_progress_chunk_count: i64,
+}
+
 impl TelemetryEventCapState {
     #[must_use]
     pub fn new(path: &Path, event_cap: Option<usize>, lossy: bool) -> Self {
@@ -168,6 +176,33 @@ impl TelemetryEventCapState {
     }
 }
 
+impl TelemetryProgressThrottleState {
+    #[must_use]
+    pub fn new(progress_interval_seconds: f64, progress_interval_chunks: i64) -> Self {
+        Self {
+            progress_interval_seconds,
+            progress_interval_chunks,
+            last_progress_time_seconds: None,
+            last_progress_chunk_count: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn should_emit_progress_at(&mut self, processed_chunk_count: i64, current_time_seconds: f64) -> bool {
+        if let Some(last_progress_time_seconds) = self.last_progress_time_seconds {
+            let elapsed_seconds = current_time_seconds - last_progress_time_seconds;
+            let elapsed_chunks = processed_chunk_count - self.last_progress_chunk_count;
+            if elapsed_seconds < self.progress_interval_seconds && elapsed_chunks < self.progress_interval_chunks {
+                return false;
+            }
+        }
+
+        self.last_progress_time_seconds = Some(current_time_seconds);
+        self.last_progress_chunk_count = processed_chunk_count;
+        true
+    }
+}
+
 impl TelemetryWriterCounterSnapshot {
     #[must_use]
     pub fn empty() -> Self {
@@ -249,5 +284,23 @@ mod tests {
         assert_eq!(envelope.source, "python");
         assert_eq!(envelope.target, "g.engine.telemetry");
         assert_eq!(envelope.process_identifier, 42);
+    }
+
+    #[test]
+    fn progress_throttle_emits_first_event() {
+        let mut state = TelemetryProgressThrottleState::new(999.0, 10);
+
+        assert!(state.should_emit_progress_at(1, 0.0));
+    }
+
+    #[test]
+    fn progress_throttle_suppresses_until_time_or_chunk_threshold() {
+        let mut state = TelemetryProgressThrottleState::new(5.0, 10);
+
+        assert!(state.should_emit_progress_at(1, 10.0));
+        assert!(!state.should_emit_progress_at(2, 11.0));
+        assert!(state.should_emit_progress_at(11, 11.5));
+        assert!(!state.should_emit_progress_at(12, 12.0));
+        assert!(state.should_emit_progress_at(12, 16.5));
     }
 }
