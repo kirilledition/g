@@ -126,6 +126,56 @@ def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> No
         )
 
 
+def test_native_null_logistic_nonconvergence_policy() -> None:
+    continue_plan = _core.plan_null_logistic_nonconvergence(
+        chromosome="22",
+        convergence_flags=(True,),
+        scalar_convergence=True,
+        phenotype_names=None,
+        policy="fail",
+    )
+    assert continue_plan.action == "continue"
+    assert continue_plan.failed_trait_indices == []
+    assert continue_plan.message is None
+    assert continue_plan.warning_message is None
+
+    fail_plan = _core.plan_null_logistic_nonconvergence(
+        chromosome="22",
+        convergence_flags=(False,),
+        scalar_convergence=True,
+        phenotype_names=None,
+        policy="fail",
+    )
+    assert fail_plan.action == "fail"
+    assert fail_plan.failed_trait_indices == [0]
+    assert fail_plan.message == "Binary null logistic model did not converge for chromosome 22."
+    assert fail_plan.warning_message is None
+
+    warn_plan = _core.plan_null_logistic_nonconvergence(
+        chromosome="22",
+        convergence_flags=(True, False),
+        scalar_convergence=False,
+        phenotype_names=("trait_a", "trait_b"),
+        policy="warn",
+    )
+    assert warn_plan.action == "warn"
+    assert warn_plan.failed_trait_indices == [1]
+    assert warn_plan.message == "Binary null logistic model did not converge for chromosome 22: trait_b."
+    assert warn_plan.warning_message == (
+        "Binary null logistic model did not converge for chromosome 22: trait_b. "
+        "Continuing because --null_logistic_nonconvergence_policy=warn."
+    )
+
+    with pytest.raises(ValueError, match="Unsupported null logistic nonconvergence policy"):
+        _core.plan_null_logistic_nonconvergence(
+            chromosome="22",
+            convergence_flags=(False,),
+            scalar_convergence=True,
+            phenotype_names=None,
+            policy="ignore",
+        )
+
+
 def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert (
         _core.resolve_manifest_gpu_genotype_format(

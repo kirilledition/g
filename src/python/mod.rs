@@ -26,6 +26,7 @@ use g_genotype::common::{ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunk
 use g_genotype::planner;
 use g_genotype::preprocess;
 
+mod callback_diagnostics;
 mod callback_progress;
 mod callback_summary;
 mod config;
@@ -46,6 +47,7 @@ mod telemetry_policy;
 mod timing;
 mod trusted_validation;
 
+use callback_diagnostics::{NativeNullLogisticNonconvergencePlan, plan_null_logistic_nonconvergence};
 use callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
     NativeCallbackProgressUpdate, build_callback_chunk_identity,
@@ -1787,6 +1789,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeGpuGenotypeFormatResolutionPlan>()?;
     module.add_class::<NativeMultiTraitChunkWritePlan>()?;
     module.add_class::<NativeMultiTraitOutputWritePlan>()?;
+    module.add_class::<NativeNullLogisticNonconvergencePlan>()?;
     module.add_class::<NativeResultInFlightSlotState>()?;
     module.add_class::<NativeSingleTraitOutputWritePlan>()?;
     module.add_class::<NativeVariantMajorDosageBatchHandoffPlan>()?;
@@ -1840,6 +1843,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
     module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_null_logistic_nonconvergence, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_manifest_gpu_genotype_format, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_bgen_delivery_method_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_callback_worker_backpressure_poll_timeout_seconds, module)?)?;

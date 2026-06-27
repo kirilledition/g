@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 
 pub mod backend;
+pub mod callback_diagnostics;
 pub mod callback_progress;
 pub mod callback_summary;
 pub mod coordinator;
@@ -12,6 +13,10 @@ pub mod schedule;
 
 pub use backend::{
     AssociationBackend, AssociationBatchResult, BackendError, GenotypeBatchView, PredictionView, PreparedGroupInput,
+};
+pub use callback_diagnostics::{
+    CallbackDiagnosticsError, NullLogisticNonconvergenceAction, NullLogisticNonconvergencePlan,
+    plan_null_logistic_nonconvergence,
 };
 pub use callback_progress::{
     CallbackChunkIdentity, CallbackProgressCompletion, CallbackProgressState, CallbackProgressUpdate,
