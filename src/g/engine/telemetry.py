@@ -71,7 +71,6 @@ class TelemetrySession:
         self.mode = mode
         self.paths = paths
         self.run_id = run_id or uuid.uuid4().hex
-        self.close_metadata: TelemetryCloseMetadata | None = None
         self.native_progress_throttle = _core.NativeTelemetryProgressThrottle(
             progress_interval_seconds,
             progress_interval_chunks,
@@ -97,6 +96,16 @@ class TelemetrySession:
     def profile_enabled(self) -> bool:
         """Return whether profiling-grade telemetry is enabled."""
         return self.mode in {types.TelemetryMode.PROFILE, types.TelemetryMode.TRACE}
+
+    @property
+    def close_metadata(self) -> TelemetryCloseMetadata | None:
+        """Return close metadata captured by the native telemetry handle."""
+        if self.native_telemetry_session is None:
+            return None
+        metadata = self.native_telemetry_session.close_metadata()
+        if metadata is None:
+            return None
+        return typing.cast("TelemetryCloseMetadata", dict(metadata))
 
     def log_event(self, event: str, level: str, **fields: object) -> None:
         """Write one structured lifecycle or profile event."""
@@ -160,23 +169,19 @@ class TelemetrySession:
     def close(self) -> TelemetryCloseMetadata | None:
         """Flush buffered telemetry resources."""
         if self.native_telemetry_session is None:
-            self.close_metadata = None
             return None
         writer_counters = typing.cast("TelemetryWriterCounters", dict(self.native_telemetry_session.finish()))
-        self.close_metadata = {"writer_counters": writer_counters}
-        return self.close_metadata
+        return {"writer_counters": writer_counters}
 
     def close_with_event(self) -> TelemetryCloseMetadata | None:
         """Emit the close event and flush buffered telemetry resources."""
         if self.native_telemetry_session is None:
-            self.close_metadata = None
             return None
         writer_counters = typing.cast(
             "TelemetryWriterCounters",
             dict(self.native_telemetry_session.finish_with_current_close_event(self.run_id)),
         )
-        self.close_metadata = {"writer_counters": writer_counters}
-        return self.close_metadata
+        return {"writer_counters": writer_counters}
 
 
 def format_timestamp(timestamp_seconds: float) -> str:

@@ -261,6 +261,19 @@ impl NativeTelemetrySession {
         telemetry_writer_counter_snapshot_to_py_dict(py, counter_snapshot)
     }
 
+    pub fn close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let last_counter_snapshot = self
+            .last_counter_snapshot
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
+        let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
+            return Ok(None);
+        };
+        let metadata = PyDict::new(py);
+        metadata.set_item("writer_counters", telemetry_writer_counter_snapshot_to_py_dict(py, counter_snapshot)?)?;
+        Ok(Some(metadata))
+    }
+
     pub fn finish<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let finish_start_time = Instant::now();
         let mut writer_guard =

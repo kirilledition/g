@@ -307,6 +307,7 @@ def test_profile_telemetry_flushes_buffered_events_on_close(tmp_path: Path) -> N
 
     for chunk_index in range(20):
         telemetry_session.log_event("chunk_profile", level="info", chunk_index=chunk_index)
+    assert telemetry_session.close_metadata is None
     telemetry.close_telemetry_session(telemetry_session)
     assert telemetry_session.close_metadata is not None
     assert telemetry_session.close_metadata["writer_counters"]["written_event_count"] == 21
@@ -343,9 +344,11 @@ def test_telemetry_close_returns_writer_counters(tmp_path: Path) -> None:
 
     telemetry_session.log_event("first_profile_event", level="info")
     telemetry_session.log_event("second_profile_event", level="info")
+    assert telemetry_session.close_metadata is None
     close_metadata = telemetry_session.close()
 
     assert close_metadata is not None
+    assert telemetry_session.close_metadata == close_metadata
     writer_counters = close_metadata["writer_counters"]
     assert writer_counters["accepted_event_count"] == 2
     assert writer_counters["written_event_count"] == 2

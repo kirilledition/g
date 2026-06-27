@@ -60,13 +60,14 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   retrieval and pass identifier views into input code.
 - `crates/runtime/src/` now owns pure runtime policy/state helpers: logging
   runtime policy, telemetry path/counter policy, telemetry session
-  cap/counter/envelope/progress-throttle state, current telemetry event metadata
-  capture, telemetry event/close-event/JSON-line emission, run lifecycle event
-  payload/rendering policy, shutdown signal metadata and controller state, stage
-  timing state, exact-stage timing policy, stage-timing/profile JSON payloads
-  and file writes, run metadata payloads, and the logging/Rayon/JAX process
-  runtime state handle. Root PyO3 adapters still own other side effects and
-  Python-only JAX setup until runtime handles move fully into Rust.
+  cap/counter/envelope/progress-throttle/close-metadata state, current
+  telemetry event metadata capture, telemetry event/close-event/JSON-line
+  emission, run lifecycle event payload/rendering policy, shutdown signal
+  metadata and controller state, stage timing state, exact-stage timing policy,
+  stage-timing/profile JSON payloads and file writes, run metadata payloads,
+  and the logging/Rayon/JAX process runtime state handle. Root PyO3 adapters
+  still own other side effects and Python-only JAX setup until runtime handles
+  move fully into Rust.
 - `crates/engine/src/` now owns the first native coordinator scaffold:
   `RunPhase`, the `AssociationBackend` trait, typed batch/prediction/group
   views, a deterministic fake backend, single-batch phase progression,
