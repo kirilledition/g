@@ -471,6 +471,16 @@ class NativeTelemetrySession:
     ) -> None: ...
     def emit_json_line(self, json_line: str) -> None: ...
     def emit_payload(self, payload: dict[str, object]) -> None: ...
+    def emit_event(
+        self,
+        run_id: str,
+        event: str,
+        level: str,
+        timestamp: str,
+        process_identifier: int,
+        thread_name: str,
+        fields: dict[str, object],
+    ) -> None: ...
     def build_event_payload(
         self,
         run_id: str,

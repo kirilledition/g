@@ -13,8 +13,6 @@ from pathlib import Path
 
 from g import _core, types
 
-TELEMETRY_SCHEMA_VERSION = 1
-
 TelemetryCounterValue = bool | float | int | None
 TelemetryWriterCounters = dict[str, TelemetryCounterValue]
 TelemetryCloseMetadata = dict[str, TelemetryWriterCounters]
@@ -91,8 +89,17 @@ class TelemetrySession:
         """Write one structured lifecycle or profile event."""
         if not self.enabled:
             return
-        payload = self.build_event_payload(event=event, level=level, **fields)
-        self.write_json_line(payload)
+        if self.native_telemetry_session is None:
+            return
+        self.native_telemetry_session.emit_event(
+            self.run_id,
+            event,
+            level,
+            format_timestamp(time.time()),
+            os.getpid(),
+            threading.current_thread().name,
+            fields,
+        )
 
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
@@ -100,13 +107,12 @@ class TelemetrySession:
             return
         if not self.should_emit_progress(processed_chunk_count):
             return
-        payload = self.build_event_payload(
-            event="progress_tick",
+        self.log_event(
+            "progress_tick",
             level="info",
             processed_chunk_count=processed_chunk_count,
             **fields,
         )
-        self.write_json_line(payload)
 
     def should_emit_progress(self, processed_chunk_count: int) -> bool:
         """Return whether a progress event should be emitted now."""
@@ -117,50 +123,17 @@ class TelemetrySession:
         timestamp = format_timestamp(time.time())
         process_identifier = os.getpid()
         thread_name = threading.current_thread().name
-        native_payload_builder = getattr(_core, "build_telemetry_event_payload", None)
-        if native_payload_builder is not None:
-            return typing.cast(
-                "dict[str, object]",
-                dict(
-                    native_payload_builder(
-                        self.run_id,
-                        event,
-                        level,
-                        timestamp,
-                        process_identifier,
-                        thread_name,
-                        fields,
-                    )
-                ),
+        return dict(
+            _core.build_telemetry_event_payload(
+                self.run_id,
+                event,
+                level,
+                timestamp,
+                process_identifier,
+                thread_name,
+                fields,
             )
-        if self.native_telemetry_session is not None and hasattr(
-            self.native_telemetry_session,
-            "build_event_payload",
-        ):
-            return dict(
-                self.native_telemetry_session.build_event_payload(
-                    self.run_id,
-                    event,
-                    level,
-                    timestamp,
-                    process_identifier,
-                    thread_name,
-                    fields,
-                )
-            )
-        payload: dict[str, object] = {
-            "schema_version": TELEMETRY_SCHEMA_VERSION,
-            "run_id": self.run_id,
-            "ts": timestamp,
-            "level": level.upper(),
-            "source": "python",
-            "target": "g.engine.telemetry",
-            "event": event,
-            "pid": process_identifier,
-            "thread_name": thread_name,
-        }
-        payload.update({key: value for key, value in fields.items() if value is not None})
-        return payload
+        )
 
     def write_json_line(self, payload: dict[str, object]) -> None:
         """Append one JSON line when the destination path is configured."""

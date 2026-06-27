@@ -189,6 +189,31 @@ impl NativeTelemetrySession {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn emit_event<'py>(
+        &self,
+        py: Python<'py>,
+        run_id: &str,
+        event: &str,
+        level: &str,
+        timestamp: &str,
+        process_identifier: u32,
+        thread_name: &str,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        let payload = build_telemetry_event_payload(
+            py,
+            run_id,
+            event,
+            level,
+            timestamp,
+            process_identifier,
+            thread_name,
+            fields,
+        )?;
+        self.emit_payload(py, &payload)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::unused_self)]
     pub fn build_event_payload<'py>(
         &self,
