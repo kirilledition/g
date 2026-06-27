@@ -14,12 +14,8 @@ const ASSOCIATION_MODE_REGENIE2_BINARY: &str = "regenie2_binary";
 const ASSOCIATION_MODE_REGENIE2_LINEAR: &str = "regenie2_linear";
 const BINARY_FALLBACK_METHOD_FIRTH_APPROXIMATE: &str = "firth_approximate";
 const BINARY_FALLBACK_METHOD_SCORE_ONLY: &str = "score_only";
-const DEVICE_GPU: &str = "gpu";
 const GPU_GENOTYPE_FORMAT_DOSAGE: &str = "dosage";
 const GPU_GENOTYPE_FORMAT_PACKED8: &str = "packed8";
-const JAX_CUDA_PLATFORM_NAME: &str = "cuda";
-const JAX_CPU_PLATFORM_NAME: &str = "cpu";
-const JAX_MATMUL_PRECISION_FLOAT32: &str = "float32";
 const MULTI_PHENOTYPE_SAMPLE_MODE_COMPLETE_CASE: &str = "complete-case";
 const MULTI_PHENOTYPE_SAMPLE_MODE_PER_PHENOTYPE: &str = "per-phenotype";
 const PHENOTYPE_COMPUTE_GROUP_MODE_COMPLETE_CASE: &str = "complete-case";
@@ -27,8 +23,6 @@ const PHENOTYPE_COMPUTE_GROUP_MODE_PER_PHENOTYPE_COMPATIBLE: &str = "per-phenoty
 const PHENOTYPE_COMPUTE_GROUP_MODE_SINGLE_PHENOTYPE: &str = "single-phenotype";
 const PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH: usize = 80;
 const REGENIE_TRAIT_TYPE_BINARY: &str = "binary";
-const XLA_AUXILIARY_CACHE_DISABLED: &str = "none";
-const XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE: &str = "xla_gpu_per_fusion_autotune_cache_dir";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum HostPolicyError {
@@ -61,22 +55,6 @@ pub struct PhenotypeComputeGroupPayload {
     pub sample_set_fingerprint: Option<String>,
     pub covariate_design_fingerprint: Option<String>,
     pub prediction_alignment_fingerprint: Option<String>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct JaxRuntimeSetupPayload {
-    pub requested_device: String,
-    pub platform_name: &'static str,
-    pub cache_directory: String,
-    pub matmul_precision: String,
-    pub persistent_cache_enabled: bool,
-    pub persistent_cache_min_entry_size_bytes: i64,
-    pub persistent_cache_min_compile_time_seconds: i64,
-    pub xla_auxiliary_cache_mode: &'static str,
-    pub xla_auxiliary_cache_reason: &'static str,
-    pub transfer_guard_enabled: bool,
-    pub gpu_validation_status: &'static str,
-    pub gpu_validation_message: Option<&'static str>,
 }
 
 pub fn plan_association_backend(
@@ -244,47 +222,6 @@ pub fn build_phenotype_output_directory_name(phenotype_index: i64, phenotype_nam
     format!("trait_{phenotype_index:04}_{truncated_slug}")
 }
 
-#[must_use]
-pub fn resolve_jax_runtime_setup(
-    requested_device: &str,
-    cache_directory: &str,
-    matmul_precision: Option<&str>,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: i64,
-    persistent_cache_min_compile_time_seconds: i64,
-    xla_autotune_cache: bool,
-    transfer_guard: bool,
-) -> JaxRuntimeSetupPayload {
-    let (gpu_validation_status, gpu_validation_message) = if requested_device == DEVICE_GPU {
-        ("pending", None)
-    } else {
-        ("skipped", Some("CPU runtime requested; GPU validation skipped."))
-    };
-    let platform_name = if requested_device == DEVICE_GPU { JAX_CUDA_PLATFORM_NAME } else { JAX_CPU_PLATFORM_NAME };
-    let matmul_precision = matmul_precision.unwrap_or(JAX_MATMUL_PRECISION_FLOAT32).to_string();
-    let (xla_auxiliary_cache_mode, xla_auxiliary_cache_reason) = if persistent_cache && xla_autotune_cache {
-        (XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE, "XLA auxiliary cache was requested")
-    } else if persistent_cache {
-        (XLA_AUXILIARY_CACHE_DISABLED, "XLA auxiliary cache was not requested")
-    } else {
-        (XLA_AUXILIARY_CACHE_DISABLED, "persistent compilation cache is disabled")
-    };
-    JaxRuntimeSetupPayload {
-        requested_device: requested_device.to_string(),
-        platform_name,
-        cache_directory: cache_directory.to_string(),
-        matmul_precision,
-        persistent_cache_enabled: persistent_cache,
-        persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds,
-        xla_auxiliary_cache_mode,
-        xla_auxiliary_cache_reason,
-        transfer_guard_enabled: transfer_guard,
-        gpu_validation_status,
-        gpu_validation_message,
-    }
-}
-
 fn optional_string_value(value: Option<&str>) -> Value {
     match value {
         Some(text) => Value::String(text.to_string()),
@@ -306,23 +243,18 @@ mod tests {
 
     #[test]
     fn plans_association_backend_from_concrete_genotype_format() {
-        let dosage_plan =
-            plan_association_backend(ASSOCIATION_MODE_REGENIE2_LINEAR, JAX_CPU_PLATFORM_NAME, "dosage").unwrap();
+        let dosage_plan = plan_association_backend(ASSOCIATION_MODE_REGENIE2_LINEAR, "cpu", "dosage").unwrap();
         assert_eq!(dosage_plan.backend_kind, ASSOCIATION_BACKEND_JAX_DOSAGE);
         assert!(!dosage_plan.uses_variant_major_packed8_delivery);
 
-        let packed_plan = plan_association_backend(
-            ASSOCIATION_MODE_REGENIE2_BINARY,
-            JAX_CUDA_PLATFORM_NAME,
-            GPU_GENOTYPE_FORMAT_PACKED8,
-        )
-        .unwrap();
+        let packed_plan =
+            plan_association_backend(ASSOCIATION_MODE_REGENIE2_BINARY, "cuda", GPU_GENOTYPE_FORMAT_PACKED8).unwrap();
         assert_eq!(packed_plan.backend_kind, ASSOCIATION_BACKEND_JAX_PACKED8);
         assert_eq!(packed_plan.genotype_format, GPU_GENOTYPE_FORMAT_PACKED8);
         assert!(packed_plan.uses_variant_major_packed8_delivery);
 
         assert_eq!(
-            plan_association_backend(ASSOCIATION_MODE_REGENIE2_BINARY, JAX_CUDA_PLATFORM_NAME, "auto"),
+            plan_association_backend(ASSOCIATION_MODE_REGENIE2_BINARY, "cuda", "auto"),
             Err(HostPolicyError::Value(
                 "gpu_genotype_format must be resolved to dosage or packed8 before backend planning.".to_string(),
             )),
@@ -393,19 +325,5 @@ mod tests {
         );
         assert_eq!(base_identifier.len(), 64);
         assert_ne!(base_identifier, changed_identifier);
-    }
-
-    #[test]
-    fn resolves_jax_runtime_setup_payload() {
-        let setup = resolve_jax_runtime_setup("gpu", "cache", None, true, 1024, 5, true, true);
-        assert_eq!(setup.platform_name, JAX_CUDA_PLATFORM_NAME);
-        assert_eq!(setup.matmul_precision, JAX_MATMUL_PRECISION_FLOAT32);
-        assert_eq!(setup.xla_auxiliary_cache_mode, XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE);
-        assert!(setup.transfer_guard_enabled);
-
-        let cpu_setup = resolve_jax_runtime_setup("cpu", "cache", Some("highest"), false, 0, 0, true, false);
-        assert_eq!(cpu_setup.platform_name, JAX_CPU_PLATFORM_NAME);
-        assert_eq!(cpu_setup.gpu_validation_status, "skipped");
-        assert_eq!(cpu_setup.matmul_precision, "highest");
     }
 }

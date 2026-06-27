@@ -32,6 +32,7 @@ mod callback_summary;
 mod config;
 mod errors;
 mod host_policy;
+mod jax_runtime;
 mod logging;
 mod output;
 mod preflight;
@@ -58,8 +59,9 @@ use g_engine::Regenie2RunEngineCore;
 use host_policy::{
     build_phenotype_compute_group_id_value, build_phenotype_compute_groups_payload,
     build_phenotype_output_directory_name, normalize_binary_correction_payload, plan_association_backend_payload,
-    resolve_association_mode_value, resolve_jax_runtime_setup_payload,
+    resolve_association_mode_value,
 };
+use jax_runtime::{build_jax_runtime_setup_diagnostic_payloads, resolve_jax_runtime_setup_payload};
 use logging::{
     NativeTelemetryProgressThrottle, NativeTelemetrySession, build_current_telemetry_event_payload,
     build_telemetry_event_payload, emit_diagnostic_event, generate_telemetry_run_id_value, initialize_logging,
@@ -1840,6 +1842,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_telemetry_session_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_jax_runtime_setup_diagnostic_payloads, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
     module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;

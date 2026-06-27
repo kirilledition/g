@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import typing
 from pathlib import Path
 
 import numpy as np
@@ -174,6 +175,42 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
             phenotype_names=None,
             policy="ignore",
         )
+
+
+def test_native_jax_runtime_setup_diagnostic_payloads() -> None:
+    diagnostic_payloads = _core.build_jax_runtime_setup_diagnostic_payloads(
+        requested_device="gpu",
+        platform_name="cuda",
+        cache_directory="/tmp/g-cache",
+        matmul_precision="float32",
+        persistent_cache_enabled=True,
+        persistent_cache_min_entry_size_bytes=1024,
+        persistent_cache_min_compile_time_seconds=5,
+        xla_auxiliary_cache_mode="xla_gpu_per_fusion_autotune_cache_dir",
+        xla_auxiliary_cache_reason="XLA auxiliary cache was requested",
+        transfer_guard_enabled=True,
+        gpu_validation_status="failed",
+        gpu_validation_message="no gpu",
+    )
+
+    assert [payload["event_name"] for payload in diagnostic_payloads] == [
+        "jax_platform_selected",
+        "jax_persistent_cache_configured",
+        "jax_xla_auxiliary_cache_configured",
+        "jax_transfer_guard_configured",
+        "jax_gpu_validation",
+    ]
+    persistent_cache_fields = typing.cast("tuple[dict[str, object], ...]", diagnostic_payloads[1]["fields"])
+    auxiliary_cache_fields = typing.cast("tuple[dict[str, object], ...]", diagnostic_payloads[2]["fields"])
+    gpu_validation_fields = typing.cast("tuple[dict[str, object], ...]", diagnostic_payloads[4]["fields"])
+    assert diagnostic_payloads[0]["message"] == "Selected JAX platform cuda."
+    assert persistent_cache_fields[0] == {"name": "enabled", "value": True}
+    assert auxiliary_cache_fields[0] == {"name": "enabled", "value": True}
+    assert diagnostic_payloads[4]["level"] == "error"
+    assert list(gpu_validation_fields) == [
+        {"name": "status", "value": "failed"},
+        {"name": "message", "value": "no gpu"},
+    ]
 
 
 def test_native_gpu_genotype_format_resolution_policy() -> None:

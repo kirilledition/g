@@ -92,46 +92,6 @@ pub(crate) fn build_phenotype_output_directory_name(phenotype_index: i64, phenot
     native_host_policy::build_phenotype_output_directory_name(phenotype_index, &phenotype_name)
 }
 
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn resolve_jax_runtime_setup_payload<'py>(
-    py: Python<'py>,
-    requested_device: String,
-    cache_directory: String,
-    matmul_precision: Option<String>,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: i64,
-    persistent_cache_min_compile_time_seconds: i64,
-    xla_autotune_cache: bool,
-    transfer_guard: bool,
-) -> PyResult<Bound<'py, PyDict>> {
-    let setup = native_host_policy::resolve_jax_runtime_setup(
-        &requested_device,
-        &cache_directory,
-        matmul_precision.as_deref(),
-        persistent_cache,
-        persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds,
-        xla_autotune_cache,
-        transfer_guard,
-    );
-    let payload = PyDict::new(py);
-    payload.set_item("requested_device", setup.requested_device)?;
-    payload.set_item("platform_name", setup.platform_name)?;
-    payload.set_item("cache_directory", setup.cache_directory)?;
-    payload.set_item("matmul_precision", setup.matmul_precision)?;
-    payload.set_item("persistent_cache_enabled", setup.persistent_cache_enabled)?;
-    payload.set_item("persistent_cache_min_entry_size_bytes", setup.persistent_cache_min_entry_size_bytes)?;
-    payload.set_item("persistent_cache_min_compile_time_seconds", setup.persistent_cache_min_compile_time_seconds)?;
-    payload.set_item("xla_auxiliary_cache_mode", setup.xla_auxiliary_cache_mode)?;
-    payload.set_item("xla_auxiliary_cache_reason", setup.xla_auxiliary_cache_reason)?;
-    payload.set_item("transfer_guard_enabled", setup.transfer_guard_enabled)?;
-    payload.set_item("gpu_validation_status", setup.gpu_validation_status)?;
-    payload.set_item("gpu_validation_message", setup.gpu_validation_message)?;
-    Ok(payload)
-}
-
 fn phenotype_compute_group_payload_to_dict<'py>(
     py: Python<'py>,
     group: &native_host_policy::PhenotypeComputeGroupPayload,

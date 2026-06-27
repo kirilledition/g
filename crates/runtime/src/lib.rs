@@ -1,5 +1,6 @@
 #![warn(clippy::pedantic)]
 
+pub mod jax_runtime;
 pub mod run_events;
 pub mod run_metadata;
 pub mod runtime_policy;
@@ -9,6 +10,10 @@ pub mod telemetry_policy;
 pub mod telemetry_session;
 pub mod timing;
 
+pub use jax_runtime::{
+    JaxRuntimeDiagnosticEventPayload, JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticValue,
+    JaxRuntimeSetupPayload, build_jax_runtime_setup_diagnostic_events, resolve_jax_runtime_setup,
+};
 pub use run_events::{
     RunArtifactPayload, RunArtifactTelemetryFields, RunCompletedEventPayload, RunCompletedTelemetryFields,
     RunFailedEventPayload, RunFailedTelemetryFields, RunInterruptedEventPayload, RunInterruptedTelemetryFields,
