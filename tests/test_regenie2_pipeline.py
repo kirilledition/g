@@ -789,12 +789,88 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
         callback_finished=False,
     )
 
+    assert cleanup_plan.cleanup_actions == [
+        "drain_callback",
+        "finish_interrupted_writer_sessions",
+        "write_stage_timing_snapshot",
+    ]
     assert cleanup_plan.drain_callback is True
     assert cleanup_plan.finish_writer_sessions is False
     assert cleanup_plan.finish_interrupted_writer_sessions is True
     assert cleanup_plan.abort_callback is False
     assert cleanup_plan.abort_writer_sessions is False
     assert cleanup_plan.write_stage_timing_snapshot is True
+
+
+def test_execute_bgen_delivery_cleanup_plan_uses_native_action_order() -> None:
+    events: list[str] = []
+
+    class OrderedCallback:
+        def finish(self) -> None:
+            events.append("callback.finish")
+
+        def abort(self) -> None:
+            events.append("callback.abort")
+
+    class OrderedWriterSession:
+        def finish(self) -> str:
+            events.append("writer.finish")
+            return "results/final.parquet"
+
+        def finish_interrupted(self, signal_name: str) -> None:
+            events.append(f"writer.finish_interrupted:{signal_name}")
+
+        def abort(self) -> None:
+            events.append("writer.abort")
+
+    def record_snapshot(
+        recorder: timing.StageTimingRecorder | None,
+        stage_timing_path: Path | None,
+    ) -> None:
+        assert recorder is None
+        assert stage_timing_path is None
+        events.append("snapshot")
+
+    success_plan = native_dispatch_delivery.plan_bgen_delivery_cleanup(
+        cleanup_outcome=native_dispatch_delivery.BgenDeliveryCleanupOutcome.SUCCESS,
+        callback_finished=False,
+    )
+    success_execution = native_dispatch_delivery.execute_bgen_delivery_cleanup_plan(
+        cleanup_plan=success_plan,
+        callback_finished=False,
+        callback=OrderedCallback(),
+        writer_sessions=(OrderedWriterSession(),),
+        writer_finish_thread_count=1,
+        stage_timing_recorder=None,
+        stage_timing_snapshot_writer=record_snapshot,
+        shutdown_request=None,
+    )
+
+    assert events == ["callback.finish", "writer.finish", "snapshot"]
+    assert success_execution.callback_finished is True
+    assert success_execution.final_parquet_paths == (Path("results/final.parquet"),)
+
+    events.clear()
+    shutdown_signal = shutdown.ShutdownSignal(number=2, name="SIGINT", exit_code=130)
+    shutdown_request = shutdown.GracefulShutdownRequested(shutdown_signal)
+    interrupted_plan = native_dispatch_delivery.plan_bgen_delivery_cleanup(
+        cleanup_outcome=native_dispatch_delivery.BgenDeliveryCleanupOutcome.INTERRUPTED,
+        callback_finished=False,
+    )
+    interrupted_execution = native_dispatch_delivery.execute_bgen_delivery_cleanup_plan(
+        cleanup_plan=interrupted_plan,
+        callback_finished=False,
+        callback=OrderedCallback(),
+        writer_sessions=(OrderedWriterSession(),),
+        writer_finish_thread_count=1,
+        stage_timing_recorder=None,
+        stage_timing_snapshot_writer=record_snapshot,
+        shutdown_request=shutdown_request,
+    )
+
+    assert events == ["callback.finish", "writer.finish_interrupted:SIGINT", "snapshot"]
+    assert interrupted_execution.callback_finished is True
+    assert interrupted_execution.final_parquet_paths == ()
 
 
 def test_plan_output_write_methods_use_native_cleanup_policy() -> None:

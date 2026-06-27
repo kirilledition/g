@@ -6,6 +6,7 @@ import enum
 import logging
 import time
 import typing
+from dataclasses import dataclass
 
 from g import _core
 from g.engine import shutdown, timing
@@ -35,6 +36,31 @@ class BgenDeliveryCleanupOutcome(enum.StrEnum):
     INTERRUPTED = "interrupted"
     FAILURE = "failure"
     INTERRUPTED_CLEANUP_FAILURE = "interrupted_cleanup_failure"
+
+
+class BgenDeliveryCleanupAction(enum.StrEnum):
+    """Native BGEN delivery cleanup action selected by engine lifecycle policy."""
+
+    DRAIN_CALLBACK = "drain_callback"
+    FINISH_WRITER_SESSIONS = "finish_writer_sessions"
+    FINISH_INTERRUPTED_WRITER_SESSIONS = "finish_interrupted_writer_sessions"
+    ABORT_CALLBACK = "abort_callback"
+    ABORT_WRITER_SESSIONS = "abort_writer_sessions"
+    WRITE_STAGE_TIMING_SNAPSHOT = "write_stage_timing_snapshot"
+
+
+@dataclass(frozen=True)
+class BgenDeliveryCleanupExecution:
+    """Result of executing one native BGEN delivery cleanup plan.
+
+    Attributes:
+        final_parquet_paths: Final Parquet paths produced by successful writer finalization.
+        callback_finished: Whether the callback was drained by this cleanup path.
+
+    """
+
+    final_parquet_paths: tuple[Path | None, ...]
+    callback_finished: bool
 
 
 def plan_bgen_delivery_cleanup(
@@ -73,6 +99,53 @@ def plan_bgen_delivery_invocation(
         variant_major_packed8_probability_pairs,
         native_multi_aligned_sample_data is not None,
         native_aligned_sample_data is not None,
+    )
+
+
+def execute_bgen_delivery_cleanup_plan(
+    *,
+    cleanup_plan: _core.NativeBgenDeliveryCleanupPlan,
+    callback_finished: bool,
+    callback: object,
+    writer_sessions: tuple[typing.Any, ...],
+    writer_finish_thread_count: int,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_snapshot_writer: typing.Callable[[timing.StageTimingRecorder | None, Path | None], None],
+    shutdown_request: shutdown.GracefulShutdownRequested | None,
+) -> BgenDeliveryCleanupExecution:
+    """Execute cleanup side effects in the native lifecycle action order."""
+    final_parquet_paths: tuple[Path | None, ...] = ()
+    resolved_callback_finished = callback_finished
+    for cleanup_action_value in cleanup_plan.cleanup_actions:
+        cleanup_action = BgenDeliveryCleanupAction(cleanup_action_value)
+        if cleanup_action is BgenDeliveryCleanupAction.DRAIN_CALLBACK:
+            writers.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+            resolved_callback_finished = True
+        elif cleanup_action is BgenDeliveryCleanupAction.FINISH_WRITER_SESSIONS:
+            final_parquet_paths = writers.finish_writer_sessions(
+                writer_sessions=writer_sessions,
+                writer_finish_thread_count=writer_finish_thread_count,
+                stage_timing_recorder=stage_timing_recorder,
+            )
+        elif cleanup_action is BgenDeliveryCleanupAction.FINISH_INTERRUPTED_WRITER_SESSIONS:
+            if shutdown_request is None:
+                message = "Interrupted writer cleanup requires a shutdown request."
+                raise RuntimeError(message)
+            writers.finish_writer_sessions_interrupted(
+                writer_sessions=writer_sessions,
+                shutdown_request=shutdown_request,
+                writer_finish_thread_count=writer_finish_thread_count,
+                stage_timing_recorder=stage_timing_recorder,
+            )
+        elif cleanup_action is BgenDeliveryCleanupAction.ABORT_CALLBACK:
+            writers.abort_callback(callback)
+        elif cleanup_action is BgenDeliveryCleanupAction.ABORT_WRITER_SESSIONS:
+            writers.abort_writer_sessions(writer_sessions)
+        elif cleanup_action is BgenDeliveryCleanupAction.WRITE_STAGE_TIMING_SNAPSHOT:
+            stage_timing_snapshot_writer(stage_timing_recorder, None)
+    return BgenDeliveryCleanupExecution(
+        final_parquet_paths=final_parquet_paths,
+        callback_finished=resolved_callback_finished,
     )
 
 
@@ -222,15 +295,18 @@ def run_bgen_engine_with_writer_sessions(
             cleanup_outcome=BgenDeliveryCleanupOutcome.SUCCESS,
             callback_finished=callback_finished,
         )
-        if cleanup_plan.drain_callback:
-            writers.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
-            callback_finished = True
-        if cleanup_plan.finish_writer_sessions:
-            final_parquet_paths = writers.finish_writer_sessions(
-                writer_sessions=writer_sessions,
-                writer_finish_thread_count=writer_finish_thread_count,
-                stage_timing_recorder=stage_timing_recorder,
-            )
+        cleanup_execution = execute_bgen_delivery_cleanup_plan(
+            cleanup_plan=cleanup_plan,
+            callback_finished=callback_finished,
+            callback=callback,
+            writer_sessions=writer_sessions,
+            writer_finish_thread_count=writer_finish_thread_count,
+            stage_timing_recorder=stage_timing_recorder,
+            stage_timing_snapshot_writer=stage_timing_snapshot_writer,
+            shutdown_request=None,
+        )
+        callback_finished = cleanup_execution.callback_finished
+        final_parquet_paths = cleanup_execution.final_parquet_paths
     except shutdown.GracefulShutdownRequested as shutdown_request:
         logger.info("%s delivery interrupted by %s.", pipeline_label, shutdown_request.signal_name)
         cleanup_plan = plan_bgen_delivery_cleanup(
@@ -238,29 +314,33 @@ def run_bgen_engine_with_writer_sessions(
             callback_finished=callback_finished,
         )
         try:
-            if cleanup_plan.drain_callback:
-                writers.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
-            if cleanup_plan.finish_interrupted_writer_sessions:
-                writers.finish_writer_sessions_interrupted(
-                    writer_sessions=writer_sessions,
-                    shutdown_request=shutdown_request,
-                    writer_finish_thread_count=writer_finish_thread_count,
-                    stage_timing_recorder=stage_timing_recorder,
-                )
+            cleanup_execution = execute_bgen_delivery_cleanup_plan(
+                cleanup_plan=cleanup_plan,
+                callback_finished=callback_finished,
+                callback=callback,
+                writer_sessions=writer_sessions,
+                writer_finish_thread_count=writer_finish_thread_count,
+                stage_timing_recorder=stage_timing_recorder,
+                stage_timing_snapshot_writer=stage_timing_snapshot_writer,
+                shutdown_request=shutdown_request,
+            )
+            callback_finished = cleanup_execution.callback_finished
         except BaseException:
             cleanup_failure_plan = plan_bgen_delivery_cleanup(
                 cleanup_outcome=BgenDeliveryCleanupOutcome.INTERRUPTED_CLEANUP_FAILURE,
                 callback_finished=callback_finished,
             )
-            if cleanup_failure_plan.abort_callback:
-                writers.abort_callback(callback)
-            if cleanup_failure_plan.abort_writer_sessions:
-                writers.abort_writer_sessions(writer_sessions)
-            if cleanup_failure_plan.write_stage_timing_snapshot:
-                stage_timing_snapshot_writer(stage_timing_recorder, None)
+            execute_bgen_delivery_cleanup_plan(
+                cleanup_plan=cleanup_failure_plan,
+                callback_finished=callback_finished,
+                callback=callback,
+                writer_sessions=writer_sessions,
+                writer_finish_thread_count=writer_finish_thread_count,
+                stage_timing_recorder=stage_timing_recorder,
+                stage_timing_snapshot_writer=stage_timing_snapshot_writer,
+                shutdown_request=shutdown_request,
+            )
             raise
-        if cleanup_plan.write_stage_timing_snapshot:
-            stage_timing_snapshot_writer(stage_timing_recorder, None)
         raise
     except BaseException:
         logger.exception("%s delivery failed.", pipeline_label)
@@ -268,15 +348,17 @@ def run_bgen_engine_with_writer_sessions(
             cleanup_outcome=BgenDeliveryCleanupOutcome.FAILURE,
             callback_finished=callback_finished,
         )
-        if cleanup_plan.abort_callback:
-            writers.abort_callback(callback)
-        if cleanup_plan.abort_writer_sessions:
-            writers.abort_writer_sessions(writer_sessions)
-        if cleanup_plan.write_stage_timing_snapshot:
-            stage_timing_snapshot_writer(stage_timing_recorder, None)
+        execute_bgen_delivery_cleanup_plan(
+            cleanup_plan=cleanup_plan,
+            callback_finished=callback_finished,
+            callback=callback,
+            writer_sessions=writer_sessions,
+            writer_finish_thread_count=writer_finish_thread_count,
+            stage_timing_recorder=stage_timing_recorder,
+            stage_timing_snapshot_writer=stage_timing_snapshot_writer,
+            shutdown_request=None,
+        )
         raise
-    if cleanup_plan.write_stage_timing_snapshot:
-        stage_timing_snapshot_writer(stage_timing_recorder, None)
     logger.info("%s pipeline finished.", pipeline_label)
     return final_parquet_paths
 

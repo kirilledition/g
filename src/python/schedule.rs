@@ -361,6 +361,11 @@ impl NativeWriterFinishExecutionPlan {
 #[pymethods]
 impl NativeBgenDeliveryCleanupPlan {
     #[getter]
+    fn cleanup_actions(&self) -> Vec<String> {
+        self.inner.cleanup_actions.clone()
+    }
+
+    #[getter]
     fn drain_callback(&self) -> bool {
         self.inner.drain_callback()
     }

@@ -1231,6 +1231,11 @@ def test_plan_writer_finish_execution_uses_native_cleanup_policy() -> None:
 
 def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
     success_plan = _core.plan_bgen_delivery_cleanup(cleanup_outcome="success", callback_finished=False)
+    assert success_plan.cleanup_actions == [
+        "drain_callback",
+        "finish_writer_sessions",
+        "write_stage_timing_snapshot",
+    ]
     assert success_plan.drain_callback is True
     assert success_plan.finish_writer_sessions is True
     assert success_plan.finish_interrupted_writer_sessions is False
@@ -1247,6 +1252,11 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
     assert interrupted_pending_callback_plan.finish_interrupted_writer_sessions is True
     assert interrupted_pending_callback_plan.abort_callback is False
     assert interrupted_pending_callback_plan.abort_writer_sessions is False
+    assert interrupted_pending_callback_plan.cleanup_actions == [
+        "drain_callback",
+        "finish_interrupted_writer_sessions",
+        "write_stage_timing_snapshot",
+    ]
 
     interrupted_finished_callback_plan = _core.plan_bgen_delivery_cleanup(
         cleanup_outcome="interrupted",
@@ -1254,6 +1264,10 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
     )
     assert interrupted_finished_callback_plan.drain_callback is False
     assert interrupted_finished_callback_plan.finish_interrupted_writer_sessions is True
+    assert interrupted_finished_callback_plan.cleanup_actions == [
+        "finish_interrupted_writer_sessions",
+        "write_stage_timing_snapshot",
+    ]
 
     failure_plan = _core.plan_bgen_delivery_cleanup(cleanup_outcome="failure", callback_finished=False)
     assert failure_plan.drain_callback is False
@@ -1262,6 +1276,11 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
     assert failure_plan.abort_callback is True
     assert failure_plan.abort_writer_sessions is True
     assert failure_plan.write_stage_timing_snapshot is True
+    assert failure_plan.cleanup_actions == [
+        "abort_callback",
+        "abort_writer_sessions",
+        "write_stage_timing_snapshot",
+    ]
 
     cleanup_failure_plan = _core.plan_bgen_delivery_cleanup(
         cleanup_outcome="interrupted_cleanup_failure",
