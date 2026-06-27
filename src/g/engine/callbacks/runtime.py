@@ -42,6 +42,7 @@ Regenie2ResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem
 Regenie2MultiResultWriteWorkItem = shared.Regenie2MultiResultWriteWorkItem
 NativeBgenWorkerShutdownError = shared.NativeBgenWorkerShutdownError
 record_stage_duration_with_optional_chunk = transfers.record_stage_duration_with_optional_chunk
+build_native_callback_chunk_identity = transfers.build_native_callback_chunk_identity
 write_regenie2_native_chunk_with_optional_timing = writers.write_regenie2_native_chunk_with_optional_timing
 materialize_regenie2_native_chunk_with_optional_timing = writers.materialize_regenie2_native_chunk_with_optional_timing
 write_materialized_regenie2_native_chunk_with_optional_timing = (
@@ -49,7 +50,6 @@ write_materialized_regenie2_native_chunk_with_optional_timing = (
 )
 record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
 binary_chunk_diagnostics_to_summary_counts = regenie2_binary.binary_chunk_diagnostics_to_summary_counts
-get_metadata_chromosome = shared.get_metadata_chromosome
 
 
 def require_current_chromosome_state[ChromosomeStateType](
@@ -89,11 +89,10 @@ class NativeBgenCallbackRunner(abc.ABC):
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
         )
-        self.processed_chunk_count = 0
+        self.progress_state = _core.NativeCallbackProgressState()
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
-        self.current_progress_chromosome: str | None = None
         self.dosage_queue_depth = queue_limits.dosage_queue_depth
         self.result_queue_depth = queue_limits.result_queue_depth
         self.result_in_flight_limit = queue_limits.result_in_flight_limit
@@ -130,6 +129,16 @@ class NativeBgenCallbackRunner(abc.ABC):
         )
         self.worker_start_lock = threading.Lock()
         self.worker_lifecycle_state = _core.NativeCallbackWorkerLifecycleState()
+
+    @property
+    def processed_chunk_count(self) -> int:
+        """Return the native processed chunk count."""
+        return self.progress_state.processed_chunk_count
+
+    @property
+    def current_progress_chromosome(self) -> str | None:
+        """Return the native active progress chromosome."""
+        return self.progress_state.current_progress_chromosome
 
     @property
     def binary_correction_summary_chunk_count(self) -> int:
@@ -543,38 +552,52 @@ class NativeBgenCallbackRunner(abc.ABC):
         else:
             message = f"Unsupported preprocessed dosage work item: {type(work_item).__name__}"
             raise TypeError(message)
-        self.processed_chunk_count += 1
         self.record_progress(work_item.metadata)
 
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""
         if self.telemetry_session is None:
+            self.progress_state.record_processed_chunk_without_progress()
             return
-        chromosome = get_metadata_chromosome(metadata)
-        if chromosome != self.current_progress_chromosome:
-            if self.current_progress_chromosome is not None:
-                self.telemetry_session.log_event(
-                    "chromosome_completed",
-                    level="info",
-                    chromosome=self.current_progress_chromosome,
-                    processed_chunk_count=self.processed_chunk_count - 1,
-                )
-            self.current_progress_chromosome = chromosome
+        progress_update = self.progress_state.record_processed_chunk(build_native_callback_chunk_identity(metadata))
+        if progress_update.completed_chromosome is not None:
+            completed_processed_chunk_count = progress_update.completed_processed_chunk_count
+            if completed_processed_chunk_count is None:
+                message = "Native callback progress completion missing processed chunk count."
+                raise RuntimeError(message)
+            self.telemetry_session.log_event(
+                "chromosome_completed",
+                level="info",
+                chromosome=progress_update.completed_chromosome,
+                processed_chunk_count=completed_processed_chunk_count,
+            )
+        if progress_update.started_chromosome is not None:
             self.telemetry_session.log_event(
                 "chromosome_started",
                 level="info",
-                chromosome=chromosome,
-                processed_chunk_count=self.processed_chunk_count,
+                chromosome=progress_update.started_chromosome,
+                processed_chunk_count=progress_update.processed_chunk_count,
             )
-        variant_start_index = int(metadata.variant_start_index)
-        variant_stop_index = int(metadata.variant_stop_index)
+        chunk_identity = progress_update.chunk_identity
         self.telemetry_session.log_progress(
-            processed_chunk_count=self.processed_chunk_count,
-            chromosome=chromosome,
-            chunk_identifier=variant_start_index,
-            variant_start_index=variant_start_index,
-            variant_stop_index=variant_stop_index,
-            variant_count=variant_stop_index - variant_start_index,
+            processed_chunk_count=progress_update.processed_chunk_count,
+            chromosome=chunk_identity.chromosome,
+            chunk_identifier=chunk_identity.chunk_identifier,
+            variant_start_index=chunk_identity.variant_start_index,
+            variant_stop_index=chunk_identity.variant_stop_index,
+            variant_count=chunk_identity.variant_count,
+        )
+
+    def complete_progress(self) -> None:
+        """Emit the native final progress completion event when telemetry consumed chunks."""
+        progress_completion = self.progress_state.finish_progress()
+        if self.telemetry_session is None or progress_completion is None:
+            return
+        self.telemetry_session.log_event(
+            "chromosome_completed",
+            level="info",
+            chromosome=progress_completion.chromosome,
+            processed_chunk_count=progress_completion.processed_chunk_count,
         )
 
     def record_binary_null_model_failure_count(self, failure_count: int) -> None:
@@ -870,14 +893,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.stop_result_worker(timeout_seconds=None)
         self.join_result_worker(timeout_seconds=GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS)
         self.raise_worker_error_if_present()
-        if self.telemetry_session is not None and self.current_progress_chromosome is not None:
-            self.telemetry_session.log_event(
-                "chromosome_completed",
-                level="info",
-                chromosome=self.current_progress_chromosome,
-                processed_chunk_count=self.processed_chunk_count,
-            )
-            self.current_progress_chromosome = None
+        self.complete_progress()
         self.emit_binary_correction_summary()
 
     def abort(self) -> None:

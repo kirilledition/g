@@ -440,8 +440,22 @@ def test_native_callback_runner_records_progress_and_chromosome_events() -> None
         ("chromosome_completed", "info", {"chromosome": "chr2", "processed_chunk_count": 2}),
     ]
     assert len(telemetry_session.logged_progress) == 2
-    assert telemetry_session.logged_progress[0]["chromosome"] == "chr1"
-    assert telemetry_session.logged_progress[1]["chromosome"] == "chr2"
+    assert telemetry_session.logged_progress[0] == {
+        "processed_chunk_count": 1,
+        "chromosome": "chr1",
+        "chunk_identifier": 0,
+        "variant_start_index": 0,
+        "variant_stop_index": 1,
+        "variant_count": 1,
+    }
+    assert telemetry_session.logged_progress[1] == {
+        "processed_chunk_count": 2,
+        "chromosome": "chr2",
+        "chunk_identifier": 1,
+        "variant_start_index": 1,
+        "variant_stop_index": 2,
+        "variant_count": 1,
+    }
 
 
 def test_native_callback_runner_emits_binary_correction_summary() -> None:

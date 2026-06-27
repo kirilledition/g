@@ -82,7 +82,8 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   policy, callback worker stop poll-timeout policy, callback worker
   stop-attempt decision policy, and BGEN delivery method selection also live in
   `g-engine`; the same crate also owns the callback worker backpressure
-  poll-timeout policy and binary correction summary counter accumulation.
+  poll-timeout policy, binary correction summary counter accumulation, and
+  callback progress/chunk identity state.
   Python only extracts callback/input object attributes, acquires semaphores,
   allocates/slices/owns NumPy buffers, owns thread objects and join calls,
   invokes writer sessions, owns summary payload emission, and calls the

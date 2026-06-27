@@ -149,6 +149,43 @@ def test_native_callback_worker_lifecycle_state_tracks_start() -> None:
     assert lifecycle_state.mark_started() is False
 
 
+def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
+    progress_state = _core.NativeCallbackProgressState()
+
+    first_identity = _core.build_callback_chunk_identity("chr1", 0, 8)
+    assert first_identity.chunk_identifier == 0
+    assert first_identity.chromosome == "chr1"
+    assert first_identity.variant_start_index == 0
+    assert first_identity.variant_stop_index == 8
+    assert first_identity.variant_count == 8
+
+    first_update = progress_state.record_processed_chunk(first_identity)
+    assert first_update.processed_chunk_count == 1
+    assert first_update.completed_chromosome is None
+    assert first_update.completed_processed_chunk_count is None
+    assert first_update.started_chromosome == "chr1"
+    assert first_update.chunk_identity.variant_count == 8
+    assert progress_state.current_progress_chromosome == "chr1"
+
+    second_update = progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr2", 8, 10))
+    assert second_update.processed_chunk_count == 2
+    assert second_update.completed_chromosome == "chr1"
+    assert second_update.completed_processed_chunk_count == 1
+    assert second_update.started_chromosome == "chr2"
+    assert progress_state.current_progress_chromosome == "chr2"
+
+    progress_completion = progress_state.finish_progress()
+    assert progress_completion is not None
+    assert progress_completion.chromosome == "chr2"
+    assert progress_completion.processed_chunk_count == 2
+    assert progress_state.finish_progress() is None
+
+    progress_state.record_processed_chunk_without_progress()
+    assert progress_state.processed_chunk_count == 3
+    assert progress_state.current_progress_chromosome is None
+    assert progress_state.finish_progress() is None
+
+
 def test_resolve_native_callback_worker_shutdown_timeouts_returns_native_defaults() -> None:
     worker_shutdown_timeouts = _core.resolve_native_callback_worker_shutdown_timeouts()
 

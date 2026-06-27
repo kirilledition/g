@@ -26,6 +26,7 @@ use g_genotype::common::{ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunk
 use g_genotype::planner;
 use g_genotype::preprocess;
 
+mod callback_progress;
 mod callback_summary;
 mod config;
 mod errors;
@@ -45,6 +46,10 @@ mod telemetry_policy;
 mod timing;
 mod trusted_validation;
 
+use callback_progress::{
+    NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
+    NativeCallbackProgressUpdate, build_callback_chunk_identity,
+};
 use callback_summary::NativeBinaryCorrectionSummary;
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
 use g_engine::Regenie2RunEngineCore;
@@ -1748,6 +1753,10 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeAlignedPhenotypeGroup>()?;
     module.add_class::<NativeAlignedSampleData>()?;
     module.add_class::<NativeBinaryCorrectionSummary>()?;
+    module.add_class::<NativeCallbackChunkIdentity>()?;
+    module.add_class::<NativeCallbackProgressCompletion>()?;
+    module.add_class::<NativeCallbackProgressState>()?;
+    module.add_class::<NativeCallbackProgressUpdate>()?;
     module.add_class::<NativeCallbackQueueLimits>()?;
     module.add_class::<NativeCallbackWorkerLifecycleState>()?;
     module.add_class::<NativeCallbackWorkerShutdownTimeouts>()?;
@@ -1799,6 +1808,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
+    module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
     module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_bgen_delivery_method_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_callback_worker_backpressure_poll_timeout_seconds, module)?)?;

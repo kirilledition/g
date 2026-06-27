@@ -142,14 +142,22 @@ def block_compute_result_for_timing(
 
 def build_chunk_timing_identity(metadata: typing.Any) -> timing.ChunkTimingIdentity:
     """Build per-chunk timing identity fields from native metadata."""
-    variant_start_index = int(metadata.variant_start_index)
-    variant_stop_index = int(metadata.variant_stop_index)
+    native_identity = build_native_callback_chunk_identity(metadata)
     return timing.ChunkTimingIdentity(
-        chunk_identifier=variant_start_index,
+        chunk_identifier=native_identity.chunk_identifier,
+        chromosome=native_identity.chromosome,
+        variant_start_index=native_identity.variant_start_index,
+        variant_stop_index=native_identity.variant_stop_index,
+        variant_count=native_identity.variant_count,
+    )
+
+
+def build_native_callback_chunk_identity(metadata: typing.Any) -> _core.NativeCallbackChunkIdentity:
+    """Build the native callback chunk identity from metadata attributes."""
+    return _core.build_callback_chunk_identity(
         chromosome=get_metadata_chromosome(metadata),
-        variant_start_index=variant_start_index,
-        variant_stop_index=variant_stop_index,
-        variant_count=variant_stop_index - variant_start_index,
+        variant_start_index=int(metadata.variant_start_index),
+        variant_stop_index=int(metadata.variant_stop_index),
     )
 
 
@@ -318,6 +326,7 @@ def build_projected_variant_major_dosage_chunk_stats(
 __all__ = [
     "block_compute_result_for_timing",
     "build_chunk_timing_identity",
+    "build_native_callback_chunk_identity",
     "build_projected_variant_major_dosage_chunk_stats",
     "cast_statistic_array_for_native_writer",
     "cast_statistic_array_for_native_writer_float32",
