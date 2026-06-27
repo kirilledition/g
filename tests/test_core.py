@@ -213,6 +213,58 @@ def test_native_jax_runtime_setup_diagnostic_payloads() -> None:
     ]
 
 
+def test_native_jax_gpu_validation_plan() -> None:
+    missing_driver_plan = _core.plan_jax_gpu_validation_payload(
+        nvidia_driver_visible=False,
+        backend_initialization_failed=False,
+        device_platforms=(),
+        device_descriptions=(),
+    )
+    assert missing_driver_plan["status"] == "failed"
+    assert missing_driver_plan["should_raise"] is True
+    assert "cannot see the NVIDIA driver" in typing.cast("str", missing_driver_plan["message"])
+
+    backend_failure_plan = _core.plan_jax_gpu_validation_payload(
+        nvidia_driver_visible=True,
+        backend_initialization_failed=True,
+        device_platforms=(),
+        device_descriptions=(),
+    )
+    assert backend_failure_plan["status"] == "failed"
+    assert backend_failure_plan["should_raise"] is True
+    assert "no CUDA-enabled JAX backend" in typing.cast("str", backend_failure_plan["message"])
+
+    cpu_only_plan = _core.plan_jax_gpu_validation_payload(
+        nvidia_driver_visible=True,
+        backend_initialization_failed=False,
+        device_platforms=("cpu",),
+        device_descriptions=("CpuDevice(id=0)",),
+    )
+    assert cpu_only_plan["status"] == "failed"
+    assert cpu_only_plan["should_raise"] is True
+    assert "Observed devices: CpuDevice(id=0)." in typing.cast("str", cpu_only_plan["message"])
+
+    gpu_plan = _core.plan_jax_gpu_validation_payload(
+        nvidia_driver_visible=True,
+        backend_initialization_failed=False,
+        device_platforms=("gpu",),
+        device_descriptions=("GpuDevice(id=0)",),
+    )
+    assert gpu_plan == {
+        "status": "succeeded",
+        "message": "JAX reported at least one GPU device.",
+        "should_raise": False,
+    }
+
+    with pytest.raises(ValueError, match="device platform and description counts must match"):
+        _core.plan_jax_gpu_validation_payload(
+            nvidia_driver_visible=True,
+            backend_initialization_failed=False,
+            device_platforms=("cpu", "gpu"),
+            device_descriptions=("CpuDevice(id=0)",),
+        )
+
+
 def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert (
         _core.resolve_manifest_gpu_genotype_format(

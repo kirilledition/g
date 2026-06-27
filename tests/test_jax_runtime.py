@@ -138,19 +138,23 @@ def test_configure_before_backend_init_validates_gpu_after_runtime(tmp_path: Pat
         del value
         call_order.append(setting_name)
 
-    def record_require_gpu_device() -> None:
-        call_order.append("require_gpu_device")
+    def record_validate_gpu_device() -> models.JaxGpuValidationReport:
+        call_order.append("validate_gpu_device")
+        return models.JaxGpuValidationReport(
+            status=models.GpuValidationStatus.SUCCEEDED,
+            message="JAX reported at least one GPU device.",
+        )
 
     with (
         patch("g.jax_runtime.setup.jax.config.update", side_effect=record_config_update),
-        patch("g.jax_runtime.setup.require_gpu_device", side_effect=record_require_gpu_device),
+        patch("g.jax_runtime.setup.validate_gpu_device", side_effect=record_validate_gpu_device),
     ):
         report = setup.configure_before_backend_init(policy, diagnostic_sink=None)
 
     assert report.gpu_validation_status == models.GpuValidationStatus.SUCCEEDED
     assert call_order[0] == "jax_platforms"
     assert "jax_compilation_cache_dir" in call_order
-    assert call_order[-1] == "require_gpu_device"
+    assert call_order[-1] == "validate_gpu_device"
 
 
 def test_configure_before_backend_init_emits_structured_diagnostics(tmp_path: Path) -> None:
@@ -194,7 +198,7 @@ def test_configure_before_backend_init_emits_gpu_validation_failure_before_raise
 
     with (
         patch("g.jax_runtime.setup.jax.config.update"),
-        patch("g.jax_runtime.setup.require_gpu_device", side_effect=RuntimeError("no gpu")),
+        patch("g.jax_runtime.setup.validate_gpu_device", side_effect=RuntimeError("no gpu")),
     ):
         try:
             setup.configure_before_backend_init(policy, diagnostic_sink=diagnostic_events.append)
@@ -236,6 +240,27 @@ def test_require_gpu_device_accepts_gpu_platform() -> None:
         patch("g.jax_runtime.setup.jax.devices", return_value=[FakeDevice()]),
     ):
         setup.require_gpu_device()
+
+
+def test_validate_gpu_device_returns_native_success_report() -> None:
+    """Ensure GPU validation success details come from native runtime policy."""
+
+    class FakeDevice:
+        platform = "gpu"
+
+        def __str__(self) -> str:
+            return "GpuDevice(id=0)"
+
+    with (
+        patch("g.jax_runtime.setup.nvidia_driver_is_visible", return_value=True),
+        patch("g.jax_runtime.setup.jax.devices", return_value=[FakeDevice()]),
+    ):
+        validation_report = setup.validate_gpu_device()
+
+    assert validation_report == models.JaxGpuValidationReport(
+        status=models.GpuValidationStatus.SUCCEEDED,
+        message="JAX reported at least one GPU device.",
+    )
 
 
 def test_require_gpu_device_rejects_missing_nvidia_driver() -> None:

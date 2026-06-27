@@ -1,5 +1,6 @@
 //! PyO3 adapters for deterministic JAX runtime setup policy.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
@@ -72,6 +73,28 @@ pub(crate) fn build_jax_runtime_setup_diagnostic_payloads<'py>(
     PyTuple::new(py, &event_payloads)
 }
 
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_jax_gpu_validation_payload<'py>(
+    py: Python<'py>,
+    nvidia_driver_visible: bool,
+    backend_initialization_failed: bool,
+    device_platforms: Vec<String>,
+    device_descriptions: Vec<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    if device_platforms.len() != device_descriptions.len() {
+        return Err(PyValueError::new_err("JAX GPU validation device platform and description counts must match."));
+    }
+    let devices = device_platforms
+        .into_iter()
+        .zip(device_descriptions)
+        .map(|(platform, description)| native_jax_runtime::JaxDeviceObservation { platform, description })
+        .collect::<Vec<_>>();
+    let plan =
+        native_jax_runtime::plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, &devices);
+    jax_gpu_validation_plan_to_dict(py, &plan)
+}
+
 fn jax_runtime_setup_payload_to_dict<'py>(
     py: Python<'py>,
     setup: &native_jax_runtime::JaxRuntimeSetupPayload,
@@ -89,6 +112,17 @@ fn jax_runtime_setup_payload_to_dict<'py>(
     payload.set_item("transfer_guard_enabled", setup.transfer_guard_enabled)?;
     payload.set_item("gpu_validation_status", &setup.gpu_validation_status)?;
     set_optional_string(py, &payload, "gpu_validation_message", setup.gpu_validation_message.as_deref())?;
+    Ok(payload)
+}
+
+fn jax_gpu_validation_plan_to_dict<'py>(
+    py: Python<'py>,
+    plan: &native_jax_runtime::JaxGpuValidationPlan,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("status", &plan.status)?;
+    payload.set_item("message", &plan.message)?;
+    payload.set_item("should_raise", plan.should_raise)?;
     Ok(payload)
 }
 

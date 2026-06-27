@@ -3,9 +3,12 @@
 const DEVICE_GPU: &str = "gpu";
 const JAX_CUDA_PLATFORM_NAME: &str = "cuda";
 const JAX_CPU_PLATFORM_NAME: &str = "cpu";
+const JAX_GPU_DEVICE_PLATFORM_NAME: &str = "gpu";
 const JAX_MATMUL_PRECISION_FLOAT32: &str = "float32";
 const JAX_RUNTIME_DIAGNOSTIC_LEVEL_ERROR: &str = "error";
 const JAX_RUNTIME_DIAGNOSTIC_LEVEL_INFO: &str = "info";
+const JAX_RUNTIME_GPU_VALIDATION_FAILED: &str = "failed";
+const JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED: &str = "succeeded";
 const XLA_AUXILIARY_CACHE_DISABLED: &str = "none";
 const XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE: &str = "xla_gpu_per_fusion_autotune_cache_dir";
 
@@ -23,6 +26,19 @@ pub struct JaxRuntimeSetupPayload {
     pub transfer_guard_enabled: bool,
     pub gpu_validation_status: String,
     pub gpu_validation_message: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JaxDeviceObservation {
+    pub platform: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JaxGpuValidationPlan {
+    pub status: String,
+    pub message: String,
+    pub should_raise: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -156,6 +172,55 @@ pub fn build_jax_runtime_setup_diagnostic_events(
     ]
 }
 
+#[must_use]
+pub fn plan_jax_gpu_validation(
+    nvidia_driver_visible: bool,
+    backend_initialization_failed: bool,
+    devices: &[JaxDeviceObservation],
+) -> JaxGpuValidationPlan {
+    if !nvidia_driver_visible {
+        return JaxGpuValidationPlan {
+            status: JAX_RUNTIME_GPU_VALIDATION_FAILED.to_string(),
+            message: "JAX GPU execution was requested, but this process cannot see the NVIDIA driver or device files. \
+                      Observed no /dev/nvidiactl, no /dev/nvidia-uvm, and no /proc/driver/nvidia. \
+                      Run on a GPU allocation/node or expose the NVIDIA devices to this container/session."
+                .to_string(),
+            should_raise: true,
+        };
+    }
+    if backend_initialization_failed {
+        return JaxGpuValidationPlan {
+            status: JAX_RUNTIME_GPU_VALIDATION_FAILED.to_string(),
+            message: "JAX GPU execution was requested, but no CUDA-enabled JAX backend could be initialized. \
+                      The JAX CUDA plugin failed while initializing the backend. Confirm that the process is running \
+                      on a GPU node, the NVIDIA driver is loaded, CUDA device files are visible, and the installed \
+                      JAX CUDA plugin matches the node driver/runtime. Install the GPU dependency group when needed, \
+                      for example: `uv sync --python 3.14 --group dev --group gpu`."
+                .to_string(),
+            should_raise: true,
+        };
+    }
+    if devices.iter().any(|device| device.platform == JAX_GPU_DEVICE_PLATFORM_NAME) {
+        return JaxGpuValidationPlan {
+            status: JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED.to_string(),
+            message: "JAX reported at least one GPU device.".to_string(),
+            should_raise: false,
+        };
+    }
+    let observed_devices = if devices.is_empty() {
+        "none".to_string()
+    } else {
+        devices.iter().map(|device| device.description.as_str()).collect::<Vec<_>>().join(", ")
+    };
+    JaxGpuValidationPlan {
+        status: JAX_RUNTIME_GPU_VALIDATION_FAILED.to_string(),
+        message: format!(
+            "JAX GPU execution was requested, but JAX did not report any GPU devices. Observed devices: {observed_devices}."
+        ),
+        should_raise: true,
+    }
+}
+
 fn gpu_validation_fields(setup: &JaxRuntimeSetupPayload) -> Vec<JaxRuntimeDiagnosticFieldPayload> {
     let mut fields = vec![text_field("status", setup.gpu_validation_status.clone())];
     if let Some(message) = setup.gpu_validation_message.clone() {
@@ -226,5 +291,39 @@ mod tests {
 
         assert_eq!(events[4].level, JAX_RUNTIME_DIAGNOSTIC_LEVEL_ERROR);
         assert_eq!(events[4].fields[1].value, JaxRuntimeDiagnosticValue::Text("no gpu".to_string()));
+    }
+
+    #[test]
+    fn plans_jax_gpu_validation_outcomes() {
+        let missing_driver_plan = plan_jax_gpu_validation(false, false, &[]);
+        assert_eq!(missing_driver_plan.status, JAX_RUNTIME_GPU_VALIDATION_FAILED);
+        assert!(missing_driver_plan.should_raise);
+        assert!(missing_driver_plan.message.contains("cannot see the NVIDIA driver"));
+
+        let backend_failure_plan = plan_jax_gpu_validation(true, true, &[]);
+        assert_eq!(backend_failure_plan.status, JAX_RUNTIME_GPU_VALIDATION_FAILED);
+        assert!(backend_failure_plan.should_raise);
+        assert!(backend_failure_plan.message.contains("no CUDA-enabled JAX backend"));
+
+        let cpu_only_plan = plan_jax_gpu_validation(
+            true,
+            false,
+            &[JaxDeviceObservation { platform: "cpu".to_string(), description: "CpuDevice(id=0)".to_string() }],
+        );
+        assert_eq!(cpu_only_plan.status, JAX_RUNTIME_GPU_VALIDATION_FAILED);
+        assert!(cpu_only_plan.should_raise);
+        assert!(cpu_only_plan.message.contains("Observed devices: CpuDevice(id=0)."));
+
+        let gpu_plan = plan_jax_gpu_validation(
+            true,
+            false,
+            &[JaxDeviceObservation {
+                platform: JAX_GPU_DEVICE_PLATFORM_NAME.to_string(),
+                description: "GpuDevice(id=0)".to_string(),
+            }],
+        );
+        assert_eq!(gpu_plan.status, JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED);
+        assert!(!gpu_plan.should_raise);
+        assert_eq!(gpu_plan.message, "JAX reported at least one GPU device.");
     }
 }

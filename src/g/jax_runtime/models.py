@@ -100,6 +100,20 @@ class JaxRuntimeSetupReport:
 
 
 @dataclass(frozen=True)
+class JaxGpuValidationReport:
+    """JAX GPU validation status from native runtime policy.
+
+    Attributes:
+        status: GPU validation status.
+        message: Validation detail or failure message.
+
+    """
+
+    status: GpuValidationStatus
+    message: str
+
+
+@dataclass(frozen=True)
 class JaxRuntimeDiagnosticField:
     """Structured field attached to a JAX runtime diagnostic event.
 

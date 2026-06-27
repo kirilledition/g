@@ -8,10 +8,9 @@ from pathlib import Path
 
 import jax
 
-from g import types
+from g import _core, types
 from g.jax_runtime import diagnostics, models, resolution
 
-GPU_DEVICE_PLATFORM_NAME = "gpu"
 NVIDIA_CONTROL_DEVICE_PATH = Path("/dev/nvidiactl")
 NVIDIA_UVM_DEVICE_PATH = Path("/dev/nvidia-uvm")
 NVIDIA_DRIVER_DIRECTORY_PATH = Path("/proc/driver/nvidia")
@@ -63,7 +62,7 @@ def configure_before_backend_init(
                 diagnostic_sink(diagnostic_event)
         return setup_report
     try:
-        require_gpu_device()
+        gpu_validation_report = validate_gpu_device()
     except RuntimeError as error:
         failed_report = dataclasses.replace(
             setup_report,
@@ -76,8 +75,8 @@ def configure_before_backend_init(
         raise
     validated_report = dataclasses.replace(
         setup_report,
-        gpu_validation_status=models.GpuValidationStatus.SUCCEEDED,
-        gpu_validation_message="JAX reported at least one GPU device.",
+        gpu_validation_status=gpu_validation_report.status,
+        gpu_validation_message=gpu_validation_report.message,
     )
     if diagnostic_sink is not None:
         for diagnostic_event in diagnostics.diagnostic_events_from_setup_report(validated_report):
@@ -104,33 +103,60 @@ def require_gpu_device() -> None:
         RuntimeError: If no visible NVIDIA driver or JAX GPU device is available.
 
     """
+    validate_gpu_device()
+
+
+def validate_gpu_device() -> models.JaxGpuValidationReport:
+    """Validate that JAX can report a GPU backend.
+
+    Returns:
+        Native validation report when at least one GPU is available.
+
+    Raises:
+        RuntimeError: If no visible NVIDIA driver or JAX GPU device is available.
+
+    """
     if not nvidia_driver_is_visible():
-        message = (
-            "JAX GPU execution was requested, but this process cannot see the NVIDIA driver or device files. "
-            "Observed no /dev/nvidiactl, no /dev/nvidia-uvm, and no /proc/driver/nvidia. "
-            "Run on a GPU allocation/node or expose the NVIDIA devices to this container/session."
+        missing_driver_plan = jax_gpu_validation_report_from_native_payload(
+            _core.plan_jax_gpu_validation_payload(
+                nvidia_driver_visible=False,
+                backend_initialization_failed=False,
+                device_platforms=(),
+                device_descriptions=(),
+            )
         )
-        raise RuntimeError(message)
+        raise RuntimeError(missing_driver_plan.message)
     try:
         devices = jax.devices()
     except Exception as error:
-        message = (
-            "JAX GPU execution was requested, but no CUDA-enabled JAX backend could be initialized. "
-            "The JAX CUDA plugin failed while initializing the backend. Confirm that the process is running on a "
-            "GPU node, the NVIDIA driver is loaded, CUDA device files are visible, and the installed JAX CUDA plugin "
-            "matches the node driver/runtime. Install the GPU dependency group when needed, for example: "
-            "`uv sync --python 3.14 --group dev --group gpu`."
+        backend_failure_plan = jax_gpu_validation_report_from_native_payload(
+            _core.plan_jax_gpu_validation_payload(
+                nvidia_driver_visible=True,
+                backend_initialization_failed=True,
+                device_platforms=(),
+                device_descriptions=(),
+            )
         )
-        raise RuntimeError(message) from error
-    gpu_devices = [
-        device
-        for device in devices
-        if getattr(typing.cast("typing.Any", device), "platform", None) == GPU_DEVICE_PLATFORM_NAME
-    ]
-    if not gpu_devices:
-        observed_devices = ", ".join(str(device) for device in devices) or "none"
-        message = (
-            "JAX GPU execution was requested, but JAX did not report any GPU devices. "
-            f"Observed devices: {observed_devices}."
+        raise RuntimeError(backend_failure_plan.message) from error
+    validation_report = jax_gpu_validation_report_from_native_payload(
+        _core.plan_jax_gpu_validation_payload(
+            nvidia_driver_visible=True,
+            backend_initialization_failed=False,
+            device_platforms=tuple(
+                str(getattr(typing.cast("typing.Any", device), "platform", "")) for device in devices
+            ),
+            device_descriptions=tuple(str(device) for device in devices),
         )
-        raise RuntimeError(message)
+    )
+    if validation_report.status == models.GpuValidationStatus.FAILED:
+        raise RuntimeError(validation_report.message)
+    return validation_report
+
+
+def jax_gpu_validation_report_from_native_payload(payload: object) -> models.JaxGpuValidationReport:
+    """Adapt a native JAX GPU validation payload."""
+    validation_payload = dict(typing.cast("typing.Mapping[str, object]", payload))
+    return models.JaxGpuValidationReport(
+        status=models.GpuValidationStatus(str(validation_payload["status"])),
+        message=str(validation_payload["message"]),
+    )
