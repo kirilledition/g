@@ -52,6 +52,7 @@ mod trusted_validation;
 use callback_diagnostics::{NativeNullLogisticNonconvergencePlan, plan_null_logistic_nonconvergence};
 use callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
+    NativeCallbackProgressTelemetryEvent, NativeCallbackProgressTelemetryPlan, NativeCallbackProgressTelemetryRecord,
     NativeCallbackProgressUpdate, build_callback_chunk_identity,
 };
 use callback_summary::NativeBinaryCorrectionSummary;
@@ -1786,6 +1787,9 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackChunkIdentity>()?;
     module.add_class::<NativeCallbackProgressCompletion>()?;
     module.add_class::<NativeCallbackProgressState>()?;
+    module.add_class::<NativeCallbackProgressTelemetryEvent>()?;
+    module.add_class::<NativeCallbackProgressTelemetryPlan>()?;
+    module.add_class::<NativeCallbackProgressTelemetryRecord>()?;
     module.add_class::<NativeCallbackProgressUpdate>()?;
     module.add_class::<NativeCallbackQueueLimits>()?;
     module.add_class::<NativeCallbackQueueOperationObservationPlan>()?;

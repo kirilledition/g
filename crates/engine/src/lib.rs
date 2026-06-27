@@ -22,7 +22,8 @@ pub use callback_diagnostics::{
     plan_null_logistic_nonconvergence,
 };
 pub use callback_progress::{
-    CallbackChunkIdentity, CallbackProgressCompletion, CallbackProgressState, CallbackProgressUpdate,
+    CallbackChunkIdentity, CallbackProgressCompletion, CallbackProgressState, CallbackProgressTelemetryEvent,
+    CallbackProgressTelemetryPlan, CallbackProgressTelemetryRecord, CallbackProgressUpdate,
 };
 pub use callback_summary::{BinaryChunkDiagnosticsInput, BinaryCorrectionSummaryState};
 pub use coordinator::{EngineCoordinator, EngineError, EngineRunInput, EngineRunReport, InjectedCoordinatorFailure};

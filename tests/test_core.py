@@ -741,6 +741,19 @@ def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
     assert first_update.started_chromosome == "chr1"
     assert first_update.chunk_identity.variant_count == 8
     assert progress_state.current_progress_chromosome == "chr1"
+    first_telemetry_plan = first_update.telemetry_plan
+    assert [
+        (event.event_name, event.level, event.chromosome, event.processed_chunk_count)
+        for event in first_telemetry_plan.events
+    ] == [
+        ("chromosome_started", "info", "chr1", 1),
+    ]
+    assert first_telemetry_plan.progress.processed_chunk_count == 1
+    assert first_telemetry_plan.progress.chromosome == "chr1"
+    assert first_telemetry_plan.progress.chunk_identifier == 0
+    assert first_telemetry_plan.progress.variant_start_index == 0
+    assert first_telemetry_plan.progress.variant_stop_index == 8
+    assert first_telemetry_plan.progress.variant_count == 8
 
     second_update = progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr2", 8, 10))
     assert second_update.processed_chunk_count == 2
@@ -748,11 +761,23 @@ def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
     assert second_update.completed_processed_chunk_count == 1
     assert second_update.started_chromosome == "chr2"
     assert progress_state.current_progress_chromosome == "chr2"
+    assert [
+        (event.event_name, event.level, event.chromosome, event.processed_chunk_count)
+        for event in second_update.telemetry_plan.events
+    ] == [
+        ("chromosome_completed", "info", "chr1", 1),
+        ("chromosome_started", "info", "chr2", 2),
+    ]
 
     progress_completion = progress_state.finish_progress()
     assert progress_completion is not None
     assert progress_completion.chromosome == "chr2"
     assert progress_completion.processed_chunk_count == 2
+    progress_completion_telemetry_event = progress_completion.telemetry_event
+    assert progress_completion_telemetry_event.event_name == "chromosome_completed"
+    assert progress_completion_telemetry_event.level == "info"
+    assert progress_completion_telemetry_event.chromosome == "chr2"
+    assert progress_completion_telemetry_event.processed_chunk_count == 2
     assert progress_state.finish_progress() is None
 
     progress_state.record_processed_chunk_without_progress()

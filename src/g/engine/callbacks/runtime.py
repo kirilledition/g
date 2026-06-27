@@ -579,32 +579,22 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.progress_state.record_processed_chunk_without_progress()
             return
         progress_update = self.progress_state.record_processed_chunk(build_native_callback_chunk_identity(metadata))
-        if progress_update.completed_chromosome is not None:
-            completed_processed_chunk_count = progress_update.completed_processed_chunk_count
-            if completed_processed_chunk_count is None:
-                message = "Native callback progress completion missing processed chunk count."
-                raise RuntimeError(message)
+        telemetry_plan = progress_update.telemetry_plan
+        for progress_event in telemetry_plan.events:
             self.telemetry_session.log_event(
-                "chromosome_completed",
-                level="info",
-                chromosome=progress_update.completed_chromosome,
-                processed_chunk_count=completed_processed_chunk_count,
+                progress_event.event_name,
+                level=progress_event.level,
+                chromosome=progress_event.chromosome,
+                processed_chunk_count=progress_event.processed_chunk_count,
             )
-        if progress_update.started_chromosome is not None:
-            self.telemetry_session.log_event(
-                "chromosome_started",
-                level="info",
-                chromosome=progress_update.started_chromosome,
-                processed_chunk_count=progress_update.processed_chunk_count,
-            )
-        chunk_identity = progress_update.chunk_identity
+        progress_record = telemetry_plan.progress
         self.telemetry_session.log_progress(
-            processed_chunk_count=progress_update.processed_chunk_count,
-            chromosome=chunk_identity.chromosome,
-            chunk_identifier=chunk_identity.chunk_identifier,
-            variant_start_index=chunk_identity.variant_start_index,
-            variant_stop_index=chunk_identity.variant_stop_index,
-            variant_count=chunk_identity.variant_count,
+            processed_chunk_count=progress_record.processed_chunk_count,
+            chromosome=progress_record.chromosome,
+            chunk_identifier=progress_record.chunk_identifier,
+            variant_start_index=progress_record.variant_start_index,
+            variant_stop_index=progress_record.variant_stop_index,
+            variant_count=progress_record.variant_count,
         )
 
     def complete_progress(self) -> None:
@@ -612,11 +602,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         progress_completion = self.progress_state.finish_progress()
         if self.telemetry_session is None or progress_completion is None:
             return
+        progress_event = progress_completion.telemetry_event
         self.telemetry_session.log_event(
-            "chromosome_completed",
-            level="info",
-            chromosome=progress_completion.chromosome,
-            processed_chunk_count=progress_completion.processed_chunk_count,
+            progress_event.event_name,
+            level=progress_event.level,
+            chromosome=progress_event.chromosome,
+            processed_chunk_count=progress_event.processed_chunk_count,
         )
 
     def record_binary_null_model_failure_count(self, failure_count: int) -> None:

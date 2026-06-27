@@ -16,6 +16,21 @@ pub(crate) struct NativeCallbackProgressUpdate {
 }
 
 #[pyclass]
+pub(crate) struct NativeCallbackProgressTelemetryEvent {
+    inner: native_callback_progress::CallbackProgressTelemetryEvent,
+}
+
+#[pyclass]
+pub(crate) struct NativeCallbackProgressTelemetryRecord {
+    inner: native_callback_progress::CallbackProgressTelemetryRecord,
+}
+
+#[pyclass]
+pub(crate) struct NativeCallbackProgressTelemetryPlan {
+    inner: native_callback_progress::CallbackProgressTelemetryPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackProgressCompletion {
     inner: native_callback_progress::CallbackProgressCompletion,
 }
@@ -79,6 +94,80 @@ impl NativeCallbackProgressUpdate {
     fn chunk_identity(&self) -> NativeCallbackChunkIdentity {
         self.inner.chunk_identity.clone().into()
     }
+
+    #[getter]
+    fn telemetry_plan(&self) -> NativeCallbackProgressTelemetryPlan {
+        self.inner.telemetry_plan().into()
+    }
+}
+
+#[pymethods]
+impl NativeCallbackProgressTelemetryEvent {
+    #[getter]
+    fn event_name(&self) -> String {
+        self.inner.event_name.clone()
+    }
+
+    #[getter]
+    fn level(&self) -> String {
+        self.inner.level.clone()
+    }
+
+    #[getter]
+    fn chromosome(&self) -> String {
+        self.inner.chromosome.clone()
+    }
+
+    #[getter]
+    fn processed_chunk_count(&self) -> i64 {
+        self.inner.processed_chunk_count
+    }
+}
+
+#[pymethods]
+impl NativeCallbackProgressTelemetryRecord {
+    #[getter]
+    fn processed_chunk_count(&self) -> i64 {
+        self.inner.processed_chunk_count
+    }
+
+    #[getter]
+    fn chromosome(&self) -> String {
+        self.inner.chromosome.clone()
+    }
+
+    #[getter]
+    fn chunk_identifier(&self) -> i64 {
+        self.inner.chunk_identifier
+    }
+
+    #[getter]
+    fn variant_start_index(&self) -> i64 {
+        self.inner.variant_start_index
+    }
+
+    #[getter]
+    fn variant_stop_index(&self) -> i64 {
+        self.inner.variant_stop_index
+    }
+
+    #[getter]
+    fn variant_count(&self) -> i64 {
+        self.inner.variant_count
+    }
+}
+
+#[pymethods]
+impl NativeCallbackProgressTelemetryPlan {
+    #[getter]
+    fn events(&self) -> Vec<NativeCallbackProgressTelemetryEvent> {
+        self.inner.events.iter().cloned().map(Into::into).collect()
+    }
+
+    #[getter]
+    fn progress(&self) -> NativeCallbackProgressTelemetryRecord {
+        self.inner.progress.clone().into()
+    }
 }
 
 #[pymethods]
@@ -91,6 +180,11 @@ impl NativeCallbackProgressCompletion {
     #[getter]
     fn processed_chunk_count(&self) -> i64 {
         self.inner.processed_chunk_count
+    }
+
+    #[getter]
+    fn telemetry_event(&self) -> NativeCallbackProgressTelemetryEvent {
+        self.inner.telemetry_event().into()
     }
 }
 
@@ -133,6 +227,24 @@ impl From<native_callback_progress::CallbackChunkIdentity> for NativeCallbackChu
 impl From<native_callback_progress::CallbackProgressUpdate> for NativeCallbackProgressUpdate {
     fn from(progress_update: native_callback_progress::CallbackProgressUpdate) -> Self {
         Self { inner: progress_update }
+    }
+}
+
+impl From<native_callback_progress::CallbackProgressTelemetryEvent> for NativeCallbackProgressTelemetryEvent {
+    fn from(telemetry_event: native_callback_progress::CallbackProgressTelemetryEvent) -> Self {
+        Self { inner: telemetry_event }
+    }
+}
+
+impl From<native_callback_progress::CallbackProgressTelemetryRecord> for NativeCallbackProgressTelemetryRecord {
+    fn from(telemetry_record: native_callback_progress::CallbackProgressTelemetryRecord) -> Self {
+        Self { inner: telemetry_record }
+    }
+}
+
+impl From<native_callback_progress::CallbackProgressTelemetryPlan> for NativeCallbackProgressTelemetryPlan {
+    fn from(telemetry_plan: native_callback_progress::CallbackProgressTelemetryPlan) -> Self {
+        Self { inner: telemetry_plan }
     }
 }
 

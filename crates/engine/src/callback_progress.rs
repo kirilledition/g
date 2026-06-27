@@ -1,5 +1,9 @@
 //! Native callback progress state and chunk identity policy.
 
+const CALLBACK_PROGRESS_EVENT_LEVEL: &str = "info";
+const CHROMOSOME_COMPLETED_EVENT_NAME: &str = "chromosome_completed";
+const CHROMOSOME_STARTED_EVENT_NAME: &str = "chromosome_started";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_field_names)]
 pub struct CallbackChunkIdentity {
@@ -32,10 +36,82 @@ pub struct CallbackProgressUpdate {
     pub chunk_identity: CallbackChunkIdentity,
 }
 
+impl CallbackProgressUpdate {
+    #[must_use]
+    pub fn telemetry_plan(&self) -> CallbackProgressTelemetryPlan {
+        let mut events = Vec::new();
+        if let (Some(completed_chromosome), Some(completed_processed_chunk_count)) =
+            (self.completed_chromosome.as_ref(), self.completed_processed_chunk_count)
+        {
+            events.push(CallbackProgressTelemetryEvent {
+                event_name: CHROMOSOME_COMPLETED_EVENT_NAME.to_string(),
+                level: CALLBACK_PROGRESS_EVENT_LEVEL.to_string(),
+                chromosome: completed_chromosome.clone(),
+                processed_chunk_count: completed_processed_chunk_count,
+            });
+        }
+        if let Some(started_chromosome) = self.started_chromosome.as_ref() {
+            events.push(CallbackProgressTelemetryEvent {
+                event_name: CHROMOSOME_STARTED_EVENT_NAME.to_string(),
+                level: CALLBACK_PROGRESS_EVENT_LEVEL.to_string(),
+                chromosome: started_chromosome.clone(),
+                processed_chunk_count: self.processed_chunk_count,
+            });
+        }
+        CallbackProgressTelemetryPlan {
+            events,
+            progress: CallbackProgressTelemetryRecord {
+                processed_chunk_count: self.processed_chunk_count,
+                chromosome: self.chunk_identity.chromosome.clone(),
+                chunk_identifier: self.chunk_identity.chunk_identifier,
+                variant_start_index: self.chunk_identity.variant_start_index,
+                variant_stop_index: self.chunk_identity.variant_stop_index,
+                variant_count: self.chunk_identity.variant_count,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackProgressCompletion {
     pub chromosome: String,
     pub processed_chunk_count: i64,
+}
+
+impl CallbackProgressCompletion {
+    #[must_use]
+    pub fn telemetry_event(&self) -> CallbackProgressTelemetryEvent {
+        CallbackProgressTelemetryEvent {
+            event_name: CHROMOSOME_COMPLETED_EVENT_NAME.to_string(),
+            level: CALLBACK_PROGRESS_EVENT_LEVEL.to_string(),
+            chromosome: self.chromosome.clone(),
+            processed_chunk_count: self.processed_chunk_count,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackProgressTelemetryEvent {
+    pub event_name: String,
+    pub level: String,
+    pub chromosome: String,
+    pub processed_chunk_count: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackProgressTelemetryRecord {
+    pub processed_chunk_count: i64,
+    pub chromosome: String,
+    pub chunk_identifier: i64,
+    pub variant_start_index: i64,
+    pub variant_stop_index: i64,
+    pub variant_count: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackProgressTelemetryPlan {
+    pub events: Vec<CallbackProgressTelemetryEvent>,
+    pub progress: CallbackProgressTelemetryRecord,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -119,6 +195,25 @@ mod tests {
         assert_eq!(first_update.completed_processed_chunk_count, None);
         assert_eq!(first_update.started_chromosome, Some("chr1".to_string()));
         assert_eq!(state.current_progress_chromosome(), Some("chr1"));
+        assert_eq!(
+            first_update.telemetry_plan(),
+            CallbackProgressTelemetryPlan {
+                events: vec![CallbackProgressTelemetryEvent {
+                    event_name: "chromosome_started".to_string(),
+                    level: "info".to_string(),
+                    chromosome: "chr1".to_string(),
+                    processed_chunk_count: 1,
+                }],
+                progress: CallbackProgressTelemetryRecord {
+                    processed_chunk_count: 1,
+                    chromosome: "chr1".to_string(),
+                    chunk_identifier: 0,
+                    variant_start_index: 0,
+                    variant_stop_index: 8,
+                    variant_count: 8,
+                },
+            },
+        );
 
         let same_chromosome_update =
             state.record_processed_chunk(CallbackChunkIdentity::new("chr1".to_string(), 8, 16));
@@ -133,6 +228,23 @@ mod tests {
         assert_eq!(chromosome_transition_update.completed_processed_chunk_count, Some(2));
         assert_eq!(chromosome_transition_update.started_chromosome, Some("chr2".to_string()));
         assert_eq!(state.current_progress_chromosome(), Some("chr2"));
+        assert_eq!(
+            chromosome_transition_update.telemetry_plan().events,
+            vec![
+                CallbackProgressTelemetryEvent {
+                    event_name: "chromosome_completed".to_string(),
+                    level: "info".to_string(),
+                    chromosome: "chr1".to_string(),
+                    processed_chunk_count: 2,
+                },
+                CallbackProgressTelemetryEvent {
+                    event_name: "chromosome_started".to_string(),
+                    level: "info".to_string(),
+                    chromosome: "chr2".to_string(),
+                    processed_chunk_count: 3,
+                },
+            ],
+        );
     }
 
     #[test]
@@ -145,6 +257,15 @@ mod tests {
         assert_eq!(
             state.finish_progress(),
             Some(CallbackProgressCompletion { chromosome: "chr3".to_string(), processed_chunk_count: 1 }),
+        );
+        assert_eq!(
+            CallbackProgressCompletion { chromosome: "chr3".to_string(), processed_chunk_count: 1 }.telemetry_event(),
+            CallbackProgressTelemetryEvent {
+                event_name: "chromosome_completed".to_string(),
+                level: "info".to_string(),
+                chromosome: "chr3".to_string(),
+                processed_chunk_count: 1,
+            },
         );
         assert_eq!(state.finish_progress(), None);
     }
