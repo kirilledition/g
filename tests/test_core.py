@@ -221,6 +221,11 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
         )
 
 
+def test_native_rayon_thread_pool_rejects_zero_thread_count() -> None:
+    with pytest.raises(ValueError, match="Rayon thread count must be positive"):
+        _core.configure_rayon_global_thread_pool(0)
+
+
 def test_native_jax_runtime_setup_diagnostic_payloads() -> None:
     diagnostic_payloads = _core.build_jax_runtime_setup_diagnostic_payloads(
         requested_device="gpu",

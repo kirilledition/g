@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 
 pub mod jax_runtime;
+pub mod rayon_runtime;
 pub mod run_events;
 pub mod run_metadata;
 pub mod runtime_policy;
@@ -16,6 +17,7 @@ pub use jax_runtime::{
     JaxRuntimeSetupPayload, build_jax_runtime_setup_diagnostic_events, plan_jax_gpu_validation,
     plan_jax_runtime_config_updates, resolve_jax_runtime_setup,
 };
+pub use rayon_runtime::{RayonRuntimeError, configure_global_rayon_thread_pool};
 pub use run_events::{
     RunArtifactPayload, RunArtifactTelemetryFields, RunCompletedEventPayload, RunCompletedTelemetryFields,
     RunFailedEventPayload, RunFailedTelemetryFields, RunInterruptedEventPayload, RunInterruptedTelemetryFields,

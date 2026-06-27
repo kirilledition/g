@@ -79,7 +79,6 @@ g-output = { workspace = true }
 g-plan = { workspace = true }
 g-runtime = { workspace = true }
 memchr = { workspace = true }
-rayon = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }

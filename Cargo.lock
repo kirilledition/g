@@ -733,7 +733,6 @@ dependencies = [
  "numpy",
  "pyo3",
  "pyo3-pylogger",
- "rayon",
  "serde",
  "serde_json",
  "sha2",
@@ -811,6 +810,7 @@ name = "g-runtime"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "rayon",
  "serde",
  "serde_json",
  "signal-hook",
