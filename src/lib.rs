@@ -1,6 +1,5 @@
 #![warn(clippy::pedantic)]
 
-pub(crate) mod callback_summary;
 pub use g_engine as engine;
 pub use g_genotype as genotype;
 pub use g_input as input;
