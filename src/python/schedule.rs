@@ -589,6 +589,17 @@ pub(crate) fn resolve_manifest_gpu_genotype_format(
 }
 
 #[pyfunction]
+pub(crate) fn resolve_effective_trusted_no_missing_diploid(
+    requested_trusted_no_missing_diploid: bool,
+    variant_major_packed8_probability_pairs: bool,
+) -> bool {
+    native_schedule::resolve_effective_trusted_no_missing_diploid(
+        requested_trusted_no_missing_diploid,
+        variant_major_packed8_probability_pairs,
+    )
+}
+
+#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn plan_gpu_genotype_format_auto_to_dosage(
     requested_gpu_genotype_format: String,

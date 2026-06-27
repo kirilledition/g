@@ -231,6 +231,21 @@ def test_native_pipeline_resume_compatibility_validates_all_manifests(tmp_path: 
         )
 
 
+def test_native_effective_trusted_no_missing_diploid_policy() -> None:
+    assert not _core.resolve_effective_trusted_no_missing_diploid(
+        requested_trusted_no_missing_diploid=False,
+        variant_major_packed8_probability_pairs=False,
+    )
+    assert _core.resolve_effective_trusted_no_missing_diploid(
+        requested_trusted_no_missing_diploid=True,
+        variant_major_packed8_probability_pairs=False,
+    )
+    assert _core.resolve_effective_trusted_no_missing_diploid(
+        requested_trusted_no_missing_diploid=False,
+        variant_major_packed8_probability_pairs=True,
+    )
+
+
 def test_native_null_logistic_nonconvergence_policy() -> None:
     continue_plan = _core.plan_null_logistic_nonconvergence(
         chromosome="22",

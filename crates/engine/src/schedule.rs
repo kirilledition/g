@@ -610,6 +610,14 @@ pub fn resolve_manifest_gpu_genotype_format(
     }
 }
 
+#[must_use]
+pub fn resolve_effective_trusted_no_missing_diploid(
+    requested_trusted_no_missing_diploid: bool,
+    variant_major_packed8_probability_pairs: bool,
+) -> bool {
+    requested_trusted_no_missing_diploid || variant_major_packed8_probability_pairs
+}
+
 /// Resolve an `auto` GPU genotype format to dosage for paths that cannot use
 /// packed8.
 ///
@@ -1096,6 +1104,14 @@ mod tests {
         assert_eq!(resolve_manifest_gpu_genotype_format(true, Some("invalid"), Some("dosage")), None);
         assert_eq!(resolve_manifest_gpu_genotype_format(true, None, Some("dosage")), Some("dosage"));
         assert_eq!(resolve_manifest_gpu_genotype_format(false, Some("packed8"), None), None);
+    }
+
+    #[test]
+    fn resolves_effective_trusted_no_missing_diploid() {
+        assert!(!resolve_effective_trusted_no_missing_diploid(false, false));
+        assert!(resolve_effective_trusted_no_missing_diploid(true, false));
+        assert!(resolve_effective_trusted_no_missing_diploid(false, true));
+        assert!(resolve_effective_trusted_no_missing_diploid(true, true));
     }
 
     #[test]

@@ -1411,6 +1411,10 @@ def resolve_manifest_gpu_genotype_format(
     manifest_gpu_genotype_format: str | None,
     association_backend_genotype_format: str | None,
 ) -> str | None: ...
+def resolve_effective_trusted_no_missing_diploid(
+    requested_trusted_no_missing_diploid: bool,
+    variant_major_packed8_probability_pairs: bool,
+) -> bool: ...
 def plan_gpu_genotype_format_auto_to_dosage(
     requested_gpu_genotype_format: str,
     resolution_reason: str,

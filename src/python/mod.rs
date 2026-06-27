@@ -115,10 +115,10 @@ use schedule::{
     plan_single_trait_binary_gpu_genotype_format_resolution, plan_single_trait_output_write,
     plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method_value,
     resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
-    resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
-    resolve_manifest_gpu_genotype_format, resolve_native_callback_queue_limits,
-    resolve_native_callback_worker_shutdown_timeouts, resolve_writer_finish_thread_count,
-    should_attempt_callback_worker_stop,
+    resolve_delivery_callback_batch_size, resolve_effective_trusted_no_missing_diploid,
+    resolve_grouped_union_callback_batch_size, resolve_manifest_gpu_genotype_format,
+    resolve_native_callback_queue_limits, resolve_native_callback_worker_shutdown_timeouts,
+    resolve_writer_finish_thread_count, should_attempt_callback_worker_stop,
 };
 use shutdown::{NativeShutdownController, build_shutdown_signal_payload};
 use telemetry_policy::{
@@ -1866,6 +1866,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
     module.add_function(wrap_pyfunction!(plan_null_logistic_nonconvergence, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_manifest_gpu_genotype_format, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_effective_trusted_no_missing_diploid, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_bgen_delivery_method_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_callback_worker_backpressure_poll_timeout_seconds, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_callback_worker_stop_poll_timeout_seconds, module)?)?;

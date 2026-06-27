@@ -54,6 +54,7 @@ pub use schedule::{
     plan_single_trait_binary_gpu_genotype_format_resolution, plan_single_trait_output_write,
     plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method,
     resolve_callback_worker_stop_poll_timeout_seconds, resolve_delivery_callback_batch_size,
-    resolve_grouped_union_callback_batch_size, resolve_manifest_gpu_genotype_format,
-    resolve_native_callback_queue_limits, resolve_writer_finish_thread_count, should_attempt_callback_worker_stop,
+    resolve_effective_trusted_no_missing_diploid, resolve_grouped_union_callback_batch_size,
+    resolve_manifest_gpu_genotype_format, resolve_native_callback_queue_limits, resolve_writer_finish_thread_count,
+    should_attempt_callback_worker_stop,
 };

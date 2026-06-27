@@ -112,7 +112,12 @@ class Regenie2PipelineContext:
     @property
     def effective_trusted_no_missing_diploid(self) -> bool:
         """Return trusted BGEN mode after packed8 requirements are applied."""
-        return self.trusted_no_missing_diploid or self.uses_packed8_genotypes
+        return bool(
+            _core.resolve_effective_trusted_no_missing_diploid(
+                self.trusted_no_missing_diploid,
+                self.uses_packed8_genotypes,
+            )
+        )
 
     @property
     def is_binary_trait(self) -> bool:
