@@ -145,6 +145,8 @@ def test_build_stage_timing_recorder_is_opt_in(tmp_path: Path) -> None:
     assert isinstance(exact_recorder, timing.StageTimingRecorder)
     assert not aggregate_recorder.exact_stage_timings
     assert exact_recorder.exact_stage_timings
+    assert not aggregate_recorder.should_collect_exact_stage_timings()
+    assert exact_recorder.should_collect_exact_stage_timings()
     assert not timing.should_collect_exact_stage_timings(aggregate_recorder)
     assert timing.should_collect_exact_stage_timings(exact_recorder)
 

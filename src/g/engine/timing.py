@@ -398,6 +398,10 @@ class StageTimingRecorder:
         """Return whether exact synchronized stage timings are requested."""
         return self.native_recorder.exact_stage_timings
 
+    def should_collect_exact_stage_timings(self) -> bool:
+        """Return whether timing should force synchronized exact stage measurements."""
+        return self.native_recorder.should_collect_exact_stage_timings()
+
     def add_stage_duration_unlocked(self, stage_name: str, duration_seconds: float) -> None:
         """Accumulate one measured duration."""
         self.native_recorder.add_stage_duration(stage_name, duration_seconds)
@@ -595,7 +599,7 @@ def build_stage_timing_recorder(
 
 def should_collect_exact_stage_timings(stage_timing_recorder: StageTimingRecorder | None) -> bool:
     """Return whether timing should force synchronized exact stage measurements."""
-    return stage_timing_recorder is not None and stage_timing_recorder.exact_stage_timings
+    return stage_timing_recorder is not None and stage_timing_recorder.should_collect_exact_stage_timings()
 
 
 def write_stage_timing_snapshot(

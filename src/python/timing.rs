@@ -27,6 +27,10 @@ impl NativeStageTimingRecorder {
         self.exact_stage_timings
     }
 
+    fn should_collect_exact_stage_timings(&self) -> bool {
+        native_timing::should_collect_exact_stage_timings(self.exact_stage_timings)
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     fn add_stage_duration(&self, stage_name: String, duration_seconds: f64) -> PyResult<()> {
         self.lock_state()?.add_stage_duration(stage_name, duration_seconds);

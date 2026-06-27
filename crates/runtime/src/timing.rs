@@ -128,6 +128,11 @@ pub struct StageTimingState {
     pub transfer_metadata: BTreeMap<TransferMetadataKey, TransferMetadataAccumulator>,
 }
 
+#[must_use]
+pub const fn should_collect_exact_stage_timings(exact_stage_timings: bool) -> bool {
+    exact_stage_timings
+}
+
 impl StageTimingState {
     pub fn add_stage_duration(&mut self, stage_name: String, duration_seconds: f64) {
         *self.stage_totals_seconds.entry(stage_name.clone()).or_insert(0.0) += duration_seconds;
@@ -446,5 +451,11 @@ mod tests {
             NumericDiagnosticValue::Float(2.0)
         );
         assert_eq!(summary.binary_chunk_summary["firth_iteration_max"], NumericDiagnosticValue::Float(8.0));
+    }
+
+    #[test]
+    fn resolves_exact_stage_timing_collection_policy() {
+        assert!(should_collect_exact_stage_timings(true));
+        assert!(!should_collect_exact_stage_timings(false));
     }
 }
