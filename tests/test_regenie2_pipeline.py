@@ -2185,27 +2185,34 @@ def test_native_dosage_delivery_defaults_callback_batch_size_in_native_policy() 
     assert engine.callback_batch_size == 1
 
 
-def test_resolve_bgen_delivery_method_uses_native_selection_policy() -> None:
+def test_plan_bgen_delivery_invocation_uses_native_selection_policy() -> None:
     run_input = SimpleNamespace(
         sample_indices=np.asarray([0, 1], dtype=np.int64),
         native_multi_aligned_sample_data=SimpleNamespace(sample_indices=np.asarray([2, 3], dtype=np.int64)),
         native_aligned_sample_data=SimpleNamespace(sample_indices=np.asarray([4, 5], dtype=np.int64)),
     )
+    callback = SimpleNamespace(native_callback_batch_size=2)
+
+    dosage_plan = native_dispatch_delivery.plan_bgen_delivery_invocation(
+        callback,
+        typing.cast("typing.Any", run_input),
+        variant_major_packed8_probability_pairs=False,
+    )
 
     assert (
-        native_dispatch_delivery.resolve_bgen_delivery_method(
-            typing.cast("typing.Any", run_input),
-            variant_major_packed8_probability_pairs=False,
-        )
-        is native_dispatch_delivery.BgenDeliveryMethod.DOSAGE_NATIVE_MULTI_ALIGNED_SAMPLES
+        dosage_plan.delivery_method == native_dispatch_delivery.BgenDeliveryMethod.DOSAGE_NATIVE_MULTI_ALIGNED_SAMPLES
+    )
+    assert dosage_plan.callback_batch_size == 2
+
+    packed8_plan = native_dispatch_delivery.plan_bgen_delivery_invocation(
+        SimpleNamespace(native_callback_batch_size=1),
+        typing.cast("typing.Any", run_input),
+        variant_major_packed8_probability_pairs=True,
     )
     assert (
-        native_dispatch_delivery.resolve_bgen_delivery_method(
-            typing.cast("typing.Any", run_input),
-            variant_major_packed8_probability_pairs=True,
-        )
-        is native_dispatch_delivery.BgenDeliveryMethod.PACKED8_NATIVE_MULTI_ALIGNED_SAMPLES
+        packed8_plan.delivery_method == native_dispatch_delivery.BgenDeliveryMethod.PACKED8_NATIVE_MULTI_ALIGNED_SAMPLES
     )
+    assert packed8_plan.callback_batch_size == 1
 
 
 def test_native_dosage_delivery_prefers_native_multi_alignment() -> None:

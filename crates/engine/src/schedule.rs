@@ -527,6 +527,12 @@ impl BgenDeliveryMethod {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BgenDeliveryInvocationPlan {
+    pub delivery_method: BgenDeliveryMethod,
+    pub callback_batch_size: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ScheduleError {
     #[error("staging_depth must be positive.")]
@@ -783,6 +789,28 @@ pub fn resolve_delivery_callback_batch_size(
         return Err(ScheduleError::Packed8CallbackBatchSize);
     }
     Ok(resolved_callback_batch_size)
+}
+
+/// Plan one native BGEN delivery invocation.
+///
+/// # Errors
+///
+/// Returns an error when the requested callback batch size is invalid for the
+/// selected delivery mode.
+pub fn plan_bgen_delivery_invocation(
+    callback_batch_size: Option<i64>,
+    variant_major_packed8_probability_pairs: bool,
+    has_native_multi_aligned_sample_data: bool,
+    has_native_aligned_sample_data: bool,
+) -> Result<BgenDeliveryInvocationPlan, ScheduleError> {
+    let callback_batch_size =
+        resolve_delivery_callback_batch_size(callback_batch_size, variant_major_packed8_probability_pairs)?;
+    let delivery_method = resolve_bgen_delivery_method(
+        variant_major_packed8_probability_pairs,
+        has_native_multi_aligned_sample_data,
+        has_native_aligned_sample_data,
+    );
+    Ok(BgenDeliveryInvocationPlan { delivery_method, callback_batch_size })
 }
 
 /// Resolve the callback batch size for grouped union BGEN delivery.
@@ -1303,6 +1331,39 @@ mod tests {
         );
         assert_eq!(
             resolve_delivery_callback_batch_size(Some(2), true).unwrap_err(),
+            ScheduleError::Packed8CallbackBatchSize,
+        );
+    }
+
+    #[test]
+    fn plans_bgen_delivery_invocation() {
+        assert_eq!(
+            plan_bgen_delivery_invocation(Some(3), false, true, true).unwrap(),
+            BgenDeliveryInvocationPlan {
+                delivery_method: BgenDeliveryMethod::DosageNativeMultiAlignedSamples,
+                callback_batch_size: 3,
+            },
+        );
+        assert_eq!(
+            plan_bgen_delivery_invocation(None, false, false, true).unwrap(),
+            BgenDeliveryInvocationPlan {
+                delivery_method: BgenDeliveryMethod::DosageNativeAlignedSamples,
+                callback_batch_size: 1,
+            },
+        );
+        assert_eq!(
+            plan_bgen_delivery_invocation(Some(1), true, false, false).unwrap(),
+            BgenDeliveryInvocationPlan {
+                delivery_method: BgenDeliveryMethod::Packed8SampleIndices,
+                callback_batch_size: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_bgen_delivery_invocation_batch_size() {
+        assert_eq!(
+            plan_bgen_delivery_invocation(Some(2), true, false, false).unwrap_err(),
             ScheduleError::Packed8CallbackBatchSize,
         );
     }

@@ -54,6 +54,11 @@ pub(crate) struct NativeBgenDeliveryCleanupPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeBgenDeliveryInvocationPlan {
+    inner: native_schedule::BgenDeliveryInvocationPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeSingleTraitOutputWritePlan {
     inner: native_schedule::SingleTraitOutputWritePlan,
 }
@@ -387,6 +392,19 @@ impl NativeBgenDeliveryCleanupPlan {
 }
 
 #[pymethods]
+impl NativeBgenDeliveryInvocationPlan {
+    #[getter]
+    fn delivery_method(&self) -> &str {
+        self.inner.delivery_method.as_value()
+    }
+
+    #[getter]
+    fn callback_batch_size(&self) -> usize {
+        self.inner.callback_batch_size
+    }
+}
+
+#[pymethods]
 impl NativeSingleTraitOutputWritePlan {
     #[getter]
     fn method_name(&self) -> &str {
@@ -576,6 +594,12 @@ impl From<native_schedule::WriterFinishExecutionPlan> for NativeWriterFinishExec
 impl From<native_schedule::BgenDeliveryCleanupPlan> for NativeBgenDeliveryCleanupPlan {
     fn from(cleanup_plan: native_schedule::BgenDeliveryCleanupPlan) -> Self {
         Self { inner: cleanup_plan }
+    }
+}
+
+impl From<native_schedule::BgenDeliveryInvocationPlan> for NativeBgenDeliveryInvocationPlan {
+    fn from(invocation_plan: native_schedule::BgenDeliveryInvocationPlan) -> Self {
+        Self { inner: invocation_plan }
     }
 }
 
@@ -903,6 +927,23 @@ pub(crate) fn plan_bgen_delivery_cleanup(
     native_schedule::plan_bgen_delivery_cleanup(&cleanup_outcome, callback_finished)
         .map(Into::into)
         .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn plan_bgen_delivery_invocation(
+    callback_batch_size: Option<i64>,
+    variant_major_packed8_probability_pairs: bool,
+    has_native_multi_aligned_sample_data: bool,
+    has_native_aligned_sample_data: bool,
+) -> PyResult<NativeBgenDeliveryInvocationPlan> {
+    native_schedule::plan_bgen_delivery_invocation(
+        callback_batch_size,
+        variant_major_packed8_probability_pairs,
+        has_native_multi_aligned_sample_data,
+        has_native_aligned_sample_data,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
 }
 
 #[pyfunction]

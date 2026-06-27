@@ -670,6 +670,43 @@ def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() 
         )
 
 
+def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
+    dosage_plan = _core.plan_bgen_delivery_invocation(
+        callback_batch_size=2,
+        variant_major_packed8_probability_pairs=False,
+        has_native_multi_aligned_sample_data=True,
+        has_native_aligned_sample_data=True,
+    )
+    assert dosage_plan.delivery_method == "dosage_native_multi_aligned_samples"
+    assert dosage_plan.callback_batch_size == 2
+
+    fallback_dosage_plan = _core.plan_bgen_delivery_invocation(
+        callback_batch_size=None,
+        variant_major_packed8_probability_pairs=False,
+        has_native_multi_aligned_sample_data=False,
+        has_native_aligned_sample_data=False,
+    )
+    assert fallback_dosage_plan.delivery_method == "dosage_sample_indices"
+    assert fallback_dosage_plan.callback_batch_size == 1
+
+    packed8_plan = _core.plan_bgen_delivery_invocation(
+        callback_batch_size=1,
+        variant_major_packed8_probability_pairs=True,
+        has_native_multi_aligned_sample_data=False,
+        has_native_aligned_sample_data=True,
+    )
+    assert packed8_plan.delivery_method == "packed8_native_aligned_samples"
+    assert packed8_plan.callback_batch_size == 1
+
+    with pytest.raises(ValueError, match="packed8 BGEN delivery"):
+        _core.plan_bgen_delivery_invocation(
+            callback_batch_size=2,
+            variant_major_packed8_probability_pairs=True,
+            has_native_multi_aligned_sample_data=False,
+            has_native_aligned_sample_data=False,
+        )
+
+
 def test_resolve_grouped_union_callback_batch_size_enforces_native_delivery_policy() -> None:
     assert _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=1) == 1
     with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):

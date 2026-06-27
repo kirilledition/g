@@ -57,20 +57,22 @@ def resolve_native_callback_batch_size(
     return int(_core.resolve_delivery_callback_batch_size(callback_batch_size, variant_major_packed8_probability_pairs))
 
 
-def resolve_bgen_delivery_method(
+def plan_bgen_delivery_invocation(
+    callback: object,
     run_input: models.BgenDeliveryRunInputProtocol,
     *,
     variant_major_packed8_probability_pairs: bool,
-) -> BgenDeliveryMethod:
-    """Resolve the native BGEN delivery method for one run input."""
+) -> _core.NativeBgenDeliveryInvocationPlan:
+    """Return the native delivery invocation plan for one run input."""
+    raw_callback_batch_size = getattr(callback, "native_callback_batch_size", None)
+    callback_batch_size = None if raw_callback_batch_size is None else int(raw_callback_batch_size)
     native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
     native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
-    return BgenDeliveryMethod(
-        _core.resolve_bgen_delivery_method_value(
-            variant_major_packed8_probability_pairs,
-            native_multi_aligned_sample_data is not None,
-            native_aligned_sample_data is not None,
-        )
+    return _core.plan_bgen_delivery_invocation(
+        callback_batch_size,
+        variant_major_packed8_probability_pairs,
+        native_multi_aligned_sample_data is not None,
+        native_aligned_sample_data is not None,
     )
 
 
@@ -82,10 +84,14 @@ def run_variant_major_packed8_delivery(
     committed_chunk_identifier_list: list[int],
 ) -> int:
     """Run packed8 delivery using native sample alignment when available."""
-    resolve_native_callback_batch_size(callback, variant_major_packed8_probability_pairs=True)
     native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
     native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
-    delivery_method = resolve_bgen_delivery_method(run_input, variant_major_packed8_probability_pairs=True)
+    invocation_plan = plan_bgen_delivery_invocation(
+        callback,
+        run_input,
+        variant_major_packed8_probability_pairs=True,
+    )
+    delivery_method = BgenDeliveryMethod(invocation_plan.delivery_method)
     if delivery_method is BgenDeliveryMethod.PACKED8_NATIVE_MULTI_ALIGNED_SAMPLES:
         native_multi_aligned_sample_data = typing.cast(
             "_core.NativeMultiAlignedSampleData",
@@ -124,12 +130,15 @@ def run_variant_major_dosage_delivery(
     committed_chunk_identifier_list: list[int],
 ) -> int:
     """Run dosage delivery using native sample alignment when available."""
-    native_callback_batch_size = resolve_native_callback_batch_size(
-        callback, variant_major_packed8_probability_pairs=False
+    invocation_plan = plan_bgen_delivery_invocation(
+        callback,
+        run_input,
+        variant_major_packed8_probability_pairs=False,
     )
+    native_callback_batch_size = int(invocation_plan.callback_batch_size)
     native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
     native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
-    delivery_method = resolve_bgen_delivery_method(run_input, variant_major_packed8_probability_pairs=False)
+    delivery_method = BgenDeliveryMethod(invocation_plan.delivery_method)
     if delivery_method is BgenDeliveryMethod.DOSAGE_NATIVE_MULTI_ALIGNED_SAMPLES:
         native_multi_aligned_sample_data = typing.cast(
             "_core.NativeMultiAlignedSampleData",

@@ -41,7 +41,7 @@ pub use preparation::{
     PipelineResumeCompatibilityError, initialize_pipeline_output_runs, validate_pipeline_resume_compatibility,
 };
 pub use schedule::{
-    BgenDeliveryCleanupPlan, BgenDeliveryMethod, CallbackQueueOperationObservationPlan,
+    BgenDeliveryCleanupPlan, BgenDeliveryInvocationPlan, BgenDeliveryMethod, CallbackQueueOperationObservationPlan,
     CallbackQueueStageObservationPlan, CallbackWorkerAbortPlan, CallbackWorkerFinishPlan, CallbackWorkerJoinPlan,
     CallbackWorkerLifecycleState, CallbackWorkerShutdownTimeouts, CallbackWorkerStopPlan, CallbackWorkerStopPollPlan,
     DosageBufferPoolState, DosageBufferReusePlan, GpuGenotypeFormatResolutionPlan, MultiTraitOutputWritePlan,
@@ -49,7 +49,7 @@ pub use schedule::{
     VariantMajorDosageBatchHandoffPlan, WriterFinishExecutionPlan, callback_worker_backpressure_poll_timeout_seconds,
     callback_worker_shutdown_timeouts, format_dosage_callback_worker_error_message,
     format_result_callback_worker_error_message, intersect_committed_chunk_identifier_sets,
-    plan_auto_gpu_genotype_format_after_trusted_validation, plan_bgen_delivery_cleanup,
+    plan_auto_gpu_genotype_format_after_trusted_validation, plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation,
     plan_callback_queue_operation_observation, plan_callback_queue_stage_observation, plan_callback_worker_abort,
     plan_callback_worker_finish, plan_callback_worker_stop_poll, plan_dosage_buffer_reuse,
     plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop, plan_gpu_genotype_format_auto_to_dosage,

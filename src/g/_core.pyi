@@ -743,6 +743,12 @@ class NativeBgenDeliveryCleanupPlan:
     @property
     def write_stage_timing_snapshot(self) -> bool: ...
 
+class NativeBgenDeliveryInvocationPlan:
+    @property
+    def delivery_method(self) -> str: ...
+    @property
+    def callback_batch_size(self) -> int: ...
+
 class NativeSingleTraitOutputWritePlan:
     @property
     def method_name(self) -> str: ...
@@ -1469,6 +1475,12 @@ def plan_bgen_delivery_cleanup(
     cleanup_outcome: str,
     callback_finished: bool,
 ) -> NativeBgenDeliveryCleanupPlan: ...
+def plan_bgen_delivery_invocation(
+    callback_batch_size: int | None,
+    variant_major_packed8_probability_pairs: bool,
+    has_native_multi_aligned_sample_data: bool,
+    has_native_aligned_sample_data: bool,
+) -> NativeBgenDeliveryInvocationPlan: ...
 def plan_single_trait_output_write(
     is_native_writer_session: bool,
     output_statistic_dtype: str,
