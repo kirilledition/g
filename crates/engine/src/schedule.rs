@@ -179,6 +179,15 @@ pub fn resolve_callback_worker_stop_poll_timeout_seconds(remaining_timeout_secon
     remaining_timeout_seconds
 }
 
+#[must_use]
+pub const fn should_attempt_callback_worker_stop(
+    has_started: bool,
+    has_worker_error: bool,
+    is_worker_alive: bool,
+) -> bool {
+    has_started && !has_worker_error && is_worker_alive
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BgenDeliveryMethod {
     DosageNativeMultiAlignedSamples,
@@ -611,6 +620,14 @@ mod tests {
         assert!(resolve_callback_worker_stop_poll_timeout_seconds(0.0).abs() < f64::EPSILON);
         assert!(resolve_callback_worker_stop_poll_timeout_seconds(-1.0).abs() < f64::EPSILON);
         assert!(resolve_callback_worker_stop_poll_timeout_seconds(f64::NAN).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn resolves_callback_worker_stop_attempt_decision() {
+        assert!(should_attempt_callback_worker_stop(true, false, true));
+        assert!(!should_attempt_callback_worker_stop(false, false, true));
+        assert!(!should_attempt_callback_worker_stop(true, true, true));
+        assert!(!should_attempt_callback_worker_stop(true, false, false));
     }
 
     #[test]

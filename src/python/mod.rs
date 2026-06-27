@@ -86,7 +86,7 @@ use schedule::{
     resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
     resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
     resolve_native_callback_queue_limits, resolve_native_callback_worker_shutdown_timeouts,
-    resolve_writer_finish_thread_count,
+    resolve_writer_finish_thread_count, should_attempt_callback_worker_stop,
 };
 use shutdown::{NativeShutdownController, build_shutdown_signal_payload};
 use telemetry_policy::{
@@ -1808,6 +1808,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_native_callback_queue_limits, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_native_callback_worker_shutdown_timeouts, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_writer_finish_thread_count, module)?)?;
+    module.add_function(wrap_pyfunction!(should_attempt_callback_worker_stop, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_buffer_reuse, module)?)?;
     module.add_function(wrap_pyfunction!(plan_variant_major_dosage_batch_handoff, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;

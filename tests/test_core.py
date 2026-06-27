@@ -170,6 +170,29 @@ def test_resolve_callback_worker_stop_poll_timeout_seconds_caps_deadline_remaini
     assert _core.resolve_callback_worker_stop_poll_timeout_seconds(-1.0) == 0.0
 
 
+def test_should_attempt_callback_worker_stop_uses_native_lifecycle_policy() -> None:
+    assert _core.should_attempt_callback_worker_stop(
+        has_started=True,
+        has_worker_error=False,
+        is_worker_alive=True,
+    )
+    assert not _core.should_attempt_callback_worker_stop(
+        has_started=False,
+        has_worker_error=False,
+        is_worker_alive=True,
+    )
+    assert not _core.should_attempt_callback_worker_stop(
+        has_started=True,
+        has_worker_error=True,
+        is_worker_alive=True,
+    )
+    assert not _core.should_attempt_callback_worker_stop(
+        has_started=True,
+        has_worker_error=False,
+        is_worker_alive=False,
+    )
+
+
 def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
     queue_limits = _core.resolve_native_callback_queue_limits(
         staging_depth=3,

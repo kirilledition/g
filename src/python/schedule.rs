@@ -258,6 +258,15 @@ pub(crate) fn resolve_callback_worker_stop_poll_timeout_seconds(remaining_timeou
 }
 
 #[pyfunction]
+pub(crate) fn should_attempt_callback_worker_stop(
+    has_started: bool,
+    has_worker_error: bool,
+    is_worker_alive: bool,
+) -> bool {
+    native_schedule::should_attempt_callback_worker_stop(has_started, has_worker_error, is_worker_alive)
+}
+
+#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn plan_dosage_buffer_reuse(
     buffered_shape: Vec<usize>,
