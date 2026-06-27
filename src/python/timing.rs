@@ -1,6 +1,7 @@
 //! PyO3 adapters for native stage timing recorder state.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -129,6 +130,16 @@ impl NativeStageTimingRecorder {
         build_stage_timing_json_payload(py, &state.build_stage_timing_snapshot_payload())
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    fn write_stage_timing_snapshot(&self, path: String) -> PyResult<()> {
+        let payload = {
+            let state = self.lock_state()?;
+            state.build_stage_timing_snapshot_payload()
+        };
+        native_timing::write_stage_timing_snapshot_payload(Path::new(&path), &payload)
+            .map_err(|error| timing_file_error_to_py(&error))
+    }
+
     fn derived_metrics_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let state = self.lock_state()?;
         build_float_mapping(py, &state.build_derived_metrics())
@@ -137,6 +148,16 @@ impl NativeStageTimingRecorder {
     fn profile_summary_payload<'py>(&self, py: Python<'py>, run_id: Option<String>) -> PyResult<Bound<'py, PyDict>> {
         let state = self.lock_state()?;
         build_profile_summary_payload(py, &state.build_profile_summary(run_id))
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn write_profile_summary(&self, path: String, run_id: Option<String>) -> PyResult<()> {
+        let payload = {
+            let state = self.lock_state()?;
+            state.build_profile_summary(run_id)
+        };
+        native_timing::write_profile_summary_payload(Path::new(&path), &payload)
+            .map_err(|error| timing_file_error_to_py(&error))
     }
 }
 
@@ -193,6 +214,10 @@ fn parse_numeric_diagnostic_value(value: &Bound<'_, PyAny>) -> PyResult<native_t
 
 fn null_logistic_integer_key(key: &str) -> bool {
     matches!(key, "iteration_count" | "converged" | "firth_iteration_count" | "firth_convergence_reason_code")
+}
+
+fn timing_file_error_to_py(error: &native_timing::TimingFileError) -> PyErr {
+    PyRuntimeError::new_err(error.to_string())
 }
 
 fn build_float_mapping<'py>(py: Python<'py>, values: &BTreeMap<String, f64>) -> PyResult<Bound<'py, PyDict>> {

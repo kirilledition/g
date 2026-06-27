@@ -1,14 +1,19 @@
 //! Native stage timing recorder state and aggregate bookkeeping.
 
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt;
+use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
+use serde::{Serialize, Serializer};
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 pub struct QueueBackpressureKey {
     pub queue_name: String,
     pub operation_name: String,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 pub struct TransferMetadataKey {
     pub transfer_name: String,
     pub array_role: String,
@@ -33,13 +38,37 @@ impl NumericDiagnosticValue {
     }
 }
 
+impl Serialize for NumericDiagnosticValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Integer(value) => serializer.serialize_i64(*value),
+            Self::Float(value) => serializer.serialize_f64(*value),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum NullLogisticDiagnosticValue {
     Integer(i64),
     Text(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+impl Serialize for NullLogisticDiagnosticValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Integer(value) => serializer.serialize_i64(*value),
+            Self::Text(value) => serializer.serialize_str(value),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ChunkStageTiming {
     pub chunk_identifier: i64,
     pub chromosome: String,
@@ -50,7 +79,7 @@ pub struct ChunkStageTiming {
     pub duration_seconds: f64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct QueueBackpressureAccumulator {
     pub observation_count: i64,
     pub max_depth: i64,
@@ -59,7 +88,7 @@ pub struct QueueBackpressureAccumulator {
     pub total_blocked_seconds: f64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct TransferMetadataAccumulator {
     pub observation_count: i64,
     pub total_bytes: i64,
@@ -67,7 +96,7 @@ pub struct TransferMetadataAccumulator {
     pub total_elements: i64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct QueueBackpressureSnapshot {
     pub queue_name: String,
     pub operation_name: String,
@@ -78,7 +107,7 @@ pub struct QueueBackpressureSnapshot {
     pub total_blocked_seconds: f64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct TransferMetadataSnapshot {
     pub transfer_name: String,
     pub array_role: String,
@@ -90,18 +119,18 @@ pub struct TransferMetadataSnapshot {
     pub total_elements: i64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct ChunkStageSummary {
     pub total_seconds: f64,
     pub count: i64,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct NullLogisticSummary {
     pub chromosome_count: i64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct ProfileSummaryPayload {
     pub schema_version: i64,
     pub run_id: Option<String>,
@@ -116,7 +145,7 @@ pub struct ProfileSummaryPayload {
     pub null_logistic_summary: NullLogisticSummary,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct StageTimingSnapshotPayload {
     pub stage_totals_seconds: BTreeMap<String, f64>,
     pub stage_counts: BTreeMap<String, i64>,
@@ -141,9 +170,77 @@ pub struct StageTimingState {
     pub transfer_metadata: BTreeMap<TransferMetadataKey, TransferMetadataAccumulator>,
 }
 
+#[derive(Debug)]
+pub enum TimingFileError {
+    CreateParentDirectory { path: PathBuf, source: std::io::Error },
+    Serialize { source: serde_json::Error },
+    WriteFile { path: PathBuf, source: std::io::Error },
+}
+
+impl fmt::Display for TimingFileError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CreateParentDirectory { path, source } => {
+                write!(formatter, "failed to create timing file parent directory for {}: {source}", path.display())
+            }
+            Self::Serialize { source } => write!(formatter, "failed to serialize timing payload: {source}"),
+            Self::WriteFile { path, source } => {
+                write!(formatter, "failed to write timing file {}: {source}", path.display())
+            }
+        }
+    }
+}
+
+impl Error for TimingFileError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::CreateParentDirectory { source, .. } | Self::WriteFile { source, .. } => Some(source),
+            Self::Serialize { source } => Some(source),
+        }
+    }
+}
+
 #[must_use]
 pub const fn should_collect_exact_stage_timings(exact_stage_timings: bool) -> bool {
     exact_stage_timings
+}
+
+/// Write a stage timing snapshot payload as pretty JSON.
+///
+/// # Errors
+///
+/// Returns an error when the parent directory cannot be created, the payload
+/// cannot be serialized, or the file cannot be written.
+pub fn write_stage_timing_snapshot_payload(
+    path: &Path,
+    payload: &StageTimingSnapshotPayload,
+) -> Result<(), TimingFileError> {
+    write_pretty_json_payload(path, payload)
+}
+
+/// Write a profile summary payload as pretty JSON.
+///
+/// # Errors
+///
+/// Returns an error when the parent directory cannot be created, the payload
+/// cannot be serialized, or the file cannot be written.
+pub fn write_profile_summary_payload(path: &Path, payload: &ProfileSummaryPayload) -> Result<(), TimingFileError> {
+    write_pretty_json_payload(path, payload)
+}
+
+fn write_pretty_json_payload<T>(path: &Path, payload: &T) -> Result<(), TimingFileError>
+where
+    T: Serialize,
+{
+    if let Some(parent_directory) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent_directory).map_err(|source| TimingFileError::CreateParentDirectory {
+            path: parent_directory.to_path_buf(),
+            source,
+        })?;
+    }
+    let payload_text = serde_json::to_string_pretty(payload).map_err(|source| TimingFileError::Serialize { source })?;
+    std::fs::write(path, format!("{payload_text}\n"))
+        .map_err(|source| TimingFileError::WriteFile { path: path.to_path_buf(), source })
 }
 
 impl StageTimingState {
@@ -504,8 +601,53 @@ mod tests {
     }
 
     #[test]
+    fn writes_stage_timing_and_profile_summary_payloads() {
+        let mut state = StageTimingState::default();
+        state.add_stage_duration("native_engine_delivery".to_string(), 2.0);
+        state.set_native_bgen_profile(BTreeMap::from([("variant_decode_count".to_string(), 8)]));
+        let directory_path = create_test_directory("writes_stage_timing_and_profile_summary_payloads");
+        let stage_timing_path = directory_path.join("nested").join("stage-timings.json");
+        let profile_summary_path = directory_path.join("profile.summary.json");
+
+        write_stage_timing_snapshot_payload(&stage_timing_path, &state.build_stage_timing_snapshot_payload())
+            .expect("stage timing payload should be written");
+        write_profile_summary_payload(&profile_summary_path, &state.build_profile_summary(Some("run-1".to_string())))
+            .expect("profile summary payload should be written");
+
+        let stage_timing_text =
+            std::fs::read_to_string(&stage_timing_path).expect("stage timing payload should be readable");
+        let profile_summary_text =
+            std::fs::read_to_string(&profile_summary_path).expect("profile summary payload should be readable");
+        assert!(stage_timing_text.ends_with('\n'));
+        assert!(profile_summary_text.ends_with('\n'));
+        let stage_timing_payload: serde_json::Value =
+            serde_json::from_str(&stage_timing_text).expect("stage timing payload should be valid JSON");
+        let profile_summary_payload: serde_json::Value =
+            serde_json::from_str(&profile_summary_text).expect("profile summary payload should be valid JSON");
+        assert_eq!(stage_timing_payload["derived_metrics"]["native_variant_decode_per_second"], serde_json::json!(4.0));
+        assert_eq!(profile_summary_payload["run_id"], serde_json::json!("run-1"));
+        assert_eq!(
+            profile_summary_payload["derived_metrics"]["native_variant_decode_per_second"],
+            serde_json::json!(4.0)
+        );
+
+        std::fs::remove_dir_all(directory_path).expect("test timing directory should be removed");
+    }
+
+    #[test]
     fn resolves_exact_stage_timing_collection_policy() {
         assert!(should_collect_exact_stage_timings(true));
         assert!(!should_collect_exact_stage_timings(false));
+    }
+
+    fn create_test_directory(test_name: &str) -> PathBuf {
+        let timestamp_nanoseconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        let directory_path =
+            std::env::temp_dir().join(format!("g-runtime-{test_name}-{}-{timestamp_nanoseconds}", std::process::id()));
+        std::fs::create_dir_all(&directory_path).expect("test timing directory should be created");
+        directory_path
     }
 }

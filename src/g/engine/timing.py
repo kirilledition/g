@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 import time
 import typing
 from dataclasses import dataclass
@@ -488,6 +487,10 @@ class StageTimingRecorder:
         """Build the JSON-ready native stage timing payload."""
         return dict(typing.cast("typing.Mapping[str, object]", self.native_recorder.stage_timing_json_payload()))
 
+    def write_stage_timing_snapshot(self, stage_timing_path: pathlib.Path) -> None:
+        """Persist the native stage timing JSON payload."""
+        self.native_recorder.write_stage_timing_snapshot(str(stage_timing_path))
+
     def derived_metrics_payload(self) -> dict[str, float]:
         """Build native derived metrics from the current timing state."""
         return dict(typing.cast("typing.Mapping[str, float]", self.native_recorder.derived_metrics_payload()))
@@ -500,6 +503,10 @@ class StageTimingRecorder:
                 self.native_recorder.profile_summary_payload(run_id),
             )
         )
+
+    def write_profile_summary(self, profile_summary_path: pathlib.Path, *, run_id: str | None) -> None:
+        """Persist the native profile summary JSON payload."""
+        self.native_recorder.write_profile_summary(str(profile_summary_path), run_id)
 
 
 def adapt_stage_timing_snapshot_payload(snapshot_payload: dict[str, object]) -> StageTimingSnapshot:
@@ -615,9 +622,7 @@ def write_stage_timing_snapshot(
         return
     if stage_timing_path is None:
         return
-    payload = stage_timing_recorder.stage_timing_json_payload()
-    stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
-    stage_timing_path.write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
+    stage_timing_recorder.write_stage_timing_snapshot(stage_timing_path)
 
 
 def write_profile_summary(
@@ -631,9 +636,7 @@ def write_profile_summary(
         return
     if profile_summary_path is None:
         return
-    payload = stage_timing_recorder.profile_summary_payload(run_id=run_id)
-    profile_summary_path.parent.mkdir(parents=True, exist_ok=True)
-    profile_summary_path.write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
+    stage_timing_recorder.write_profile_summary(profile_summary_path, run_id=run_id)
 
 
 def serialize_chunk_stage_timings(
