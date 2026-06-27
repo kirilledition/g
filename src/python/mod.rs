@@ -85,15 +85,17 @@ use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runt
 use runtime_state::NativeRuntimeState;
 use schedule::{
     NativeCallbackQueueLimits, NativeCallbackQueueOperationObservationPlan, NativeCallbackQueueStageObservationPlan,
-    NativeCallbackWorkerJoinPlan, NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts,
-    NativeCallbackWorkerStopPlan, NativeDosageBufferPoolState, NativeDosageBufferReusePlan,
-    NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan, NativeResultInFlightSlotState,
-    NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    NativeCallbackWorkerAbortPlan, NativeCallbackWorkerFinishPlan, NativeCallbackWorkerJoinPlan,
+    NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts, NativeCallbackWorkerStopPlan,
+    NativeDosageBufferPoolState, NativeDosageBufferReusePlan, NativeMultiTraitChunkWritePlan,
+    NativeMultiTraitOutputWritePlan, NativeResultInFlightSlotState, NativeSingleTraitOutputWritePlan,
+    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
     intersect_committed_chunk_identifier_sets, plan_callback_queue_operation_observation,
-    plan_callback_queue_stage_observation, plan_dosage_buffer_reuse, plan_dosage_callback_worker_join,
-    plan_dosage_callback_worker_stop, plan_multi_trait_chunk_write, plan_multi_trait_output_write,
-    plan_result_callback_worker_join, plan_result_callback_worker_stop, plan_single_trait_output_write,
-    plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method_value,
+    plan_callback_queue_stage_observation, plan_callback_worker_abort, plan_callback_worker_finish,
+    plan_dosage_buffer_reuse, plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop,
+    plan_multi_trait_chunk_write, plan_multi_trait_output_write, plan_result_callback_worker_join,
+    plan_result_callback_worker_stop, plan_single_trait_output_write, plan_variant_major_dosage_batch_handoff,
+    plan_writer_finish_execution, resolve_bgen_delivery_method_value,
     resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
     resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
     resolve_native_callback_queue_limits, resolve_native_callback_worker_shutdown_timeouts,
@@ -1766,6 +1768,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackQueueLimits>()?;
     module.add_class::<NativeCallbackQueueOperationObservationPlan>()?;
     module.add_class::<NativeCallbackQueueStageObservationPlan>()?;
+    module.add_class::<NativeCallbackWorkerAbortPlan>()?;
+    module.add_class::<NativeCallbackWorkerFinishPlan>()?;
     module.add_class::<NativeCallbackWorkerJoinPlan>()?;
     module.add_class::<NativeCallbackWorkerLifecycleState>()?;
     module.add_class::<NativeCallbackWorkerShutdownTimeouts>()?;
@@ -1835,6 +1839,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(should_attempt_callback_worker_stop, module)?)?;
     module.add_function(wrap_pyfunction!(plan_callback_queue_operation_observation, module)?)?;
     module.add_function(wrap_pyfunction!(plan_callback_queue_stage_observation, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_worker_abort, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_worker_finish, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_buffer_reuse, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_join, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_stop, module)?)?;

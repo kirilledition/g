@@ -93,6 +93,16 @@ pub(crate) struct NativeCallbackWorkerStopPlan {
     inner: native_schedule::CallbackWorkerStopPlan,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerFinishPlan {
+    inner: native_schedule::CallbackWorkerFinishPlan,
+}
+
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerAbortPlan {
+    inner: native_schedule::CallbackWorkerAbortPlan,
+}
+
 #[pymethods]
 impl NativeDosageBufferPoolState {
     #[new]
@@ -234,6 +244,42 @@ impl NativeCallbackWorkerStopPlan {
 }
 
 #[pymethods]
+impl NativeCallbackWorkerFinishPlan {
+    #[getter]
+    fn dosage_stop_timeout_seconds(&self) -> f64 {
+        self.inner.dosage_stop_timeout_seconds
+    }
+
+    #[getter]
+    fn dosage_join_timeout_seconds(&self) -> f64 {
+        self.inner.dosage_join_timeout_seconds
+    }
+
+    #[getter]
+    fn result_stop_timeout_seconds(&self) -> f64 {
+        self.inner.result_stop_timeout_seconds
+    }
+
+    #[getter]
+    fn result_join_timeout_seconds(&self) -> f64 {
+        self.inner.result_join_timeout_seconds
+    }
+}
+
+#[pymethods]
+impl NativeCallbackWorkerAbortPlan {
+    #[getter]
+    fn dosage_stop_timeout_seconds(&self) -> f64 {
+        self.inner.dosage_stop_timeout_seconds
+    }
+
+    #[getter]
+    fn result_stop_timeout_seconds(&self) -> f64 {
+        self.inner.result_stop_timeout_seconds
+    }
+}
+
+#[pymethods]
 impl NativeMultiTraitChunkWritePlan {
     #[getter]
     fn active_trait_indices(&self) -> Vec<usize> {
@@ -366,6 +412,18 @@ impl From<native_schedule::CallbackWorkerJoinPlan> for NativeCallbackWorkerJoinP
 impl From<native_schedule::CallbackWorkerStopPlan> for NativeCallbackWorkerStopPlan {
     fn from(stop_plan: native_schedule::CallbackWorkerStopPlan) -> Self {
         Self { inner: stop_plan }
+    }
+}
+
+impl From<native_schedule::CallbackWorkerFinishPlan> for NativeCallbackWorkerFinishPlan {
+    fn from(finish_plan: native_schedule::CallbackWorkerFinishPlan) -> Self {
+        Self { inner: finish_plan }
+    }
+}
+
+impl From<native_schedule::CallbackWorkerAbortPlan> for NativeCallbackWorkerAbortPlan {
+    fn from(abort_plan: native_schedule::CallbackWorkerAbortPlan) -> Self {
+        Self { inner: abort_plan }
     }
 }
 
@@ -515,6 +573,16 @@ pub(crate) fn plan_result_callback_worker_stop(
 ) -> NativeCallbackWorkerStopPlan {
     native_schedule::plan_result_callback_worker_stop(timeout_seconds, has_started, has_worker_error, is_worker_alive)
         .into()
+}
+
+#[pyfunction]
+pub(crate) fn plan_callback_worker_finish() -> NativeCallbackWorkerFinishPlan {
+    native_schedule::plan_callback_worker_finish().into()
+}
+
+#[pyfunction]
+pub(crate) fn plan_callback_worker_abort() -> NativeCallbackWorkerAbortPlan {
+    native_schedule::plan_callback_worker_abort().into()
 }
 
 #[pyfunction]

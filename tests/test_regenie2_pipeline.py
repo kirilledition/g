@@ -2368,6 +2368,88 @@ def test_base_native_callback_runner_compute_methods_are_abstract() -> None:
         )
 
 
+class RecordingShutdownCallbackRunner(ManualCallbackRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.shutdown_calls: list[str] = []
+        self.shutdown_timeouts: dict[str, float | None] = {}
+
+    def stop_dosage_worker(self, timeout_seconds: float | None) -> None:
+        self.shutdown_calls.append("stop_dosage")
+        self.shutdown_timeouts["stop_dosage"] = timeout_seconds
+
+    def join_dosage_worker(self, timeout_seconds: float | None) -> None:
+        self.shutdown_calls.append("join_dosage")
+        self.shutdown_timeouts["join_dosage"] = timeout_seconds
+
+    def stop_result_worker(self, timeout_seconds: float | None) -> None:
+        self.shutdown_calls.append("stop_result")
+        self.shutdown_timeouts["stop_result"] = timeout_seconds
+
+    def join_result_worker(self, timeout_seconds: float | None) -> None:
+        self.shutdown_calls.append("join_result")
+        self.shutdown_timeouts["join_result"] = timeout_seconds
+
+    def raise_worker_error_if_present(self) -> None:
+        self.shutdown_calls.append("raise_worker_error")
+
+    def complete_progress(self) -> None:
+        self.shutdown_calls.append("complete_progress")
+
+    def emit_binary_correction_summary(self) -> None:
+        self.shutdown_calls.append("emit_binary_correction_summary")
+
+
+class FailingStopShutdownCallbackRunner(RecordingShutdownCallbackRunner):
+    def stop_dosage_worker(self, timeout_seconds: float | None) -> None:
+        super().stop_dosage_worker(timeout_seconds)
+        raise callback_shared.NativeBgenWorkerShutdownError(
+            worker_name="dosage-worker",
+            timeout_seconds=timeout_seconds if timeout_seconds is not None else 0.0,
+        )
+
+    def stop_result_worker(self, timeout_seconds: float | None) -> None:
+        super().stop_result_worker(timeout_seconds)
+        raise callback_shared.NativeBgenWorkerShutdownError(
+            worker_name="result-worker",
+            timeout_seconds=timeout_seconds if timeout_seconds is not None else 0.0,
+        )
+
+
+def test_native_callback_runner_uses_native_finish_shutdown_plan() -> None:
+    callback = RecordingShutdownCallbackRunner()
+
+    callback.finish()
+
+    assert callback.shutdown_calls == [
+        "stop_dosage",
+        "join_dosage",
+        "stop_result",
+        "join_result",
+        "raise_worker_error",
+        "complete_progress",
+        "emit_binary_correction_summary",
+    ]
+    assert callback.shutdown_timeouts == {
+        "stop_dosage": 60.0,
+        "join_dosage": 300.0,
+        "stop_result": 60.0,
+        "join_result": 300.0,
+    }
+
+
+def test_native_callback_runner_uses_native_abort_shutdown_plan() -> None:
+    callback = FailingStopShutdownCallbackRunner()
+
+    callback.abort()
+
+    assert callback.shutdown_calls == ["stop_dosage", "stop_result"]
+    assert callback.shutdown_timeouts == {
+        "stop_dosage": 1.0,
+        "stop_result": 1.0,
+    }
+
+
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:
     result_queue: queue.Queue[
         callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None

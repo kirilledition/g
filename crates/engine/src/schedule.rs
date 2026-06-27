@@ -246,6 +246,20 @@ pub struct CallbackWorkerStopPlan {
     pub timeout_seconds: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CallbackWorkerFinishPlan {
+    pub dosage_stop_timeout_seconds: f64,
+    pub dosage_join_timeout_seconds: f64,
+    pub result_stop_timeout_seconds: f64,
+    pub result_join_timeout_seconds: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CallbackWorkerAbortPlan {
+    pub dosage_stop_timeout_seconds: f64,
+    pub result_stop_timeout_seconds: f64,
+}
+
 #[must_use]
 pub const fn callback_worker_shutdown_timeouts() -> CallbackWorkerShutdownTimeouts {
     CallbackWorkerShutdownTimeouts {
@@ -354,6 +368,26 @@ pub fn plan_result_callback_worker_stop(
         is_worker_alive,
         callback_worker_shutdown_timeouts().result_worker_join_timeout_seconds,
     )
+}
+
+#[must_use]
+pub fn plan_callback_worker_finish() -> CallbackWorkerFinishPlan {
+    let shutdown_timeouts = callback_worker_shutdown_timeouts();
+    CallbackWorkerFinishPlan {
+        dosage_stop_timeout_seconds: shutdown_timeouts.dosage_worker_join_timeout_seconds,
+        dosage_join_timeout_seconds: shutdown_timeouts.graceful_dosage_worker_join_timeout_seconds,
+        result_stop_timeout_seconds: shutdown_timeouts.result_worker_join_timeout_seconds,
+        result_join_timeout_seconds: shutdown_timeouts.graceful_result_worker_join_timeout_seconds,
+    }
+}
+
+#[must_use]
+pub fn plan_callback_worker_abort() -> CallbackWorkerAbortPlan {
+    let shutdown_timeouts = callback_worker_shutdown_timeouts();
+    CallbackWorkerAbortPlan {
+        dosage_stop_timeout_seconds: shutdown_timeouts.worker_abort_stop_timeout_seconds,
+        result_stop_timeout_seconds: shutdown_timeouts.worker_abort_stop_timeout_seconds,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1051,6 +1085,23 @@ mod tests {
         assert_eq!(
             plan_result_callback_worker_stop(None, true, true, true),
             CallbackWorkerStopPlan { should_stop: false, timeout_seconds: 60.0 },
+        );
+    }
+
+    #[test]
+    fn plans_callback_worker_finish_and_abort_policy() {
+        assert_eq!(
+            plan_callback_worker_finish(),
+            CallbackWorkerFinishPlan {
+                dosage_stop_timeout_seconds: 60.0,
+                dosage_join_timeout_seconds: 300.0,
+                result_stop_timeout_seconds: 60.0,
+                result_join_timeout_seconds: 300.0,
+            },
+        );
+        assert_eq!(
+            plan_callback_worker_abort(),
+            CallbackWorkerAbortPlan { dosage_stop_timeout_seconds: 1.0, result_stop_timeout_seconds: 1.0 },
         );
     }
 

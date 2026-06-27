@@ -900,20 +900,22 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
-        self.stop_dosage_worker(timeout_seconds=None)
-        self.join_dosage_worker(timeout_seconds=GRACEFUL_DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS)
-        self.stop_result_worker(timeout_seconds=None)
-        self.join_result_worker(timeout_seconds=GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS)
+        finish_plan = _core.plan_callback_worker_finish()
+        self.stop_dosage_worker(timeout_seconds=finish_plan.dosage_stop_timeout_seconds)
+        self.join_dosage_worker(timeout_seconds=finish_plan.dosage_join_timeout_seconds)
+        self.stop_result_worker(timeout_seconds=finish_plan.result_stop_timeout_seconds)
+        self.join_result_worker(timeout_seconds=finish_plan.result_join_timeout_seconds)
         self.raise_worker_error_if_present()
         self.complete_progress()
         self.emit_binary_correction_summary()
 
     def abort(self) -> None:
         """Stop the worker after an upstream failure."""
+        abort_plan = _core.plan_callback_worker_abort()
         with contextlib.suppress(NativeBgenWorkerShutdownError):
-            self.stop_dosage_worker(timeout_seconds=WORKER_ABORT_STOP_TIMEOUT_SECONDS)
+            self.stop_dosage_worker(timeout_seconds=abort_plan.dosage_stop_timeout_seconds)
         with contextlib.suppress(NativeBgenWorkerShutdownError):
-            self.stop_result_worker(timeout_seconds=WORKER_ABORT_STOP_TIMEOUT_SECONDS)
+            self.stop_result_worker(timeout_seconds=abort_plan.result_stop_timeout_seconds)
 
     def stop_dosage_worker(self, timeout_seconds: float | None) -> None:
         """Signal the dosage worker to exit after queued dosage chunks drain."""
