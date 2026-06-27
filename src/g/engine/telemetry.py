@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import os
-import threading
-import time
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -138,17 +135,11 @@ class TelemetrySession:
 
     def build_event_payload(self, *, event: str, level: str, **fields: object) -> dict[str, object]:
         """Build a schema-versioned telemetry event payload."""
-        timestamp = format_timestamp(time.time())
-        process_identifier = os.getpid()
-        thread_name = threading.current_thread().name
         return dict(
-            _core.build_telemetry_event_payload(
+            _core.build_current_telemetry_event_payload(
                 self.run_id,
                 event,
                 level,
-                timestamp,
-                process_identifier,
-                thread_name,
                 fields,
             )
         )

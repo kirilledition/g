@@ -3,7 +3,9 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::telemetry_policy;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -245,8 +247,30 @@ pub fn build_telemetry_event_envelope(
 }
 
 #[must_use]
+pub fn build_current_telemetry_event_envelope(
+    run_id: &str,
+    event: &str,
+    level: &str,
+    thread_name: &str,
+) -> TelemetryEventEnvelope {
+    build_telemetry_event_envelope(
+        run_id,
+        event,
+        level,
+        &current_telemetry_timestamp(),
+        std::process::id(),
+        thread_name,
+    )
+}
+
+#[must_use]
 pub fn generate_run_id() -> String {
     format!("{:032x}", Uuid::new_v4().as_u128())
+}
+
+fn current_telemetry_timestamp() -> String {
+    let elapsed_seconds = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |duration| duration.as_secs_f64());
+    telemetry_policy::format_timestamp(elapsed_seconds)
 }
 
 #[cfg(test)]
@@ -291,6 +315,18 @@ mod tests {
         assert_eq!(envelope.source, "python");
         assert_eq!(envelope.target, "g.engine.telemetry");
         assert_eq!(envelope.process_identifier, 42);
+    }
+
+    #[test]
+    fn builds_current_telemetry_event_envelope() {
+        let envelope = build_current_telemetry_event_envelope("run-1", "started", "debug", "main");
+
+        assert_eq!(envelope.run_id, "run-1");
+        assert_eq!(envelope.level, "DEBUG");
+        assert_eq!(envelope.process_identifier, std::process::id());
+        assert_eq!(envelope.thread_name, "main");
+        assert!(envelope.timestamp.contains('T'));
+        assert!(envelope.timestamp.ends_with('Z'));
     }
 
     #[test]

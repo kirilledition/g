@@ -59,8 +59,9 @@ use host_policy::{
     resolve_association_mode_value, resolve_jax_runtime_setup_payload,
 };
 use logging::{
-    NativeTelemetryProgressThrottle, NativeTelemetrySession, build_telemetry_event_payload, emit_diagnostic_event,
-    generate_telemetry_run_id_value, initialize_logging, shutdown_logging,
+    NativeTelemetryProgressThrottle, NativeTelemetrySession, build_current_telemetry_event_payload,
+    build_telemetry_event_payload, emit_diagnostic_event, generate_telemetry_run_id_value, initialize_logging,
+    shutdown_logging,
 };
 use output::{
     NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
@@ -1858,6 +1859,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_variant_major_dosage_batch_handoff, module)?)?;
     module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
+    module.add_function(wrap_pyfunction!(build_current_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(generate_telemetry_run_id_value, module)?)?;
     module.add_function(wrap_pyfunction!(format_telemetry_timestamp_value, module)?)?;

@@ -288,6 +288,41 @@ def test_telemetry_session_generates_native_run_id(tmp_path: Path) -> None:
     assert event_payload["run_id"] == telemetry_session.run_id
 
 
+def test_telemetry_session_builds_current_event_payload_natively(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=None,
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.OFF,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    event_payload = telemetry_session.build_event_payload(
+        event="payload_built",
+        level="debug",
+        kept_field="value",
+        omitted_field=None,
+    )
+
+    assert event_payload["schema_version"] == 1
+    assert event_payload["run_id"] == "run-1"
+    assert event_payload["event"] == "payload_built"
+    assert event_payload["level"] == "DEBUG"
+    assert event_payload["pid"] == os.getpid()
+    assert event_payload["thread_name"] == "MainThread"
+    assert event_payload["kept_field"] == "value"
+    assert "omitted_field" not in event_payload
+
+
 def test_telemetry_progress_throttle_emits_after_chunk_interval(tmp_path: Path) -> None:
     telemetry_paths = telemetry.TelemetryPaths(
         log_dir=tmp_path,

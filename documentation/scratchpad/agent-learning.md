@@ -61,8 +61,9 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
 - `crates/runtime/src/` now owns pure runtime policy/state helpers: logging
   runtime policy, telemetry path/counter policy, telemetry run ID generation,
   telemetry session cap/counter/envelope/progress-throttle/close-metadata state,
-  current telemetry event metadata capture, telemetry event/close-event/JSON-line
-  emission, run lifecycle event payload/rendering policy, shutdown signal
+  current telemetry event metadata and payload construction, telemetry
+  event/close-event/JSON-line emission, run lifecycle event payload/rendering
+  policy, shutdown signal
   metadata and controller state, stage timing state, exact-stage timing policy,
   stage-timing/profile JSON payloads and file writes, run metadata payloads,
   and the logging/Rayon/JAX process runtime state handle. Root PyO3 adapters

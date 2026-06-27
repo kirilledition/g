@@ -8,9 +8,8 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
-use g_runtime::telemetry_policy as native_telemetry_policy;
 use g_runtime::telemetry_session as native_telemetry_session;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -360,16 +359,37 @@ pub fn build_telemetry_event_payload<'py>(
         process_identifier,
         thread_name,
     );
+    telemetry_event_envelope_to_py_dict(py, &envelope, fields)
+}
+
+#[pyfunction]
+pub fn build_current_telemetry_event_payload<'py>(
+    py: Python<'py>,
+    run_id: &str,
+    event: &str,
+    level: &str,
+    fields: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let thread_name = current_python_thread_name(py)?;
+    let envelope = native_telemetry_session::build_current_telemetry_event_envelope(run_id, event, level, &thread_name);
+    telemetry_event_envelope_to_py_dict(py, &envelope, fields)
+}
+
+fn telemetry_event_envelope_to_py_dict<'py>(
+    py: Python<'py>,
+    envelope: &native_telemetry_session::TelemetryEventEnvelope,
+    fields: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyDict>> {
     let payload = PyDict::new(py);
     payload.set_item("schema_version", envelope.schema_version)?;
-    payload.set_item("run_id", envelope.run_id)?;
-    payload.set_item("ts", envelope.timestamp)?;
-    payload.set_item("level", envelope.level)?;
+    payload.set_item("run_id", &envelope.run_id)?;
+    payload.set_item("ts", &envelope.timestamp)?;
+    payload.set_item("level", &envelope.level)?;
     payload.set_item("source", envelope.source)?;
     payload.set_item("target", envelope.target)?;
-    payload.set_item("event", envelope.event)?;
+    payload.set_item("event", &envelope.event)?;
     payload.set_item("pid", envelope.process_identifier)?;
-    payload.set_item("thread_name", envelope.thread_name)?;
+    payload.set_item("thread_name", &envelope.thread_name)?;
     for (key, value) in fields {
         if !value.is_none() {
             payload.set_item(key, value)?;
@@ -381,23 +401,6 @@ pub fn build_telemetry_event_payload<'py>(
 #[pyfunction]
 pub fn generate_telemetry_run_id_value() -> String {
     native_telemetry_session::generate_run_id()
-}
-
-fn build_current_telemetry_event_payload<'py>(
-    py: Python<'py>,
-    run_id: &str,
-    event: &str,
-    level: &str,
-    fields: &Bound<'py, PyDict>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let timestamp = current_telemetry_timestamp();
-    let thread_name = current_python_thread_name(py)?;
-    build_telemetry_event_payload(py, run_id, event, level, &timestamp, std::process::id(), &thread_name, fields)
-}
-
-fn current_telemetry_timestamp() -> String {
-    let elapsed_seconds = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |duration| duration.as_secs_f64());
-    native_telemetry_policy::format_timestamp(elapsed_seconds)
 }
 
 fn current_python_thread_name(py: Python<'_>) -> PyResult<String> {

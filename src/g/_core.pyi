@@ -1065,6 +1065,12 @@ def initialize_logging(
     trace_event_cap: int | None = None,
 ) -> bool: ...
 def shutdown_logging() -> None: ...
+def build_current_telemetry_event_payload(
+    run_id: str,
+    event: str,
+    level: str,
+    fields: dict[str, object],
+) -> dict[str, object]: ...
 def build_telemetry_event_payload(
     run_id: str,
     event: str,
