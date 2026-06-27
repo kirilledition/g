@@ -479,6 +479,24 @@ class StageTimingRecorder:
             element_count,
         )
 
+    def add_transfer_metadata_for_shape(
+        self,
+        *,
+        transfer_name: str,
+        array_role: str,
+        dtype_name: str,
+        shape_dimensions: tuple[int, ...],
+        item_size: int,
+    ) -> None:
+        """Store transfer metadata computed from array shape and dtype item size."""
+        self.native_recorder.add_transfer_metadata_for_shape(
+            transfer_name,
+            array_role,
+            dtype_name,
+            shape_dimensions,
+            item_size,
+        )
+
     def snapshot(self) -> StageTimingSnapshot:
         """Return an immutable copy of the current timings."""
         return adapt_stage_timing_snapshot_payload(self.native_recorder.snapshot_payload())

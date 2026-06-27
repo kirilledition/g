@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import typing
 
+import pytest
+
 from g.engine import timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> None:
@@ -135,6 +135,46 @@ def test_stage_timing_recorder_aggregates_transfer_metadata() -> None:
     )
     assert recorder.derived_metrics_payload() == {"host_to_device_transfer_bytes_per_second": 48.0}
     assert recorder.stage_timing_json_payload()["derived_metrics"] == {"host_to_device_transfer_bytes_per_second": 48.0}
+
+
+def test_stage_timing_recorder_builds_transfer_metadata_from_shape() -> None:
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+
+    recorder.add_stage_duration("host_to_device_transfer", 2.0)
+    recorder.add_transfer_metadata_for_shape(
+        transfer_name="host_to_device_transfer",
+        array_role="genotype_matrix",
+        dtype_name="float32",
+        shape_dimensions=(4, 8),
+        item_size=4,
+    )
+
+    assert recorder.snapshot().transfer_metadata == (
+        timing.TransferMetadataSnapshot(
+            transfer_name="host_to_device_transfer",
+            array_role="genotype_matrix",
+            dtype_name="float32",
+            ndim=2,
+            observation_count=1,
+            total_bytes=128,
+            max_bytes=128,
+            total_elements=32,
+        ),
+    )
+    assert recorder.derived_metrics_payload() == {"host_to_device_transfer_bytes_per_second": 64.0}
+
+
+def test_stage_timing_recorder_rejects_invalid_transfer_metadata_shape() -> None:
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+
+    with pytest.raises(ValueError, match="shape dimensions must be nonnegative"):
+        recorder.add_transfer_metadata_for_shape(
+            transfer_name="host_to_device_transfer",
+            array_role="genotype_matrix",
+            dtype_name="float32",
+            shape_dimensions=(4, -1),
+            item_size=4,
+        )
 
 
 def test_build_stage_timing_recorder_is_opt_in(tmp_path: Path) -> None:

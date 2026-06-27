@@ -47,18 +47,13 @@ def record_transfer_metadata_for_array(
         numpy_dtype = np.dtype(dtype)
     except TypeError:
         return
-    element_count = 1
-    ndim = 0
-    for dimension in typing.cast("typing.Iterable[typing.Any]", shape):
-        element_count *= int(dimension)
-        ndim += 1
-    stage_timing_recorder.add_transfer_metadata(
+    shape_dimensions = tuple(int(dimension) for dimension in typing.cast("typing.Iterable[typing.Any]", shape))
+    stage_timing_recorder.add_transfer_metadata_for_shape(
         transfer_name=transfer_name,
         array_role=array_role,
         dtype_name=numpy_dtype.name,
-        ndim=ndim,
-        byte_count=element_count * int(numpy_dtype.itemsize),
-        element_count=element_count,
+        shape_dimensions=shape_dimensions,
+        item_size=int(numpy_dtype.itemsize),
     )
 
 

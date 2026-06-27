@@ -96,6 +96,13 @@ pub struct TransferMetadataAccumulator {
     pub total_elements: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransferMetadataObservation {
+    pub key: TransferMetadataKey,
+    pub byte_count: i64,
+    pub element_count: i64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct QueueBackpressureSnapshot {
     pub queue_name: String,
@@ -177,6 +184,15 @@ pub enum TimingFileError {
     WriteFile { path: PathBuf, source: std::io::Error },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TransferMetadataError {
+    NegativeDimension { dimension: i64 },
+    NonPositiveItemSize { item_size: i64 },
+    DimensionCountOverflow { dimension_count: usize },
+    ElementCountOverflow,
+    ByteCountOverflow,
+}
+
 impl fmt::Display for TimingFileError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -200,9 +216,67 @@ impl Error for TimingFileError {
     }
 }
 
+impl fmt::Display for TransferMetadataError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NegativeDimension { dimension } => {
+                write!(formatter, "Transfer metadata shape dimensions must be nonnegative: {dimension}")
+            }
+            Self::NonPositiveItemSize { item_size } => {
+                write!(formatter, "Transfer metadata dtype item size must be positive: {item_size}")
+            }
+            Self::DimensionCountOverflow { dimension_count } => {
+                write!(formatter, "Transfer metadata dimension count exceeds platform capacity: {dimension_count}")
+            }
+            Self::ElementCountOverflow => write!(formatter, "Transfer metadata element count exceeds i64 capacity."),
+            Self::ByteCountOverflow => write!(formatter, "Transfer metadata byte count exceeds i64 capacity."),
+        }
+    }
+}
+
+impl Error for TransferMetadataError {}
+
 #[must_use]
 pub const fn should_collect_exact_stage_timings(exact_stage_timings: bool) -> bool {
     exact_stage_timings
+}
+
+/// Build one transfer metadata observation from array adapter fields.
+///
+/// # Errors
+///
+/// Returns an error when the dtype item size is non-positive, any dimension is
+/// negative, or the dimension/element/byte counts exceed `i64`.
+pub fn build_transfer_metadata_observation(
+    transfer_name: &str,
+    array_role: &str,
+    dtype_name: &str,
+    shape_dimensions: &[i64],
+    item_size: i64,
+) -> Result<TransferMetadataObservation, TransferMetadataError> {
+    if item_size <= 0 {
+        return Err(TransferMetadataError::NonPositiveItemSize { item_size });
+    }
+    let dimension_count = i64::try_from(shape_dimensions.len())
+        .map_err(|_| TransferMetadataError::DimensionCountOverflow { dimension_count: shape_dimensions.len() })?;
+    let mut element_count = 1_i64;
+    for dimension in shape_dimensions {
+        if *dimension < 0 {
+            return Err(TransferMetadataError::NegativeDimension { dimension: *dimension });
+        }
+        element_count = element_count.checked_mul(*dimension).ok_or(TransferMetadataError::ElementCountOverflow)?;
+    }
+    let byte_count = element_count.checked_mul(item_size).ok_or(TransferMetadataError::ByteCountOverflow)?;
+    Ok(TransferMetadataObservation {
+        key: TransferMetadataKey {
+            transfer_name: transfer_name.to_string(),
+            array_role: array_role.to_string(),
+            dtype_name: dtype_name.to_string(),
+            dimension_count,
+        },
+        byte_count,
+        element_count,
+    })
 }
 
 /// Write a stage timing snapshot payload as pretty JSON.
@@ -288,6 +362,26 @@ impl StageTimingState {
         accumulator.total_bytes += byte_count;
         accumulator.max_bytes = accumulator.max_bytes.max(byte_count);
         accumulator.total_elements += element_count;
+    }
+
+    /// Store transfer metadata from array adapter fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the adapter fields cannot form a valid transfer
+    /// metadata observation.
+    pub fn add_transfer_metadata_for_shape(
+        &mut self,
+        transfer_name: &str,
+        array_role: &str,
+        dtype_name: &str,
+        shape_dimensions: &[i64],
+        item_size: i64,
+    ) -> Result<(), TransferMetadataError> {
+        let observation =
+            build_transfer_metadata_observation(transfer_name, array_role, dtype_name, shape_dimensions, item_size)?;
+        self.add_transfer_metadata(observation.key, observation.byte_count, observation.element_count);
+        Ok(())
     }
 
     #[must_use]
@@ -598,6 +692,77 @@ mod tests {
         assert_eq!(payload.stage_counts["host_to_device_transfer"], 1);
         assert_eq!(payload.transfer_metadata.len(), 1);
         assert!((payload.derived_metrics["host_to_device_transfer_bytes_per_second"] - 48.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn builds_transfer_metadata_observation_from_shape_dimensions() {
+        let observation =
+            build_transfer_metadata_observation("host_to_device_transfer", "genotype_matrix", "float32", &[4, 8], 4)
+                .unwrap();
+
+        assert_eq!(
+            observation,
+            TransferMetadataObservation {
+                key: TransferMetadataKey {
+                    transfer_name: "host_to_device_transfer".to_string(),
+                    array_role: "genotype_matrix".to_string(),
+                    dtype_name: "float32".to_string(),
+                    dimension_count: 2,
+                },
+                byte_count: 128,
+                element_count: 32,
+            },
+        );
+
+        let scalar_observation =
+            build_transfer_metadata_observation("device_to_host_materialization", "beta", "float64", &[], 8).unwrap();
+        assert_eq!(scalar_observation.key.dimension_count, 0);
+        assert_eq!(scalar_observation.byte_count, 8);
+        assert_eq!(scalar_observation.element_count, 1);
+    }
+
+    #[test]
+    fn rejects_invalid_transfer_metadata_shape_inputs() {
+        assert_eq!(
+            build_transfer_metadata_observation("transfer", "array", "float32", &[1, -1], 4).unwrap_err(),
+            TransferMetadataError::NegativeDimension { dimension: -1 },
+        );
+        assert_eq!(
+            build_transfer_metadata_observation("transfer", "array", "float32", &[1], 0).unwrap_err(),
+            TransferMetadataError::NonPositiveItemSize { item_size: 0 },
+        );
+        assert_eq!(
+            build_transfer_metadata_observation("transfer", "array", "float32", &[i64::MAX, 2], 4).unwrap_err(),
+            TransferMetadataError::ElementCountOverflow,
+        );
+        assert_eq!(
+            build_transfer_metadata_observation("transfer", "array", "float32", &[i64::MAX], 2).unwrap_err(),
+            TransferMetadataError::ByteCountOverflow,
+        );
+    }
+
+    #[test]
+    fn records_transfer_metadata_from_shape_dimensions() {
+        let mut state = StageTimingState::default();
+        state
+            .add_transfer_metadata_for_shape("host_to_device_transfer", "genotype_matrix", "float32", &[4, 8], 4)
+            .unwrap();
+
+        let payload = state.build_stage_timing_snapshot_payload();
+
+        assert_eq!(
+            payload.transfer_metadata,
+            vec![TransferMetadataSnapshot {
+                transfer_name: "host_to_device_transfer".to_string(),
+                array_role: "genotype_matrix".to_string(),
+                dtype_name: "float32".to_string(),
+                dimension_count: 2,
+                observation_count: 1,
+                total_bytes: 128,
+                max_bytes: 128,
+                total_elements: 32,
+            }],
+        );
     }
 
     #[test]

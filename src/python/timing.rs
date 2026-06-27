@@ -120,6 +120,20 @@ impl NativeStageTimingRecorder {
         Ok(())
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    fn add_transfer_metadata_for_shape(
+        &self,
+        transfer_name: String,
+        array_role: String,
+        dtype_name: String,
+        shape_dimensions: Vec<i64>,
+        item_size: i64,
+    ) -> PyResult<()> {
+        self.lock_state()?
+            .add_transfer_metadata_for_shape(&transfer_name, &array_role, &dtype_name, &shape_dimensions, item_size)
+            .map_err(|error| transfer_metadata_error_to_py(&error))
+    }
+
     fn snapshot_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let state = self.lock_state()?;
         build_stage_timing_snapshot_payload(py, &state.build_stage_timing_snapshot_payload())
@@ -218,6 +232,10 @@ fn null_logistic_integer_key(key: &str) -> bool {
 
 fn timing_file_error_to_py(error: &native_timing::TimingFileError) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
+}
+
+fn transfer_metadata_error_to_py(error: &native_timing::TransferMetadataError) -> PyErr {
+    PyValueError::new_err(error.to_string())
 }
 
 fn build_float_mapping<'py>(py: Python<'py>, values: &BTreeMap<String, f64>) -> PyResult<Bound<'py, PyDict>> {

@@ -391,6 +391,30 @@ def test_default_transfer_path_does_not_block_for_timing(monkeypatch: pytest.Mon
     np.testing.assert_array_equal(np.asarray(device_array), source_array)
 
 
+def test_transfer_metadata_uses_native_shape_policy() -> None:
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+
+    callback_transfers.record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="host_to_device_transfer",
+        array_role="genotype_matrix",
+        array=np.zeros((2, 3), dtype=np.float32),
+    )
+
+    assert stage_timing_recorder.snapshot().transfer_metadata == (
+        timing.TransferMetadataSnapshot(
+            transfer_name="host_to_device_transfer",
+            array_role="genotype_matrix",
+            dtype_name="float32",
+            ndim=2,
+            observation_count=1,
+            total_bytes=24,
+            max_bytes=24,
+            total_elements=6,
+        ),
+    )
+
+
 def test_default_writer_path_preserves_values_without_timing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Materialize output values unchanged without default timing probes."""
     monkeypatch.setattr(callback_writers, "time", FailingPerfCounterClock)
