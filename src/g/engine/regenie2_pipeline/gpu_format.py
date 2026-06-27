@@ -41,6 +41,20 @@ class GpuGenotypeFormatResolution:
     prepared_engine: _core.Regenie2RunEngine | None
 
 
+@dataclass(frozen=True)
+class ManifestGpuGenotypeFormatFields:
+    """Manifest GPU genotype-format fields read by the Python adapter.
+
+    Attributes:
+        manifest_gpu_genotype_format: Top-level manifest GPU genotype format.
+        association_backend_genotype_format: Legacy association-backend genotype format.
+
+    """
+
+    manifest_gpu_genotype_format: str | None
+    association_backend_genotype_format: str | None
+
+
 def log_auto_resolution(
     *,
     telemetry_session: telemetry.TelemetrySession | None,
@@ -75,33 +89,49 @@ def resolve_auto_to_dosage(
     resolution_reason: str,
 ) -> types.GpuGenotypeFormat:
     """Resolve non-profiled auto requests to dosage."""
-    if requested_gpu_genotype_format != types.GpuGenotypeFormat.AUTO:
-        return requested_gpu_genotype_format
-    log_auto_resolution(
-        telemetry_session=telemetry_session,
-        requested_gpu_genotype_format=requested_gpu_genotype_format,
-        resolved_gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
+    native_resolution_plan = _core.plan_gpu_genotype_format_auto_to_dosage(
+        requested_gpu_genotype_format=requested_gpu_genotype_format.value,
         resolution_reason=resolution_reason,
-        fallback_error=None,
     )
-    return types.GpuGenotypeFormat.DOSAGE
+    log_native_auto_resolution(
+        telemetry_session=telemetry_session,
+        native_resolution_plan=native_resolution_plan,
+    )
+    return concrete_gpu_genotype_format_from_native_plan(native_resolution_plan)
+
+
+def read_manifest_gpu_genotype_format_fields(
+    existing_manifest: collections.abc.Mapping[str, typing.Any],
+) -> ManifestGpuGenotypeFormatFields:
+    """Read manifest GPU genotype-format fields for native policy planning."""
+    raw_gpu_genotype_format = existing_manifest.get(MANIFEST_GPU_GENOTYPE_FORMAT_FIELD)
+    manifest_gpu_genotype_format = raw_gpu_genotype_format if isinstance(raw_gpu_genotype_format, str) else None
+    association_backend_genotype_format: str | None = None
+    if manifest_gpu_genotype_format is None:
+        association_backend = existing_manifest.get(MANIFEST_ASSOCIATION_BACKEND_FIELD)
+        if isinstance(association_backend, collections.abc.Mapping):
+            raw_gpu_genotype_format = association_backend.get(MANIFEST_ASSOCIATION_BACKEND_GENOTYPE_FORMAT_FIELD)
+            if isinstance(raw_gpu_genotype_format, str):
+                association_backend_genotype_format = raw_gpu_genotype_format
+    return ManifestGpuGenotypeFormatFields(
+        manifest_gpu_genotype_format=manifest_gpu_genotype_format,
+        association_backend_genotype_format=association_backend_genotype_format,
+    )
 
 
 def read_manifest_gpu_genotype_format(
     existing_manifest: collections.abc.Mapping[str, typing.Any],
 ) -> types.GpuGenotypeFormat | None:
     """Read a concrete GPU genotype format from an existing manifest."""
-    raw_gpu_genotype_format = existing_manifest.get(MANIFEST_GPU_GENOTYPE_FORMAT_FIELD)
-    if not isinstance(raw_gpu_genotype_format, str):
-        association_backend = existing_manifest.get(MANIFEST_ASSOCIATION_BACKEND_FIELD)
-        if isinstance(association_backend, collections.abc.Mapping):
-            raw_gpu_genotype_format = association_backend.get(MANIFEST_ASSOCIATION_BACKEND_GENOTYPE_FORMAT_FIELD)
-    if raw_gpu_genotype_format not in (
-        types.GpuGenotypeFormat.DOSAGE.value,
-        types.GpuGenotypeFormat.PACKED8.value,
-    ):
+    manifest_fields = read_manifest_gpu_genotype_format_fields(existing_manifest)
+    native_gpu_genotype_format = _core.resolve_manifest_gpu_genotype_format(
+        resume=True,
+        manifest_gpu_genotype_format=manifest_fields.manifest_gpu_genotype_format,
+        association_backend_genotype_format=manifest_fields.association_backend_genotype_format,
+    )
+    if native_gpu_genotype_format is None:
         return None
-    return types.GpuGenotypeFormat(raw_gpu_genotype_format)
+    return types.GpuGenotypeFormat(native_gpu_genotype_format)
 
 
 def resolve_manifest_gpu_genotype_format(
@@ -115,15 +145,50 @@ def resolve_manifest_gpu_genotype_format(
     return read_manifest_gpu_genotype_format(existing_manifest)
 
 
-def build_explicit_resolution(
-    requested_gpu_genotype_format: types.GpuGenotypeFormat,
+def concrete_gpu_genotype_format_from_native_plan(
+    native_resolution_plan: _core.NativeGpuGenotypeFormatResolutionPlan,
+) -> types.GpuGenotypeFormat:
+    """Return the concrete GPU genotype format from a resolved native plan."""
+    resolved_gpu_genotype_format = native_resolution_plan.resolved_gpu_genotype_format
+    if resolved_gpu_genotype_format is None:
+        raise RuntimeError("Native GPU genotype-format resolution plan is not resolved.")
+    return types.GpuGenotypeFormat(resolved_gpu_genotype_format)
+
+
+def log_native_auto_resolution(
+    *,
+    telemetry_session: telemetry.TelemetrySession | None,
+    native_resolution_plan: _core.NativeGpuGenotypeFormatResolutionPlan,
+) -> None:
+    """Emit logging and telemetry for a resolved native auto decision."""
+    if not native_resolution_plan.should_log_auto_resolution:
+        return
+    resolution_reason = native_resolution_plan.resolution_reason
+    if resolution_reason is None:
+        raise RuntimeError("Native GPU genotype-format resolution plan has no resolution reason.")
+    log_auto_resolution(
+        telemetry_session=telemetry_session,
+        requested_gpu_genotype_format=types.GpuGenotypeFormat(native_resolution_plan.requested_gpu_genotype_format),
+        resolved_gpu_genotype_format=concrete_gpu_genotype_format_from_native_plan(native_resolution_plan),
+        resolution_reason=resolution_reason,
+        fallback_error=native_resolution_plan.fallback_error,
+    )
+
+
+def build_resolution_from_native_plan(
+    *,
+    native_resolution_plan: _core.NativeGpuGenotypeFormatResolutionPlan,
+    prepared_engine: _core.Regenie2RunEngine | None,
 ) -> GpuGenotypeFormatResolution:
-    """Build a pass-through resolution for explicit concrete requests."""
+    """Build the public Python resolution dataclass from native policy."""
+    resolution_reason = native_resolution_plan.resolution_reason
+    if resolution_reason is None:
+        raise RuntimeError("Native GPU genotype-format resolution plan has no resolution reason.")
     return GpuGenotypeFormatResolution(
-        requested_gpu_genotype_format=requested_gpu_genotype_format,
-        resolved_gpu_genotype_format=requested_gpu_genotype_format,
-        resolution_reason="explicit",
-        prepared_engine=None,
+        requested_gpu_genotype_format=types.GpuGenotypeFormat(native_resolution_plan.requested_gpu_genotype_format),
+        resolved_gpu_genotype_format=concrete_gpu_genotype_format_from_native_plan(native_resolution_plan),
+        resolution_reason=resolution_reason,
+        prepared_engine=prepared_engine,
     )
 
 
@@ -167,41 +232,30 @@ def resolve_single_trait_binary_gpu_genotype_format(
     telemetry_session: telemetry.TelemetrySession | None,
 ) -> GpuGenotypeFormatResolution:
     """Resolve the single-trait binary GPU genotype format before output initialization."""
-    if requested_gpu_genotype_format != types.GpuGenotypeFormat.AUTO:
-        return build_explicit_resolution(requested_gpu_genotype_format)
-
-    manifest_gpu_genotype_format = resolve_manifest_gpu_genotype_format(
-        existing_manifest=existing_manifest,
-        resume=resume,
+    manifest_fields = (
+        read_manifest_gpu_genotype_format_fields(existing_manifest)
+        if existing_manifest is not None
+        else ManifestGpuGenotypeFormatFields(
+            manifest_gpu_genotype_format=None,
+            association_backend_genotype_format=None,
+        )
     )
-    if manifest_gpu_genotype_format is not None:
-        log_auto_resolution(
+    native_resolution_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+        requested_gpu_genotype_format=requested_gpu_genotype_format.value,
+        manifest_gpu_genotype_format=manifest_fields.manifest_gpu_genotype_format,
+        association_backend_genotype_format=manifest_fields.association_backend_genotype_format,
+        resume=resume,
+        jax_device=jax_device.value,
+    )
+    prepared_engine: _core.Regenie2RunEngine | None = None
+    if not native_resolution_plan.requires_trusted_validation:
+        log_native_auto_resolution(
             telemetry_session=telemetry_session,
-            requested_gpu_genotype_format=requested_gpu_genotype_format,
-            resolved_gpu_genotype_format=manifest_gpu_genotype_format,
-            resolution_reason="resume_manifest",
-            fallback_error=None,
+            native_resolution_plan=native_resolution_plan,
         )
-        return GpuGenotypeFormatResolution(
-            requested_gpu_genotype_format=requested_gpu_genotype_format,
-            resolved_gpu_genotype_format=manifest_gpu_genotype_format,
-            resolution_reason="resume_manifest",
-            prepared_engine=None,
-        )
-
-    if jax_device != types.Device.GPU:
-        log_auto_resolution(
-            telemetry_session=telemetry_session,
-            requested_gpu_genotype_format=requested_gpu_genotype_format,
-            resolved_gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
-            resolution_reason="non_gpu_device",
-            fallback_error=None,
-        )
-        return GpuGenotypeFormatResolution(
-            requested_gpu_genotype_format=requested_gpu_genotype_format,
-            resolved_gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
-            resolution_reason="non_gpu_device",
-            prepared_engine=None,
+        return build_resolution_from_native_plan(
+            native_resolution_plan=native_resolution_plan,
+            prepared_engine=prepared_engine,
         )
 
     try:
@@ -213,31 +267,20 @@ def resolve_single_trait_binary_gpu_genotype_format(
             stage_timing_recorder=stage_timing_recorder,
         )
     except ValueError as error:
-        fallback_error = str(error)
-        log_auto_resolution(
-            telemetry_session=telemetry_session,
-            requested_gpu_genotype_format=requested_gpu_genotype_format,
-            resolved_gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
-            resolution_reason="trusted_validation_failed",
-            fallback_error=fallback_error,
+        native_resolution_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(
+            fallback_error=str(error),
         )
-        return GpuGenotypeFormatResolution(
-            requested_gpu_genotype_format=requested_gpu_genotype_format,
-            resolved_gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
-            resolution_reason="trusted_validation_failed",
-            prepared_engine=None,
+        prepared_engine = None
+    else:
+        native_resolution_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(
+            fallback_error=None,
         )
 
-    log_auto_resolution(
+    log_native_auto_resolution(
         telemetry_session=telemetry_session,
-        requested_gpu_genotype_format=requested_gpu_genotype_format,
-        resolved_gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
-        resolution_reason="trusted_validation_passed",
-        fallback_error=None,
+        native_resolution_plan=native_resolution_plan,
     )
-    return GpuGenotypeFormatResolution(
-        requested_gpu_genotype_format=requested_gpu_genotype_format,
-        resolved_gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
-        resolution_reason="trusted_validation_passed",
+    return build_resolution_from_native_plan(
+        native_resolution_plan=native_resolution_plan,
         prepared_engine=prepared_engine,
     )

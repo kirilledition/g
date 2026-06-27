@@ -34,6 +34,11 @@ pub(crate) struct NativeVariantMajorDosageBatchHandoffPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeGpuGenotypeFormatResolutionPlan {
+    inner: native_schedule::GpuGenotypeFormatResolutionPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeMultiTraitChunkWritePlan {
     inner: native_schedule::MultiTraitChunkWritePlan,
 }
@@ -415,6 +420,44 @@ impl NativeCallbackQueueStageObservationPlan {
     }
 }
 
+#[pymethods]
+impl NativeGpuGenotypeFormatResolutionPlan {
+    #[getter]
+    fn requested_gpu_genotype_format(&self) -> &str {
+        &self.inner.requested_gpu_genotype_format
+    }
+
+    #[getter]
+    fn resolved_gpu_genotype_format(&self) -> Option<&str> {
+        self.inner.resolved_gpu_genotype_format.as_deref()
+    }
+
+    #[getter]
+    fn resolution_reason(&self) -> Option<&str> {
+        self.inner.resolution_reason.as_deref()
+    }
+
+    #[getter]
+    fn fallback_error(&self) -> Option<&str> {
+        self.inner.fallback_error.as_deref()
+    }
+
+    #[getter]
+    fn requires_trusted_validation(&self) -> bool {
+        self.inner.requires_trusted_validation
+    }
+
+    #[getter]
+    fn is_resolved(&self) -> bool {
+        self.inner.is_resolved()
+    }
+
+    #[getter]
+    fn should_log_auto_resolution(&self) -> bool {
+        self.inner.should_log_auto_resolution()
+    }
+}
+
 impl From<native_schedule::CallbackWorkerShutdownTimeouts> for NativeCallbackWorkerShutdownTimeouts {
     fn from(worker_shutdown_timeouts: native_schedule::CallbackWorkerShutdownTimeouts) -> Self {
         Self { inner: worker_shutdown_timeouts }
@@ -474,6 +517,12 @@ impl From<native_schedule::VariantMajorDosageBatchHandoffPlan> for NativeVariant
     }
 }
 
+impl From<native_schedule::GpuGenotypeFormatResolutionPlan> for NativeGpuGenotypeFormatResolutionPlan {
+    fn from(resolution_plan: native_schedule::GpuGenotypeFormatResolutionPlan) -> Self {
+        Self { inner: resolution_plan }
+    }
+}
+
 impl From<native_schedule::MultiTraitChunkWritePlan> for NativeMultiTraitChunkWritePlan {
     fn from(write_plan: native_schedule::MultiTraitChunkWritePlan) -> Self {
         Self { inner: write_plan }
@@ -522,6 +571,60 @@ pub(crate) fn intersect_committed_chunk_identifier_sets(
     native_schedule::intersect_committed_chunk_identifier_sets(&native_committed_chunk_identifier_sets)
         .into_iter()
         .collect()
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn resolve_manifest_gpu_genotype_format(
+    resume: bool,
+    manifest_gpu_genotype_format: Option<String>,
+    association_backend_genotype_format: Option<String>,
+) -> Option<String> {
+    native_schedule::resolve_manifest_gpu_genotype_format(
+        resume,
+        manifest_gpu_genotype_format.as_deref(),
+        association_backend_genotype_format.as_deref(),
+    )
+    .map(str::to_string)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_gpu_genotype_format_auto_to_dosage(
+    requested_gpu_genotype_format: String,
+    resolution_reason: String,
+) -> PyResult<NativeGpuGenotypeFormatResolutionPlan> {
+    native_schedule::plan_gpu_genotype_format_auto_to_dosage(&requested_gpu_genotype_format, &resolution_reason)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_single_trait_binary_gpu_genotype_format_resolution(
+    requested_gpu_genotype_format: String,
+    manifest_gpu_genotype_format: Option<String>,
+    association_backend_genotype_format: Option<String>,
+    resume: bool,
+    jax_device: String,
+) -> PyResult<NativeGpuGenotypeFormatResolutionPlan> {
+    native_schedule::plan_single_trait_binary_gpu_genotype_format_resolution(
+        &requested_gpu_genotype_format,
+        manifest_gpu_genotype_format.as_deref(),
+        association_backend_genotype_format.as_deref(),
+        resume,
+        &jax_device,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_auto_gpu_genotype_format_after_trusted_validation(
+    fallback_error: Option<String>,
+) -> NativeGpuGenotypeFormatResolutionPlan {
+    native_schedule::plan_auto_gpu_genotype_format_after_trusted_validation(fallback_error.as_deref()).into()
 }
 
 #[pyfunction]

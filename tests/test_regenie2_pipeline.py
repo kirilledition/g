@@ -5088,6 +5088,39 @@ def test_binary_auto_resume_uses_existing_manifest_genotype_format(
     ]
 
 
+def test_binary_auto_resume_uses_legacy_association_backend_genotype_format() -> None:
+    telemetry_session = RecordingTelemetrySession()
+
+    resolution = pipeline_gpu_format.resolve_single_trait_binary_gpu_genotype_format(
+        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+        existing_manifest={
+            "association_backend": {"genotype_format": "packed8"},
+            "committed_chunks": [],
+        },
+        resume=True,
+        jax_device=types.Device.GPU,
+        genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
+        chunk_size=32,
+        variant_limit=100,
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+        stage_timing_recorder=None,
+        telemetry_session=typing.cast("typing.Any", telemetry_session),
+    )
+
+    assert resolution.resolved_gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
+    assert resolution.prepared_engine is None
+    assert telemetry_session.events == [
+        (
+            "gpu_genotype_format_resolved",
+            {
+                "requested_gpu_genotype_format": "auto",
+                "resolved_gpu_genotype_format": "packed8",
+                "resolution_reason": "resume_manifest",
+            },
+        )
+    ]
+
+
 def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed_chunks() -> None:
     FakeRunEngine.instances.clear()
     writer_sessions = [FakeWriterSession(), FakeWriterSession()]

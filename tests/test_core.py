@@ -126,6 +126,95 @@ def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> No
         )
 
 
+def test_native_gpu_genotype_format_resolution_policy() -> None:
+    assert (
+        _core.resolve_manifest_gpu_genotype_format(
+            resume=True,
+            manifest_gpu_genotype_format="packed8",
+            association_backend_genotype_format="dosage",
+        )
+        == "packed8"
+    )
+    assert (
+        _core.resolve_manifest_gpu_genotype_format(
+            resume=True,
+            manifest_gpu_genotype_format=None,
+            association_backend_genotype_format="dosage",
+        )
+        == "dosage"
+    )
+    assert (
+        _core.resolve_manifest_gpu_genotype_format(
+            resume=False,
+            manifest_gpu_genotype_format="packed8",
+            association_backend_genotype_format=None,
+        )
+        is None
+    )
+
+    auto_to_dosage_plan = _core.plan_gpu_genotype_format_auto_to_dosage(
+        requested_gpu_genotype_format="auto",
+        resolution_reason="multi_trait_or_linear_pipeline",
+    )
+    assert auto_to_dosage_plan.requested_gpu_genotype_format == "auto"
+    assert auto_to_dosage_plan.resolved_gpu_genotype_format == "dosage"
+    assert auto_to_dosage_plan.resolution_reason == "multi_trait_or_linear_pipeline"
+    assert auto_to_dosage_plan.fallback_error is None
+    assert auto_to_dosage_plan.requires_trusted_validation is False
+    assert auto_to_dosage_plan.is_resolved is True
+    assert auto_to_dosage_plan.should_log_auto_resolution is True
+
+    explicit_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+        requested_gpu_genotype_format="packed8",
+        manifest_gpu_genotype_format=None,
+        association_backend_genotype_format=None,
+        resume=False,
+        jax_device="gpu",
+    )
+    assert explicit_plan.resolved_gpu_genotype_format == "packed8"
+    assert explicit_plan.resolution_reason == "explicit"
+    assert explicit_plan.should_log_auto_resolution is False
+
+    manifest_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+        requested_gpu_genotype_format="auto",
+        manifest_gpu_genotype_format=None,
+        association_backend_genotype_format="dosage",
+        resume=True,
+        jax_device="gpu",
+    )
+    assert manifest_plan.resolved_gpu_genotype_format == "dosage"
+    assert manifest_plan.resolution_reason == "resume_manifest"
+    assert manifest_plan.requires_trusted_validation is False
+
+    validation_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+        requested_gpu_genotype_format="auto",
+        manifest_gpu_genotype_format=None,
+        association_backend_genotype_format=None,
+        resume=False,
+        jax_device="gpu",
+    )
+    assert validation_plan.resolved_gpu_genotype_format is None
+    assert validation_plan.resolution_reason is None
+    assert validation_plan.requires_trusted_validation is True
+
+    passed_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(fallback_error=None)
+    assert passed_plan.resolved_gpu_genotype_format == "packed8"
+    assert passed_plan.resolution_reason == "trusted_validation_passed"
+
+    failed_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(
+        fallback_error="packed8 incompatible",
+    )
+    assert failed_plan.resolved_gpu_genotype_format == "dosage"
+    assert failed_plan.resolution_reason == "trusted_validation_failed"
+    assert failed_plan.fallback_error == "packed8 incompatible"
+
+    with pytest.raises(ValueError, match="Unsupported GPU genotype format"):
+        _core.plan_gpu_genotype_format_auto_to_dosage(
+            requested_gpu_genotype_format="unknown",
+            resolution_reason="unused",
+        )
+
+
 def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() -> None:
     assert (
         _core.resolve_delivery_callback_batch_size(
