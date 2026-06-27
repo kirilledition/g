@@ -183,6 +183,54 @@ def test_native_preflight_binary_and_prediction_shape_policy() -> None:
         _core.validate_multi_prediction_preflight_shape("2", (2, 2), trait_count=2, sample_count=3)
 
 
+def test_native_pipeline_resume_compatibility_validates_all_manifests(tmp_path: Path) -> None:
+    chunks_directory = tmp_path / "chunks"
+    chunks_directory.mkdir()
+    manifest_json = json.dumps(
+        {"schema_version": 7, "chunk_size": 32, "committed_chunks": []},
+        sort_keys=True,
+    )
+    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
+
+    _core.validate_pipeline_resume_compatibility(
+        chunks_directories=(str(chunks_directory),),
+        existing_manifest_json_values=(manifest_json,),
+        current_header_json_values=(current_header_json,),
+        resume_mode="fast",
+    )
+    _core.validate_pipeline_resume_compatibility(
+        chunks_directories=(str(chunks_directory),),
+        existing_manifest_json_values=(manifest_json,),
+        current_header_json_values=(current_header_json,),
+        resume_mode="strict",
+    )
+
+    with pytest.raises(ValueError, match=r"Resume requires run_manifest\.json"):
+        _core.validate_pipeline_resume_compatibility(
+            chunks_directories=(str(chunks_directory),),
+            existing_manifest_json_values=(None,),
+            current_header_json_values=(current_header_json,),
+            resume_mode="fast",
+        )
+
+    with pytest.raises(ValueError, match="input counts must match"):
+        _core.validate_pipeline_resume_compatibility(
+            chunks_directories=(str(chunks_directory),),
+            existing_manifest_json_values=(),
+            current_header_json_values=(current_header_json,),
+            resume_mode="fast",
+        )
+
+    incompatible_header_json = json.dumps({"schema_version": 7, "chunk_size": 64}, sort_keys=True)
+    with pytest.raises(ValueError, match="chunk_size"):
+        _core.validate_pipeline_resume_compatibility(
+            chunks_directories=(str(chunks_directory),),
+            existing_manifest_json_values=(manifest_json,),
+            current_header_json_values=(incompatible_header_json,),
+            resume_mode="fast",
+        )
+
+
 def test_native_null_logistic_nonconvergence_policy() -> None:
     continue_plan = _core.plan_null_logistic_nonconvergence(
         chromosome="22",

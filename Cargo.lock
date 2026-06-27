@@ -748,6 +748,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "g-genotype",
+ "g-output",
  "thiserror",
 ]
 

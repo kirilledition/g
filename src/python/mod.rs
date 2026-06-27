@@ -36,6 +36,7 @@ mod jax_runtime;
 mod logging;
 mod output;
 mod preflight;
+mod preparation;
 mod profile;
 mod run_events;
 mod run_metadata;
@@ -85,6 +86,7 @@ use preflight::{
     validate_multi_prediction_preflight_shape, validate_multi_trait_preflight_shape_payload,
     validate_single_prediction_preflight_shape, validate_single_trait_preflight_shape_payload,
 };
+use preparation::validate_pipeline_resume_compatibility;
 use profile::build_profile_snapshot_dict;
 use run_events::{
     build_run_completed_telemetry_fields, build_run_failed_telemetry_fields, build_run_interrupted_telemetry_fields,
@@ -1841,6 +1843,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_phenotype_output_directory_name, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_manifest_extension_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_pipeline_resume_compatibility, module)?)?;
     module.add_function(wrap_pyfunction!(build_preflight_report_payload, module)?)?;
     module.add_function(wrap_pyfunction!(validate_single_trait_preflight_shape_payload, module)?)?;
     module.add_function(wrap_pyfunction!(validate_multi_trait_preflight_shape_payload, module)?)?;
