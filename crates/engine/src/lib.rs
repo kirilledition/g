@@ -5,6 +5,7 @@ pub mod callback_diagnostics;
 pub mod callback_progress;
 pub mod callback_summary;
 pub mod coordinator;
+pub mod effects;
 pub mod fake_backend;
 pub mod phase;
 pub mod pipeline;
@@ -23,6 +24,7 @@ pub use callback_progress::{
 };
 pub use callback_summary::{BinaryChunkDiagnosticsInput, BinaryCorrectionSummaryState};
 pub use coordinator::{EngineCoordinator, EngineError, EngineRunInput, EngineRunReport, InjectedCoordinatorFailure};
+pub use effects::{EngineEffectError, EngineEffectOperation, EngineRunEffects, NoopEngineRunEffects};
 pub use fake_backend::{FakeBackend, FakeBackendFailure, FakeChromosomeState, FakeGroupState};
 pub use phase::RunPhase;
 pub use pipeline::Regenie2RunEngineCore;
