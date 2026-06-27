@@ -346,6 +346,36 @@ def test_plan_callback_queue_stage_observation_uses_native_timing_policy() -> No
         )
 
 
+def test_plan_callback_queue_operation_observation_uses_native_timing_policy() -> None:
+    pool_observation_plan = _core.plan_callback_queue_operation_observation(
+        queue_name="dosage_buffer_pool",
+        operation_name="reuse",
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    assert pool_observation_plan.queue_name == "dosage_buffer_pool"
+    assert pool_observation_plan.operation_name == "reuse"
+    assert pool_observation_plan.blocked_seconds == 0.0
+
+    blocked_observation_plan = _core.plan_callback_queue_operation_observation(
+        queue_name="result_in_flight_slots",
+        operation_name="release",
+        elapsed_seconds=0.5,
+        blocked=True,
+    )
+    assert blocked_observation_plan.queue_name == "result_in_flight_slots"
+    assert blocked_observation_plan.operation_name == "release"
+    assert blocked_observation_plan.blocked_seconds == 0.5
+
+    with pytest.raises(ValueError, match="Unsupported callback queue operation"):
+        _core.plan_callback_queue_operation_observation(
+            queue_name="dosage_buffer_pool",
+            operation_name="unknown_operation",
+            elapsed_seconds=0.25,
+            blocked=False,
+        )
+
+
 def test_plan_dosage_buffer_reuse_uses_native_shape_policy() -> None:
     exact_reuse_plan = _core.plan_dosage_buffer_reuse(
         buffered_shape=(2, 3),

@@ -575,6 +575,14 @@ class NativeCallbackQueueLimits:
     @property
     def dosage_buffer_limit(self) -> int: ...
 
+class NativeCallbackQueueOperationObservationPlan:
+    @property
+    def queue_name(self) -> str: ...
+    @property
+    def operation_name(self) -> str: ...
+    @property
+    def blocked_seconds(self) -> float: ...
+
 class NativeCallbackQueueStageObservationPlan:
     @property
     def queue_name(self) -> str: ...
@@ -1197,6 +1205,12 @@ def resolve_native_callback_queue_limits(
     dosage_buffer_limit: int | None,
 ) -> NativeCallbackQueueLimits: ...
 def resolve_native_callback_worker_shutdown_timeouts() -> NativeCallbackWorkerShutdownTimeouts: ...
+def plan_callback_queue_operation_observation(
+    queue_name: str,
+    operation_name: str,
+    elapsed_seconds: float,
+    blocked: bool,
+) -> NativeCallbackQueueOperationObservationPlan: ...
 def plan_callback_queue_stage_observation(
     queue_name: str,
     operation_name: str,

@@ -16,7 +16,13 @@ const RESULT_IN_FLIGHT_SLOTS_NAME: &str = "result_in_flight_slots";
 const QUEUE_PUT_OPERATION: &str = "put";
 const QUEUE_PRODUCER_BLOCKING_OPERATION: &str = "producer_blocking";
 const QUEUE_CONSUMER_WAIT_OPERATION: &str = "consumer_wait";
+const QUEUE_REUSE_OPERATION: &str = "reuse";
+const QUEUE_RETURN_OPERATION: &str = "return";
+const QUEUE_RETURN_FULL_OPERATION: &str = "return_full";
+const QUEUE_ALLOCATE_OPERATION: &str = "allocate";
+const QUEUE_DISCARD_OPERATION: &str = "discard";
 const RESULT_SLOT_ACQUIRE_OPERATION: &str = "acquire";
+const RESULT_SLOT_RELEASE_OPERATION: &str = "release";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeCallbackQueueLimits {
@@ -91,6 +97,13 @@ pub struct CallbackQueueStageObservationPlan {
     pub queue_name: String,
     pub operation_name: String,
     pub stage_name: String,
+    pub blocked_seconds: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CallbackQueueOperationObservationPlan {
+    pub queue_name: String,
+    pub operation_name: String,
     pub blocked_seconds: f64,
 }
 
@@ -325,6 +338,8 @@ pub enum ScheduleError {
     UnsupportedOutputStatisticDtype { output_statistic_dtype: String },
     #[error("Unsupported callback queue stage operation: {queue_name}.{operation_name}")]
     UnsupportedCallbackQueueStageOperation { queue_name: String, operation_name: String },
+    #[error("Unsupported callback queue operation: {queue_name}.{operation_name}")]
+    UnsupportedCallbackQueueOperation { queue_name: String, operation_name: String },
 }
 
 #[must_use]
@@ -625,6 +640,52 @@ fn resolve_callback_queue_stage_name(queue_name: &str, operation_name: &str) -> 
     }
 }
 
+fn callback_queue_operation_is_supported(queue_name: &str, operation_name: &str) -> bool {
+    matches!(
+        (queue_name, operation_name),
+        (
+            DOSAGE_QUEUE_NAME | RESULT_QUEUE_NAME,
+            QUEUE_PUT_OPERATION | QUEUE_PRODUCER_BLOCKING_OPERATION | QUEUE_CONSUMER_WAIT_OPERATION,
+        ) | (
+            DOSAGE_BUFFER_POOL_NAME,
+            QUEUE_CONSUMER_WAIT_OPERATION
+                | QUEUE_REUSE_OPERATION
+                | QUEUE_RETURN_OPERATION
+                | QUEUE_RETURN_FULL_OPERATION
+                | QUEUE_ALLOCATE_OPERATION
+                | QUEUE_DISCARD_OPERATION,
+        ) | (
+            RESULT_IN_FLIGHT_SLOTS_NAME,
+            RESULT_SLOT_ACQUIRE_OPERATION | QUEUE_PRODUCER_BLOCKING_OPERATION | RESULT_SLOT_RELEASE_OPERATION,
+        )
+    )
+}
+
+/// Plan one aggregate callback queue or bounded-resource observation.
+///
+/// # Errors
+///
+/// Returns an error when the queue/resource and operation pair is not part of
+/// the callback scheduler observation contract.
+pub fn plan_callback_queue_operation_observation(
+    queue_name: &str,
+    operation_name: &str,
+    elapsed_seconds: f64,
+    blocked: bool,
+) -> Result<CallbackQueueOperationObservationPlan, ScheduleError> {
+    if !callback_queue_operation_is_supported(queue_name, operation_name) {
+        return Err(ScheduleError::UnsupportedCallbackQueueOperation {
+            queue_name: queue_name.to_string(),
+            operation_name: operation_name.to_string(),
+        });
+    }
+    Ok(CallbackQueueOperationObservationPlan {
+        queue_name: queue_name.to_string(),
+        operation_name: operation_name.to_string(),
+        blocked_seconds: if blocked { elapsed_seconds } else { 0.0 },
+    })
+}
+
 /// Plan one timed callback queue or bounded-resource observation.
 ///
 /// # Errors
@@ -643,11 +704,13 @@ pub fn plan_callback_queue_stage_observation(
             operation_name: operation_name.to_string(),
         });
     };
+    let operation_plan =
+        plan_callback_queue_operation_observation(queue_name, operation_name, elapsed_seconds, blocked)?;
     Ok(CallbackQueueStageObservationPlan {
-        queue_name: queue_name.to_string(),
-        operation_name: operation_name.to_string(),
+        queue_name: operation_plan.queue_name,
+        operation_name: operation_plan.operation_name,
         stage_name: stage_name.to_string(),
-        blocked_seconds: if blocked { elapsed_seconds } else { 0.0 },
+        blocked_seconds: operation_plan.blocked_seconds,
     })
 }
 
@@ -1041,12 +1104,44 @@ mod tests {
     }
 
     #[test]
+    fn plans_callback_queue_operation_observations() {
+        assert_eq!(
+            plan_callback_queue_operation_observation("dosage_buffer_pool", "reuse", 0.25, false).unwrap(),
+            CallbackQueueOperationObservationPlan {
+                queue_name: "dosage_buffer_pool".to_string(),
+                operation_name: "reuse".to_string(),
+                blocked_seconds: 0.0,
+            },
+        );
+        assert_eq!(
+            plan_callback_queue_operation_observation("result_in_flight_slots", "release", 0.5, true).unwrap(),
+            CallbackQueueOperationObservationPlan {
+                queue_name: "result_in_flight_slots".to_string(),
+                operation_name: "release".to_string(),
+                blocked_seconds: 0.5,
+            },
+        );
+    }
+
+    #[test]
     fn rejects_unknown_callback_queue_stage_observations() {
         assert_eq!(
             plan_callback_queue_stage_observation("unknown_queue", "put", 0.25, false).unwrap_err(),
             ScheduleError::UnsupportedCallbackQueueStageOperation {
                 queue_name: "unknown_queue".to_string(),
                 operation_name: "put".to_string(),
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_callback_queue_operation_observations() {
+        assert_eq!(
+            plan_callback_queue_operation_observation("dosage_buffer_pool", "unknown_operation", 0.25, false)
+                .unwrap_err(),
+            ScheduleError::UnsupportedCallbackQueueOperation {
+                queue_name: "dosage_buffer_pool".to_string(),
+                operation_name: "unknown_operation".to_string(),
             },
         );
     }

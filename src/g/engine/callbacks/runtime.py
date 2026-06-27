@@ -238,18 +238,24 @@ class NativeBgenCallbackRunner(abc.ABC):
         operation_name: str,
         observed_queue: queue.Queue[typing.Any],
         elapsed_seconds: float,
-        blocked_seconds: float,
+        blocked: bool,
     ) -> None:
         """Record aggregate queue depth and wait metadata."""
         if self.stage_timing_recorder is None:
             return
-        self.stage_timing_recorder.add_queue_backpressure_observation(
+        observation_plan = _core.plan_callback_queue_operation_observation(
             queue_name=queue_name,
             operation_name=operation_name,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=observation_plan.queue_name,
+            operation_name=observation_plan.operation_name,
             queue_depth=observed_queue.qsize(),
             queue_capacity=observed_queue.maxsize,
             elapsed_seconds=elapsed_seconds,
-            blocked_seconds=blocked_seconds,
+            blocked_seconds=observation_plan.blocked_seconds,
         )
 
     def record_queue_stage_duration(
@@ -289,18 +295,24 @@ class NativeBgenCallbackRunner(abc.ABC):
         current_depth: int,
         capacity: int,
         elapsed_seconds: float,
-        blocked_seconds: float,
+        blocked: bool,
     ) -> None:
         """Record aggregate bounded-resource occupancy metadata."""
         if self.stage_timing_recorder is None:
             return
-        self.stage_timing_recorder.add_queue_backpressure_observation(
+        observation_plan = _core.plan_callback_queue_operation_observation(
             queue_name=resource_name,
             operation_name=operation_name,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=observation_plan.queue_name,
+            operation_name=observation_plan.operation_name,
             queue_depth=current_depth,
             queue_capacity=capacity,
             elapsed_seconds=elapsed_seconds,
-            blocked_seconds=blocked_seconds,
+            blocked_seconds=observation_plan.blocked_seconds,
         )
 
     def record_bounded_resource_stage_duration(
@@ -883,7 +895,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             current_depth=current_depth,
             capacity=self.result_in_flight_limit,
             elapsed_seconds=0.0,
-            blocked_seconds=0.0,
+            blocked=False,
         )
 
     def finish(self) -> None:
@@ -1066,7 +1078,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                         operation_name="reuse",
                         observed_queue=self.free_dosage_buffers,
                         elapsed_seconds=0.0,
-                        blocked_seconds=0.0,
+                        blocked=False,
                     )
                     return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
@@ -1103,7 +1115,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                         operation_name="reuse",
                         observed_queue=self.free_dosage_buffers,
                         elapsed_seconds=0.0,
-                        blocked_seconds=0.0,
+                        blocked=False,
                     )
                     return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
@@ -1122,7 +1134,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 operation_name="return",
                 observed_queue=self.free_dosage_buffers,
                 elapsed_seconds=0.0,
-                blocked_seconds=0.0,
+                blocked=False,
             )
         except queue.Full:
             self.record_queue_operation(
@@ -1130,7 +1142,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 operation_name="return_full",
                 observed_queue=self.free_dosage_buffers,
                 elapsed_seconds=0.0,
-                blocked_seconds=0.0,
+                blocked=False,
             )
             self.discard_dosage_buffer_slot(dosage_buffer)
 
@@ -1149,7 +1161,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             operation_name="allocate",
             observed_queue=self.free_dosage_buffers,
             elapsed_seconds=0.0,
-            blocked_seconds=0.0,
+            blocked=False,
         )
         return dosage_buffer
 
@@ -1163,7 +1175,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             operation_name="discard",
             observed_queue=self.free_dosage_buffers,
             elapsed_seconds=0.0,
-            blocked_seconds=0.0,
+            blocked=False,
         )
 
     def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | HostGenotypeBuffer) -> None:

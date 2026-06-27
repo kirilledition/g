@@ -54,6 +54,11 @@ pub(crate) struct NativeMultiTraitOutputWritePlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeCallbackQueueOperationObservationPlan {
+    inner: native_schedule::CallbackQueueOperationObservationPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackQueueStageObservationPlan {
     inner: native_schedule::CallbackQueueStageObservationPlan,
 }
@@ -270,6 +275,24 @@ impl NativeMultiTraitOutputWritePlan {
 }
 
 #[pymethods]
+impl NativeCallbackQueueOperationObservationPlan {
+    #[getter]
+    fn queue_name(&self) -> &str {
+        &self.inner.queue_name
+    }
+
+    #[getter]
+    fn operation_name(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    #[getter]
+    fn blocked_seconds(&self) -> f64 {
+        self.inner.blocked_seconds
+    }
+}
+
+#[pymethods]
 impl NativeCallbackQueueStageObservationPlan {
     #[getter]
     fn queue_name(&self) -> &str {
@@ -342,6 +365,12 @@ impl From<native_schedule::SingleTraitOutputWritePlan> for NativeSingleTraitOutp
 impl From<native_schedule::MultiTraitOutputWritePlan> for NativeMultiTraitOutputWritePlan {
     fn from(write_plan: native_schedule::MultiTraitOutputWritePlan) -> Self {
         Self { inner: write_plan }
+    }
+}
+
+impl From<native_schedule::CallbackQueueOperationObservationPlan> for NativeCallbackQueueOperationObservationPlan {
+    fn from(observation_plan: native_schedule::CallbackQueueOperationObservationPlan) -> Self {
+        Self { inner: observation_plan }
     }
 }
 
@@ -524,6 +553,19 @@ pub(crate) fn plan_multi_trait_output_write(
     )
     .map(Into::into)
     .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_callback_queue_operation_observation(
+    queue_name: String,
+    operation_name: String,
+    elapsed_seconds: f64,
+    blocked: bool,
+) -> PyResult<NativeCallbackQueueOperationObservationPlan> {
+    native_schedule::plan_callback_queue_operation_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
 }
 
 #[pyfunction]

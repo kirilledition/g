@@ -2265,6 +2265,28 @@ def test_native_callback_runner_uses_native_dosage_buffer_pool_accounting() -> N
     assert callback.dosage_buffer_pool.owns_buffer(id(first_buffer)) is False
 
 
+def test_native_callback_runner_records_native_dosage_buffer_operation_observations() -> None:
+    callback = ManualCallbackRunner()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    callback.stage_timing_recorder = stage_timing_recorder
+
+    dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    callback.release_dosage_buffer(dosage_buffer)
+    reused_dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    callback.discard_dosage_buffer_slot(reused_dosage_buffer)
+
+    queue_backpressure_by_operation = {
+        queue_backpressure.operation_name: queue_backpressure
+        for queue_backpressure in stage_timing_recorder.snapshot().queue_backpressure
+    }
+
+    assert set(queue_backpressure_by_operation) == {"allocate", "return", "reuse", "discard"}
+    for queue_backpressure in queue_backpressure_by_operation.values():
+        assert queue_backpressure.queue_name == "dosage_buffer_pool"
+        assert queue_backpressure.observation_count == 1
+        assert queue_backpressure.total_blocked_seconds == 0.0
+
+
 def test_native_callback_runner_reuses_larger_host_dosage_buffer_as_view() -> None:
     callback = ManualCallbackRunner()
 
