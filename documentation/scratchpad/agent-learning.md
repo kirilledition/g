@@ -59,9 +59,9 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   and LOCO prediction alignment; genotype readers keep BGEN-embedded sample
   retrieval and pass identifier views into input code.
 - `crates/runtime/src/` now owns pure runtime policy/state helpers: logging
-  runtime policy, telemetry path/counter policy, telemetry session
-  cap/counter/envelope/progress-throttle/close-metadata state, current
-  telemetry event metadata capture, telemetry event/close-event/JSON-line
+  runtime policy, telemetry path/counter policy, telemetry run ID generation,
+  telemetry session cap/counter/envelope/progress-throttle/close-metadata state,
+  current telemetry event metadata capture, telemetry event/close-event/JSON-line
   emission, run lifecycle event payload/rendering policy, shutdown signal
   metadata and controller state, stage timing state, exact-stage timing policy,
   stage-timing/profile JSON payloads and file writes, run metadata payloads,

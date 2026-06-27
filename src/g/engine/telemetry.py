@@ -7,7 +7,6 @@ import os
 import threading
 import time
 import typing
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -70,7 +69,7 @@ class TelemetrySession:
         """Initialize a run telemetry session."""
         self.mode = mode
         self.paths = paths
-        self.run_id = run_id or uuid.uuid4().hex
+        self.run_id = run_id or _core.generate_telemetry_run_id_value()
         self.native_progress_throttle = _core.NativeTelemetryProgressThrottle(
             progress_interval_seconds,
             progress_interval_chunks,

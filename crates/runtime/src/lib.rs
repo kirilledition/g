@@ -35,7 +35,7 @@ pub use telemetry_policy::{
 };
 pub use telemetry_session::{
     TelemetryCapAction, TelemetryEventCapState, TelemetryEventEnvelope, TelemetryProgressThrottleState,
-    TelemetryWriterCounterSnapshot, build_telemetry_event_envelope,
+    TelemetryWriterCounterSnapshot, build_telemetry_event_envelope, generate_run_id,
 };
 pub use timing::{
     ChunkStageSummary, ChunkStageTiming, NullLogisticDiagnosticValue, NullLogisticSummary, NumericDiagnosticValue,

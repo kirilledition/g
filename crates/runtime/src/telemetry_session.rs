@@ -4,6 +4,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use uuid::Uuid;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TelemetryCapAction {
     Write,
@@ -242,6 +244,11 @@ pub fn build_telemetry_event_envelope(
     }
 }
 
+#[must_use]
+pub fn generate_run_id() -> String {
+    format!("{:032x}", Uuid::new_v4().as_u128())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,5 +309,13 @@ mod tests {
         assert!(state.should_emit_progress_at(11, 11.5));
         assert!(!state.should_emit_progress_at(12, 12.0));
         assert!(state.should_emit_progress_at(12, 16.5));
+    }
+
+    #[test]
+    fn generates_python_compatible_run_identifier() {
+        let run_id = generate_run_id();
+
+        assert_eq!(run_id.len(), 32);
+        assert!(run_id.chars().all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase()));
     }
 }

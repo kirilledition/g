@@ -378,6 +378,11 @@ pub fn build_telemetry_event_payload<'py>(
     Ok(payload)
 }
 
+#[pyfunction]
+pub fn generate_telemetry_run_id_value() -> String {
+    native_telemetry_session::generate_run_id()
+}
+
 fn build_current_telemetry_event_payload<'py>(
     py: Python<'py>,
     run_id: &str,
