@@ -77,8 +77,8 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   callback batch-size delivery policy, grouped-union callback batch-size
   policy, callback queue-limit policy, variant-major dosage batch handoff
   planning, result in-flight slot accounting, dosage-buffer pool accounting,
-  dosage-buffer reuse shape planning, writer-finish thread cleanup policy,
-  callback worker lifecycle start state, callback worker shutdown timeout
+  dosage-buffer reuse shape planning, writer-finish thread cleanup/execution
+  planning, callback worker lifecycle start state, callback worker shutdown timeout
   policy, callback worker stop poll-timeout policy, callback worker
   stop-attempt decision policy, and BGEN delivery method selection also live in
   `g-engine`; the same crate also owns the callback worker backpressure

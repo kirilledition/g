@@ -43,6 +43,24 @@ impl MultiTraitChunkWritePlan {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WriterFinishExecutionPlan {
+    pub writer_session_count: usize,
+    pub thread_count: usize,
+}
+
+impl WriterFinishExecutionPlan {
+    #[must_use]
+    pub const fn has_writer_sessions(&self) -> bool {
+        self.writer_session_count > 0
+    }
+
+    #[must_use]
+    pub const fn uses_parallel_finish(&self) -> bool {
+        self.thread_count > 1
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DosageBufferPoolState {
     buffer_limit: usize,
@@ -489,6 +507,26 @@ pub fn resolve_writer_finish_thread_count(
     Ok(writer_session_count.min(requested_thread_count))
 }
 
+/// Plan how writer sessions should be finished by the transitional Python adapter.
+///
+/// # Errors
+///
+/// Returns an error when at least one writer must finish and the requested
+/// thread count is non-positive or cannot fit in `usize`.
+pub fn plan_writer_finish_execution(
+    writer_session_count: i64,
+    requested_thread_count: i64,
+) -> Result<WriterFinishExecutionPlan, ScheduleError> {
+    let thread_count = resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)?;
+    let writer_session_count = if writer_session_count <= 0 {
+        0
+    } else {
+        usize::try_from(writer_session_count)
+            .map_err(|_| ScheduleError::WriterSessionCountOverflow { session_count: writer_session_count })?
+    };
+    Ok(WriterFinishExecutionPlan { writer_session_count, thread_count })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,11 +805,28 @@ mod tests {
     }
 
     #[test]
+    fn plans_writer_finish_execution() {
+        assert_eq!(
+            plan_writer_finish_execution(0, 0).unwrap(),
+            WriterFinishExecutionPlan { writer_session_count: 0, thread_count: 0 },
+        );
+        assert_eq!(
+            plan_writer_finish_execution(1, 1).unwrap(),
+            WriterFinishExecutionPlan { writer_session_count: 1, thread_count: 1 },
+        );
+        let parallel_plan = plan_writer_finish_execution(3, 2).unwrap();
+        assert_eq!(parallel_plan, WriterFinishExecutionPlan { writer_session_count: 3, thread_count: 2 });
+        assert!(parallel_plan.has_writer_sessions());
+        assert!(parallel_plan.uses_parallel_finish());
+    }
+
+    #[test]
     fn rejects_invalid_writer_finish_thread_count_when_writers_exist() {
         assert_eq!(
             resolve_writer_finish_thread_count(1, 0).unwrap_err(),
             ScheduleError::NonPositiveWriterFinishThreadCount,
         );
+        assert_eq!(plan_writer_finish_execution(1, 0).unwrap_err(), ScheduleError::NonPositiveWriterFinishThreadCount,);
     }
 
     #[test]

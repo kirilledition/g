@@ -458,6 +458,29 @@ def test_resolve_writer_finish_thread_count_enforces_native_cleanup_policy() -> 
         _core.resolve_writer_finish_thread_count(1, 0)
 
 
+def test_plan_writer_finish_execution_uses_native_cleanup_policy() -> None:
+    empty_finish_plan = _core.plan_writer_finish_execution(writer_session_count=0, requested_thread_count=0)
+    assert empty_finish_plan.writer_session_count == 0
+    assert empty_finish_plan.thread_count == 0
+    assert empty_finish_plan.has_writer_sessions is False
+    assert empty_finish_plan.uses_parallel_finish is False
+
+    serial_finish_plan = _core.plan_writer_finish_execution(writer_session_count=1, requested_thread_count=1)
+    assert serial_finish_plan.writer_session_count == 1
+    assert serial_finish_plan.thread_count == 1
+    assert serial_finish_plan.has_writer_sessions is True
+    assert serial_finish_plan.uses_parallel_finish is False
+
+    parallel_finish_plan = _core.plan_writer_finish_execution(writer_session_count=3, requested_thread_count=2)
+    assert parallel_finish_plan.writer_session_count == 3
+    assert parallel_finish_plan.thread_count == 2
+    assert parallel_finish_plan.has_writer_sessions is True
+    assert parallel_finish_plan.uses_parallel_finish is True
+
+    with pytest.raises(ValueError, match="Writer finish thread count must be positive"):
+        _core.plan_writer_finish_execution(writer_session_count=1, requested_thread_count=0)
+
+
 def test_regenie2_run_engine_required_chromosomes_returns_boundary_labels() -> None:
     engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
 

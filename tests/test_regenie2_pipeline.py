@@ -707,6 +707,15 @@ def test_resolve_writer_finish_thread_count_uses_native_cleanup_policy() -> None
         native_dispatch_writers.resolve_writer_finish_thread_count(1, 0)
 
 
+def test_plan_writer_finish_execution_uses_native_cleanup_policy() -> None:
+    finish_plan = native_dispatch_writers.plan_writer_finish_execution(3, 2)
+
+    assert finish_plan.writer_session_count == 3
+    assert finish_plan.thread_count == 2
+    assert finish_plan.has_writer_sessions is True
+    assert finish_plan.uses_parallel_finish is True
+
+
 def test_write_regenie2_native_chunk_records_per_chunk_output_timing() -> None:
     writer_session = FakeWriterSession()
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)

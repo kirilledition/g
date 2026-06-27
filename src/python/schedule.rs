@@ -39,6 +39,11 @@ pub(crate) struct NativeMultiTraitChunkWritePlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeWriterFinishExecutionPlan {
+    inner: native_schedule::WriterFinishExecutionPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageBufferPoolState {
     inner: native_schedule::DosageBufferPoolState,
 }
@@ -195,6 +200,29 @@ impl NativeMultiTraitChunkWritePlan {
     }
 }
 
+#[pymethods]
+impl NativeWriterFinishExecutionPlan {
+    #[getter]
+    fn writer_session_count(&self) -> usize {
+        self.inner.writer_session_count
+    }
+
+    #[getter]
+    fn thread_count(&self) -> usize {
+        self.inner.thread_count
+    }
+
+    #[getter]
+    fn has_writer_sessions(&self) -> bool {
+        self.inner.has_writer_sessions()
+    }
+
+    #[getter]
+    fn uses_parallel_finish(&self) -> bool {
+        self.inner.uses_parallel_finish()
+    }
+}
+
 impl From<native_schedule::CallbackWorkerShutdownTimeouts> for NativeCallbackWorkerShutdownTimeouts {
     fn from(worker_shutdown_timeouts: native_schedule::CallbackWorkerShutdownTimeouts) -> Self {
         Self { inner: worker_shutdown_timeouts }
@@ -227,6 +255,12 @@ impl From<native_schedule::VariantMajorDosageBatchHandoffPlan> for NativeVariant
 impl From<native_schedule::MultiTraitChunkWritePlan> for NativeMultiTraitChunkWritePlan {
     fn from(write_plan: native_schedule::MultiTraitChunkWritePlan) -> Self {
         Self { inner: write_plan }
+    }
+}
+
+impl From<native_schedule::WriterFinishExecutionPlan> for NativeWriterFinishExecutionPlan {
+    fn from(finish_plan: native_schedule::WriterFinishExecutionPlan) -> Self {
+        Self { inner: finish_plan }
     }
 }
 
@@ -365,6 +399,16 @@ pub(crate) fn resolve_writer_finish_thread_count(
     requested_thread_count: i64,
 ) -> PyResult<usize> {
     native_schedule::resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn plan_writer_finish_execution(
+    writer_session_count: i64,
+    requested_thread_count: i64,
+) -> PyResult<NativeWriterFinishExecutionPlan> {
+    native_schedule::plan_writer_finish_execution(writer_session_count, requested_thread_count)
+        .map(Into::into)
         .map_err(|error| schedule_error_to_py(&error))
 }
 
