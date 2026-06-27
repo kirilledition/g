@@ -901,7 +901,9 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             if not self.worker_thread.is_alive():
                 return
-            current_timeout_seconds = max(0.0, min(0.1, stop_deadline - time.monotonic()))
+            current_timeout_seconds = _core.resolve_callback_worker_stop_poll_timeout_seconds(
+                stop_deadline - time.monotonic()
+            )
             try:
                 self.dosage_queue.put(None, timeout=current_timeout_seconds)
                 return
@@ -939,7 +941,9 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             if not self.result_worker_thread.is_alive():
                 return
-            current_timeout_seconds = max(0.0, min(0.1, stop_deadline - time.monotonic()))
+            current_timeout_seconds = _core.resolve_callback_worker_stop_poll_timeout_seconds(
+                stop_deadline - time.monotonic()
+            )
             try:
                 self.result_queue.put(None, timeout=current_timeout_seconds)
                 return

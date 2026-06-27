@@ -248,6 +248,11 @@ pub(crate) fn resolve_native_callback_worker_shutdown_timeouts() -> NativeCallba
 }
 
 #[pyfunction]
+pub(crate) fn resolve_callback_worker_stop_poll_timeout_seconds(remaining_timeout_seconds: f64) -> f64 {
+    native_schedule::resolve_callback_worker_stop_poll_timeout_seconds(remaining_timeout_seconds)
+}
+
+#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn plan_dosage_buffer_reuse(
     buffered_shape: Vec<usize>,

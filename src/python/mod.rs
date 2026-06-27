@@ -82,7 +82,8 @@ use schedule::{
     NativeCallbackQueueLimits, NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts,
     NativeDosageBufferPoolState, NativeDosageBufferReusePlan, NativeResultInFlightSlotState,
     NativeVariantMajorDosageBatchHandoffPlan, intersect_committed_chunk_identifier_sets, plan_dosage_buffer_reuse,
-    plan_variant_major_dosage_batch_handoff, resolve_bgen_delivery_method_value, resolve_delivery_callback_batch_size,
+    plan_variant_major_dosage_batch_handoff, resolve_bgen_delivery_method_value,
+    resolve_callback_worker_stop_poll_timeout_seconds, resolve_delivery_callback_batch_size,
     resolve_grouped_union_callback_batch_size, resolve_native_callback_queue_limits,
     resolve_native_callback_worker_shutdown_timeouts, resolve_writer_finish_thread_count,
 };
@@ -1799,6 +1800,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_bgen_delivery_method_value, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_callback_worker_stop_poll_timeout_seconds, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_delivery_callback_batch_size, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_grouped_union_callback_batch_size, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_native_callback_queue_limits, module)?)?;

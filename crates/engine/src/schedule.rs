@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 
 const DEFAULT_DELIVERY_CALLBACK_BATCH_SIZE: i64 = 1;
+const CALLBACK_WORKER_STOP_POLL_TIMEOUT_CAP_SECONDS: f64 = 0.1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeCallbackQueueLimits {
@@ -159,6 +160,17 @@ pub const fn callback_worker_shutdown_timeouts() -> CallbackWorkerShutdownTimeou
         graceful_result_worker_join_timeout_seconds: 300.0,
         worker_abort_stop_timeout_seconds: 1.0,
     }
+}
+
+#[must_use]
+pub fn resolve_callback_worker_stop_poll_timeout_seconds(remaining_timeout_seconds: f64) -> f64 {
+    if remaining_timeout_seconds.is_nan() || remaining_timeout_seconds <= 0.0 {
+        return 0.0;
+    }
+    if remaining_timeout_seconds > CALLBACK_WORKER_STOP_POLL_TIMEOUT_CAP_SECONDS {
+        return CALLBACK_WORKER_STOP_POLL_TIMEOUT_CAP_SECONDS;
+    }
+    remaining_timeout_seconds
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -579,6 +591,15 @@ mod tests {
                 worker_abort_stop_timeout_seconds: 1.0,
             },
         );
+    }
+
+    #[test]
+    fn resolves_callback_worker_stop_poll_timeout_seconds() {
+        assert!((resolve_callback_worker_stop_poll_timeout_seconds(1.0) - 0.1).abs() < f64::EPSILON);
+        assert!((resolve_callback_worker_stop_poll_timeout_seconds(0.05) - 0.05).abs() < f64::EPSILON);
+        assert!(resolve_callback_worker_stop_poll_timeout_seconds(0.0).abs() < f64::EPSILON);
+        assert!(resolve_callback_worker_stop_poll_timeout_seconds(-1.0).abs() < f64::EPSILON);
+        assert!(resolve_callback_worker_stop_poll_timeout_seconds(f64::NAN).abs() < f64::EPSILON);
     }
 
     #[test]
