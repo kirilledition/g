@@ -1471,6 +1471,32 @@ def build_preflight_report_payload(
     chromosome_count: int,
     trusted_no_missing_diploid: bool,
 ) -> dict[str, object]: ...
+def validate_single_trait_preflight_shape_payload(
+    phenotype_sample_count: int,
+    covariate_dimension_count: int,
+    covariate_sample_count: int,
+    covariate_count: int,
+) -> dict[str, object]: ...
+def validate_multi_trait_preflight_shape_payload(
+    phenotype_dimension_count: int,
+    phenotype_trait_count: int,
+    phenotype_sample_count: int,
+    covariate_dimension_count: int,
+    covariate_sample_count: int,
+    covariate_count: int,
+) -> dict[str, object]: ...
+def validate_binary_phenotype_case_control_counts(case_count: int, control_count: int) -> None: ...
+def validate_single_prediction_preflight_shape(
+    chromosome: str,
+    prediction_shape: typing.Sequence[int],
+    sample_count: int,
+) -> None: ...
+def validate_multi_prediction_preflight_shape(
+    chromosome: str,
+    prediction_shape: typing.Sequence[int],
+    trait_count: int,
+    sample_count: int,
+) -> None: ...
 def emit_diagnostic_event(level: str, event: str, message: str, fields_json: str | None = None) -> None: ...
 def align_sample_data_from_sample_file(
     sample_path: str,

@@ -80,7 +80,11 @@ use output::{
     scan_committed_chunk_identifiers, validate_run_manifest_compatibility, validate_strict_manifest_chunks,
     write_regenie2_multi_native_chunk, write_regenie2_multi_native_chunk_f64, write_run_manifest_json,
 };
-use preflight::{build_preflight_report_payload, resolve_preflight_variant_count};
+use preflight::{
+    build_preflight_report_payload, resolve_preflight_variant_count, validate_binary_phenotype_case_control_counts,
+    validate_multi_prediction_preflight_shape, validate_multi_trait_preflight_shape_payload,
+    validate_single_prediction_preflight_shape, validate_single_trait_preflight_shape_payload,
+};
 use profile::build_profile_snapshot_dict;
 use run_events::{
     build_run_completed_telemetry_fields, build_run_failed_telemetry_fields, build_run_interrupted_telemetry_fields,
@@ -1838,6 +1842,11 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_phenotype_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_manifest_extension_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_preflight_report_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_single_trait_preflight_shape_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_multi_trait_preflight_shape_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_binary_phenotype_case_control_counts, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_single_prediction_preflight_shape, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_multi_prediction_preflight_shape, module)?)?;
     module.add_function(wrap_pyfunction!(normalize_binary_correction_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_association_backend_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;

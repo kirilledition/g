@@ -127,6 +127,62 @@ def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> No
         )
 
 
+def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None:
+    single_payload = _core.validate_single_trait_preflight_shape_payload(
+        phenotype_sample_count=3,
+        covariate_dimension_count=2,
+        covariate_sample_count=3,
+        covariate_count=2,
+    )
+    assert single_payload == {"sample_count": 3, "covariate_count": 2}
+
+    multi_payload = _core.validate_multi_trait_preflight_shape_payload(
+        phenotype_dimension_count=2,
+        phenotype_trait_count=2,
+        phenotype_sample_count=3,
+        covariate_dimension_count=2,
+        covariate_sample_count=3,
+        covariate_count=2,
+    )
+    assert multi_payload == {"trait_count": 2, "sample_count": 3, "covariate_count": 2}
+
+    with pytest.raises(ValueError, match="Covariate matrix must be two-dimensional"):
+        _core.validate_single_trait_preflight_shape_payload(
+            phenotype_sample_count=3,
+            covariate_dimension_count=1,
+            covariate_sample_count=3,
+            covariate_count=0,
+        )
+
+    with pytest.raises(ValueError, match="Phenotype matrix must contain at least one trait"):
+        _core.validate_multi_trait_preflight_shape_payload(
+            phenotype_dimension_count=2,
+            phenotype_trait_count=0,
+            phenotype_sample_count=3,
+            covariate_dimension_count=2,
+            covariate_sample_count=3,
+            covariate_count=2,
+        )
+
+
+def test_native_preflight_binary_and_prediction_shape_policy() -> None:
+    _core.validate_binary_phenotype_case_control_counts(case_count=1, control_count=2)
+    _core.validate_single_prediction_preflight_shape("1", (3,), sample_count=3)
+    _core.validate_multi_prediction_preflight_shape("2", (2, 3), trait_count=2, sample_count=3)
+
+    with pytest.raises(ValueError, match="Binary phenotype must contain at least one case and one control"):
+        _core.validate_binary_phenotype_case_control_counts(case_count=0, control_count=2)
+
+    with pytest.raises(ValueError, match="Prediction sample count for chromosome 1 is 2, expected 3"):
+        _core.validate_single_prediction_preflight_shape("1", (2,), sample_count=3)
+
+    with pytest.raises(
+        ValueError,
+        match=r"Prediction matrix shape for chromosome 2 is \(2, 2\), expected \(2, 3\)",
+    ):
+        _core.validate_multi_prediction_preflight_shape("2", (2, 2), trait_count=2, sample_count=3)
+
+
 def test_native_null_logistic_nonconvergence_policy() -> None:
     continue_plan = _core.plan_null_logistic_nonconvergence(
         chromosome="22",

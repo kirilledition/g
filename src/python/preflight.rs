@@ -46,6 +46,87 @@ pub(crate) fn build_preflight_report_payload<'py>(
     Ok(payload_dict)
 }
 
+#[pyfunction]
+pub(crate) fn validate_single_trait_preflight_shape_payload<'py>(
+    py: Python<'py>,
+    phenotype_sample_count: i64,
+    covariate_dimension_count: i64,
+    covariate_sample_count: i64,
+    covariate_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_preflight::validate_single_trait_preflight_shape_payload(
+        phenotype_sample_count,
+        covariate_dimension_count,
+        covariate_sample_count,
+        covariate_count,
+    )
+    .map_err(|error| preflight_error_to_py(&error))?;
+    let payload_dict = PyDict::new(py);
+    payload_dict.set_item("sample_count", payload.sample_count)?;
+    payload_dict.set_item("covariate_count", payload.covariate_count)?;
+    Ok(payload_dict)
+}
+
+#[pyfunction]
+pub(crate) fn validate_multi_trait_preflight_shape_payload<'py>(
+    py: Python<'py>,
+    phenotype_dimension_count: i64,
+    phenotype_trait_count: i64,
+    phenotype_sample_count: i64,
+    covariate_dimension_count: i64,
+    covariate_sample_count: i64,
+    covariate_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_preflight::validate_multi_trait_preflight_shape_payload(
+        phenotype_dimension_count,
+        phenotype_trait_count,
+        phenotype_sample_count,
+        covariate_dimension_count,
+        covariate_sample_count,
+        covariate_count,
+    )
+    .map_err(|error| preflight_error_to_py(&error))?;
+    let payload_dict = PyDict::new(py);
+    payload_dict.set_item("trait_count", payload.trait_count)?;
+    payload_dict.set_item("sample_count", payload.sample_count)?;
+    payload_dict.set_item("covariate_count", payload.covariate_count)?;
+    Ok(payload_dict)
+}
+
+#[pyfunction]
+pub(crate) fn validate_binary_phenotype_case_control_counts(case_count: i64, control_count: i64) -> PyResult<()> {
+    native_preflight::validate_binary_phenotype_case_control_counts(case_count, control_count)
+        .map_err(|error| preflight_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn validate_single_prediction_preflight_shape(
+    chromosome: &str,
+    prediction_shape: Vec<i64>,
+    sample_count: i64,
+) -> PyResult<()> {
+    let prediction_shape = prediction_shape.into_boxed_slice();
+    native_preflight::validate_single_prediction_preflight_shape(chromosome, &prediction_shape, sample_count)
+        .map_err(|error| preflight_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn validate_multi_prediction_preflight_shape(
+    chromosome: &str,
+    prediction_shape: Vec<i64>,
+    trait_count: i64,
+    sample_count: i64,
+) -> PyResult<()> {
+    let prediction_shape = prediction_shape.into_boxed_slice();
+    native_preflight::validate_multi_prediction_preflight_shape(
+        chromosome,
+        &prediction_shape,
+        trait_count,
+        sample_count,
+    )
+    .map_err(|error| preflight_error_to_py(&error))
+}
+
 fn usize_count(label: &str, count: i64) -> PyResult<usize> {
     usize::try_from(count).map_err(|_| PyValueError::new_err(format!("{label} cannot be negative: {count}")))
 }

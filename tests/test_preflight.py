@@ -164,6 +164,29 @@ def test_multi_preflight_validates_prediction_shape_once_per_chromosome() -> Non
         )
 
 
+@pytest.mark.parametrize(
+    ("phenotype_matrix", "message"),
+    [
+        (np.asarray([0.0, 1.0, 0.0], dtype=np.float32), "Phenotype matrix must be two-dimensional"),
+        (np.empty((0, 3), dtype=np.float32), "Phenotype matrix must contain at least one trait"),
+        (np.empty((2, 0), dtype=np.float32), "Phenotype matrix must contain at least one sample"),
+    ],
+)
+def test_multi_preflight_rejects_invalid_phenotype_shapes(
+    phenotype_matrix: np.ndarray,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        preflight.run_regenie2_multi_preflight(
+            run_input=build_multi_run_input(phenotype_matrix=phenotype_matrix),
+            prediction_source=FakePredictionSource({"1": np.zeros((2, 3), dtype=np.float32)}),
+            engine=FakeEngine(["1"]),
+            variant_limit=None,
+            is_binary_trait=False,
+            trusted_no_missing_diploid=False,
+        )
+
+
 def test_preflight_rejects_non_finite_predictions() -> None:
     with pytest.raises(ValueError, match="Prediction values for chromosome 2 contains non-finite values"):
         preflight.run_regenie2_preflight(
