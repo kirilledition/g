@@ -2,6 +2,11 @@
 
 use signal_hook::consts::signal;
 
+const SIGSTKFLT_NUMBER: i32 = 16;
+const SIGPWR_NUMBER: i32 = 30;
+const SIGRTMIN_NUMBER: i32 = 34;
+const SIGRTMAX_NUMBER: i32 = 64;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShutdownSignalPayload {
     pub number: i32,
@@ -87,6 +92,7 @@ fn linux_signal_name(signal_number: i32) -> Option<&'static str> {
         signal::SIGPIPE => Some("SIGPIPE"),
         signal::SIGALRM => Some("SIGALRM"),
         signal::SIGTERM => Some("SIGTERM"),
+        SIGSTKFLT_NUMBER => Some("SIGSTKFLT"),
         signal::SIGCHLD => Some("SIGCHLD"),
         signal::SIGCONT => Some("SIGCONT"),
         signal::SIGSTOP => Some("SIGSTOP"),
@@ -100,7 +106,10 @@ fn linux_signal_name(signal_number: i32) -> Option<&'static str> {
         signal::SIGPROF => Some("SIGPROF"),
         signal::SIGWINCH => Some("SIGWINCH"),
         signal::SIGIO => Some("SIGIO"),
+        SIGPWR_NUMBER => Some("SIGPWR"),
         signal::SIGSYS => Some("SIGSYS"),
+        SIGRTMIN_NUMBER => Some("SIGRTMIN"),
+        SIGRTMAX_NUMBER => Some("SIGRTMAX"),
         _ => None,
     }
 }
@@ -116,6 +125,10 @@ mod tests {
         assert_eq!(payload.number, signal::SIGTERM);
         assert_eq!(payload.name, "SIGTERM");
         assert_eq!(payload.exit_code, 128 + signal::SIGTERM);
+        assert_eq!(build_shutdown_signal(SIGSTKFLT_NUMBER).unwrap().name, "SIGSTKFLT");
+        assert_eq!(build_shutdown_signal(SIGPWR_NUMBER).unwrap().name, "SIGPWR");
+        assert_eq!(build_shutdown_signal(SIGRTMIN_NUMBER).unwrap().name, "SIGRTMIN");
+        assert_eq!(build_shutdown_signal(SIGRTMAX_NUMBER).unwrap().name, "SIGRTMAX");
         assert!(build_shutdown_signal(0).is_err());
     }
 

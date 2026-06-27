@@ -8,6 +8,25 @@ import pytest
 from g.engine import shutdown
 
 
+def test_build_shutdown_signal_uses_native_metadata_for_supported_linux_signals() -> None:
+    for signal_name in ("SIGSTKFLT", "SIGPWR", "SIGRTMIN", "SIGRTMAX"):
+        signal_member = getattr(signal, signal_name, None)
+        if signal_member is None:
+            continue
+
+        signal_number = int(signal_member)
+        assert shutdown.build_shutdown_signal(signal_number) == shutdown.ShutdownSignal(
+            number=signal_number,
+            name=signal_name,
+            exit_code=128 + signal_number,
+        )
+
+
+def test_build_shutdown_signal_rejects_unknown_signal() -> None:
+    with pytest.raises(ValueError, match="0 is not a valid Signals"):
+        shutdown.build_shutdown_signal(0)
+
+
 def test_shutdown_controller_records_first_signal_in_native_handle() -> None:
     controller = shutdown.GracefulShutdownController(handled_signals=(signal.SIGINT,))
 

@@ -64,8 +64,8 @@ config rewrite notes reduce to these rules for the Rust frontend branch:
   telemetry session cap/counter/envelope/progress-throttle/close-metadata state,
   current telemetry event metadata and payload construction, telemetry
   event/close-event/JSON-line emission, run lifecycle event payload/rendering
-  policy, shutdown signal
-  metadata and controller state, stage timing state, exact-stage timing policy,
+  policy, shutdown signal metadata and controller state without Python fallback,
+  stage timing state, exact-stage timing policy,
   stage-timing/profile JSON payloads and file writes, run metadata payloads,
   and the logging/Rayon/JAX process runtime state handle. Root PyO3 adapters
   still own other side effects and Python-only JAX setup until runtime handles

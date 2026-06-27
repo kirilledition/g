@@ -12,7 +12,6 @@ import g._core
 if typing.TYPE_CHECKING:
     import types as python_types
 
-NATIVE_BUILD_SHUTDOWN_SIGNAL_PAYLOAD = getattr(g._core, "build_shutdown_signal_payload", None)
 NATIVE_SHUTDOWN_SIGNAL_CACHE: dict[int, ShutdownSignal]
 
 
@@ -41,18 +40,12 @@ class ShutdownSignal:
 
 def build_native_shutdown_signal_cache() -> dict[int, ShutdownSignal]:
     """Build cached native metadata for the default handled signals."""
-    native_build_shutdown_signal = NATIVE_BUILD_SHUTDOWN_SIGNAL_PAYLOAD
-    if not callable(native_build_shutdown_signal):
-        return {}
     cached_signals: dict[int, ShutdownSignal] = {}
     for handled_signal in (signal.SIGINT, signal.SIGTERM):
         signal_number = int(handled_signal)
-        try:
-            cached_signals[signal_number] = shutdown_signal_from_native_payload(
-                native_build_shutdown_signal(signal_number)
-            )
-        except ValueError:
-            continue
+        cached_signals[signal_number] = shutdown_signal_from_native_payload(
+            g._core.build_shutdown_signal_payload(signal_number)
+        )
     return cached_signals
 
 
@@ -138,23 +131,7 @@ def build_shutdown_signal(signal_number: int) -> ShutdownSignal:
     cached_signal = NATIVE_SHUTDOWN_SIGNAL_CACHE.get(signal_number)
     if cached_signal is not None:
         return cached_signal
-    native_build_shutdown_signal = NATIVE_BUILD_SHUTDOWN_SIGNAL_PAYLOAD
-    if callable(native_build_shutdown_signal):
-        try:
-            return shutdown_signal_from_native_payload(native_build_shutdown_signal(signal_number))
-        except ValueError:
-            return build_shutdown_signal_with_python_fallback(signal_number)
-    return build_shutdown_signal_with_python_fallback(signal_number)
-
-
-def build_shutdown_signal_with_python_fallback(signal_number: int) -> ShutdownSignal:
-    """Build shutdown metadata when the native helper is unavailable."""
-    signal_value = signal.Signals(signal_number)
-    return ShutdownSignal(
-        number=signal_number,
-        name=signal_value.name,
-        exit_code=128 + signal_number,
-    )
+    return shutdown_signal_from_native_payload(g._core.build_shutdown_signal_payload(signal_number))
 
 
 def shutdown_signal_from_native_payload(payload: object) -> ShutdownSignal:
