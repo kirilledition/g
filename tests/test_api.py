@@ -14,7 +14,7 @@ import g
 import g.cli as cli_module
 import g.engine.shutdown as shutdown_module
 import g.engine.telemetry as telemetry_module
-from g import api, execution_plan, types
+from g import _core, api, execution_plan, types
 from g.interface import config
 from g.io import output
 from g.io.output import OutputRunPaths, PreparedOutputRun
@@ -24,6 +24,18 @@ from g.jax_runtime import resolution as jax_runtime_resolution
 from g.runner import execution as runner_execution
 from g.runner import metadata as runner_metadata
 from g.runner import runtime as runner_runtime
+
+
+class NativeLoggingPolicyCore:
+    """Fake-core mixin that keeps logging policy resolution native."""
+
+    def build_logging_runtime_policy_payload(self, *arguments: object) -> dict[str, object]:
+        """Delegate logging policy payload construction to the native helper."""
+        native_build_logging_policy = typing.cast(
+            "typing.Callable[..., dict[str, object]]",
+            _core.build_logging_runtime_policy_payload,
+        )
+        return native_build_logging_policy(*arguments)
 
 
 def complete_mock_output_initialization(
@@ -631,7 +643,7 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
 def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeLoggingPolicyCore):
         def initialize_logging(self, **kwargs: object) -> None:
             calls.append(kwargs)
 
@@ -674,7 +686,7 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
 def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeLoggingPolicyCore):
         def initialize_logging(self, **kwargs: object) -> bool:
             calls.append(kwargs)
             return True
@@ -702,7 +714,7 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
 def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeLoggingPolicyCore):
         def initialize_logging(self, **kwargs: object) -> bool:
             calls.append(kwargs)
             return True
@@ -732,7 +744,7 @@ def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path)
 def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeLoggingPolicyCore):
         def initialize_logging(self, **kwargs: object) -> bool:
             calls.append(kwargs)
             return True
@@ -758,7 +770,7 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
 
 
 def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path: Path) -> None:
-    class FakeCoreModule:
+    class FakeCoreModule(NativeLoggingPolicyCore):
         def initialize_logging(self, **kwargs: object) -> bool:
             del kwargs
             return False

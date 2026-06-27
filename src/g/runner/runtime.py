@@ -167,53 +167,22 @@ def build_logging_runtime_policy(
     telemetry_paths: telemetry.TelemetryPaths | None,
 ) -> LoggingRuntimePolicy:
     """Build the process-global logging policy requested by a run."""
-    native_build_logging_runtime_policy = getattr(_core, "build_logging_runtime_policy_payload", None)
-    if callable(native_build_logging_runtime_policy):
-        telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
-        native_payload = native_build_logging_runtime_policy(
-            diagnostics_config.log_filter,
-            None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
-            diagnostics_config.log_stderr,
-            diagnostics_config.log_queue_size,
-            diagnostics_config.log_lossy,
-            diagnostics_config.include_source_location,
-            diagnostics_config.include_span_events,
-            None if diagnostics_config.trace_file is None else str(diagnostics_config.trace_file),
-            diagnostics_config.trace_filter,
-            diagnostics_config.trace_event_cap,
-            diagnostics_config.telemetry.value,
-            None if telemetry_stream_file is None else str(telemetry_stream_file),
-        )
-        return logging_runtime_policy_from_native_payload(native_payload)
-    return build_logging_runtime_policy_with_python_fallback(diagnostics_config, telemetry_paths)
-
-
-def build_logging_runtime_policy_with_python_fallback(
-    diagnostics_config: config.GDiagnosticsConfig,
-    telemetry_paths: telemetry.TelemetryPaths | None,
-) -> LoggingRuntimePolicy:
-    """Build logging policy when the native helper is unavailable."""
     telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
-    log_file = diagnostics_config.log_file if telemetry_stream_file is None else None
-    trace_file = diagnostics_config.trace_file if telemetry_stream_file is None else telemetry_stream_file
-    trace_filter = diagnostics_config.trace_filter
-    if telemetry_stream_file is not None and diagnostics_config.telemetry != types.TelemetryMode.TRACE:
-        trace_filter = diagnostics_config.log_filter
-    trace_event_cap = (
-        diagnostics_config.trace_event_cap if diagnostics_config.telemetry == types.TelemetryMode.TRACE else None
+    native_payload = _core.build_logging_runtime_policy_payload(
+        diagnostics_config.log_filter,
+        None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
+        diagnostics_config.log_stderr,
+        diagnostics_config.log_queue_size,
+        diagnostics_config.log_lossy,
+        diagnostics_config.include_source_location,
+        diagnostics_config.include_span_events,
+        None if diagnostics_config.trace_file is None else str(diagnostics_config.trace_file),
+        diagnostics_config.trace_filter,
+        diagnostics_config.trace_event_cap,
+        diagnostics_config.telemetry.value,
+        None if telemetry_stream_file is None else str(telemetry_stream_file),
     )
-    return LoggingRuntimePolicy(
-        log_filter=diagnostics_config.log_filter,
-        log_file=log_file,
-        log_stderr=diagnostics_config.log_stderr,
-        log_queue_size=diagnostics_config.log_queue_size,
-        log_lossy=diagnostics_config.log_lossy,
-        include_source_location=diagnostics_config.include_source_location,
-        include_span_events=diagnostics_config.include_span_events,
-        trace_file=trace_file,
-        trace_filter=trace_filter,
-        trace_event_cap=trace_event_cap,
-    )
+    return logging_runtime_policy_from_native_payload(native_payload)
 
 
 def logging_runtime_policy_from_native_payload(payload: object) -> LoggingRuntimePolicy:
@@ -306,36 +275,19 @@ def build_runtime_policy(
 
 def describe_logging_runtime_policy(policy: LoggingRuntimePolicy) -> str:
     """Format a logging runtime policy for concise errors."""
-    native_describe_logging_runtime_policy = getattr(_core, "describe_logging_runtime_policy_value", None)
-    if callable(native_describe_logging_runtime_policy):
-        return str(
-            native_describe_logging_runtime_policy(
-                policy.log_filter,
-                None if policy.log_file is None else str(policy.log_file),
-                policy.log_stderr,
-                policy.log_queue_size,
-                policy.log_lossy,
-                policy.include_source_location,
-                policy.include_span_events,
-                None if policy.trace_file is None else str(policy.trace_file),
-                policy.trace_filter,
-                policy.trace_event_cap,
-            )
+    return str(
+        _core.describe_logging_runtime_policy_value(
+            policy.log_filter,
+            None if policy.log_file is None else str(policy.log_file),
+            policy.log_stderr,
+            policy.log_queue_size,
+            policy.log_lossy,
+            policy.include_source_location,
+            policy.include_span_events,
+            None if policy.trace_file is None else str(policy.trace_file),
+            policy.trace_filter,
+            policy.trace_event_cap,
         )
-    log_file = "<none>" if policy.log_file is None else str(policy.log_file)
-    trace_file = "<none>" if policy.trace_file is None else str(policy.trace_file)
-    trace_event_cap = "<none>" if policy.trace_event_cap is None else str(policy.trace_event_cap)
-    return (
-        f"log-filter={policy.log_filter}, "
-        f"log-file={log_file}, "
-        f"log-stderr={policy.log_stderr}, "
-        f"log-queue-size={policy.log_queue_size}, "
-        f"log-lossy={policy.log_lossy}, "
-        f"include-source-location={policy.include_source_location}, "
-        f"include-span-events={policy.include_span_events}, "
-        f"trace-file={trace_file}, "
-        f"trace-filter={policy.trace_filter}, "
-        f"trace-event-cap={trace_event_cap}"
     )
 
 
