@@ -8,6 +8,35 @@ use pyo3::types::PyDict;
 
 use g_runtime::telemetry_policy as native_telemetry_policy;
 
+#[pyclass]
+pub(crate) struct NativeTelemetrySessionPolicy {
+    policy: native_telemetry_policy::TelemetrySessionPolicyPayload,
+}
+
+#[pymethods]
+impl NativeTelemetrySessionPolicy {
+    #[new]
+    #[allow(clippy::needless_pass_by_value)]
+    fn new(telemetry_mode: String, trace_event_cap: i64) -> Self {
+        Self { policy: native_telemetry_policy::resolve_telemetry_session_policy(&telemetry_mode, trace_event_cap) }
+    }
+
+    #[getter]
+    fn enabled(&self) -> bool {
+        self.policy.enabled
+    }
+
+    #[getter]
+    fn profile_enabled(&self) -> bool {
+        self.policy.profile_enabled
+    }
+
+    #[getter]
+    fn event_cap(&self) -> Option<i64> {
+        self.policy.event_cap
+    }
+}
+
 #[pyfunction]
 pub(crate) fn format_telemetry_timestamp_value(timestamp_seconds: f64) -> String {
     native_telemetry_policy::format_timestamp(timestamp_seconds)

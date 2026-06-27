@@ -364,6 +364,8 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
         run_id="run-2",
     )
     profile_session.close()
+    trace_policy = _core.NativeTelemetrySessionPolicy("trace", 10)
+    disabled_trace_cap_policy = _core.NativeTelemetrySessionPolicy("trace", 0)
 
     assert dict(_core.resolve_telemetry_session_policy_payload("trace", 10)) == {
         "enabled": True,
@@ -375,8 +377,15 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
         "profile_enabled": True,
         "event_cap": None,
     }
+    assert trace_policy.enabled
+    assert trace_policy.profile_enabled
+    assert trace_policy.event_cap == 10
+    assert disabled_trace_cap_policy.enabled
+    assert disabled_trace_cap_policy.profile_enabled
+    assert disabled_trace_cap_policy.event_cap is None
     assert not off_session.enabled
     assert not off_session.profile_enabled
+    assert off_session.native_session_policy.event_cap is None
     assert off_session.native_telemetry_session is None
     assert profile_session.enabled
     assert profile_session.profile_enabled

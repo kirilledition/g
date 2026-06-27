@@ -12,8 +12,6 @@ from g import _core, types
 TelemetryCounterValue = bool | float | int | None
 TelemetryWriterCounters = dict[str, TelemetryCounterValue]
 TelemetryCloseMetadata = dict[str, TelemetryWriterCounters]
-TelemetrySessionPolicyValue = bool | int | None
-TelemetrySessionPolicy = dict[str, TelemetrySessionPolicyValue]
 
 if typing.TYPE_CHECKING:
     from g.interface import config
@@ -69,22 +67,17 @@ class TelemetrySession:
         self.mode = mode
         self.paths = paths
         self.run_id = run_id or _core.generate_telemetry_run_id_value()
-        self.session_policy = typing.cast(
-            "TelemetrySessionPolicy",
-            native_mapping_payload(_core.resolve_telemetry_session_policy_payload(mode.value, trace_event_cap)),
-        )
+        self.native_session_policy = _core.NativeTelemetrySessionPolicy(mode.value, trace_event_cap)
         self.native_progress_throttle = _core.NativeTelemetryProgressThrottle(
             progress_interval_seconds,
             progress_interval_chunks,
         )
-        event_cap_payload = self.session_policy["event_cap"]
-        native_event_cap = None if event_cap_payload is None else int(event_cap_payload)
         self.native_telemetry_session = (
             _core.NativeTelemetrySession(
                 str(paths.stream_file),
                 queue_size=queue_size,
                 lossy=lossy,
-                event_cap=native_event_cap,
+                event_cap=self.native_session_policy.event_cap,
             )
             if self.enabled and paths.stream_file is not None
             else None
@@ -93,12 +86,12 @@ class TelemetrySession:
     @property
     def enabled(self) -> bool:
         """Return whether this session writes telemetry."""
-        return bool(self.session_policy["enabled"])
+        return self.native_session_policy.enabled
 
     @property
     def profile_enabled(self) -> bool:
         """Return whether profiling-grade telemetry is enabled."""
-        return bool(self.session_policy["profile_enabled"])
+        return self.native_session_policy.profile_enabled
 
     @property
     def close_metadata(self) -> TelemetryCloseMetadata | None:

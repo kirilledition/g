@@ -106,9 +106,9 @@ use schedule::{
 };
 use shutdown::{NativeShutdownController, build_shutdown_signal_payload};
 use telemetry_policy::{
-    build_empty_telemetry_writer_counters_payload, format_telemetry_timestamp_value, paths_refer_to_same_file_value,
-    resolve_telemetry_output_run_root_value, resolve_telemetry_paths_payload, resolve_telemetry_session_policy_payload,
-    resolve_telemetry_stream_file_value,
+    NativeTelemetrySessionPolicy, build_empty_telemetry_writer_counters_payload, format_telemetry_timestamp_value,
+    paths_refer_to_same_file_value, resolve_telemetry_output_run_root_value, resolve_telemetry_paths_payload,
+    resolve_telemetry_session_policy_payload, resolve_telemetry_stream_file_value,
 };
 use timing::NativeStageTimingRecorder;
 use trusted_validation::{
@@ -1801,6 +1801,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<RegeniePredictionSource>()?;
     module.add_class::<MultiRegeniePredictionSource>()?;
     module.add_class::<NativeTelemetryProgressThrottle>()?;
+    module.add_class::<NativeTelemetrySessionPolicy>()?;
     module.add_class::<NativeTelemetrySession>()?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(resolve_prediction_loco_paths, module)?)?;
