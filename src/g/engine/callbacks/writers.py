@@ -225,15 +225,19 @@ def materialize_regenie2_multi_native_chunk_with_optional_timing(
 ) -> MaterializedRegenie2MultiNativeChunk:
     """Materialize one multi-trait REGENIE result chunk on host."""
     chunk_identifier = int(metadata.variant_start_index)
-    active_trait_indices = tuple(
-        trait_index
-        for trait_index, _writer_session in enumerate(writer_sessions)
-        if chunk_identifier not in committed_chunk_identifier_sets[trait_index]
+    committed_chunk_identifier_batches = tuple(
+        tuple(committed_chunk_identifier_set) for committed_chunk_identifier_set in committed_chunk_identifier_sets
     )
+    write_plan = _core.plan_multi_trait_chunk_write(
+        writer_session_count=len(writer_sessions),
+        chunk_identifier=chunk_identifier,
+        committed_chunk_identifier_sets=committed_chunk_identifier_batches,
+    )
+    active_trait_indices = tuple(write_plan.active_trait_indices)
     use_native_multi_writer = all(
         isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions
     )
-    if not active_trait_indices:
+    if write_plan.all_traits_committed:
         return MaterializedRegenie2MultiNativeChunk(
             active_writer_sessions=(),
             use_native_multi_writer=use_native_multi_writer,
@@ -245,7 +249,7 @@ def materialize_regenie2_multi_native_chunk_with_optional_timing(
         )
 
     active_writer_sessions = tuple(writer_sessions[trait_index] for trait_index in active_trait_indices)
-    total_trait_count = len(writer_sessions)
+    total_trait_count = write_plan.total_trait_count
     active_extra_code = None
     if extra_code is not None:
         active_extra_code = select_active_trait_rows_on_device(

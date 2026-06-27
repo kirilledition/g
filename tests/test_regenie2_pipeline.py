@@ -1628,10 +1628,9 @@ class BundledChunkStats(ExplodingChunkStats):
 
 class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
     def __init__(self) -> None:
-        self.processed_chunk_count = 0
+        self.progress_state = callback_runtime._core.NativeCallbackProgressState()
         self.stage_timing_recorder = None
         self.telemetry_session = None
-        self.current_progress_chromosome = None
         self.native_callback_batch_size = 1
         self.dosage_queue: queue.Queue[
             callback_shared.PreprocessedDosageChunkWorkItem
@@ -1699,9 +1698,7 @@ def test_native_callback_runner_records_chromosome_progress_transitions() -> Non
     telemetry_session = RecordingTelemetrySession()
     callback.telemetry_session = telemetry_session
 
-    callback.processed_chunk_count = 1
     callback.record_progress(build_native_metadata())
-    callback.processed_chunk_count = 2
     callback.record_progress(
         SimpleNamespace(
             variant_start_index=7,

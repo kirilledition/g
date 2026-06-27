@@ -34,6 +34,11 @@ pub(crate) struct NativeVariantMajorDosageBatchHandoffPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeMultiTraitChunkWritePlan {
+    inner: native_schedule::MultiTraitChunkWritePlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageBufferPoolState {
     inner: native_schedule::DosageBufferPoolState,
 }
@@ -167,6 +172,29 @@ impl NativeCallbackWorkerShutdownTimeouts {
     }
 }
 
+#[pymethods]
+impl NativeMultiTraitChunkWritePlan {
+    #[getter]
+    fn active_trait_indices(&self) -> Vec<usize> {
+        self.inner.active_trait_indices.clone()
+    }
+
+    #[getter]
+    fn total_trait_count(&self) -> usize {
+        self.inner.total_trait_count
+    }
+
+    #[getter]
+    fn active_trait_count(&self) -> usize {
+        self.inner.active_trait_count()
+    }
+
+    #[getter]
+    fn all_traits_committed(&self) -> bool {
+        self.inner.all_traits_committed()
+    }
+}
+
 impl From<native_schedule::CallbackWorkerShutdownTimeouts> for NativeCallbackWorkerShutdownTimeouts {
     fn from(worker_shutdown_timeouts: native_schedule::CallbackWorkerShutdownTimeouts) -> Self {
         Self { inner: worker_shutdown_timeouts }
@@ -193,6 +221,12 @@ impl From<native_schedule::DosageBufferReusePlan> for NativeDosageBufferReusePla
 impl From<native_schedule::VariantMajorDosageBatchHandoffPlan> for NativeVariantMajorDosageBatchHandoffPlan {
     fn from(batch_handoff_plan: native_schedule::VariantMajorDosageBatchHandoffPlan) -> Self {
         Self { chunk_count: batch_handoff_plan.chunk_count }
+    }
+}
+
+impl From<native_schedule::MultiTraitChunkWritePlan> for NativeMultiTraitChunkWritePlan {
+    fn from(write_plan: native_schedule::MultiTraitChunkWritePlan) -> Self {
+        Self { inner: write_plan }
     }
 }
 
@@ -285,6 +319,26 @@ pub(crate) fn plan_variant_major_dosage_batch_handoff(
         metadata_count,
         genotype_matrix_by_variant_count,
         chunk_stats_count,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_multi_trait_chunk_write(
+    writer_session_count: usize,
+    chunk_identifier: usize,
+    committed_chunk_identifier_sets: Vec<Vec<usize>>,
+) -> PyResult<NativeMultiTraitChunkWritePlan> {
+    let native_committed_chunk_identifier_sets: Vec<BTreeSet<usize>> = committed_chunk_identifier_sets
+        .into_iter()
+        .map(|chunk_identifiers| chunk_identifiers.into_iter().collect())
+        .collect();
+    native_schedule::plan_multi_trait_chunk_write(
+        writer_session_count,
+        chunk_identifier,
+        &native_committed_chunk_identifier_sets,
     )
     .map(Into::into)
     .map_err(|error| schedule_error_to_py(&error))

@@ -26,6 +26,24 @@ pub struct VariantMajorDosageBatchHandoffPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiTraitChunkWritePlan {
+    pub active_trait_indices: Vec<usize>,
+    pub total_trait_count: usize,
+}
+
+impl MultiTraitChunkWritePlan {
+    #[must_use]
+    pub fn active_trait_count(&self) -> usize {
+        self.active_trait_indices.len()
+    }
+
+    #[must_use]
+    pub fn all_traits_committed(&self) -> bool {
+        self.active_trait_indices.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DosageBufferPoolState {
     buffer_limit: usize,
     buffer_identifiers: BTreeSet<usize>,
@@ -248,6 +266,10 @@ pub enum ScheduleError {
     VariantMajorDosageBatchLengthMismatch,
     #[error("Variant-major dosage batch must contain at least one chunk.")]
     EmptyVariantMajorDosageBatch,
+    #[error(
+        "Committed chunk identifier set count ({committed_set_count}) must match writer session count ({writer_session_count})."
+    )]
+    MultiTraitCommittedChunkSetCountMismatch { writer_session_count: usize, committed_set_count: usize },
 }
 
 #[must_use]
@@ -337,6 +359,34 @@ pub fn plan_variant_major_dosage_batch_handoff(
         return Err(ScheduleError::EmptyVariantMajorDosageBatch);
     }
     Ok(VariantMajorDosageBatchHandoffPlan { chunk_count: metadata_count })
+}
+
+/// Plan which multi-trait writer lanes still need one chunk.
+///
+/// # Errors
+///
+/// Returns an error when the committed chunk identifier set count does not
+/// match the writer session count.
+pub fn plan_multi_trait_chunk_write(
+    writer_session_count: usize,
+    chunk_identifier: usize,
+    committed_chunk_identifier_sets: &[BTreeSet<usize>],
+) -> Result<MultiTraitChunkWritePlan, ScheduleError> {
+    if committed_chunk_identifier_sets.len() != writer_session_count {
+        return Err(ScheduleError::MultiTraitCommittedChunkSetCountMismatch {
+            writer_session_count,
+            committed_set_count: committed_chunk_identifier_sets.len(),
+        });
+    }
+    let active_trait_indices =
+        committed_chunk_identifier_sets
+            .iter()
+            .enumerate()
+            .filter_map(|(trait_index, committed_chunk_identifier_set)| {
+                if committed_chunk_identifier_set.contains(&chunk_identifier) { None } else { Some(trait_index) }
+            })
+            .collect();
+    Ok(MultiTraitChunkWritePlan { active_trait_indices, total_trait_count: writer_session_count })
 }
 
 /// Resolve native callback queue depths and bounded resource limits.
@@ -540,6 +590,37 @@ mod tests {
         assert_eq!(
             plan_variant_major_dosage_batch_handoff(0, 0, 0).unwrap_err(),
             ScheduleError::EmptyVariantMajorDosageBatch,
+        );
+    }
+
+    #[test]
+    fn plans_multi_trait_chunk_write_for_uncommitted_traits() {
+        assert_eq!(
+            plan_multi_trait_chunk_write(
+                3,
+                32,
+                &[BTreeSet::from([0_usize]), BTreeSet::from([32_usize]), BTreeSet::from([64_usize]),],
+            )
+            .unwrap(),
+            MultiTraitChunkWritePlan { active_trait_indices: vec![0, 2], total_trait_count: 3 },
+        );
+    }
+
+    #[test]
+    fn plans_multi_trait_chunk_write_when_all_traits_committed() {
+        let write_plan =
+            plan_multi_trait_chunk_write(2, 32, &[BTreeSet::from([32_usize]), BTreeSet::from([0_usize, 32])]).unwrap();
+
+        assert_eq!(write_plan.active_trait_indices, Vec::<usize>::new());
+        assert_eq!(write_plan.active_trait_count(), 0);
+        assert!(write_plan.all_traits_committed());
+    }
+
+    #[test]
+    fn rejects_mismatched_multi_trait_committed_chunk_set_counts() {
+        assert_eq!(
+            plan_multi_trait_chunk_write(2, 32, &[BTreeSet::new()]).unwrap_err(),
+            ScheduleError::MultiTraitCommittedChunkSetCountMismatch { writer_session_count: 2, committed_set_count: 1 },
         );
     }
 

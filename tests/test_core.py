@@ -98,6 +98,34 @@ def test_intersect_committed_chunk_identifier_sets_returns_sorted_shared_identif
     assert _core.intersect_committed_chunk_identifier_sets(()) == []
 
 
+def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> None:
+    write_plan = _core.plan_multi_trait_chunk_write(
+        writer_session_count=3,
+        chunk_identifier=32,
+        committed_chunk_identifier_sets=((0,), (32,), (64,)),
+    )
+    assert write_plan.active_trait_indices == [0, 2]
+    assert write_plan.total_trait_count == 3
+    assert write_plan.active_trait_count == 2
+    assert write_plan.all_traits_committed is False
+
+    committed_write_plan = _core.plan_multi_trait_chunk_write(
+        writer_session_count=2,
+        chunk_identifier=32,
+        committed_chunk_identifier_sets=((32,), (0, 32)),
+    )
+    assert committed_write_plan.active_trait_indices == []
+    assert committed_write_plan.active_trait_count == 0
+    assert committed_write_plan.all_traits_committed is True
+
+    with pytest.raises(ValueError, match="Committed chunk identifier set count"):
+        _core.plan_multi_trait_chunk_write(
+            writer_session_count=2,
+            chunk_identifier=32,
+            committed_chunk_identifier_sets=((32,),),
+        )
+
+
 def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() -> None:
     assert (
         _core.resolve_delivery_callback_batch_size(
