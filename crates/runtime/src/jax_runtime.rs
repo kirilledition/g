@@ -1,6 +1,14 @@
 //! Deterministic JAX runtime setup policy and diagnostics.
 
 const DEVICE_GPU: &str = "gpu";
+const JAX_CONFIG_COMPILATION_CACHE_DIR: &str = "jax_compilation_cache_dir";
+const JAX_CONFIG_DEFAULT_MATMUL_PRECISION: &str = "jax_default_matmul_precision";
+const JAX_CONFIG_ENABLE_X64: &str = "jax_enable_x64";
+const JAX_CONFIG_PERSISTENT_CACHE_ENABLE_XLA_CACHES: &str = "jax_persistent_cache_enable_xla_caches";
+const JAX_CONFIG_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS: &str = "jax_persistent_cache_min_compile_time_secs";
+const JAX_CONFIG_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: &str = "jax_persistent_cache_min_entry_size_bytes";
+const JAX_CONFIG_PLATFORMS: &str = "jax_platforms";
+const JAX_CONFIG_TRANSFER_GUARD: &str = "jax_transfer_guard";
 const JAX_CUDA_PLATFORM_NAME: &str = "cuda";
 const JAX_CPU_PLATFORM_NAME: &str = "cpu";
 const JAX_GPU_DEVICE_PLATFORM_NAME: &str = "gpu";
@@ -9,6 +17,7 @@ const JAX_RUNTIME_DIAGNOSTIC_LEVEL_ERROR: &str = "error";
 const JAX_RUNTIME_DIAGNOSTIC_LEVEL_INFO: &str = "info";
 const JAX_RUNTIME_GPU_VALIDATION_FAILED: &str = "failed";
 const JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED: &str = "succeeded";
+const JAX_TRANSFER_GUARD_DISALLOW: &str = "disallow";
 const XLA_AUXILIARY_CACHE_DISABLED: &str = "none";
 const XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE: &str = "xla_gpu_per_fusion_autotune_cache_dir";
 
@@ -39,6 +48,19 @@ pub struct JaxGpuValidationPlan {
     pub status: String,
     pub message: String,
     pub should_raise: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JaxRuntimeConfigValue {
+    Boolean(bool),
+    Integer(i64),
+    Text(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JaxRuntimeConfigUpdatePayload {
+    pub setting_name: String,
+    pub value: JaxRuntimeConfigValue,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -173,6 +195,33 @@ pub fn build_jax_runtime_setup_diagnostic_events(
 }
 
 #[must_use]
+pub fn plan_jax_runtime_config_updates(setup: &JaxRuntimeSetupPayload) -> Vec<JaxRuntimeConfigUpdatePayload> {
+    let mut updates = vec![
+        text_config_update(JAX_CONFIG_PLATFORMS, setup.platform_name.clone()),
+        boolean_config_update(JAX_CONFIG_ENABLE_X64, true),
+        text_config_update(JAX_CONFIG_DEFAULT_MATMUL_PRECISION, setup.matmul_precision.clone()),
+    ];
+    if setup.persistent_cache_enabled {
+        updates.extend([
+            text_config_update(JAX_CONFIG_COMPILATION_CACHE_DIR, setup.cache_directory.clone()),
+            integer_config_update(
+                JAX_CONFIG_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
+                setup.persistent_cache_min_entry_size_bytes,
+            ),
+            integer_config_update(
+                JAX_CONFIG_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
+                setup.persistent_cache_min_compile_time_seconds,
+            ),
+            text_config_update(JAX_CONFIG_PERSISTENT_CACHE_ENABLE_XLA_CACHES, setup.xla_auxiliary_cache_mode.clone()),
+        ]);
+    }
+    if setup.transfer_guard_enabled {
+        updates.push(text_config_update(JAX_CONFIG_TRANSFER_GUARD, JAX_TRANSFER_GUARD_DISALLOW.to_string()));
+    }
+    updates
+}
+
+#[must_use]
 pub fn plan_jax_gpu_validation(
     nvidia_driver_visible: bool,
     backend_initialization_failed: bool,
@@ -227,6 +276,18 @@ fn gpu_validation_fields(setup: &JaxRuntimeSetupPayload) -> Vec<JaxRuntimeDiagno
         fields.push(text_field("message", message));
     }
     fields
+}
+
+fn boolean_config_update(name: &str, value: bool) -> JaxRuntimeConfigUpdatePayload {
+    JaxRuntimeConfigUpdatePayload { setting_name: name.to_string(), value: JaxRuntimeConfigValue::Boolean(value) }
+}
+
+fn integer_config_update(name: &str, value: i64) -> JaxRuntimeConfigUpdatePayload {
+    JaxRuntimeConfigUpdatePayload { setting_name: name.to_string(), value: JaxRuntimeConfigValue::Integer(value) }
+}
+
+fn text_config_update(name: &str, value: String) -> JaxRuntimeConfigUpdatePayload {
+    JaxRuntimeConfigUpdatePayload { setting_name: name.to_string(), value: JaxRuntimeConfigValue::Text(value) }
 }
 
 fn boolean_field(name: &str, value: bool) -> JaxRuntimeDiagnosticFieldPayload {
@@ -291,6 +352,30 @@ mod tests {
 
         assert_eq!(events[4].level, JAX_RUNTIME_DIAGNOSTIC_LEVEL_ERROR);
         assert_eq!(events[4].fields[1].value, JaxRuntimeDiagnosticValue::Text("no gpu".to_string()));
+    }
+
+    #[test]
+    fn plans_ordered_jax_runtime_config_updates() {
+        let setup = resolve_jax_runtime_setup("cpu", "cache", Some("highest"), true, 1024, 5, true, true);
+
+        let updates = plan_jax_runtime_config_updates(&setup);
+
+        assert_eq!(
+            updates,
+            vec![
+                text_config_update(JAX_CONFIG_PLATFORMS, JAX_CPU_PLATFORM_NAME.to_string()),
+                boolean_config_update(JAX_CONFIG_ENABLE_X64, true),
+                text_config_update(JAX_CONFIG_DEFAULT_MATMUL_PRECISION, "highest".to_string()),
+                text_config_update(JAX_CONFIG_COMPILATION_CACHE_DIR, "cache".to_string()),
+                integer_config_update(JAX_CONFIG_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES, 1024),
+                integer_config_update(JAX_CONFIG_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS, 5),
+                text_config_update(
+                    JAX_CONFIG_PERSISTENT_CACHE_ENABLE_XLA_CACHES,
+                    XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE.to_string(),
+                ),
+                text_config_update(JAX_CONFIG_TRANSFER_GUARD, JAX_TRANSFER_GUARD_DISALLOW.to_string()),
+            ]
+        );
     }
 
     #[test]

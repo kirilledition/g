@@ -123,9 +123,15 @@ def test_configure_before_backend_init_sets_platform_first(tmp_path: Path) -> No
         report = setup.configure_before_backend_init(policy, diagnostic_sink=None)
 
     assert report.cache_directory == cache_directory
-    assert mock_update.call_args_list[0].args == ("jax_platforms", "cpu")
-    assert ("jax_enable_x64", True) in [call.args for call in mock_update.call_args_list]
-    assert ("jax_compilation_cache_dir", str(cache_directory)) in [call.args for call in mock_update.call_args_list]
+    assert [call.args for call in mock_update.call_args_list] == [
+        ("jax_platforms", "cpu"),
+        ("jax_enable_x64", True),
+        ("jax_default_matmul_precision", "float32"),
+        ("jax_compilation_cache_dir", str(cache_directory)),
+        ("jax_persistent_cache_min_entry_size_bytes", 0),
+        ("jax_persistent_cache_min_compile_time_secs", 0),
+        ("jax_persistent_cache_enable_xla_caches", "none"),
+    ]
 
 
 def test_configure_before_backend_init_validates_gpu_after_runtime(tmp_path: Path) -> None:

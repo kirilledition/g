@@ -213,6 +213,50 @@ def test_native_jax_runtime_setup_diagnostic_payloads() -> None:
     ]
 
 
+def test_native_jax_runtime_config_update_payloads() -> None:
+    update_payloads = _core.plan_jax_runtime_config_update_payloads(
+        platform_name="cuda",
+        cache_directory="/tmp/g-cache",
+        matmul_precision="float32",
+        persistent_cache_enabled=True,
+        persistent_cache_min_entry_size_bytes=1024,
+        persistent_cache_min_compile_time_seconds=5,
+        xla_auxiliary_cache_mode="xla_gpu_per_fusion_autotune_cache_dir",
+        transfer_guard_enabled=True,
+    )
+
+    assert list(update_payloads) == [
+        {"setting_name": "jax_platforms", "value": "cuda"},
+        {"setting_name": "jax_enable_x64", "value": True},
+        {"setting_name": "jax_default_matmul_precision", "value": "float32"},
+        {"setting_name": "jax_compilation_cache_dir", "value": "/tmp/g-cache"},
+        {"setting_name": "jax_persistent_cache_min_entry_size_bytes", "value": 1024},
+        {"setting_name": "jax_persistent_cache_min_compile_time_secs", "value": 5},
+        {
+            "setting_name": "jax_persistent_cache_enable_xla_caches",
+            "value": "xla_gpu_per_fusion_autotune_cache_dir",
+        },
+        {"setting_name": "jax_transfer_guard", "value": "disallow"},
+    ]
+
+    minimal_update_payloads = _core.plan_jax_runtime_config_update_payloads(
+        platform_name="cpu",
+        cache_directory="/tmp/g-cache",
+        matmul_precision="highest",
+        persistent_cache_enabled=False,
+        persistent_cache_min_entry_size_bytes=0,
+        persistent_cache_min_compile_time_seconds=0,
+        xla_auxiliary_cache_mode="none",
+        transfer_guard_enabled=False,
+    )
+
+    assert list(minimal_update_payloads) == [
+        {"setting_name": "jax_platforms", "value": "cpu"},
+        {"setting_name": "jax_enable_x64", "value": True},
+        {"setting_name": "jax_default_matmul_precision", "value": "highest"},
+    ]
+
+
 def test_native_jax_gpu_validation_plan() -> None:
     missing_driver_plan = _core.plan_jax_gpu_validation_payload(
         nvidia_driver_visible=False,

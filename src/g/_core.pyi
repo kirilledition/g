@@ -1256,6 +1256,16 @@ def build_jax_runtime_setup_diagnostic_payloads(
     gpu_validation_status: str,
     gpu_validation_message: str | None,
 ) -> tuple[dict[str, object], ...]: ...
+def plan_jax_runtime_config_update_payloads(
+    platform_name: str,
+    cache_directory: str,
+    matmul_precision: str,
+    persistent_cache_enabled: bool,
+    persistent_cache_min_entry_size_bytes: int,
+    persistent_cache_min_compile_time_seconds: int,
+    xla_auxiliary_cache_mode: str,
+    transfer_guard_enabled: bool,
+) -> tuple[dict[str, object], ...]: ...
 def plan_jax_gpu_validation_payload(
     nvidia_driver_visible: bool,
     backend_initialization_failed: bool,

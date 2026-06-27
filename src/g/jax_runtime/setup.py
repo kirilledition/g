@@ -37,25 +37,7 @@ def configure_before_backend_init(
     setup_report = resolution.resolve_jax_runtime_setup(policy)
     if setup_report.persistent_cache_enabled:
         setup_report.cache_directory.mkdir(parents=True, exist_ok=True)
-    jax.config.update("jax_platforms", setup_report.platform_name)
-    jax.config.update("jax_enable_x64", models.JAX_ENABLE_X64)
-    jax.config.update("jax_default_matmul_precision", setup_report.matmul_precision.value)
-    if setup_report.persistent_cache_enabled:
-        jax.config.update("jax_compilation_cache_dir", str(setup_report.cache_directory))
-        jax.config.update(
-            "jax_persistent_cache_min_entry_size_bytes",
-            setup_report.persistent_cache_min_entry_size_bytes,
-        )
-        jax.config.update(
-            "jax_persistent_cache_min_compile_time_secs",
-            setup_report.persistent_cache_min_compile_time_seconds,
-        )
-        jax.config.update(
-            "jax_persistent_cache_enable_xla_caches",
-            setup_report.xla_auxiliary_cache_mode.value,
-        )
-    if setup_report.transfer_guard_enabled:
-        jax.config.update("jax_transfer_guard", "disallow")
+    apply_jax_runtime_config_updates(setup_report)
     if policy.device != types.Device.GPU:
         if diagnostic_sink is not None:
             for diagnostic_event in diagnostics.diagnostic_events_from_setup_report(setup_report):
@@ -94,6 +76,23 @@ def nvidia_driver_is_visible() -> bool:
     return (
         NVIDIA_CONTROL_DEVICE_PATH.exists() or NVIDIA_UVM_DEVICE_PATH.exists() or NVIDIA_DRIVER_DIRECTORY_PATH.exists()
     )
+
+
+def apply_jax_runtime_config_updates(setup_report: models.JaxRuntimeSetupReport) -> None:
+    """Apply native-ordered JAX runtime config updates."""
+    update_payloads = _core.plan_jax_runtime_config_update_payloads(
+        platform_name=setup_report.platform_name,
+        cache_directory=str(setup_report.cache_directory),
+        matmul_precision=setup_report.matmul_precision.value,
+        persistent_cache_enabled=setup_report.persistent_cache_enabled,
+        persistent_cache_min_entry_size_bytes=setup_report.persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds=setup_report.persistent_cache_min_compile_time_seconds,
+        xla_auxiliary_cache_mode=setup_report.xla_auxiliary_cache_mode.value,
+        transfer_guard_enabled=setup_report.transfer_guard_enabled,
+    )
+    for update_payload in update_payloads:
+        update_mapping = dict(typing.cast("typing.Mapping[str, object]", update_payload))
+        jax.config.update(str(update_mapping["setting_name"]), update_mapping["value"])
 
 
 def require_gpu_device() -> None:

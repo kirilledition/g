@@ -11,9 +11,10 @@ pub mod telemetry_session;
 pub mod timing;
 
 pub use jax_runtime::{
-    JaxDeviceObservation, JaxGpuValidationPlan, JaxRuntimeDiagnosticEventPayload, JaxRuntimeDiagnosticFieldPayload,
-    JaxRuntimeDiagnosticValue, JaxRuntimeSetupPayload, build_jax_runtime_setup_diagnostic_events,
-    plan_jax_gpu_validation, resolve_jax_runtime_setup,
+    JaxDeviceObservation, JaxGpuValidationPlan, JaxRuntimeConfigUpdatePayload, JaxRuntimeConfigValue,
+    JaxRuntimeDiagnosticEventPayload, JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticValue,
+    JaxRuntimeSetupPayload, build_jax_runtime_setup_diagnostic_events, plan_jax_gpu_validation,
+    plan_jax_runtime_config_updates, resolve_jax_runtime_setup,
 };
 pub use run_events::{
     RunArtifactPayload, RunArtifactTelemetryFields, RunCompletedEventPayload, RunCompletedTelemetryFields,

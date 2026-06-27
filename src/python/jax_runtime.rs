@@ -74,6 +74,42 @@ pub(crate) fn build_jax_runtime_setup_diagnostic_payloads<'py>(
 }
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_jax_runtime_config_update_payloads<'py>(
+    py: Python<'py>,
+    platform_name: String,
+    cache_directory: String,
+    matmul_precision: String,
+    persistent_cache_enabled: bool,
+    persistent_cache_min_entry_size_bytes: i64,
+    persistent_cache_min_compile_time_seconds: i64,
+    xla_auxiliary_cache_mode: String,
+    transfer_guard_enabled: bool,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let setup = native_jax_runtime::JaxRuntimeSetupPayload {
+        requested_device: String::new(),
+        platform_name,
+        cache_directory,
+        matmul_precision,
+        persistent_cache_enabled,
+        persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds,
+        xla_auxiliary_cache_mode,
+        xla_auxiliary_cache_reason: String::new(),
+        transfer_guard_enabled,
+        gpu_validation_status: String::new(),
+        gpu_validation_message: None,
+    };
+    let updates = native_jax_runtime::plan_jax_runtime_config_updates(&setup);
+    let update_payloads = updates
+        .iter()
+        .map(|update| jax_runtime_config_update_payload_to_dict(py, update))
+        .collect::<PyResult<Vec<_>>>()?;
+    PyTuple::new(py, &update_payloads)
+}
+
+#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn plan_jax_gpu_validation_payload<'py>(
     py: Python<'py>,
@@ -123,6 +159,20 @@ fn jax_gpu_validation_plan_to_dict<'py>(
     payload.set_item("status", &plan.status)?;
     payload.set_item("message", &plan.message)?;
     payload.set_item("should_raise", plan.should_raise)?;
+    Ok(payload)
+}
+
+fn jax_runtime_config_update_payload_to_dict<'py>(
+    py: Python<'py>,
+    update: &native_jax_runtime::JaxRuntimeConfigUpdatePayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("setting_name", &update.setting_name)?;
+    match &update.value {
+        native_jax_runtime::JaxRuntimeConfigValue::Boolean(value) => payload.set_item("value", *value)?,
+        native_jax_runtime::JaxRuntimeConfigValue::Integer(value) => payload.set_item("value", *value)?,
+        native_jax_runtime::JaxRuntimeConfigValue::Text(value) => payload.set_item("value", value)?,
+    }
     Ok(payload)
 }
 

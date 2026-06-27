@@ -62,7 +62,8 @@ use host_policy::{
     resolve_association_mode_value,
 };
 use jax_runtime::{
-    build_jax_runtime_setup_diagnostic_payloads, plan_jax_gpu_validation_payload, resolve_jax_runtime_setup_payload,
+    build_jax_runtime_setup_diagnostic_payloads, plan_jax_gpu_validation_payload,
+    plan_jax_runtime_config_update_payloads, resolve_jax_runtime_setup_payload,
 };
 use logging::{
     NativeTelemetryProgressThrottle, NativeTelemetrySession, build_current_telemetry_event_payload,
@@ -1845,6 +1846,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_jax_runtime_setup_diagnostic_payloads, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_jax_runtime_config_update_payloads, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
