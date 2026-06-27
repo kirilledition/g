@@ -783,6 +783,20 @@ def test_plan_writer_finish_execution_uses_native_cleanup_policy() -> None:
     assert finish_plan.uses_parallel_finish is True
 
 
+def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
+    cleanup_plan = native_dispatch_delivery.plan_bgen_delivery_cleanup(
+        cleanup_outcome=native_dispatch_delivery.BgenDeliveryCleanupOutcome.INTERRUPTED,
+        callback_finished=False,
+    )
+
+    assert cleanup_plan.drain_callback is True
+    assert cleanup_plan.finish_writer_sessions is False
+    assert cleanup_plan.finish_interrupted_writer_sessions is True
+    assert cleanup_plan.abort_callback is False
+    assert cleanup_plan.abort_writer_sessions is False
+    assert cleanup_plan.write_stage_timing_snapshot is True
+
+
 def test_plan_output_write_methods_use_native_cleanup_policy() -> None:
     single_write_plan = callback_writers._core.plan_single_trait_output_write(
         is_native_writer_session=True,

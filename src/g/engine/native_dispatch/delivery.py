@@ -28,6 +28,24 @@ class BgenDeliveryMethod(enum.StrEnum):
     PACKED8_SAMPLE_INDICES = "packed8_sample_indices"
 
 
+class BgenDeliveryCleanupOutcome(enum.StrEnum):
+    """Native BGEN delivery cleanup outcome selected by engine lifecycle policy."""
+
+    SUCCESS = "success"
+    INTERRUPTED = "interrupted"
+    FAILURE = "failure"
+    INTERRUPTED_CLEANUP_FAILURE = "interrupted_cleanup_failure"
+
+
+def plan_bgen_delivery_cleanup(
+    *,
+    cleanup_outcome: BgenDeliveryCleanupOutcome,
+    callback_finished: bool,
+) -> _core.NativeBgenDeliveryCleanupPlan:
+    """Return the native cleanup plan for one delivery outcome."""
+    return _core.plan_bgen_delivery_cleanup(cleanup_outcome.value, callback_finished)
+
+
 def resolve_native_callback_batch_size(
     callback: object,
     *,
@@ -69,6 +87,10 @@ def run_variant_major_packed8_delivery(
     native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
     delivery_method = resolve_bgen_delivery_method(run_input, variant_major_packed8_probability_pairs=True)
     if delivery_method is BgenDeliveryMethod.PACKED8_NATIVE_MULTI_ALIGNED_SAMPLES:
+        native_multi_aligned_sample_data = typing.cast(
+            "_core.NativeMultiAlignedSampleData",
+            native_multi_aligned_sample_data,
+        )
         return int(
             engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_multi_aligned_samples(
                 native_multi_aligned_sample_data,
@@ -77,6 +99,7 @@ def run_variant_major_packed8_delivery(
             )
         )
     if delivery_method is BgenDeliveryMethod.PACKED8_NATIVE_ALIGNED_SAMPLES:
+        native_aligned_sample_data = typing.cast("_core.NativeAlignedSampleData", native_aligned_sample_data)
         return int(
             engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_aligned_samples(
                 native_aligned_sample_data,
@@ -108,6 +131,10 @@ def run_variant_major_dosage_delivery(
     native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
     delivery_method = resolve_bgen_delivery_method(run_input, variant_major_packed8_probability_pairs=False)
     if delivery_method is BgenDeliveryMethod.DOSAGE_NATIVE_MULTI_ALIGNED_SAMPLES:
+        native_multi_aligned_sample_data = typing.cast(
+            "_core.NativeMultiAlignedSampleData",
+            native_multi_aligned_sample_data,
+        )
         return int(
             engine.run_bgen_variant_major_dosage_buffered_chunks_for_native_multi_aligned_samples(
                 native_multi_aligned_sample_data,
@@ -117,6 +144,7 @@ def run_variant_major_dosage_delivery(
             )
         )
     if delivery_method is BgenDeliveryMethod.DOSAGE_NATIVE_ALIGNED_SAMPLES:
+        native_aligned_sample_data = typing.cast("_core.NativeAlignedSampleData", native_aligned_sample_data)
         return int(
             engine.run_bgen_variant_major_dosage_buffered_chunks_for_native_aligned_samples(
                 native_aligned_sample_data,
@@ -150,6 +178,7 @@ def run_bgen_engine_with_writer_sessions(
 ) -> tuple[Path | None, ...]:
     """Run native BGEN chunk delivery and close all output writers."""
     callback_finished = False
+    final_parquet_paths: tuple[Path | None, ...] = ()
     try:
         if stage_timing_recorder is not None:
             engine.reset_profile()
@@ -180,38 +209,65 @@ def run_bgen_engine_with_writer_sessions(
         logger.debug("%s delivery finished: processed_chunk_count=%s.", pipeline_label, processed_chunk_count)
         if stage_timing_recorder is not None:
             stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
-        writers.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
-        callback_finished = True
-        final_parquet_paths = writers.finish_writer_sessions(
-            writer_sessions=writer_sessions,
-            writer_finish_thread_count=writer_finish_thread_count,
-            stage_timing_recorder=stage_timing_recorder,
+        cleanup_plan = plan_bgen_delivery_cleanup(
+            cleanup_outcome=BgenDeliveryCleanupOutcome.SUCCESS,
+            callback_finished=callback_finished,
         )
-    except shutdown.GracefulShutdownRequested as shutdown_request:
-        logger.info("%s delivery interrupted by %s.", pipeline_label, shutdown_request.signal_name)
-        try:
-            if not callback_finished:
-                writers.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
-            writers.finish_writer_sessions_interrupted(
+        if cleanup_plan.drain_callback:
+            writers.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+            callback_finished = True
+        if cleanup_plan.finish_writer_sessions:
+            final_parquet_paths = writers.finish_writer_sessions(
                 writer_sessions=writer_sessions,
-                shutdown_request=shutdown_request,
                 writer_finish_thread_count=writer_finish_thread_count,
                 stage_timing_recorder=stage_timing_recorder,
             )
+    except shutdown.GracefulShutdownRequested as shutdown_request:
+        logger.info("%s delivery interrupted by %s.", pipeline_label, shutdown_request.signal_name)
+        cleanup_plan = plan_bgen_delivery_cleanup(
+            cleanup_outcome=BgenDeliveryCleanupOutcome.INTERRUPTED,
+            callback_finished=callback_finished,
+        )
+        try:
+            if cleanup_plan.drain_callback:
+                writers.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+            if cleanup_plan.finish_interrupted_writer_sessions:
+                writers.finish_writer_sessions_interrupted(
+                    writer_sessions=writer_sessions,
+                    shutdown_request=shutdown_request,
+                    writer_finish_thread_count=writer_finish_thread_count,
+                    stage_timing_recorder=stage_timing_recorder,
+                )
         except BaseException:
-            writers.abort_callback(callback)
-            writers.abort_writer_sessions(writer_sessions)
-            stage_timing_snapshot_writer(stage_timing_recorder, None)
+            cleanup_failure_plan = plan_bgen_delivery_cleanup(
+                cleanup_outcome=BgenDeliveryCleanupOutcome.INTERRUPTED_CLEANUP_FAILURE,
+                callback_finished=callback_finished,
+            )
+            if cleanup_failure_plan.abort_callback:
+                writers.abort_callback(callback)
+            if cleanup_failure_plan.abort_writer_sessions:
+                writers.abort_writer_sessions(writer_sessions)
+            if cleanup_failure_plan.write_stage_timing_snapshot:
+                stage_timing_snapshot_writer(stage_timing_recorder, None)
             raise
-        stage_timing_snapshot_writer(stage_timing_recorder, None)
+        if cleanup_plan.write_stage_timing_snapshot:
+            stage_timing_snapshot_writer(stage_timing_recorder, None)
         raise
     except BaseException:
         logger.exception("%s delivery failed.", pipeline_label)
-        writers.abort_callback(callback)
-        writers.abort_writer_sessions(writer_sessions)
-        stage_timing_snapshot_writer(stage_timing_recorder, None)
+        cleanup_plan = plan_bgen_delivery_cleanup(
+            cleanup_outcome=BgenDeliveryCleanupOutcome.FAILURE,
+            callback_finished=callback_finished,
+        )
+        if cleanup_plan.abort_callback:
+            writers.abort_callback(callback)
+        if cleanup_plan.abort_writer_sessions:
+            writers.abort_writer_sessions(writer_sessions)
+        if cleanup_plan.write_stage_timing_snapshot:
+            stage_timing_snapshot_writer(stage_timing_recorder, None)
         raise
-    stage_timing_snapshot_writer(stage_timing_recorder, None)
+    if cleanup_plan.write_stage_timing_snapshot:
+        stage_timing_snapshot_writer(stage_timing_recorder, None)
     logger.info("%s pipeline finished.", pipeline_label)
     return final_parquet_paths
 

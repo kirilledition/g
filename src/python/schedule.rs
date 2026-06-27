@@ -49,6 +49,11 @@ pub(crate) struct NativeWriterFinishExecutionPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeBgenDeliveryCleanupPlan {
+    inner: native_schedule::BgenDeliveryCleanupPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeSingleTraitOutputWritePlan {
     inner: native_schedule::SingleTraitOutputWritePlan,
 }
@@ -349,6 +354,39 @@ impl NativeWriterFinishExecutionPlan {
 }
 
 #[pymethods]
+impl NativeBgenDeliveryCleanupPlan {
+    #[getter]
+    fn drain_callback(&self) -> bool {
+        self.inner.drain_callback()
+    }
+
+    #[getter]
+    fn finish_writer_sessions(&self) -> bool {
+        self.inner.finish_writer_sessions()
+    }
+
+    #[getter]
+    fn finish_interrupted_writer_sessions(&self) -> bool {
+        self.inner.finish_interrupted_writer_sessions()
+    }
+
+    #[getter]
+    fn abort_callback(&self) -> bool {
+        self.inner.abort_callback()
+    }
+
+    #[getter]
+    fn abort_writer_sessions(&self) -> bool {
+        self.inner.abort_writer_sessions()
+    }
+
+    #[getter]
+    fn write_stage_timing_snapshot(&self) -> bool {
+        self.inner.write_stage_timing_snapshot()
+    }
+}
+
+#[pymethods]
 impl NativeSingleTraitOutputWritePlan {
     #[getter]
     fn method_name(&self) -> &str {
@@ -532,6 +570,12 @@ impl From<native_schedule::MultiTraitChunkWritePlan> for NativeMultiTraitChunkWr
 impl From<native_schedule::WriterFinishExecutionPlan> for NativeWriterFinishExecutionPlan {
     fn from(finish_plan: native_schedule::WriterFinishExecutionPlan) -> Self {
         Self { inner: finish_plan }
+    }
+}
+
+impl From<native_schedule::BgenDeliveryCleanupPlan> for NativeBgenDeliveryCleanupPlan {
+    fn from(cleanup_plan: native_schedule::BgenDeliveryCleanupPlan) -> Self {
+        Self { inner: cleanup_plan }
     }
 }
 
@@ -846,6 +890,17 @@ pub(crate) fn plan_writer_finish_execution(
     requested_thread_count: i64,
 ) -> PyResult<NativeWriterFinishExecutionPlan> {
     native_schedule::plan_writer_finish_execution(writer_session_count, requested_thread_count)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_bgen_delivery_cleanup(
+    cleanup_outcome: String,
+    callback_finished: bool,
+) -> PyResult<NativeBgenDeliveryCleanupPlan> {
+    native_schedule::plan_bgen_delivery_cleanup(&cleanup_outcome, callback_finished)
         .map(Into::into)
         .map_err(|error| schedule_error_to_py(&error))
 }

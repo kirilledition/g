@@ -1155,6 +1155,51 @@ def test_plan_writer_finish_execution_uses_native_cleanup_policy() -> None:
         _core.plan_writer_finish_execution(writer_session_count=1, requested_thread_count=0)
 
 
+def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
+    success_plan = _core.plan_bgen_delivery_cleanup(cleanup_outcome="success", callback_finished=False)
+    assert success_plan.drain_callback is True
+    assert success_plan.finish_writer_sessions is True
+    assert success_plan.finish_interrupted_writer_sessions is False
+    assert success_plan.abort_callback is False
+    assert success_plan.abort_writer_sessions is False
+    assert success_plan.write_stage_timing_snapshot is True
+
+    interrupted_pending_callback_plan = _core.plan_bgen_delivery_cleanup(
+        cleanup_outcome="interrupted",
+        callback_finished=False,
+    )
+    assert interrupted_pending_callback_plan.drain_callback is True
+    assert interrupted_pending_callback_plan.finish_writer_sessions is False
+    assert interrupted_pending_callback_plan.finish_interrupted_writer_sessions is True
+    assert interrupted_pending_callback_plan.abort_callback is False
+    assert interrupted_pending_callback_plan.abort_writer_sessions is False
+
+    interrupted_finished_callback_plan = _core.plan_bgen_delivery_cleanup(
+        cleanup_outcome="interrupted",
+        callback_finished=True,
+    )
+    assert interrupted_finished_callback_plan.drain_callback is False
+    assert interrupted_finished_callback_plan.finish_interrupted_writer_sessions is True
+
+    failure_plan = _core.plan_bgen_delivery_cleanup(cleanup_outcome="failure", callback_finished=False)
+    assert failure_plan.drain_callback is False
+    assert failure_plan.finish_writer_sessions is False
+    assert failure_plan.finish_interrupted_writer_sessions is False
+    assert failure_plan.abort_callback is True
+    assert failure_plan.abort_writer_sessions is True
+    assert failure_plan.write_stage_timing_snapshot is True
+
+    cleanup_failure_plan = _core.plan_bgen_delivery_cleanup(
+        cleanup_outcome="interrupted_cleanup_failure",
+        callback_finished=False,
+    )
+    assert cleanup_failure_plan.abort_callback is True
+    assert cleanup_failure_plan.abort_writer_sessions is True
+
+    with pytest.raises(ValueError, match="Unsupported BGEN delivery cleanup outcome"):
+        _core.plan_bgen_delivery_cleanup(cleanup_outcome="unknown", callback_finished=False)
+
+
 def test_plan_output_write_methods_use_native_dtype_policy() -> None:
     native_float64_write_plan = _core.plan_single_trait_output_write(
         is_native_writer_session=True,
