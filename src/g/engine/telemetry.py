@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import threading
 import time
@@ -180,8 +179,7 @@ class TelemetrySession:
         """Append one JSON line when the destination path is configured."""
         if self.native_telemetry_session is None:
             return
-        line = f"{json.dumps(payload, sort_keys=True, default=str)}\n"
-        self.native_telemetry_session.emit_json_line(line)
+        self.native_telemetry_session.emit_payload(payload)
 
     def writer_counters(self) -> TelemetryWriterCounters:
         """Return the current native telemetry writer counters."""

@@ -230,7 +230,13 @@ def test_telemetry_session_writes_schema_events_and_throttled_progress(tmp_path:
         run_id="run-1",
     )
 
-    telemetry_session.log_event("run_started", level="info", association_mode="regenie2_linear")
+    artifact_path = tmp_path / "artifact.txt"
+    telemetry_session.log_event(
+        "run_started",
+        level="info",
+        association_mode="regenie2_linear",
+        artifact_path=artifact_path,
+    )
     telemetry_session.log_progress(processed_chunk_count=1, chromosome="22")
     telemetry_session.log_progress(processed_chunk_count=2, chromosome="22")
     telemetry_session.close()
@@ -242,6 +248,7 @@ def test_telemetry_session_writes_schema_events_and_throttled_progress(tmp_path:
     assert event_payload["schema_version"] == 1
     assert event_payload["run_id"] == "run-1"
     assert event_payload["event"] == "run_started"
+    assert event_payload["artifact_path"] == str(artifact_path)
     assert len(progress_payloads) == 1
     assert progress_payloads[0]["event"] == "progress_tick"
     assert progress_payloads[0]["processed_chunk_count"] == 1

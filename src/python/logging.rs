@@ -13,7 +13,7 @@ use std::time::Instant;
 use g_runtime::telemetry_session as native_telemetry_session;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyModule};
 use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -156,6 +156,11 @@ impl NativeTelemetrySession {
         Ok(())
     }
 
+    pub fn emit_payload(&self, py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<()> {
+        let json_line = serialize_telemetry_payload_json_line(py, payload)?;
+        self.emit_json_line(&json_line)
+    }
+
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::unused_self)]
     pub fn build_event_payload<'py>(
@@ -280,6 +285,16 @@ fn telemetry_writer_counter_snapshot_to_py_dict<'py>(
     counters.set_item("event_cap", snapshot.event_cap)?;
     counters.set_item("finish_flush_duration_seconds", snapshot.finish_flush_duration_seconds)?;
     Ok(counters)
+}
+
+fn serialize_telemetry_payload_json_line(py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<String> {
+    let json_module = PyModule::import(py, "json")?;
+    let builtins_module = PyModule::import(py, "builtins")?;
+    let keyword_arguments = PyDict::new(py);
+    keyword_arguments.set_item("sort_keys", true)?;
+    keyword_arguments.set_item("default", builtins_module.getattr("str")?)?;
+    let json_text = json_module.call_method("dumps", (payload,), Some(&keyword_arguments))?.extract::<String>()?;
+    Ok(format!("{json_text}\n"))
 }
 
 #[pyfunction]
