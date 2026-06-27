@@ -133,7 +133,8 @@ def test_stage_timing_recorder_aggregates_transfer_metadata() -> None:
             total_elements=24,
         ),
     )
-    assert timing.build_derived_metrics(snapshot) == {"host_to_device_transfer_bytes_per_second": 48.0}
+    assert recorder.derived_metrics_payload() == {"host_to_device_transfer_bytes_per_second": 48.0}
+    assert recorder.stage_timing_json_payload()["derived_metrics"] == {"host_to_device_transfer_bytes_per_second": 48.0}
 
 
 def test_build_stage_timing_recorder_is_opt_in(tmp_path: Path) -> None:
@@ -248,19 +249,13 @@ def test_write_profile_summary_persists_aggregate_payload(tmp_path: Path) -> Non
     assert payload["binary_chunk_summary"]["firth_iteration_max"] == 8
 
 
-def test_build_derived_metrics_omits_zero_denominator_values() -> None:
-    snapshot = timing.StageTimingSnapshot(
-        stage_totals_seconds={"native_engine_delivery": 0.0, "output_write": 2.0},
-        stage_counts={"native_engine_delivery": 1},
-        chunk_stage_timings=(),
-        native_bgen_profile={"variant_decode_count": 0, "selected_sample_count": 10},
-        binary_chunk_diagnostics=(),
-        null_logistic_diagnostics=(),
-        queue_backpressure=(),
-        transfer_metadata=(),
-    )
+def test_native_derived_metrics_omit_zero_denominator_values() -> None:
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    recorder.add_stage_duration("native_engine_delivery", 0.0)
+    recorder.add_stage_duration("output_write", 2.0)
+    recorder.set_native_bgen_profile({"variant_decode_count": 0, "selected_sample_count": 10})
 
-    assert timing.build_derived_metrics(snapshot) == {}
+    assert recorder.derived_metrics_payload() == {}
 
 
 def test_record_stage_duration_uses_elapsed_perf_counter(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -121,22 +121,12 @@ impl NativeStageTimingRecorder {
 
     fn snapshot_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let state = self.lock_state()?;
-        let payload = PyDict::new(py);
-        payload.set_item("stage_totals_seconds", build_float_mapping(py, &state.stage_totals_seconds)?)?;
-        payload.set_item("stage_counts", build_integer_mapping(py, &state.stage_counts)?)?;
-        payload.set_item("chunk_stage_timings", build_chunk_stage_timing_payloads(py, &state.chunk_stage_timings)?)?;
-        payload.set_item("native_bgen_profile", build_integer_mapping(py, &state.native_bgen_profile)?)?;
-        payload.set_item(
-            "binary_chunk_diagnostics",
-            build_binary_chunk_diagnostics_payloads(py, &state.binary_chunk_diagnostics)?,
-        )?;
-        payload.set_item(
-            "null_logistic_diagnostics",
-            build_null_logistic_diagnostics_payloads(py, &state.null_logistic_diagnostics)?,
-        )?;
-        payload.set_item("queue_backpressure", build_queue_backpressure_payloads(py, &state.queue_backpressure)?)?;
-        payload.set_item("transfer_metadata", build_transfer_metadata_payloads(py, &state.transfer_metadata)?)?;
-        Ok(payload)
+        build_stage_timing_snapshot_payload(py, &state.build_stage_timing_snapshot_payload())
+    }
+
+    fn stage_timing_json_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let state = self.lock_state()?;
+        build_stage_timing_json_payload(py, &state.build_stage_timing_snapshot_payload())
     }
 
     fn derived_metrics_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -221,6 +211,46 @@ fn build_integer_mapping<'py>(py: Python<'py>, values: &BTreeMap<String, i64>) -
     Ok(mapping)
 }
 
+fn build_stage_timing_snapshot_payload<'py>(
+    py: Python<'py>,
+    snapshot_payload: &native_timing::StageTimingSnapshotPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("stage_totals_seconds", build_float_mapping(py, &snapshot_payload.stage_totals_seconds)?)?;
+    payload.set_item("stage_counts", build_integer_mapping(py, &snapshot_payload.stage_counts)?)?;
+    payload.set_item(
+        "chunk_stage_timings",
+        build_chunk_stage_timing_payloads(py, &snapshot_payload.chunk_stage_timings)?,
+    )?;
+    payload.set_item("native_bgen_profile", build_integer_mapping(py, &snapshot_payload.native_bgen_profile)?)?;
+    payload.set_item(
+        "binary_chunk_diagnostics",
+        build_binary_chunk_diagnostics_payloads(py, &snapshot_payload.binary_chunk_diagnostics)?,
+    )?;
+    payload.set_item(
+        "null_logistic_diagnostics",
+        build_null_logistic_diagnostics_payloads(py, &snapshot_payload.null_logistic_diagnostics)?,
+    )?;
+    payload.set_item(
+        "queue_backpressure",
+        build_queue_backpressure_summary_payloads(py, &snapshot_payload.queue_backpressure)?,
+    )?;
+    payload.set_item(
+        "transfer_metadata",
+        build_transfer_metadata_summary_payloads(py, &snapshot_payload.transfer_metadata)?,
+    )?;
+    Ok(payload)
+}
+
+fn build_stage_timing_json_payload<'py>(
+    py: Python<'py>,
+    snapshot_payload: &native_timing::StageTimingSnapshotPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = build_stage_timing_snapshot_payload(py, snapshot_payload)?;
+    payload.set_item("derived_metrics", build_float_mapping(py, &snapshot_payload.derived_metrics)?)?;
+    Ok(payload)
+}
+
 fn build_chunk_stage_timing_payloads<'py>(
     py: Python<'py>,
     timings: &[native_timing::ChunkStageTiming],
@@ -284,49 +314,6 @@ fn build_null_logistic_diagnostics_payloads<'py>(
                     }
                 }
             }
-            Ok(payload)
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &payloads)
-}
-
-fn build_queue_backpressure_payloads<'py>(
-    py: Python<'py>,
-    queue_backpressure: &BTreeMap<native_timing::QueueBackpressureKey, native_timing::QueueBackpressureAccumulator>,
-) -> PyResult<Bound<'py, PyTuple>> {
-    let payloads = queue_backpressure
-        .iter()
-        .map(|(key, accumulator)| {
-            let payload = PyDict::new(py);
-            payload.set_item("queue_name", &key.queue_name)?;
-            payload.set_item("operation_name", &key.operation_name)?;
-            payload.set_item("observation_count", accumulator.observation_count)?;
-            payload.set_item("max_depth", accumulator.max_depth)?;
-            payload.set_item("max_capacity", accumulator.max_capacity)?;
-            payload.set_item("total_elapsed_seconds", accumulator.total_elapsed_seconds)?;
-            payload.set_item("total_blocked_seconds", accumulator.total_blocked_seconds)?;
-            Ok(payload)
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &payloads)
-}
-
-fn build_transfer_metadata_payloads<'py>(
-    py: Python<'py>,
-    transfer_metadata: &BTreeMap<native_timing::TransferMetadataKey, native_timing::TransferMetadataAccumulator>,
-) -> PyResult<Bound<'py, PyTuple>> {
-    let payloads = transfer_metadata
-        .iter()
-        .map(|(key, accumulator)| {
-            let payload = PyDict::new(py);
-            payload.set_item("transfer_name", &key.transfer_name)?;
-            payload.set_item("array_role", &key.array_role)?;
-            payload.set_item("dtype_name", &key.dtype_name)?;
-            payload.set_item("ndim", key.dimension_count)?;
-            payload.set_item("observation_count", accumulator.observation_count)?;
-            payload.set_item("total_bytes", accumulator.total_bytes)?;
-            payload.set_item("max_bytes", accumulator.max_bytes)?;
-            payload.set_item("total_elements", accumulator.total_elements)?;
             Ok(payload)
         })
         .collect::<PyResult<Vec<_>>>()?;

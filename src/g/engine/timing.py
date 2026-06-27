@@ -484,6 +484,10 @@ class StageTimingRecorder:
         """Return an immutable copy of the current timings."""
         return adapt_stage_timing_snapshot_payload(self.native_recorder.snapshot_payload())
 
+    def stage_timing_json_payload(self) -> dict[str, object]:
+        """Build the JSON-ready native stage timing payload."""
+        return dict(typing.cast("typing.Mapping[str, object]", self.native_recorder.stage_timing_json_payload()))
+
     def derived_metrics_payload(self) -> dict[str, float]:
         """Build native derived metrics from the current timing state."""
         return dict(typing.cast("typing.Mapping[str, float]", self.native_recorder.derived_metrics_payload()))
@@ -611,18 +615,7 @@ def write_stage_timing_snapshot(
         return
     if stage_timing_path is None:
         return
-    snapshot = stage_timing_recorder.snapshot()
-    payload = {
-        "stage_totals_seconds": snapshot.stage_totals_seconds,
-        "stage_counts": snapshot.stage_counts,
-        "chunk_stage_timings": serialize_chunk_stage_timings(snapshot.chunk_stage_timings),
-        "native_bgen_profile": snapshot.native_bgen_profile,
-        "binary_chunk_diagnostics": serialize_binary_chunk_diagnostics(snapshot.binary_chunk_diagnostics),
-        "null_logistic_diagnostics": serialize_null_logistic_diagnostics(snapshot.null_logistic_diagnostics),
-        "queue_backpressure": serialize_queue_backpressure(snapshot.queue_backpressure),
-        "transfer_metadata": serialize_transfer_metadata(snapshot.transfer_metadata),
-        "derived_metrics": stage_timing_recorder.derived_metrics_payload(),
-    }
+    payload = stage_timing_recorder.stage_timing_json_payload()
     stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
     stage_timing_path.write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
 
@@ -760,36 +753,6 @@ def build_binary_chunk_summary(
         float(diagnostics.get("firth_iteration_max", 0.0)) for diagnostics in diagnostics_mappings
     )
     return summary
-
-
-def build_derived_metrics(snapshot: StageTimingSnapshot) -> dict[str, float]:
-    """Build throughput metrics from raw timing counters."""
-    derived_metrics: dict[str, float] = {}
-    variant_decode_count = float(snapshot.native_bgen_profile.get("variant_decode_count", 0))
-    native_delivery_seconds = snapshot.stage_totals_seconds.get("native_engine_delivery", 0.0)
-    if variant_decode_count > 0.0 and native_delivery_seconds > 0.0:
-        derived_metrics["native_variant_decode_per_second"] = variant_decode_count / native_delivery_seconds
-    output_write_seconds = snapshot.stage_totals_seconds.get("output_write", 0.0)
-    if variant_decode_count > 0.0 and output_write_seconds > 0.0:
-        derived_metrics["output_variant_rows_per_second"] = variant_decode_count / output_write_seconds
-    jax_compute_seconds = snapshot.stage_totals_seconds.get("jax_compute", 0.0)
-    if variant_decode_count > 0.0 and jax_compute_seconds > 0.0:
-        derived_metrics["jax_variant_compute_per_second"] = variant_decode_count / jax_compute_seconds
-    selected_sample_count = float(snapshot.native_bgen_profile.get("selected_sample_count", 0))
-    if variant_decode_count > 0.0 and selected_sample_count > 0.0 and native_delivery_seconds > 0.0:
-        derived_metrics["native_dosage_values_per_second"] = (
-            variant_decode_count * selected_sample_count / native_delivery_seconds
-        )
-    transfer_byte_totals: dict[str, int] = {}
-    for transfer_snapshot in snapshot.transfer_metadata:
-        transfer_byte_totals[transfer_snapshot.transfer_name] = (
-            transfer_byte_totals.get(transfer_snapshot.transfer_name, 0) + transfer_snapshot.total_bytes
-        )
-    for transfer_name, byte_count in transfer_byte_totals.items():
-        transfer_seconds = snapshot.stage_totals_seconds.get(transfer_name, 0.0)
-        if byte_count > 0 and transfer_seconds > 0.0:
-            derived_metrics[f"{transfer_name}_bytes_per_second"] = float(byte_count) / transfer_seconds
-    return derived_metrics
 
 
 def record_stage_duration(

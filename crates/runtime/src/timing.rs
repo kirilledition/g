@@ -117,6 +117,19 @@ pub struct ProfileSummaryPayload {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
+pub struct StageTimingSnapshotPayload {
+    pub stage_totals_seconds: BTreeMap<String, f64>,
+    pub stage_counts: BTreeMap<String, i64>,
+    pub chunk_stage_timings: Vec<ChunkStageTiming>,
+    pub native_bgen_profile: BTreeMap<String, i64>,
+    pub binary_chunk_diagnostics: Vec<BTreeMap<String, NumericDiagnosticValue>>,
+    pub null_logistic_diagnostics: Vec<BTreeMap<String, NullLogisticDiagnosticValue>>,
+    pub queue_backpressure: Vec<QueueBackpressureSnapshot>,
+    pub transfer_metadata: Vec<TransferMetadataSnapshot>,
+    pub derived_metrics: BTreeMap<String, f64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct StageTimingState {
     pub stage_totals_seconds: BTreeMap<String, f64>,
     pub stage_counts: BTreeMap<String, i64>,
@@ -196,6 +209,21 @@ impl StageTimingState {
             null_logistic_summary: NullLogisticSummary {
                 chromosome_count: saturating_usize_to_i64(self.null_logistic_diagnostics.len()),
             },
+        }
+    }
+
+    #[must_use]
+    pub fn build_stage_timing_snapshot_payload(&self) -> StageTimingSnapshotPayload {
+        StageTimingSnapshotPayload {
+            stage_totals_seconds: self.stage_totals_seconds.clone(),
+            stage_counts: self.stage_counts.clone(),
+            chunk_stage_timings: self.chunk_stage_timings.clone(),
+            native_bgen_profile: self.native_bgen_profile.clone(),
+            binary_chunk_diagnostics: self.binary_chunk_diagnostics.clone(),
+            null_logistic_diagnostics: self.null_logistic_diagnostics.clone(),
+            queue_backpressure: self.build_queue_backpressure_snapshots(),
+            transfer_metadata: self.build_transfer_metadata_snapshots(),
+            derived_metrics: self.build_derived_metrics(),
         }
     }
 
@@ -451,6 +479,28 @@ mod tests {
             NumericDiagnosticValue::Float(2.0)
         );
         assert_eq!(summary.binary_chunk_summary["firth_iteration_max"], NumericDiagnosticValue::Float(8.0));
+    }
+
+    #[test]
+    fn builds_stage_timing_snapshot_payload_with_derived_metrics() {
+        let mut state = StageTimingState::default();
+        state.add_stage_duration("host_to_device_transfer".to_string(), 2.0);
+        state.add_transfer_metadata(
+            TransferMetadataKey {
+                transfer_name: "host_to_device_transfer".to_string(),
+                array_role: "genotype_matrix".to_string(),
+                dtype_name: "float32".to_string(),
+                dimension_count: 2,
+            },
+            96,
+            24,
+        );
+
+        let payload = state.build_stage_timing_snapshot_payload();
+
+        assert_eq!(payload.stage_counts["host_to_device_transfer"], 1);
+        assert_eq!(payload.transfer_metadata.len(), 1);
+        assert!((payload.derived_metrics["host_to_device_transfer_bytes_per_second"] - 48.0).abs() < f64::EPSILON);
     }
 
     #[test]
