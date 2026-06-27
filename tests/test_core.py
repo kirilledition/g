@@ -322,6 +322,35 @@ def test_plan_callback_worker_finish_and_abort_use_native_timeout_policy() -> No
     assert abort_plan.result_stop_timeout_seconds == 1.0
 
 
+def test_plan_callback_worker_stop_poll_uses_native_loop_policy() -> None:
+    active_poll_plan = _core.plan_callback_worker_stop_poll(
+        remaining_timeout_seconds=1.0,
+        has_started=True,
+        has_worker_error=False,
+        is_worker_alive=True,
+    )
+    assert active_poll_plan.should_stop is True
+    assert active_poll_plan.poll_timeout_seconds == 0.1
+
+    failed_poll_plan = _core.plan_callback_worker_stop_poll(
+        remaining_timeout_seconds=0.05,
+        has_started=True,
+        has_worker_error=True,
+        is_worker_alive=True,
+    )
+    assert failed_poll_plan.should_stop is False
+    assert failed_poll_plan.poll_timeout_seconds == 0.05
+
+    expired_poll_plan = _core.plan_callback_worker_stop_poll(
+        remaining_timeout_seconds=-1.0,
+        has_started=True,
+        has_worker_error=False,
+        is_worker_alive=True,
+    )
+    assert expired_poll_plan.should_stop is True
+    assert expired_poll_plan.poll_timeout_seconds == 0.0
+
+
 def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
     queue_limits = _core.resolve_native_callback_queue_limits(
         staging_depth=3,

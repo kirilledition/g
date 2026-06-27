@@ -929,19 +929,16 @@ class NativeBgenCallbackRunner(abc.ABC):
             return
         stop_deadline = time.monotonic() + stop_plan.timeout_seconds
         while time.monotonic() < stop_deadline:
-            current_stop_plan = _core.plan_dosage_callback_worker_stop(
-                timeout_seconds=stop_plan.timeout_seconds,
+            stop_poll_plan = _core.plan_callback_worker_stop_poll(
+                remaining_timeout_seconds=stop_deadline - time.monotonic(),
                 has_started=self.worker_threads_have_started(),
                 has_worker_error=self.worker_error is not None,
                 is_worker_alive=self.worker_thread.is_alive(),
             )
-            if not current_stop_plan.should_stop:
+            if not stop_poll_plan.should_stop:
                 return
-            current_timeout_seconds = _core.resolve_callback_worker_stop_poll_timeout_seconds(
-                stop_deadline - time.monotonic()
-            )
             try:
-                self.dosage_queue.put(None, timeout=current_timeout_seconds)
+                self.dosage_queue.put(None, timeout=stop_poll_plan.poll_timeout_seconds)
                 return
             except queue.Full:
                 continue
@@ -977,19 +974,16 @@ class NativeBgenCallbackRunner(abc.ABC):
             return
         stop_deadline = time.monotonic() + stop_plan.timeout_seconds
         while time.monotonic() < stop_deadline:
-            current_stop_plan = _core.plan_result_callback_worker_stop(
-                timeout_seconds=stop_plan.timeout_seconds,
+            stop_poll_plan = _core.plan_callback_worker_stop_poll(
+                remaining_timeout_seconds=stop_deadline - time.monotonic(),
                 has_started=self.worker_threads_have_started(),
                 has_worker_error=self.result_worker_error is not None,
                 is_worker_alive=self.result_worker_thread.is_alive(),
             )
-            if not current_stop_plan.should_stop:
+            if not stop_poll_plan.should_stop:
                 return
-            current_timeout_seconds = _core.resolve_callback_worker_stop_poll_timeout_seconds(
-                stop_deadline - time.monotonic()
-            )
             try:
-                self.result_queue.put(None, timeout=current_timeout_seconds)
+                self.result_queue.put(None, timeout=stop_poll_plan.poll_timeout_seconds)
                 return
             except queue.Full:
                 continue

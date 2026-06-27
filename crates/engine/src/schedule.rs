@@ -260,6 +260,12 @@ pub struct CallbackWorkerAbortPlan {
     pub result_stop_timeout_seconds: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CallbackWorkerStopPollPlan {
+    pub should_stop: bool,
+    pub poll_timeout_seconds: f64,
+}
+
 #[must_use]
 pub const fn callback_worker_shutdown_timeouts() -> CallbackWorkerShutdownTimeouts {
     CallbackWorkerShutdownTimeouts {
@@ -387,6 +393,19 @@ pub fn plan_callback_worker_abort() -> CallbackWorkerAbortPlan {
     CallbackWorkerAbortPlan {
         dosage_stop_timeout_seconds: shutdown_timeouts.worker_abort_stop_timeout_seconds,
         result_stop_timeout_seconds: shutdown_timeouts.worker_abort_stop_timeout_seconds,
+    }
+}
+
+#[must_use]
+pub fn plan_callback_worker_stop_poll(
+    remaining_timeout_seconds: f64,
+    has_started: bool,
+    has_worker_error: bool,
+    is_worker_alive: bool,
+) -> CallbackWorkerStopPollPlan {
+    CallbackWorkerStopPollPlan {
+        should_stop: should_attempt_callback_worker_stop(has_started, has_worker_error, is_worker_alive),
+        poll_timeout_seconds: resolve_callback_worker_stop_poll_timeout_seconds(remaining_timeout_seconds),
     }
 }
 
@@ -1102,6 +1121,22 @@ mod tests {
         assert_eq!(
             plan_callback_worker_abort(),
             CallbackWorkerAbortPlan { dosage_stop_timeout_seconds: 1.0, result_stop_timeout_seconds: 1.0 },
+        );
+    }
+
+    #[test]
+    fn plans_callback_worker_stop_poll_policy() {
+        assert_eq!(
+            plan_callback_worker_stop_poll(1.0, true, false, true),
+            CallbackWorkerStopPollPlan { should_stop: true, poll_timeout_seconds: 0.1 },
+        );
+        assert_eq!(
+            plan_callback_worker_stop_poll(0.05, true, true, true),
+            CallbackWorkerStopPollPlan { should_stop: false, poll_timeout_seconds: 0.05 },
+        );
+        assert_eq!(
+            plan_callback_worker_stop_poll(-1.0, true, false, true),
+            CallbackWorkerStopPollPlan { should_stop: true, poll_timeout_seconds: 0.0 },
         );
     }
 

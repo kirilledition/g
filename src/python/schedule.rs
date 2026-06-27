@@ -103,6 +103,11 @@ pub(crate) struct NativeCallbackWorkerAbortPlan {
     inner: native_schedule::CallbackWorkerAbortPlan,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerStopPollPlan {
+    inner: native_schedule::CallbackWorkerStopPollPlan,
+}
+
 #[pymethods]
 impl NativeDosageBufferPoolState {
     #[new]
@@ -280,6 +285,19 @@ impl NativeCallbackWorkerAbortPlan {
 }
 
 #[pymethods]
+impl NativeCallbackWorkerStopPollPlan {
+    #[getter]
+    fn should_stop(&self) -> bool {
+        self.inner.should_stop
+    }
+
+    #[getter]
+    fn poll_timeout_seconds(&self) -> f64 {
+        self.inner.poll_timeout_seconds
+    }
+}
+
+#[pymethods]
 impl NativeMultiTraitChunkWritePlan {
     #[getter]
     fn active_trait_indices(&self) -> Vec<usize> {
@@ -424,6 +442,12 @@ impl From<native_schedule::CallbackWorkerFinishPlan> for NativeCallbackWorkerFin
 impl From<native_schedule::CallbackWorkerAbortPlan> for NativeCallbackWorkerAbortPlan {
     fn from(abort_plan: native_schedule::CallbackWorkerAbortPlan) -> Self {
         Self { inner: abort_plan }
+    }
+}
+
+impl From<native_schedule::CallbackWorkerStopPollPlan> for NativeCallbackWorkerStopPollPlan {
+    fn from(stop_poll_plan: native_schedule::CallbackWorkerStopPollPlan) -> Self {
+        Self { inner: stop_poll_plan }
     }
 }
 
@@ -583,6 +607,22 @@ pub(crate) fn plan_callback_worker_finish() -> NativeCallbackWorkerFinishPlan {
 #[pyfunction]
 pub(crate) fn plan_callback_worker_abort() -> NativeCallbackWorkerAbortPlan {
     native_schedule::plan_callback_worker_abort().into()
+}
+
+#[pyfunction]
+pub(crate) fn plan_callback_worker_stop_poll(
+    remaining_timeout_seconds: f64,
+    has_started: bool,
+    has_worker_error: bool,
+    is_worker_alive: bool,
+) -> NativeCallbackWorkerStopPollPlan {
+    native_schedule::plan_callback_worker_stop_poll(
+        remaining_timeout_seconds,
+        has_started,
+        has_worker_error,
+        is_worker_alive,
+    )
+    .into()
 }
 
 #[pyfunction]
