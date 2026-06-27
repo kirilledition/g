@@ -22,8 +22,9 @@ pub use preflight::{
 pub use schedule::{
     BgenDeliveryMethod, CallbackWorkerLifecycleState, CallbackWorkerShutdownTimeouts, DosageBufferPoolState,
     DosageBufferReusePlan, NativeCallbackQueueLimits, ResultInFlightSlotState, ScheduleError,
-    VariantMajorDosageBatchHandoffPlan, callback_worker_shutdown_timeouts, intersect_committed_chunk_identifier_sets,
-    plan_dosage_buffer_reuse, plan_variant_major_dosage_batch_handoff, resolve_bgen_delivery_method,
+    VariantMajorDosageBatchHandoffPlan, callback_worker_backpressure_poll_timeout_seconds,
+    callback_worker_shutdown_timeouts, intersect_committed_chunk_identifier_sets, plan_dosage_buffer_reuse,
+    plan_variant_major_dosage_batch_handoff, resolve_bgen_delivery_method,
     resolve_callback_worker_stop_poll_timeout_seconds, resolve_delivery_callback_batch_size,
     resolve_grouped_union_callback_batch_size, resolve_native_callback_queue_limits,
     resolve_writer_finish_thread_count,

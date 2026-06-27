@@ -159,6 +159,10 @@ def test_resolve_native_callback_worker_shutdown_timeouts_returns_native_default
     assert worker_shutdown_timeouts.worker_abort_stop_timeout_seconds == 1.0
 
 
+def test_resolve_callback_worker_backpressure_poll_timeout_seconds_returns_native_default() -> None:
+    assert _core.resolve_callback_worker_backpressure_poll_timeout_seconds() == 0.1
+
+
 def test_resolve_callback_worker_stop_poll_timeout_seconds_caps_deadline_remaining_time() -> None:
     assert _core.resolve_callback_worker_stop_poll_timeout_seconds(1.0) == 0.1
     assert _core.resolve_callback_worker_stop_poll_timeout_seconds(0.05) == 0.05

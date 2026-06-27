@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 
 const DEFAULT_DELIVERY_CALLBACK_BATCH_SIZE: i64 = 1;
+const CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS: f64 = 0.1;
 const CALLBACK_WORKER_STOP_POLL_TIMEOUT_CAP_SECONDS: f64 = 0.1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -160,6 +161,11 @@ pub const fn callback_worker_shutdown_timeouts() -> CallbackWorkerShutdownTimeou
         graceful_result_worker_join_timeout_seconds: 300.0,
         worker_abort_stop_timeout_seconds: 1.0,
     }
+}
+
+#[must_use]
+pub const fn callback_worker_backpressure_poll_timeout_seconds() -> f64 {
+    CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS
 }
 
 #[must_use]
@@ -591,6 +597,11 @@ mod tests {
                 worker_abort_stop_timeout_seconds: 1.0,
             },
         );
+    }
+
+    #[test]
+    fn resolves_callback_worker_backpressure_poll_timeout_seconds() {
+        assert!((callback_worker_backpressure_poll_timeout_seconds() - 0.1).abs() < f64::EPSILON);
     }
 
     #[test]
