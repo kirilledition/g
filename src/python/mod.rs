@@ -68,9 +68,10 @@ use jax_runtime::{
     plan_jax_runtime_config_update_payloads, resolve_jax_runtime_setup_payload,
 };
 use logging::{
-    NativeTelemetryProgressThrottle, NativeTelemetrySession, build_current_telemetry_event_payload,
-    build_telemetry_event_payload, emit_diagnostic_event, generate_telemetry_run_id_value, initialize_logging,
-    shutdown_logging,
+    NativeTelemetryEventEmissionPlan, NativeTelemetryProgressEmissionPlan, NativeTelemetryProgressThrottle,
+    NativeTelemetrySession, build_current_telemetry_event_payload, build_telemetry_event_payload,
+    emit_diagnostic_event, generate_telemetry_run_id_value, initialize_logging, plan_telemetry_event_emission,
+    plan_telemetry_progress_emission, shutdown_logging,
 };
 use output::{
     NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
@@ -1828,6 +1829,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
     module.add_class::<MultiRegeniePredictionSource>()?;
+    module.add_class::<NativeTelemetryEventEmissionPlan>()?;
+    module.add_class::<NativeTelemetryProgressEmissionPlan>()?;
     module.add_class::<NativeTelemetryProgressThrottle>()?;
     module.add_class::<NativeTelemetrySessionPolicy>()?;
     module.add_class::<NativeTelemetrySession>()?;
@@ -1911,6 +1914,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup, module)?)?;
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_invocation, module)?)?;
     module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;
     module.add_function(wrap_pyfunction!(build_current_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(generate_telemetry_run_id_value, module)?)?;

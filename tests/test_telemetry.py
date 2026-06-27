@@ -366,6 +366,19 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     profile_session.close()
     trace_policy = _core.NativeTelemetrySessionPolicy("trace", 10)
     disabled_trace_cap_policy = _core.NativeTelemetrySessionPolicy("trace", 0)
+    event_emission_plan = _core.plan_telemetry_event_emission(
+        telemetry_enabled=True,
+        has_native_telemetry_session=True,
+    )
+    disabled_event_emission_plan = _core.plan_telemetry_event_emission(
+        telemetry_enabled=True,
+        has_native_telemetry_session=False,
+    )
+    progress_emission_plan = _core.plan_telemetry_progress_emission(
+        telemetry_enabled=True,
+        has_native_telemetry_session=True,
+        should_emit_progress=True,
+    )
 
     assert dict(_core.resolve_telemetry_session_policy_payload("trace", 10)) == {
         "enabled": True,
@@ -383,12 +396,62 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     assert disabled_trace_cap_policy.enabled
     assert disabled_trace_cap_policy.profile_enabled
     assert disabled_trace_cap_policy.event_cap is None
+    assert event_emission_plan.should_emit is True
+    assert disabled_event_emission_plan.should_emit is False
+    assert progress_emission_plan.should_emit is True
+    assert progress_emission_plan.event_name == "progress_tick"
+    assert progress_emission_plan.level == "info"
     assert not off_session.enabled
     assert not off_session.profile_enabled
     assert off_session.native_session_policy.event_cap is None
     assert off_session.native_telemetry_session is None
     assert profile_session.enabled
     assert profile_session.profile_enabled
+
+
+def test_telemetry_session_uses_native_progress_emission_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROGRESS,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    def plan_telemetry_progress_emission(
+        *,
+        telemetry_enabled: bool,
+        has_native_telemetry_session: bool,
+        should_emit_progress: bool,
+    ) -> object:
+        assert telemetry_enabled is True
+        assert has_native_telemetry_session is True
+        assert should_emit_progress is True
+        return unittest.mock.Mock(should_emit=True, event_name="native_progress_tick", level="debug")
+
+    monkeypatch.setattr(telemetry._core, "plan_telemetry_progress_emission", plan_telemetry_progress_emission)
+
+    telemetry_session.log_progress(processed_chunk_count=1, chromosome="22")
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payload = json.loads(telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()[0])
+    assert event_payload["event"] == "native_progress_tick"
+    assert event_payload["level"] == "DEBUG"
+    assert event_payload["processed_chunk_count"] == 1
+    assert event_payload["chromosome"] == "22"
 
 
 def test_telemetry_progress_throttle_emits_after_chunk_interval(tmp_path: Path) -> None:

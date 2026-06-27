@@ -51,6 +51,16 @@ pub struct NativeTelemetryProgressThrottle {
     state: Mutex<native_telemetry_session::TelemetryProgressThrottleState>,
 }
 
+#[pyclass]
+pub struct NativeTelemetryEventEmissionPlan {
+    inner: native_telemetry_session::TelemetryEventEmissionPlan,
+}
+
+#[pyclass]
+pub struct NativeTelemetryProgressEmissionPlan {
+    inner: native_telemetry_session::TelemetryProgressEmissionPlan,
+}
+
 impl TelemetryWriterFactory {
     fn new(writer: NonBlocking, event_cap_state: native_telemetry_session::TelemetryEventCapState) -> Self {
         Self { writer, event_cap_state: Arc::new(event_cap_state) }
@@ -146,6 +156,32 @@ impl NativeTelemetryProgressThrottle {
         let mut state =
             self.state.lock().map_err(|_| PyRuntimeError::new_err("Telemetry progress mutex was poisoned."))?;
         Ok(state.should_emit_progress_at(processed_chunk_count, current_time_seconds))
+    }
+}
+
+#[pymethods]
+impl NativeTelemetryEventEmissionPlan {
+    #[getter]
+    fn should_emit(&self) -> bool {
+        self.inner.should_emit
+    }
+}
+
+#[pymethods]
+impl NativeTelemetryProgressEmissionPlan {
+    #[getter]
+    fn should_emit(&self) -> bool {
+        self.inner.should_emit
+    }
+
+    #[getter]
+    fn event_name(&self) -> &str {
+        &self.inner.event_name
+    }
+
+    #[getter]
+    fn level(&self) -> &str {
+        &self.inner.level
     }
 }
 
@@ -337,6 +373,40 @@ impl NativeTelemetrySession {
         let _ = self.emit_current_event(py, run_id, "telemetry_session_closed", "debug", &fields);
         self.finish(py)
     }
+}
+
+impl From<native_telemetry_session::TelemetryEventEmissionPlan> for NativeTelemetryEventEmissionPlan {
+    fn from(emission_plan: native_telemetry_session::TelemetryEventEmissionPlan) -> Self {
+        Self { inner: emission_plan }
+    }
+}
+
+impl From<native_telemetry_session::TelemetryProgressEmissionPlan> for NativeTelemetryProgressEmissionPlan {
+    fn from(emission_plan: native_telemetry_session::TelemetryProgressEmissionPlan) -> Self {
+        Self { inner: emission_plan }
+    }
+}
+
+#[pyfunction]
+pub fn plan_telemetry_event_emission(
+    telemetry_enabled: bool,
+    has_native_telemetry_session: bool,
+) -> NativeTelemetryEventEmissionPlan {
+    native_telemetry_session::plan_telemetry_event_emission(telemetry_enabled, has_native_telemetry_session).into()
+}
+
+#[pyfunction]
+pub fn plan_telemetry_progress_emission(
+    telemetry_enabled: bool,
+    has_native_telemetry_session: bool,
+    should_emit_progress: bool,
+) -> NativeTelemetryProgressEmissionPlan {
+    native_telemetry_session::plan_telemetry_progress_emission(
+        telemetry_enabled,
+        has_native_telemetry_session,
+        should_emit_progress,
+    )
+    .into()
 }
 
 #[pyfunction]

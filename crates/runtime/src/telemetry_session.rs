@@ -8,6 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::telemetry_policy;
 use uuid::Uuid;
 
+const PROGRESS_TICK_EVENT_NAME: &str = "progress_tick";
+const PROGRESS_TICK_EVENT_LEVEL: &str = "info";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TelemetryCapAction {
     Write,
@@ -56,6 +59,18 @@ pub struct TelemetryProgressThrottleState {
     progress_interval_chunks: i64,
     last_progress_time_seconds: Option<f64>,
     last_progress_chunk_count: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryEventEmissionPlan {
+    pub should_emit: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryProgressEmissionPlan {
+    pub should_emit: bool,
+    pub event_name: String,
+    pub level: String,
 }
 
 impl TelemetryEventCapState {
@@ -264,6 +279,27 @@ pub fn build_current_telemetry_event_envelope(
 }
 
 #[must_use]
+pub const fn plan_telemetry_event_emission(
+    telemetry_enabled: bool,
+    has_native_telemetry_session: bool,
+) -> TelemetryEventEmissionPlan {
+    TelemetryEventEmissionPlan { should_emit: telemetry_enabled && has_native_telemetry_session }
+}
+
+#[must_use]
+pub fn plan_telemetry_progress_emission(
+    telemetry_enabled: bool,
+    has_native_telemetry_session: bool,
+    should_emit_progress: bool,
+) -> TelemetryProgressEmissionPlan {
+    TelemetryProgressEmissionPlan {
+        should_emit: telemetry_enabled && has_native_telemetry_session && should_emit_progress,
+        event_name: PROGRESS_TICK_EVENT_NAME.to_string(),
+        level: PROGRESS_TICK_EVENT_LEVEL.to_string(),
+    }
+}
+
+#[must_use]
 pub fn generate_run_id() -> String {
     format!("{:032x}", Uuid::new_v4().as_u128())
 }
@@ -345,6 +381,29 @@ mod tests {
         assert!(state.should_emit_progress_at(11, 11.5));
         assert!(!state.should_emit_progress_at(12, 12.0));
         assert!(state.should_emit_progress_at(12, 16.5));
+    }
+
+    #[test]
+    fn plans_telemetry_event_and_progress_emission() {
+        assert_eq!(plan_telemetry_event_emission(true, true), TelemetryEventEmissionPlan { should_emit: true });
+        assert_eq!(plan_telemetry_event_emission(false, true), TelemetryEventEmissionPlan { should_emit: false });
+        assert_eq!(plan_telemetry_event_emission(true, false), TelemetryEventEmissionPlan { should_emit: false });
+        assert_eq!(
+            plan_telemetry_progress_emission(true, true, true),
+            TelemetryProgressEmissionPlan {
+                should_emit: true,
+                event_name: "progress_tick".to_string(),
+                level: "info".to_string(),
+            },
+        );
+        assert_eq!(
+            plan_telemetry_progress_emission(true, true, false),
+            TelemetryProgressEmissionPlan {
+                should_emit: false,
+                event_name: "progress_tick".to_string(),
+                level: "info".to_string(),
+            },
+        );
     }
 
     #[test]

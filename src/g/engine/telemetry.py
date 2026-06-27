@@ -105,11 +105,14 @@ class TelemetrySession:
 
     def log_event(self, event: str, level: str, **fields: object) -> None:
         """Write one structured lifecycle or profile event."""
-        if not self.enabled:
+        emission_plan = _core.plan_telemetry_event_emission(
+            telemetry_enabled=self.enabled,
+            has_native_telemetry_session=self.native_telemetry_session is not None,
+        )
+        if not emission_plan.should_emit:
             return
-        if self.native_telemetry_session is None:
-            return
-        self.native_telemetry_session.emit_current_event(
+        native_telemetry_session = typing.cast("_core.NativeTelemetrySession", self.native_telemetry_session)
+        native_telemetry_session.emit_current_event(
             self.run_id,
             event,
             level,
@@ -118,15 +121,21 @@ class TelemetrySession:
 
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
-        if not self.enabled:
+        should_emit_progress = self.enabled and self.should_emit_progress(processed_chunk_count)
+        emission_plan = _core.plan_telemetry_progress_emission(
+            telemetry_enabled=self.enabled,
+            has_native_telemetry_session=self.native_telemetry_session is not None,
+            should_emit_progress=should_emit_progress,
+        )
+        if not emission_plan.should_emit:
             return
-        if not self.should_emit_progress(processed_chunk_count):
-            return
-        self.log_event(
-            "progress_tick",
-            level="info",
-            processed_chunk_count=processed_chunk_count,
-            **fields,
+        native_telemetry_session = typing.cast("_core.NativeTelemetrySession", self.native_telemetry_session)
+        progress_fields = {"processed_chunk_count": processed_chunk_count, **fields}
+        native_telemetry_session.emit_current_event(
+            self.run_id,
+            emission_plan.event_name,
+            emission_plan.level,
+            progress_fields,
         )
 
     def should_emit_progress(self, processed_chunk_count: int) -> bool:

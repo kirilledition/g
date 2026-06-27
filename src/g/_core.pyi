@@ -461,6 +461,18 @@ class NativeTelemetryProgressThrottle:
     def __init__(self, progress_interval_seconds: float, progress_interval_chunks: int) -> None: ...
     def should_emit_progress(self, processed_chunk_count: int) -> bool: ...
 
+class NativeTelemetryEventEmissionPlan:
+    @property
+    def should_emit(self) -> bool: ...
+
+class NativeTelemetryProgressEmissionPlan:
+    @property
+    def should_emit(self) -> bool: ...
+    @property
+    def event_name(self) -> str: ...
+    @property
+    def level(self) -> str: ...
+
 class NativeTelemetrySessionPolicy:
     def __init__(self, telemetry_mode: str, trace_event_cap: int) -> None: ...
     @property
@@ -1511,6 +1523,15 @@ def plan_bgen_delivery_cleanup(
     cleanup_outcome: str,
     callback_finished: bool,
 ) -> NativeBgenDeliveryCleanupPlan: ...
+def plan_telemetry_event_emission(
+    telemetry_enabled: bool,
+    has_native_telemetry_session: bool,
+) -> NativeTelemetryEventEmissionPlan: ...
+def plan_telemetry_progress_emission(
+    telemetry_enabled: bool,
+    has_native_telemetry_session: bool,
+    should_emit_progress: bool,
+) -> NativeTelemetryProgressEmissionPlan: ...
 def plan_bgen_delivery_invocation(
     callback_batch_size: int | None,
     variant_major_packed8_probability_pairs: bool,
