@@ -8,8 +8,9 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use g_runtime::telemetry_policy as native_telemetry_policy;
 use g_runtime::telemetry_session as native_telemetry_session;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -213,6 +214,18 @@ impl NativeTelemetrySession {
         self.emit_payload(py, &payload)
     }
 
+    pub fn emit_current_event<'py>(
+        &self,
+        py: Python<'py>,
+        run_id: &str,
+        event: &str,
+        level: &str,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        let payload = build_current_telemetry_event_payload(py, run_id, event, level, fields)?;
+        self.emit_payload(py, &payload)
+    }
+
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::unused_self)]
     pub fn build_event_payload<'py>(
@@ -305,6 +318,13 @@ impl NativeTelemetrySession {
         );
         self.finish(py)
     }
+
+    pub fn finish_with_current_close_event<'py>(&self, py: Python<'py>, run_id: &str) -> PyResult<Bound<'py, PyDict>> {
+        let fields = PyDict::new(py);
+        fields.set_item("writer_counters", self.counters(py)?)?;
+        let _ = self.emit_current_event(py, run_id, "telemetry_session_closed", "debug", &fields);
+        self.finish(py)
+    }
 }
 
 #[pyfunction]
@@ -343,6 +363,28 @@ pub fn build_telemetry_event_payload<'py>(
         }
     }
     Ok(payload)
+}
+
+fn build_current_telemetry_event_payload<'py>(
+    py: Python<'py>,
+    run_id: &str,
+    event: &str,
+    level: &str,
+    fields: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let timestamp = current_telemetry_timestamp();
+    let thread_name = current_python_thread_name(py)?;
+    build_telemetry_event_payload(py, run_id, event, level, &timestamp, std::process::id(), &thread_name, fields)
+}
+
+fn current_telemetry_timestamp() -> String {
+    let elapsed_seconds = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |duration| duration.as_secs_f64());
+    native_telemetry_policy::format_timestamp(elapsed_seconds)
+}
+
+fn current_python_thread_name(py: Python<'_>) -> PyResult<String> {
+    let threading_module = PyModule::import(py, "threading")?;
+    threading_module.call_method0("current_thread")?.getattr("name")?.extract::<String>()
 }
 
 fn telemetry_writer_counter_snapshot_to_py_dict<'py>(

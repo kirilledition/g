@@ -104,13 +104,10 @@ class TelemetrySession:
             return
         if self.native_telemetry_session is None:
             return
-        self.native_telemetry_session.emit_event(
+        self.native_telemetry_session.emit_current_event(
             self.run_id,
             event,
             level,
-            format_timestamp(time.time()),
-            os.getpid(),
-            threading.current_thread().name,
             fields,
         )
 
@@ -176,14 +173,7 @@ class TelemetrySession:
             return None
         writer_counters = typing.cast(
             "TelemetryWriterCounters",
-            dict(
-                self.native_telemetry_session.finish_with_close_event(
-                    self.run_id,
-                    format_timestamp(time.time()),
-                    os.getpid(),
-                    threading.current_thread().name,
-                )
-            ),
+            dict(self.native_telemetry_session.finish_with_current_close_event(self.run_id)),
         )
         self.close_metadata = {"writer_counters": writer_counters}
         return self.close_metadata

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import typing
 import unittest.mock
 
@@ -249,6 +250,8 @@ def test_telemetry_session_writes_schema_events_and_throttled_progress(tmp_path:
     assert event_payload["run_id"] == "run-1"
     assert event_payload["event"] == "run_started"
     assert event_payload["artifact_path"] == str(artifact_path)
+    assert event_payload["pid"] == os.getpid()
+    assert event_payload["thread_name"] == "MainThread"
     assert len(progress_payloads) == 1
     assert progress_payloads[0]["event"] == "progress_tick"
     assert progress_payloads[0]["processed_chunk_count"] == 1

@@ -481,6 +481,13 @@ class NativeTelemetrySession:
         thread_name: str,
         fields: dict[str, object],
     ) -> None: ...
+    def emit_current_event(
+        self,
+        run_id: str,
+        event: str,
+        level: str,
+        fields: dict[str, object],
+    ) -> None: ...
     def build_event_payload(
         self,
         run_id: str,
@@ -500,6 +507,7 @@ class NativeTelemetrySession:
         process_identifier: int,
         thread_name: str,
     ) -> dict[str, object]: ...
+    def finish_with_current_close_event(self, run_id: str) -> dict[str, object]: ...
 
 class NativeBinaryCorrectionSummary:
     @property
