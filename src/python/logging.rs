@@ -282,6 +282,29 @@ impl NativeTelemetrySession {
         writer.fail_if_lossless_cap_exceeded()?;
         telemetry_writer_counter_snapshot_to_py_dict(py, &counter_snapshot)
     }
+
+    pub fn finish_with_close_event<'py>(
+        &self,
+        py: Python<'py>,
+        run_id: &str,
+        timestamp: &str,
+        process_identifier: u32,
+        thread_name: &str,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let fields = PyDict::new(py);
+        fields.set_item("writer_counters", self.counters(py)?)?;
+        let _ = self.emit_event(
+            py,
+            run_id,
+            "telemetry_session_closed",
+            "debug",
+            timestamp,
+            process_identifier,
+            thread_name,
+            &fields,
+        );
+        self.finish(py)
+    }
 }
 
 #[pyfunction]

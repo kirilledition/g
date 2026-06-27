@@ -493,6 +493,13 @@ class NativeTelemetrySession:
     ) -> dict[str, object]: ...
     def counters(self) -> dict[str, object]: ...
     def finish(self) -> dict[str, object]: ...
+    def finish_with_close_event(
+        self,
+        run_id: str,
+        timestamp: str,
+        process_identifier: int,
+        thread_name: str,
+    ) -> dict[str, object]: ...
 
 class NativeBinaryCorrectionSummary:
     @property

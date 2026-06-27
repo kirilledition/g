@@ -21,6 +21,19 @@ if typing.TYPE_CHECKING:
     from g.interface import config
 
 
+class TelemetryCloseableSession(typing.Protocol):
+    """Telemetry session shape accepted by the close helper."""
+
+    def log_event(self, event: str, level: str, **fields: object) -> None:
+        """Write one telemetry event."""
+
+    def writer_counters(self) -> object:
+        """Return writer counters for close telemetry."""
+
+    def close(self) -> object:
+        """Close the telemetry resources."""
+
+
 @dataclass(frozen=True)
 class TelemetryPaths:
     """Resolved telemetry output paths for one run.
@@ -156,6 +169,25 @@ class TelemetrySession:
         self.close_metadata = {"writer_counters": writer_counters}
         return self.close_metadata
 
+    def close_with_event(self) -> TelemetryCloseMetadata | None:
+        """Emit the close event and flush buffered telemetry resources."""
+        if self.native_telemetry_session is None:
+            self.close_metadata = None
+            return None
+        writer_counters = typing.cast(
+            "TelemetryWriterCounters",
+            dict(
+                self.native_telemetry_session.finish_with_close_event(
+                    self.run_id,
+                    format_timestamp(time.time()),
+                    os.getpid(),
+                    threading.current_thread().name,
+                )
+            ),
+        )
+        self.close_metadata = {"writer_counters": writer_counters}
+        return self.close_metadata
+
 
 def format_timestamp(timestamp_seconds: float) -> str:
     """Format a Unix timestamp as an RFC 3339 UTC timestamp."""
@@ -261,9 +293,12 @@ def build_empty_writer_counters() -> TelemetryWriterCounters:
     )
 
 
-def close_telemetry_session(telemetry_session: TelemetrySession | None) -> None:
+def close_telemetry_session(telemetry_session: TelemetryCloseableSession | None) -> None:
     """Flush telemetry teardown hooks and preserve close failures."""
     if telemetry_session is None:
+        return
+    if isinstance(telemetry_session, TelemetrySession):
+        telemetry_session.close_with_event()
         return
     with contextlib.suppress(Exception):
         telemetry_session.log_event(
