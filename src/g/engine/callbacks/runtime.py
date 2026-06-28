@@ -106,8 +106,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         )
         self.result_in_flight_slots = threading.BoundedSemaphore(self.result_in_flight_limit)
         self.free_dosage_buffers: queue.Queue[HostGenotypeBuffer] = queue.Queue(maxsize=self.dosage_buffer_limit)
-        self.worker_error: BaseException | None = None
-        self.result_worker_error: BaseException | None = None
+        self.worker_error_cause: BaseException | None = None
+        self.result_worker_error_cause: BaseException | None = None
         self.binary_correction_summary = _core.NativeBinaryCorrectionSummary()
         self.binary_correction_pending_diagnostics: list[regenie2_binary.BinaryChunkDiagnostics] = []
         self.worker_thread = threading.Thread(
@@ -179,6 +179,34 @@ class NativeBgenCallbackRunner(abc.ABC):
     def dosage_buffer_limit(self) -> int:
         """Return the native dosage buffer limit."""
         return self.callback_scheduler_state.dosage_buffer_limit
+
+    @property
+    def worker_error(self) -> BaseException | None:
+        """Return the Python dosage worker exception cause."""
+        return self.worker_error_cause
+
+    @worker_error.setter
+    def worker_error(self, error: BaseException | None) -> None:
+        """Record a dosage worker failure in native scheduler state."""
+        self.worker_error_cause = error
+        if error is None:
+            self.callback_scheduler_state.clear_dosage_worker_error()
+            return
+        self.callback_scheduler_state.record_dosage_worker_error(str(error))
+
+    @property
+    def result_worker_error(self) -> BaseException | None:
+        """Return the Python result worker exception cause."""
+        return self.result_worker_error_cause
+
+    @result_worker_error.setter
+    def result_worker_error(self, error: BaseException | None) -> None:
+        """Record a result worker failure in native scheduler state."""
+        self.result_worker_error_cause = error
+        if error is None:
+            self.callback_scheduler_state.clear_result_worker_error()
+            return
+        self.callback_scheduler_state.record_result_worker_error(str(error))
 
     @property
     def dosage_buffer_count(self) -> int:
@@ -805,12 +833,12 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
-        if self.worker_error is not None:
-            message = _core.format_dosage_callback_worker_error_message(str(self.worker_error))
-            raise RuntimeError(message) from self.worker_error
-        if self.result_worker_error is not None:
-            message = _core.format_result_callback_worker_error_message(str(self.result_worker_error))
-            raise RuntimeError(message) from self.result_worker_error
+        dosage_worker_error_message = self.callback_scheduler_state.dosage_worker_error_message
+        if dosage_worker_error_message is not None:
+            raise RuntimeError(dosage_worker_error_message) from self.worker_error_cause
+        result_worker_error_message = self.callback_scheduler_state.result_worker_error_message
+        if result_worker_error_message is not None:
+            raise RuntimeError(result_worker_error_message) from self.result_worker_error_cause
 
     def put_result_write_item(
         self,
@@ -930,7 +958,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         stop_plan = _core.plan_dosage_callback_worker_stop(
             timeout_seconds=timeout_seconds,
             has_started=self.worker_threads_have_started(),
-            has_worker_error=self.worker_error is not None,
+            has_worker_error=self.callback_scheduler_state.has_dosage_worker_error,
             is_worker_alive=self.worker_thread.is_alive(),
         )
         if not stop_plan.should_stop:
@@ -940,7 +968,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             stop_poll_plan = _core.plan_callback_worker_stop_poll(
                 remaining_timeout_seconds=stop_deadline - time.monotonic(),
                 has_started=self.worker_threads_have_started(),
-                has_worker_error=self.worker_error is not None,
+                has_worker_error=self.callback_scheduler_state.has_dosage_worker_error,
                 is_worker_alive=self.worker_thread.is_alive(),
             )
             if not stop_poll_plan.should_stop:
@@ -975,7 +1003,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         stop_plan = _core.plan_result_callback_worker_stop(
             timeout_seconds=timeout_seconds,
             has_started=self.worker_threads_have_started(),
-            has_worker_error=self.result_worker_error is not None,
+            has_worker_error=self.callback_scheduler_state.has_result_worker_error,
             is_worker_alive=self.result_worker_thread.is_alive(),
         )
         if not stop_plan.should_stop:
@@ -985,7 +1013,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             stop_poll_plan = _core.plan_callback_worker_stop_poll(
                 remaining_timeout_seconds=stop_deadline - time.monotonic(),
                 has_started=self.worker_threads_have_started(),
-                has_worker_error=self.result_worker_error is not None,
+                has_worker_error=self.callback_scheduler_state.has_result_worker_error,
                 is_worker_alive=self.result_worker_thread.is_alive(),
             )
             if not stop_poll_plan.should_stop:

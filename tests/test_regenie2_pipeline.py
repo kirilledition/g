@@ -1909,7 +1909,18 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         self.packed_metadata.append(variant_metadata)
 
 
+def attach_manual_callback_scheduler_state(callback: typing.Any) -> None:
+    callback.callback_scheduler_state = callback_runtime._core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=2,
+        dosage_buffer_limit=2,
+    )
+
+
 def mark_callback_workers_started(callback: typing.Any) -> None:
+    if not hasattr(callback, "callback_scheduler_state"):
+        attach_manual_callback_scheduler_state(callback)
     assert callback.callback_scheduler_state.mark_started() is True
 
 
@@ -2348,6 +2359,11 @@ def test_native_callback_runner_records_worker_errors_from_consumer() -> None:
     callback.consume_dosage_chunks()
 
     assert isinstance(callback.worker_error, ValueError)
+    assert callback.callback_scheduler_state.has_dosage_worker_error is True
+    assert (
+        callback.callback_scheduler_state.dosage_worker_error_message
+        == "native pipeline callback worker failed: compute failed"
+    )
 
 
 def test_native_callback_runner_reuses_and_replaces_host_dosage_buffers() -> None:
@@ -2468,13 +2484,16 @@ def test_native_callback_runner_surfaces_worker_and_writer_errors() -> None:
     callback = ManualCallbackRunner()
     callback.worker_error = ValueError("dosage failed")
 
+    assert callback.callback_scheduler_state.has_dosage_worker_error is True
     with pytest.raises(RuntimeError, match="callback worker failed") as dosage_error:
         callback.raise_worker_error_if_present()
     assert str(dosage_error.value) == "native pipeline callback worker failed: dosage failed"
 
     callback.worker_error = None
+    assert callback.callback_scheduler_state.has_dosage_worker_error is False
     callback.result_worker_error = ValueError("writer failed")
 
+    assert callback.callback_scheduler_state.has_result_worker_error is True
     with pytest.raises(RuntimeError, match="result writer worker failed") as writer_error:
         callback.raise_worker_error_if_present()
     assert str(writer_error.value) == "native pipeline result writer worker failed: writer failed"
@@ -2595,6 +2614,7 @@ def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> No
     result_worker_thread = threading.Thread(target=stop_event.wait, name="failed-result-worker")
     result_worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
+    attach_manual_callback_scheduler_state(callback)
     callback.result_queue = result_queue
     callback.result_worker_error = RuntimeError("writer failed")
     callback.result_worker_thread = result_worker_thread
@@ -2616,6 +2636,7 @@ def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> No
     worker_thread = threading.Thread(target=stop_event.wait, name="failed-dosage-worker")
     worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
+    attach_manual_callback_scheduler_state(callback)
     callback.dosage_queue = dosage_queue
     callback.worker_error = RuntimeError("dosage failed")
     callback.worker_thread = worker_thread
@@ -2639,6 +2660,7 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
     result_worker_thread = threading.Thread(target=stop_event.wait, name="blocked-result-worker")
     result_worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
+    attach_manual_callback_scheduler_state(callback)
     callback.result_queue = result_queue
     callback.result_worker_error = None
     callback.result_worker_thread = result_worker_thread
@@ -2662,6 +2684,7 @@ def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
     worker_thread = threading.Thread(target=stop_event.wait, name="blocked-dosage-worker")
     worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
+    attach_manual_callback_scheduler_state(callback)
     callback.dosage_queue = dosage_queue
     callback.worker_error = None
     callback.worker_thread = worker_thread

@@ -319,6 +319,42 @@ impl NativeCallbackSchedulerState {
     fn discard_dosage_buffer(&mut self, buffer_identifier: usize) -> bool {
         self.inner.discard_dosage_buffer(buffer_identifier)
     }
+
+    #[getter]
+    fn dosage_worker_error_message(&self) -> Option<String> {
+        self.inner.dosage_worker_error_message().map(str::to_string)
+    }
+
+    #[getter]
+    fn result_worker_error_message(&self) -> Option<String> {
+        self.inner.result_worker_error_message().map(str::to_string)
+    }
+
+    #[getter]
+    fn has_dosage_worker_error(&self) -> bool {
+        self.inner.has_dosage_worker_error()
+    }
+
+    #[getter]
+    fn has_result_worker_error(&self) -> bool {
+        self.inner.has_result_worker_error()
+    }
+
+    fn record_dosage_worker_error(&mut self, error_message: &str) {
+        self.inner.record_dosage_worker_error(error_message);
+    }
+
+    fn record_result_worker_error(&mut self, error_message: &str) {
+        self.inner.record_result_worker_error(error_message);
+    }
+
+    fn clear_dosage_worker_error(&mut self) -> bool {
+        self.inner.clear_dosage_worker_error()
+    }
+
+    fn clear_result_worker_error(&mut self) -> bool {
+        self.inner.clear_result_worker_error()
+    }
 }
 
 #[pymethods]

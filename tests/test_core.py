@@ -1080,6 +1080,22 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     assert scheduler_state.has_available_dosage_buffer_slot() is True
     assert scheduler_state.discard_dosage_buffer(11) is True
     assert scheduler_state.dosage_buffer_allocated_count == 0
+    assert scheduler_state.has_dosage_worker_error is False
+    assert scheduler_state.has_result_worker_error is False
+    assert scheduler_state.dosage_worker_error_message is None
+    assert scheduler_state.result_worker_error_message is None
+
+    scheduler_state.record_dosage_worker_error("dosage failed")
+    scheduler_state.record_result_worker_error("writer failed")
+
+    assert scheduler_state.has_dosage_worker_error is True
+    assert scheduler_state.has_result_worker_error is True
+    assert scheduler_state.dosage_worker_error_message == "native pipeline callback worker failed: dosage failed"
+    assert scheduler_state.result_worker_error_message == "native pipeline result writer worker failed: writer failed"
+    assert scheduler_state.clear_dosage_worker_error() is True
+    assert scheduler_state.clear_result_worker_error() is True
+    assert scheduler_state.dosage_worker_error_message is None
+    assert scheduler_state.result_worker_error_message is None
 
     with pytest.raises(ValueError, match="effective dosage_buffer_limit"):
         _core.NativeCallbackSchedulerState(

@@ -316,6 +316,8 @@ pub struct CallbackSchedulerState {
     result_in_flight_slot_state: ResultInFlightSlotState,
     dosage_buffer_pool_state: DosageBufferPoolState,
     worker_lifecycle_state: CallbackWorkerLifecycleState,
+    dosage_worker_error_message: Option<String>,
+    result_worker_error_message: Option<String>,
 }
 
 impl CallbackSchedulerState {
@@ -345,6 +347,8 @@ impl CallbackSchedulerState {
             result_in_flight_slot_state: ResultInFlightSlotState::new(queue_limits.result_in_flight_limit),
             dosage_buffer_pool_state: DosageBufferPoolState::new(queue_limits.dosage_buffer_limit),
             worker_lifecycle_state: CallbackWorkerLifecycleState::new(),
+            dosage_worker_error_message: None,
+            result_worker_error_message: None,
         })
     }
 
@@ -441,6 +445,46 @@ impl CallbackSchedulerState {
 
     pub fn discard_dosage_buffer(&mut self, buffer_identifier: usize) -> bool {
         self.dosage_buffer_pool_state.discard_buffer(buffer_identifier)
+    }
+
+    #[must_use]
+    pub fn dosage_worker_error_message(&self) -> Option<&str> {
+        self.dosage_worker_error_message.as_deref()
+    }
+
+    #[must_use]
+    pub fn result_worker_error_message(&self) -> Option<&str> {
+        self.result_worker_error_message.as_deref()
+    }
+
+    #[must_use]
+    pub fn has_dosage_worker_error(&self) -> bool {
+        self.dosage_worker_error_message.is_some()
+    }
+
+    #[must_use]
+    pub fn has_result_worker_error(&self) -> bool {
+        self.result_worker_error_message.is_some()
+    }
+
+    pub fn record_dosage_worker_error(&mut self, error_message: &str) {
+        self.dosage_worker_error_message = Some(format_dosage_callback_worker_error_message(error_message));
+    }
+
+    pub fn record_result_worker_error(&mut self, error_message: &str) {
+        self.result_worker_error_message = Some(format_result_callback_worker_error_message(error_message));
+    }
+
+    pub fn clear_dosage_worker_error(&mut self) -> bool {
+        let had_error = self.has_dosage_worker_error();
+        self.dosage_worker_error_message = None;
+        had_error
+    }
+
+    pub fn clear_result_worker_error(&mut self) -> bool {
+        let had_error = self.has_result_worker_error();
+        self.result_worker_error_message = None;
+        had_error
     }
 }
 
@@ -1670,6 +1714,25 @@ mod tests {
         assert!(scheduler_state.has_available_dosage_buffer_slot());
         assert!(scheduler_state.discard_dosage_buffer(11));
         assert_eq!(scheduler_state.dosage_buffer_allocated_count(), 0);
+
+        assert!(!scheduler_state.has_dosage_worker_error());
+        assert!(!scheduler_state.has_result_worker_error());
+        scheduler_state.record_dosage_worker_error("dosage failed");
+        scheduler_state.record_result_worker_error("writer failed");
+        assert_eq!(
+            scheduler_state.dosage_worker_error_message(),
+            Some("native pipeline callback worker failed: dosage failed"),
+        );
+        assert_eq!(
+            scheduler_state.result_worker_error_message(),
+            Some("native pipeline result writer worker failed: writer failed"),
+        );
+        assert!(scheduler_state.has_dosage_worker_error());
+        assert!(scheduler_state.has_result_worker_error());
+        assert!(scheduler_state.clear_dosage_worker_error());
+        assert!(scheduler_state.clear_result_worker_error());
+        assert_eq!(scheduler_state.dosage_worker_error_message(), None);
+        assert_eq!(scheduler_state.result_worker_error_message(), None);
     }
 
     #[test]

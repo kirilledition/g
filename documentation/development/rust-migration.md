@@ -65,7 +65,8 @@ on all internal crates and remains the only native Python binding crate.
 
 Phase 10 queue migration also has a native callback scheduler state handle that
 consolidates queue limits, worker-start state, result in-flight accounting, and
-dosage-buffer pool accounting for production callback runners.
+dosage-buffer pool accounting, plus worker failure state, for production
+callback runners.
 
 ## Phase Order
 
