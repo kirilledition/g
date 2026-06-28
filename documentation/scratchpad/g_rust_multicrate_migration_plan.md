@@ -999,6 +999,9 @@ Remove Python as the chunk-level scheduler.
 - Callback producer backpressure attempts now use native scheduler methods that
   select the default poll timeout internally for dosage queues, result queues,
   result in-flight slots, and dosage-buffer acquisition.
+- Callback queue, result-slot, and dosage-buffer pool timing observations now
+  use scheduler-owned native planners for occupancy capacity and observation
+  validation.
 
 ### Tests
 

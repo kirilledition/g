@@ -311,19 +311,41 @@ class NativeBgenCallbackRunner(abc.ABC):
         *,
         resource_name: str,
         operation_name: str,
-        current_depth: int,
-        capacity: int,
         elapsed_seconds: float,
         blocked: bool,
     ) -> None:
         """Record aggregate bounded-resource occupancy metadata."""
         if self.stage_timing_recorder is None:
             return
-        observation = self.callback_scheduler_state.plan_queue_backpressure_observation(
+        observation = self.callback_scheduler_state.plan_current_queue_backpressure_observation(
             queue_name=resource_name,
             operation_name=operation_name,
-            queue_depth=current_depth,
-            queue_capacity=capacity,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=observation.queue_name,
+            operation_name=observation.operation_name,
+            queue_depth=observation.queue_depth,
+            queue_capacity=observation.queue_capacity,
+            elapsed_seconds=observation.elapsed_seconds,
+            blocked_seconds=observation.blocked_seconds,
+        )
+
+    def record_dosage_buffer_pool_operation(
+        self,
+        *,
+        operation_name: str,
+        free_buffer_count: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> None:
+        """Record dosage-buffer pool occupancy metadata."""
+        if self.stage_timing_recorder is None:
+            return
+        observation = self.callback_scheduler_state.plan_dosage_buffer_pool_backpressure_observation(
+            operation_name=operation_name,
+            free_buffer_count=free_buffer_count,
             elapsed_seconds=elapsed_seconds,
             blocked=blocked,
         )
@@ -341,8 +363,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         *,
         resource_name: str,
         operation_name: str,
-        current_depth: int,
-        capacity: int,
         start_time: float,
         blocked: bool,
     ) -> None:
@@ -350,11 +370,37 @@ class NativeBgenCallbackRunner(abc.ABC):
         elapsed_seconds = time.perf_counter() - start_time
         if self.stage_timing_recorder is None:
             return
-        observation = self.callback_scheduler_state.plan_queue_stage_backpressure_observation(
+        observation = self.callback_scheduler_state.plan_current_queue_stage_backpressure_observation(
             queue_name=resource_name,
             operation_name=operation_name,
-            queue_depth=current_depth,
-            queue_capacity=capacity,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+        self.stage_timing_recorder.add_stage_duration(observation.stage_name, observation.elapsed_seconds)
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=observation.queue_name,
+            operation_name=observation.operation_name,
+            queue_depth=observation.queue_depth,
+            queue_capacity=observation.queue_capacity,
+            elapsed_seconds=observation.elapsed_seconds,
+            blocked_seconds=observation.blocked_seconds,
+        )
+
+    def record_dosage_buffer_pool_stage_duration(
+        self,
+        *,
+        operation_name: str,
+        free_buffer_count: int,
+        start_time: float,
+        blocked: bool,
+    ) -> None:
+        """Record dosage-buffer pool stage duration plus pressure metadata."""
+        elapsed_seconds = time.perf_counter() - start_time
+        if self.stage_timing_recorder is None:
+            return
+        observation = self.callback_scheduler_state.plan_dosage_buffer_pool_stage_backpressure_observation(
+            operation_name=operation_name,
+            free_buffer_count=free_buffer_count,
             elapsed_seconds=elapsed_seconds,
             blocked=blocked,
         )
@@ -538,8 +584,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_bounded_resource_stage_duration(
                     resource_name="dosage_queue",
                     operation_name="consumer_wait",
-                    current_depth=self.dosage_queue_count,
-                    capacity=self.dosage_queue_depth,
                     start_time=get_start_time,
                     blocked=True,
                 )
@@ -713,8 +757,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_queue",
                     operation_name="consumer_wait",
-                    current_depth=self.result_queue_count,
-                    capacity=self.result_queue_depth,
                     start_time=get_start_time,
                     blocked=True,
                 )
@@ -793,8 +835,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_bounded_resource_stage_duration(
                     resource_name="dosage_queue",
                     operation_name="producer_blocking",
-                    current_depth=self.dosage_queue_count,
-                    capacity=self.dosage_queue_depth,
                     start_time=put_start_time,
                     blocked=True,
                 )
@@ -802,8 +842,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.record_bounded_resource_stage_duration(
                 resource_name="dosage_queue",
                 operation_name="put",
-                current_depth=self.dosage_queue_count,
-                capacity=self.dosage_queue_depth,
                 start_time=put_start_time,
                 blocked=False,
             )
@@ -928,8 +966,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_queue",
                     operation_name="producer_blocking",
-                    current_depth=self.result_queue_count,
-                    capacity=self.result_queue_depth,
                     start_time=put_start_time,
                     blocked=True,
                 )
@@ -937,8 +973,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.record_bounded_resource_stage_duration(
                 resource_name="result_queue",
                 operation_name="put",
-                current_depth=self.result_queue_count,
-                capacity=self.result_queue_depth,
                 start_time=put_start_time,
                 blocked=False,
             )
@@ -1027,10 +1061,8 @@ class NativeBgenCallbackRunner(abc.ABC):
             with self.result_in_flight_slot_condition:
                 attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
                 if attempt_plan.should_acquire:
-                    current_depth = attempt_plan.occupied_count
                     blocked = False
                 else:
-                    current_depth = attempt_plan.occupied_count
                     if attempt_plan.should_wait:
                         self.result_in_flight_slot_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
                     blocked = True
@@ -1038,8 +1070,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_in_flight_slots",
                     operation_name="producer_blocking",
-                    current_depth=current_depth,
-                    capacity=self.result_in_flight_limit,
                     start_time=acquire_start_time,
                     blocked=True,
                 )
@@ -1047,8 +1077,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.record_bounded_resource_stage_duration(
                 resource_name="result_in_flight_slots",
                 operation_name="acquire",
-                current_depth=current_depth,
-                capacity=self.result_in_flight_limit,
                 start_time=acquire_start_time,
                 blocked=False,
             )
@@ -1061,13 +1089,10 @@ class NativeBgenCallbackRunner(abc.ABC):
             if release_plan.has_release_error:
                 message = "Native result in-flight slot state has no occupied slot to release."
                 raise RuntimeError(message)
-            current_depth = release_plan.occupied_count
             self.result_in_flight_slot_condition.notify()
         self.record_bounded_resource_operation(
             resource_name="result_in_flight_slots",
             operation_name="release",
-            current_depth=current_depth,
-            capacity=self.result_in_flight_limit,
             elapsed_seconds=0.0,
             blocked=False,
         )
@@ -1271,11 +1296,9 @@ class NativeBgenCallbackRunner(abc.ABC):
                     dtype=dtype,
                 )
                 if reused_dosage_buffer is not None:
-                    self.record_bounded_resource_operation(
-                        resource_name="dosage_buffer_pool",
+                    self.record_dosage_buffer_pool_operation(
                         operation_name="reuse",
-                        current_depth=self.free_dosage_buffer_count,
-                        capacity=self.dosage_buffer_limit,
+                        free_buffer_count=self.free_dosage_buffer_count,
                         elapsed_seconds=0.0,
                         blocked=False,
                     )
@@ -1305,22 +1328,18 @@ class NativeBgenCallbackRunner(abc.ABC):
                     dtype=dtype,
                 )
                 if reused_dosage_buffer is not None:
-                    self.record_bounded_resource_operation(
-                        resource_name="dosage_buffer_pool",
+                    self.record_dosage_buffer_pool_operation(
                         operation_name="reuse",
-                        current_depth=self.free_dosage_buffer_count,
-                        capacity=self.dosage_buffer_limit,
+                        free_buffer_count=self.free_dosage_buffer_count,
                         elapsed_seconds=0.0,
                         blocked=False,
                     )
                     return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
                 continue
-            self.record_bounded_resource_stage_duration(
-                resource_name="dosage_buffer_pool",
+            self.record_dosage_buffer_pool_stage_duration(
                 operation_name="consumer_wait",
-                current_depth=current_depth,
-                capacity=self.dosage_buffer_limit,
+                free_buffer_count=current_depth,
                 start_time=buffer_wait_start_time,
                 blocked=True,
             )
@@ -1335,11 +1354,9 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.free_dosage_buffers.append(dosage_buffer_owner)
             current_depth = self.free_dosage_buffer_count
             self.dosage_buffer_pool_condition.notify()
-        self.record_bounded_resource_operation(
-            resource_name="dosage_buffer_pool",
+        self.record_dosage_buffer_pool_operation(
             operation_name="return",
-            current_depth=current_depth,
-            capacity=self.dosage_buffer_limit,
+            free_buffer_count=current_depth,
             elapsed_seconds=0.0,
             blocked=False,
         )
@@ -1357,11 +1374,9 @@ class NativeBgenCallbackRunner(abc.ABC):
                 message = "Native dosage-buffer pool has no available slot for allocation."
                 raise RuntimeError(message)
             current_depth = self.free_dosage_buffer_count
-        self.record_bounded_resource_operation(
-            resource_name="dosage_buffer_pool",
+        self.record_dosage_buffer_pool_operation(
             operation_name="allocate",
-            current_depth=current_depth,
-            capacity=self.dosage_buffer_limit,
+            free_buffer_count=current_depth,
             elapsed_seconds=0.0,
             blocked=False,
         )
@@ -1376,11 +1391,9 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             current_depth = self.free_dosage_buffer_count
             self.dosage_buffer_pool_condition.notify()
-        self.record_bounded_resource_operation(
-            resource_name="dosage_buffer_pool",
+        self.record_dosage_buffer_pool_operation(
             operation_name="discard",
-            current_depth=current_depth,
-            capacity=self.dosage_buffer_limit,
+            free_buffer_count=current_depth,
             elapsed_seconds=0.0,
             blocked=False,
         )

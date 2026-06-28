@@ -2724,6 +2724,27 @@ class CallbackQueueGetAttemptPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class CallbackQueueBackpressureObservationProbe:
+    queue_name: str
+    operation_name: str
+    queue_depth: int
+    queue_capacity: int
+    elapsed_seconds: float
+    blocked_seconds: float
+
+
+@dataclasses.dataclass(frozen=True)
+class CallbackQueueStageBackpressureObservationProbe:
+    queue_name: str
+    operation_name: str
+    stage_name: str
+    queue_depth: int
+    queue_capacity: int
+    elapsed_seconds: float
+    blocked_seconds: float
+
+
+@dataclasses.dataclass(frozen=True)
 class ResultInFlightAcquireAttemptPlanProbe:
     should_acquire: bool
     should_wait: bool
@@ -2919,6 +2940,99 @@ class WorkerErrorRaiseSchedulerProbe:
             raise_dosage_worker_error=True,
             raise_result_worker_error=False,
             error_message="planned dosage worker failure",
+        )
+
+
+@dataclasses.dataclass
+class CallbackObservationSchedulerProbe:
+    current_queue_observation_called: bool = False
+    current_queue_stage_observation_called: bool = False
+    dosage_buffer_pool_observation_called: bool = False
+    dosage_buffer_pool_stage_observation_called: bool = False
+    observed_resource_name: str | None = None
+    observed_operation_name: str | None = None
+    observed_free_buffer_count: int | None = None
+
+    def plan_current_queue_backpressure_observation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> CallbackQueueBackpressureObservationProbe:
+        self.current_queue_observation_called = True
+        self.observed_resource_name = queue_name
+        self.observed_operation_name = operation_name
+        return CallbackQueueBackpressureObservationProbe(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            queue_depth=1,
+            queue_capacity=2,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=elapsed_seconds if blocked else 0.0,
+        )
+
+    def plan_current_queue_stage_backpressure_observation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> CallbackQueueStageBackpressureObservationProbe:
+        self.current_queue_stage_observation_called = True
+        self.observed_resource_name = queue_name
+        self.observed_operation_name = operation_name
+        return CallbackQueueStageBackpressureObservationProbe(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            stage_name="callback_queue_put",
+            queue_depth=1,
+            queue_capacity=2,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=elapsed_seconds if blocked else 0.0,
+        )
+
+    def plan_dosage_buffer_pool_backpressure_observation(
+        self,
+        *,
+        operation_name: str,
+        free_buffer_count: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> CallbackQueueBackpressureObservationProbe:
+        self.dosage_buffer_pool_observation_called = True
+        self.observed_operation_name = operation_name
+        self.observed_free_buffer_count = free_buffer_count
+        return CallbackQueueBackpressureObservationProbe(
+            queue_name="dosage_buffer_pool",
+            operation_name=operation_name,
+            queue_depth=free_buffer_count,
+            queue_capacity=3,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=elapsed_seconds if blocked else 0.0,
+        )
+
+    def plan_dosage_buffer_pool_stage_backpressure_observation(
+        self,
+        *,
+        operation_name: str,
+        free_buffer_count: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> CallbackQueueStageBackpressureObservationProbe:
+        self.dosage_buffer_pool_stage_observation_called = True
+        self.observed_operation_name = operation_name
+        self.observed_free_buffer_count = free_buffer_count
+        return CallbackQueueStageBackpressureObservationProbe(
+            queue_name="dosage_buffer_pool",
+            operation_name=operation_name,
+            stage_name="dosage_buffer_pool_consumer_wait",
+            queue_depth=free_buffer_count,
+            queue_capacity=3,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=elapsed_seconds if blocked else 0.0,
         )
 
 
@@ -3151,6 +3265,44 @@ def test_native_callback_runner_uses_scheduler_queue_backpressure_attempt_plans(
 
     assert scheduler_state.dosage_put_backpressure_called is True
     assert scheduler_state.result_put_backpressure_called is True
+
+
+def test_native_callback_runner_uses_scheduler_resource_observation_plans() -> None:
+    callback = ManualCallbackRunner()
+    callback.stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    scheduler_state = CallbackObservationSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+
+    callback.record_bounded_resource_operation(
+        resource_name="result_in_flight_slots",
+        operation_name="release",
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    callback.record_bounded_resource_stage_duration(
+        resource_name="dosage_queue",
+        operation_name="put",
+        start_time=time.perf_counter(),
+        blocked=False,
+    )
+    callback.record_dosage_buffer_pool_operation(
+        operation_name="return",
+        free_buffer_count=2,
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    callback.record_dosage_buffer_pool_stage_duration(
+        operation_name="consumer_wait",
+        free_buffer_count=1,
+        start_time=time.perf_counter(),
+        blocked=True,
+    )
+
+    assert scheduler_state.current_queue_observation_called is True
+    assert scheduler_state.current_queue_stage_observation_called is True
+    assert scheduler_state.dosage_buffer_pool_observation_called is True
+    assert scheduler_state.dosage_buffer_pool_stage_observation_called is True
+    assert scheduler_state.observed_free_buffer_count == 1
 
 
 def test_native_callback_runner_uses_scheduler_worker_error_raise_plan() -> None:

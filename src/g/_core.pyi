@@ -980,6 +980,20 @@ class NativeCallbackSchedulerState:
         elapsed_seconds: float,
         blocked: bool,
     ) -> NativeCallbackQueueBackpressureObservation: ...
+    def plan_current_queue_backpressure_observation(
+        self,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> NativeCallbackQueueBackpressureObservation: ...
+    def plan_dosage_buffer_pool_backpressure_observation(
+        self,
+        operation_name: str,
+        free_buffer_count: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> NativeCallbackQueueBackpressureObservation: ...
     def plan_queue_stage_observation(
         self,
         queue_name: str,
@@ -993,6 +1007,20 @@ class NativeCallbackSchedulerState:
         operation_name: str,
         queue_depth: int,
         queue_capacity: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> NativeCallbackQueueStageBackpressureObservation: ...
+    def plan_current_queue_stage_backpressure_observation(
+        self,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> NativeCallbackQueueStageBackpressureObservation: ...
+    def plan_dosage_buffer_pool_stage_backpressure_observation(
+        self,
+        operation_name: str,
+        free_buffer_count: int,
         elapsed_seconds: float,
         blocked: bool,
     ) -> NativeCallbackQueueStageBackpressureObservation: ...

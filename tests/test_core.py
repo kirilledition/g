@@ -1909,6 +1909,71 @@ def test_plan_callback_queue_stage_observation_uses_native_timing_policy() -> No
         )
 
 
+def test_native_callback_scheduler_state_plans_current_queue_observations() -> None:
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=3,
+        native_callback_batch_size=2,
+        result_in_flight_limit=7,
+        dosage_buffer_limit=8,
+    )
+
+    assert scheduler_state.acquire_dosage_queue_slot() is True
+    dosage_queue_observation = scheduler_state.plan_current_queue_stage_backpressure_observation(
+        queue_name="dosage_queue",
+        operation_name="producer_blocking",
+        elapsed_seconds=0.5,
+        blocked=True,
+    )
+    assert dosage_queue_observation.queue_name == "dosage_queue"
+    assert dosage_queue_observation.operation_name == "producer_blocking"
+    assert dosage_queue_observation.stage_name == "callback_queue_producer_blocking"
+    assert dosage_queue_observation.queue_depth == 1
+    assert dosage_queue_observation.queue_capacity == 3
+    assert dosage_queue_observation.elapsed_seconds == 0.5
+    assert dosage_queue_observation.blocked_seconds == 0.5
+
+    assert scheduler_state.acquire_result_in_flight_slot() is True
+    result_slot_observation = scheduler_state.plan_current_queue_backpressure_observation(
+        queue_name="result_in_flight_slots",
+        operation_name="release",
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    assert result_slot_observation.queue_name == "result_in_flight_slots"
+    assert result_slot_observation.operation_name == "release"
+    assert result_slot_observation.queue_depth == 1
+    assert result_slot_observation.queue_capacity == 7
+    assert result_slot_observation.elapsed_seconds == 0.25
+    assert result_slot_observation.blocked_seconds == 0.0
+
+    dosage_buffer_observation = scheduler_state.plan_dosage_buffer_pool_backpressure_observation(
+        operation_name="reuse",
+        free_buffer_count=4,
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    assert dosage_buffer_observation.queue_name == "dosage_buffer_pool"
+    assert dosage_buffer_observation.operation_name == "reuse"
+    assert dosage_buffer_observation.queue_depth == 4
+    assert dosage_buffer_observation.queue_capacity == 8
+    assert dosage_buffer_observation.elapsed_seconds == 0.25
+    assert dosage_buffer_observation.blocked_seconds == 0.0
+
+    dosage_buffer_stage_observation = scheduler_state.plan_dosage_buffer_pool_stage_backpressure_observation(
+        operation_name="consumer_wait",
+        free_buffer_count=2,
+        elapsed_seconds=0.5,
+        blocked=True,
+    )
+    assert dosage_buffer_stage_observation.queue_name == "dosage_buffer_pool"
+    assert dosage_buffer_stage_observation.operation_name == "consumer_wait"
+    assert dosage_buffer_stage_observation.stage_name == "dosage_buffer_pool_consumer_wait"
+    assert dosage_buffer_stage_observation.queue_depth == 2
+    assert dosage_buffer_stage_observation.queue_capacity == 8
+    assert dosage_buffer_stage_observation.elapsed_seconds == 0.5
+    assert dosage_buffer_stage_observation.blocked_seconds == 0.5
+
+
 def test_plan_callback_queue_operation_observation_uses_native_timing_policy() -> None:
     pool_observation_plan = _core.plan_callback_queue_operation_observation(
         queue_name="dosage_buffer_pool",
