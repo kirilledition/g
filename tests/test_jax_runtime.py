@@ -199,6 +199,24 @@ def test_configure_before_backend_init_validates_gpu_after_runtime(tmp_path: Pat
     assert call_order[-1] == "validate_gpu_device"
 
 
+def test_configure_before_backend_init_uses_native_side_effect_plan(tmp_path: Path) -> None:
+    cache_directory = tmp_path / "jax-cache"
+    policy = dataclasses.replace(build_runtime_policy(device=types.Device.GPU), cache_directory=cache_directory)
+
+    with (
+        patch(
+            "g.jax_runtime.setup._core.plan_jax_runtime_setup_side_effects_payload",
+            return_value={"should_create_cache_directory": False, "should_validate_gpu": False},
+        ),
+        patch("g.jax_runtime.setup.jax.config.update"),
+        patch("g.jax_runtime.setup.validate_gpu_device") as validate_gpu_device_mock,
+    ):
+        setup.configure_before_backend_init(policy, diagnostic_sink=None)
+
+    assert not cache_directory.exists()
+    validate_gpu_device_mock.assert_not_called()
+
+
 def test_configure_before_backend_init_emits_structured_diagnostics(tmp_path: Path) -> None:
     """Ensure setup choices are emitted as structured diagnostic events."""
     cache_directory = tmp_path / "jax-cache"

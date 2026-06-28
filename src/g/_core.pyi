@@ -1391,6 +1391,10 @@ def plan_jax_runtime_config_update_payloads(
     xla_auxiliary_cache_mode: str,
     transfer_guard_enabled: bool,
 ) -> tuple[dict[str, object], ...]: ...
+def plan_jax_runtime_setup_side_effects_payload(
+    requested_device: str,
+    persistent_cache_enabled: bool,
+) -> dict[str, object]: ...
 def plan_jax_gpu_validation_payload(
     nvidia_driver_visible: bool,
     backend_initialization_failed: bool,

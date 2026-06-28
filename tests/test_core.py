@@ -571,6 +571,26 @@ def test_native_jax_runtime_config_update_payloads() -> None:
     ]
 
 
+def test_native_jax_runtime_setup_side_effect_plan() -> None:
+    cpu_plan = _core.plan_jax_runtime_setup_side_effects_payload(
+        requested_device="cpu",
+        persistent_cache_enabled=True,
+    )
+    gpu_plan = _core.plan_jax_runtime_setup_side_effects_payload(
+        requested_device="gpu",
+        persistent_cache_enabled=False,
+    )
+
+    assert cpu_plan == {
+        "should_create_cache_directory": True,
+        "should_validate_gpu": False,
+    }
+    assert gpu_plan == {
+        "should_create_cache_directory": False,
+        "should_validate_gpu": True,
+    }
+
+
 def test_native_jax_gpu_validation_plan() -> None:
     missing_driver_plan = _core.plan_jax_gpu_validation_payload(
         nvidia_driver_visible=False,

@@ -51,6 +51,12 @@ pub struct JaxGpuValidationPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JaxRuntimeSetupSideEffectPlan {
+    pub should_create_cache_directory: bool,
+    pub should_validate_gpu: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JaxRuntimeConfigValue {
     Boolean(bool),
     Integer(i64),
@@ -123,6 +129,17 @@ pub fn resolve_jax_runtime_setup(
         transfer_guard_enabled: transfer_guard,
         gpu_validation_status,
         gpu_validation_message,
+    }
+}
+
+#[must_use]
+pub fn plan_jax_runtime_setup_side_effects(
+    requested_device: &str,
+    persistent_cache_enabled: bool,
+) -> JaxRuntimeSetupSideEffectPlan {
+    JaxRuntimeSetupSideEffectPlan {
+        should_create_cache_directory: persistent_cache_enabled,
+        should_validate_gpu: requested_device == DEVICE_GPU,
     }
 }
 
@@ -318,6 +335,18 @@ mod tests {
         assert_eq!(cpu_setup.platform_name, JAX_CPU_PLATFORM_NAME);
         assert_eq!(cpu_setup.gpu_validation_status, "skipped");
         assert_eq!(cpu_setup.matmul_precision, "highest");
+    }
+
+    #[test]
+    fn plans_jax_runtime_setup_side_effects() {
+        assert_eq!(
+            plan_jax_runtime_setup_side_effects("cpu", true),
+            JaxRuntimeSetupSideEffectPlan { should_create_cache_directory: true, should_validate_gpu: false },
+        );
+        assert_eq!(
+            plan_jax_runtime_setup_side_effects("gpu", false),
+            JaxRuntimeSetupSideEffectPlan { should_create_cache_directory: false, should_validate_gpu: true },
+        );
     }
 
     #[test]

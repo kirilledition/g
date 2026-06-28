@@ -8,7 +8,7 @@ from pathlib import Path
 
 import jax
 
-from g import _core, types
+from g import _core
 from g.jax_runtime import diagnostics, models, resolution
 
 NVIDIA_CONTROL_DEVICE_PATH = Path("/dev/nvidiactl")
@@ -35,10 +35,14 @@ def configure_before_backend_init(
 
     """
     setup_report = resolution.resolve_jax_runtime_setup(policy)
-    if setup_report.persistent_cache_enabled:
+    side_effect_plan = _core.plan_jax_runtime_setup_side_effects_payload(
+        requested_device=policy.device.value,
+        persistent_cache_enabled=setup_report.persistent_cache_enabled,
+    )
+    if typing.cast("bool", side_effect_plan["should_create_cache_directory"]):
         setup_report.cache_directory.mkdir(parents=True, exist_ok=True)
     apply_jax_runtime_config_updates(setup_report)
-    if policy.device != types.Device.GPU:
+    if not typing.cast("bool", side_effect_plan["should_validate_gpu"]):
         if diagnostic_sink is not None:
             for diagnostic_event in diagnostics.diagnostic_events_from_setup_report(setup_report):
                 diagnostic_sink(diagnostic_event)
