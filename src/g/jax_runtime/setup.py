@@ -76,8 +76,10 @@ def nvidia_driver_is_visible() -> bool:
         Whether NVIDIA driver files are visible.
 
     """
-    return (
-        NVIDIA_CONTROL_DEVICE_PATH.exists() or NVIDIA_UVM_DEVICE_PATH.exists() or NVIDIA_DRIVER_DIRECTORY_PATH.exists()
+    return _core.nvidia_driver_files_are_visible_value(
+        control_device_path=str(NVIDIA_CONTROL_DEVICE_PATH),
+        uvm_device_path=str(NVIDIA_UVM_DEVICE_PATH),
+        driver_directory_path=str(NVIDIA_DRIVER_DIRECTORY_PATH),
     )
 
 

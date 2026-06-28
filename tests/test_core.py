@@ -635,6 +635,26 @@ def test_native_jax_runtime_diagnostic_record_plan() -> None:
     }
 
 
+def test_native_nvidia_driver_visibility_uses_any_driver_path(tmp_path: Path) -> None:
+    control_device_path = tmp_path / "nvidiactl"
+    uvm_device_path = tmp_path / "nvidia-uvm"
+    driver_directory_path = tmp_path / "driver"
+
+    assert not _core.nvidia_driver_files_are_visible_value(
+        control_device_path=str(control_device_path),
+        uvm_device_path=str(uvm_device_path),
+        driver_directory_path=str(driver_directory_path),
+    )
+
+    driver_directory_path.mkdir()
+
+    assert _core.nvidia_driver_files_are_visible_value(
+        control_device_path=str(control_device_path),
+        uvm_device_path=str(uvm_device_path),
+        driver_directory_path=str(driver_directory_path),
+    )
+
+
 def test_native_default_local_cache_directory_value() -> None:
     assert (
         _core.build_default_local_cache_directory_value(

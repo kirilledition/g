@@ -329,6 +329,21 @@ def test_require_gpu_device_accepts_gpu_platform() -> None:
         setup.require_gpu_device()
 
 
+def test_nvidia_driver_is_visible_uses_native_probe(tmp_path: Path) -> None:
+    control_device_path = tmp_path / "nvidiactl"
+    uvm_device_path = tmp_path / "nvidia-uvm"
+    driver_directory_path = tmp_path / "driver"
+
+    with (
+        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("g.jax_runtime.setup.NVIDIA_UVM_DEVICE_PATH", uvm_device_path),
+        patch("g.jax_runtime.setup.NVIDIA_DRIVER_DIRECTORY_PATH", driver_directory_path),
+    ):
+        assert setup.nvidia_driver_is_visible() is False
+        control_device_path.touch()
+        assert setup.nvidia_driver_is_visible() is True
+
+
 def test_validate_gpu_device_returns_native_success_report() -> None:
     """Ensure GPU validation success details come from native runtime policy."""
 

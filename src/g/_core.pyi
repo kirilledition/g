@@ -1414,6 +1414,11 @@ def plan_jax_runtime_diagnostic_record_payload(
     diagnostic_level: str,
     has_telemetry_session: bool,
 ) -> dict[str, object]: ...
+def nvidia_driver_files_are_visible_value(
+    control_device_path: str,
+    uvm_device_path: str,
+    driver_directory_path: str,
+) -> bool: ...
 def plan_jax_runtime_setup_side_effects_payload(
     requested_device: str,
     persistent_cache_enabled: bool,

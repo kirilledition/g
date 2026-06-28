@@ -1,5 +1,7 @@
 //! Deterministic JAX runtime setup policy and diagnostics.
 
+use std::path::Path;
+
 const DEVICE_GPU: &str = "gpu";
 const JAX_CONFIG_COMPILATION_CACHE_DIR: &str = "jax_compilation_cache_dir";
 const JAX_CONFIG_DEFAULT_MATMUL_PRECISION: &str = "jax_default_matmul_precision";
@@ -167,6 +169,15 @@ pub fn plan_jax_runtime_setup_side_effects(
         should_create_cache_directory: persistent_cache_enabled,
         should_validate_gpu: requested_device == DEVICE_GPU,
     }
+}
+
+#[must_use]
+pub fn nvidia_driver_files_are_visible(
+    control_device_path: &Path,
+    uvm_device_path: &Path,
+    driver_directory_path: &Path,
+) -> bool {
+    control_device_path.exists() || uvm_device_path.exists() || driver_directory_path.exists()
 }
 
 #[must_use]
@@ -361,6 +372,10 @@ fn text_field(name: &str, value: String) -> JaxRuntimeDiagnosticFieldPayload {
 mod tests {
     use super::*;
 
+    fn temporary_test_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("g-runtime-{name}-{}", uuid::Uuid::new_v4()))
+    }
+
     #[test]
     fn resolves_jax_runtime_setup_payload() {
         let setup = resolve_jax_runtime_setup("gpu", "cache", None, true, 1024, 5, true, true);
@@ -405,6 +420,23 @@ mod tests {
             plan_jax_runtime_setup_side_effects("gpu", false),
             JaxRuntimeSetupSideEffectPlan { should_create_cache_directory: false, should_validate_gpu: true },
         );
+    }
+
+    #[test]
+    fn detects_visible_nvidia_driver_files() {
+        let test_root = temporary_test_path("nvidia-driver");
+        let control_device_path = test_root.join("nvidiactl");
+        let uvm_device_path = test_root.join("nvidia-uvm");
+        let driver_directory_path = test_root.join("driver");
+        std::fs::create_dir_all(&test_root).expect("create nvidia driver test root");
+
+        assert!(!nvidia_driver_files_are_visible(&control_device_path, &uvm_device_path, &driver_directory_path,));
+
+        std::fs::write(&uvm_device_path, b"").expect("create nvidia uvm test file");
+
+        assert!(nvidia_driver_files_are_visible(&control_device_path, &uvm_device_path, &driver_directory_path,));
+
+        std::fs::remove_dir_all(test_root).expect("remove nvidia driver test root");
     }
 
     #[test]

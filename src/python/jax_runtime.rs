@@ -1,5 +1,7 @@
 //! PyO3 adapters for deterministic JAX runtime setup policy.
 
+use std::path::Path;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -53,6 +55,20 @@ pub(crate) fn plan_jax_runtime_diagnostic_record_payload<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let plan = native_jax_runtime::plan_jax_runtime_diagnostic_record(&diagnostic_level, has_telemetry_session);
     jax_runtime_diagnostic_record_plan_to_dict(py, &plan)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn nvidia_driver_files_are_visible_value(
+    control_device_path: String,
+    uvm_device_path: String,
+    driver_directory_path: String,
+) -> bool {
+    native_jax_runtime::nvidia_driver_files_are_visible(
+        Path::new(&control_device_path),
+        Path::new(&uvm_device_path),
+        Path::new(&driver_directory_path),
+    )
 }
 
 #[pyfunction]
