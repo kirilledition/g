@@ -36,8 +36,8 @@ pub use runtime_state::{
     RuntimeCompatibilityToken, describe_jax_runtime_policy,
 };
 pub use shutdown::{
-    ShutdownControllerState, ShutdownRequestAction, ShutdownRequestDecisionPayload, ShutdownSignalPayload,
-    build_shutdown_signal,
+    SecondSignalExceptionPlan, ShutdownControllerState, ShutdownRequestAction, ShutdownRequestDecisionPayload,
+    ShutdownSignalPayload, build_shutdown_signal, plan_second_signal_exception,
 };
 pub use telemetry_policy::{
     TelemetryPathsPayload, TelemetryWriterCountersPayload, build_empty_writer_counters, format_timestamp,

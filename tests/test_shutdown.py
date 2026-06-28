@@ -5,6 +5,7 @@ import unittest.mock
 
 import pytest
 
+from g import _core
 from g.engine import shutdown
 
 
@@ -25,6 +26,19 @@ def test_build_shutdown_signal_uses_native_metadata_for_supported_linux_signals(
 def test_build_shutdown_signal_rejects_unknown_signal() -> None:
     with pytest.raises(ValueError, match="0 is not a valid Signals"):
         shutdown.build_shutdown_signal(0)
+
+
+def test_native_second_signal_exception_plan() -> None:
+    sigint_plan = _core.plan_second_signal_exception(int(signal.SIGINT))
+    sigterm_plan = _core.plan_second_signal_exception(int(signal.SIGTERM))
+
+    assert isinstance(sigint_plan, _core.NativeSecondSignalExceptionPlan)
+    assert sigint_plan.raise_keyboard_interrupt is True
+    assert sigint_plan.exit_code == 128 + int(signal.SIGINT)
+    assert sigterm_plan.raise_keyboard_interrupt is False
+    assert sigterm_plan.exit_code == 128 + int(signal.SIGTERM)
+    with pytest.raises(ValueError, match="0 is not a valid Signals"):
+        _core.plan_second_signal_exception(0)
 
 
 def test_shutdown_controller_records_first_signal_in_native_handle() -> None:
@@ -57,6 +71,26 @@ def test_shutdown_controller_repeated_signal_restores_handlers_and_aborts() -> N
 
     signal_mock.assert_called_once_with(signal.SIGINT, previous_handler)
     assert not controller.handlers_installed
+
+
+def test_second_signal_exception_uses_native_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeSecondSignalExceptionPlan:
+        def __init__(self, *, raise_keyboard_interrupt: bool, exit_code: int) -> None:
+            self.raise_keyboard_interrupt = raise_keyboard_interrupt
+            self.exit_code = exit_code
+
+    def plan_second_signal_exception(signal_number: int) -> FakeSecondSignalExceptionPlan:
+        assert signal_number == int(signal.SIGINT)
+        return FakeSecondSignalExceptionPlan(raise_keyboard_interrupt=False, exit_code=199)
+
+    monkeypatch.setattr(shutdown.g._core, "plan_second_signal_exception", plan_second_signal_exception)
+
+    with pytest.raises(SystemExit) as system_exit:
+        shutdown.raise_second_signal_exception(
+            shutdown.ShutdownSignal(number=int(signal.SIGINT), name="SIGINT", exit_code=128 + int(signal.SIGINT))
+        )
+
+    assert system_exit.value.code == 199
 
 
 def test_shutdown_controller_context_resets_native_requested_signal() -> None:

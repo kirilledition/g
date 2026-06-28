@@ -36,6 +36,12 @@ pub struct ShutdownRequestDecisionPayload {
     pub signal: ShutdownSignalPayload,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecondSignalExceptionPlan {
+    pub raise_keyboard_interrupt: bool,
+    pub exit_code: i32,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ShutdownControllerState {
     pub requested_signal: Option<ShutdownSignalPayload>,
@@ -73,6 +79,20 @@ pub fn build_shutdown_signal(signal_number: i32) -> Result<ShutdownSignalPayload
     let signal_name =
         linux_signal_name(signal_number).ok_or_else(|| format!("{signal_number} is not a valid Signals"))?;
     Ok(ShutdownSignalPayload { number: signal_number, name: signal_name.to_string(), exit_code: 128 + signal_number })
+}
+
+/// Plan the Python exception adapter for a repeated shutdown signal.
+///
+/// # Errors
+///
+/// Returns an error when `signal_number` is not one of the supported Linux
+/// signal constants.
+pub fn plan_second_signal_exception(signal_number: i32) -> Result<SecondSignalExceptionPlan, String> {
+    let signal = build_shutdown_signal(signal_number)?;
+    Ok(SecondSignalExceptionPlan {
+        raise_keyboard_interrupt: signal_number == signal::SIGINT,
+        exit_code: signal.exit_code,
+    })
 }
 
 fn linux_signal_name(signal_number: i32) -> Option<&'static str> {
@@ -146,5 +166,18 @@ mod tests {
         assert_eq!(controller.requested_signal.as_ref().unwrap().name, "SIGINT");
         controller.reset();
         assert_eq!(controller.requested_signal, None);
+    }
+
+    #[test]
+    fn plans_second_signal_exception_adapter() {
+        assert_eq!(
+            plan_second_signal_exception(signal::SIGINT).unwrap(),
+            SecondSignalExceptionPlan { raise_keyboard_interrupt: true, exit_code: 128 + signal::SIGINT },
+        );
+        assert_eq!(
+            plan_second_signal_exception(signal::SIGTERM).unwrap(),
+            SecondSignalExceptionPlan { raise_keyboard_interrupt: false, exit_code: 128 + signal::SIGTERM },
+        );
+        assert!(plan_second_signal_exception(0).is_err());
     }
 }

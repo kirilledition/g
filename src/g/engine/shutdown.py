@@ -154,9 +154,10 @@ NATIVE_SHUTDOWN_SIGNAL_CACHE = build_native_shutdown_signal_cache()
 
 def raise_second_signal_exception(shutdown_signal: ShutdownSignal) -> typing.NoReturn:
     """Raise a hard-interrupt exception for a repeated shutdown signal."""
-    if shutdown_signal.number == signal.SIGINT:
+    exception_plan = g._core.plan_second_signal_exception(shutdown_signal.number)
+    if exception_plan.raise_keyboard_interrupt:
         raise KeyboardInterrupt
-    raise SystemExit(shutdown_signal.exit_code)
+    raise SystemExit(exception_plan.exit_code)
 
 
 def install_graceful_shutdown_handlers() -> GracefulShutdownController:

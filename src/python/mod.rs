@@ -125,7 +125,10 @@ use schedule::{
     resolve_native_callback_worker_shutdown_timeouts, resolve_writer_finish_thread_count,
     should_attempt_callback_worker_stop,
 };
-use shutdown::{NativeShutdownController, build_shutdown_signal_payload};
+use shutdown::{
+    NativeSecondSignalExceptionPlan, NativeShutdownController, build_shutdown_signal_payload,
+    plan_second_signal_exception,
+};
 use telemetry_policy::{
     NativeTelemetrySessionPolicy, build_empty_telemetry_writer_counters_payload, format_telemetry_timestamp_value,
     paths_refer_to_same_file_value, resolve_telemetry_output_run_root_value, resolve_telemetry_paths_payload,
@@ -1827,6 +1830,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeRayonThreadPoolConfigurationPlan>()?;
     module.add_class::<NativeRuntimeCompatibilityToken>()?;
     module.add_class::<NativeRuntimeState>()?;
+    module.add_class::<NativeSecondSignalExceptionPlan>()?;
     module.add_class::<NativeShutdownController>()?;
     module.add_class::<NativeStageTimingRecorder>()?;
     module.add_class::<NativeStageTimingRecorderPlan>()?;
@@ -1855,6 +1859,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_second_signal_exception, module)?)?;
     module.add_function(wrap_pyfunction!(build_multi_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_compute_group_id_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_compute_groups_payload, module)?)?;

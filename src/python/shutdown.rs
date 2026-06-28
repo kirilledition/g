@@ -13,6 +13,24 @@ pub(crate) struct NativeShutdownController {
     state: Mutex<native_shutdown::ShutdownControllerState>,
 }
 
+#[pyclass]
+pub(crate) struct NativeSecondSignalExceptionPlan {
+    inner: native_shutdown::SecondSignalExceptionPlan,
+}
+
+#[pymethods]
+impl NativeSecondSignalExceptionPlan {
+    #[getter]
+    fn raise_keyboard_interrupt(&self) -> bool {
+        self.inner.raise_keyboard_interrupt
+    }
+
+    #[getter]
+    fn exit_code(&self) -> i32 {
+        self.inner.exit_code
+    }
+}
+
 #[pymethods]
 impl NativeShutdownController {
     #[new]
@@ -49,6 +67,12 @@ impl NativeShutdownController {
 pub(crate) fn build_shutdown_signal_payload<'py>(py: Python<'py>, signal_number: i32) -> PyResult<Bound<'py, PyDict>> {
     let payload = native_shutdown::build_shutdown_signal(signal_number).map_err(PyValueError::new_err)?;
     shutdown_signal_payload_to_dict(py, &payload)
+}
+
+#[pyfunction]
+pub(crate) fn plan_second_signal_exception(signal_number: i32) -> PyResult<NativeSecondSignalExceptionPlan> {
+    let plan = native_shutdown::plan_second_signal_exception(signal_number).map_err(PyValueError::new_err)?;
+    Ok(NativeSecondSignalExceptionPlan { inner: plan })
 }
 
 fn shutdown_signal_payload_to_dict<'py>(
