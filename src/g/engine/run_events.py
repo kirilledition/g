@@ -5,13 +5,12 @@ from __future__ import annotations
 import dataclasses
 import typing
 from dataclasses import dataclass
+from pathlib import Path
 
 import g._core
+from g import types
 
 if typing.TYPE_CHECKING:
-    from pathlib import Path
-
-    from g import types
     from g.engine import shutdown
 
 
@@ -145,16 +144,7 @@ def attach_run_metadata(
 
 def build_run_completed_event(artifacts: RunArtifacts) -> RunCompletedEvent:
     """Build a structured completion event from run artifacts."""
-    artifact_payloads = flatten_artifact_payloads(artifacts)
-    phenotype_count = artifacts.phenotype_count
-    if phenotype_count is None and len(artifact_payloads) > 1:
-        phenotype_count = len(artifact_payloads)
-    return RunCompletedEvent(
-        run_id=artifacts.run_id,
-        association_mode=artifacts.association_mode,
-        phenotype_count=phenotype_count,
-        artifacts=artifact_payloads,
-    )
+    return run_completed_event_from_native_payload(g._core.build_run_completed_event_payload(artifacts))
 
 
 def build_run_interrupted_event(shutdown_request: shutdown.GracefulShutdownRequested) -> RunInterruptedEvent:
@@ -173,24 +163,44 @@ def build_run_failed_event(error: Exception) -> RunFailedEvent:
     return RunFailedEvent(error_type=type(error).__name__, error_message=str(error))
 
 
-def flatten_artifact_payloads(artifacts: RunArtifacts) -> tuple[RunArtifactPayload, ...]:
-    """Return per-phenotype artifact payloads for a run artifact tree."""
-    if artifacts.phenotype_artifacts:
-        return tuple(
-            artifact_payload
-            for phenotype_artifact in artifacts.phenotype_artifacts
-            for artifact_payload in flatten_artifact_payloads(phenotype_artifact)
-        )
-    return (
-        RunArtifactPayload(
-            phenotype_name=artifacts.phenotype_name,
-            output_run_directory=artifacts.output_run_directory,
-            final_dataset=artifacts.final_dataset,
-            final_parquet=artifacts.final_parquet,
-            final_regenie=artifacts.final_regenie,
-            effective_config=artifacts.effective_config,
+def run_completed_event_from_native_payload(payload: object) -> RunCompletedEvent:
+    """Adapt a native completed-run event payload to the public Python dataclass."""
+    event_payload = native_mapping_payload(payload)
+    association_mode_payload = typing.cast("str | None", event_payload["association_mode"])
+    return RunCompletedEvent(
+        run_id=typing.cast("str | None", event_payload["run_id"]),
+        association_mode=None if association_mode_payload is None else types.AssociationMode(association_mode_payload),
+        phenotype_count=typing.cast("int | None", event_payload["phenotype_count"]),
+        artifacts=tuple(
+            run_artifact_payload_from_native_payload(artifact_payload)
+            for artifact_payload in typing.cast("typing.Sequence[object]", event_payload["artifacts"])
         ),
     )
+
+
+def run_artifact_payload_from_native_payload(payload: object) -> RunArtifactPayload:
+    """Adapt one native completed-run artifact payload."""
+    artifact_payload = native_mapping_payload(payload)
+    return RunArtifactPayload(
+        phenotype_name=typing.cast("str | None", artifact_payload["phenotype_name"]),
+        output_run_directory=optional_path_from_native_payload(artifact_payload["output_run_directory"]),
+        final_dataset=optional_path_from_native_payload(artifact_payload["final_dataset"]),
+        final_parquet=optional_path_from_native_payload(artifact_payload["final_parquet"]),
+        final_regenie=optional_path_from_native_payload(artifact_payload["final_regenie"]),
+        effective_config=optional_path_from_native_payload(artifact_payload["effective_config"]),
+    )
+
+
+def optional_path_from_native_payload(path_payload: object) -> Path | None:
+    """Adapt an optional native path string."""
+    if path_payload is None:
+        return None
+    return Path(typing.cast("str", path_payload))
+
+
+def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
+    """Adapt a native mapping payload to a mutable Python dictionary."""
+    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
 
 
 def run_completed_telemetry_fields(event: RunCompletedEvent) -> dict[str, object]:

@@ -2,8 +2,81 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from g import types
+from g import _core, types
 from g.engine import run_events
+
+
+def test_run_completed_event_uses_native_artifact_tree_builder() -> None:
+    artifacts = run_events.RunArtifacts(
+        output_run_directory=None,
+        final_dataset=None,
+        final_parquet=None,
+        final_regenie=None,
+        effective_config=None,
+        phenotype_artifacts=(
+            run_events.RunArtifacts(
+                output_run_directory=Path("out/height/run"),
+                final_dataset=None,
+                final_parquet=Path("out/height/final.parquet"),
+                final_regenie=None,
+                effective_config=Path("out/height/effective_config.toml"),
+                phenotype_artifacts=(),
+                phenotype_name="height",
+                association_mode=None,
+                phenotype_count=None,
+                run_id=None,
+            ),
+            run_events.RunArtifacts(
+                output_run_directory=Path("out/weight/run"),
+                final_dataset=None,
+                final_parquet=Path("out/weight/final.parquet"),
+                final_regenie=None,
+                effective_config=Path("out/weight/effective_config.toml"),
+                phenotype_artifacts=(),
+                phenotype_name="weight",
+                association_mode=None,
+                phenotype_count=None,
+                run_id=None,
+            ),
+        ),
+        phenotype_name=None,
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype_count=None,
+        run_id="run-1",
+    )
+
+    native_payload = _core.build_run_completed_event_payload(artifacts)
+    event = run_events.build_run_completed_event(artifacts)
+
+    assert native_payload["phenotype_count"] == 2
+    assert event.run_id == "run-1"
+    assert event.association_mode == types.AssociationMode.REGENIE2_LINEAR
+    assert event.phenotype_count == 2
+    assert tuple(artifact.phenotype_name for artifact in event.artifacts) == ("height", "weight")
+    assert event.artifacts[1].output_run_directory == Path("out/weight/run")
+    assert event.artifacts[1].final_parquet == Path("out/weight/final.parquet")
+
+
+def test_run_completed_event_preserves_missing_native_metadata() -> None:
+    event = run_events.build_run_completed_event(
+        run_events.RunArtifacts(
+            output_run_directory=Path("out/run"),
+            final_dataset=None,
+            final_parquet=None,
+            final_regenie=None,
+            effective_config=None,
+            phenotype_artifacts=(),
+            phenotype_name=None,
+            association_mode=None,
+            phenotype_count=None,
+            run_id=None,
+        )
+    )
+
+    assert event.run_id is None
+    assert event.association_mode is None
+    assert event.phenotype_count is None
+    assert event.artifacts[0].output_run_directory == Path("out/run")
 
 
 def test_run_completed_telemetry_fields_use_native_payload_builder() -> None:

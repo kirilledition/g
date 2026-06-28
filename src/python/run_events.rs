@@ -6,6 +6,16 @@ use pyo3::types::{PyDict, PyTuple};
 use g_runtime::run_events as native_run_events;
 
 #[pyfunction]
+pub fn build_run_completed_event_payload<'py>(
+    py: Python<'py>,
+    artifacts: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let artifacts_payload = run_artifacts_payload_from_py(artifacts)?;
+    let event_payload = native_run_events::build_run_completed_event_from_artifacts(&artifacts_payload);
+    run_completed_event_payload_to_py_dict(py, &event_payload)
+}
+
+#[pyfunction]
 pub fn build_run_completed_telemetry_fields<'py>(
     py: Python<'py>,
     event: &Bound<'py, PyAny>,
@@ -78,6 +88,26 @@ fn run_failed_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_eve
     })
 }
 
+fn run_artifacts_payload_from_py(artifacts: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunArtifactsPayload> {
+    let phenotype_artifacts = artifacts.getattr("phenotype_artifacts")?;
+    let mut artifact_payloads = Vec::new();
+    for phenotype_artifact in phenotype_artifacts.try_iter()? {
+        artifact_payloads.push(run_artifacts_payload_from_py(&phenotype_artifact?)?);
+    }
+    Ok(native_run_events::RunArtifactsPayload {
+        output_run_directory: optional_path_string(artifacts, "output_run_directory")?,
+        final_dataset: optional_path_string(artifacts, "final_dataset")?,
+        final_parquet: optional_path_string(artifacts, "final_parquet")?,
+        final_regenie: optional_path_string(artifacts, "final_regenie")?,
+        effective_config: optional_path_string(artifacts, "effective_config")?,
+        phenotype_artifacts: artifact_payloads,
+        phenotype_name: optional_string_attribute(artifacts, "phenotype_name")?,
+        association_mode: optional_enum_value(artifacts, "association_mode")?,
+        phenotype_count: optional_i64_attribute(artifacts, "phenotype_count")?,
+        run_id: optional_string_attribute(artifacts, "run_id")?,
+    })
+}
+
 fn artifact_payloads_from_py_event(event: &Bound<'_, PyAny>) -> PyResult<Vec<native_run_events::RunArtifactPayload>> {
     let artifact_payloads = event.getattr("artifacts")?;
     let mut artifacts = Vec::new();
@@ -96,6 +126,37 @@ fn artifact_payload_from_py(artifact: &Bound<'_, PyAny>) -> PyResult<native_run_
         final_regenie: optional_path_string(artifact, "final_regenie")?,
         effective_config: optional_path_string(artifact, "effective_config")?,
     })
+}
+
+fn run_completed_event_payload_to_py_dict<'py>(
+    py: Python<'py>,
+    event: &native_run_events::RunCompletedEventPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("run_id", &event.run_id)?;
+    payload.set_item("association_mode", &event.association_mode)?;
+    payload.set_item("phenotype_count", event.phenotype_count)?;
+    let artifacts = event
+        .artifacts
+        .iter()
+        .map(|artifact| run_artifact_payload_to_py_dict(py, artifact))
+        .collect::<PyResult<Vec<_>>>()?;
+    payload.set_item("artifacts", PyTuple::new(py, &artifacts)?)?;
+    Ok(payload)
+}
+
+fn run_artifact_payload_to_py_dict<'py>(
+    py: Python<'py>,
+    artifact: &native_run_events::RunArtifactPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("phenotype_name", &artifact.phenotype_name)?;
+    payload.set_item("output_run_directory", &artifact.output_run_directory)?;
+    payload.set_item("final_dataset", &artifact.final_dataset)?;
+    payload.set_item("final_parquet", &artifact.final_parquet)?;
+    payload.set_item("final_regenie", &artifact.final_regenie)?;
+    payload.set_item("effective_config", &artifact.effective_config)?;
+    Ok(payload)
 }
 
 fn run_completed_telemetry_fields_to_py_dict<'py>(

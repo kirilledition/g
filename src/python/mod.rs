@@ -95,8 +95,9 @@ use preflight::{
 use preparation::{initialize_pipeline_output_runs, validate_pipeline_resume_compatibility};
 use profile::build_profile_snapshot_dict;
 use run_events::{
-    build_run_completed_telemetry_fields, build_run_failed_telemetry_fields, build_run_interrupted_telemetry_fields,
-    render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
+    build_run_completed_event_payload, build_run_completed_telemetry_fields, build_run_failed_telemetry_fields,
+    build_run_interrupted_telemetry_fields, render_run_completed_lines, render_run_failed_lines,
+    render_run_interrupted_lines,
 };
 use run_metadata::{
     build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload, build_run_manifest_extension_payload,
@@ -1866,6 +1867,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_json_sha256, module)?)?;
     module.add_function(wrap_pyfunction!(build_empty_telemetry_writer_counters_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_completed_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_completed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_failed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;

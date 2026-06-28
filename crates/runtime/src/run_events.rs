@@ -11,6 +11,20 @@ pub struct RunArtifactPayload {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunArtifactsPayload {
+    pub output_run_directory: Option<String>,
+    pub final_dataset: Option<String>,
+    pub final_parquet: Option<String>,
+    pub final_regenie: Option<String>,
+    pub effective_config: Option<String>,
+    pub phenotype_artifacts: Vec<RunArtifactsPayload>,
+    pub phenotype_name: Option<String>,
+    pub association_mode: Option<String>,
+    pub phenotype_count: Option<i64>,
+    pub run_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunCompletedEventPayload {
     pub run_id: Option<String>,
     pub association_mode: Option<String>,
@@ -67,6 +81,34 @@ pub struct RunFailedTelemetryFields {
     pub failure_kind: &'static str,
     pub error_type: String,
     pub error_message: String,
+}
+
+#[must_use]
+pub fn build_run_completed_event_from_artifacts(artifacts: &RunArtifactsPayload) -> RunCompletedEventPayload {
+    let artifact_payloads = flatten_run_artifact_payloads(artifacts);
+    let inferred_phenotype_count =
+        if artifact_payloads.len() > 1 { i64::try_from(artifact_payloads.len()).ok() } else { None };
+    RunCompletedEventPayload {
+        run_id: artifacts.run_id.clone(),
+        association_mode: artifacts.association_mode.clone(),
+        phenotype_count: artifacts.phenotype_count.or(inferred_phenotype_count),
+        artifacts: artifact_payloads,
+    }
+}
+
+#[must_use]
+pub fn flatten_run_artifact_payloads(artifacts: &RunArtifactsPayload) -> Vec<RunArtifactPayload> {
+    if !artifacts.phenotype_artifacts.is_empty() {
+        return artifacts.phenotype_artifacts.iter().flat_map(flatten_run_artifact_payloads).collect();
+    }
+    vec![RunArtifactPayload {
+        phenotype_name: artifacts.phenotype_name.clone(),
+        output_run_directory: artifacts.output_run_directory.clone(),
+        final_dataset: artifacts.final_dataset.clone(),
+        final_parquet: artifacts.final_parquet.clone(),
+        final_regenie: artifacts.final_regenie.clone(),
+        effective_config: artifacts.effective_config.clone(),
+    }]
 }
 
 #[must_use]
@@ -182,6 +224,48 @@ mod tests {
             final_regenie: None,
             effective_config: Some("run/effective_config.toml".to_string()),
         }
+    }
+
+    fn build_artifact_tree(name: &str) -> RunArtifactsPayload {
+        RunArtifactsPayload {
+            phenotype_name: Some(name.to_string()),
+            output_run_directory: Some(format!("run/{name}")),
+            final_dataset: None,
+            final_parquet: Some(format!("run/{name}.parquet")),
+            final_regenie: None,
+            effective_config: Some(format!("run/{name}/effective_config.toml")),
+            phenotype_artifacts: Vec::new(),
+            association_mode: None,
+            phenotype_count: None,
+            run_id: None,
+        }
+    }
+
+    #[test]
+    fn builds_run_completed_event_from_artifact_tree() {
+        let artifacts = RunArtifactsPayload {
+            phenotype_name: None,
+            output_run_directory: None,
+            final_dataset: None,
+            final_parquet: None,
+            final_regenie: None,
+            effective_config: None,
+            phenotype_artifacts: vec![build_artifact_tree("height"), build_artifact_tree("weight")],
+            association_mode: Some("regenie2_linear".to_string()),
+            phenotype_count: None,
+            run_id: Some("run-1".to_string()),
+        };
+
+        let event = build_run_completed_event_from_artifacts(&artifacts);
+
+        assert_eq!(event.run_id.as_deref(), Some("run-1"));
+        assert_eq!(event.association_mode.as_deref(), Some("regenie2_linear"));
+        assert_eq!(event.phenotype_count, Some(2));
+        assert_eq!(
+            event.artifacts.iter().map(|artifact| artifact.phenotype_name.as_deref()).collect::<Vec<_>>(),
+            vec![Some("height"), Some("weight")]
+        );
+        assert_eq!(event.artifacts[1].final_parquet.as_deref(), Some("run/weight.parquet"));
     }
 
     #[test]
