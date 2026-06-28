@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -124,21 +123,13 @@ def attach_run_metadata(
     phenotype_count: int,
 ) -> RunArtifacts:
     """Attach lifecycle metadata to returned run artifacts."""
-    phenotype_artifacts = tuple(
-        attach_run_metadata(
-            phenotype_artifact,
-            run_id=run_id,
-            association_mode=association_mode,
-            phenotype_count=phenotype_count,
+    return run_artifacts_from_native_payload(
+        g._core.attach_run_metadata_payload(
+            artifacts,
+            run_id,
+            association_mode.value,
+            phenotype_count,
         )
-        for phenotype_artifact in artifacts.phenotype_artifacts
-    )
-    return dataclasses.replace(
-        artifacts,
-        phenotype_artifacts=phenotype_artifacts,
-        run_id=run_id,
-        association_mode=association_mode,
-        phenotype_count=phenotype_count,
     )
 
 
@@ -182,6 +173,30 @@ def run_artifact_payload_from_native_payload(payload: object) -> RunArtifactPayl
         final_parquet=optional_path_from_native_payload(artifact_payload["final_parquet"]),
         final_regenie=optional_path_from_native_payload(artifact_payload["final_regenie"]),
         effective_config=optional_path_from_native_payload(artifact_payload["effective_config"]),
+    )
+
+
+def run_artifacts_from_native_payload(payload: object) -> RunArtifacts:
+    """Adapt a native artifact tree payload to the public Python dataclass."""
+    artifacts_payload = native_mapping_payload(payload)
+    association_mode_payload = typing.cast("str | None", artifacts_payload["association_mode"])
+    return RunArtifacts(
+        output_run_directory=optional_path_from_native_payload(artifacts_payload["output_run_directory"]),
+        final_dataset=optional_path_from_native_payload(artifacts_payload["final_dataset"]),
+        final_parquet=optional_path_from_native_payload(artifacts_payload["final_parquet"]),
+        final_regenie=optional_path_from_native_payload(artifacts_payload["final_regenie"]),
+        effective_config=optional_path_from_native_payload(artifacts_payload["effective_config"]),
+        phenotype_artifacts=tuple(
+            run_artifacts_from_native_payload(phenotype_artifact_payload)
+            for phenotype_artifact_payload in typing.cast(
+                "typing.Sequence[object]",
+                artifacts_payload["phenotype_artifacts"],
+            )
+        ),
+        phenotype_name=typing.cast("str | None", artifacts_payload["phenotype_name"]),
+        association_mode=None if association_mode_payload is None else types.AssociationMode(association_mode_payload),
+        phenotype_count=typing.cast("int | None", artifacts_payload["phenotype_count"]),
+        run_id=typing.cast("str | None", artifacts_payload["run_id"]),
     )
 
 

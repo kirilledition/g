@@ -16,6 +16,25 @@ pub fn build_run_completed_event_payload<'py>(
 }
 
 #[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn attach_run_metadata_payload<'py>(
+    py: Python<'py>,
+    artifacts: &Bound<'py, PyAny>,
+    run_id: Option<String>,
+    association_mode: String,
+    phenotype_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let artifacts_payload = run_artifacts_payload_from_py(artifacts)?;
+    let attached_artifacts = native_run_events::attach_run_metadata_to_artifacts(
+        &artifacts_payload,
+        run_id.as_deref(),
+        &association_mode,
+        phenotype_count,
+    );
+    run_artifacts_payload_to_py_dict(py, &attached_artifacts)
+}
+
+#[pyfunction]
 pub fn build_run_interrupted_event_payload<'py>(
     py: Python<'py>,
     shutdown_request: &Bound<'py, PyAny>,
@@ -130,6 +149,29 @@ fn run_artifacts_payload_from_py(artifacts: &Bound<'_, PyAny>) -> PyResult<nativ
         phenotype_count: optional_i64_attribute(artifacts, "phenotype_count")?,
         run_id: optional_string_attribute(artifacts, "run_id")?,
     })
+}
+
+fn run_artifacts_payload_to_py_dict<'py>(
+    py: Python<'py>,
+    artifacts: &native_run_events::RunArtifactsPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("output_run_directory", &artifacts.output_run_directory)?;
+    payload.set_item("final_dataset", &artifacts.final_dataset)?;
+    payload.set_item("final_parquet", &artifacts.final_parquet)?;
+    payload.set_item("final_regenie", &artifacts.final_regenie)?;
+    payload.set_item("effective_config", &artifacts.effective_config)?;
+    let phenotype_artifacts = artifacts
+        .phenotype_artifacts
+        .iter()
+        .map(|phenotype_artifact| run_artifacts_payload_to_py_dict(py, phenotype_artifact))
+        .collect::<PyResult<Vec<_>>>()?;
+    payload.set_item("phenotype_artifacts", PyTuple::new(py, &phenotype_artifacts)?)?;
+    payload.set_item("phenotype_name", &artifacts.phenotype_name)?;
+    payload.set_item("association_mode", &artifacts.association_mode)?;
+    payload.set_item("phenotype_count", artifacts.phenotype_count)?;
+    payload.set_item("run_id", &artifacts.run_id)?;
+    Ok(payload)
 }
 
 fn artifact_payloads_from_py_event(event: &Bound<'_, PyAny>) -> PyResult<Vec<native_run_events::RunArtifactPayload>> {

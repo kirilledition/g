@@ -97,6 +97,33 @@ pub fn build_run_completed_event_from_artifacts(artifacts: &RunArtifactsPayload)
 }
 
 #[must_use]
+pub fn attach_run_metadata_to_artifacts(
+    artifacts: &RunArtifactsPayload,
+    run_id: Option<&str>,
+    association_mode: &str,
+    phenotype_count: i64,
+) -> RunArtifactsPayload {
+    RunArtifactsPayload {
+        output_run_directory: artifacts.output_run_directory.clone(),
+        final_dataset: artifacts.final_dataset.clone(),
+        final_parquet: artifacts.final_parquet.clone(),
+        final_regenie: artifacts.final_regenie.clone(),
+        effective_config: artifacts.effective_config.clone(),
+        phenotype_artifacts: artifacts
+            .phenotype_artifacts
+            .iter()
+            .map(|phenotype_artifact| {
+                attach_run_metadata_to_artifacts(phenotype_artifact, run_id, association_mode, phenotype_count)
+            })
+            .collect(),
+        phenotype_name: artifacts.phenotype_name.clone(),
+        association_mode: Some(association_mode.to_string()),
+        phenotype_count: Some(phenotype_count),
+        run_id: run_id.map(str::to_string),
+    }
+}
+
+#[must_use]
 pub fn flatten_run_artifact_payloads(artifacts: &RunArtifactsPayload) -> Vec<RunArtifactPayload> {
     if !artifacts.phenotype_artifacts.is_empty() {
         return artifacts.phenotype_artifacts.iter().flat_map(flatten_run_artifact_payloads).collect();
@@ -281,6 +308,31 @@ mod tests {
             vec![Some("height"), Some("weight")]
         );
         assert_eq!(event.artifacts[1].final_parquet.as_deref(), Some("run/weight.parquet"));
+    }
+
+    #[test]
+    fn attaches_run_metadata_to_artifact_tree() {
+        let artifacts = RunArtifactsPayload {
+            phenotype_name: None,
+            output_run_directory: None,
+            final_dataset: None,
+            final_parquet: None,
+            final_regenie: None,
+            effective_config: None,
+            phenotype_artifacts: vec![build_artifact_tree("height"), build_artifact_tree("weight")],
+            association_mode: None,
+            phenotype_count: None,
+            run_id: None,
+        };
+
+        let attached_artifacts = attach_run_metadata_to_artifacts(&artifacts, Some("run-1"), "regenie2_linear", 2);
+
+        assert_eq!(attached_artifacts.run_id.as_deref(), Some("run-1"));
+        assert_eq!(attached_artifacts.association_mode.as_deref(), Some("regenie2_linear"));
+        assert_eq!(attached_artifacts.phenotype_count, Some(2));
+        assert_eq!(attached_artifacts.phenotype_artifacts[0].run_id.as_deref(), Some("run-1"));
+        assert_eq!(attached_artifacts.phenotype_artifacts[1].association_mode.as_deref(), Some("regenie2_linear"));
+        assert_eq!(attached_artifacts.phenotype_artifacts[1].phenotype_count, Some(2));
     }
 
     #[test]

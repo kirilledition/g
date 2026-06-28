@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import typing
 from pathlib import Path
 
 from g import _core, types
@@ -55,6 +56,72 @@ def test_run_completed_event_uses_native_artifact_tree_builder() -> None:
     assert tuple(artifact.phenotype_name for artifact in event.artifacts) == ("height", "weight")
     assert event.artifacts[1].output_run_directory == Path("out/weight/run")
     assert event.artifacts[1].final_parquet == Path("out/weight/final.parquet")
+
+
+def test_attach_run_metadata_uses_native_artifact_tree_builder() -> None:
+    artifacts = run_events.RunArtifacts(
+        output_run_directory=None,
+        final_dataset=None,
+        final_parquet=None,
+        final_regenie=None,
+        effective_config=None,
+        phenotype_artifacts=(
+            run_events.RunArtifacts(
+                output_run_directory=Path("out/height/run"),
+                final_dataset=None,
+                final_parquet=Path("out/height/final.parquet"),
+                final_regenie=None,
+                effective_config=Path("out/height/effective_config.toml"),
+                phenotype_artifacts=(),
+                phenotype_name="height",
+                association_mode=None,
+                phenotype_count=None,
+                run_id=None,
+            ),
+            run_events.RunArtifacts(
+                output_run_directory=Path("out/weight/run"),
+                final_dataset=None,
+                final_parquet=Path("out/weight/final.parquet"),
+                final_regenie=None,
+                effective_config=Path("out/weight/effective_config.toml"),
+                phenotype_artifacts=(),
+                phenotype_name="weight",
+                association_mode=None,
+                phenotype_count=None,
+                run_id=None,
+            ),
+        ),
+        phenotype_name=None,
+        association_mode=None,
+        phenotype_count=None,
+        run_id=None,
+    )
+
+    native_payload = _core.attach_run_metadata_payload(
+        artifacts,
+        "run-1",
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        2,
+    )
+    attached_artifacts = run_events.attach_run_metadata(
+        artifacts,
+        run_id="run-1",
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype_count=2,
+    )
+    phenotype_payloads = typing.cast("tuple[dict[str, object], ...]", native_payload["phenotype_artifacts"])
+
+    assert native_payload["run_id"] == "run-1"
+    assert native_payload["association_mode"] == "regenie2_linear"
+    assert native_payload["phenotype_count"] == 2
+    assert phenotype_payloads[0]["run_id"] == "run-1"
+    assert phenotype_payloads[1]["association_mode"] == "regenie2_linear"
+    assert attached_artifacts.run_id == "run-1"
+    assert attached_artifacts.association_mode == types.AssociationMode.REGENIE2_LINEAR
+    assert attached_artifacts.phenotype_count == 2
+    assert attached_artifacts.phenotype_artifacts[1].run_id == "run-1"
+    assert attached_artifacts.phenotype_artifacts[1].association_mode == types.AssociationMode.REGENIE2_LINEAR
+    assert attached_artifacts.phenotype_artifacts[1].phenotype_count == 2
 
 
 def test_run_completed_event_preserves_missing_native_metadata() -> None:
