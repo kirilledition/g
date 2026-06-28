@@ -2574,6 +2574,20 @@ class FailingStopShutdownCallbackRunner(RecordingShutdownCallbackRunner):
         )
 
 
+def test_callback_runtime_does_not_export_legacy_worker_timeout_constants() -> None:
+    legacy_constant_names = (
+        "DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS",
+        "RESULT_WORKER_JOIN_TIMEOUT_SECONDS",
+        "GRACEFUL_DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS",
+        "GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS",
+        "WORKER_ABORT_STOP_TIMEOUT_SECONDS",
+    )
+
+    for legacy_constant_name in legacy_constant_names:
+        assert not hasattr(callback_runtime, legacy_constant_name)
+        assert not hasattr(callback_shared, legacy_constant_name)
+
+
 @dataclasses.dataclass(frozen=True)
 class CallbackFinishPlanProbe:
     dosage_stop_timeout_seconds: float
@@ -2712,10 +2726,7 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
     mark_callback_workers_started(callback)
 
     try:
-        with (
-            patch("g.engine.callbacks.runtime.RESULT_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
-            np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "blocked-result-worker"),
-        ):
+        with np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "blocked-result-worker"):
             callback.stop_result_worker(timeout_seconds=0.0)
     finally:
         stop_event.set()
@@ -2736,10 +2747,7 @@ def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
     mark_callback_workers_started(callback)
 
     try:
-        with (
-            patch("g.engine.callbacks.runtime.DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
-            np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "blocked-dosage-worker"),
-        ):
+        with np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "blocked-dosage-worker"):
             callback.stop_dosage_worker(timeout_seconds=0.0)
     finally:
         stop_event.set()
@@ -2755,10 +2763,7 @@ def test_join_result_worker_raises_when_worker_does_not_stop() -> None:
     mark_callback_workers_started(callback)
 
     try:
-        with (
-            patch("g.engine.callbacks.runtime.RESULT_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
-            np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "stuck-result-worker"),
-        ):
+        with np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "stuck-result-worker"):
             callback.join_result_worker(timeout_seconds=0.0)
     finally:
         stop_event.set()
@@ -2774,10 +2779,7 @@ def test_join_dosage_worker_raises_when_worker_does_not_stop() -> None:
     mark_callback_workers_started(callback)
 
     try:
-        with (
-            patch("g.engine.callbacks.runtime.DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
-            np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "stuck-dosage-worker"),
-        ):
+        with np.testing.assert_raises_regex(callback_shared.NativeBgenWorkerShutdownError, "stuck-dosage-worker"):
             callback.join_dosage_worker(timeout_seconds=0.0)
     finally:
         stop_event.set()

@@ -68,7 +68,9 @@ consolidates queue limits, worker-start state, result in-flight accounting, and
 dosage-buffer pool accounting and reuse planning, worker failure state, worker
 finish/abort planning, worker stop/join planning, chunk batch handoff planning,
 queue observation planning, and backpressure timeout policy for production
-callback runners.
+callback runners. Callback modules no longer resolve worker shutdown timeout
+constants at import time; production shutdown timeout policy comes from native
+scheduler plans.
 
 ## Phase Order
 
