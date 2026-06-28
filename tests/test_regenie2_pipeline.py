@@ -1858,12 +1858,13 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         self.progress_state = callback_runtime._core.NativeCallbackProgressState()
         self.stage_timing_recorder = None
         self.telemetry_session = None
-        self.dosage_queue: queue.Queue[
+        self.dosage_queue: collections.deque[
             callback_shared.PreprocessedDosageChunkWorkItem
             | callback_shared.PreprocessedVariantMajorDosageChunkWorkItem
             | callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
+            | callback_shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
             | None
-        ] = queue.Queue()
+        ] = collections.deque()
         self.result_queue: collections.deque[
             callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None
         ] = collections.deque()
@@ -1873,6 +1874,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             result_in_flight_limit=2,
             dosage_buffer_limit=2,
         )
+        self.dosage_queue_condition = threading.Condition()
         self.result_queue_condition = threading.Condition()
         self.result_in_flight_slot_condition = threading.Condition()
         self.dosage_buffer_pool_condition = threading.Condition()
@@ -1921,6 +1923,8 @@ def attach_manual_callback_scheduler_state(callback: typing.Any) -> None:
         result_in_flight_limit=2,
         dosage_buffer_limit=2,
     )
+    callback.dosage_queue_condition = threading.Condition()
+    callback.dosage_queue = collections.deque()
     callback.result_queue_condition = threading.Condition()
     callback.result_queue = collections.deque()
 
@@ -2181,7 +2185,7 @@ def test_native_callback_runner_uses_scheduler_variant_major_batch_handoff_plan(
             chunk_stats_batch=(typing.cast("typing.Any", SimpleNamespace()),),
         )
 
-    queued_work_item = callback.dosage_queue.get_nowait()
+    queued_work_item = callback.get_dosage_work_item()
     assert queued_work_item is not None
     assert isinstance(queued_work_item, callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem)
     assert len(queued_work_item.work_items) == 1
@@ -2207,26 +2211,34 @@ def test_native_callback_runner_rejects_invalid_variant_major_batch_handoffs() -
 
 def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
     callback = ManualCallbackRunner()
+    callback.callback_scheduler_state = callback_runtime._core.NativeCallbackSchedulerState(
+        staging_depth=3,
+        native_callback_batch_size=1,
+        result_in_flight_limit=2,
+        dosage_buffer_limit=2,
+    )
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     callback.stage_timing_recorder = stage_timing_recorder
     metadata = build_native_metadata()
     chunk_stats = typing.cast("typing.Any", SimpleNamespace())
 
-    callback.dosage_queue.put_nowait(
+    assert callback.try_put_dosage_work_item(
         callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
             metadata=metadata,
             genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
             chunk_stats=chunk_stats,
-        )
+        ),
+        timeout_seconds=0.0,
     )
-    callback.dosage_queue.put_nowait(
+    assert callback.try_put_dosage_work_item(
         callback_shared.PreprocessedDosageChunkWorkItem(
             metadata=metadata,
             genotype_matrix=np.ones((2, 2), dtype=np.float32),
             chunk_stats=chunk_stats,
-        )
+        ),
+        timeout_seconds=0.0,
     )
-    callback.dosage_queue.put_nowait(None)
+    assert callback.try_put_dosage_work_item(None, timeout_seconds=0.0)
 
     callback.consume_dosage_chunks()
 
@@ -2353,12 +2365,13 @@ def test_native_callback_runner_records_worker_errors_from_consumer() -> None:
             raise ValueError(message)
 
     callback = FailingCallbackRunner()
-    callback.dosage_queue.put_nowait(
+    assert callback.try_put_dosage_work_item(
         callback_shared.PreprocessedDosageChunkWorkItem(
             metadata=build_native_metadata(),
             genotype_matrix=np.ones((2, 2), dtype=np.float32),
             chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
-        )
+        ),
+        timeout_seconds=0.0,
     )
 
     callback.consume_dosage_chunks()
@@ -2721,14 +2734,13 @@ def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> No
 
 
 def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> None:
-    dosage_queue: queue.Queue[callback_shared.PreprocessedDosageChunkWorkItem | None] = queue.Queue(maxsize=1)
-    dosage_queue.put_nowait(None)
     stop_event = threading.Event()
     worker_thread = threading.Thread(target=stop_event.wait, name="failed-dosage-worker")
     worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
     attach_manual_callback_scheduler_state(callback)
-    callback.dosage_queue = dosage_queue
+    assert callback.callback_scheduler_state.acquire_dosage_queue_slot() is True
+    callback.dosage_queue.append(None)
     callback.worker_error = RuntimeError("dosage failed")
     callback.worker_thread = worker_thread
     mark_callback_workers_started(callback)
@@ -2739,7 +2751,7 @@ def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> No
         stop_event.set()
         worker_thread.join()
 
-    assert dosage_queue.full()
+    assert callback.callback_scheduler_state.has_available_dosage_queue_slot() is False
 
 
 def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
@@ -2787,15 +2799,39 @@ def test_native_callback_runner_waits_on_native_result_queue_release() -> None:
     assert callback.callback_scheduler_state.result_queue_occupied_count == 0
 
 
+def test_native_callback_runner_waits_on_native_dosage_queue_release() -> None:
+    callback = ManualCallbackRunner()
+    assert callback.callback_scheduler_state.acquire_dosage_queue_slot() is True
+    callback.dosage_queue.append(None)
+
+    enqueue_started = threading.Event()
+
+    def enqueue_after_dosage_queue_is_full() -> bool:
+        enqueue_started.set()
+        return callback.try_put_dosage_work_item(None, timeout_seconds=2.0)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(enqueue_after_dosage_queue_is_full)
+        assert enqueue_started.wait(timeout=1.0)
+        time.sleep(0.2)
+        assert not future.done()
+
+        assert callback.get_dosage_work_item() is None
+        assert future.result(timeout=2.0) is True
+
+    assert callback.callback_scheduler_state.dosage_queue_occupied_count == 1
+    assert callback.get_dosage_work_item() is None
+    assert callback.callback_scheduler_state.dosage_queue_occupied_count == 0
+
+
 def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
-    dosage_queue: queue.Queue[callback_shared.PreprocessedDosageChunkWorkItem | None] = queue.Queue(maxsize=1)
-    dosage_queue.put_nowait(None)
     stop_event = threading.Event()
     worker_thread = threading.Thread(target=stop_event.wait, name="blocked-dosage-worker")
     worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
     attach_manual_callback_scheduler_state(callback)
-    callback.dosage_queue = dosage_queue
+    assert callback.callback_scheduler_state.acquire_dosage_queue_slot() is True
+    callback.dosage_queue.append(None)
     callback.worker_error = None
     callback.worker_thread = worker_thread
     mark_callback_workers_started(callback)
@@ -2999,7 +3035,7 @@ def test_native_bgen_callback_runner_uses_native_scheduler_state() -> None:
     assert callback.result_queue_depth == 12
     assert callback.result_in_flight_limit == 13
     assert callback.dosage_buffer_limit == 14
-    assert callback.dosage_queue.maxsize == 11
+    assert not hasattr(callback.dosage_queue, "maxsize")
     assert not hasattr(callback.result_queue, "maxsize")
     assert not hasattr(callback.free_dosage_buffers, "maxsize")
 

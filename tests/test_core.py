@@ -1057,6 +1057,9 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
 
     assert scheduler_state.native_callback_batch_size == 2
     assert scheduler_state.dosage_queue_depth == 3
+    assert scheduler_state.dosage_queue_capacity == 3
+    assert scheduler_state.dosage_queue_occupied_count == 0
+    assert scheduler_state.has_available_dosage_queue_slot() is True
     assert scheduler_state.result_queue_depth == 3
     assert scheduler_state.result_queue_capacity == 3
     assert scheduler_state.result_queue_occupied_count == 0
@@ -1069,6 +1072,12 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     assert scheduler_state.mark_started() is True
     assert scheduler_state.has_started is True
     assert scheduler_state.mark_started() is False
+
+    assert scheduler_state.acquire_dosage_queue_slot() is True
+    assert scheduler_state.dosage_queue_occupied_count == 1
+    assert scheduler_state.has_available_dosage_queue_slot() is True
+    assert scheduler_state.release_dosage_queue_slot() is True
+    assert scheduler_state.dosage_queue_occupied_count == 0
 
     assert scheduler_state.acquire_result_queue_slot() is True
     assert scheduler_state.result_queue_occupied_count == 1

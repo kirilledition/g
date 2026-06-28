@@ -77,7 +77,9 @@ dosage buffers are no longer held in a bounded Python queue; the native
 scheduler state owns buffer capacity and the Python transition layer keeps only
 an available-buffer free list. Result write queue occupancy is now tracked by
 native scheduler state instead of a bounded Python queue, with Python retaining
-only transitional item storage and wakeups.
+only transitional item storage and wakeups. Dosage queue occupancy is now
+tracked by native scheduler state instead of a bounded Python queue, with Python
+retaining only transitional item storage and wakeups.
 
 ## Phase Order
 

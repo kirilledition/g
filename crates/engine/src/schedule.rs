@@ -357,6 +357,7 @@ impl CallbackWorkerLifecycleState {
 pub struct CallbackSchedulerState {
     queue_limits: NativeCallbackQueueLimits,
     native_callback_batch_size: usize,
+    dosage_queue_state: CallbackQueueOccupancyState,
     result_queue_state: CallbackQueueOccupancyState,
     result_in_flight_slot_state: ResultInFlightSlotState,
     dosage_buffer_pool_state: DosageBufferPoolState,
@@ -389,6 +390,7 @@ impl CallbackSchedulerState {
         Ok(Self {
             queue_limits,
             native_callback_batch_size,
+            dosage_queue_state: CallbackQueueOccupancyState::new(queue_limits.dosage_queue_depth),
             result_queue_state: CallbackQueueOccupancyState::new(queue_limits.result_queue_depth),
             result_in_flight_slot_state: ResultInFlightSlotState::new(queue_limits.result_in_flight_limit),
             dosage_buffer_pool_state: DosageBufferPoolState::new(queue_limits.dosage_buffer_limit),
@@ -411,6 +413,29 @@ impl CallbackSchedulerState {
     #[must_use]
     pub const fn dosage_queue_depth(&self) -> usize {
         self.queue_limits.dosage_queue_depth
+    }
+
+    #[must_use]
+    pub const fn dosage_queue_capacity(&self) -> usize {
+        self.dosage_queue_state.queue_capacity()
+    }
+
+    #[must_use]
+    pub const fn dosage_queue_occupied_count(&self) -> usize {
+        self.dosage_queue_state.occupied_count()
+    }
+
+    #[must_use]
+    pub const fn has_available_dosage_queue_slot(&self) -> bool {
+        self.dosage_queue_state.has_available_slot()
+    }
+
+    pub fn acquire_dosage_queue_slot(&mut self) -> bool {
+        self.dosage_queue_state.acquire_slot()
+    }
+
+    pub fn release_dosage_queue_slot(&mut self) -> bool {
+        self.dosage_queue_state.release_slot()
     }
 
     #[must_use]
@@ -1922,6 +1947,9 @@ mod tests {
         assert_eq!(scheduler_state.queue_limits().dosage_queue_depth, 3);
         assert_eq!(scheduler_state.native_callback_batch_size(), 2);
         assert_eq!(scheduler_state.dosage_queue_depth(), 3);
+        assert_eq!(scheduler_state.dosage_queue_capacity(), 3);
+        assert_eq!(scheduler_state.dosage_queue_occupied_count(), 0);
+        assert!(scheduler_state.has_available_dosage_queue_slot());
         assert_eq!(scheduler_state.result_queue_depth(), 3);
         assert_eq!(scheduler_state.result_queue_capacity(), 3);
         assert_eq!(scheduler_state.result_queue_occupied_count(), 0);
@@ -1934,6 +1962,12 @@ mod tests {
         assert!(scheduler_state.mark_started());
         assert!(scheduler_state.has_started());
         assert!(!scheduler_state.mark_started());
+
+        assert!(scheduler_state.acquire_dosage_queue_slot());
+        assert_eq!(scheduler_state.dosage_queue_occupied_count(), 1);
+        assert!(scheduler_state.has_available_dosage_queue_slot());
+        assert!(scheduler_state.release_dosage_queue_slot());
+        assert_eq!(scheduler_state.dosage_queue_occupied_count(), 0);
 
         assert!(scheduler_state.acquire_result_queue_slot());
         assert_eq!(scheduler_state.result_queue_occupied_count(), 1);

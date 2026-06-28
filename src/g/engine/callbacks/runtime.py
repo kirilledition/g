@@ -6,7 +6,6 @@ import abc
 import collections
 import collections.abc
 import contextlib
-import queue
 import threading
 import time
 import typing
@@ -23,6 +22,8 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.engine import telemetry, timing
 
 if typing.TYPE_CHECKING:
+    import queue
+
     import jax
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
@@ -87,16 +88,17 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
+        self.dosage_queue_condition = threading.Condition()
         self.result_in_flight_slot_condition = threading.Condition()
         self.result_queue_condition = threading.Condition()
         self.dosage_buffer_pool_condition = threading.Condition()
-        self.dosage_queue: queue.Queue[
+        self.dosage_queue: collections.deque[
             PreprocessedDosageChunkWorkItem
             | PreprocessedVariantMajorDosageChunkWorkItem
             | PreprocessedVariantMajorDosageChunkBatchWorkItem
             | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
             | None
-        ] = queue.Queue(maxsize=self.dosage_queue_depth)
+        ] = collections.deque()
         self.result_queue: collections.deque[Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None] = (
             collections.deque()
         )
@@ -227,6 +229,11 @@ class NativeBgenCallbackRunner(abc.ABC):
     def result_queue_count(self) -> int:
         """Return the native result-queue occupancy count."""
         return self.callback_scheduler_state.result_queue_occupied_count
+
+    @property
+    def dosage_queue_count(self) -> int:
+        """Return the native dosage-queue occupancy count."""
+        return self.callback_scheduler_state.dosage_queue_occupied_count
 
     def record_stage_duration(self, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage using this runner's timing recorder."""
@@ -559,13 +566,14 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             while True:
                 get_start_time = time.perf_counter()
-                work_item = self.dosage_queue.get()
+                work_item = self.get_dosage_work_item()
                 if work_item is None:
                     return
-                self.record_queue_stage_duration(
-                    queue_name="dosage_queue",
+                self.record_bounded_resource_stage_duration(
+                    resource_name="dosage_queue",
                     operation_name="consumer_wait",
-                    observed_queue=self.dosage_queue,
+                    current_depth=self.dosage_queue_count,
+                    capacity=self.dosage_queue_depth,
                     start_time=get_start_time,
                     blocked=True,
                 )
@@ -581,7 +589,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     def consume_dosage_chunks_without_timing(self) -> None:
         """Consume queued dosage chunks without diagnostic timing overhead."""
         while True:
-            work_item = self.dosage_queue.get()
+            work_item = self.get_dosage_work_item()
             if work_item is None:
                 return
             self.process_dosage_work_item(work_item)
@@ -810,33 +818,85 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
-                try:
-                    self.dosage_queue.put(work_item, timeout=backpressure_poll_timeout_seconds)
+                if self.try_put_dosage_work_item(
+                    work_item,
+                    timeout_seconds=backpressure_poll_timeout_seconds,
+                ):
                     return
-                except queue.Full:
-                    continue
         while True:
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
-            try:
-                self.dosage_queue.put(work_item, timeout=backpressure_poll_timeout_seconds)
-                self.record_queue_stage_duration(
-                    queue_name="dosage_queue",
-                    operation_name="put",
-                    observed_queue=self.dosage_queue,
-                    start_time=put_start_time,
-                    blocked=False,
-                )
-                return
-            except queue.Full:
-                self.record_queue_stage_duration(
-                    queue_name="dosage_queue",
+            queued = self.try_put_dosage_work_item(
+                work_item,
+                timeout_seconds=backpressure_poll_timeout_seconds,
+            )
+            if not queued:
+                self.record_bounded_resource_stage_duration(
+                    resource_name="dosage_queue",
                     operation_name="producer_blocking",
-                    observed_queue=self.dosage_queue,
+                    current_depth=self.dosage_queue_count,
+                    capacity=self.dosage_queue_depth,
                     start_time=put_start_time,
                     blocked=True,
                 )
                 continue
+            self.record_bounded_resource_stage_duration(
+                resource_name="dosage_queue",
+                operation_name="put",
+                current_depth=self.dosage_queue_count,
+                capacity=self.dosage_queue_depth,
+                start_time=put_start_time,
+                blocked=False,
+            )
+            return
+
+    def try_put_dosage_work_item(
+        self,
+        work_item: (
+            PreprocessedDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkBatchWorkItem
+            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+            | None
+        ),
+        *,
+        timeout_seconds: float,
+    ) -> bool:
+        """Try to enqueue one dosage item under native dosage-queue capacity."""
+        deadline = time.monotonic() + max(timeout_seconds, 0.0)
+        while True:
+            with self.dosage_queue_condition:
+                if self.callback_scheduler_state.acquire_dosage_queue_slot():
+                    self.dosage_queue.append(work_item)
+                    self.dosage_queue_condition.notify()
+                    return True
+                remaining_timeout_seconds = deadline - time.monotonic()
+                if remaining_timeout_seconds <= 0.0:
+                    return False
+                self.dosage_queue_condition.wait(timeout=remaining_timeout_seconds)
+
+    def get_dosage_work_item(
+        self,
+    ) -> (
+        PreprocessedDosageChunkWorkItem
+        | PreprocessedVariantMajorDosageChunkWorkItem
+        | PreprocessedVariantMajorDosageChunkBatchWorkItem
+        | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+        | None
+    ):
+        """Wait for and return one dosage queue item while releasing native queue capacity."""
+        while True:
+            with self.dosage_queue_condition:
+                if self.dosage_queue:
+                    work_item = self.dosage_queue.popleft()
+                    if not self.callback_scheduler_state.release_dosage_queue_slot():
+                        message = "Native dosage-queue state has no occupied slot to release."
+                        raise RuntimeError(message)
+                    self.dosage_queue_condition.notify()
+                    return work_item
+                self.dosage_queue_condition.wait(
+                    timeout=self.callback_scheduler_state.backpressure_poll_timeout_seconds
+                )
 
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
@@ -1016,11 +1076,11 @@ class NativeBgenCallbackRunner(abc.ABC):
             )
             if not stop_poll_plan.should_stop:
                 return
-            try:
-                self.dosage_queue.put(None, timeout=stop_poll_plan.poll_timeout_seconds)
+            if self.try_put_dosage_work_item(
+                None,
+                timeout_seconds=stop_poll_plan.poll_timeout_seconds,
+            ):
                 return
-            except queue.Full:
-                continue
         raise NativeBgenWorkerShutdownError(
             worker_name=self.worker_thread.name,
             timeout_seconds=stop_plan.timeout_seconds,

@@ -244,6 +244,28 @@ impl NativeCallbackSchedulerState {
     }
 
     #[getter]
+    fn dosage_queue_capacity(&self) -> usize {
+        self.inner.dosage_queue_capacity()
+    }
+
+    #[getter]
+    fn dosage_queue_occupied_count(&self) -> usize {
+        self.inner.dosage_queue_occupied_count()
+    }
+
+    fn has_available_dosage_queue_slot(&self) -> bool {
+        self.inner.has_available_dosage_queue_slot()
+    }
+
+    fn acquire_dosage_queue_slot(&mut self) -> bool {
+        self.inner.acquire_dosage_queue_slot()
+    }
+
+    fn release_dosage_queue_slot(&mut self) -> bool {
+        self.inner.release_dosage_queue_slot()
+    }
+
+    #[getter]
     fn result_queue_depth(&self) -> usize {
         self.inner.result_queue_depth()
     }
