@@ -40,7 +40,8 @@ pub use preflight::{
     validate_single_trait_preflight_shape_payload,
 };
 pub use preparation::{
-    PipelineResumeCompatibilityError, initialize_pipeline_output_runs, validate_pipeline_resume_compatibility,
+    PipelineOutputInitialization, PipelineResumeCompatibilityError, initialize_pipeline_output_run_batch,
+    initialize_pipeline_output_runs, validate_pipeline_resume_compatibility,
 };
 pub use schedule::{
     BgenDeliveryCleanupPlan, BgenDeliveryInvocationPlan, BgenDeliveryMethod, CallbackQueueOperationObservationPlan,

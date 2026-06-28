@@ -22,6 +22,33 @@ pub enum PipelineResumeCompatibilityError {
     Output(#[from] g_output::OutputWriterError),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PipelineOutputInitialization {
+    committed_chunk_identifier_sets: Vec<Vec<i64>>,
+}
+
+impl PipelineOutputInitialization {
+    #[must_use]
+    pub fn new(committed_chunk_identifier_sets: Vec<Vec<i64>>) -> Self {
+        Self { committed_chunk_identifier_sets }
+    }
+
+    #[must_use]
+    pub fn committed_chunk_identifier_sets(&self) -> &[Vec<i64>] {
+        &self.committed_chunk_identifier_sets
+    }
+
+    #[must_use]
+    pub fn committed_chunk_identifiers(&self, output_index: usize) -> Option<&[i64]> {
+        self.committed_chunk_identifier_sets.get(output_index).map(Vec::as_slice)
+    }
+
+    #[must_use]
+    pub fn output_count(&self) -> usize {
+        self.committed_chunk_identifier_sets.len()
+    }
+}
+
 /// Validate all resume manifests before output initialization mutates any run directory.
 ///
 /// # Errors
@@ -100,6 +127,30 @@ pub fn initialize_pipeline_output_runs(
         committed_chunk_identifier_sets.push(initialized_output_run.committed_chunk_identifiers);
     }
     Ok(committed_chunk_identifier_sets)
+}
+
+/// Initialize all output runs and return a native result handle.
+///
+/// # Errors
+///
+/// Returns an error when input counts differ, all-manifest resume validation fails, or any output initialization fails.
+pub fn initialize_pipeline_output_run_batch(
+    run_directories: Vec<PathBuf>,
+    chunks_directories: Vec<PathBuf>,
+    existing_manifest_json_values: Vec<Option<String>>,
+    current_header_json_values: Vec<String>,
+    resume: bool,
+    resume_mode: OutputResumeMode,
+) -> Result<PipelineOutputInitialization, PipelineResumeCompatibilityError> {
+    let committed_chunk_identifier_sets = initialize_pipeline_output_runs(
+        run_directories,
+        chunks_directories,
+        existing_manifest_json_values,
+        current_header_json_values,
+        resume,
+        resume_mode,
+    )?;
+    Ok(PipelineOutputInitialization::new(committed_chunk_identifier_sets))
 }
 
 fn validate_pipeline_input_counts(
@@ -243,6 +294,36 @@ mod tests {
 
         assert_eq!(committed_chunk_identifier_sets, vec![vec![2]]);
         assert!(run_directory.join("run_manifest.json").exists());
+        std::fs::remove_dir_all(run_directory).expect("test output directory should be removed");
+    }
+
+    #[test]
+    fn initializes_pipeline_output_batch_handle() {
+        let unique_suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("current time should be after Unix epoch")
+            .as_nanos();
+        let run_directory = std::env::temp_dir().join(format!("g-engine-output-batch-test-{unique_suffix}"));
+        let chunks_directory = run_directory.join("chunks");
+        std::fs::create_dir_all(&chunks_directory).expect("test output directory should be created");
+
+        let committed_chunks_manifest = r#"{"schema_version":7,"chunk_size":32,"committed_chunks":[{"chunk_identifier":2,"variant_start_index":2,"variant_stop_index":4,"row_count":2,"chunk_file_name":"chunk_2.arrow"}]}"#.to_string();
+        let current_header = r#"{"schema_version":7,"chunk_size":32}"#.to_string();
+        let initialization = initialize_pipeline_output_run_batch(
+            vec![run_directory.clone()],
+            vec![chunks_directory],
+            vec![Some(committed_chunks_manifest)],
+            vec![current_header],
+            true,
+            OutputResumeMode::Fast,
+        )
+        .unwrap();
+
+        assert_eq!(initialization.output_count(), 1);
+        assert_eq!(initialization.committed_chunk_identifier_sets(), &[vec![2]]);
+        assert_eq!(initialization.committed_chunk_identifiers(0), Some([2].as_slice()));
+        assert_eq!(initialization.committed_chunk_identifiers(1), None);
+
         std::fs::remove_dir_all(run_directory).expect("test output directory should be removed");
     }
 

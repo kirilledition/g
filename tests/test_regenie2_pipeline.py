@@ -4580,6 +4580,27 @@ def test_multi_resume_manifest_mismatch_does_not_partially_initialize_outputs(tm
     assert output.get_run_manifest_path(second_output_run_paths).read_bytes() == second_manifest_bytes
 
 
+def test_pipeline_output_initialization_returns_native_handle(tmp_path: Path) -> None:
+    output_run_paths = output.OutputRunPaths(tmp_path / "one.run", tmp_path / "one.run/chunks")
+    output_run_paths.chunks_directory.mkdir(parents=True)
+    current_header = {"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION, "phenotype_name": "one", "chunk_size": 32}
+
+    initialized_outputs = pipeline_outputs.initialize_pipeline_output_runs(
+        output_run_paths_by_trait=(output_run_paths,),
+        existing_manifests_by_trait=(None,),
+        current_headers_by_trait=(current_header,),
+        resume=False,
+        resume_mode=types.ResumeMode.FAST,
+        runtime_compatibility_token=build_test_runtime_compatibility_token(),
+    )
+
+    assert isinstance(initialized_outputs, pipeline_outputs.InitializedPipelineOutputRuns)
+    assert isinstance(initialized_outputs.native_initialization, _core.NativePipelineOutputInitialization)
+    assert initialized_outputs.native_initialization.output_count == 1
+    assert initialized_outputs.committed_chunk_identifier_sets == (set(),)
+    assert initialized_outputs.committed_chunk_identifiers(0) == set()
+
+
 def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() -> None:
     FakeRunEngine.instances.clear()
     FakePredictionSource.instances.clear()

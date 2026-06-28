@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import typing
+from dataclasses import dataclass
 
 from g import _core, execution_plan, types
 from g.engine import timing
@@ -17,6 +18,41 @@ if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class InitializedPipelineOutputRuns:
+    """Native initialization result for pipeline output runs.
+
+    Attributes:
+        native_initialization: Native output initialization result handle.
+
+    """
+
+    native_initialization: _core.NativePipelineOutputInitialization
+
+    @property
+    def committed_chunk_identifier_sets(self) -> tuple[set[int], ...]:
+        """Return committed chunk identifiers for each initialized output."""
+        return tuple(
+            {int(chunk_identifier) for chunk_identifier in chunk_identifier_set}
+            for chunk_identifier_set in self.native_initialization.committed_chunk_identifier_sets()
+        )
+
+    def committed_chunk_identifiers(self, output_index: int) -> set[int]:
+        """Return committed chunk identifiers for one initialized output.
+
+        Args:
+            output_index: Output index in the native initialization result.
+
+        Returns:
+            Committed chunk identifiers for the requested output.
+
+        """
+        return {
+            int(chunk_identifier)
+            for chunk_identifier in self.native_initialization.committed_chunk_identifiers(output_index)
+        }
 
 
 def log_association_backend_selected(
@@ -209,9 +245,9 @@ def initialize_pipeline_output_runs(
     resume: bool,
     resume_mode: types.ResumeMode,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
-) -> tuple[set[int], ...]:
+) -> InitializedPipelineOutputRuns:
     """Validate/write output manifests and return committed chunk sets."""
-    committed_chunk_identifier_sets = _core.initialize_pipeline_output_runs(
+    native_initialization = _core.initialize_pipeline_output_run_batch(
         tuple(str(output_run_paths.run_directory) for output_run_paths in output_run_paths_by_trait),
         tuple(str(output_run_paths.chunks_directory) for output_run_paths in output_run_paths_by_trait),
         tuple(
@@ -227,11 +263,9 @@ def initialize_pipeline_output_runs(
         runtime_compatibility_token,
     )
     if resume:
-        for committed_chunk_identifier_set in committed_chunk_identifier_sets:
+        for committed_chunk_identifier_set in native_initialization.committed_chunk_identifier_sets():
             logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifier_set))
-    return tuple(
-        {int(chunk_identifier) for chunk_identifier in chunk_set} for chunk_set in committed_chunk_identifier_sets
-    )
+    return InitializedPipelineOutputRuns(native_initialization=native_initialization)
 
 
 def validate_pipeline_resume_compatibility(

@@ -313,6 +313,46 @@ def test_native_pipeline_output_initialization_returns_committed_sets(tmp_path: 
     assert written_manifest["committed_chunks"][0]["chunk_identifier"] == 2
 
 
+def test_native_pipeline_output_initialization_handle_returns_committed_sets(tmp_path: Path) -> None:
+    run_directory = tmp_path / "run"
+    chunks_directory = run_directory / "chunks"
+    chunks_directory.mkdir(parents=True)
+    existing_manifest_json = json.dumps(
+        {
+            "schema_version": 7,
+            "chunk_size": 32,
+            "committed_chunks": [
+                {
+                    "chunk_identifier": 2,
+                    "variant_start_index": 2,
+                    "variant_stop_index": 4,
+                    "row_count": 2,
+                    "chunk_file_name": "chunk_2.arrow",
+                }
+            ],
+        },
+        sort_keys=True,
+    )
+    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
+
+    native_initialization = _core.initialize_pipeline_output_run_batch(
+        run_directories=(str(run_directory),),
+        chunks_directories=(str(chunks_directory),),
+        existing_manifest_json_values=(existing_manifest_json,),
+        current_header_json_values=(current_header_json,),
+        resume=True,
+        resume_mode="fast",
+        runtime_compatibility_token=build_native_runtime_compatibility_token(),
+    )
+
+    assert isinstance(native_initialization, _core.NativePipelineOutputInitialization)
+    assert native_initialization.output_count == 1
+    assert native_initialization.committed_chunk_identifier_sets() == [[2]]
+    assert native_initialization.committed_chunk_identifiers(0) == [2]
+    with pytest.raises(ValueError, match="Output index 1 is out of range"):
+        native_initialization.committed_chunk_identifiers(1)
+
+
 def test_native_effective_trusted_no_missing_diploid_policy() -> None:
     assert not _core.resolve_effective_trusted_no_missing_diploid(
         requested_trusted_no_missing_diploid=False,

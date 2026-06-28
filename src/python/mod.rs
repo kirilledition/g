@@ -94,7 +94,10 @@ use preflight::{
     validate_multi_prediction_preflight_shape, validate_multi_trait_preflight_shape_payload,
     validate_single_prediction_preflight_shape, validate_single_trait_preflight_shape_payload,
 };
-use preparation::{initialize_pipeline_output_runs, validate_pipeline_resume_compatibility};
+use preparation::{
+    NativePipelineOutputInitialization, initialize_pipeline_output_run_batch, initialize_pipeline_output_runs,
+    validate_pipeline_resume_compatibility,
+};
 use profile::build_profile_snapshot_dict;
 use run_events::{
     attach_run_metadata_payload, build_run_completed_event_payload, build_run_completed_telemetry_fields,
@@ -1842,6 +1845,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeMultiAlignedSampleData>()?;
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
+    module.add_class::<NativePipelineOutputInitialization>()?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
     module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
     module.add_class::<NativeJaxRuntimeSetupSession>()?;
@@ -1895,6 +1899,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_run_manifest_extension_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_runtime_policy_handle, module)?)?;
     module.add_function(wrap_pyfunction!(validate_pipeline_resume_compatibility, module)?)?;
+    module.add_function(wrap_pyfunction!(initialize_pipeline_output_run_batch, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_pipeline_output_runs, module)?)?;
     module.add_function(wrap_pyfunction!(build_preflight_report_payload, module)?)?;
     module.add_function(wrap_pyfunction!(validate_single_trait_preflight_shape_payload, module)?)?;

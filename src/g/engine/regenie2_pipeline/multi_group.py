@@ -97,7 +97,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         runtime_compatibility_token=context.runtime_compatibility_token,
     )
     outputs.notify_output_runs_initialized(context=context, phenotype_names=compute_group.phenotype_names)
-    committed_chunk_identifier_sets = initialized_outputs
+    committed_chunk_identifier_sets = initialized_outputs.committed_chunk_identifier_sets
     writer_sessions = outputs.create_pipeline_writer_sessions(
         context=context,
         output_run_paths_by_trait=output_run_paths_by_phenotype,

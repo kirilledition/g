@@ -282,7 +282,7 @@ def run_single_trait_bgen_pipeline(
     return native_dispatch_delivery.run_bgen_engine_with_callback(
         engine=engine,
         run_input=run_input,
-        committed_chunk_identifiers=initialized_outputs[0],
+        committed_chunk_identifiers=initialized_outputs.committed_chunk_identifiers(0),
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=context.stage_timing_recorder,

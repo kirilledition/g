@@ -1786,6 +1786,22 @@ def validate_pipeline_resume_compatibility(
     current_header_json_values: typing.Sequence[str],
     resume_mode: str,
 ) -> None: ...
+
+class NativePipelineOutputInitialization:
+    @property
+    def output_count(self) -> int: ...
+    def committed_chunk_identifier_sets(self) -> list[list[int]]: ...
+    def committed_chunk_identifiers(self, output_index: int) -> list[int]: ...
+
+def initialize_pipeline_output_run_batch(
+    run_directories: typing.Sequence[str],
+    chunks_directories: typing.Sequence[str],
+    existing_manifest_json_values: typing.Sequence[str | None],
+    current_header_json_values: typing.Sequence[str],
+    resume: bool,
+    resume_mode: str,
+    runtime_compatibility_token: NativeRuntimeCompatibilityToken,
+) -> NativePipelineOutputInitialization: ...
 def initialize_pipeline_output_runs(
     run_directories: typing.Sequence[str],
     chunks_directories: typing.Sequence[str],
