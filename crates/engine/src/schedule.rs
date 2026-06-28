@@ -309,6 +309,141 @@ impl CallbackWorkerLifecycleState {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackSchedulerState {
+    queue_limits: NativeCallbackQueueLimits,
+    native_callback_batch_size: usize,
+    result_in_flight_slot_state: ResultInFlightSlotState,
+    dosage_buffer_pool_state: DosageBufferPoolState,
+    worker_lifecycle_state: CallbackWorkerLifecycleState,
+}
+
+impl CallbackSchedulerState {
+    /// Build the native callback scheduler state for one callback runner.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when queue limits or bounded resource limits are invalid.
+    pub fn new(
+        staging_depth: i64,
+        native_callback_batch_size: i64,
+        result_in_flight_limit: Option<i64>,
+        dosage_buffer_limit: Option<i64>,
+    ) -> Result<Self, ScheduleError> {
+        let queue_limits = resolve_native_callback_queue_limits(
+            staging_depth,
+            native_callback_batch_size,
+            result_in_flight_limit,
+            dosage_buffer_limit,
+        )?;
+        let native_callback_batch_size = usize::try_from(native_callback_batch_size).map_err(|_| {
+            ScheduleError::CallbackBatchSizeOverflow { callback_batch_size: native_callback_batch_size }
+        })?;
+        Ok(Self {
+            queue_limits,
+            native_callback_batch_size,
+            result_in_flight_slot_state: ResultInFlightSlotState::new(queue_limits.result_in_flight_limit),
+            dosage_buffer_pool_state: DosageBufferPoolState::new(queue_limits.dosage_buffer_limit),
+            worker_lifecycle_state: CallbackWorkerLifecycleState::new(),
+        })
+    }
+
+    #[must_use]
+    pub const fn queue_limits(&self) -> NativeCallbackQueueLimits {
+        self.queue_limits
+    }
+
+    #[must_use]
+    pub const fn native_callback_batch_size(&self) -> usize {
+        self.native_callback_batch_size
+    }
+
+    #[must_use]
+    pub const fn dosage_queue_depth(&self) -> usize {
+        self.queue_limits.dosage_queue_depth
+    }
+
+    #[must_use]
+    pub const fn result_queue_depth(&self) -> usize {
+        self.queue_limits.result_queue_depth
+    }
+
+    #[must_use]
+    pub const fn result_in_flight_limit(&self) -> usize {
+        self.queue_limits.result_in_flight_limit
+    }
+
+    #[must_use]
+    pub const fn dosage_buffer_limit(&self) -> usize {
+        self.queue_limits.dosage_buffer_limit
+    }
+
+    #[must_use]
+    pub const fn has_started(&self) -> bool {
+        self.worker_lifecycle_state.has_started()
+    }
+
+    pub fn mark_started(&mut self) -> bool {
+        self.worker_lifecycle_state.mark_started()
+    }
+
+    #[must_use]
+    pub const fn result_in_flight_slot_limit(&self) -> usize {
+        self.result_in_flight_slot_state.slot_limit()
+    }
+
+    #[must_use]
+    pub const fn result_in_flight_occupied_count(&self) -> usize {
+        self.result_in_flight_slot_state.occupied_count()
+    }
+
+    #[must_use]
+    pub const fn has_available_result_in_flight_slot(&self) -> bool {
+        self.result_in_flight_slot_state.has_available_slot()
+    }
+
+    pub fn acquire_result_in_flight_slot(&mut self) -> bool {
+        self.result_in_flight_slot_state.acquire_slot()
+    }
+
+    pub fn release_result_in_flight_slot(&mut self) -> bool {
+        self.result_in_flight_slot_state.release_slot()
+    }
+
+    #[must_use]
+    pub const fn dosage_buffer_pool_limit(&self) -> usize {
+        self.dosage_buffer_pool_state.buffer_limit()
+    }
+
+    #[must_use]
+    pub fn dosage_buffer_allocated_count(&self) -> usize {
+        self.dosage_buffer_pool_state.allocated_count()
+    }
+
+    #[must_use]
+    pub fn dosage_buffer_identifiers(&self) -> Vec<usize> {
+        self.dosage_buffer_pool_state.buffer_identifiers()
+    }
+
+    #[must_use]
+    pub fn has_available_dosage_buffer_slot(&self) -> bool {
+        self.dosage_buffer_pool_state.has_available_slot()
+    }
+
+    #[must_use]
+    pub fn owns_dosage_buffer(&self, buffer_identifier: usize) -> bool {
+        self.dosage_buffer_pool_state.owns_buffer(buffer_identifier)
+    }
+
+    pub fn register_dosage_buffer(&mut self, buffer_identifier: usize) -> bool {
+        self.dosage_buffer_pool_state.register_buffer(buffer_identifier)
+    }
+
+    pub fn discard_dosage_buffer(&mut self, buffer_identifier: usize) -> bool {
+        self.dosage_buffer_pool_state.discard_buffer(buffer_identifier)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CallbackWorkerShutdownTimeouts {
     pub dosage_worker_join_timeout_seconds: f64,
@@ -1503,6 +1638,38 @@ mod tests {
         assert!(lifecycle_state.mark_started());
         assert!(lifecycle_state.has_started());
         assert!(!lifecycle_state.mark_started());
+    }
+
+    #[test]
+    fn tracks_callback_scheduler_state() {
+        let mut scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
+
+        assert_eq!(scheduler_state.queue_limits().dosage_queue_depth, 3);
+        assert_eq!(scheduler_state.native_callback_batch_size(), 2);
+        assert_eq!(scheduler_state.dosage_queue_depth(), 3);
+        assert_eq!(scheduler_state.result_queue_depth(), 3);
+        assert_eq!(scheduler_state.result_in_flight_limit(), 7);
+        assert_eq!(scheduler_state.result_in_flight_slot_limit(), 7);
+        assert_eq!(scheduler_state.dosage_buffer_limit(), 8);
+        assert_eq!(scheduler_state.dosage_buffer_pool_limit(), 8);
+        assert!(!scheduler_state.has_started());
+        assert!(scheduler_state.mark_started());
+        assert!(scheduler_state.has_started());
+        assert!(!scheduler_state.mark_started());
+
+        assert!(scheduler_state.acquire_result_in_flight_slot());
+        assert_eq!(scheduler_state.result_in_flight_occupied_count(), 1);
+        assert!(scheduler_state.has_available_result_in_flight_slot());
+        assert!(scheduler_state.release_result_in_flight_slot());
+        assert_eq!(scheduler_state.result_in_flight_occupied_count(), 0);
+
+        assert!(scheduler_state.register_dosage_buffer(11));
+        assert!(scheduler_state.owns_dosage_buffer(11));
+        assert_eq!(scheduler_state.dosage_buffer_allocated_count(), 1);
+        assert_eq!(scheduler_state.dosage_buffer_identifiers(), vec![11]);
+        assert!(scheduler_state.has_available_dosage_buffer_slot());
+        assert!(scheduler_state.discard_dosage_buffer(11));
+        assert_eq!(scheduler_state.dosage_buffer_allocated_count(), 0);
     }
 
     #[test]

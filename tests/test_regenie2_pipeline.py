@@ -1864,16 +1864,17 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         self.result_queue: queue.Queue[
             callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None
         ] = queue.Queue()
-        self.result_in_flight_slots = threading.BoundedSemaphore(2)
-        self.result_in_flight_limit = 2
-        self.result_in_flight_slot_lock = threading.Lock()
-        self.result_in_flight_slot_state = callback_runtime._core.NativeResultInFlightSlotState(
-            self.result_in_flight_limit
+        self.callback_scheduler_state = callback_runtime._core.NativeCallbackSchedulerState(
+            staging_depth=1,
+            native_callback_batch_size=1,
+            result_in_flight_limit=2,
+            dosage_buffer_limit=2,
         )
-        self.worker_lifecycle_state = callback_runtime._core.NativeCallbackWorkerLifecycleState()
+        self.result_in_flight_slots = threading.BoundedSemaphore(2)
+        self.result_in_flight_limit = self.callback_scheduler_state.result_in_flight_limit
+        self.result_in_flight_slot_lock = threading.Lock()
         self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
-        self.dosage_buffer_limit = 2
-        self.dosage_buffer_pool = callback_runtime._core.NativeDosageBufferPoolState(self.dosage_buffer_limit)
+        self.dosage_buffer_limit = self.callback_scheduler_state.dosage_buffer_limit
         self.worker_error = None
         self.result_worker_error = None
         self.sample_major_metadata: list[object] = []
@@ -1912,8 +1913,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
 
 
 def mark_callback_workers_started(callback: typing.Any) -> None:
-    callback.worker_lifecycle_state = callback_runtime._core.NativeCallbackWorkerLifecycleState()
-    assert callback.worker_lifecycle_state.mark_started() is True
+    assert callback.callback_scheduler_state.mark_started() is True
 
 
 def test_native_callback_runner_records_chromosome_progress_transitions() -> None:
@@ -2390,16 +2390,16 @@ def test_native_callback_runner_uses_native_dosage_buffer_pool_accounting() -> N
 
     first_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
     second_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=4)
-    assert callback.dosage_buffer_pool.allocated_count == 2
-    assert callback.dosage_buffer_pool.has_available_slot() is False
-    assert callback.dosage_buffer_pool.owns_buffer(id(first_buffer)) is True
-    assert callback.dosage_buffer_pool.owns_buffer(id(second_buffer)) is True
+    assert callback.callback_scheduler_state.dosage_buffer_allocated_count == 2
+    assert callback.callback_scheduler_state.has_available_dosage_buffer_slot() is False
+    assert callback.callback_scheduler_state.owns_dosage_buffer(id(first_buffer)) is True
+    assert callback.callback_scheduler_state.owns_dosage_buffer(id(second_buffer)) is True
 
     callback.discard_dosage_buffer_slot(first_buffer)
 
-    assert callback.dosage_buffer_pool.allocated_count == 1
-    assert callback.dosage_buffer_pool.has_available_slot() is True
-    assert callback.dosage_buffer_pool.owns_buffer(id(first_buffer)) is False
+    assert callback.callback_scheduler_state.dosage_buffer_allocated_count == 1
+    assert callback.callback_scheduler_state.has_available_dosage_buffer_slot() is True
+    assert callback.callback_scheduler_state.owns_dosage_buffer(id(first_buffer)) is False
 
 
 def test_native_callback_runner_records_native_dosage_buffer_operation_observations() -> None:
@@ -2817,7 +2817,7 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
     assert explicit_callback.dosage_buffer_limit == 8
 
 
-def test_native_bgen_callback_runner_uses_native_queue_limit_policy() -> None:
+def test_native_bgen_callback_runner_uses_native_scheduler_state() -> None:
     class ConcreteCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def compute_preprocessed_chunk(
             self,
@@ -2846,16 +2846,17 @@ def test_native_bgen_callback_runner_uses_native_queue_limit_policy() -> None:
         ) -> None:
             del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
 
-    resolved_limits = SimpleNamespace(
+    resolved_scheduler_state = SimpleNamespace(
+        native_callback_batch_size=5,
         dosage_queue_depth=11,
         result_queue_depth=12,
         result_in_flight_limit=13,
         dosage_buffer_limit=14,
     )
     with patch(
-        "g.engine.callbacks.runtime._core.resolve_native_callback_queue_limits",
-        return_value=resolved_limits,
-    ) as mock_resolver:
+        "g.engine.callbacks.runtime._core.NativeCallbackSchedulerState",
+        return_value=resolved_scheduler_state,
+    ) as mock_scheduler_state:
         callback = ConcreteCallbackRunner(
             worker_name="native-policy",
             staging_depth=3,
@@ -2867,7 +2868,7 @@ def test_native_bgen_callback_runner_uses_native_queue_limit_policy() -> None:
             output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
         )
 
-    mock_resolver.assert_called_once_with(
+    mock_scheduler_state.assert_called_once_with(
         staging_depth=3,
         native_callback_batch_size=5,
         result_in_flight_limit=7,
@@ -3266,8 +3267,8 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
     callback.acquire_result_in_flight_slot()
     callback.acquire_result_in_flight_slot()
 
-    assert callback.result_in_flight_slot_state.occupied_count == 2
-    assert callback.result_in_flight_slot_state.has_available_slot() is False
+    assert callback.callback_scheduler_state.result_in_flight_occupied_count == 2
+    assert callback.callback_scheduler_state.has_available_result_in_flight_slot() is False
     assert callback.result_in_flight_slots.acquire(blocking=False) is False
 
     callback.put_result_write_item(
@@ -3287,10 +3288,10 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
     callback.finish()
 
     assert callback.result_in_flight_slots.acquire(blocking=False) is True
-    assert callback.result_in_flight_slot_state.occupied_count == 1
+    assert callback.callback_scheduler_state.result_in_flight_occupied_count == 1
     callback.release_result_in_flight_slot()
     callback.release_result_in_flight_slot()
-    assert callback.result_in_flight_slot_state.occupied_count == 0
+    assert callback.callback_scheduler_state.result_in_flight_occupied_count == 0
     assert callback.free_dosage_buffers.get_nowait() is host_dosage_buffer
     assert len(writer_session.native_chunks) == 1
 
@@ -3301,18 +3302,18 @@ def test_native_callback_runner_uses_native_result_in_flight_slot_accounting() -
     callback.acquire_result_in_flight_slot()
     callback.acquire_result_in_flight_slot()
 
-    assert callback.result_in_flight_slot_state.occupied_count == 2
-    assert callback.result_in_flight_slot_state.has_available_slot() is False
+    assert callback.callback_scheduler_state.result_in_flight_occupied_count == 2
+    assert callback.callback_scheduler_state.has_available_result_in_flight_slot() is False
     assert callback.result_in_flight_slot_count == 2
 
     callback.release_result_in_flight_slot()
 
-    assert callback.result_in_flight_slot_state.occupied_count == 1
-    assert callback.result_in_flight_slot_state.has_available_slot() is True
+    assert callback.callback_scheduler_state.result_in_flight_occupied_count == 1
+    assert callback.callback_scheduler_state.has_available_result_in_flight_slot() is True
 
     callback.release_result_in_flight_slot()
 
-    assert callback.result_in_flight_slot_state.occupied_count == 0
+    assert callback.callback_scheduler_state.result_in_flight_occupied_count == 0
 
 
 def test_result_worker_releases_host_dosage_buffer_before_output_write() -> None:

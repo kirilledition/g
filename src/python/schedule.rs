@@ -20,6 +20,11 @@ pub(crate) struct NativeCallbackQueueLimits {
 }
 
 #[pyclass]
+pub(crate) struct NativeCallbackSchedulerState {
+    inner: native_schedule::CallbackSchedulerState,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageBufferReusePlan {
     #[pyo3(get)]
     requires_slice: bool,
@@ -206,6 +211,113 @@ impl NativeCallbackWorkerLifecycleState {
 
     fn mark_started(&mut self) -> bool {
         self.inner.mark_started()
+    }
+}
+
+#[pymethods]
+impl NativeCallbackSchedulerState {
+    #[new]
+    fn new(
+        staging_depth: i64,
+        native_callback_batch_size: i64,
+        result_in_flight_limit: Option<i64>,
+        dosage_buffer_limit: Option<i64>,
+    ) -> PyResult<Self> {
+        native_schedule::CallbackSchedulerState::new(
+            staging_depth,
+            native_callback_batch_size,
+            result_in_flight_limit,
+            dosage_buffer_limit,
+        )
+        .map(|inner| Self { inner })
+        .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    #[getter]
+    fn native_callback_batch_size(&self) -> usize {
+        self.inner.native_callback_batch_size()
+    }
+
+    #[getter]
+    fn dosage_queue_depth(&self) -> usize {
+        self.inner.dosage_queue_depth()
+    }
+
+    #[getter]
+    fn result_queue_depth(&self) -> usize {
+        self.inner.result_queue_depth()
+    }
+
+    #[getter]
+    fn result_in_flight_limit(&self) -> usize {
+        self.inner.result_in_flight_limit()
+    }
+
+    #[getter]
+    fn dosage_buffer_limit(&self) -> usize {
+        self.inner.dosage_buffer_limit()
+    }
+
+    #[getter]
+    fn has_started(&self) -> bool {
+        self.inner.has_started()
+    }
+
+    fn mark_started(&mut self) -> bool {
+        self.inner.mark_started()
+    }
+
+    #[getter]
+    fn result_in_flight_slot_limit(&self) -> usize {
+        self.inner.result_in_flight_slot_limit()
+    }
+
+    #[getter]
+    fn result_in_flight_occupied_count(&self) -> usize {
+        self.inner.result_in_flight_occupied_count()
+    }
+
+    fn has_available_result_in_flight_slot(&self) -> bool {
+        self.inner.has_available_result_in_flight_slot()
+    }
+
+    fn acquire_result_in_flight_slot(&mut self) -> bool {
+        self.inner.acquire_result_in_flight_slot()
+    }
+
+    fn release_result_in_flight_slot(&mut self) -> bool {
+        self.inner.release_result_in_flight_slot()
+    }
+
+    #[getter]
+    fn dosage_buffer_pool_limit(&self) -> usize {
+        self.inner.dosage_buffer_pool_limit()
+    }
+
+    #[getter]
+    fn dosage_buffer_allocated_count(&self) -> usize {
+        self.inner.dosage_buffer_allocated_count()
+    }
+
+    #[getter]
+    fn dosage_buffer_identifiers(&self) -> Vec<usize> {
+        self.inner.dosage_buffer_identifiers()
+    }
+
+    fn has_available_dosage_buffer_slot(&self) -> bool {
+        self.inner.has_available_dosage_buffer_slot()
+    }
+
+    fn owns_dosage_buffer(&self, buffer_identifier: usize) -> bool {
+        self.inner.owns_dosage_buffer(buffer_identifier)
+    }
+
+    fn register_dosage_buffer(&mut self, buffer_identifier: usize) -> bool {
+        self.inner.register_dosage_buffer(buffer_identifier)
+    }
+
+    fn discard_dosage_buffer(&mut self, buffer_identifier: usize) -> bool {
+        self.inner.discard_dosage_buffer(buffer_identifier)
     }
 }
 

@@ -83,7 +83,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
         """Initialize shared native callback state."""
-        queue_limits = _core.resolve_native_callback_queue_limits(
+        self.callback_scheduler_state = _core.NativeCallbackSchedulerState(
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
@@ -93,13 +93,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
-        self.dosage_queue_depth = queue_limits.dosage_queue_depth
-        self.result_queue_depth = queue_limits.result_queue_depth
-        self.result_in_flight_limit = queue_limits.result_in_flight_limit
-        self.dosage_buffer_limit = queue_limits.dosage_buffer_limit
-        self.native_callback_batch_size = native_callback_batch_size
+        self.dosage_queue_depth = self.callback_scheduler_state.dosage_queue_depth
+        self.result_queue_depth = self.callback_scheduler_state.result_queue_depth
+        self.result_in_flight_limit = self.callback_scheduler_state.result_in_flight_limit
+        self.dosage_buffer_limit = self.callback_scheduler_state.dosage_buffer_limit
+        self.native_callback_batch_size = self.callback_scheduler_state.native_callback_batch_size
         self.result_in_flight_slot_lock = threading.Lock()
-        self.result_in_flight_slot_state = _core.NativeResultInFlightSlotState(self.result_in_flight_limit)
         self.dosage_queue: queue.Queue[
             PreprocessedDosageChunkWorkItem
             | PreprocessedVariantMajorDosageChunkWorkItem
@@ -112,7 +111,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         )
         self.result_in_flight_slots = threading.BoundedSemaphore(self.result_in_flight_limit)
         self.free_dosage_buffers: queue.Queue[HostGenotypeBuffer] = queue.Queue(maxsize=self.dosage_buffer_limit)
-        self.dosage_buffer_pool = _core.NativeDosageBufferPoolState(self.dosage_buffer_limit)
         self.worker_error: BaseException | None = None
         self.result_worker_error: BaseException | None = None
         self.binary_correction_summary = _core.NativeBinaryCorrectionSummary()
@@ -128,7 +126,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             daemon=True,
         )
         self.worker_start_lock = threading.Lock()
-        self.worker_lifecycle_state = _core.NativeCallbackWorkerLifecycleState()
 
     @property
     def processed_chunk_count(self) -> int:
@@ -152,12 +149,12 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             self.result_worker_thread.start()
             self.worker_thread.start()
-            self.worker_lifecycle_state.mark_started()
+            self.callback_scheduler_state.mark_started()
 
     @property
     def worker_threads_started(self) -> bool:
         """Return whether callback worker threads have been started."""
-        return self.worker_lifecycle_state.has_started
+        return self.callback_scheduler_state.has_started
 
     def worker_threads_have_started(self) -> bool:
         """Return whether callback worker threads have been started."""
@@ -166,17 +163,17 @@ class NativeBgenCallbackRunner(abc.ABC):
     @property
     def dosage_buffer_count(self) -> int:
         """Return the native dosage-buffer pool allocation count."""
-        return self.dosage_buffer_pool.allocated_count
+        return self.callback_scheduler_state.dosage_buffer_allocated_count
 
     @property
     def dosage_buffer_identifiers(self) -> set[int]:
         """Return the native dosage-buffer pool ownership identifiers."""
-        return set(self.dosage_buffer_pool.buffer_identifiers)
+        return set(self.callback_scheduler_state.dosage_buffer_identifiers)
 
     @property
     def result_in_flight_slot_count(self) -> int:
         """Return the native result in-flight occupied slot count."""
-        return self.result_in_flight_slot_state.occupied_count
+        return self.callback_scheduler_state.result_in_flight_occupied_count
 
     def record_stage_duration(self, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage using this runner's timing recorder."""
@@ -839,7 +836,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.raise_worker_error_if_present()
                 if self.result_in_flight_slots.acquire(timeout=CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS):
                     with self.result_in_flight_slot_lock:
-                        if not self.result_in_flight_slot_state.acquire_slot():
+                        if not self.callback_scheduler_state.acquire_result_in_flight_slot():
                             self.result_in_flight_slots.release()
                             message = "Native result in-flight slot state has no available slot."
                             raise RuntimeError(message)
@@ -849,11 +846,11 @@ class NativeBgenCallbackRunner(abc.ABC):
             acquire_start_time = time.perf_counter()
             if self.result_in_flight_slots.acquire(timeout=CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS):
                 with self.result_in_flight_slot_lock:
-                    if not self.result_in_flight_slot_state.acquire_slot():
+                    if not self.callback_scheduler_state.acquire_result_in_flight_slot():
                         self.result_in_flight_slots.release()
                         message = "Native result in-flight slot state has no available slot."
                         raise RuntimeError(message)
-                    current_depth = self.result_in_flight_slot_state.occupied_count
+                    current_depth = self.callback_scheduler_state.result_in_flight_occupied_count
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_in_flight_slots",
                     operation_name="acquire",
@@ -864,7 +861,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 )
                 return
             with self.result_in_flight_slot_lock:
-                current_depth = self.result_in_flight_slot_state.occupied_count
+                current_depth = self.callback_scheduler_state.result_in_flight_occupied_count
             self.record_bounded_resource_stage_duration(
                 resource_name="result_in_flight_slots",
                 operation_name="producer_blocking",
@@ -878,8 +875,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Release capacity for one completed chunk of GPU result work."""
         self.result_in_flight_slots.release()
         with self.result_in_flight_slot_lock:
-            self.result_in_flight_slot_state.release_slot()
-            current_depth = self.result_in_flight_slot_state.occupied_count
+            self.callback_scheduler_state.release_result_in_flight_slot()
+            current_depth = self.callback_scheduler_state.result_in_flight_occupied_count
         self.record_bounded_resource_operation(
             resource_name="result_in_flight_slots",
             operation_name="release",
@@ -1081,10 +1078,10 @@ class NativeBgenCallbackRunner(abc.ABC):
                     )
                     return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
-                if self.dosage_buffer_pool.has_available_slot():
+                if self.callback_scheduler_state.has_available_dosage_buffer_slot():
                     return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
                 continue
-            if self.dosage_buffer_pool.has_available_slot():
+            if self.callback_scheduler_state.has_available_dosage_buffer_slot():
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
             with contextlib.suppress(queue.Empty):
                 if self.stage_timing_recorder is None:
@@ -1118,13 +1115,13 @@ class NativeBgenCallbackRunner(abc.ABC):
                     )
                     return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
-                if self.dosage_buffer_pool.has_available_slot():
+                if self.callback_scheduler_state.has_available_dosage_buffer_slot():
                     return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
 
     def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Return a processed host dosage buffer to the reusable pool."""
         dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
-        if not self.dosage_buffer_pool.owns_buffer(id(dosage_buffer_owner)):
+        if not self.callback_scheduler_state.owns_dosage_buffer(id(dosage_buffer_owner)):
             return
         try:
             self.free_dosage_buffers.put_nowait(dosage_buffer_owner)
@@ -1152,7 +1149,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> HostGenotypeBuffer:
         """Allocate and register one host genotype buffer slot."""
         dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
-        if not self.dosage_buffer_pool.register_buffer(id(dosage_buffer)):
+        if not self.callback_scheduler_state.register_dosage_buffer(id(dosage_buffer)):
             message = "Native dosage-buffer pool has no available slot for allocation."
             raise RuntimeError(message)
         self.record_queue_operation(
@@ -1167,7 +1164,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Remove one discarded host genotype buffer slot from pool accounting."""
         dosage_buffer_identifier = id(dosage_buffer)
-        if not self.dosage_buffer_pool.discard_buffer(dosage_buffer_identifier):
+        if not self.callback_scheduler_state.discard_dosage_buffer(dosage_buffer_identifier):
             return
         self.record_queue_operation(
             queue_name="dosage_buffer_pool",
@@ -1190,7 +1187,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         if isinstance(dosage_buffer, np.ndarray):
             host_dosage_buffer = typing.cast("HostGenotypeBuffer", dosage_buffer)
             dosage_buffer_owner = self._dosage_buffer_owner(host_dosage_buffer)
-            if self.dosage_buffer_pool.owns_buffer(id(dosage_buffer_owner)):
+            if self.callback_scheduler_state.owns_dosage_buffer(id(dosage_buffer_owner)):
                 return dosage_buffer_owner
         return None
 

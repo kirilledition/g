@@ -1047,6 +1047,49 @@ def test_native_callback_worker_lifecycle_state_tracks_start() -> None:
     assert lifecycle_state.mark_started() is False
 
 
+def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=3,
+        native_callback_batch_size=2,
+        result_in_flight_limit=7,
+        dosage_buffer_limit=8,
+    )
+
+    assert scheduler_state.native_callback_batch_size == 2
+    assert scheduler_state.dosage_queue_depth == 3
+    assert scheduler_state.result_queue_depth == 3
+    assert scheduler_state.result_in_flight_limit == 7
+    assert scheduler_state.result_in_flight_slot_limit == 7
+    assert scheduler_state.dosage_buffer_limit == 8
+    assert scheduler_state.dosage_buffer_pool_limit == 8
+    assert scheduler_state.has_started is False
+    assert scheduler_state.mark_started() is True
+    assert scheduler_state.has_started is True
+    assert scheduler_state.mark_started() is False
+
+    assert scheduler_state.acquire_result_in_flight_slot() is True
+    assert scheduler_state.result_in_flight_occupied_count == 1
+    assert scheduler_state.has_available_result_in_flight_slot() is True
+    assert scheduler_state.release_result_in_flight_slot() is True
+    assert scheduler_state.result_in_flight_occupied_count == 0
+
+    assert scheduler_state.register_dosage_buffer(11) is True
+    assert scheduler_state.owns_dosage_buffer(11) is True
+    assert scheduler_state.dosage_buffer_allocated_count == 1
+    assert scheduler_state.dosage_buffer_identifiers == [11]
+    assert scheduler_state.has_available_dosage_buffer_slot() is True
+    assert scheduler_state.discard_dosage_buffer(11) is True
+    assert scheduler_state.dosage_buffer_allocated_count == 0
+
+    with pytest.raises(ValueError, match="effective dosage_buffer_limit"):
+        _core.NativeCallbackSchedulerState(
+            staging_depth=1,
+            native_callback_batch_size=3,
+            result_in_flight_limit=None,
+            dosage_buffer_limit=2,
+        )
+
+
 def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
     progress_state = _core.NativeCallbackProgressState()
 

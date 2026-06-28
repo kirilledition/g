@@ -122,7 +122,7 @@ use runtime_state::{
 };
 use schedule::{
     NativeBgenDeliveryCleanupPlan, NativeBgenDeliveryInvocationPlan, NativeCallbackQueueLimits,
-    NativeCallbackQueueOperationObservationPlan, NativeCallbackQueueStageObservationPlan,
+    NativeCallbackQueueOperationObservationPlan, NativeCallbackQueueStageObservationPlan, NativeCallbackSchedulerState,
     NativeCallbackWorkerAbortPlan, NativeCallbackWorkerFinishPlan, NativeCallbackWorkerJoinPlan,
     NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts, NativeCallbackWorkerStopPlan,
     NativeCallbackWorkerStopPollPlan, NativeDosageBufferPoolState, NativeDosageBufferReusePlan,
@@ -1821,6 +1821,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackQueueLimits>()?;
     module.add_class::<NativeCallbackQueueOperationObservationPlan>()?;
     module.add_class::<NativeCallbackQueueStageObservationPlan>()?;
+    module.add_class::<NativeCallbackSchedulerState>()?;
     module.add_class::<NativeCallbackWorkerAbortPlan>()?;
     module.add_class::<NativeCallbackWorkerFinishPlan>()?;
     module.add_class::<NativeCallbackWorkerJoinPlan>()?;
