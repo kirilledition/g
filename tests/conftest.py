@@ -18,5 +18,6 @@ COMPUTE_CONFIG = config.RegenieConfig.from_options(
 ).g_compute
 jax_runtime_setup.configure_before_backend_init(
     jax_runtime_resolution.resolve_jax_runtime_policy(COMPUTE_CONFIG),
+    native_setup_session=None,
     diagnostic_sink=None,
 )

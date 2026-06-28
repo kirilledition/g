@@ -9,6 +9,8 @@ use pyo3::types::{PyAny, PyDict};
 use g_runtime::runtime_policy as native_runtime_policy;
 use g_runtime::runtime_state as native_runtime_state;
 
+use super::jax_runtime::NativeJaxRuntimeSetupSession;
+
 #[pyclass]
 pub(crate) struct NativeRuntimeCompatibilityToken {
     token: native_runtime_state::RuntimeCompatibilityToken,
@@ -256,6 +258,20 @@ impl NativeRuntimeState {
             .plan_jax_runtime_setup_lifecycle(&jax_policy)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(NativeJaxRuntimeSetupLifecyclePlan { inner: plan })
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn build_jax_runtime_setup_session(
+        &self,
+        payload: &Bound<'_, PyAny>,
+        resolved_cache_directory: String,
+    ) -> PyResult<NativeJaxRuntimeSetupSession> {
+        let jax_policy = parse_jax_runtime_policy_payload(payload)?;
+        let session = self
+            .lock_state()?
+            .build_jax_runtime_setup_session(&jax_policy, &resolved_cache_directory)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(NativeJaxRuntimeSetupSession::from_session(session))
     }
 }
 

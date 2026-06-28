@@ -18,12 +18,14 @@ NVIDIA_DRIVER_DIRECTORY_PATH = Path("/proc/driver/nvidia")
 def configure_before_backend_init(
     policy: models.JaxRuntimePolicy,
     *,
+    native_setup_session: _core.NativeJaxRuntimeSetupSession | None,
     diagnostic_sink: typing.Callable[[models.JaxRuntimeDiagnosticEvent], None] | None,
 ) -> models.JaxRuntimeSetupReport:
     """Configure JAX platform and runtime knobs before backend initialization.
 
     Args:
         policy: Requested runtime policy.
+        native_setup_session: Native setup session to own setup decisions.
         diagnostic_sink: Optional structured diagnostic event sink.
 
     Returns:
@@ -33,40 +35,57 @@ def configure_before_backend_init(
         RuntimeError: If GPU execution was requested but validation fails.
 
     """
-    setup_report = resolution.resolve_jax_runtime_setup(policy)
-    side_effect_plan = _core.plan_jax_runtime_setup_side_effects_payload(
-        requested_device=policy.device.value,
-        persistent_cache_enabled=setup_report.persistent_cache_enabled,
-    )
+    active_setup_session = resolve_active_setup_session(policy, native_setup_session)
+    setup_report = resolution.jax_runtime_setup_report_from_native_payload(active_setup_session.setup_payload())
+    side_effect_plan = active_setup_session.side_effect_plan_payload()
     if typing.cast("bool", side_effect_plan["should_create_cache_directory"]):
         setup_report.cache_directory.mkdir(parents=True, exist_ok=True)
-    apply_jax_runtime_config_updates(setup_report)
+    apply_jax_runtime_config_updates(active_setup_session)
     if not typing.cast("bool", side_effect_plan["should_validate_gpu"]):
         if diagnostic_sink is not None:
-            for diagnostic_event in diagnostics.diagnostic_events_from_setup_report(setup_report):
+            for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(active_setup_session):
                 diagnostic_sink(diagnostic_event)
         return setup_report
     try:
         gpu_validation_report = validate_gpu_device()
     except RuntimeError as error:
-        failed_report = complete_jax_runtime_setup_validation_report(
-            setup_report,
+        complete_jax_runtime_setup_validation_report(
+            active_setup_session,
             validation_status=models.GpuValidationStatus.FAILED,
             validation_message=str(error),
         )
         if diagnostic_sink is not None:
-            for diagnostic_event in diagnostics.diagnostic_events_from_setup_report(failed_report):
+            for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(active_setup_session):
                 diagnostic_sink(diagnostic_event)
         raise
     validated_report = complete_jax_runtime_setup_validation_report(
-        setup_report,
+        active_setup_session,
         validation_status=gpu_validation_report.status,
         validation_message=gpu_validation_report.message,
     )
     if diagnostic_sink is not None:
-        for diagnostic_event in diagnostics.diagnostic_events_from_setup_report(validated_report):
+        for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(active_setup_session):
             diagnostic_sink(diagnostic_event)
     return validated_report
+
+
+def resolve_active_setup_session(
+    policy: models.JaxRuntimePolicy,
+    native_setup_session: _core.NativeJaxRuntimeSetupSession | None,
+) -> _core.NativeJaxRuntimeSetupSession:
+    """Return the caller-provided native setup session or build a direct one.
+
+    Args:
+        policy: Requested runtime policy.
+        native_setup_session: Optional native setup session.
+
+    Returns:
+        Native setup session.
+
+    """
+    if native_setup_session is not None:
+        return native_setup_session
+    return resolution.build_native_jax_runtime_setup_session(policy)
 
 
 def nvidia_driver_is_visible() -> bool:
@@ -83,25 +102,16 @@ def nvidia_driver_is_visible() -> bool:
     )
 
 
-def apply_jax_runtime_config_updates(setup_report: models.JaxRuntimeSetupReport) -> None:
+def apply_jax_runtime_config_updates(native_setup_session: _core.NativeJaxRuntimeSetupSession) -> None:
     """Apply native-ordered JAX runtime config updates."""
-    update_payloads = _core.plan_jax_runtime_config_update_payloads(
-        platform_name=setup_report.platform_name,
-        cache_directory=str(setup_report.cache_directory),
-        matmul_precision=setup_report.matmul_precision.value,
-        persistent_cache_enabled=setup_report.persistent_cache_enabled,
-        persistent_cache_min_entry_size_bytes=setup_report.persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds=setup_report.persistent_cache_min_compile_time_seconds,
-        xla_auxiliary_cache_mode=setup_report.xla_auxiliary_cache_mode.value,
-        transfer_guard_enabled=setup_report.transfer_guard_enabled,
-    )
+    update_payloads = native_setup_session.config_update_payloads()
     for update_payload in update_payloads:
         update_mapping = dict(typing.cast("typing.Mapping[str, object]", update_payload))
         jax.config.update(str(update_mapping["setting_name"]), update_mapping["value"])
 
 
 def complete_jax_runtime_setup_validation_report(
-    setup_report: models.JaxRuntimeSetupReport,
+    native_setup_session: _core.NativeJaxRuntimeSetupSession,
     *,
     validation_status: models.GpuValidationStatus,
     validation_message: str | None,
@@ -109,7 +119,7 @@ def complete_jax_runtime_setup_validation_report(
     """Complete a setup report after the JAX GPU validation side effect.
 
     Args:
-        setup_report: Setup report before GPU validation has completed.
+        native_setup_session: Native setup session before GPU validation has completed.
         validation_status: Final GPU validation status.
         validation_message: Optional validation detail.
 
@@ -117,19 +127,9 @@ def complete_jax_runtime_setup_validation_report(
         Completed setup report.
 
     """
-    completed_payload = _core.complete_jax_runtime_setup_validation_payload(
-        requested_device=setup_report.requested_device.value,
-        platform_name=setup_report.platform_name,
-        cache_directory=str(setup_report.cache_directory),
-        matmul_precision=setup_report.matmul_precision.value,
-        persistent_cache_enabled=setup_report.persistent_cache_enabled,
-        persistent_cache_min_entry_size_bytes=setup_report.persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds=setup_report.persistent_cache_min_compile_time_seconds,
-        xla_auxiliary_cache_mode=setup_report.xla_auxiliary_cache_mode.value,
-        xla_auxiliary_cache_reason=setup_report.xla_auxiliary_cache_reason,
-        transfer_guard_enabled=setup_report.transfer_guard_enabled,
-        gpu_validation_status=validation_status.value,
-        gpu_validation_message=validation_message,
+    completed_payload = native_setup_session.complete_validation_payload(
+        validation_status.value,
+        validation_message,
     )
     return resolution.jax_runtime_setup_report_from_native_payload(completed_payload)
 

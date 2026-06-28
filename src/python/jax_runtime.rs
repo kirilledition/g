@@ -1,12 +1,86 @@
 //! PyO3 adapters for deterministic JAX runtime setup policy.
 
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyTuple};
 
 use g_runtime::jax_runtime as native_jax_runtime;
+
+#[pyclass]
+pub(crate) struct NativeJaxRuntimeSetupSession {
+    session: Mutex<native_jax_runtime::JaxRuntimeSetupSession>,
+}
+
+#[pymethods]
+impl NativeJaxRuntimeSetupSession {
+    #[new]
+    fn new(setup_payload: &Bound<'_, PyAny>, should_configure: bool) -> PyResult<Self> {
+        Ok(Self::from_session(native_jax_runtime::JaxRuntimeSetupSession::new(
+            should_configure,
+            parse_jax_runtime_setup_payload(setup_payload)?,
+        )))
+    }
+
+    #[getter]
+    fn should_configure(&self) -> PyResult<bool> {
+        Ok(self.lock_session()?.should_configure())
+    }
+
+    fn setup_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let session = self.lock_session()?;
+        jax_runtime_setup_payload_to_dict(py, session.setup())
+    }
+
+    fn side_effect_plan_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let session = self.lock_session()?;
+        jax_runtime_setup_side_effect_plan_to_dict(py, &session.side_effect_plan())
+    }
+
+    fn config_update_payloads<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let session = self.lock_session()?;
+        let update_payloads = session
+            .config_updates()
+            .iter()
+            .map(|update| jax_runtime_config_update_payload_to_dict(py, update))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, &update_payloads)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn complete_validation_payload<'py>(
+        &self,
+        py: Python<'py>,
+        gpu_validation_status: String,
+        gpu_validation_message: Option<String>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let mut session = self.lock_session()?;
+        let completed_setup = session.complete_validation(&gpu_validation_status, gpu_validation_message.as_deref());
+        jax_runtime_setup_payload_to_dict(py, &completed_setup)
+    }
+
+    fn diagnostic_event_payloads<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let session = self.lock_session()?;
+        let event_payloads = session
+            .diagnostic_events()
+            .iter()
+            .map(|event| jax_runtime_diagnostic_event_payload_to_dict(py, event))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, &event_payloads)
+    }
+}
+
+impl NativeJaxRuntimeSetupSession {
+    pub(crate) fn from_session(session: native_jax_runtime::JaxRuntimeSetupSession) -> Self {
+        Self { session: Mutex::new(session) }
+    }
+
+    fn lock_session(&self) -> PyResult<MutexGuard<'_, native_jax_runtime::JaxRuntimeSetupSession>> {
+        self.session.lock().map_err(|_| PyValueError::new_err("JAX runtime setup session mutex was poisoned."))
+    }
+}
 
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
@@ -229,6 +303,27 @@ fn jax_runtime_setup_payload_to_dict<'py>(
     Ok(payload)
 }
 
+fn parse_jax_runtime_setup_payload(payload: &Bound<'_, PyAny>) -> PyResult<native_jax_runtime::JaxRuntimeSetupPayload> {
+    Ok(native_jax_runtime::JaxRuntimeSetupPayload {
+        requested_device: payload.get_item("requested_device")?.extract::<String>()?,
+        platform_name: payload.get_item("platform_name")?.extract::<String>()?,
+        cache_directory: payload.get_item("cache_directory")?.extract::<String>()?,
+        matmul_precision: payload.get_item("matmul_precision")?.extract::<String>()?,
+        persistent_cache_enabled: payload.get_item("persistent_cache_enabled")?.extract::<bool>()?,
+        persistent_cache_min_entry_size_bytes: payload
+            .get_item("persistent_cache_min_entry_size_bytes")?
+            .extract::<i64>()?,
+        persistent_cache_min_compile_time_seconds: payload
+            .get_item("persistent_cache_min_compile_time_seconds")?
+            .extract::<i64>()?,
+        xla_auxiliary_cache_mode: payload.get_item("xla_auxiliary_cache_mode")?.extract::<String>()?,
+        xla_auxiliary_cache_reason: payload.get_item("xla_auxiliary_cache_reason")?.extract::<String>()?,
+        transfer_guard_enabled: payload.get_item("transfer_guard_enabled")?.extract::<bool>()?,
+        gpu_validation_status: payload.get_item("gpu_validation_status")?.extract::<String>()?,
+        gpu_validation_message: extract_optional_string(&payload.get_item("gpu_validation_message")?)?,
+    })
+}
+
 fn jax_runtime_diagnostic_record_plan_to_dict<'py>(
     py: Python<'py>,
     plan: &native_jax_runtime::JaxRuntimeDiagnosticRecordPlan,
@@ -311,4 +406,8 @@ fn set_optional_string(py: Python<'_>, payload: &Bound<'_, PyDict>, key: &str, v
         Some(text) => payload.set_item(key, text),
         None => payload.set_item(key, py.None()),
     }
+}
+
+fn extract_optional_string(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    if value.is_none() { Ok(None) } else { Ok(Some(value.extract::<String>()?)) }
 }

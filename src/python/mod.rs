@@ -65,8 +65,9 @@ use host_policy::{
     resolve_association_mode_value,
 };
 use jax_runtime::{
-    build_jax_runtime_setup_diagnostic_payloads, complete_jax_runtime_setup_validation_payload,
-    nvidia_driver_files_are_visible_value, plan_jax_gpu_validation_payload, plan_jax_runtime_config_update_payloads,
+    NativeJaxRuntimeSetupSession, build_jax_runtime_setup_diagnostic_payloads,
+    complete_jax_runtime_setup_validation_payload, nvidia_driver_files_are_visible_value,
+    plan_jax_gpu_validation_payload, plan_jax_runtime_config_update_payloads,
     plan_jax_runtime_diagnostic_record_payload, plan_jax_runtime_setup_side_effects_payload,
     resolve_jax_runtime_setup_payload,
 };
@@ -1843,6 +1844,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
     module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
+    module.add_class::<NativeJaxRuntimeSetupSession>()?;
     module.add_class::<NativeRayonThreadPoolConfigurationPlan>()?;
     module.add_class::<NativeRunRuntime>()?;
     module.add_class::<NativeRuntimeCompatibilityToken>()?;

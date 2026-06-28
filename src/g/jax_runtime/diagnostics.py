@@ -69,3 +69,22 @@ def diagnostic_events_from_setup_report(
         diagnostic_event_from_native_payload(native_payload)
         for native_payload in typing.cast("typing.Iterable[object]", native_payloads)
     )
+
+
+def diagnostic_events_from_native_setup_session(
+    native_setup_session: _core.NativeJaxRuntimeSetupSession,
+) -> tuple[models.JaxRuntimeDiagnosticEvent, ...]:
+    """Convert a native setup session into ordered structured diagnostic events.
+
+    Args:
+        native_setup_session: Native JAX runtime setup session.
+
+    Returns:
+        Ordered diagnostic events.
+
+    """
+    native_payloads = native_setup_session.diagnostic_event_payloads()
+    return tuple(
+        diagnostic_event_from_native_payload(native_payload)
+        for native_payload in typing.cast("typing.Iterable[object]", native_payloads)
+    )

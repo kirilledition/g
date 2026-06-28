@@ -70,11 +70,36 @@ def resolve_jax_runtime_setup(policy: models.JaxRuntimePolicy) -> models.JaxRunt
         Setup report with pure resolution decisions.
 
     """
-    if policy.cache_directory is None:
-        resolved_cache_directory = runtime_paths.default_local_cache_directory(DEFAULT_CACHE_DIRECTORY_NAME)
-    else:
-        resolved_cache_directory = policy.cache_directory.expanduser()
-    setup_payload = _core.resolve_jax_runtime_setup_payload(
+    setup_session = build_native_jax_runtime_setup_session(policy)
+    return jax_runtime_setup_report_from_native_payload(setup_session.setup_payload())
+
+
+def build_native_jax_runtime_setup_session(policy: models.JaxRuntimePolicy) -> _core.NativeJaxRuntimeSetupSession:
+    """Build a native setup session for direct JAX runtime configuration.
+
+    Args:
+        policy: Requested runtime policy.
+
+    Returns:
+        Native JAX runtime setup session.
+
+    """
+    setup_payload = build_jax_runtime_setup_payload(policy)
+    return _core.NativeJaxRuntimeSetupSession(setup_payload, should_configure=True)
+
+
+def build_jax_runtime_setup_payload(policy: models.JaxRuntimePolicy) -> dict[str, object]:
+    """Build a native JAX runtime setup payload from a requested policy.
+
+    Args:
+        policy: Requested runtime policy.
+
+    Returns:
+        Native setup payload mapping.
+
+    """
+    resolved_cache_directory = resolve_jax_runtime_cache_directory(policy)
+    return _core.resolve_jax_runtime_setup_payload(
         policy.device.value,
         str(resolved_cache_directory),
         None if policy.matmul_precision is None else policy.matmul_precision.value,
@@ -84,7 +109,21 @@ def resolve_jax_runtime_setup(policy: models.JaxRuntimePolicy) -> models.JaxRunt
         policy.xla_autotune_cache,
         policy.transfer_guard,
     )
-    return jax_runtime_setup_report_from_native_payload(setup_payload)
+
+
+def resolve_jax_runtime_cache_directory(policy: models.JaxRuntimePolicy) -> Path:
+    """Resolve the cache directory used by JAX runtime setup.
+
+    Args:
+        policy: Requested runtime policy.
+
+    Returns:
+        Resolved cache directory.
+
+    """
+    if policy.cache_directory is None:
+        return runtime_paths.default_local_cache_directory(DEFAULT_CACHE_DIRECTORY_NAME)
+    return policy.cache_directory.expanduser()
 
 
 def jax_runtime_setup_report_from_native_payload(payload: object) -> models.JaxRuntimeSetupReport:

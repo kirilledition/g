@@ -196,10 +196,11 @@ def configure_runtime_before_jax_import(
 ) -> jax_runtime_models.JaxRuntimeSetupReport | None:
     """Configure JAX platform and runtime before compute modules are imported."""
     requested_policy = jax_runtime_resolution.resolve_jax_runtime_policy(compute_config)
-    setup_lifecycle_plan = PROCESS_RUNTIME_STATE.plan_jax_runtime_setup_lifecycle(
-        jax_runtime_policy_to_native_payload(requested_policy)
+    native_setup_session = PROCESS_RUNTIME_STATE.build_jax_runtime_setup_session(
+        jax_runtime_policy_to_native_payload(requested_policy),
+        str(jax_runtime_resolution.resolve_jax_runtime_cache_directory(requested_policy)),
     )
-    if not setup_lifecycle_plan.should_configure:
+    if not native_setup_session.should_configure:
         return None
 
     def record_diagnostic_event(diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent) -> None:
@@ -208,6 +209,7 @@ def configure_runtime_before_jax_import(
     setup_module = importlib.import_module("g.jax_runtime.setup")
     setup_report = setup_module.configure_before_backend_init(
         requested_policy,
+        native_setup_session=native_setup_session,
         diagnostic_sink=record_diagnostic_event,
     )
     record_jax_runtime_policy(requested_policy)

@@ -166,7 +166,7 @@ def test_configure_before_backend_init_sets_platform_first(tmp_path: Path) -> No
     policy = dataclasses.replace(build_runtime_policy(), cache_directory=cache_directory)
 
     with patch("g.jax_runtime.setup.jax.config.update") as mock_update:
-        report = setup.configure_before_backend_init(policy, diagnostic_sink=None)
+        report = setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=None)
 
     assert report.cache_directory == cache_directory
     assert [call.args for call in mock_update.call_args_list] == [
@@ -201,7 +201,7 @@ def test_configure_before_backend_init_validates_gpu_after_runtime(tmp_path: Pat
         patch("g.jax_runtime.setup.jax.config.update", side_effect=record_config_update),
         patch("g.jax_runtime.setup.validate_gpu_device", side_effect=record_validate_gpu_device),
     ):
-        report = setup.configure_before_backend_init(policy, diagnostic_sink=None)
+        report = setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=None)
 
     assert report.gpu_validation_status == models.GpuValidationStatus.SUCCEEDED
     assert call_order[0] == "jax_platforms"
@@ -211,29 +211,25 @@ def test_configure_before_backend_init_validates_gpu_after_runtime(tmp_path: Pat
 
 def test_configure_before_backend_init_uses_native_side_effect_plan(tmp_path: Path) -> None:
     cache_directory = tmp_path / "jax-cache"
-    policy = dataclasses.replace(build_runtime_policy(device=types.Device.GPU), cache_directory=cache_directory)
+    policy = dataclasses.replace(build_runtime_policy(persistent_cache=False), cache_directory=cache_directory)
 
     with (
-        patch(
-            "g.jax_runtime.setup._core.plan_jax_runtime_setup_side_effects_payload",
-            return_value={"should_create_cache_directory": False, "should_validate_gpu": False},
-        ),
         patch("g.jax_runtime.setup.jax.config.update"),
         patch("g.jax_runtime.setup.validate_gpu_device") as validate_gpu_device_mock,
     ):
-        setup.configure_before_backend_init(policy, diagnostic_sink=None)
+        setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=None)
 
     assert not cache_directory.exists()
     validate_gpu_device_mock.assert_not_called()
 
 
 def test_complete_jax_runtime_setup_validation_report_uses_native_payload(tmp_path: Path) -> None:
-    setup_report = resolution.resolve_jax_runtime_setup(
+    native_setup_session = resolution.build_native_jax_runtime_setup_session(
         build_runtime_policy(device=types.Device.GPU, cache_directory=tmp_path / "jax-cache")
     )
 
     completed_report = setup.complete_jax_runtime_setup_validation_report(
-        setup_report,
+        native_setup_session,
         validation_status=models.GpuValidationStatus.SUCCEEDED,
         validation_message="gpu ready",
     )
@@ -256,7 +252,7 @@ def test_configure_before_backend_init_emits_structured_diagnostics(tmp_path: Pa
     diagnostic_events: list[models.JaxRuntimeDiagnosticEvent] = []
 
     with patch("g.jax_runtime.setup.jax.config.update"):
-        setup.configure_before_backend_init(policy, diagnostic_sink=diagnostic_events.append)
+        setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=diagnostic_events.append)
 
     event_names = [diagnostic_event.event_name for diagnostic_event in diagnostic_events]
     assert event_names == [
@@ -288,7 +284,11 @@ def test_configure_before_backend_init_emits_gpu_validation_failure_before_raise
         patch("g.jax_runtime.setup.validate_gpu_device", side_effect=RuntimeError("no gpu")),
     ):
         try:
-            setup.configure_before_backend_init(policy, diagnostic_sink=diagnostic_events.append)
+            setup.configure_before_backend_init(
+                policy,
+                native_setup_session=None,
+                diagnostic_sink=diagnostic_events.append,
+            )
         except RuntimeError as error:
             assert str(error) == "no gpu"
         else:

@@ -962,9 +962,12 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
             self,
             policy: jax_runtime_models.JaxRuntimePolicy,
             *,
+            native_setup_session: _core.NativeJaxRuntimeSetupSession,
             diagnostic_sink: typing.Callable[[jax_runtime_models.JaxRuntimeDiagnosticEvent], None],
         ) -> jax_runtime_models.JaxRuntimeSetupReport:
             del diagnostic_sink
+            assert isinstance(native_setup_session, _core.NativeJaxRuntimeSetupSession)
+            assert native_setup_session.should_configure is True
             call_order.append(f"setup:{policy.device.value}")
             return jax_runtime_models.JaxRuntimeSetupReport(
                 requested_device=policy.device,
@@ -1011,8 +1014,10 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
             self,
             policy: jax_runtime_models.JaxRuntimePolicy,
             *,
+            native_setup_session: _core.NativeJaxRuntimeSetupSession,
             diagnostic_sink: typing.Callable[[jax_runtime_models.JaxRuntimeDiagnosticEvent], None],
         ) -> jax_runtime_models.JaxRuntimeSetupReport:
+            assert isinstance(native_setup_session, _core.NativeJaxRuntimeSetupSession)
             setup_report = jax_runtime_models.JaxRuntimeSetupReport(
                 requested_device=policy.device,
                 platform_name=jax_runtime_models.JAX_CPU_PLATFORM_NAME,
@@ -1123,9 +1128,11 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
             self,
             policy: jax_runtime_models.JaxRuntimePolicy,
             *,
+            native_setup_session: _core.NativeJaxRuntimeSetupSession,
             diagnostic_sink: typing.Callable[[jax_runtime_models.JaxRuntimeDiagnosticEvent], None],
         ) -> jax_runtime_models.JaxRuntimeSetupReport:
             del diagnostic_sink
+            assert isinstance(native_setup_session, _core.NativeJaxRuntimeSetupSession)
             call_order.append(f"setup:{policy.cache_directory}")
             return jax_runtime_models.JaxRuntimeSetupReport(
                 requested_device=policy.device,

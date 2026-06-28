@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::jax_runtime;
 use crate::runtime_policy::{LoggingRuntimePolicyPayload, describe_logging_runtime_policy};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -271,6 +272,31 @@ impl ProcessRuntimeState {
         self.require_compatible_jax_policy(requested_policy)?;
         Ok(JaxRuntimeSetupLifecyclePlan { should_configure: self.jax_policy.as_ref() != Some(requested_policy) })
     }
+
+    /// Build a run-scoped JAX setup session after lifecycle compatibility checks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a previous run configured incompatible
+    /// process-global JAX runtime settings.
+    pub fn build_jax_runtime_setup_session(
+        &self,
+        requested_policy: &JaxRuntimePolicyPayload,
+        resolved_cache_directory: &str,
+    ) -> Result<jax_runtime::JaxRuntimeSetupSession, RuntimeCompatibilityError> {
+        let lifecycle_plan = self.plan_jax_runtime_setup_lifecycle(requested_policy)?;
+        let setup = jax_runtime::resolve_jax_runtime_setup(
+            &requested_policy.device,
+            resolved_cache_directory,
+            requested_policy.matmul_precision.as_deref(),
+            requested_policy.persistent_cache,
+            requested_policy.persistent_cache_min_entry_size_bytes,
+            requested_policy.persistent_cache_min_compile_time_seconds,
+            requested_policy.xla_autotune_cache,
+            requested_policy.transfer_guard,
+        );
+        Ok(jax_runtime::JaxRuntimeSetupSession::new(lifecycle_plan.should_configure, setup))
+    }
 }
 
 #[must_use]
@@ -405,6 +431,34 @@ mod tests {
         assert!(
             state
                 .plan_jax_runtime_setup_lifecycle(&build_jax_policy(Some("/tmp/second-cache")))
+                .unwrap_err()
+                .to_string()
+                .contains("JAX runtime is already configured")
+        );
+    }
+
+    #[test]
+    fn builds_jax_runtime_setup_session_from_process_state() {
+        let mut state = ProcessRuntimeState::default();
+        let requested_policy = build_jax_policy(Some("/tmp/cache"));
+
+        let configure_session = state
+            .build_jax_runtime_setup_session(&requested_policy, "/tmp/cache")
+            .expect("compatible JAX policy should build a setup session");
+
+        assert!(configure_session.should_configure());
+        assert_eq!(configure_session.setup().platform_name, "cpu");
+        assert_eq!(configure_session.setup().cache_directory, "/tmp/cache");
+
+        state.record_jax_policy(requested_policy.clone());
+        let skip_session = state
+            .build_jax_runtime_setup_session(&requested_policy, "/tmp/cache")
+            .expect("matching configured JAX policy should build a skip session");
+
+        assert!(!skip_session.should_configure());
+        assert!(
+            state
+                .build_jax_runtime_setup_session(&build_jax_policy(Some("/tmp/second-cache")), "/tmp/second-cache")
                 .unwrap_err()
                 .to_string()
                 .contains("JAX runtime is already configured")

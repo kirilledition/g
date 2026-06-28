@@ -465,14 +465,54 @@ def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
     }
 
     configure_plan = runtime_state.plan_jax_runtime_setup_lifecycle(jax_policy_payload)
+    configure_session = runtime_state.build_jax_runtime_setup_session(jax_policy_payload, "/tmp/g-jax-cache")
     runtime_state.record_jax_runtime_policy(jax_policy_payload)
     skip_plan = runtime_state.plan_jax_runtime_setup_lifecycle(jax_policy_payload)
+    skip_session = runtime_state.build_jax_runtime_setup_session(jax_policy_payload, "/tmp/g-jax-cache")
 
     assert isinstance(configure_plan, _core.NativeJaxRuntimeSetupLifecyclePlan)
     assert configure_plan.should_configure is True
+    assert isinstance(configure_session, _core.NativeJaxRuntimeSetupSession)
+    assert configure_session.should_configure is True
+    assert configure_session.setup_payload()["cache_directory"] == "/tmp/g-jax-cache"
+    assert configure_session.side_effect_plan_payload() == {
+        "should_create_cache_directory": True,
+        "should_validate_gpu": False,
+    }
+    assert configure_session.config_update_payloads()[0]["setting_name"] == "jax_platforms"
+    assert configure_session.diagnostic_event_payloads()[0]["event_name"] == "jax_platform_selected"
     assert skip_plan.should_configure is False
+    assert skip_session.should_configure is False
     with pytest.raises(RuntimeError, match="JAX runtime is already configured"):
         runtime_state.plan_jax_runtime_setup_lifecycle({**jax_policy_payload, "cache_directory": "/tmp/other-cache"})
+    with pytest.raises(RuntimeError, match="JAX runtime is already configured"):
+        runtime_state.build_jax_runtime_setup_session(
+            {**jax_policy_payload, "cache_directory": "/tmp/other-cache"},
+            "/tmp/other-cache",
+        )
+
+
+def test_native_jax_runtime_setup_session_completes_validation() -> None:
+    setup_payload = _core.resolve_jax_runtime_setup_payload(
+        requested_device="gpu",
+        cache_directory="/tmp/g-jax-cache",
+        matmul_precision=None,
+        persistent_cache=True,
+        persistent_cache_min_entry_size_bytes=0,
+        persistent_cache_min_compile_time_seconds=0,
+        xla_autotune_cache=False,
+        transfer_guard=False,
+    )
+    native_setup_session = _core.NativeJaxRuntimeSetupSession(setup_payload, should_configure=True)
+
+    completed_payload = native_setup_session.complete_validation_payload("succeeded", "gpu ready")
+    diagnostic_payloads = native_setup_session.diagnostic_event_payloads()
+    gpu_validation_fields = typing.cast("tuple[dict[str, object], ...]", diagnostic_payloads[-1]["fields"])
+
+    assert native_setup_session.should_configure is True
+    assert completed_payload["gpu_validation_status"] == "succeeded"
+    assert native_setup_session.setup_payload()["gpu_validation_message"] == "gpu ready"
+    assert gpu_validation_fields[0]["value"] == "succeeded"
 
 
 def test_native_jax_runtime_policy_payload() -> None:

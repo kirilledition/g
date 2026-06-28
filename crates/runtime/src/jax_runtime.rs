@@ -61,6 +61,12 @@ pub struct JaxRuntimeSetupSideEffectPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JaxRuntimeSetupSession {
+    should_configure: bool,
+    setup: JaxRuntimeSetupPayload,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JaxRuntimeConfigValue {
     Boolean(bool),
     Integer(i64),
@@ -99,6 +105,48 @@ pub struct JaxRuntimeDiagnosticRecordPlan {
     pub logging_level_name: String,
     pub should_emit_telemetry: bool,
     pub telemetry_level: String,
+}
+
+impl JaxRuntimeSetupSession {
+    #[must_use]
+    pub fn new(should_configure: bool, setup: JaxRuntimeSetupPayload) -> Self {
+        Self { should_configure, setup }
+    }
+
+    #[must_use]
+    pub const fn should_configure(&self) -> bool {
+        self.should_configure
+    }
+
+    #[must_use]
+    pub const fn setup(&self) -> &JaxRuntimeSetupPayload {
+        &self.setup
+    }
+
+    #[must_use]
+    pub fn side_effect_plan(&self) -> JaxRuntimeSetupSideEffectPlan {
+        plan_jax_runtime_setup_side_effects(&self.setup.requested_device, self.setup.persistent_cache_enabled)
+    }
+
+    #[must_use]
+    pub fn config_updates(&self) -> Vec<JaxRuntimeConfigUpdatePayload> {
+        plan_jax_runtime_config_updates(&self.setup)
+    }
+
+    #[must_use]
+    pub fn diagnostic_events(&self) -> Vec<JaxRuntimeDiagnosticEventPayload> {
+        build_jax_runtime_setup_diagnostic_events(&self.setup)
+    }
+
+    #[must_use]
+    pub fn complete_validation(
+        &mut self,
+        gpu_validation_status: &str,
+        gpu_validation_message: Option<&str>,
+    ) -> JaxRuntimeSetupPayload {
+        self.setup = complete_jax_runtime_setup_validation(&self.setup, gpu_validation_status, gpu_validation_message);
+        self.setup.clone()
+    }
 }
 
 #[allow(clippy::fn_params_excessive_bools)]
@@ -419,6 +467,28 @@ mod tests {
         assert_eq!(
             plan_jax_runtime_setup_side_effects("gpu", false),
             JaxRuntimeSetupSideEffectPlan { should_create_cache_directory: false, should_validate_gpu: true },
+        );
+    }
+
+    #[test]
+    fn jax_runtime_setup_session_owns_setup_state() {
+        let setup = resolve_jax_runtime_setup("gpu", "cache", None, true, 0, 0, false, false);
+        let mut session = JaxRuntimeSetupSession::new(true, setup);
+
+        assert!(session.should_configure());
+        assert_eq!(
+            session.side_effect_plan(),
+            JaxRuntimeSetupSideEffectPlan { should_create_cache_directory: true, should_validate_gpu: true },
+        );
+        assert_eq!(session.config_updates()[0].setting_name, JAX_CONFIG_PLATFORMS);
+
+        let completed_setup = session.complete_validation(JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED, Some("gpu ready"));
+
+        assert_eq!(completed_setup.gpu_validation_status, JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED);
+        assert_eq!(session.setup().gpu_validation_message, Some("gpu ready".to_string()));
+        assert_eq!(
+            session.diagnostic_events()[4].fields[0].value,
+            JaxRuntimeDiagnosticValue::Text("succeeded".to_string())
         );
     }
 
