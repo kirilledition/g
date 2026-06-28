@@ -1389,6 +1389,95 @@ def test_native_callback_scheduler_state_plans_result_in_flight_slot_attempts() 
     assert expired_acquire_plan.slot_limit == 1
 
 
+def test_native_callback_scheduler_state_plans_dosage_buffer_attempts() -> None:
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=1,
+    )
+
+    allocate_plan = scheduler_state.plan_dosage_buffer_acquire_attempt(
+        free_buffer_count=0,
+        wait_timeout_seconds=0.25,
+    )
+    assert allocate_plan.should_take_free_buffer is False
+    assert allocate_plan.should_allocate is True
+    assert allocate_plan.should_wait is False
+    assert allocate_plan.wait_timeout_seconds == 0.0
+    assert allocate_plan.free_buffer_count == 0
+    assert allocate_plan.allocated_count == 0
+    assert allocate_plan.buffer_limit == 1
+
+    register_plan = scheduler_state.plan_dosage_buffer_register_attempt(buffer_identifier=11)
+    assert register_plan.should_register is True
+    assert register_plan.has_registration_error is False
+    assert register_plan.allocated_count == 1
+    assert register_plan.buffer_limit == 1
+
+    duplicate_register_plan = scheduler_state.plan_dosage_buffer_register_attempt(buffer_identifier=13)
+    assert duplicate_register_plan.should_register is False
+    assert duplicate_register_plan.has_registration_error is True
+    assert duplicate_register_plan.allocated_count == 1
+    assert duplicate_register_plan.buffer_limit == 1
+
+    blocked_acquire_plan = scheduler_state.plan_dosage_buffer_acquire_attempt(
+        free_buffer_count=0,
+        wait_timeout_seconds=0.25,
+    )
+    assert blocked_acquire_plan.should_take_free_buffer is False
+    assert blocked_acquire_plan.should_allocate is False
+    assert blocked_acquire_plan.should_wait is True
+    assert blocked_acquire_plan.wait_timeout_seconds == 0.25
+    assert blocked_acquire_plan.free_buffer_count == 0
+    assert blocked_acquire_plan.allocated_count == 1
+    assert blocked_acquire_plan.buffer_limit == 1
+
+    free_buffer_plan = scheduler_state.plan_dosage_buffer_acquire_attempt(
+        free_buffer_count=1,
+        wait_timeout_seconds=0.25,
+    )
+    assert free_buffer_plan.should_take_free_buffer is True
+    assert free_buffer_plan.should_allocate is False
+    assert free_buffer_plan.should_wait is False
+    assert free_buffer_plan.wait_timeout_seconds == 0.0
+    assert free_buffer_plan.free_buffer_count == 1
+    assert free_buffer_plan.allocated_count == 1
+    assert free_buffer_plan.buffer_limit == 1
+
+    return_plan = scheduler_state.plan_dosage_buffer_return_attempt(buffer_identifier=11)
+    assert return_plan.should_return is True
+    assert return_plan.allocated_count == 1
+    assert return_plan.buffer_limit == 1
+
+    unknown_return_plan = scheduler_state.plan_dosage_buffer_return_attempt(buffer_identifier=13)
+    assert unknown_return_plan.should_return is False
+    assert unknown_return_plan.allocated_count == 1
+    assert unknown_return_plan.buffer_limit == 1
+
+    discard_plan = scheduler_state.plan_dosage_buffer_discard_attempt(buffer_identifier=11)
+    assert discard_plan.should_discard is True
+    assert discard_plan.allocated_count == 0
+    assert discard_plan.buffer_limit == 1
+
+    missing_discard_plan = scheduler_state.plan_dosage_buffer_discard_attempt(buffer_identifier=11)
+    assert missing_discard_plan.should_discard is False
+    assert missing_discard_plan.allocated_count == 0
+    assert missing_discard_plan.buffer_limit == 1
+
+    nan_acquire_plan = scheduler_state.plan_dosage_buffer_acquire_attempt(
+        free_buffer_count=0,
+        wait_timeout_seconds=float("nan"),
+    )
+    assert nan_acquire_plan.should_take_free_buffer is False
+    assert nan_acquire_plan.should_allocate is True
+    assert nan_acquire_plan.should_wait is False
+    assert nan_acquire_plan.wait_timeout_seconds == 0.0
+    assert nan_acquire_plan.free_buffer_count == 0
+    assert nan_acquire_plan.allocated_count == 0
+    assert nan_acquire_plan.buffer_limit == 1
+
+
 def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
     progress_state = _core.NativeCallbackProgressState()
 

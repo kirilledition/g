@@ -2723,6 +2723,45 @@ class ResultInFlightReleaseAttemptPlanProbe:
     slot_limit: int
 
 
+@dataclasses.dataclass(frozen=True)
+class DosageBufferAcquireAttemptPlanProbe:
+    should_take_free_buffer: bool
+    should_allocate: bool
+    should_wait: bool
+    wait_timeout_seconds: float
+    free_buffer_count: int
+    allocated_count: int
+    buffer_limit: int
+
+
+@dataclasses.dataclass(frozen=True)
+class DosageBufferRegisterAttemptPlanProbe:
+    should_register: bool
+    has_registration_error: bool
+    allocated_count: int
+    buffer_limit: int
+
+
+@dataclasses.dataclass(frozen=True)
+class DosageBufferReturnAttemptPlanProbe:
+    should_return: bool
+    allocated_count: int
+    buffer_limit: int
+
+
+@dataclasses.dataclass(frozen=True)
+class DosageBufferDiscardAttemptPlanProbe:
+    should_discard: bool
+    allocated_count: int
+    buffer_limit: int
+
+
+@dataclasses.dataclass(frozen=True)
+class DosageBufferReusePlanProbe:
+    requires_slice: bool
+    slice_dimensions: list[int]
+
+
 @dataclasses.dataclass
 class CallbackSchedulerShutdownPlanProbe:
     finish_called: bool = False
@@ -2839,6 +2878,77 @@ class ResultInFlightAttemptSchedulerProbe:
         )
 
 
+@dataclasses.dataclass
+class DosageBufferAttemptSchedulerProbe:
+    dosage_buffer_limit: int = 2
+    backpressure_poll_timeout_seconds: float = 0.1
+    dosage_worker_error_message: str | None = None
+    result_worker_error_message: str | None = None
+    acquire_free_buffer_counts: list[int] = dataclasses.field(default_factory=list)
+    acquire_wait_timeout_seconds: float | None = None
+    registered_buffer_identifier: int | None = None
+    returned_buffer_identifier: int | None = None
+    discarded_buffer_identifier: int | None = None
+    reuse_buffered_shape: tuple[int, ...] | None = None
+    reuse_expected_shape: tuple[int, ...] | None = None
+
+    def plan_dosage_buffer_acquire_attempt(
+        self,
+        free_buffer_count: int,
+        wait_timeout_seconds: float,
+    ) -> DosageBufferAcquireAttemptPlanProbe:
+        self.acquire_free_buffer_counts.append(free_buffer_count)
+        self.acquire_wait_timeout_seconds = wait_timeout_seconds
+        return DosageBufferAcquireAttemptPlanProbe(
+            should_take_free_buffer=free_buffer_count > 0,
+            should_allocate=free_buffer_count == 0,
+            should_wait=False,
+            wait_timeout_seconds=0.0,
+            free_buffer_count=free_buffer_count,
+            allocated_count=0,
+            buffer_limit=self.dosage_buffer_limit,
+        )
+
+    def plan_dosage_buffer_register_attempt(self, buffer_identifier: int) -> DosageBufferRegisterAttemptPlanProbe:
+        self.registered_buffer_identifier = buffer_identifier
+        return DosageBufferRegisterAttemptPlanProbe(
+            should_register=True,
+            has_registration_error=False,
+            allocated_count=1,
+            buffer_limit=self.dosage_buffer_limit,
+        )
+
+    def plan_dosage_buffer_return_attempt(self, buffer_identifier: int) -> DosageBufferReturnAttemptPlanProbe:
+        self.returned_buffer_identifier = buffer_identifier
+        return DosageBufferReturnAttemptPlanProbe(
+            should_return=True,
+            allocated_count=1,
+            buffer_limit=self.dosage_buffer_limit,
+        )
+
+    def plan_dosage_buffer_discard_attempt(self, buffer_identifier: int) -> DosageBufferDiscardAttemptPlanProbe:
+        self.discarded_buffer_identifier = buffer_identifier
+        return DosageBufferDiscardAttemptPlanProbe(
+            should_discard=True,
+            allocated_count=0,
+            buffer_limit=self.dosage_buffer_limit,
+        )
+
+    def plan_dosage_buffer_reuse(
+        self,
+        buffered_shape: tuple[int, ...],
+        expected_shape: tuple[int, ...],
+    ) -> DosageBufferReusePlanProbe | None:
+        self.reuse_buffered_shape = buffered_shape
+        self.reuse_expected_shape = expected_shape
+        if buffered_shape != expected_shape:
+            return None
+        return DosageBufferReusePlanProbe(
+            requires_slice=False,
+            slice_dimensions=list(expected_shape),
+        )
+
+
 def test_native_callback_runner_uses_scheduler_finish_shutdown_plan() -> None:
     callback = RecordingShutdownCallbackRunner()
     scheduler_state = CallbackSchedulerShutdownPlanProbe()
@@ -2911,6 +3021,26 @@ def test_native_callback_runner_uses_scheduler_result_in_flight_attempt_plans() 
     assert acquire_wait_timeout_seconds is not None
     assert acquire_wait_timeout_seconds == 0.1
     assert scheduler_state.release_called is True
+
+
+def test_native_callback_runner_uses_scheduler_dosage_buffer_attempt_plans() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = DosageBufferAttemptSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+
+    dosage_buffer = callback.acquire_dosage_buffer_with_shape((2, 3), np.float32)
+    callback.release_dosage_buffer(dosage_buffer)
+    reused_dosage_buffer = callback.acquire_dosage_buffer_with_shape((2, 3), np.float32)
+    callback.discard_dosage_buffer_slot(reused_dosage_buffer)
+
+    assert scheduler_state.acquire_free_buffer_counts == [0, 1]
+    assert scheduler_state.acquire_wait_timeout_seconds == 0.1
+    assert scheduler_state.registered_buffer_identifier == id(dosage_buffer)
+    assert scheduler_state.returned_buffer_identifier == id(dosage_buffer)
+    assert scheduler_state.reuse_buffered_shape == (2, 3)
+    assert scheduler_state.reuse_expected_shape == (2, 3)
+    assert reused_dosage_buffer is dosage_buffer
+    assert scheduler_state.discarded_buffer_identifier == id(dosage_buffer)
 
 
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:

@@ -257,6 +257,39 @@ pub struct ResultInFlightReleaseAttemptPlan {
     pub slot_limit: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DosageBufferAcquireAttemptPlan {
+    pub should_take_free_buffer: bool,
+    pub should_allocate: bool,
+    pub should_wait: bool,
+    pub wait_timeout_seconds: f64,
+    pub free_buffer_count: usize,
+    pub allocated_count: usize,
+    pub buffer_limit: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DosageBufferRegisterAttemptPlan {
+    pub should_register: bool,
+    pub has_registration_error: bool,
+    pub allocated_count: usize,
+    pub buffer_limit: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DosageBufferReturnAttemptPlan {
+    pub should_return: bool,
+    pub allocated_count: usize,
+    pub buffer_limit: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DosageBufferDiscardAttemptPlan {
+    pub should_discard: bool,
+    pub allocated_count: usize,
+    pub buffer_limit: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackWorkerStartPlan {
     pub start_actions: Vec<String>,
@@ -669,6 +702,30 @@ impl CallbackSchedulerState {
 
     pub fn discard_dosage_buffer(&mut self, buffer_identifier: usize) -> bool {
         self.dosage_buffer_pool_state.discard_buffer(buffer_identifier)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_buffer_acquire_attempt(
+        &self,
+        free_buffer_count: usize,
+        wait_timeout_seconds: f64,
+    ) -> DosageBufferAcquireAttemptPlan {
+        plan_dosage_buffer_acquire_attempt(&self.dosage_buffer_pool_state, free_buffer_count, wait_timeout_seconds)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_buffer_register_attempt(&mut self, buffer_identifier: usize) -> DosageBufferRegisterAttemptPlan {
+        plan_dosage_buffer_register_attempt(&mut self.dosage_buffer_pool_state, buffer_identifier)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_buffer_return_attempt(&self, buffer_identifier: usize) -> DosageBufferReturnAttemptPlan {
+        plan_dosage_buffer_return_attempt(&self.dosage_buffer_pool_state, buffer_identifier)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_buffer_discard_attempt(&mut self, buffer_identifier: usize) -> DosageBufferDiscardAttemptPlan {
+        plan_dosage_buffer_discard_attempt(&mut self.dosage_buffer_pool_state, buffer_identifier)
     }
 
     #[must_use]
@@ -1226,6 +1283,65 @@ fn plan_result_in_flight_slot_release_attempt(
         has_release_error: !released_slot,
         occupied_count: slot_state.occupied_count(),
         slot_limit: slot_state.slot_limit(),
+    }
+}
+
+fn plan_dosage_buffer_acquire_attempt(
+    buffer_pool_state: &DosageBufferPoolState,
+    free_buffer_count: usize,
+    wait_timeout_seconds: f64,
+) -> DosageBufferAcquireAttemptPlan {
+    let should_take_free_buffer = free_buffer_count > 0;
+    let should_allocate = !should_take_free_buffer && buffer_pool_state.has_available_slot();
+    let normalized_wait_timeout_seconds = if should_take_free_buffer || should_allocate {
+        0.0
+    } else {
+        normalize_callback_queue_wait_timeout_seconds(wait_timeout_seconds)
+    };
+    DosageBufferAcquireAttemptPlan {
+        should_take_free_buffer,
+        should_allocate,
+        should_wait: !should_take_free_buffer && !should_allocate && normalized_wait_timeout_seconds > 0.0,
+        wait_timeout_seconds: normalized_wait_timeout_seconds,
+        free_buffer_count,
+        allocated_count: buffer_pool_state.allocated_count(),
+        buffer_limit: buffer_pool_state.buffer_limit(),
+    }
+}
+
+fn plan_dosage_buffer_register_attempt(
+    buffer_pool_state: &mut DosageBufferPoolState,
+    buffer_identifier: usize,
+) -> DosageBufferRegisterAttemptPlan {
+    let registered_buffer = buffer_pool_state.register_buffer(buffer_identifier);
+    DosageBufferRegisterAttemptPlan {
+        should_register: registered_buffer,
+        has_registration_error: !registered_buffer,
+        allocated_count: buffer_pool_state.allocated_count(),
+        buffer_limit: buffer_pool_state.buffer_limit(),
+    }
+}
+
+fn plan_dosage_buffer_return_attempt(
+    buffer_pool_state: &DosageBufferPoolState,
+    buffer_identifier: usize,
+) -> DosageBufferReturnAttemptPlan {
+    DosageBufferReturnAttemptPlan {
+        should_return: buffer_pool_state.owns_buffer(buffer_identifier),
+        allocated_count: buffer_pool_state.allocated_count(),
+        buffer_limit: buffer_pool_state.buffer_limit(),
+    }
+}
+
+fn plan_dosage_buffer_discard_attempt(
+    buffer_pool_state: &mut DosageBufferPoolState,
+    buffer_identifier: usize,
+) -> DosageBufferDiscardAttemptPlan {
+    let discarded_buffer = buffer_pool_state.discard_buffer(buffer_identifier);
+    DosageBufferDiscardAttemptPlan {
+        should_discard: discarded_buffer,
+        allocated_count: buffer_pool_state.allocated_count(),
+        buffer_limit: buffer_pool_state.buffer_limit(),
     }
 }
 
@@ -2312,6 +2428,94 @@ mod tests {
         assert!(!buffer_pool_state.owns_buffer(11));
         assert!(buffer_pool_state.has_available_slot());
         assert!(!buffer_pool_state.discard_buffer(99));
+    }
+
+    #[test]
+    fn plans_dosage_buffer_pool_attempts() {
+        let mut scheduler_state = CallbackSchedulerState::new(1, 1, None, Some(1)).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_acquire_attempt(0, 0.25),
+            DosageBufferAcquireAttemptPlan {
+                should_take_free_buffer: false,
+                should_allocate: true,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                free_buffer_count: 0,
+                allocated_count: 0,
+                buffer_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_register_attempt(11),
+            DosageBufferRegisterAttemptPlan {
+                should_register: true,
+                has_registration_error: false,
+                allocated_count: 1,
+                buffer_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_register_attempt(13),
+            DosageBufferRegisterAttemptPlan {
+                should_register: false,
+                has_registration_error: true,
+                allocated_count: 1,
+                buffer_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_acquire_attempt(0, 0.25),
+            DosageBufferAcquireAttemptPlan {
+                should_take_free_buffer: false,
+                should_allocate: false,
+                should_wait: true,
+                wait_timeout_seconds: 0.25,
+                free_buffer_count: 0,
+                allocated_count: 1,
+                buffer_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_acquire_attempt(1, 0.25),
+            DosageBufferAcquireAttemptPlan {
+                should_take_free_buffer: true,
+                should_allocate: false,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                free_buffer_count: 1,
+                allocated_count: 1,
+                buffer_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_return_attempt(11),
+            DosageBufferReturnAttemptPlan { should_return: true, allocated_count: 1, buffer_limit: 1 },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_return_attempt(13),
+            DosageBufferReturnAttemptPlan { should_return: false, allocated_count: 1, buffer_limit: 1 },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_discard_attempt(11),
+            DosageBufferDiscardAttemptPlan { should_discard: true, allocated_count: 0, buffer_limit: 1 },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_discard_attempt(11),
+            DosageBufferDiscardAttemptPlan { should_discard: false, allocated_count: 0, buffer_limit: 1 },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_acquire_attempt(0, f64::NAN),
+            DosageBufferAcquireAttemptPlan {
+                should_take_free_buffer: false,
+                should_allocate: true,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                free_buffer_count: 0,
+                allocated_count: 0,
+                buffer_limit: 1,
+            },
+        );
     }
 
     #[test]

@@ -104,6 +104,26 @@ pub(crate) struct NativeCallbackQueueGetAttemptPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeDosageBufferAcquireAttemptPlan {
+    inner: native_schedule::DosageBufferAcquireAttemptPlan,
+}
+
+#[pyclass]
+pub(crate) struct NativeDosageBufferRegisterAttemptPlan {
+    inner: native_schedule::DosageBufferRegisterAttemptPlan,
+}
+
+#[pyclass]
+pub(crate) struct NativeDosageBufferReturnAttemptPlan {
+    inner: native_schedule::DosageBufferReturnAttemptPlan,
+}
+
+#[pyclass]
+pub(crate) struct NativeDosageBufferDiscardAttemptPlan {
+    inner: native_schedule::DosageBufferDiscardAttemptPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageBufferPoolState {
     inner: native_schedule::DosageBufferPoolState,
 }
@@ -451,6 +471,29 @@ impl NativeCallbackSchedulerState {
 
     fn discard_dosage_buffer(&mut self, buffer_identifier: usize) -> bool {
         self.inner.discard_dosage_buffer(buffer_identifier)
+    }
+
+    fn plan_dosage_buffer_acquire_attempt(
+        &self,
+        free_buffer_count: usize,
+        wait_timeout_seconds: f64,
+    ) -> NativeDosageBufferAcquireAttemptPlan {
+        self.inner.plan_dosage_buffer_acquire_attempt(free_buffer_count, wait_timeout_seconds).into()
+    }
+
+    fn plan_dosage_buffer_register_attempt(
+        &mut self,
+        buffer_identifier: usize,
+    ) -> NativeDosageBufferRegisterAttemptPlan {
+        self.inner.plan_dosage_buffer_register_attempt(buffer_identifier).into()
+    }
+
+    fn plan_dosage_buffer_return_attempt(&self, buffer_identifier: usize) -> NativeDosageBufferReturnAttemptPlan {
+        self.inner.plan_dosage_buffer_return_attempt(buffer_identifier).into()
+    }
+
+    fn plan_dosage_buffer_discard_attempt(&mut self, buffer_identifier: usize) -> NativeDosageBufferDiscardAttemptPlan {
+        self.inner.plan_dosage_buffer_discard_attempt(buffer_identifier).into()
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -1102,6 +1145,103 @@ impl NativeCallbackQueueGetAttemptPlan {
 }
 
 #[pymethods]
+impl NativeDosageBufferAcquireAttemptPlan {
+    #[getter]
+    fn should_take_free_buffer(&self) -> bool {
+        self.inner.should_take_free_buffer
+    }
+
+    #[getter]
+    fn should_allocate(&self) -> bool {
+        self.inner.should_allocate
+    }
+
+    #[getter]
+    fn should_wait(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    #[getter]
+    fn wait_timeout_seconds(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+
+    #[getter]
+    fn free_buffer_count(&self) -> usize {
+        self.inner.free_buffer_count
+    }
+
+    #[getter]
+    fn allocated_count(&self) -> usize {
+        self.inner.allocated_count
+    }
+
+    #[getter]
+    fn buffer_limit(&self) -> usize {
+        self.inner.buffer_limit
+    }
+}
+
+#[pymethods]
+impl NativeDosageBufferRegisterAttemptPlan {
+    #[getter]
+    fn should_register(&self) -> bool {
+        self.inner.should_register
+    }
+
+    #[getter]
+    fn has_registration_error(&self) -> bool {
+        self.inner.has_registration_error
+    }
+
+    #[getter]
+    fn allocated_count(&self) -> usize {
+        self.inner.allocated_count
+    }
+
+    #[getter]
+    fn buffer_limit(&self) -> usize {
+        self.inner.buffer_limit
+    }
+}
+
+#[pymethods]
+impl NativeDosageBufferReturnAttemptPlan {
+    #[getter]
+    fn should_return(&self) -> bool {
+        self.inner.should_return
+    }
+
+    #[getter]
+    fn allocated_count(&self) -> usize {
+        self.inner.allocated_count
+    }
+
+    #[getter]
+    fn buffer_limit(&self) -> usize {
+        self.inner.buffer_limit
+    }
+}
+
+#[pymethods]
+impl NativeDosageBufferDiscardAttemptPlan {
+    #[getter]
+    fn should_discard(&self) -> bool {
+        self.inner.should_discard
+    }
+
+    #[getter]
+    fn allocated_count(&self) -> usize {
+        self.inner.allocated_count
+    }
+
+    #[getter]
+    fn buffer_limit(&self) -> usize {
+        self.inner.buffer_limit
+    }
+}
+
+#[pymethods]
 impl NativeResultInFlightAcquireAttemptPlan {
     #[getter]
     fn should_acquire(&self) -> bool {
@@ -1332,6 +1472,30 @@ impl From<native_schedule::CallbackQueuePutAttemptPlan> for NativeCallbackQueueP
 impl From<native_schedule::CallbackQueueGetAttemptPlan> for NativeCallbackQueueGetAttemptPlan {
     fn from(get_attempt_plan: native_schedule::CallbackQueueGetAttemptPlan) -> Self {
         Self { inner: get_attempt_plan }
+    }
+}
+
+impl From<native_schedule::DosageBufferAcquireAttemptPlan> for NativeDosageBufferAcquireAttemptPlan {
+    fn from(acquire_attempt_plan: native_schedule::DosageBufferAcquireAttemptPlan) -> Self {
+        Self { inner: acquire_attempt_plan }
+    }
+}
+
+impl From<native_schedule::DosageBufferRegisterAttemptPlan> for NativeDosageBufferRegisterAttemptPlan {
+    fn from(register_attempt_plan: native_schedule::DosageBufferRegisterAttemptPlan) -> Self {
+        Self { inner: register_attempt_plan }
+    }
+}
+
+impl From<native_schedule::DosageBufferReturnAttemptPlan> for NativeDosageBufferReturnAttemptPlan {
+    fn from(return_attempt_plan: native_schedule::DosageBufferReturnAttemptPlan) -> Self {
+        Self { inner: return_attempt_plan }
+    }
+}
+
+impl From<native_schedule::DosageBufferDiscardAttemptPlan> for NativeDosageBufferDiscardAttemptPlan {
+    fn from(discard_attempt_plan: native_schedule::DosageBufferDiscardAttemptPlan) -> Self {
+        Self { inner: discard_attempt_plan }
     }
 }
 
