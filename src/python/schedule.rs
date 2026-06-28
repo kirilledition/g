@@ -94,6 +94,16 @@ pub(crate) struct NativeCallbackQueueStageBackpressureObservation {
 }
 
 #[pyclass]
+pub(crate) struct NativeCallbackQueuePutAttemptPlan {
+    inner: native_schedule::CallbackQueuePutAttemptPlan,
+}
+
+#[pyclass]
+pub(crate) struct NativeCallbackQueueGetAttemptPlan {
+    inner: native_schedule::CallbackQueueGetAttemptPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageBufferPoolState {
     inner: native_schedule::DosageBufferPoolState,
 }
@@ -303,6 +313,14 @@ impl NativeCallbackSchedulerState {
         self.inner.release_dosage_queue_slot()
     }
 
+    fn plan_dosage_queue_put_attempt(&mut self, wait_timeout_seconds: f64) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_dosage_queue_put_attempt(wait_timeout_seconds).into()
+    }
+
+    fn plan_dosage_queue_get_attempt(&mut self, has_queued_item: bool) -> NativeCallbackQueueGetAttemptPlan {
+        self.inner.plan_dosage_queue_get_attempt(has_queued_item).into()
+    }
+
     #[getter]
     fn result_queue_depth(&self) -> usize {
         self.inner.result_queue_depth()
@@ -328,6 +346,14 @@ impl NativeCallbackSchedulerState {
 
     fn release_result_queue_slot(&mut self) -> bool {
         self.inner.release_result_queue_slot()
+    }
+
+    fn plan_result_queue_put_attempt(&mut self, wait_timeout_seconds: f64) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_result_queue_put_attempt(wait_timeout_seconds).into()
+    }
+
+    fn plan_result_queue_get_attempt(&mut self, has_queued_item: bool) -> NativeCallbackQueueGetAttemptPlan {
+        self.inner.plan_result_queue_get_attempt(has_queued_item).into()
     }
 
     #[getter]
@@ -994,6 +1020,67 @@ impl NativeCallbackQueueStageBackpressureObservation {
 }
 
 #[pymethods]
+impl NativeCallbackQueuePutAttemptPlan {
+    #[getter]
+    fn should_put(&self) -> bool {
+        self.inner.should_put
+    }
+
+    #[getter]
+    fn should_wait(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    #[getter]
+    fn wait_timeout_seconds(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+
+    #[getter]
+    fn queue_depth(&self) -> usize {
+        self.inner.queue_depth
+    }
+
+    #[getter]
+    fn queue_capacity(&self) -> usize {
+        self.inner.queue_capacity
+    }
+}
+
+#[pymethods]
+impl NativeCallbackQueueGetAttemptPlan {
+    #[getter]
+    fn should_get(&self) -> bool {
+        self.inner.should_get
+    }
+
+    #[getter]
+    fn should_wait(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    #[getter]
+    fn has_release_error(&self) -> bool {
+        self.inner.has_release_error
+    }
+
+    #[getter]
+    fn wait_timeout_seconds(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+
+    #[getter]
+    fn queue_depth(&self) -> usize {
+        self.inner.queue_depth
+    }
+
+    #[getter]
+    fn queue_capacity(&self) -> usize {
+        self.inner.queue_capacity
+    }
+}
+
+#[pymethods]
 impl NativeGpuGenotypeFormatResolutionPlan {
     #[getter]
     fn requested_gpu_genotype_format(&self) -> &str {
@@ -1161,6 +1248,18 @@ impl From<native_schedule::CallbackQueueStageBackpressureObservation>
 {
     fn from(observation: native_schedule::CallbackQueueStageBackpressureObservation) -> Self {
         Self { inner: observation }
+    }
+}
+
+impl From<native_schedule::CallbackQueuePutAttemptPlan> for NativeCallbackQueuePutAttemptPlan {
+    fn from(put_attempt_plan: native_schedule::CallbackQueuePutAttemptPlan) -> Self {
+        Self { inner: put_attempt_plan }
+    }
+}
+
+impl From<native_schedule::CallbackQueueGetAttemptPlan> for NativeCallbackQueueGetAttemptPlan {
+    fn from(get_attempt_plan: native_schedule::CallbackQueueGetAttemptPlan) -> Self {
+        Self { inner: get_attempt_plan }
     }
 }
 

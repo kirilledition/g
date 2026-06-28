@@ -830,14 +830,17 @@ class NativeBgenCallbackRunner(abc.ABC):
         deadline = time.monotonic() + max(timeout_seconds, 0.0)
         while True:
             with self.dosage_queue_condition:
-                if self.callback_scheduler_state.acquire_dosage_queue_slot():
+                remaining_timeout_seconds = deadline - time.monotonic()
+                attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_attempt(
+                    wait_timeout_seconds=remaining_timeout_seconds
+                )
+                if attempt_plan.should_put:
                     self.dosage_queue.append(work_item)
                     self.dosage_queue_condition.notify()
                     return True
-                remaining_timeout_seconds = deadline - time.monotonic()
-                if remaining_timeout_seconds <= 0.0:
+                if not attempt_plan.should_wait:
                     return False
-                self.dosage_queue_condition.wait(timeout=remaining_timeout_seconds)
+                self.dosage_queue_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
 
     def get_dosage_work_item(
         self,
@@ -851,16 +854,18 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Wait for and return one dosage queue item while releasing native queue capacity."""
         while True:
             with self.dosage_queue_condition:
-                if self.dosage_queue:
+                get_plan = self.callback_scheduler_state.plan_dosage_queue_get_attempt(
+                    has_queued_item=bool(self.dosage_queue)
+                )
+                if get_plan.has_release_error:
+                    message = "Native dosage-queue state has no occupied slot to release."
+                    raise RuntimeError(message)
+                if get_plan.should_get:
                     work_item = self.dosage_queue.popleft()
-                    if not self.callback_scheduler_state.release_dosage_queue_slot():
-                        message = "Native dosage-queue state has no occupied slot to release."
-                        raise RuntimeError(message)
                     self.dosage_queue_condition.notify()
                     return work_item
-                self.dosage_queue_condition.wait(
-                    timeout=self.callback_scheduler_state.backpressure_poll_timeout_seconds
-                )
+                if get_plan.should_wait:
+                    self.dosage_queue_condition.wait(timeout=get_plan.wait_timeout_seconds)
 
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
@@ -923,29 +928,34 @@ class NativeBgenCallbackRunner(abc.ABC):
         deadline = time.monotonic() + max(timeout_seconds, 0.0)
         while True:
             with self.result_queue_condition:
-                if self.callback_scheduler_state.acquire_result_queue_slot():
+                remaining_timeout_seconds = deadline - time.monotonic()
+                attempt_plan = self.callback_scheduler_state.plan_result_queue_put_attempt(
+                    wait_timeout_seconds=remaining_timeout_seconds
+                )
+                if attempt_plan.should_put:
                     self.result_queue.append(work_item)
                     self.result_queue_condition.notify()
                     return True
-                remaining_timeout_seconds = deadline - time.monotonic()
-                if remaining_timeout_seconds <= 0.0:
+                if not attempt_plan.should_wait:
                     return False
-                self.result_queue_condition.wait(timeout=remaining_timeout_seconds)
+                self.result_queue_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
 
     def get_result_write_item(self) -> Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None:
         """Wait for and return one result queue item while releasing native queue capacity."""
         while True:
             with self.result_queue_condition:
-                if self.result_queue:
+                get_plan = self.callback_scheduler_state.plan_result_queue_get_attempt(
+                    has_queued_item=bool(self.result_queue)
+                )
+                if get_plan.has_release_error:
+                    message = "Native result-queue state has no occupied slot to release."
+                    raise RuntimeError(message)
+                if get_plan.should_get:
                     work_item = self.result_queue.popleft()
-                    if not self.callback_scheduler_state.release_result_queue_slot():
-                        message = "Native result-queue state has no occupied slot to release."
-                        raise RuntimeError(message)
                     self.result_queue_condition.notify()
                     return work_item
-                self.result_queue_condition.wait(
-                    timeout=self.callback_scheduler_state.backpressure_poll_timeout_seconds
-                )
+                if get_plan.should_wait:
+                    self.result_queue_condition.wait(timeout=get_plan.wait_timeout_seconds)
 
     def acquire_result_in_flight_slot(self) -> None:
         """Reserve capacity for one chunk of pending GPU result work."""

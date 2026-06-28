@@ -122,30 +122,30 @@ use runtime_state::{
 };
 use schedule::{
     NativeBgenDeliveryCleanupPlan, NativeBgenDeliveryInvocationPlan, NativeCallbackQueueBackpressureObservation,
-    NativeCallbackQueueLimits, NativeCallbackQueueOperationObservationPlan,
-    NativeCallbackQueueStageBackpressureObservation, NativeCallbackQueueStageObservationPlan,
-    NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerFinishPlan,
-    NativeCallbackWorkerJoinPlan, NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts,
-    NativeCallbackWorkerStartPlan, NativeCallbackWorkerStopPlan, NativeCallbackWorkerStopPollPlan,
-    NativeDosageBufferPoolState, NativeDosageBufferReusePlan, NativeGpuGenotypeFormatResolutionPlan,
-    NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan, NativeResultInFlightSlotState,
-    NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
-    format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
-    intersect_committed_chunk_identifier_sets, plan_auto_gpu_genotype_format_after_trusted_validation,
-    plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation, plan_callback_queue_backpressure_observation,
-    plan_callback_queue_operation_observation, plan_callback_queue_stage_backpressure_observation,
-    plan_callback_queue_stage_observation, plan_callback_worker_abort, plan_callback_worker_finish,
-    plan_callback_worker_start, plan_callback_worker_stop_poll, plan_dosage_buffer_reuse,
-    plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop, plan_gpu_genotype_format_auto_to_dosage,
-    plan_multi_trait_chunk_write, plan_multi_trait_output_write, plan_result_callback_worker_join,
-    plan_result_callback_worker_stop, plan_single_trait_binary_gpu_genotype_format_resolution,
-    plan_single_trait_output_write, plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution,
-    resolve_bgen_delivery_method_value, resolve_callback_worker_backpressure_poll_timeout_seconds,
-    resolve_callback_worker_stop_poll_timeout_seconds, resolve_delivery_callback_batch_size,
-    resolve_effective_trusted_no_missing_diploid, resolve_grouped_union_callback_batch_size,
-    resolve_manifest_gpu_genotype_format, resolve_native_callback_queue_limits,
-    resolve_native_callback_worker_shutdown_timeouts, resolve_writer_finish_thread_count,
-    should_attempt_callback_worker_stop,
+    NativeCallbackQueueGetAttemptPlan, NativeCallbackQueueLimits, NativeCallbackQueueOperationObservationPlan,
+    NativeCallbackQueuePutAttemptPlan, NativeCallbackQueueStageBackpressureObservation,
+    NativeCallbackQueueStageObservationPlan, NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan,
+    NativeCallbackWorkerFinishPlan, NativeCallbackWorkerJoinPlan, NativeCallbackWorkerLifecycleState,
+    NativeCallbackWorkerShutdownTimeouts, NativeCallbackWorkerStartPlan, NativeCallbackWorkerStopPlan,
+    NativeCallbackWorkerStopPollPlan, NativeDosageBufferPoolState, NativeDosageBufferReusePlan,
+    NativeGpuGenotypeFormatResolutionPlan, NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan,
+    NativeResultInFlightSlotState, NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan,
+    NativeWriterFinishExecutionPlan, format_dosage_callback_worker_error_message,
+    format_result_callback_worker_error_message, intersect_committed_chunk_identifier_sets,
+    plan_auto_gpu_genotype_format_after_trusted_validation, plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation,
+    plan_callback_queue_backpressure_observation, plan_callback_queue_operation_observation,
+    plan_callback_queue_stage_backpressure_observation, plan_callback_queue_stage_observation,
+    plan_callback_worker_abort, plan_callback_worker_finish, plan_callback_worker_start,
+    plan_callback_worker_stop_poll, plan_dosage_buffer_reuse, plan_dosage_callback_worker_join,
+    plan_dosage_callback_worker_stop, plan_gpu_genotype_format_auto_to_dosage, plan_multi_trait_chunk_write,
+    plan_multi_trait_output_write, plan_result_callback_worker_join, plan_result_callback_worker_stop,
+    plan_single_trait_binary_gpu_genotype_format_resolution, plan_single_trait_output_write,
+    plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method_value,
+    resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
+    resolve_delivery_callback_batch_size, resolve_effective_trusted_no_missing_diploid,
+    resolve_grouped_union_callback_batch_size, resolve_manifest_gpu_genotype_format,
+    resolve_native_callback_queue_limits, resolve_native_callback_worker_shutdown_timeouts,
+    resolve_writer_finish_thread_count, should_attempt_callback_worker_stop,
 };
 use shutdown::{
     NativeSecondSignalExceptionPlan, NativeShutdownController, build_shutdown_signal_payload,
@@ -1823,7 +1823,9 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackProgressUpdate>()?;
     module.add_class::<NativeCallbackQueueLimits>()?;
     module.add_class::<NativeCallbackQueueBackpressureObservation>()?;
+    module.add_class::<NativeCallbackQueueGetAttemptPlan>()?;
     module.add_class::<NativeCallbackQueueOperationObservationPlan>()?;
+    module.add_class::<NativeCallbackQueuePutAttemptPlan>()?;
     module.add_class::<NativeCallbackQueueStageBackpressureObservation>()?;
     module.add_class::<NativeCallbackQueueStageObservationPlan>()?;
     module.add_class::<NativeCallbackSchedulerState>()?;

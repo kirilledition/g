@@ -2687,6 +2687,25 @@ class CallbackAbortPlanProbe:
     result_stop_timeout_seconds: float
 
 
+@dataclasses.dataclass(frozen=True)
+class CallbackQueuePutAttemptPlanProbe:
+    should_put: bool
+    should_wait: bool
+    wait_timeout_seconds: float
+    queue_depth: int
+    queue_capacity: int
+
+
+@dataclasses.dataclass(frozen=True)
+class CallbackQueueGetAttemptPlanProbe:
+    should_get: bool
+    should_wait: bool
+    has_release_error: bool
+    wait_timeout_seconds: float
+    queue_depth: int
+    queue_capacity: int
+
+
 @dataclasses.dataclass
 class CallbackSchedulerShutdownPlanProbe:
     finish_called: bool = False
@@ -2716,6 +2735,58 @@ class CallbackSchedulerShutdownPlanProbe:
             abort_actions=["stop_dosage_worker", "stop_result_worker"],
             dosage_stop_timeout_seconds=0.25,
             result_stop_timeout_seconds=0.5,
+        )
+
+
+@dataclasses.dataclass
+class CallbackQueueAttemptSchedulerProbe:
+    dosage_put_wait_timeout_seconds: float | None = None
+    dosage_get_called: bool = False
+    result_put_wait_timeout_seconds: float | None = None
+    result_get_called: bool = False
+
+    def plan_dosage_queue_put_attempt(self, wait_timeout_seconds: float) -> CallbackQueuePutAttemptPlanProbe:
+        self.dosage_put_wait_timeout_seconds = wait_timeout_seconds
+        return CallbackQueuePutAttemptPlanProbe(
+            should_put=True,
+            should_wait=False,
+            wait_timeout_seconds=0.0,
+            queue_depth=1,
+            queue_capacity=1,
+        )
+
+    def plan_dosage_queue_get_attempt(self, *, has_queued_item: bool) -> CallbackQueueGetAttemptPlanProbe:
+        self.dosage_get_called = True
+        assert has_queued_item is True
+        return CallbackQueueGetAttemptPlanProbe(
+            should_get=True,
+            should_wait=False,
+            has_release_error=False,
+            wait_timeout_seconds=0.0,
+            queue_depth=0,
+            queue_capacity=1,
+        )
+
+    def plan_result_queue_put_attempt(self, wait_timeout_seconds: float) -> CallbackQueuePutAttemptPlanProbe:
+        self.result_put_wait_timeout_seconds = wait_timeout_seconds
+        return CallbackQueuePutAttemptPlanProbe(
+            should_put=True,
+            should_wait=False,
+            wait_timeout_seconds=0.0,
+            queue_depth=1,
+            queue_capacity=1,
+        )
+
+    def plan_result_queue_get_attempt(self, *, has_queued_item: bool) -> CallbackQueueGetAttemptPlanProbe:
+        self.result_get_called = True
+        assert has_queued_item is True
+        return CallbackQueueGetAttemptPlanProbe(
+            should_get=True,
+            should_wait=False,
+            has_release_error=False,
+            wait_timeout_seconds=0.0,
+            queue_depth=0,
+            queue_capacity=1,
         )
 
 
@@ -2757,6 +2828,26 @@ def test_native_callback_runner_uses_scheduler_abort_shutdown_plan() -> None:
         "stop_dosage": 0.25,
         "stop_result": 0.5,
     }
+
+
+def test_native_callback_runner_uses_scheduler_queue_attempt_plans() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = CallbackQueueAttemptSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+
+    assert callback.try_put_dosage_work_item(None, timeout_seconds=0.5) is True
+    assert callback.get_dosage_work_item() is None
+    assert callback.try_put_result_write_item(None, timeout_seconds=0.5) is True
+    assert callback.get_result_write_item() is None
+
+    dosage_put_wait_timeout_seconds = scheduler_state.dosage_put_wait_timeout_seconds
+    assert dosage_put_wait_timeout_seconds is not None
+    assert 0.0 < dosage_put_wait_timeout_seconds <= 0.5
+    assert scheduler_state.dosage_get_called is True
+    result_put_wait_timeout_seconds = scheduler_state.result_put_wait_timeout_seconds
+    assert result_put_wait_timeout_seconds is not None
+    assert 0.0 < result_put_wait_timeout_seconds <= 0.5
+    assert scheduler_state.result_get_called is True
 
 
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:

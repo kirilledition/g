@@ -221,6 +221,25 @@ pub struct CallbackQueueStageBackpressureObservation {
     pub blocked_seconds: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CallbackQueuePutAttemptPlan {
+    pub should_put: bool,
+    pub should_wait: bool,
+    pub wait_timeout_seconds: f64,
+    pub queue_depth: usize,
+    pub queue_capacity: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CallbackQueueGetAttemptPlan {
+    pub should_get: bool,
+    pub should_wait: bool,
+    pub has_release_error: bool,
+    pub wait_timeout_seconds: f64,
+    pub queue_depth: usize,
+    pub queue_capacity: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackWorkerStartPlan {
     pub start_actions: Vec<String>,
@@ -495,6 +514,16 @@ impl CallbackSchedulerState {
     }
 
     #[must_use]
+    pub fn plan_dosage_queue_put_attempt(&mut self, wait_timeout_seconds: f64) -> CallbackQueuePutAttemptPlan {
+        plan_callback_queue_put_attempt(&mut self.dosage_queue_state, wait_timeout_seconds)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_queue_get_attempt(&mut self, has_queued_item: bool) -> CallbackQueueGetAttemptPlan {
+        plan_callback_queue_get_attempt(&mut self.dosage_queue_state, has_queued_item)
+    }
+
+    #[must_use]
     pub const fn result_queue_depth(&self) -> usize {
         self.queue_limits.result_queue_depth
     }
@@ -520,6 +549,16 @@ impl CallbackSchedulerState {
 
     pub fn release_result_queue_slot(&mut self) -> bool {
         self.result_queue_state.release_slot()
+    }
+
+    #[must_use]
+    pub fn plan_result_queue_put_attempt(&mut self, wait_timeout_seconds: f64) -> CallbackQueuePutAttemptPlan {
+        plan_callback_queue_put_attempt(&mut self.result_queue_state, wait_timeout_seconds)
+    }
+
+    #[must_use]
+    pub fn plan_result_queue_get_attempt(&mut self, has_queued_item: bool) -> CallbackQueueGetAttemptPlan {
+        plan_callback_queue_get_attempt(&mut self.result_queue_state, has_queued_item)
     }
 
     #[must_use]
@@ -1071,6 +1110,58 @@ pub fn plan_callback_worker_abort() -> CallbackWorkerAbortPlan {
         dosage_stop_timeout_seconds: shutdown_timeouts.worker_abort_stop_timeout_seconds,
         result_stop_timeout_seconds: shutdown_timeouts.worker_abort_stop_timeout_seconds,
     }
+}
+
+fn plan_callback_queue_put_attempt(
+    queue_state: &mut CallbackQueueOccupancyState,
+    wait_timeout_seconds: f64,
+) -> CallbackQueuePutAttemptPlan {
+    if queue_state.acquire_slot() {
+        return CallbackQueuePutAttemptPlan {
+            should_put: true,
+            should_wait: false,
+            wait_timeout_seconds: 0.0,
+            queue_depth: queue_state.occupied_count(),
+            queue_capacity: queue_state.queue_capacity(),
+        };
+    }
+    let normalized_wait_timeout_seconds = normalize_callback_queue_wait_timeout_seconds(wait_timeout_seconds);
+    CallbackQueuePutAttemptPlan {
+        should_put: false,
+        should_wait: normalized_wait_timeout_seconds > 0.0,
+        wait_timeout_seconds: normalized_wait_timeout_seconds,
+        queue_depth: queue_state.occupied_count(),
+        queue_capacity: queue_state.queue_capacity(),
+    }
+}
+
+fn plan_callback_queue_get_attempt(
+    queue_state: &mut CallbackQueueOccupancyState,
+    has_queued_item: bool,
+) -> CallbackQueueGetAttemptPlan {
+    if has_queued_item {
+        let released_slot = queue_state.release_slot();
+        return CallbackQueueGetAttemptPlan {
+            should_get: released_slot,
+            should_wait: false,
+            has_release_error: !released_slot,
+            wait_timeout_seconds: 0.0,
+            queue_depth: queue_state.occupied_count(),
+            queue_capacity: queue_state.queue_capacity(),
+        };
+    }
+    CallbackQueueGetAttemptPlan {
+        should_get: false,
+        should_wait: true,
+        has_release_error: false,
+        wait_timeout_seconds: callback_worker_backpressure_poll_timeout_seconds(),
+        queue_depth: queue_state.occupied_count(),
+        queue_capacity: queue_state.queue_capacity(),
+    }
+}
+
+fn normalize_callback_queue_wait_timeout_seconds(wait_timeout_seconds: f64) -> f64 {
+    if wait_timeout_seconds.is_finite() && wait_timeout_seconds > 0.0 { wait_timeout_seconds } else { 0.0 }
 }
 
 #[must_use]
@@ -2399,6 +2490,85 @@ mod tests {
                 queue_capacity: 3,
                 elapsed_seconds: 0.5,
                 blocked_seconds: 0.5,
+            },
+        );
+    }
+
+    #[test]
+    fn plans_callback_scheduler_queue_put_and_get_attempts() {
+        let mut scheduler_state = CallbackSchedulerState::new(1, 1, None, None).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_dosage_queue_put_attempt(0.25),
+            CallbackQueuePutAttemptPlan {
+                should_put: true,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                queue_depth: 1,
+                queue_capacity: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_queue_put_attempt(0.25),
+            CallbackQueuePutAttemptPlan {
+                should_put: false,
+                should_wait: true,
+                wait_timeout_seconds: 0.25,
+                queue_depth: 1,
+                queue_capacity: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_queue_get_attempt(true),
+            CallbackQueueGetAttemptPlan {
+                should_get: true,
+                should_wait: false,
+                has_release_error: false,
+                wait_timeout_seconds: 0.0,
+                queue_depth: 0,
+                queue_capacity: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_queue_get_attempt(false),
+            CallbackQueueGetAttemptPlan {
+                should_get: false,
+                should_wait: true,
+                has_release_error: false,
+                wait_timeout_seconds: 0.1,
+                queue_depth: 0,
+                queue_capacity: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_queue_get_attempt(true),
+            CallbackQueueGetAttemptPlan {
+                should_get: false,
+                should_wait: false,
+                has_release_error: true,
+                wait_timeout_seconds: 0.0,
+                queue_depth: 0,
+                queue_capacity: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_queue_put_attempt(f64::NAN),
+            CallbackQueuePutAttemptPlan {
+                should_put: true,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                queue_depth: 1,
+                queue_capacity: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_queue_put_attempt(f64::NAN),
+            CallbackQueuePutAttemptPlan {
+                should_put: false,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                queue_depth: 1,
+                queue_capacity: 1,
             },
         );
     }

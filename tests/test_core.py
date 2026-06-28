@@ -1279,6 +1279,67 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
         )
 
 
+def test_native_callback_scheduler_state_plans_queue_put_and_get_attempts() -> None:
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+
+    dosage_put_plan = scheduler_state.plan_dosage_queue_put_attempt(wait_timeout_seconds=0.25)
+    assert dosage_put_plan.should_put is True
+    assert dosage_put_plan.should_wait is False
+    assert dosage_put_plan.wait_timeout_seconds == 0.0
+    assert dosage_put_plan.queue_depth == 1
+    assert dosage_put_plan.queue_capacity == 1
+
+    blocked_dosage_put_plan = scheduler_state.plan_dosage_queue_put_attempt(wait_timeout_seconds=0.25)
+    assert blocked_dosage_put_plan.should_put is False
+    assert blocked_dosage_put_plan.should_wait is True
+    assert blocked_dosage_put_plan.wait_timeout_seconds == 0.25
+    assert blocked_dosage_put_plan.queue_depth == 1
+    assert blocked_dosage_put_plan.queue_capacity == 1
+
+    dosage_get_plan = scheduler_state.plan_dosage_queue_get_attempt(has_queued_item=True)
+    assert dosage_get_plan.should_get is True
+    assert dosage_get_plan.should_wait is False
+    assert dosage_get_plan.has_release_error is False
+    assert dosage_get_plan.wait_timeout_seconds == 0.0
+    assert dosage_get_plan.queue_depth == 0
+    assert dosage_get_plan.queue_capacity == 1
+
+    empty_dosage_get_plan = scheduler_state.plan_dosage_queue_get_attempt(has_queued_item=False)
+    assert empty_dosage_get_plan.should_get is False
+    assert empty_dosage_get_plan.should_wait is True
+    assert empty_dosage_get_plan.has_release_error is False
+    assert empty_dosage_get_plan.wait_timeout_seconds == 0.1
+    assert empty_dosage_get_plan.queue_depth == 0
+    assert empty_dosage_get_plan.queue_capacity == 1
+
+    release_error_plan = scheduler_state.plan_result_queue_get_attempt(has_queued_item=True)
+    assert release_error_plan.should_get is False
+    assert release_error_plan.should_wait is False
+    assert release_error_plan.has_release_error is True
+    assert release_error_plan.wait_timeout_seconds == 0.0
+    assert release_error_plan.queue_depth == 0
+    assert release_error_plan.queue_capacity == 1
+
+    result_put_plan = scheduler_state.plan_result_queue_put_attempt(wait_timeout_seconds=float("nan"))
+    assert result_put_plan.should_put is True
+    assert result_put_plan.should_wait is False
+    assert result_put_plan.wait_timeout_seconds == 0.0
+    assert result_put_plan.queue_depth == 1
+    assert result_put_plan.queue_capacity == 1
+
+    expired_result_put_plan = scheduler_state.plan_result_queue_put_attempt(wait_timeout_seconds=float("nan"))
+    assert expired_result_put_plan.should_put is False
+    assert expired_result_put_plan.should_wait is False
+    assert expired_result_put_plan.wait_timeout_seconds == 0.0
+    assert expired_result_put_plan.queue_depth == 1
+    assert expired_result_put_plan.queue_capacity == 1
+
+
 def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
     progress_state = _core.NativeCallbackProgressState()
 
