@@ -2465,16 +2465,17 @@ def test_native_callback_runner_reuses_larger_host_dosage_buffer_as_view() -> No
     assert restored_buffer is oversized_buffer
 
 
-def test_native_callback_runner_uses_native_dosage_buffer_reuse_plan() -> None:
+def test_native_callback_runner_uses_scheduler_dosage_buffer_reuse_plan() -> None:
     callback = ManualCallbackRunner()
     oversized_buffer = callback.allocate_dosage_buffer_with_shape((4, 5), np.float32)
     callback.release_dosage_buffer(oversized_buffer)
-    reuse_plan = SimpleNamespace(requires_slice=True, slice_dimensions=(2, 3))
 
-    with patch("g.engine.callbacks.runtime._core.plan_dosage_buffer_reuse", return_value=reuse_plan) as mock_planner:
+    with patch(
+        "g.engine.callbacks.runtime._core.plan_dosage_buffer_reuse",
+        side_effect=AssertionError("runner should use scheduler dosage buffer reuse planner"),
+    ):
         sliced_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
 
-    mock_planner.assert_called_once_with(buffered_shape=(4, 5), expected_shape=(2, 3))
     assert sliced_buffer.shape == (2, 3)
     assert np.shares_memory(sliced_buffer, oversized_buffer)
 

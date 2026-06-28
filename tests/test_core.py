@@ -1128,6 +1128,21 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     assert queue_stage_plan.stage_name == "callback_queue_producer_blocking"
     assert queue_stage_plan.blocked_seconds == 0.5
 
+    reuse_plan = scheduler_state.plan_dosage_buffer_reuse(
+        buffered_shape=(4, 5),
+        expected_shape=(2, 3),
+    )
+    assert reuse_plan is not None
+    assert reuse_plan.requires_slice is True
+    assert reuse_plan.slice_dimensions == [2, 3]
+    assert (
+        scheduler_state.plan_dosage_buffer_reuse(
+            buffered_shape=(2, 3),
+            expected_shape=(3, 2),
+        )
+        is None
+    )
+
     dosage_join_plan = scheduler_state.plan_dosage_worker_join(timeout_seconds=None)
     assert dosage_join_plan.should_join is True
     assert dosage_join_plan.timeout_seconds == 60.0

@@ -320,6 +320,15 @@ impl NativeCallbackSchedulerState {
         self.inner.discard_dosage_buffer(buffer_identifier)
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    fn plan_dosage_buffer_reuse(
+        &self,
+        buffered_shape: Vec<usize>,
+        expected_shape: Vec<usize>,
+    ) -> Option<NativeDosageBufferReusePlan> {
+        self.inner.plan_dosage_buffer_reuse(&buffered_shape, &expected_shape).map(Into::into)
+    }
+
     #[getter]
     fn dosage_worker_error_message(&self) -> Option<String> {
         self.inner.dosage_worker_error_message().map(str::to_string)

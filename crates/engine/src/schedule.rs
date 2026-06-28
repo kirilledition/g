@@ -448,6 +448,15 @@ impl CallbackSchedulerState {
     }
 
     #[must_use]
+    pub fn plan_dosage_buffer_reuse(
+        &self,
+        buffered_shape: &[usize],
+        expected_shape: &[usize],
+    ) -> Option<DosageBufferReusePlan> {
+        plan_dosage_buffer_reuse(buffered_shape, expected_shape)
+    }
+
+    #[must_use]
     pub fn dosage_worker_error_message(&self) -> Option<&str> {
         self.dosage_worker_error_message.as_deref()
     }
@@ -1693,6 +1702,17 @@ mod tests {
     fn rejects_incompatible_dosage_buffer_reuse_shapes() {
         assert_eq!(plan_dosage_buffer_reuse(&[2, 3], &[2, 3, 1]), None);
         assert_eq!(plan_dosage_buffer_reuse(&[2, 3], &[3, 2]), None);
+    }
+
+    #[test]
+    fn plans_callback_scheduler_dosage_buffer_reuse() {
+        let scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_reuse(&[4, 5], &[2, 3]).unwrap(),
+            DosageBufferReusePlan { requires_slice: true, slice_dimensions: vec![2, 3] },
+        );
+        assert_eq!(scheduler_state.plan_dosage_buffer_reuse(&[2, 3], &[3, 2]), None);
     }
 
     #[test]
