@@ -1383,6 +1383,44 @@ def test_native_callback_scheduler_state_plans_queue_put_and_get_attempts() -> N
     assert expired_result_put_plan.queue_depth == 1
     assert expired_result_put_plan.queue_capacity == 1
 
+    dosage_backpressure_scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+    first_dosage_backpressure_plan = dosage_backpressure_scheduler_state.plan_dosage_queue_put_backpressure_attempt()
+    assert first_dosage_backpressure_plan.should_put is True
+    assert first_dosage_backpressure_plan.should_wait is False
+    assert first_dosage_backpressure_plan.wait_timeout_seconds == 0.0
+    assert first_dosage_backpressure_plan.queue_depth == 1
+    assert first_dosage_backpressure_plan.queue_capacity == 1
+    second_dosage_backpressure_plan = dosage_backpressure_scheduler_state.plan_dosage_queue_put_backpressure_attempt()
+    assert second_dosage_backpressure_plan.should_put is False
+    assert second_dosage_backpressure_plan.should_wait is True
+    assert second_dosage_backpressure_plan.wait_timeout_seconds == 0.1
+    assert second_dosage_backpressure_plan.queue_depth == 1
+    assert second_dosage_backpressure_plan.queue_capacity == 1
+
+    result_backpressure_scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+    first_result_backpressure_plan = result_backpressure_scheduler_state.plan_result_queue_put_backpressure_attempt()
+    assert first_result_backpressure_plan.should_put is True
+    assert first_result_backpressure_plan.should_wait is False
+    assert first_result_backpressure_plan.wait_timeout_seconds == 0.0
+    assert first_result_backpressure_plan.queue_depth == 1
+    assert first_result_backpressure_plan.queue_capacity == 1
+    second_result_backpressure_plan = result_backpressure_scheduler_state.plan_result_queue_put_backpressure_attempt()
+    assert second_result_backpressure_plan.should_put is False
+    assert second_result_backpressure_plan.should_wait is True
+    assert second_result_backpressure_plan.wait_timeout_seconds == 0.1
+    assert second_result_backpressure_plan.queue_depth == 1
+    assert second_result_backpressure_plan.queue_capacity == 1
+
 
 def test_native_callback_scheduler_state_plans_result_in_flight_slot_attempts() -> None:
     scheduler_state = _core.NativeCallbackSchedulerState(
@@ -1405,6 +1443,13 @@ def test_native_callback_scheduler_state_plans_result_in_flight_slot_attempts() 
     assert blocked_acquire_plan.wait_timeout_seconds == 0.25
     assert blocked_acquire_plan.occupied_count == 1
     assert blocked_acquire_plan.slot_limit == 1
+
+    backpressure_acquire_plan = scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
+    assert backpressure_acquire_plan.should_acquire is False
+    assert backpressure_acquire_plan.should_wait is True
+    assert backpressure_acquire_plan.wait_timeout_seconds == 0.1
+    assert backpressure_acquire_plan.occupied_count == 1
+    assert backpressure_acquire_plan.slot_limit == 1
 
     release_plan = scheduler_state.plan_result_in_flight_slot_release_attempt()
     assert release_plan.should_release is True
@@ -1476,6 +1521,15 @@ def test_native_callback_scheduler_state_plans_dosage_buffer_attempts() -> None:
     assert blocked_acquire_plan.free_buffer_count == 0
     assert blocked_acquire_plan.allocated_count == 1
     assert blocked_acquire_plan.buffer_limit == 1
+
+    backpressure_acquire_plan = scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt(free_buffer_count=0)
+    assert backpressure_acquire_plan.should_take_free_buffer is False
+    assert backpressure_acquire_plan.should_allocate is False
+    assert backpressure_acquire_plan.should_wait is True
+    assert backpressure_acquire_plan.wait_timeout_seconds == 0.1
+    assert backpressure_acquire_plan.free_buffer_count == 0
+    assert backpressure_acquire_plan.allocated_count == 1
+    assert backpressure_acquire_plan.buffer_limit == 1
 
     free_buffer_plan = scheduler_state.plan_dosage_buffer_acquire_attempt(
         free_buffer_count=1,

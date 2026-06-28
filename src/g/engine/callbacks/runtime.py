@@ -780,22 +780,15 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Put work into the bounded worker queue while surfacing worker errors."""
         self.start()
-        backpressure_poll_timeout_seconds = self.callback_scheduler_state.backpressure_poll_timeout_seconds
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
-                if self.try_put_dosage_work_item(
-                    work_item,
-                    timeout_seconds=backpressure_poll_timeout_seconds,
-                ):
+                if self.try_put_dosage_work_item_with_backpressure_timeout(work_item):
                     return
         while True:
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
-            queued = self.try_put_dosage_work_item(
-                work_item,
-                timeout_seconds=backpressure_poll_timeout_seconds,
-            )
+            queued = self.try_put_dosage_work_item_with_backpressure_timeout(work_item)
             if not queued:
                 self.record_bounded_resource_stage_duration(
                     resource_name="dosage_queue",
@@ -836,6 +829,37 @@ class NativeBgenCallbackRunner(abc.ABC):
                 attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_attempt(
                     wait_timeout_seconds=remaining_timeout_seconds
                 )
+                if attempt_plan.should_put:
+                    self.dosage_queue.append(work_item)
+                    self.dosage_queue_condition.notify()
+                    return True
+                if not attempt_plan.should_wait:
+                    return False
+                self.dosage_queue_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
+
+    def try_put_dosage_work_item_with_backpressure_timeout(
+        self,
+        work_item: (
+            PreprocessedDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkBatchWorkItem
+            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+            | None
+        ),
+    ) -> bool:
+        """Try to enqueue one dosage item using native backpressure policy."""
+        deadline: float | None = None
+        while True:
+            with self.dosage_queue_condition:
+                if deadline is None:
+                    attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_backpressure_attempt()
+                    if attempt_plan.should_wait:
+                        deadline = time.monotonic() + attempt_plan.wait_timeout_seconds
+                else:
+                    remaining_timeout_seconds = deadline - time.monotonic()
+                    attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_attempt(
+                        wait_timeout_seconds=remaining_timeout_seconds
+                    )
                 if attempt_plan.should_put:
                     self.dosage_queue.append(work_item)
                     self.dosage_queue_condition.notify()
@@ -891,22 +915,15 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Put a computed result into the bounded materialization/write queue."""
         self.start()
-        backpressure_poll_timeout_seconds = self.callback_scheduler_state.backpressure_poll_timeout_seconds
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
-                if self.try_put_result_write_item(
-                    work_item,
-                    timeout_seconds=backpressure_poll_timeout_seconds,
-                ):
+                if self.try_put_result_write_item_with_backpressure_timeout(work_item):
                     return
         while True:
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
-            queued = self.try_put_result_write_item(
-                work_item,
-                timeout_seconds=backpressure_poll_timeout_seconds,
-            )
+            queued = self.try_put_result_write_item_with_backpressure_timeout(work_item)
             if not queued:
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_queue",
@@ -949,6 +966,31 @@ class NativeBgenCallbackRunner(abc.ABC):
                     return False
                 self.result_queue_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
 
+    def try_put_result_write_item_with_backpressure_timeout(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+    ) -> bool:
+        """Try to enqueue one result item using native backpressure policy."""
+        deadline: float | None = None
+        while True:
+            with self.result_queue_condition:
+                if deadline is None:
+                    attempt_plan = self.callback_scheduler_state.plan_result_queue_put_backpressure_attempt()
+                    if attempt_plan.should_wait:
+                        deadline = time.monotonic() + attempt_plan.wait_timeout_seconds
+                else:
+                    remaining_timeout_seconds = deadline - time.monotonic()
+                    attempt_plan = self.callback_scheduler_state.plan_result_queue_put_attempt(
+                        wait_timeout_seconds=remaining_timeout_seconds
+                    )
+                if attempt_plan.should_put:
+                    self.result_queue.append(work_item)
+                    self.result_queue_condition.notify()
+                    return True
+                if not attempt_plan.should_wait:
+                    return False
+                self.result_queue_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
+
     def get_result_write_item(self) -> Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None:
         """Wait for and return one result queue item while releasing native queue capacity."""
         while True:
@@ -968,13 +1010,12 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def acquire_result_in_flight_slot(self) -> None:
         """Reserve capacity for one chunk of pending GPU result work."""
-        backpressure_poll_timeout_seconds = self.callback_scheduler_state.backpressure_poll_timeout_seconds
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
                 with self.result_in_flight_slot_condition:
-                    attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_attempt(
-                        wait_timeout_seconds=backpressure_poll_timeout_seconds
+                    attempt_plan = (
+                        self.callback_scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
                     )
                     if attempt_plan.should_acquire:
                         return
@@ -984,9 +1025,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.raise_worker_error_if_present()
             acquire_start_time = time.perf_counter()
             with self.result_in_flight_slot_condition:
-                attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_attempt(
-                    wait_timeout_seconds=backpressure_poll_timeout_seconds
-                )
+                attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
                 if attempt_plan.should_acquire:
                     current_depth = attempt_plan.occupied_count
                     blocked = False
@@ -1209,15 +1248,13 @@ class NativeBgenCallbackRunner(abc.ABC):
         dtype: npt.DTypeLike,
     ) -> HostGenotypeBuffer:
         """Return a reusable host dosage buffer with the requested shape."""
-        backpressure_poll_timeout_seconds = self.callback_scheduler_state.backpressure_poll_timeout_seconds
         while True:
             self.raise_worker_error_if_present()
             dosage_buffer: HostGenotypeBuffer | None = None
             should_allocate_dosage_buffer = False
             with self.dosage_buffer_pool_condition:
-                acquire_plan = self.callback_scheduler_state.plan_dosage_buffer_acquire_attempt(
-                    free_buffer_count=self.free_dosage_buffer_count,
-                    wait_timeout_seconds=backpressure_poll_timeout_seconds,
+                acquire_plan = self.callback_scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt(
+                    free_buffer_count=self.free_dosage_buffer_count
                 )
                 if acquire_plan.should_take_free_buffer:
                     dosage_buffer = self.free_dosage_buffers.popleft()
@@ -1249,9 +1286,8 @@ class NativeBgenCallbackRunner(abc.ABC):
                 continue
             buffer_wait_start_time = time.perf_counter()
             with self.dosage_buffer_pool_condition:
-                acquire_plan = self.callback_scheduler_state.plan_dosage_buffer_acquire_attempt(
-                    free_buffer_count=self.free_dosage_buffer_count,
-                    wait_timeout_seconds=backpressure_poll_timeout_seconds,
+                acquire_plan = self.callback_scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt(
+                    free_buffer_count=self.free_dosage_buffer_count
                 )
                 if acquire_plan.should_take_free_buffer:
                     dosage_buffer = self.free_dosage_buffers.popleft()

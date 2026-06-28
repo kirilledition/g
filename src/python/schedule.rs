@@ -395,6 +395,10 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_dosage_queue_put_attempt(wait_timeout_seconds).into()
     }
 
+    fn plan_dosage_queue_put_backpressure_attempt(&mut self) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_dosage_queue_put_backpressure_attempt().into()
+    }
+
     fn plan_dosage_queue_get_attempt(&mut self, has_queued_item: bool) -> NativeCallbackQueueGetAttemptPlan {
         self.inner.plan_dosage_queue_get_attempt(has_queued_item).into()
     }
@@ -428,6 +432,10 @@ impl NativeCallbackSchedulerState {
 
     fn plan_result_queue_put_attempt(&mut self, wait_timeout_seconds: f64) -> NativeCallbackQueuePutAttemptPlan {
         self.inner.plan_result_queue_put_attempt(wait_timeout_seconds).into()
+    }
+
+    fn plan_result_queue_put_backpressure_attempt(&mut self) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_result_queue_put_backpressure_attempt().into()
     }
 
     fn plan_result_queue_get_attempt(&mut self, has_queued_item: bool) -> NativeCallbackQueueGetAttemptPlan {
@@ -490,6 +498,10 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_result_in_flight_slot_acquire_attempt(wait_timeout_seconds).into()
     }
 
+    fn plan_result_in_flight_slot_acquire_backpressure_attempt(&mut self) -> NativeResultInFlightAcquireAttemptPlan {
+        self.inner.plan_result_in_flight_slot_acquire_backpressure_attempt().into()
+    }
+
     fn plan_result_in_flight_slot_release_attempt(&mut self) -> NativeResultInFlightReleaseAttemptPlan {
         self.inner.plan_result_in_flight_slot_release_attempt().into()
     }
@@ -531,6 +543,13 @@ impl NativeCallbackSchedulerState {
         wait_timeout_seconds: f64,
     ) -> NativeDosageBufferAcquireAttemptPlan {
         self.inner.plan_dosage_buffer_acquire_attempt(free_buffer_count, wait_timeout_seconds).into()
+    }
+
+    fn plan_dosage_buffer_acquire_backpressure_attempt(
+        &self,
+        free_buffer_count: usize,
+    ) -> NativeDosageBufferAcquireAttemptPlan {
+        self.inner.plan_dosage_buffer_acquire_backpressure_attempt(free_buffer_count).into()
     }
 
     fn plan_dosage_buffer_register_attempt(

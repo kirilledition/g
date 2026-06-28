@@ -2837,12 +2837,24 @@ class CallbackStartAttemptSchedulerProbe:
 @dataclasses.dataclass
 class CallbackQueueAttemptSchedulerProbe:
     dosage_put_wait_timeout_seconds: float | None = None
+    dosage_put_backpressure_called: bool = False
     dosage_get_called: bool = False
     result_put_wait_timeout_seconds: float | None = None
+    result_put_backpressure_called: bool = False
     result_get_called: bool = False
 
     def plan_dosage_queue_put_attempt(self, wait_timeout_seconds: float) -> CallbackQueuePutAttemptPlanProbe:
         self.dosage_put_wait_timeout_seconds = wait_timeout_seconds
+        return CallbackQueuePutAttemptPlanProbe(
+            should_put=True,
+            should_wait=False,
+            wait_timeout_seconds=0.0,
+            queue_depth=1,
+            queue_capacity=1,
+        )
+
+    def plan_dosage_queue_put_backpressure_attempt(self) -> CallbackQueuePutAttemptPlanProbe:
+        self.dosage_put_backpressure_called = True
         return CallbackQueuePutAttemptPlanProbe(
             should_put=True,
             should_wait=False,
@@ -2865,6 +2877,16 @@ class CallbackQueueAttemptSchedulerProbe:
 
     def plan_result_queue_put_attempt(self, wait_timeout_seconds: float) -> CallbackQueuePutAttemptPlanProbe:
         self.result_put_wait_timeout_seconds = wait_timeout_seconds
+        return CallbackQueuePutAttemptPlanProbe(
+            should_put=True,
+            should_wait=False,
+            wait_timeout_seconds=0.0,
+            queue_depth=1,
+            queue_capacity=1,
+        )
+
+    def plan_result_queue_put_backpressure_attempt(self) -> CallbackQueuePutAttemptPlanProbe:
+        self.result_put_backpressure_called = True
         return CallbackQueuePutAttemptPlanProbe(
             should_put=True,
             should_wait=False,
@@ -2903,11 +2925,16 @@ class WorkerErrorRaiseSchedulerProbe:
 @dataclasses.dataclass
 class ResultInFlightAttemptSchedulerProbe:
     result_in_flight_limit: int = 1
-    backpressure_poll_timeout_seconds: float = 0.1
     dosage_worker_error_message: str | None = None
     result_worker_error_message: str | None = None
     acquire_wait_timeout_seconds: float | None = None
+    acquire_backpressure_called: bool = False
     release_called: bool = False
+
+    @property
+    def backpressure_poll_timeout_seconds(self) -> float:
+        message = "Runtime should use the native result-slot backpressure attempt plan."
+        raise AssertionError(message)
 
     def plan_worker_error_raise(self) -> WorkerErrorRaisePlanProbe:
         return WorkerErrorRaisePlanProbe(
@@ -2930,6 +2957,17 @@ class ResultInFlightAttemptSchedulerProbe:
             slot_limit=1,
         )
 
+    def plan_result_in_flight_slot_acquire_backpressure_attempt(self) -> ResultInFlightAcquireAttemptPlanProbe:
+        self.acquire_backpressure_called = True
+        self.acquire_wait_timeout_seconds = 0.1
+        return ResultInFlightAcquireAttemptPlanProbe(
+            should_acquire=True,
+            should_wait=False,
+            wait_timeout_seconds=0.0,
+            occupied_count=1,
+            slot_limit=1,
+        )
+
     def plan_result_in_flight_slot_release_attempt(self) -> ResultInFlightReleaseAttemptPlanProbe:
         self.release_called = True
         return ResultInFlightReleaseAttemptPlanProbe(
@@ -2943,16 +2981,21 @@ class ResultInFlightAttemptSchedulerProbe:
 @dataclasses.dataclass
 class DosageBufferAttemptSchedulerProbe:
     dosage_buffer_limit: int = 2
-    backpressure_poll_timeout_seconds: float = 0.1
     dosage_worker_error_message: str | None = None
     result_worker_error_message: str | None = None
     acquire_free_buffer_counts: list[int] = dataclasses.field(default_factory=list)
     acquire_wait_timeout_seconds: float | None = None
+    acquire_backpressure_called: bool = False
     registered_buffer_identifier: int | None = None
     returned_buffer_identifier: int | None = None
     discarded_buffer_identifier: int | None = None
     reuse_buffered_shape: tuple[int, ...] | None = None
     reuse_expected_shape: tuple[int, ...] | None = None
+
+    @property
+    def backpressure_poll_timeout_seconds(self) -> float:
+        message = "Runtime should use the native dosage-buffer backpressure attempt plan."
+        raise AssertionError(message)
 
     def plan_worker_error_raise(self) -> WorkerErrorRaisePlanProbe:
         return WorkerErrorRaisePlanProbe(
@@ -2969,6 +3012,23 @@ class DosageBufferAttemptSchedulerProbe:
     ) -> DosageBufferAcquireAttemptPlanProbe:
         self.acquire_free_buffer_counts.append(free_buffer_count)
         self.acquire_wait_timeout_seconds = wait_timeout_seconds
+        return DosageBufferAcquireAttemptPlanProbe(
+            should_take_free_buffer=free_buffer_count > 0,
+            should_allocate=free_buffer_count == 0,
+            should_wait=False,
+            wait_timeout_seconds=0.0,
+            free_buffer_count=free_buffer_count,
+            allocated_count=0,
+            buffer_limit=self.dosage_buffer_limit,
+        )
+
+    def plan_dosage_buffer_acquire_backpressure_attempt(
+        self,
+        free_buffer_count: int,
+    ) -> DosageBufferAcquireAttemptPlanProbe:
+        self.acquire_backpressure_called = True
+        self.acquire_free_buffer_counts.append(free_buffer_count)
+        self.acquire_wait_timeout_seconds = 0.1
         return DosageBufferAcquireAttemptPlanProbe(
             should_take_free_buffer=free_buffer_count > 0,
             should_allocate=free_buffer_count == 0,
@@ -3079,6 +3139,20 @@ def test_native_callback_runner_uses_scheduler_queue_attempt_plans() -> None:
     assert scheduler_state.result_get_called is True
 
 
+def test_native_callback_runner_uses_scheduler_queue_backpressure_attempt_plans() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = CallbackQueueAttemptSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+
+    assert callback.try_put_dosage_work_item_with_backpressure_timeout(None) is True
+    assert callback.get_dosage_work_item() is None
+    assert callback.try_put_result_write_item_with_backpressure_timeout(None) is True
+    assert callback.get_result_write_item() is None
+
+    assert scheduler_state.dosage_put_backpressure_called is True
+    assert scheduler_state.result_put_backpressure_called is True
+
+
 def test_native_callback_runner_uses_scheduler_worker_error_raise_plan() -> None:
     callback = ManualCallbackRunner()
     scheduler_state = WorkerErrorRaiseSchedulerProbe()
@@ -3103,6 +3177,7 @@ def test_native_callback_runner_uses_scheduler_result_in_flight_attempt_plans() 
     acquire_wait_timeout_seconds = scheduler_state.acquire_wait_timeout_seconds
     assert acquire_wait_timeout_seconds is not None
     assert acquire_wait_timeout_seconds == 0.1
+    assert scheduler_state.acquire_backpressure_called is True
     assert scheduler_state.release_called is True
 
 
@@ -3118,6 +3193,7 @@ def test_native_callback_runner_uses_scheduler_dosage_buffer_attempt_plans() -> 
 
     assert scheduler_state.acquire_free_buffer_counts == [0, 1]
     assert scheduler_state.acquire_wait_timeout_seconds == 0.1
+    assert scheduler_state.acquire_backpressure_called is True
     assert scheduler_state.registered_buffer_identifier == id(dosage_buffer)
     assert scheduler_state.returned_buffer_identifier == id(dosage_buffer)
     assert scheduler_state.reuse_buffered_shape == (2, 3)

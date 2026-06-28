@@ -994,6 +994,12 @@ Remove Python as the chunk-level scheduler.
 8. Keep device conversion and JAX invocation in Python.
 9. Preserve callback batch-size semantics.
 
+### Current implementation notes
+
+- Callback producer backpressure attempts now use native scheduler methods that
+  select the default poll timeout internally for dosage queues, result queues,
+  result in-flight slots, and dosage-buffer acquisition.
+
 ### Tests
 
 - queue backpressure;

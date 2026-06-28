@@ -598,6 +598,11 @@ impl CallbackSchedulerState {
     }
 
     #[must_use]
+    pub fn plan_dosage_queue_put_backpressure_attempt(&mut self) -> CallbackQueuePutAttemptPlan {
+        self.plan_dosage_queue_put_attempt(callback_worker_backpressure_poll_timeout_seconds())
+    }
+
+    #[must_use]
     pub fn plan_dosage_queue_get_attempt(&mut self, has_queued_item: bool) -> CallbackQueueGetAttemptPlan {
         plan_callback_queue_get_attempt(&mut self.dosage_queue_state, has_queued_item)
     }
@@ -633,6 +638,11 @@ impl CallbackSchedulerState {
     #[must_use]
     pub fn plan_result_queue_put_attempt(&mut self, wait_timeout_seconds: f64) -> CallbackQueuePutAttemptPlan {
         plan_callback_queue_put_attempt(&mut self.result_queue_state, wait_timeout_seconds)
+    }
+
+    #[must_use]
+    pub fn plan_result_queue_put_backpressure_attempt(&mut self) -> CallbackQueuePutAttemptPlan {
+        self.plan_result_queue_put_attempt(callback_worker_backpressure_poll_timeout_seconds())
     }
 
     #[must_use]
@@ -701,6 +711,11 @@ impl CallbackSchedulerState {
     }
 
     #[must_use]
+    pub fn plan_result_in_flight_slot_acquire_backpressure_attempt(&mut self) -> ResultInFlightAcquireAttemptPlan {
+        self.plan_result_in_flight_slot_acquire_attempt(callback_worker_backpressure_poll_timeout_seconds())
+    }
+
+    #[must_use]
     pub fn plan_result_in_flight_slot_release_attempt(&mut self) -> ResultInFlightReleaseAttemptPlan {
         plan_result_in_flight_slot_release_attempt(&mut self.result_in_flight_slot_state)
     }
@@ -745,6 +760,14 @@ impl CallbackSchedulerState {
         wait_timeout_seconds: f64,
     ) -> DosageBufferAcquireAttemptPlan {
         plan_dosage_buffer_acquire_attempt(&self.dosage_buffer_pool_state, free_buffer_count, wait_timeout_seconds)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_buffer_acquire_backpressure_attempt(
+        &self,
+        free_buffer_count: usize,
+    ) -> DosageBufferAcquireAttemptPlan {
+        self.plan_dosage_buffer_acquire_attempt(free_buffer_count, callback_worker_backpressure_poll_timeout_seconds())
     }
 
     #[must_use]
@@ -2577,6 +2600,18 @@ mod tests {
             },
         );
         assert_eq!(
+            scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt(0),
+            DosageBufferAcquireAttemptPlan {
+                should_take_free_buffer: false,
+                should_allocate: false,
+                should_wait: true,
+                wait_timeout_seconds: 0.1,
+                free_buffer_count: 0,
+                allocated_count: 1,
+                buffer_limit: 1,
+            },
+        );
+        assert_eq!(
             scheduler_state.plan_dosage_buffer_acquire_attempt(1, 0.25),
             DosageBufferAcquireAttemptPlan {
                 should_take_free_buffer: true,
@@ -2658,6 +2693,16 @@ mod tests {
                 should_acquire: false,
                 should_wait: true,
                 wait_timeout_seconds: 0.25,
+                occupied_count: 1,
+                slot_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt(),
+            ResultInFlightAcquireAttemptPlan {
+                should_acquire: false,
+                should_wait: true,
+                wait_timeout_seconds: 0.1,
                 occupied_count: 1,
                 slot_limit: 1,
             },
@@ -3063,6 +3108,53 @@ mod tests {
                 should_put: false,
                 should_wait: false,
                 wait_timeout_seconds: 0.0,
+                queue_depth: 1,
+                queue_capacity: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn plans_callback_scheduler_queue_backpressure_attempts() {
+        let mut dosage_backpressure_scheduler_state = CallbackSchedulerState::new(1, 1, None, None).unwrap();
+        assert_eq!(
+            dosage_backpressure_scheduler_state.plan_dosage_queue_put_backpressure_attempt(),
+            CallbackQueuePutAttemptPlan {
+                should_put: true,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                queue_depth: 1,
+                queue_capacity: 1,
+            },
+        );
+        assert_eq!(
+            dosage_backpressure_scheduler_state.plan_dosage_queue_put_backpressure_attempt(),
+            CallbackQueuePutAttemptPlan {
+                should_put: false,
+                should_wait: true,
+                wait_timeout_seconds: 0.1,
+                queue_depth: 1,
+                queue_capacity: 1,
+            },
+        );
+
+        let mut result_backpressure_scheduler_state = CallbackSchedulerState::new(1, 1, None, None).unwrap();
+        assert_eq!(
+            result_backpressure_scheduler_state.plan_result_queue_put_backpressure_attempt(),
+            CallbackQueuePutAttemptPlan {
+                should_put: true,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                queue_depth: 1,
+                queue_capacity: 1,
+            },
+        );
+        assert_eq!(
+            result_backpressure_scheduler_state.plan_result_queue_put_backpressure_attempt(),
+            CallbackQueuePutAttemptPlan {
+                should_put: false,
+                should_wait: true,
+                wait_timeout_seconds: 0.1,
                 queue_depth: 1,
                 queue_capacity: 1,
             },
