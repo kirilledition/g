@@ -1288,6 +1288,16 @@ def build_run_failed_event_payload(error: BaseException) -> dict[str, object]: .
 def build_run_completed_telemetry_fields(event: object) -> dict[str, object]: ...
 def build_run_interrupted_telemetry_fields(event: object) -> dict[str, object]: ...
 def build_run_failed_telemetry_fields(event: object) -> dict[str, object]: ...
+def build_execution_run_artifacts_payload(
+    association_mode: str,
+    phenotype_count: int,
+    output_format: str,
+    output_run_directories: tuple[str, ...],
+    chunks_directories: tuple[str, ...],
+    effective_configs: tuple[str, ...],
+    phenotype_names: tuple[str, ...],
+    final_output_paths: tuple[str | None, ...],
+) -> dict[str, object]: ...
 def build_phenotype_run_artifacts_payload(
     output_run_directory: str,
     chunks_directory: str,

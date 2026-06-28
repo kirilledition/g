@@ -31,9 +31,9 @@ pub use run_events::{
     render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
 };
 pub use run_metadata::{
-    PhenotypeRunArtifactsInput, RunArtifactsPayload, RunManifestCommandPayload, RunManifestExtensionInput,
-    RunManifestExtensionPayload, RunManifestRuntimePayload, build_multi_run_artifacts, build_phenotype_run_artifacts,
-    build_run_manifest_extension,
+    ExecutionRunArtifactsInput, PhenotypeRunArtifactsInput, RunArtifactsPayload, RunManifestCommandPayload,
+    RunManifestExtensionInput, RunManifestExtensionPayload, RunManifestRuntimePayload, build_execution_run_artifacts,
+    build_multi_run_artifacts, build_phenotype_run_artifacts, build_run_manifest_extension,
 };
 pub use runtime_paths::build_default_local_cache_directory;
 pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_policy, describe_logging_runtime_policy};

@@ -101,7 +101,8 @@ use run_events::{
     render_run_interrupted_lines,
 };
 use run_metadata::{
-    build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload, build_run_manifest_extension_payload,
+    build_execution_run_artifacts_payload, build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload,
+    build_run_manifest_extension_payload,
 };
 use runtime::{
     configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool,
@@ -1878,6 +1879,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_second_signal_exception, module)?)?;
+    module.add_function(wrap_pyfunction!(build_execution_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_multi_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_compute_group_id_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_compute_groups_payload, module)?)?;

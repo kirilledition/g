@@ -1,5 +1,6 @@
 //! PyO3 adapters for run metadata and artifact payload construction.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
@@ -41,6 +42,39 @@ pub(crate) fn build_multi_run_artifacts_payload<'py>(
     phenotype_count: i64,
 ) -> PyResult<Bound<'py, PyDict>> {
     let artifacts = native_run_metadata::build_multi_run_artifacts(&association_mode, phenotype_count);
+    run_artifacts_payload_to_dict(py, &artifacts)
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_execution_run_artifacts_payload<'py>(
+    py: Python<'py>,
+    association_mode: String,
+    phenotype_count: i64,
+    output_format: String,
+    output_run_directories: Vec<String>,
+    chunks_directories: Vec<String>,
+    effective_configs: Vec<String>,
+    phenotype_names: Vec<String>,
+    final_output_paths: Vec<Option<String>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let phenotype_artifacts = phenotype_run_artifact_inputs_from_sequences(
+        &association_mode,
+        phenotype_count,
+        &output_format,
+        output_run_directories,
+        chunks_directories,
+        effective_configs,
+        phenotype_names,
+        final_output_paths,
+    )?;
+    let artifacts =
+        native_run_metadata::build_execution_run_artifacts(native_run_metadata::ExecutionRunArtifactsInput {
+            association_mode,
+            phenotype_count,
+            phenotype_artifacts,
+        });
     run_artifacts_payload_to_dict(py, &artifacts)
 }
 
@@ -100,12 +134,60 @@ fn run_artifacts_payload_to_dict<'py>(
     set_optional_string(py, &payload, "final_parquet", artifacts.final_parquet.as_deref())?;
     set_optional_string(py, &payload, "final_regenie", artifacts.final_regenie.as_deref())?;
     set_optional_string(py, &payload, "effective_config", artifacts.effective_config.as_deref())?;
-    payload.set_item("phenotype_artifacts", PyTuple::new(py, Vec::<String>::new())?)?;
+    let phenotype_artifacts = artifacts
+        .phenotype_artifacts
+        .iter()
+        .map(|phenotype_artifact| run_artifacts_payload_to_dict(py, phenotype_artifact))
+        .collect::<PyResult<Vec<_>>>()?;
+    payload.set_item("phenotype_artifacts", PyTuple::new(py, &phenotype_artifacts)?)?;
     set_optional_string(py, &payload, "phenotype_name", artifacts.phenotype_name.as_deref())?;
     set_optional_string(py, &payload, "association_mode", artifacts.association_mode.as_deref())?;
     set_optional_i64(py, &payload, "phenotype_count", artifacts.phenotype_count)?;
     set_optional_string(py, &payload, "run_id", artifacts.run_id.as_deref())?;
     Ok(payload)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn phenotype_run_artifact_inputs_from_sequences(
+    association_mode: &str,
+    phenotype_count: i64,
+    output_format: &str,
+    output_run_directories: Vec<String>,
+    chunks_directories: Vec<String>,
+    effective_configs: Vec<String>,
+    phenotype_names: Vec<String>,
+    final_output_paths: Vec<Option<String>>,
+) -> PyResult<Vec<native_run_metadata::PhenotypeRunArtifactsInput>> {
+    let artifact_count = phenotype_names.len();
+    let sequence_lengths = [
+        output_run_directories.len(),
+        chunks_directories.len(),
+        effective_configs.len(),
+        artifact_count,
+        final_output_paths.len(),
+    ];
+    if sequence_lengths.iter().any(|sequence_length| *sequence_length != artifact_count) {
+        return Err(PyValueError::new_err("execution artifact sequence lengths must match"));
+    }
+    Ok(output_run_directories
+        .into_iter()
+        .zip(chunks_directories)
+        .zip(effective_configs)
+        .zip(phenotype_names)
+        .zip(final_output_paths)
+        .map(|((((output_run_directory, chunks_directory), effective_config), phenotype_name), final_output_path)| {
+            native_run_metadata::PhenotypeRunArtifactsInput {
+                output_run_directory,
+                chunks_directory,
+                effective_config,
+                phenotype_name,
+                association_mode: association_mode.to_string(),
+                phenotype_count,
+                output_format: output_format.to_string(),
+                final_output_path,
+            }
+        })
+        .collect())
 }
 
 fn run_manifest_command_to_dict<'py>(

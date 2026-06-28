@@ -124,6 +124,52 @@ def test_attach_run_metadata_uses_native_artifact_tree_builder() -> None:
     assert attached_artifacts.phenotype_artifacts[1].phenotype_count == 2
 
 
+def test_execution_run_artifacts_uses_native_artifact_tree_builder() -> None:
+    native_payload = _core.build_execution_run_artifacts_payload(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        2,
+        "parquet",
+        ("out/height/run", "out/weight/run"),
+        ("out/height/run/parts", "out/weight/run/parts"),
+        ("out/height/effective_config.toml", "out/weight/effective_config.toml"),
+        ("height", "weight"),
+        ("out/height/final.parquet", "out/weight/final.parquet"),
+    )
+    artifacts = run_events.run_artifacts_from_native_payload(native_payload)
+    phenotype_payloads = typing.cast("tuple[dict[str, object], ...]", native_payload["phenotype_artifacts"])
+
+    assert native_payload["output_run_directory"] is None
+    assert native_payload["association_mode"] == types.AssociationMode.REGENIE2_LINEAR.value
+    assert native_payload["phenotype_count"] == 2
+    assert phenotype_payloads[1]["phenotype_name"] == "weight"
+    assert phenotype_payloads[1]["final_dataset"] == "out/weight/run/parts"
+    assert phenotype_payloads[1]["final_parquet"] == "out/weight/final.parquet"
+    assert artifacts.phenotype_artifacts[0].phenotype_name == "height"
+    assert artifacts.phenotype_artifacts[1].final_dataset == Path("out/weight/run/parts")
+    assert artifacts.phenotype_artifacts[1].phenotype_count == 2
+
+
+def test_execution_run_artifacts_single_phenotype_has_no_wrapper() -> None:
+    native_payload = _core.build_execution_run_artifacts_payload(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        1,
+        "regenie",
+        ("out/height/run",),
+        ("out/height/run/parts",),
+        ("out/height/effective_config.toml",),
+        ("height",),
+        ("out/height.regenie",),
+    )
+    artifacts = run_events.run_artifacts_from_native_payload(native_payload)
+
+    assert native_payload["output_run_directory"] == "out/height/run"
+    assert native_payload["phenotype_artifacts"] == ()
+    assert native_payload["final_dataset"] is None
+    assert native_payload["final_regenie"] == "out/height.regenie"
+    assert artifacts.phenotype_artifacts == ()
+    assert artifacts.final_regenie == Path("out/height.regenie")
+
+
 def test_run_completed_event_preserves_missing_native_metadata() -> None:
     event = run_events.build_run_completed_event(
         run_events.RunArtifacts(

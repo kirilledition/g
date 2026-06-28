@@ -4,42 +4,17 @@ from __future__ import annotations
 
 import logging
 import typing
-from pathlib import Path
 
 from g import _core, execution_plan, types
 from g.engine import run_events, telemetry
 from g.interface import config
 from g.io import output
 
+if typing.TYPE_CHECKING:
+    from pathlib import Path
+
 logger = logging.getLogger(__name__)
 RunArtifacts = run_events.RunArtifacts
-
-
-def run_artifacts_from_native_payload(
-    artifact_payload: dict[str, object],
-    phenotype_artifacts: tuple[RunArtifacts, ...],
-) -> RunArtifacts:
-    """Adapt a native artifact payload to the public Python dataclass."""
-    association_mode_value = typing.cast("str | None", artifact_payload["association_mode"])
-    return RunArtifacts(
-        output_run_directory=optional_path_from_native_payload(artifact_payload["output_run_directory"]),
-        final_dataset=optional_path_from_native_payload(artifact_payload["final_dataset"]),
-        final_parquet=optional_path_from_native_payload(artifact_payload["final_parquet"]),
-        final_regenie=optional_path_from_native_payload(artifact_payload["final_regenie"]),
-        effective_config=optional_path_from_native_payload(artifact_payload["effective_config"]),
-        phenotype_artifacts=phenotype_artifacts,
-        phenotype_name=typing.cast("str | None", artifact_payload["phenotype_name"]),
-        association_mode=None if association_mode_value is None else types.AssociationMode(association_mode_value),
-        phenotype_count=typing.cast("int | None", artifact_payload["phenotype_count"]),
-        run_id=typing.cast("str | None", artifact_payload["run_id"]),
-    )
-
-
-def optional_path_from_native_payload(path_payload: object) -> Path | None:
-    """Adapt an optional native path string to a Python path."""
-    if path_payload is None:
-        return None
-    return Path(typing.cast("str", path_payload))
 
 
 def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
@@ -125,53 +100,30 @@ def finalize_execution_plan(
     final_output_paths: tuple[Path | None, ...],
 ) -> RunArtifacts:
     """Build user-facing artifacts after native execution."""
-    phenotype_artifacts = tuple(
-        finalize_phenotype_run(
-            regenie_config=regenie_config,
-            plan=plan,
-            phenotype_run_plan=phenotype_run_plan,
-            final_output_path=final_output_path,
-        )
-        for phenotype_run_plan, final_output_path in zip(
-            plan.phenotype_run_plans,
-            final_output_paths,
-            strict=True,
-        )
-    )
-    logger.info("Finalized REGENIE run artifacts for %s phenotype(s).", len(phenotype_artifacts))
-    if len(phenotype_artifacts) == 1:
-        return phenotype_artifacts[0]
-    return run_artifacts_from_native_payload(
-        _core.build_multi_run_artifacts_payload(
-            plan.association_mode.value,
-            len(phenotype_artifacts),
-        ),
-        phenotype_artifacts,
-    )
-
-
-def finalize_phenotype_run(
-    *,
-    regenie_config: config.RegenieConfig,
-    plan: execution_plan.RegenieExecutionPlan,
-    phenotype_run_plan: execution_plan.PhenotypeRunPlan,
-    final_output_path: Path | None,
-) -> RunArtifacts:
-    """Build artifacts for one phenotype."""
     del regenie_config
-    return run_artifacts_from_native_payload(
-        _core.build_phenotype_run_artifacts_payload(
-            str(phenotype_run_plan.output_run_paths.run_directory),
-            str(phenotype_run_plan.output_run_paths.chunks_directory),
-            str(phenotype_run_plan.effective_config_path),
-            phenotype_run_plan.phenotype_name,
+    artifacts = run_events.run_artifacts_from_native_payload(
+        _core.build_execution_run_artifacts_payload(
             plan.association_mode.value,
             len(plan.phenotype_run_plans),
             plan.output_plan.writer_settings.output_format.value,
-            None if final_output_path is None else str(final_output_path),
-        ),
-        (),
+            tuple(
+                str(phenotype_run_plan.output_run_paths.run_directory)
+                for phenotype_run_plan in plan.phenotype_run_plans
+            ),
+            tuple(
+                str(phenotype_run_plan.output_run_paths.chunks_directory)
+                for phenotype_run_plan in plan.phenotype_run_plans
+            ),
+            tuple(str(phenotype_run_plan.effective_config_path) for phenotype_run_plan in plan.phenotype_run_plans),
+            tuple(phenotype_run_plan.phenotype_name for phenotype_run_plan in plan.phenotype_run_plans),
+            tuple(
+                None if final_output_path is None else str(final_output_path)
+                for final_output_path in final_output_paths
+            ),
+        )
     )
+    logger.info("Finalized REGENIE run artifacts for %s phenotype(s).", len(plan.phenotype_run_plans))
+    return artifacts
 
 
 def extend_run_manifest(

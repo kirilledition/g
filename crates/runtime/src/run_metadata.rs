@@ -1,5 +1,7 @@
 //! Deterministic run metadata and artifact payload construction.
 
+pub use crate::run_events::RunArtifactsPayload;
+
 const COMMAND_INTERFACE: &str = "g regenie";
 const OUTPUT_FORMAT_PARQUET: &str = "parquet";
 const OUTPUT_FORMAT_REGENIE: &str = "regenie";
@@ -17,16 +19,10 @@ pub struct PhenotypeRunArtifactsInput {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RunArtifactsPayload {
-    pub output_run_directory: Option<String>,
-    pub final_dataset: Option<String>,
-    pub final_parquet: Option<String>,
-    pub final_regenie: Option<String>,
-    pub effective_config: Option<String>,
-    pub phenotype_name: Option<String>,
-    pub association_mode: Option<String>,
-    pub phenotype_count: Option<i64>,
-    pub run_id: Option<String>,
+pub struct ExecutionRunArtifactsInput {
+    pub association_mode: String,
+    pub phenotype_count: i64,
+    pub phenotype_artifacts: Vec<PhenotypeRunArtifactsInput>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -101,7 +97,32 @@ pub fn build_phenotype_run_artifacts(input: PhenotypeRunArtifactsInput) -> RunAr
         final_parquet,
         final_regenie,
         effective_config: Some(effective_config),
+        phenotype_artifacts: Vec::new(),
         phenotype_name: Some(phenotype_name),
+        association_mode: Some(association_mode),
+        phenotype_count: Some(phenotype_count),
+        run_id: None,
+    }
+}
+
+#[must_use]
+pub fn build_execution_run_artifacts(input: ExecutionRunArtifactsInput) -> RunArtifactsPayload {
+    let ExecutionRunArtifactsInput { association_mode, phenotype_count, phenotype_artifacts } = input;
+    let mut finalized_phenotype_artifacts =
+        phenotype_artifacts.into_iter().map(build_phenotype_run_artifacts).collect::<Vec<_>>();
+    if finalized_phenotype_artifacts.len() == 1
+        && let Some(phenotype_artifact) = finalized_phenotype_artifacts.pop()
+    {
+        return phenotype_artifact;
+    }
+    RunArtifactsPayload {
+        output_run_directory: None,
+        final_dataset: None,
+        final_parquet: None,
+        final_regenie: None,
+        effective_config: None,
+        phenotype_artifacts: finalized_phenotype_artifacts,
+        phenotype_name: None,
         association_mode: Some(association_mode),
         phenotype_count: Some(phenotype_count),
         run_id: None,
@@ -116,6 +137,7 @@ pub fn build_multi_run_artifacts(association_mode: &str, phenotype_count: i64) -
         final_parquet: None,
         final_regenie: None,
         effective_config: None,
+        phenotype_artifacts: Vec::new(),
         phenotype_name: None,
         association_mode: Some(association_mode.to_string()),
         phenotype_count: Some(phenotype_count),
@@ -189,6 +211,66 @@ mod tests {
         assert_eq!(artifacts.final_parquet.as_deref(), Some("run/final.parquet"));
         assert_eq!(artifacts.final_regenie, None);
         assert_eq!(artifacts.phenotype_name.as_deref(), Some("height"));
+        assert!(artifacts.phenotype_artifacts.is_empty());
+    }
+
+    #[test]
+    fn builds_execution_artifact_tree() {
+        let artifacts = build_execution_run_artifacts(ExecutionRunArtifactsInput {
+            association_mode: "regenie2_linear".to_string(),
+            phenotype_count: 2,
+            phenotype_artifacts: vec![
+                PhenotypeRunArtifactsInput {
+                    output_run_directory: "run/height".to_string(),
+                    chunks_directory: "run/height/chunks".to_string(),
+                    effective_config: "run/height/effective_config.toml".to_string(),
+                    phenotype_name: "height".to_string(),
+                    association_mode: "regenie2_linear".to_string(),
+                    phenotype_count: 2,
+                    output_format: OUTPUT_FORMAT_PARQUET.to_string(),
+                    final_output_path: Some("run/height/final.parquet".to_string()),
+                },
+                PhenotypeRunArtifactsInput {
+                    output_run_directory: "run/weight".to_string(),
+                    chunks_directory: "run/weight/chunks".to_string(),
+                    effective_config: "run/weight/effective_config.toml".to_string(),
+                    phenotype_name: "weight".to_string(),
+                    association_mode: "regenie2_linear".to_string(),
+                    phenotype_count: 2,
+                    output_format: OUTPUT_FORMAT_PARQUET.to_string(),
+                    final_output_path: Some("run/weight/final.parquet".to_string()),
+                },
+            ],
+        });
+
+        assert_eq!(artifacts.output_run_directory, None);
+        assert_eq!(artifacts.association_mode.as_deref(), Some("regenie2_linear"));
+        assert_eq!(artifacts.phenotype_count, Some(2));
+        assert_eq!(artifacts.phenotype_artifacts.len(), 2);
+        assert_eq!(artifacts.phenotype_artifacts[1].phenotype_name.as_deref(), Some("weight"));
+        assert_eq!(artifacts.phenotype_artifacts[1].final_parquet.as_deref(), Some("run/weight/final.parquet"));
+    }
+
+    #[test]
+    fn builds_single_execution_artifacts_without_wrapper() {
+        let artifacts = build_execution_run_artifacts(ExecutionRunArtifactsInput {
+            association_mode: "regenie2_linear".to_string(),
+            phenotype_count: 1,
+            phenotype_artifacts: vec![PhenotypeRunArtifactsInput {
+                output_run_directory: "run/height".to_string(),
+                chunks_directory: "run/height/chunks".to_string(),
+                effective_config: "run/height/effective_config.toml".to_string(),
+                phenotype_name: "height".to_string(),
+                association_mode: "regenie2_linear".to_string(),
+                phenotype_count: 1,
+                output_format: OUTPUT_FORMAT_REGENIE.to_string(),
+                final_output_path: Some("run/height.regenie".to_string()),
+            }],
+        });
+
+        assert_eq!(artifacts.output_run_directory.as_deref(), Some("run/height"));
+        assert_eq!(artifacts.final_regenie.as_deref(), Some("run/height.regenie"));
+        assert!(artifacts.phenotype_artifacts.is_empty());
     }
 
     #[test]
