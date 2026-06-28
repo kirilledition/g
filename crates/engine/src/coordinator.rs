@@ -283,7 +283,7 @@ fn should_abort_outputs_after_failure(phase: RunPhase) -> bool {
 mod tests {
     use super::*;
     use crate::fake_backend::{FakeBackend, FakeBackendFailure};
-    use crate::fake_effects::FakeEngineRunEffects;
+    use crate::fake_effects::{FakeEngineRunEffects, FakeOutputLifecycleState};
 
     fn build_input() -> EngineRunInput<'static> {
         EngineRunInput::new(
@@ -329,6 +329,8 @@ mod tests {
 
         assert_eq!(report.result.variant_count, 4);
         assert_eq!(effects.state().output.written_results, vec![report.result]);
+        assert_eq!(effects.state().output.lifecycle_state, FakeOutputLifecycleState::Finalized);
+        assert_eq!(effects.state().output.abort_count, 0);
         assert_eq!(effects.state().phase_events, report.phase_history[1..]);
         assert_eq!(
             effects.state().completed_operations,
@@ -357,6 +359,8 @@ mod tests {
         assert_eq!(coordinator.phase(), RunPhase::Failed);
         assert_eq!(coordinator.phase_history().last(), Some(&RunPhase::Failed));
         assert_eq!(effects.state().output.aborted_phase, Some(RunPhase::Running));
+        assert_eq!(effects.state().output.lifecycle_state, FakeOutputLifecycleState::Aborted);
+        assert_eq!(effects.state().output.abort_count, 1);
     }
 
     #[test]
@@ -370,6 +374,8 @@ mod tests {
         assert_eq!(coordinator.phase(), RunPhase::Failed);
         assert_eq!(coordinator.phase_history().last(), Some(&RunPhase::Failed));
         assert_eq!(effects.state().output.aborted_phase, Some(RunPhase::Running));
+        assert_eq!(effects.state().output.lifecycle_state, FakeOutputLifecycleState::Aborted);
+        assert_eq!(effects.state().output.abort_count, 1);
     }
 
     #[test]
@@ -382,6 +388,8 @@ mod tests {
         assert!(matches!(error, EngineError::Backend { phase: RunPhase::Running, .. }));
         assert_eq!(coordinator.phase(), RunPhase::Failed);
         assert_eq!(effects.state().output.aborted_phase, Some(RunPhase::Running));
+        assert_eq!(effects.state().output.lifecycle_state, FakeOutputLifecycleState::Aborted);
+        assert_eq!(effects.state().output.abort_count, 1);
     }
 
     #[test]
@@ -429,6 +437,8 @@ mod tests {
         );
         assert_eq!(coordinator.phase(), RunPhase::Failed);
         assert_eq!(effects.state().output.aborted_phase, Some(RunPhase::Running));
+        assert_eq!(effects.state().output.lifecycle_state, FakeOutputLifecycleState::Aborted);
+        assert_eq!(effects.state().output.abort_count, 1);
     }
 
     #[test]
@@ -459,6 +469,8 @@ mod tests {
             );
             assert_eq!(coordinator.phase(), RunPhase::Failed);
             assert_eq!(effects.state().output.aborted_phase.is_some(), aborts_outputs,);
+            assert_eq!(effects.state().output.lifecycle_state == FakeOutputLifecycleState::Aborted, aborts_outputs,);
+            assert_eq!(effects.state().output.abort_count, usize::from(aborts_outputs));
         }
     }
 
@@ -496,5 +508,34 @@ mod tests {
         assert_eq!(error, EngineError::Interrupted { phase: RunPhase::Running });
         assert_eq!(coordinator.phase(), RunPhase::Interrupted);
         assert_eq!(coordinator.phase_history().last(), Some(&RunPhase::Interrupted));
+    }
+
+    #[test]
+    fn coordinator_aborts_outputs_for_injected_failures_after_initialization() {
+        for phase in [RunPhase::OutputsInitialized, RunPhase::Running, RunPhase::Draining, RunPhase::Finalizing] {
+            let mut coordinator = EngineCoordinator::new(FakeBackend::succeed())
+                .with_injected_failure(InjectedCoordinatorFailure::new(phase, format!("failed at {}", phase.as_str())));
+            let mut effects = FakeEngineRunEffects::succeed();
+
+            let error = coordinator.run_single_batch_with_effects(&build_input(), &mut effects).unwrap_err();
+
+            assert!(matches!(error, EngineError::Coordinator { phase: error_phase, .. } if error_phase == phase));
+            assert_eq!(effects.state().output.lifecycle_state, FakeOutputLifecycleState::Aborted);
+            assert_eq!(effects.state().output.aborted_phase, Some(phase));
+            assert_eq!(effects.state().output.abort_count, 1);
+        }
+    }
+
+    #[test]
+    fn coordinator_aborts_outputs_for_interruption_after_initialization() {
+        let mut coordinator = EngineCoordinator::new(FakeBackend::succeed()).with_interruption(RunPhase::Running);
+        let mut effects = FakeEngineRunEffects::succeed();
+
+        let error = coordinator.run_single_batch_with_effects(&build_input(), &mut effects).unwrap_err();
+
+        assert_eq!(error, EngineError::Interrupted { phase: RunPhase::Running });
+        assert_eq!(effects.state().output.lifecycle_state, FakeOutputLifecycleState::Aborted);
+        assert_eq!(effects.state().output.aborted_phase, Some(RunPhase::Running));
+        assert_eq!(effects.state().output.abort_count, 1);
     }
 }

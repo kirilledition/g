@@ -29,7 +29,7 @@ pub use callback_summary::{BinaryChunkDiagnosticsInput, BinaryCorrectionSummaryS
 pub use coordinator::{EngineCoordinator, EngineError, EngineRunInput, EngineRunReport, InjectedCoordinatorFailure};
 pub use effects::{EngineEffectError, EngineEffectOperation, EngineRunEffects, NoopEngineRunEffects};
 pub use fake_backend::{FakeBackend, FakeBackendFailure, FakeChromosomeState, FakeGroupState};
-pub use fake_effects::{FakeEngineRunEffects, FakeOutputState, FakeRunEffectState};
+pub use fake_effects::{FakeEngineRunEffects, FakeOutputLifecycleState, FakeOutputState, FakeRunEffectState};
 pub use phase::RunPhase;
 pub use pipeline::Regenie2RunEngineCore;
 pub use preflight::{

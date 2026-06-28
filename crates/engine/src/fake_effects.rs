@@ -4,10 +4,24 @@ use crate::backend::AssociationBatchResult;
 use crate::effects::{EngineEffectError, EngineEffectOperation, EngineRunEffects};
 use crate::phase::RunPhase;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FakeOutputLifecycleState {
+    #[default]
+    NotInitialized,
+    CompatibilityValidated,
+    WritersConstructed,
+    BatchWritten,
+    Drained,
+    Finalized,
+    Aborted,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FakeOutputState {
+    pub lifecycle_state: FakeOutputLifecycleState,
     pub written_results: Vec<AssociationBatchResult>,
     pub aborted_phase: Option<RunPhase>,
+    pub abort_count: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -76,32 +90,44 @@ impl EngineRunEffects for FakeEngineRunEffects {
 
     fn validate_output_compatibility(&mut self) -> Result<(), EngineEffectError> {
         self.state.completed_operations.push(EngineEffectOperation::OutputCompatibility);
-        self.maybe_fail(EngineEffectOperation::OutputCompatibility)
+        self.maybe_fail(EngineEffectOperation::OutputCompatibility)?;
+        self.state.output.lifecycle_state = FakeOutputLifecycleState::CompatibilityValidated;
+        Ok(())
     }
 
     fn construct_writers(&mut self) -> Result<(), EngineEffectError> {
         self.state.completed_operations.push(EngineEffectOperation::WriterConstruction);
-        self.maybe_fail(EngineEffectOperation::WriterConstruction)
+        self.maybe_fail(EngineEffectOperation::WriterConstruction)?;
+        self.state.output.lifecycle_state = FakeOutputLifecycleState::WritersConstructed;
+        Ok(())
     }
 
     fn write_batch_result(&mut self, result: &AssociationBatchResult) -> Result<(), EngineEffectError> {
         self.state.completed_operations.push(EngineEffectOperation::OutputWrite);
+        self.maybe_fail(EngineEffectOperation::OutputWrite)?;
         self.state.output.written_results.push(result.clone());
-        self.maybe_fail(EngineEffectOperation::OutputWrite)
+        self.state.output.lifecycle_state = FakeOutputLifecycleState::BatchWritten;
+        Ok(())
     }
 
     fn drain_writers(&mut self) -> Result<(), EngineEffectError> {
         self.state.completed_operations.push(EngineEffectOperation::WriterDrain);
-        self.maybe_fail(EngineEffectOperation::WriterDrain)
+        self.maybe_fail(EngineEffectOperation::WriterDrain)?;
+        self.state.output.lifecycle_state = FakeOutputLifecycleState::Drained;
+        Ok(())
     }
 
     fn finalize_outputs(&mut self) -> Result<(), EngineEffectError> {
         self.state.completed_operations.push(EngineEffectOperation::OutputFinalization);
-        self.maybe_fail(EngineEffectOperation::OutputFinalization)
+        self.maybe_fail(EngineEffectOperation::OutputFinalization)?;
+        self.state.output.lifecycle_state = FakeOutputLifecycleState::Finalized;
+        Ok(())
     }
 
     fn abort_outputs(&mut self, phase: RunPhase) {
+        self.state.output.lifecycle_state = FakeOutputLifecycleState::Aborted;
         self.state.output.aborted_phase = Some(phase);
+        self.state.output.abort_count += 1;
     }
 }
 
@@ -140,6 +166,8 @@ mod tests {
         );
         assert_eq!(effects.state.output.written_results, vec![result]);
         assert_eq!(effects.state.output.aborted_phase, None);
+        assert_eq!(effects.state.output.abort_count, 0);
+        assert_eq!(effects.state.output.lifecycle_state, FakeOutputLifecycleState::Finalized);
     }
 
     #[test]
@@ -150,5 +178,17 @@ mod tests {
 
         assert_eq!(error.message(), "fake engine side effect failed during writer_construction");
         assert_eq!(effects.state.completed_operations, vec![EngineEffectOperation::WriterConstruction]);
+        assert_eq!(effects.state.output.lifecycle_state, FakeOutputLifecycleState::NotInitialized);
+    }
+
+    #[test]
+    fn fake_effects_record_abort_lifecycle_state() {
+        let mut effects = FakeEngineRunEffects::succeed();
+
+        effects.abort_outputs(RunPhase::Running);
+
+        assert_eq!(effects.state.output.lifecycle_state, FakeOutputLifecycleState::Aborted);
+        assert_eq!(effects.state.output.aborted_phase, Some(RunPhase::Running));
+        assert_eq!(effects.state.output.abort_count, 1);
     }
 }
