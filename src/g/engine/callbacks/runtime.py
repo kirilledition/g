@@ -955,20 +955,16 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def stop_dosage_worker(self, timeout_seconds: float | None) -> None:
         """Signal the dosage worker to exit after queued dosage chunks drain."""
-        stop_plan = _core.plan_dosage_callback_worker_stop(
+        stop_plan = self.callback_scheduler_state.plan_dosage_worker_stop(
             timeout_seconds=timeout_seconds,
-            has_started=self.worker_threads_have_started(),
-            has_worker_error=self.callback_scheduler_state.has_dosage_worker_error,
             is_worker_alive=self.worker_thread.is_alive(),
         )
         if not stop_plan.should_stop:
             return
         stop_deadline = time.monotonic() + stop_plan.timeout_seconds
         while time.monotonic() < stop_deadline:
-            stop_poll_plan = _core.plan_callback_worker_stop_poll(
+            stop_poll_plan = self.callback_scheduler_state.plan_dosage_worker_stop_poll(
                 remaining_timeout_seconds=stop_deadline - time.monotonic(),
-                has_started=self.worker_threads_have_started(),
-                has_worker_error=self.callback_scheduler_state.has_dosage_worker_error,
                 is_worker_alive=self.worker_thread.is_alive(),
             )
             if not stop_poll_plan.should_stop:
@@ -985,10 +981,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def join_dosage_worker(self, timeout_seconds: float | None) -> None:
         """Join the dosage worker with a bounded shutdown wait."""
-        join_plan = _core.plan_dosage_callback_worker_join(
-            timeout_seconds=timeout_seconds,
-            has_started=self.worker_threads_have_started(),
-        )
+        join_plan = self.callback_scheduler_state.plan_dosage_worker_join(timeout_seconds=timeout_seconds)
         if not join_plan.should_join:
             return
         self.worker_thread.join(timeout=join_plan.timeout_seconds)
@@ -1000,20 +993,16 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def stop_result_worker(self, timeout_seconds: float | None) -> None:
         """Signal the result worker to exit after queued results drain."""
-        stop_plan = _core.plan_result_callback_worker_stop(
+        stop_plan = self.callback_scheduler_state.plan_result_worker_stop(
             timeout_seconds=timeout_seconds,
-            has_started=self.worker_threads_have_started(),
-            has_worker_error=self.callback_scheduler_state.has_result_worker_error,
             is_worker_alive=self.result_worker_thread.is_alive(),
         )
         if not stop_plan.should_stop:
             return
         stop_deadline = time.monotonic() + stop_plan.timeout_seconds
         while time.monotonic() < stop_deadline:
-            stop_poll_plan = _core.plan_callback_worker_stop_poll(
+            stop_poll_plan = self.callback_scheduler_state.plan_result_worker_stop_poll(
                 remaining_timeout_seconds=stop_deadline - time.monotonic(),
-                has_started=self.worker_threads_have_started(),
-                has_worker_error=self.callback_scheduler_state.has_result_worker_error,
                 is_worker_alive=self.result_worker_thread.is_alive(),
             )
             if not stop_poll_plan.should_stop:
@@ -1030,10 +1019,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def join_result_worker(self, timeout_seconds: float | None) -> None:
         """Join the result writer worker with a bounded shutdown wait."""
-        join_plan = _core.plan_result_callback_worker_join(
-            timeout_seconds=timeout_seconds,
-            has_started=self.worker_threads_have_started(),
-        )
+        join_plan = self.callback_scheduler_state.plan_result_worker_join(timeout_seconds=timeout_seconds)
         if not join_plan.should_join:
             return
         self.result_worker_thread.join(timeout=join_plan.timeout_seconds)

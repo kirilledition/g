@@ -1097,6 +1097,33 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     assert scheduler_state.dosage_worker_error_message is None
     assert scheduler_state.result_worker_error_message is None
 
+    dosage_join_plan = scheduler_state.plan_dosage_worker_join(timeout_seconds=None)
+    assert dosage_join_plan.should_join is True
+    assert dosage_join_plan.timeout_seconds == 60.0
+    dosage_stop_plan = scheduler_state.plan_dosage_worker_stop(timeout_seconds=None, is_worker_alive=True)
+    assert dosage_stop_plan.should_stop is True
+    assert dosage_stop_plan.timeout_seconds == 60.0
+    dosage_poll_plan = scheduler_state.plan_dosage_worker_stop_poll(
+        remaining_timeout_seconds=1.0,
+        is_worker_alive=True,
+    )
+    assert dosage_poll_plan.should_stop is True
+    assert dosage_poll_plan.poll_timeout_seconds == 0.1
+
+    scheduler_state.record_result_worker_error("writer failed")
+    result_stop_plan = scheduler_state.plan_result_worker_stop(timeout_seconds=None, is_worker_alive=True)
+    assert result_stop_plan.should_stop is False
+    assert result_stop_plan.timeout_seconds == 60.0
+    result_poll_plan = scheduler_state.plan_result_worker_stop_poll(
+        remaining_timeout_seconds=1.0,
+        is_worker_alive=True,
+    )
+    assert result_poll_plan.should_stop is False
+    assert result_poll_plan.poll_timeout_seconds == 0.1
+    result_join_plan = scheduler_state.plan_result_worker_join(timeout_seconds=0.25)
+    assert result_join_plan.should_join is True
+    assert result_join_plan.timeout_seconds == 0.25
+
     with pytest.raises(ValueError, match="effective dosage_buffer_limit"):
         _core.NativeCallbackSchedulerState(
             staging_depth=1,

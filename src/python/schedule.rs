@@ -355,6 +355,46 @@ impl NativeCallbackSchedulerState {
     fn clear_result_worker_error(&mut self) -> bool {
         self.inner.clear_result_worker_error()
     }
+
+    fn plan_dosage_worker_join(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
+        self.inner.plan_dosage_worker_join(timeout_seconds).into()
+    }
+
+    fn plan_result_worker_join(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
+        self.inner.plan_result_worker_join(timeout_seconds).into()
+    }
+
+    fn plan_dosage_worker_stop(
+        &self,
+        timeout_seconds: Option<f64>,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPlan {
+        self.inner.plan_dosage_worker_stop(timeout_seconds, is_worker_alive).into()
+    }
+
+    fn plan_result_worker_stop(
+        &self,
+        timeout_seconds: Option<f64>,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPlan {
+        self.inner.plan_result_worker_stop(timeout_seconds, is_worker_alive).into()
+    }
+
+    fn plan_dosage_worker_stop_poll(
+        &self,
+        remaining_timeout_seconds: f64,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPollPlan {
+        self.inner.plan_dosage_worker_stop_poll(remaining_timeout_seconds, is_worker_alive).into()
+    }
+
+    fn plan_result_worker_stop_poll(
+        &self,
+        remaining_timeout_seconds: f64,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPollPlan {
+        self.inner.plan_result_worker_stop_poll(remaining_timeout_seconds, is_worker_alive).into()
+    }
 }
 
 #[pymethods]

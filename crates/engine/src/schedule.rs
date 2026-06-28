@@ -486,6 +486,72 @@ impl CallbackSchedulerState {
         self.result_worker_error_message = None;
         had_error
     }
+
+    #[must_use]
+    pub fn plan_dosage_worker_join(&self, timeout_seconds: Option<f64>) -> CallbackWorkerJoinPlan {
+        plan_dosage_callback_worker_join(timeout_seconds, self.has_started())
+    }
+
+    #[must_use]
+    pub fn plan_result_worker_join(&self, timeout_seconds: Option<f64>) -> CallbackWorkerJoinPlan {
+        plan_result_callback_worker_join(timeout_seconds, self.has_started())
+    }
+
+    #[must_use]
+    pub fn plan_dosage_worker_stop(
+        &self,
+        timeout_seconds: Option<f64>,
+        is_worker_alive: bool,
+    ) -> CallbackWorkerStopPlan {
+        plan_dosage_callback_worker_stop(
+            timeout_seconds,
+            self.has_started(),
+            self.has_dosage_worker_error(),
+            is_worker_alive,
+        )
+    }
+
+    #[must_use]
+    pub fn plan_result_worker_stop(
+        &self,
+        timeout_seconds: Option<f64>,
+        is_worker_alive: bool,
+    ) -> CallbackWorkerStopPlan {
+        plan_result_callback_worker_stop(
+            timeout_seconds,
+            self.has_started(),
+            self.has_result_worker_error(),
+            is_worker_alive,
+        )
+    }
+
+    #[must_use]
+    pub fn plan_dosage_worker_stop_poll(
+        &self,
+        remaining_timeout_seconds: f64,
+        is_worker_alive: bool,
+    ) -> CallbackWorkerStopPollPlan {
+        plan_callback_worker_stop_poll(
+            remaining_timeout_seconds,
+            self.has_started(),
+            self.has_dosage_worker_error(),
+            is_worker_alive,
+        )
+    }
+
+    #[must_use]
+    pub fn plan_result_worker_stop_poll(
+        &self,
+        remaining_timeout_seconds: f64,
+        is_worker_alive: bool,
+    ) -> CallbackWorkerStopPollPlan {
+        plan_callback_worker_stop_poll(
+            remaining_timeout_seconds,
+            self.has_started(),
+            self.has_result_worker_error(),
+            is_worker_alive,
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1733,6 +1799,32 @@ mod tests {
         assert!(scheduler_state.clear_result_worker_error());
         assert_eq!(scheduler_state.dosage_worker_error_message(), None);
         assert_eq!(scheduler_state.result_worker_error_message(), None);
+
+        assert_eq!(
+            scheduler_state.plan_dosage_worker_join(None),
+            CallbackWorkerJoinPlan { should_join: true, timeout_seconds: 60.0 },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_worker_stop(None, true),
+            CallbackWorkerStopPlan { should_stop: true, timeout_seconds: 60.0 },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_worker_stop_poll(1.0, true),
+            CallbackWorkerStopPollPlan { should_stop: true, poll_timeout_seconds: 0.1 },
+        );
+        scheduler_state.record_result_worker_error("writer failed");
+        assert_eq!(
+            scheduler_state.plan_result_worker_stop(None, true),
+            CallbackWorkerStopPlan { should_stop: false, timeout_seconds: 60.0 },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_worker_stop_poll(1.0, true),
+            CallbackWorkerStopPollPlan { should_stop: false, poll_timeout_seconds: 0.1 },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_worker_join(Some(0.25)),
+            CallbackWorkerJoinPlan { should_join: true, timeout_seconds: 0.25 },
+        );
     }
 
     #[test]
