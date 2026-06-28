@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from g import _core, types
-from g.engine import run_events
+from g.engine import run_events, shutdown
 
 
 def test_run_completed_event_uses_native_artifact_tree_builder() -> None:
@@ -145,13 +145,22 @@ def test_run_completed_rendering_uses_native_renderer() -> None:
 
 
 def test_interrupted_run_event_uses_native_payload_builder_and_renderer() -> None:
-    event = run_events.RunInterruptedEvent(
-        signal_number=2,
-        signal_name="SIGINT",
-        exit_code=130,
-        flushed_for_resume=True,
+    shutdown_request = shutdown.GracefulShutdownRequested(
+        shutdown.ShutdownSignal(number=2, name="SIGINT", exit_code=130)
     )
+    native_payload = _core.build_run_interrupted_event_payload(shutdown_request)
+    event = run_events.build_run_interrupted_event(shutdown_request)
 
+    assert native_payload == {
+        "signal_number": 2,
+        "signal_name": "SIGINT",
+        "exit_code": 130,
+        "flushed_for_resume": True,
+    }
+    assert event.signal_number == 2
+    assert event.signal_name == "SIGINT"
+    assert event.exit_code == 130
+    assert event.flushed_for_resume is True
     assert run_events.run_interrupted_telemetry_fields(event) == {
         "failure_kind": "graceful_shutdown",
         "signal_number": 2,
@@ -165,8 +174,13 @@ def test_interrupted_run_event_uses_native_payload_builder_and_renderer() -> Non
 
 
 def test_failed_run_event_uses_native_payload_builder_and_renderer() -> None:
-    event = run_events.RunFailedEvent(error_type="RuntimeError", error_message="boom")
+    error = RuntimeError("boom")
+    native_payload = _core.build_run_failed_event_payload(error)
+    event = run_events.build_run_failed_event(error)
 
+    assert native_payload == {"error_type": "RuntimeError", "error_message": "boom"}
+    assert event.error_type == "RuntimeError"
+    assert event.error_message == "boom"
     assert run_events.run_failed_telemetry_fields(event) == {
         "failure_kind": "exception",
         "error_type": "RuntimeError",

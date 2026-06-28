@@ -16,6 +16,30 @@ pub fn build_run_completed_event_payload<'py>(
 }
 
 #[pyfunction]
+pub fn build_run_interrupted_event_payload<'py>(
+    py: Python<'py>,
+    shutdown_request: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let shutdown_signal = shutdown_request.getattr("shutdown_signal")?;
+    let signal_name = shutdown_signal.getattr("name")?.extract::<String>()?;
+    let event_payload = native_run_events::build_run_interrupted_event_payload(
+        shutdown_signal.getattr("number")?.extract::<i64>()?,
+        &signal_name,
+        shutdown_signal.getattr("exit_code")?.extract::<i64>()?,
+        true,
+    );
+    run_interrupted_event_payload_to_py_dict(py, &event_payload)
+}
+
+#[pyfunction]
+pub fn build_run_failed_event_payload<'py>(py: Python<'py>, error: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
+    let error_type = error.get_type().name()?.to_string_lossy().into_owned();
+    let error_message = error.str()?.to_string_lossy().into_owned();
+    let event_payload = native_run_events::build_run_failed_event_payload(&error_type, &error_message);
+    run_failed_event_payload_to_py_dict(py, &event_payload)
+}
+
+#[pyfunction]
 pub fn build_run_completed_telemetry_fields<'py>(
     py: Python<'py>,
     event: &Bound<'py, PyAny>,
@@ -156,6 +180,28 @@ fn run_artifact_payload_to_py_dict<'py>(
     payload.set_item("final_parquet", &artifact.final_parquet)?;
     payload.set_item("final_regenie", &artifact.final_regenie)?;
     payload.set_item("effective_config", &artifact.effective_config)?;
+    Ok(payload)
+}
+
+fn run_interrupted_event_payload_to_py_dict<'py>(
+    py: Python<'py>,
+    event: &native_run_events::RunInterruptedEventPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("signal_number", event.signal_number)?;
+    payload.set_item("signal_name", &event.signal_name)?;
+    payload.set_item("exit_code", event.exit_code)?;
+    payload.set_item("flushed_for_resume", event.flushed_for_resume)?;
+    Ok(payload)
+}
+
+fn run_failed_event_payload_to_py_dict<'py>(
+    py: Python<'py>,
+    event: &native_run_events::RunFailedEventPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("error_type", &event.error_type)?;
+    payload.set_item("error_message", &event.error_message)?;
     Ok(payload)
 }
 

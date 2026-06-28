@@ -149,18 +149,12 @@ def build_run_completed_event(artifacts: RunArtifacts) -> RunCompletedEvent:
 
 def build_run_interrupted_event(shutdown_request: shutdown.GracefulShutdownRequested) -> RunInterruptedEvent:
     """Build a structured interruption event from a graceful shutdown request."""
-    shutdown_signal = shutdown_request.shutdown_signal
-    return RunInterruptedEvent(
-        signal_number=shutdown_signal.number,
-        signal_name=shutdown_signal.name,
-        exit_code=shutdown_signal.exit_code,
-        flushed_for_resume=True,
-    )
+    return run_interrupted_event_from_native_payload(g._core.build_run_interrupted_event_payload(shutdown_request))
 
 
 def build_run_failed_event(error: Exception) -> RunFailedEvent:
     """Build a structured failure event from an exception."""
-    return RunFailedEvent(error_type=type(error).__name__, error_message=str(error))
+    return run_failed_event_from_native_payload(g._core.build_run_failed_event_payload(error))
 
 
 def run_completed_event_from_native_payload(payload: object) -> RunCompletedEvent:
@@ -188,6 +182,26 @@ def run_artifact_payload_from_native_payload(payload: object) -> RunArtifactPayl
         final_parquet=optional_path_from_native_payload(artifact_payload["final_parquet"]),
         final_regenie=optional_path_from_native_payload(artifact_payload["final_regenie"]),
         effective_config=optional_path_from_native_payload(artifact_payload["effective_config"]),
+    )
+
+
+def run_interrupted_event_from_native_payload(payload: object) -> RunInterruptedEvent:
+    """Adapt a native interrupted-run event payload."""
+    event_payload = native_mapping_payload(payload)
+    return RunInterruptedEvent(
+        signal_number=typing.cast("int", event_payload["signal_number"]),
+        signal_name=typing.cast("str", event_payload["signal_name"]),
+        exit_code=typing.cast("int", event_payload["exit_code"]),
+        flushed_for_resume=typing.cast("bool", event_payload["flushed_for_resume"]),
+    )
+
+
+def run_failed_event_from_native_payload(payload: object) -> RunFailedEvent:
+    """Adapt a native failed-run event payload."""
+    event_payload = native_mapping_payload(payload)
+    return RunFailedEvent(
+        error_type=typing.cast("str", event_payload["error_type"]),
+        error_message=typing.cast("str", event_payload["error_message"]),
     )
 
 

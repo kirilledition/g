@@ -112,6 +112,21 @@ pub fn flatten_run_artifact_payloads(artifacts: &RunArtifactsPayload) -> Vec<Run
 }
 
 #[must_use]
+pub fn build_run_interrupted_event_payload(
+    signal_number: i64,
+    signal_name: &str,
+    exit_code: i64,
+    flushed_for_resume: bool,
+) -> RunInterruptedEventPayload {
+    RunInterruptedEventPayload { signal_number, signal_name: signal_name.to_string(), exit_code, flushed_for_resume }
+}
+
+#[must_use]
+pub fn build_run_failed_event_payload(error_type: &str, error_message: &str) -> RunFailedEventPayload {
+    RunFailedEventPayload { error_type: error_type.to_string(), error_message: error_message.to_string() }
+}
+
+#[must_use]
 pub fn build_run_completed_telemetry_fields(event: &RunCompletedEventPayload) -> RunCompletedTelemetryFields {
     let phenotype_artifacts = event.artifacts.iter().map(build_artifact_telemetry_fields).collect::<Vec<_>>();
     let single_artifact = if phenotype_artifacts.len() == 1 { phenotype_artifacts.first().cloned() } else { None };
@@ -266,6 +281,23 @@ mod tests {
             vec![Some("height"), Some("weight")]
         );
         assert_eq!(event.artifacts[1].final_parquet.as_deref(), Some("run/weight.parquet"));
+    }
+
+    #[test]
+    fn builds_interrupted_and_failed_event_payloads() {
+        assert_eq!(
+            build_run_interrupted_event_payload(2, "SIGINT", 130, true),
+            RunInterruptedEventPayload {
+                signal_number: 2,
+                signal_name: "SIGINT".to_string(),
+                exit_code: 130,
+                flushed_for_resume: true,
+            },
+        );
+        assert_eq!(
+            build_run_failed_event_payload("RuntimeError", "boom"),
+            RunFailedEventPayload { error_type: "RuntimeError".to_string(), error_message: "boom".to_string() },
+        );
     }
 
     #[test]
