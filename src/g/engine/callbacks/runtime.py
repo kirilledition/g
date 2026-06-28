@@ -87,7 +87,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
-        self.result_in_flight_slot_lock = threading.Lock()
+        self.result_in_flight_slot_condition = threading.Condition()
         self.dosage_queue: queue.Queue[
             PreprocessedDosageChunkWorkItem
             | PreprocessedVariantMajorDosageChunkWorkItem
@@ -98,7 +98,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.result_queue: queue.Queue[Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None] = (
             queue.Queue(maxsize=self.result_queue_depth)
         )
-        self.result_in_flight_slots = threading.BoundedSemaphore(self.result_in_flight_limit)
         self.free_dosage_buffers: queue.Queue[HostGenotypeBuffer] = queue.Queue(maxsize=self.dosage_buffer_limit)
         self.worker_error_cause: BaseException | None = None
         self.result_worker_error_cause: BaseException | None = None
@@ -879,49 +878,49 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
-                if self.result_in_flight_slots.acquire(timeout=backpressure_poll_timeout_seconds):
-                    with self.result_in_flight_slot_lock:
-                        if not self.callback_scheduler_state.acquire_result_in_flight_slot():
-                            self.result_in_flight_slots.release()
-                            message = "Native result in-flight slot state has no available slot."
-                            raise RuntimeError(message)
-                    return
+                with self.result_in_flight_slot_condition:
+                    if self.callback_scheduler_state.acquire_result_in_flight_slot():
+                        return
+                    self.result_in_flight_slot_condition.wait(timeout=backpressure_poll_timeout_seconds)
         while True:
             self.raise_worker_error_if_present()
             acquire_start_time = time.perf_counter()
-            if self.result_in_flight_slots.acquire(timeout=backpressure_poll_timeout_seconds):
-                with self.result_in_flight_slot_lock:
-                    if not self.callback_scheduler_state.acquire_result_in_flight_slot():
-                        self.result_in_flight_slots.release()
-                        message = "Native result in-flight slot state has no available slot."
-                        raise RuntimeError(message)
+            with self.result_in_flight_slot_condition:
+                if self.callback_scheduler_state.acquire_result_in_flight_slot():
                     current_depth = self.callback_scheduler_state.result_in_flight_occupied_count
+                    blocked = False
+                else:
+                    current_depth = self.callback_scheduler_state.result_in_flight_occupied_count
+                    self.result_in_flight_slot_condition.wait(timeout=backpressure_poll_timeout_seconds)
+                    blocked = True
+            if blocked:
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_in_flight_slots",
-                    operation_name="acquire",
+                    operation_name="producer_blocking",
                     current_depth=current_depth,
                     capacity=self.result_in_flight_limit,
                     start_time=acquire_start_time,
-                    blocked=False,
+                    blocked=True,
                 )
-                return
-            with self.result_in_flight_slot_lock:
-                current_depth = self.callback_scheduler_state.result_in_flight_occupied_count
+                continue
             self.record_bounded_resource_stage_duration(
                 resource_name="result_in_flight_slots",
-                operation_name="producer_blocking",
+                operation_name="acquire",
                 current_depth=current_depth,
                 capacity=self.result_in_flight_limit,
                 start_time=acquire_start_time,
-                blocked=True,
+                blocked=False,
             )
+            return
 
     def release_result_in_flight_slot(self) -> None:
         """Release capacity for one completed chunk of GPU result work."""
-        self.result_in_flight_slots.release()
-        with self.result_in_flight_slot_lock:
-            self.callback_scheduler_state.release_result_in_flight_slot()
+        with self.result_in_flight_slot_condition:
+            if not self.callback_scheduler_state.release_result_in_flight_slot():
+                message = "Native result in-flight slot state has no occupied slot to release."
+                raise RuntimeError(message)
             current_depth = self.callback_scheduler_state.result_in_flight_occupied_count
+            self.result_in_flight_slot_condition.notify()
         self.record_bounded_resource_operation(
             resource_name="result_in_flight_slots",
             operation_name="release",

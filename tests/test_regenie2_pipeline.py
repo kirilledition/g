@@ -4,6 +4,7 @@ import concurrent.futures
 import dataclasses
 import queue
 import threading
+import time
 import typing
 from pathlib import Path
 from types import SimpleNamespace
@@ -1869,8 +1870,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             result_in_flight_limit=2,
             dosage_buffer_limit=2,
         )
-        self.result_in_flight_slots = threading.BoundedSemaphore(self.result_in_flight_limit)
-        self.result_in_flight_slot_lock = threading.Lock()
+        self.result_in_flight_slot_condition = threading.Condition()
         self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=self.dosage_buffer_limit)
         self.worker_error = None
         self.result_worker_error = None
@@ -3336,7 +3336,7 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
 
     assert callback.callback_scheduler_state.result_in_flight_occupied_count == 2
     assert callback.callback_scheduler_state.has_available_result_in_flight_slot() is False
-    assert callback.result_in_flight_slots.acquire(blocking=False) is False
+    assert not hasattr(callback, "result_in_flight_slots")
 
     callback.put_result_write_item(
         callback_shared.Regenie2ResultWriteWorkItem(
@@ -3354,9 +3354,7 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
     )
     callback.finish()
 
-    assert callback.result_in_flight_slots.acquire(blocking=False) is True
     assert callback.callback_scheduler_state.result_in_flight_occupied_count == 1
-    callback.release_result_in_flight_slot()
     callback.release_result_in_flight_slot()
     assert callback.callback_scheduler_state.result_in_flight_occupied_count == 0
     assert callback.free_dosage_buffers.get_nowait() is host_dosage_buffer
@@ -3380,6 +3378,32 @@ def test_native_callback_runner_uses_native_result_in_flight_slot_accounting() -
 
     callback.release_result_in_flight_slot()
 
+    assert callback.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+
+def test_native_callback_runner_waits_on_native_result_in_flight_slot_release() -> None:
+    callback = ManualCallbackRunner()
+    callback.acquire_result_in_flight_slot()
+    callback.acquire_result_in_flight_slot()
+
+    acquisition_started = threading.Event()
+
+    def acquire_slot_after_capacity_is_full() -> None:
+        acquisition_started.set()
+        callback.acquire_result_in_flight_slot()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(acquire_slot_after_capacity_is_full)
+        assert acquisition_started.wait(timeout=1.0)
+        time.sleep(0.2)
+        assert not future.done()
+
+        callback.release_result_in_flight_slot()
+        future.result(timeout=2.0)
+
+    assert callback.callback_scheduler_state.result_in_flight_occupied_count == 2
+    callback.release_result_in_flight_slot()
+    callback.release_result_in_flight_slot()
     assert callback.callback_scheduler_state.result_in_flight_occupied_count == 0
 
 
@@ -3414,8 +3438,7 @@ def test_result_worker_releases_host_dosage_buffer_before_output_write() -> None
 
     assert observing_writer_session.observed_buffer_before_write is True
     assert callback.free_dosage_buffers.get_nowait() is host_dosage_buffer
-    assert callback.result_in_flight_slots.acquire(blocking=False) is True
-    callback.release_result_in_flight_slot()
+    assert callback.callback_scheduler_state.result_in_flight_occupied_count == 0
 
 
 def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats() -> None:

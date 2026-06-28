@@ -70,7 +70,9 @@ finish/abort planning, worker stop/join planning, chunk batch handoff planning,
 queue observation planning, and backpressure timeout policy for production
 callback runners. Callback modules no longer resolve worker shutdown timeout
 constants at import time; production shutdown timeout policy comes from native
-scheduler plans.
+scheduler plans. Result in-flight capacity is no longer mirrored by a Python
+bounded semaphore; the native scheduler state is the capacity owner while the
+Python transition layer only waits on slot-release notifications.
 
 ## Phase Order
 
