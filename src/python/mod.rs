@@ -95,8 +95,8 @@ use preflight::{
     validate_single_prediction_preflight_shape, validate_single_trait_preflight_shape_payload,
 };
 use preparation::{
-    NativePipelineOutputInitialization, initialize_pipeline_output_run_batch, initialize_pipeline_output_runs,
-    validate_pipeline_resume_compatibility,
+    NativePipelineOutputInitialization, NativePipelineOutputPreparationBatch, initialize_pipeline_output_run_batch,
+    initialize_pipeline_output_runs, validate_pipeline_resume_compatibility,
 };
 use profile::build_profile_snapshot_dict;
 use run_events::{
@@ -1846,6 +1846,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<NativePipelineOutputInitialization>()?;
+    module.add_class::<NativePipelineOutputPreparationBatch>()?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
     module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
     module.add_class::<NativeJaxRuntimeSetupSession>()?;

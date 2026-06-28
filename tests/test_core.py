@@ -353,6 +353,45 @@ def test_native_pipeline_output_initialization_handle_returns_committed_sets(tmp
         native_initialization.committed_chunk_identifiers(1)
 
 
+def test_native_pipeline_output_preparation_batch_initializes_outputs(tmp_path: Path) -> None:
+    run_directory = tmp_path / "run"
+    chunks_directory = run_directory / "chunks"
+    chunks_directory.mkdir(parents=True)
+    existing_manifest_json = json.dumps(
+        {
+            "schema_version": 7,
+            "chunk_size": 32,
+            "committed_chunks": [
+                {
+                    "chunk_identifier": 2,
+                    "variant_start_index": 2,
+                    "variant_stop_index": 4,
+                    "row_count": 2,
+                    "chunk_file_name": "chunk_2.arrow",
+                }
+            ],
+        },
+        sort_keys=True,
+    )
+    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
+    native_preparation_batch = _core.NativePipelineOutputPreparationBatch(
+        run_directories=(str(run_directory),),
+        chunks_directories=(str(chunks_directory),),
+        existing_manifest_json_values=(existing_manifest_json,),
+        current_header_json_values=(current_header_json,),
+        resume=True,
+        resume_mode="fast",
+    )
+
+    native_preparation_batch.validate_resume_compatibility()
+    native_initialization = native_preparation_batch.initialize(build_native_runtime_compatibility_token())
+
+    assert native_preparation_batch.output_count == 1
+    assert native_preparation_batch.resume is True
+    assert isinstance(native_initialization, _core.NativePipelineOutputInitialization)
+    assert native_initialization.committed_chunk_identifiers(0) == [2]
+
+
 def test_native_effective_trusted_no_missing_diploid_policy() -> None:
     assert not _core.resolve_effective_trusted_no_missing_diploid(
         requested_trusted_no_missing_diploid=False,

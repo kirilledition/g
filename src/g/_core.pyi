@@ -1793,6 +1793,26 @@ class NativePipelineOutputInitialization:
     def committed_chunk_identifier_sets(self) -> list[list[int]]: ...
     def committed_chunk_identifiers(self, output_index: int) -> list[int]: ...
 
+class NativePipelineOutputPreparationBatch:
+    def __init__(
+        self,
+        run_directories: typing.Sequence[str],
+        chunks_directories: typing.Sequence[str],
+        existing_manifest_json_values: typing.Sequence[str | None],
+        current_header_json_values: typing.Sequence[str],
+        resume: bool,
+        resume_mode: str,
+    ) -> None: ...
+    @property
+    def output_count(self) -> int: ...
+    @property
+    def resume(self) -> bool: ...
+    def validate_resume_compatibility(self) -> None: ...
+    def initialize(
+        self,
+        runtime_compatibility_token: NativeRuntimeCompatibilityToken,
+    ) -> NativePipelineOutputInitialization: ...
+
 def initialize_pipeline_output_run_batch(
     run_directories: typing.Sequence[str],
     chunks_directories: typing.Sequence[str],

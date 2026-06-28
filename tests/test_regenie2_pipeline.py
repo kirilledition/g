@@ -4584,6 +4584,13 @@ def test_pipeline_output_initialization_returns_native_handle(tmp_path: Path) ->
     output_run_paths = output.OutputRunPaths(tmp_path / "one.run", tmp_path / "one.run/chunks")
     output_run_paths.chunks_directory.mkdir(parents=True)
     current_header = {"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION, "phenotype_name": "one", "chunk_size": 32}
+    native_preparation_batch = pipeline_outputs.build_pipeline_output_preparation_batch(
+        output_run_paths_by_trait=(output_run_paths,),
+        existing_manifests_by_trait=(None,),
+        current_headers_by_trait=(current_header,),
+        resume=False,
+        resume_mode=types.ResumeMode.FAST,
+    )
 
     initialized_outputs = pipeline_outputs.initialize_pipeline_output_runs(
         output_run_paths_by_trait=(output_run_paths,),
@@ -4594,6 +4601,9 @@ def test_pipeline_output_initialization_returns_native_handle(tmp_path: Path) ->
         runtime_compatibility_token=build_test_runtime_compatibility_token(),
     )
 
+    assert isinstance(native_preparation_batch, _core.NativePipelineOutputPreparationBatch)
+    assert native_preparation_batch.output_count == 1
+    assert native_preparation_batch.resume is False
     assert isinstance(initialized_outputs, pipeline_outputs.InitializedPipelineOutputRuns)
     assert isinstance(initialized_outputs.native_initialization, _core.NativePipelineOutputInitialization)
     assert initialized_outputs.native_initialization.output_count == 1

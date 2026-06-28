@@ -247,21 +247,14 @@ def initialize_pipeline_output_runs(
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> InitializedPipelineOutputRuns:
     """Validate/write output manifests and return committed chunk sets."""
-    native_initialization = _core.initialize_pipeline_output_run_batch(
-        tuple(str(output_run_paths.run_directory) for output_run_paths in output_run_paths_by_trait),
-        tuple(str(output_run_paths.chunks_directory) for output_run_paths in output_run_paths_by_trait),
-        tuple(
-            None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True)
-            for existing_manifest in existing_manifests_by_trait
-        ),
-        tuple(
-            json.dumps(output.run_manifest_header_input_to_mapping(current_header), sort_keys=True)
-            for current_header in current_headers_by_trait
-        ),
-        resume,
-        resume_mode.value,
-        runtime_compatibility_token,
+    native_preparation_batch = build_pipeline_output_preparation_batch(
+        output_run_paths_by_trait=output_run_paths_by_trait,
+        existing_manifests_by_trait=existing_manifests_by_trait,
+        current_headers_by_trait=current_headers_by_trait,
+        resume=resume,
+        resume_mode=resume_mode,
     )
+    native_initialization = native_preparation_batch.initialize(runtime_compatibility_token)
     if resume:
         for committed_chunk_identifier_set in native_initialization.committed_chunk_identifier_sets():
             logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifier_set))
@@ -276,7 +269,39 @@ def validate_pipeline_resume_compatibility(
     resume_mode: types.ResumeMode,
 ) -> None:
     """Validate all resume manifests before any output run is mutated."""
-    _core.validate_pipeline_resume_compatibility(
+    native_preparation_batch = build_pipeline_output_preparation_batch(
+        output_run_paths_by_trait=output_run_paths_by_trait,
+        existing_manifests_by_trait=existing_manifests_by_trait,
+        current_headers_by_trait=current_headers_by_trait,
+        resume=True,
+        resume_mode=resume_mode,
+    )
+    native_preparation_batch.validate_resume_compatibility()
+
+
+def build_pipeline_output_preparation_batch(
+    *,
+    output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
+    existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
+    current_headers_by_trait: tuple[output.RunManifestHeaderInput, ...],
+    resume: bool,
+    resume_mode: types.ResumeMode,
+) -> _core.NativePipelineOutputPreparationBatch:
+    """Build the native output-preparation batch handle.
+
+    Args:
+        output_run_paths_by_trait: Output run paths in trait order.
+        existing_manifests_by_trait: Existing manifest mappings in trait order.
+        current_headers_by_trait: Current manifest headers in trait order.
+        resume: Whether this batch will resume existing output runs.
+        resume_mode: Resume validation policy.
+
+    Returns:
+        Native output preparation batch handle.
+
+    """
+    return _core.NativePipelineOutputPreparationBatch(
+        tuple(str(output_run_paths.run_directory) for output_run_paths in output_run_paths_by_trait),
         tuple(str(output_run_paths.chunks_directory) for output_run_paths in output_run_paths_by_trait),
         tuple(
             None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True)
@@ -286,6 +311,7 @@ def validate_pipeline_resume_compatibility(
             json.dumps(output.run_manifest_header_input_to_mapping(current_header), sort_keys=True)
             for current_header in current_headers_by_trait
         ),
+        resume,
         resume_mode.value,
     )
 

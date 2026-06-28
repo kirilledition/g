@@ -27,6 +27,16 @@ pub struct PipelineOutputInitialization {
     committed_chunk_identifier_sets: Vec<Vec<i64>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PipelineOutputPreparationBatch {
+    run_directories: Vec<PathBuf>,
+    chunks_directories: Vec<PathBuf>,
+    existing_manifest_json_values: Vec<Option<String>>,
+    current_header_json_values: Vec<String>,
+    resume: bool,
+    resume_mode: OutputResumeMode,
+}
+
 impl PipelineOutputInitialization {
     #[must_use]
     pub fn new(committed_chunk_identifier_sets: Vec<Vec<i64>>) -> Self {
@@ -46,6 +56,87 @@ impl PipelineOutputInitialization {
     #[must_use]
     pub fn output_count(&self) -> usize {
         self.committed_chunk_identifier_sets.len()
+    }
+}
+
+impl PipelineOutputPreparationBatch {
+    /// Build a native output-preparation batch from per-output preparation inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when per-output input counts are inconsistent.
+    pub fn new(
+        run_directories: Vec<PathBuf>,
+        chunks_directories: Vec<PathBuf>,
+        existing_manifest_json_values: Vec<Option<String>>,
+        current_header_json_values: Vec<String>,
+        resume: bool,
+        resume_mode: OutputResumeMode,
+    ) -> Result<Self, PipelineResumeCompatibilityError> {
+        validate_pipeline_input_counts(
+            chunks_directories.len(),
+            existing_manifest_json_values.len(),
+            current_header_json_values.len(),
+        )?;
+        validate_pipeline_output_directory_counts(run_directories.len(), chunks_directories.len())?;
+        Ok(Self {
+            run_directories,
+            chunks_directories,
+            existing_manifest_json_values,
+            current_header_json_values,
+            resume,
+            resume_mode,
+        })
+    }
+
+    #[must_use]
+    pub fn output_count(&self) -> usize {
+        self.run_directories.len()
+    }
+
+    #[must_use]
+    pub const fn resume(&self) -> bool {
+        self.resume
+    }
+
+    #[must_use]
+    pub const fn resume_mode(&self) -> OutputResumeMode {
+        self.resume_mode
+    }
+
+    /// Validate all resume manifests before output initialization mutates any run directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a resume manifest is missing, manifest compatibility fails, or strict
+    /// resume chunk validation fails.
+    pub fn validate_resume_compatibility(&self) -> Result<(), PipelineResumeCompatibilityError> {
+        validate_pipeline_resume_compatibility_after_count_check(
+            self.chunks_directories.clone(),
+            self.existing_manifest_json_values.clone(),
+            self.current_header_json_values.clone(),
+            self.resume_mode,
+        )
+    }
+
+    /// Initialize all output runs after validating every resume manifest when resume is enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when all-manifest resume validation fails or any output initialization fails.
+    pub fn initialize(&self) -> Result<PipelineOutputInitialization, PipelineResumeCompatibilityError> {
+        if self.resume {
+            self.validate_resume_compatibility()?;
+        }
+        let committed_chunk_identifier_sets = initialize_pipeline_outputs_after_count_check(
+            self.run_directories.clone(),
+            self.chunks_directories.clone(),
+            self.existing_manifest_json_values.clone(),
+            self.current_header_json_values.clone(),
+            self.resume,
+            self.resume_mode,
+        )?;
+        Ok(PipelineOutputInitialization::new(committed_chunk_identifier_sets))
     }
 }
 
@@ -88,27 +179,77 @@ pub fn initialize_pipeline_output_runs(
     resume: bool,
     resume_mode: OutputResumeMode,
 ) -> Result<Vec<Vec<i64>>, PipelineResumeCompatibilityError> {
-    validate_pipeline_input_counts(
-        chunks_directories.len(),
-        existing_manifest_json_values.len(),
-        current_header_json_values.len(),
+    let preparation_batch = PipelineOutputPreparationBatch::new(
+        run_directories,
+        chunks_directories,
+        existing_manifest_json_values,
+        current_header_json_values,
+        resume,
+        resume_mode,
     )?;
-    if run_directories.len() != chunks_directories.len() {
-        return Err(PipelineResumeCompatibilityError::MismatchedOutputRunDirectoryCount {
-            run_directory_count: run_directories.len(),
-            chunks_directory_count: chunks_directories.len(),
+    Ok(preparation_batch.initialize()?.committed_chunk_identifier_sets().to_vec())
+}
+
+/// Initialize all output runs and return a native result handle.
+///
+/// # Errors
+///
+/// Returns an error when input counts differ, all-manifest resume validation fails, or any output initialization fails.
+pub fn initialize_pipeline_output_run_batch(
+    run_directories: Vec<PathBuf>,
+    chunks_directories: Vec<PathBuf>,
+    existing_manifest_json_values: Vec<Option<String>>,
+    current_header_json_values: Vec<String>,
+    resume: bool,
+    resume_mode: OutputResumeMode,
+) -> Result<PipelineOutputInitialization, PipelineResumeCompatibilityError> {
+    let preparation_batch = PipelineOutputPreparationBatch::new(
+        run_directories,
+        chunks_directories,
+        existing_manifest_json_values,
+        current_header_json_values,
+        resume,
+        resume_mode,
+    )?;
+    preparation_batch.initialize()
+}
+
+fn validate_pipeline_input_counts(
+    chunks_directory_count: usize,
+    manifest_count: usize,
+    header_count: usize,
+) -> Result<(), PipelineResumeCompatibilityError> {
+    if chunks_directory_count != manifest_count || chunks_directory_count != header_count {
+        return Err(PipelineResumeCompatibilityError::MismatchedInputCounts {
+            chunks_directory_count,
+            manifest_count,
+            header_count,
         });
     }
+    Ok(())
+}
 
-    if resume {
-        validate_pipeline_resume_compatibility_after_count_check(
-            chunks_directories.clone(),
-            existing_manifest_json_values.clone(),
-            current_header_json_values.clone(),
-            resume_mode,
-        )?;
+fn validate_pipeline_output_directory_counts(
+    run_directory_count: usize,
+    chunks_directory_count: usize,
+) -> Result<(), PipelineResumeCompatibilityError> {
+    if run_directory_count != chunks_directory_count {
+        return Err(PipelineResumeCompatibilityError::MismatchedOutputRunDirectoryCount {
+            run_directory_count,
+            chunks_directory_count,
+        });
     }
+    Ok(())
+}
 
+fn initialize_pipeline_outputs_after_count_check(
+    run_directories: Vec<PathBuf>,
+    chunks_directories: Vec<PathBuf>,
+    existing_manifest_json_values: Vec<Option<String>>,
+    current_header_json_values: Vec<String>,
+    resume: bool,
+    resume_mode: OutputResumeMode,
+) -> Result<Vec<Vec<i64>>, PipelineResumeCompatibilityError> {
     let mut committed_chunk_identifier_sets = Vec::with_capacity(run_directories.len());
     for (((run_directory, chunks_directory), existing_manifest_json), current_header_json) in run_directories
         .into_iter()
@@ -127,45 +268,6 @@ pub fn initialize_pipeline_output_runs(
         committed_chunk_identifier_sets.push(initialized_output_run.committed_chunk_identifiers);
     }
     Ok(committed_chunk_identifier_sets)
-}
-
-/// Initialize all output runs and return a native result handle.
-///
-/// # Errors
-///
-/// Returns an error when input counts differ, all-manifest resume validation fails, or any output initialization fails.
-pub fn initialize_pipeline_output_run_batch(
-    run_directories: Vec<PathBuf>,
-    chunks_directories: Vec<PathBuf>,
-    existing_manifest_json_values: Vec<Option<String>>,
-    current_header_json_values: Vec<String>,
-    resume: bool,
-    resume_mode: OutputResumeMode,
-) -> Result<PipelineOutputInitialization, PipelineResumeCompatibilityError> {
-    let committed_chunk_identifier_sets = initialize_pipeline_output_runs(
-        run_directories,
-        chunks_directories,
-        existing_manifest_json_values,
-        current_header_json_values,
-        resume,
-        resume_mode,
-    )?;
-    Ok(PipelineOutputInitialization::new(committed_chunk_identifier_sets))
-}
-
-fn validate_pipeline_input_counts(
-    chunks_directory_count: usize,
-    manifest_count: usize,
-    header_count: usize,
-) -> Result<(), PipelineResumeCompatibilityError> {
-    if chunks_directory_count != manifest_count || chunks_directory_count != header_count {
-        return Err(PipelineResumeCompatibilityError::MismatchedInputCounts {
-            chunks_directory_count,
-            manifest_count,
-            header_count,
-        });
-    }
-    Ok(())
 }
 
 fn validate_pipeline_resume_compatibility_after_count_check(
@@ -325,6 +427,58 @@ mod tests {
         assert_eq!(initialization.committed_chunk_identifiers(1), None);
 
         std::fs::remove_dir_all(run_directory).expect("test output directory should be removed");
+    }
+
+    #[test]
+    fn pipeline_output_preparation_batch_validates_resume_and_initializes_outputs() {
+        let unique_suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("current time should be after Unix epoch")
+            .as_nanos();
+        let run_directory = std::env::temp_dir().join(format!("g-engine-output-prep-batch-test-{unique_suffix}"));
+        let chunks_directory = run_directory.join("chunks");
+        std::fs::create_dir_all(&chunks_directory).expect("test output directory should be created");
+
+        let committed_chunks_manifest = r#"{"schema_version":7,"chunk_size":32,"committed_chunks":[{"chunk_identifier":2,"variant_start_index":2,"variant_stop_index":4,"row_count":2,"chunk_file_name":"chunk_2.arrow"}]}"#.to_string();
+        let current_header = r#"{"schema_version":7,"chunk_size":32}"#.to_string();
+        let preparation_batch = PipelineOutputPreparationBatch::new(
+            vec![run_directory.clone()],
+            vec![chunks_directory],
+            vec![Some(committed_chunks_manifest)],
+            vec![current_header],
+            true,
+            OutputResumeMode::Fast,
+        )
+        .unwrap();
+
+        preparation_batch.validate_resume_compatibility().unwrap();
+        let initialization = preparation_batch.initialize().unwrap();
+
+        assert_eq!(preparation_batch.output_count(), 1);
+        assert!(preparation_batch.resume());
+        assert_eq!(preparation_batch.resume_mode(), OutputResumeMode::Fast);
+        assert_eq!(initialization.committed_chunk_identifier_sets(), &[vec![2]]);
+
+        std::fs::remove_dir_all(run_directory).expect("test output directory should be removed");
+    }
+
+    #[test]
+    fn rejects_pipeline_output_preparation_batch_mismatched_counts() {
+        let error = PipelineOutputPreparationBatch::new(
+            vec![PathBuf::from("run")],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            false,
+            OutputResumeMode::Fast,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Pipeline output run directory count must match chunks directory count: \
+             run_directory_count=1, chunks_directory_count=0.",
+        );
     }
 
     #[test]
