@@ -1206,20 +1206,24 @@ def test_describe_runtime_state_reports_process_global_state() -> None:
     )
     telemetry_paths = telemetry_module.resolve_telemetry_paths(regenie_config)
     runtime_policy = runner_runtime.build_runtime_policy(regenie_config, telemetry_paths)
+    process_runtime_state = build_test_process_runtime_state(
+        runtime_policy.logging_policy,
+        runtime_policy.rayon_thread_count,
+        runtime_policy.jax_policy,
+    )
 
     assert isinstance(runtime_policy.native_policy, _core.NativeRuntimePolicy)
     with (
-        patch(
-            "g.runner.runtime.PROCESS_RUNTIME_STATE",
-            build_test_process_runtime_state(
-                runtime_policy.logging_policy,
-                runtime_policy.rayon_thread_count,
-                runtime_policy.jax_policy,
-            ),
-        ),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", process_runtime_state),
     ):
+        run_runtime = runner_runtime.build_run_runtime(runtime_policy)
         runtime_state = api.describe_runtime_state()
 
+    assert isinstance(run_runtime.native_runtime, _core.NativeRunRuntime)
+    assert isinstance(run_runtime.runtime_compatibility_token, _core.NativeRuntimeCompatibilityToken)
+    assert run_runtime.logging_policy == runtime_policy.logging_policy
+    assert run_runtime.rayon_thread_count == runtime_policy.rayon_thread_count
+    assert run_runtime.jax_policy == runtime_policy.jax_policy
     assert runtime_state == api.RuntimeState(
         logging_policy=runtime_policy.logging_policy,
         rayon_thread_count=4,

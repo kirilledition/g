@@ -32,6 +32,12 @@ pub struct RuntimePolicyPayload {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunRuntime {
+    pub runtime_policy: RuntimePolicyPayload,
+    pub compatibility_token: RuntimeCompatibilityToken,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeCompatibilityToken {
     _private: (),
 }
@@ -125,6 +131,20 @@ impl ProcessRuntimeState {
             runtime_policy.rayon_thread_count,
             &runtime_policy.jax_policy,
         )
+    }
+
+    /// Build a run-scoped runtime handle after compatibility checks pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any requested process-global runtime setting
+    /// conflicts with previously configured state.
+    pub fn build_run_runtime(
+        &self,
+        runtime_policy: RuntimePolicyPayload,
+    ) -> Result<RunRuntime, RuntimeCompatibilityError> {
+        let compatibility_token = self.require_compatible_runtime_policy_payload(&runtime_policy)?;
+        Ok(RunRuntime { runtime_policy, compatibility_token })
     }
 
     /// Require logging compatibility with previously configured process state.
@@ -421,5 +441,23 @@ mod tests {
             .expect("matching runtime policy payload should issue a token");
 
         assert_eq!(token, RuntimeCompatibilityToken { _private: () });
+    }
+
+    #[test]
+    fn builds_run_runtime_after_compatibility_checks() {
+        let mut state = ProcessRuntimeState::default();
+        state.record_logging_policy(build_policy("info"));
+        let runtime_policy = RuntimePolicyPayload {
+            logging_policy: build_policy("info"),
+            rayon_thread_count: None,
+            jax_policy: build_jax_policy(Some("/tmp/cache")),
+        };
+
+        let run_runtime = state
+            .build_run_runtime(runtime_policy.clone())
+            .expect("matching runtime policy should produce run runtime handle");
+
+        assert_eq!(run_runtime.runtime_policy, runtime_policy);
+        assert_eq!(run_runtime.compatibility_token, RuntimeCompatibilityToken { _private: () });
     }
 }

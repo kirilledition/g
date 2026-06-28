@@ -973,6 +973,12 @@ class NativeRuntimePolicy:
     def logging_runtime_policy_payload(self) -> dict[str, object]: ...
     def jax_runtime_policy_payload(self) -> dict[str, object]: ...
 
+class NativeRunRuntime:
+    rayon_thread_count: int | None
+    def logging_runtime_policy_payload(self) -> dict[str, object]: ...
+    def jax_runtime_policy_payload(self) -> dict[str, object]: ...
+    def runtime_compatibility_token(self) -> NativeRuntimeCompatibilityToken: ...
+
 class NativeRayonThreadPoolConfigurationPlan:
     should_configure: bool
     thread_count: int | None
@@ -991,6 +997,10 @@ class NativeRuntimeState:
         rayon_thread_count: int | None,
         jax_policy_payload: dict[str, object],
     ) -> NativeRuntimeCompatibilityToken: ...
+    def build_run_runtime(
+        self,
+        runtime_policy: NativeRuntimePolicy,
+    ) -> NativeRunRuntime: ...
     def require_compatible_runtime_policy_handle(
         self,
         runtime_policy: NativeRuntimePolicy,

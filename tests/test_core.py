@@ -412,13 +412,19 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
     )
     runtime_policy = _core.build_runtime_policy_handle(logging_policy_payload, None, jax_policy_payload)
     runtime_token_from_policy_handle = runtime_state.require_compatible_runtime_policy_handle(runtime_policy)
+    run_runtime = runtime_state.build_run_runtime(runtime_policy)
 
     assert isinstance(runtime_token, _core.NativeRuntimeCompatibilityToken)
     assert isinstance(runtime_policy, _core.NativeRuntimePolicy)
     assert isinstance(runtime_token_from_policy_handle, _core.NativeRuntimeCompatibilityToken)
+    assert isinstance(run_runtime, _core.NativeRunRuntime)
+    assert isinstance(run_runtime.runtime_compatibility_token(), _core.NativeRuntimeCompatibilityToken)
     assert runtime_policy.rayon_thread_count is None
     assert runtime_policy.logging_runtime_policy_payload() == logging_policy_payload
     assert runtime_policy.jax_runtime_policy_payload() == jax_policy_payload
+    assert run_runtime.rayon_thread_count is None
+    assert run_runtime.logging_runtime_policy_payload() == logging_policy_payload
+    assert run_runtime.jax_runtime_policy_payload() == jax_policy_payload
 
     runtime_state.record_jax_runtime_policy({**jax_policy_payload, "cache_directory": "/tmp/first-cache"})
     with pytest.raises(RuntimeError, match="JAX runtime is already configured"):

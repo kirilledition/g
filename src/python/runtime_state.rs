@@ -30,6 +30,11 @@ pub(crate) struct NativeRuntimePolicy {
 }
 
 #[pyclass]
+pub(crate) struct NativeRunRuntime {
+    runtime: native_runtime_state::RunRuntime,
+}
+
+#[pyclass]
 pub(crate) struct NativeRuntimeState {
     state: Mutex<native_runtime_state::ProcessRuntimeState>,
 }
@@ -114,6 +119,26 @@ impl NativeRuntimePolicy {
 }
 
 #[pymethods]
+impl NativeRunRuntime {
+    #[getter]
+    fn rayon_thread_count(&self) -> Option<i64> {
+        self.runtime.runtime_policy.rayon_thread_count
+    }
+
+    fn logging_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        logging_runtime_policy_payload_to_dict(py, &self.runtime.runtime_policy.logging_policy)
+    }
+
+    fn jax_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        jax_runtime_policy_payload_to_dict(py, &self.runtime.runtime_policy.jax_policy)
+    }
+
+    fn runtime_compatibility_token(&self) -> NativeRuntimeCompatibilityToken {
+        NativeRuntimeCompatibilityToken { token: self.runtime.compatibility_token.clone() }
+    }
+}
+
+#[pymethods]
 impl NativeRuntimeState {
     #[new]
     fn new() -> Self {
@@ -148,6 +173,14 @@ impl NativeRuntimeState {
             .require_compatible_runtime_policy(&logging_policy, rayon_thread_count, &jax_policy)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(NativeRuntimeCompatibilityToken { token })
+    }
+
+    fn build_run_runtime(&self, runtime_policy: &NativeRuntimePolicy) -> PyResult<NativeRunRuntime> {
+        let runtime = self
+            .lock_state()?
+            .build_run_runtime(runtime_policy.policy.clone())
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(NativeRunRuntime { runtime })
     }
 
     fn require_compatible_runtime_policy_handle(

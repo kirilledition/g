@@ -111,8 +111,9 @@ use runtime::{
 use runtime_paths::build_default_local_cache_directory_value;
 use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
 use runtime_state::{
-    NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRuntimeCompatibilityToken,
-    NativeRuntimePolicy, NativeRuntimeState, build_jax_runtime_policy_payload, build_runtime_policy_handle,
+    NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRunRuntime,
+    NativeRuntimeCompatibilityToken, NativeRuntimePolicy, NativeRuntimeState, build_jax_runtime_policy_payload,
+    build_runtime_policy_handle,
 };
 use schedule::{
     NativeBgenDeliveryCleanupPlan, NativeBgenDeliveryInvocationPlan, NativeCallbackQueueLimits,
@@ -1842,6 +1843,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
     module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
     module.add_class::<NativeRayonThreadPoolConfigurationPlan>()?;
+    module.add_class::<NativeRunRuntime>()?;
     module.add_class::<NativeRuntimeCompatibilityToken>()?;
     module.add_class::<NativeRuntimePolicy>()?;
     module.add_class::<NativeRuntimeState>()?;

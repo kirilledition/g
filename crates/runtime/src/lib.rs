@@ -39,8 +39,8 @@ pub use runtime_paths::build_default_local_cache_directory;
 pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_policy, describe_logging_runtime_policy};
 pub use runtime_state::{
     JaxRuntimePolicyPayload, JaxRuntimeSetupLifecyclePlan, ProcessRuntimeState, RayonThreadPoolConfigurationPlan,
-    RuntimeCompatibilityError, RuntimeCompatibilityToken, RuntimePolicyPayload, build_jax_runtime_policy_payload,
-    describe_jax_runtime_policy,
+    RunRuntime, RuntimeCompatibilityError, RuntimeCompatibilityToken, RuntimePolicyPayload,
+    build_jax_runtime_policy_payload, describe_jax_runtime_policy,
 };
 pub use shutdown::{
     SecondSignalExceptionPlan, ShutdownControllerState, ShutdownRequestAction, ShutdownRequestDecisionPayload,

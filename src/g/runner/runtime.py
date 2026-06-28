@@ -77,6 +77,38 @@ class RuntimePolicy:
 
 
 @dataclass(frozen=True)
+class RunRuntime:
+    """Run-scoped native runtime handle after compatibility checks pass.
+
+    Attributes:
+        native_runtime: Native run runtime handle.
+
+    """
+
+    native_runtime: _core.NativeRunRuntime
+
+    @property
+    def runtime_compatibility_token(self) -> _core.NativeRuntimeCompatibilityToken:
+        """Return the native token proving runtime compatibility checks passed."""
+        return self.native_runtime.runtime_compatibility_token()
+
+    @property
+    def logging_policy(self) -> LoggingRuntimePolicy:
+        """Return the checked logging and tracing sink policy view."""
+        return logging_runtime_policy_from_native_payload(self.native_runtime.logging_runtime_policy_payload())
+
+    @property
+    def rayon_thread_count(self) -> int | None:
+        """Return the checked Rayon thread count, or None when unset."""
+        return self.native_runtime.rayon_thread_count
+
+    @property
+    def jax_policy(self) -> jax_runtime_models.JaxRuntimePolicy:
+        """Return the checked JAX runtime policy view."""
+        return jax_runtime_policy_from_native_payload(self.native_runtime.jax_runtime_policy_payload())
+
+
+@dataclass(frozen=True)
 class RuntimeState:
     """Process-global runtime choices already configured in this Python process.
 
@@ -347,7 +379,12 @@ def configured_jax_runtime_policy() -> jax_runtime_models.JaxRuntimePolicy | Non
 
 def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> _core.NativeRuntimeCompatibilityToken:
     """Return a native token after process-global runtime checks pass."""
-    return PROCESS_RUNTIME_STATE.require_compatible_runtime_policy_handle(runtime_policy.native_policy)
+    return build_run_runtime(runtime_policy).runtime_compatibility_token
+
+
+def build_run_runtime(runtime_policy: RuntimePolicy) -> RunRuntime:
+    """Build a run-scoped native runtime handle after compatibility checks pass."""
+    return RunRuntime(native_runtime=PROCESS_RUNTIME_STATE.build_run_runtime(runtime_policy.native_policy))
 
 
 def describe_runtime_state() -> RuntimeState:

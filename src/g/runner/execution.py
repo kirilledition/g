@@ -95,7 +95,7 @@ def regenie(
     try:
         config.validate_config_for_run(regenie_config)
         runtime_policy = runtime.build_runtime_policy(regenie_config, active_telemetry_session.paths)
-        runtime_compatibility_token = runtime.require_compatible_runtime_policy(runtime_policy)
+        run_runtime = runtime.build_run_runtime(runtime_policy)
         if initialize_logging_on_entry:
             runtime.initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
         association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
@@ -113,7 +113,7 @@ def regenie(
         artifacts = run_validated_regenie_config(
             regenie_config,
             telemetry_session=active_telemetry_session,
-            runtime_compatibility_token=runtime_compatibility_token,
+            runtime_compatibility_token=run_runtime.runtime_compatibility_token,
         )
     except shutdown.GracefulShutdownRequested as shutdown_request:
         interrupted_event = run_events.build_run_interrupted_event(shutdown_request)
