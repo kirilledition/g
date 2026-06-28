@@ -2143,8 +2143,8 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
     callback = BatchedCallbackRunner()
     try:
         with patch(
-            "g.engine.callbacks.runtime._core.plan_callback_queue_stage_observation",
-            side_effect=AssertionError("runner should use scheduler queue stage planner"),
+            "g.engine.callbacks.runtime._core.plan_callback_queue_stage_backpressure_observation",
+            side_effect=AssertionError("runner should use scheduler queue stage backpressure planner"),
         ):
             callback.compute_preprocessed_variant_major_dosage_chunk_batch(
                 metadata_batch=(first_metadata, second_metadata),
@@ -2467,8 +2467,8 @@ def test_native_callback_runner_records_native_dosage_buffer_operation_observati
     callback.stage_timing_recorder = stage_timing_recorder
 
     with patch(
-        "g.engine.callbacks.runtime._core.plan_callback_queue_operation_observation",
-        side_effect=AssertionError("runner should use scheduler queue operation planner"),
+        "g.engine.callbacks.runtime._core.plan_callback_queue_backpressure_observation",
+        side_effect=AssertionError("runner should use scheduler queue backpressure planner"),
     ):
         dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
         callback.release_dosage_buffer(dosage_buffer)

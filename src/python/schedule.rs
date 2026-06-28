@@ -84,6 +84,16 @@ pub(crate) struct NativeCallbackQueueStageObservationPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeCallbackQueueBackpressureObservation {
+    inner: native_schedule::CallbackQueueBackpressureObservation,
+}
+
+#[pyclass]
+pub(crate) struct NativeCallbackQueueStageBackpressureObservation {
+    inner: native_schedule::CallbackQueueStageBackpressureObservation,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageBufferPoolState {
     inner: native_schedule::DosageBufferPoolState,
 }
@@ -453,6 +463,29 @@ impl NativeCallbackSchedulerState {
     }
 
     #[allow(clippy::needless_pass_by_value)]
+    fn plan_queue_backpressure_observation(
+        &self,
+        queue_name: String,
+        operation_name: String,
+        queue_depth: usize,
+        queue_capacity: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+        self.inner
+            .plan_queue_backpressure_observation(
+                &queue_name,
+                &operation_name,
+                queue_depth,
+                queue_capacity,
+                elapsed_seconds,
+                blocked,
+            )
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
     fn plan_queue_stage_observation(
         &self,
         queue_name: String,
@@ -462,6 +495,29 @@ impl NativeCallbackSchedulerState {
     ) -> PyResult<NativeCallbackQueueStageObservationPlan> {
         self.inner
             .plan_queue_stage_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn plan_queue_stage_backpressure_observation(
+        &self,
+        queue_name: String,
+        operation_name: String,
+        queue_depth: usize,
+        queue_capacity: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
+        self.inner
+            .plan_queue_stage_backpressure_observation(
+                &queue_name,
+                &operation_name,
+                queue_depth,
+                queue_capacity,
+                elapsed_seconds,
+                blocked,
+            )
             .map(Into::into)
             .map_err(|error| schedule_error_to_py(&error))
     }
@@ -757,6 +813,39 @@ impl NativeCallbackQueueOperationObservationPlan {
 }
 
 #[pymethods]
+impl NativeCallbackQueueBackpressureObservation {
+    #[getter]
+    fn queue_name(&self) -> &str {
+        &self.inner.queue_name
+    }
+
+    #[getter]
+    fn operation_name(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    #[getter]
+    fn queue_depth(&self) -> usize {
+        self.inner.queue_depth
+    }
+
+    #[getter]
+    fn queue_capacity(&self) -> usize {
+        self.inner.queue_capacity
+    }
+
+    #[getter]
+    fn elapsed_seconds(&self) -> f64 {
+        self.inner.elapsed_seconds
+    }
+
+    #[getter]
+    fn blocked_seconds(&self) -> f64 {
+        self.inner.blocked_seconds
+    }
+}
+
+#[pymethods]
 impl NativeCallbackQueueStageObservationPlan {
     #[getter]
     fn queue_name(&self) -> &str {
@@ -771,6 +860,44 @@ impl NativeCallbackQueueStageObservationPlan {
     #[getter]
     fn stage_name(&self) -> &str {
         &self.inner.stage_name
+    }
+
+    #[getter]
+    fn blocked_seconds(&self) -> f64 {
+        self.inner.blocked_seconds
+    }
+}
+
+#[pymethods]
+impl NativeCallbackQueueStageBackpressureObservation {
+    #[getter]
+    fn queue_name(&self) -> &str {
+        &self.inner.queue_name
+    }
+
+    #[getter]
+    fn operation_name(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    #[getter]
+    fn stage_name(&self) -> &str {
+        &self.inner.stage_name
+    }
+
+    #[getter]
+    fn queue_depth(&self) -> usize {
+        self.inner.queue_depth
+    }
+
+    #[getter]
+    fn queue_capacity(&self) -> usize {
+        self.inner.queue_capacity
+    }
+
+    #[getter]
+    fn elapsed_seconds(&self) -> f64 {
+        self.inner.elapsed_seconds
     }
 
     #[getter]
@@ -924,9 +1051,23 @@ impl From<native_schedule::CallbackQueueOperationObservationPlan> for NativeCall
     }
 }
 
+impl From<native_schedule::CallbackQueueBackpressureObservation> for NativeCallbackQueueBackpressureObservation {
+    fn from(observation: native_schedule::CallbackQueueBackpressureObservation) -> Self {
+        Self { inner: observation }
+    }
+}
+
 impl From<native_schedule::CallbackQueueStageObservationPlan> for NativeCallbackQueueStageObservationPlan {
     fn from(observation_plan: native_schedule::CallbackQueueStageObservationPlan) -> Self {
         Self { inner: observation_plan }
+    }
+}
+
+impl From<native_schedule::CallbackQueueStageBackpressureObservation>
+    for NativeCallbackQueueStageBackpressureObservation
+{
+    fn from(observation: native_schedule::CallbackQueueStageBackpressureObservation) -> Self {
+        Self { inner: observation }
     }
 }
 
@@ -1291,6 +1432,28 @@ pub(crate) fn plan_callback_queue_operation_observation(
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_callback_queue_backpressure_observation(
+    queue_name: String,
+    operation_name: String,
+    queue_depth: usize,
+    queue_capacity: usize,
+    elapsed_seconds: f64,
+    blocked: bool,
+) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+    native_schedule::plan_callback_queue_backpressure_observation(
+        &queue_name,
+        &operation_name,
+        queue_depth,
+        queue_capacity,
+        elapsed_seconds,
+        blocked,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn plan_callback_queue_stage_observation(
     queue_name: String,
     operation_name: String,
@@ -1300,6 +1463,28 @@ pub(crate) fn plan_callback_queue_stage_observation(
     native_schedule::plan_callback_queue_stage_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
         .map(Into::into)
         .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_callback_queue_stage_backpressure_observation(
+    queue_name: String,
+    operation_name: String,
+    queue_depth: usize,
+    queue_capacity: usize,
+    elapsed_seconds: f64,
+    blocked: bool,
+) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
+    native_schedule::plan_callback_queue_stage_backpressure_observation(
+        &queue_name,
+        &operation_name,
+        queue_depth,
+        queue_capacity,
+        elapsed_seconds,
+        blocked,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
 }
 
 fn schedule_error_to_py(error: &native_schedule::ScheduleError) -> PyErr {

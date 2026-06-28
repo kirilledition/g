@@ -191,6 +191,27 @@ pub struct CallbackQueueOperationObservationPlan {
     pub blocked_seconds: f64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct CallbackQueueBackpressureObservation {
+    pub queue_name: String,
+    pub operation_name: String,
+    pub queue_depth: usize,
+    pub queue_capacity: usize,
+    pub elapsed_seconds: f64,
+    pub blocked_seconds: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CallbackQueueStageBackpressureObservation {
+    pub queue_name: String,
+    pub operation_name: String,
+    pub stage_name: String,
+    pub queue_depth: usize,
+    pub queue_capacity: usize,
+    pub elapsed_seconds: f64,
+    pub blocked_seconds: f64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackQueueOccupancyState {
     queue_capacity: usize,
@@ -636,6 +657,31 @@ impl CallbackSchedulerState {
         plan_callback_queue_operation_observation(queue_name, operation_name, elapsed_seconds, blocked)
     }
 
+    /// Plan one aggregate callback queue or bounded-resource backpressure observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the queue/resource and operation pair is not part
+    /// of the callback scheduler observation contract.
+    pub fn plan_queue_backpressure_observation(
+        &self,
+        queue_name: &str,
+        operation_name: &str,
+        queue_depth: usize,
+        queue_capacity: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> Result<CallbackQueueBackpressureObservation, ScheduleError> {
+        plan_callback_queue_backpressure_observation(
+            queue_name,
+            operation_name,
+            queue_depth,
+            queue_capacity,
+            elapsed_seconds,
+            blocked,
+        )
+    }
+
     /// Plan one timed callback queue or bounded-resource observation.
     ///
     /// # Errors
@@ -650,6 +696,31 @@ impl CallbackSchedulerState {
         blocked: bool,
     ) -> Result<CallbackQueueStageObservationPlan, ScheduleError> {
         plan_callback_queue_stage_observation(queue_name, operation_name, elapsed_seconds, blocked)
+    }
+
+    /// Plan one timed callback queue or bounded-resource backpressure observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the queue/resource and operation pair does not
+    /// have a canonical callback timing stage.
+    pub fn plan_queue_stage_backpressure_observation(
+        &self,
+        queue_name: &str,
+        operation_name: &str,
+        queue_depth: usize,
+        queue_capacity: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> Result<CallbackQueueStageBackpressureObservation, ScheduleError> {
+        plan_callback_queue_stage_backpressure_observation(
+            queue_name,
+            operation_name,
+            queue_depth,
+            queue_capacity,
+            elapsed_seconds,
+            blocked,
+        )
     }
 
     #[must_use]
@@ -1573,6 +1644,32 @@ pub fn plan_callback_queue_operation_observation(
     })
 }
 
+/// Plan one complete aggregate callback queue or bounded-resource observation payload.
+///
+/// # Errors
+///
+/// Returns an error when the queue/resource and operation pair is not part of
+/// the callback scheduler observation contract.
+pub fn plan_callback_queue_backpressure_observation(
+    queue_name: &str,
+    operation_name: &str,
+    queue_depth: usize,
+    queue_capacity: usize,
+    elapsed_seconds: f64,
+    blocked: bool,
+) -> Result<CallbackQueueBackpressureObservation, ScheduleError> {
+    let operation_plan =
+        plan_callback_queue_operation_observation(queue_name, operation_name, elapsed_seconds, blocked)?;
+    Ok(CallbackQueueBackpressureObservation {
+        queue_name: operation_plan.queue_name,
+        operation_name: operation_plan.operation_name,
+        queue_depth,
+        queue_capacity,
+        elapsed_seconds,
+        blocked_seconds: operation_plan.blocked_seconds,
+    })
+}
+
 /// Plan one timed callback queue or bounded-resource observation.
 ///
 /// # Errors
@@ -1598,6 +1695,32 @@ pub fn plan_callback_queue_stage_observation(
         operation_name: operation_plan.operation_name,
         stage_name: stage_name.to_string(),
         blocked_seconds: operation_plan.blocked_seconds,
+    })
+}
+
+/// Plan one complete timed callback queue or bounded-resource observation payload.
+///
+/// # Errors
+///
+/// Returns an error when the queue/resource and operation pair does not have a
+/// canonical callback timing stage.
+pub fn plan_callback_queue_stage_backpressure_observation(
+    queue_name: &str,
+    operation_name: &str,
+    queue_depth: usize,
+    queue_capacity: usize,
+    elapsed_seconds: f64,
+    blocked: bool,
+) -> Result<CallbackQueueStageBackpressureObservation, ScheduleError> {
+    let stage_plan = plan_callback_queue_stage_observation(queue_name, operation_name, elapsed_seconds, blocked)?;
+    Ok(CallbackQueueStageBackpressureObservation {
+        queue_name: stage_plan.queue_name,
+        operation_name: stage_plan.operation_name,
+        stage_name: stage_plan.stage_name,
+        queue_depth,
+        queue_capacity,
+        elapsed_seconds,
+        blocked_seconds: stage_plan.blocked_seconds,
     })
 }
 
@@ -2066,12 +2189,46 @@ mod tests {
         );
         assert_eq!(
             scheduler_state
+                .plan_queue_backpressure_observation(DOSAGE_BUFFER_POOL_NAME, QUEUE_RETURN_OPERATION, 1, 2, 0.25, true)
+                .unwrap(),
+            CallbackQueueBackpressureObservation {
+                queue_name: DOSAGE_BUFFER_POOL_NAME.to_string(),
+                operation_name: QUEUE_RETURN_OPERATION.to_string(),
+                queue_depth: 1,
+                queue_capacity: 2,
+                elapsed_seconds: 0.25,
+                blocked_seconds: 0.25,
+            },
+        );
+        assert_eq!(
+            scheduler_state
                 .plan_queue_stage_observation(DOSAGE_QUEUE_NAME, QUEUE_PRODUCER_BLOCKING_OPERATION, 0.5, true)
                 .unwrap(),
             CallbackQueueStageObservationPlan {
                 queue_name: DOSAGE_QUEUE_NAME.to_string(),
                 operation_name: QUEUE_PRODUCER_BLOCKING_OPERATION.to_string(),
                 stage_name: "callback_queue_producer_blocking".to_string(),
+                blocked_seconds: 0.5,
+            },
+        );
+        assert_eq!(
+            scheduler_state
+                .plan_queue_stage_backpressure_observation(
+                    DOSAGE_QUEUE_NAME,
+                    QUEUE_PRODUCER_BLOCKING_OPERATION,
+                    3,
+                    3,
+                    0.5,
+                    true,
+                )
+                .unwrap(),
+            CallbackQueueStageBackpressureObservation {
+                queue_name: DOSAGE_QUEUE_NAME.to_string(),
+                operation_name: QUEUE_PRODUCER_BLOCKING_OPERATION.to_string(),
+                stage_name: "callback_queue_producer_blocking".to_string(),
+                queue_depth: 3,
+                queue_capacity: 3,
+                elapsed_seconds: 0.5,
                 blocked_seconds: 0.5,
             },
         );
@@ -2406,6 +2563,18 @@ mod tests {
                 blocked_seconds: 0.5,
             },
         );
+        assert_eq!(
+            plan_callback_queue_stage_backpressure_observation("dosage_queue", "put", 2, 3, 0.25, false).unwrap(),
+            CallbackQueueStageBackpressureObservation {
+                queue_name: "dosage_queue".to_string(),
+                operation_name: "put".to_string(),
+                stage_name: "callback_queue_put".to_string(),
+                queue_depth: 2,
+                queue_capacity: 3,
+                elapsed_seconds: 0.25,
+                blocked_seconds: 0.0,
+            },
+        );
     }
 
     #[test]
@@ -2424,6 +2593,17 @@ mod tests {
                 queue_name: "result_in_flight_slots".to_string(),
                 operation_name: "release".to_string(),
                 blocked_seconds: 0.5,
+            },
+        );
+        assert_eq!(
+            plan_callback_queue_backpressure_observation("dosage_buffer_pool", "reuse", 1, 2, 0.25, false).unwrap(),
+            CallbackQueueBackpressureObservation {
+                queue_name: "dosage_buffer_pool".to_string(),
+                operation_name: "reuse".to_string(),
+                queue_depth: 1,
+                queue_capacity: 2,
+                elapsed_seconds: 0.25,
+                blocked_seconds: 0.0,
             },
         );
     }

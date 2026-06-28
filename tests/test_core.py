@@ -1135,6 +1135,21 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     assert queue_operation_plan.operation_name == "return"
     assert queue_operation_plan.blocked_seconds == 0.25
 
+    queue_backpressure_observation = scheduler_state.plan_queue_backpressure_observation(
+        queue_name="dosage_buffer_pool",
+        operation_name="return",
+        queue_depth=1,
+        queue_capacity=2,
+        elapsed_seconds=0.25,
+        blocked=True,
+    )
+    assert queue_backpressure_observation.queue_name == "dosage_buffer_pool"
+    assert queue_backpressure_observation.operation_name == "return"
+    assert queue_backpressure_observation.queue_depth == 1
+    assert queue_backpressure_observation.queue_capacity == 2
+    assert queue_backpressure_observation.elapsed_seconds == 0.25
+    assert queue_backpressure_observation.blocked_seconds == 0.25
+
     queue_stage_plan = scheduler_state.plan_queue_stage_observation(
         queue_name="dosage_queue",
         operation_name="producer_blocking",
@@ -1145,6 +1160,22 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     assert queue_stage_plan.operation_name == "producer_blocking"
     assert queue_stage_plan.stage_name == "callback_queue_producer_blocking"
     assert queue_stage_plan.blocked_seconds == 0.5
+
+    queue_stage_backpressure_observation = scheduler_state.plan_queue_stage_backpressure_observation(
+        queue_name="dosage_queue",
+        operation_name="producer_blocking",
+        queue_depth=3,
+        queue_capacity=3,
+        elapsed_seconds=0.5,
+        blocked=True,
+    )
+    assert queue_stage_backpressure_observation.queue_name == "dosage_queue"
+    assert queue_stage_backpressure_observation.operation_name == "producer_blocking"
+    assert queue_stage_backpressure_observation.stage_name == "callback_queue_producer_blocking"
+    assert queue_stage_backpressure_observation.queue_depth == 3
+    assert queue_stage_backpressure_observation.queue_capacity == 3
+    assert queue_stage_backpressure_observation.elapsed_seconds == 0.5
+    assert queue_stage_backpressure_observation.blocked_seconds == 0.5
 
     reuse_plan = scheduler_state.plan_dosage_buffer_reuse(
         buffered_shape=(4, 5),
@@ -1490,6 +1521,22 @@ def test_plan_callback_queue_stage_observation_uses_native_timing_policy() -> No
     assert queue_observation_plan.stage_name == "callback_queue_put"
     assert queue_observation_plan.blocked_seconds == 0.0
 
+    queue_backpressure_observation = _core.plan_callback_queue_stage_backpressure_observation(
+        queue_name="dosage_queue",
+        operation_name="put",
+        queue_depth=2,
+        queue_capacity=3,
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    assert queue_backpressure_observation.queue_name == "dosage_queue"
+    assert queue_backpressure_observation.operation_name == "put"
+    assert queue_backpressure_observation.stage_name == "callback_queue_put"
+    assert queue_backpressure_observation.queue_depth == 2
+    assert queue_backpressure_observation.queue_capacity == 3
+    assert queue_backpressure_observation.elapsed_seconds == 0.25
+    assert queue_backpressure_observation.blocked_seconds == 0.0
+
     blocked_observation_plan = _core.plan_callback_queue_stage_observation(
         queue_name="result_in_flight_slots",
         operation_name="producer_blocking",
@@ -1518,6 +1565,21 @@ def test_plan_callback_queue_operation_observation_uses_native_timing_policy() -
     assert pool_observation_plan.queue_name == "dosage_buffer_pool"
     assert pool_observation_plan.operation_name == "reuse"
     assert pool_observation_plan.blocked_seconds == 0.0
+
+    pool_backpressure_observation = _core.plan_callback_queue_backpressure_observation(
+        queue_name="dosage_buffer_pool",
+        operation_name="reuse",
+        queue_depth=1,
+        queue_capacity=2,
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    assert pool_backpressure_observation.queue_name == "dosage_buffer_pool"
+    assert pool_backpressure_observation.operation_name == "reuse"
+    assert pool_backpressure_observation.queue_depth == 1
+    assert pool_backpressure_observation.queue_capacity == 2
+    assert pool_backpressure_observation.elapsed_seconds == 0.25
+    assert pool_backpressure_observation.blocked_seconds == 0.0
 
     blocked_observation_plan = _core.plan_callback_queue_operation_observation(
         queue_name="result_in_flight_slots",

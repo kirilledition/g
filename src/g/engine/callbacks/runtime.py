@@ -22,8 +22,6 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.engine import telemetry, timing
 
 if typing.TYPE_CHECKING:
-    import queue
-
     import jax
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
@@ -288,62 +286,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             return None
         return self.record_stage_duration
 
-    def record_queue_operation(
-        self,
-        *,
-        queue_name: str,
-        operation_name: str,
-        observed_queue: queue.Queue[typing.Any],
-        elapsed_seconds: float,
-        blocked: bool,
-    ) -> None:
-        """Record aggregate queue depth and wait metadata."""
-        if self.stage_timing_recorder is None:
-            return
-        observation_plan = self.callback_scheduler_state.plan_queue_operation_observation(
-            queue_name=queue_name,
-            operation_name=operation_name,
-            elapsed_seconds=elapsed_seconds,
-            blocked=blocked,
-        )
-        self.stage_timing_recorder.add_queue_backpressure_observation(
-            queue_name=observation_plan.queue_name,
-            operation_name=observation_plan.operation_name,
-            queue_depth=observed_queue.qsize(),
-            queue_capacity=observed_queue.maxsize,
-            elapsed_seconds=elapsed_seconds,
-            blocked_seconds=observation_plan.blocked_seconds,
-        )
-
-    def record_queue_stage_duration(
-        self,
-        *,
-        queue_name: str,
-        operation_name: str,
-        observed_queue: queue.Queue[typing.Any],
-        start_time: float,
-        blocked: bool,
-    ) -> None:
-        """Record a queue stage duration plus aggregate pressure metadata."""
-        elapsed_seconds = time.perf_counter() - start_time
-        if self.stage_timing_recorder is None:
-            return
-        observation_plan = self.callback_scheduler_state.plan_queue_stage_observation(
-            queue_name=queue_name,
-            operation_name=operation_name,
-            elapsed_seconds=elapsed_seconds,
-            blocked=blocked,
-        )
-        self.stage_timing_recorder.add_stage_duration(observation_plan.stage_name, elapsed_seconds)
-        self.stage_timing_recorder.add_queue_backpressure_observation(
-            queue_name=observation_plan.queue_name,
-            operation_name=observation_plan.operation_name,
-            queue_depth=observed_queue.qsize(),
-            queue_capacity=observed_queue.maxsize,
-            elapsed_seconds=elapsed_seconds,
-            blocked_seconds=observation_plan.blocked_seconds,
-        )
-
     def record_bounded_resource_operation(
         self,
         *,
@@ -357,19 +299,21 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record aggregate bounded-resource occupancy metadata."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.callback_scheduler_state.plan_queue_operation_observation(
+        observation = self.callback_scheduler_state.plan_queue_backpressure_observation(
             queue_name=resource_name,
             operation_name=operation_name,
+            queue_depth=current_depth,
+            queue_capacity=capacity,
             elapsed_seconds=elapsed_seconds,
             blocked=blocked,
         )
         self.stage_timing_recorder.add_queue_backpressure_observation(
-            queue_name=observation_plan.queue_name,
-            operation_name=observation_plan.operation_name,
-            queue_depth=current_depth,
-            queue_capacity=capacity,
-            elapsed_seconds=elapsed_seconds,
-            blocked_seconds=observation_plan.blocked_seconds,
+            queue_name=observation.queue_name,
+            operation_name=observation.operation_name,
+            queue_depth=observation.queue_depth,
+            queue_capacity=observation.queue_capacity,
+            elapsed_seconds=observation.elapsed_seconds,
+            blocked_seconds=observation.blocked_seconds,
         )
 
     def record_bounded_resource_stage_duration(
@@ -386,20 +330,22 @@ class NativeBgenCallbackRunner(abc.ABC):
         elapsed_seconds = time.perf_counter() - start_time
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.callback_scheduler_state.plan_queue_stage_observation(
+        observation = self.callback_scheduler_state.plan_queue_stage_backpressure_observation(
             queue_name=resource_name,
             operation_name=operation_name,
-            elapsed_seconds=elapsed_seconds,
-            blocked=blocked,
-        )
-        self.stage_timing_recorder.add_stage_duration(observation_plan.stage_name, elapsed_seconds)
-        self.stage_timing_recorder.add_queue_backpressure_observation(
-            queue_name=observation_plan.queue_name,
-            operation_name=observation_plan.operation_name,
             queue_depth=current_depth,
             queue_capacity=capacity,
             elapsed_seconds=elapsed_seconds,
-            blocked_seconds=observation_plan.blocked_seconds,
+            blocked=blocked,
+        )
+        self.stage_timing_recorder.add_stage_duration(observation.stage_name, observation.elapsed_seconds)
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=observation.queue_name,
+            operation_name=observation.operation_name,
+            queue_depth=observation.queue_depth,
+            queue_capacity=observation.queue_capacity,
+            elapsed_seconds=observation.elapsed_seconds,
+            blocked_seconds=observation.blocked_seconds,
         )
 
     @abc.abstractmethod

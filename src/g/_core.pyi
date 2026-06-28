@@ -702,6 +702,20 @@ class NativeCallbackQueueOperationObservationPlan:
     @property
     def blocked_seconds(self) -> float: ...
 
+class NativeCallbackQueueBackpressureObservation:
+    @property
+    def queue_name(self) -> str: ...
+    @property
+    def operation_name(self) -> str: ...
+    @property
+    def queue_depth(self) -> int: ...
+    @property
+    def queue_capacity(self) -> int: ...
+    @property
+    def elapsed_seconds(self) -> float: ...
+    @property
+    def blocked_seconds(self) -> float: ...
+
 class NativeCallbackQueueStageObservationPlan:
     @property
     def queue_name(self) -> str: ...
@@ -709,6 +723,22 @@ class NativeCallbackQueueStageObservationPlan:
     def operation_name(self) -> str: ...
     @property
     def stage_name(self) -> str: ...
+    @property
+    def blocked_seconds(self) -> float: ...
+
+class NativeCallbackQueueStageBackpressureObservation:
+    @property
+    def queue_name(self) -> str: ...
+    @property
+    def operation_name(self) -> str: ...
+    @property
+    def stage_name(self) -> str: ...
+    @property
+    def queue_depth(self) -> int: ...
+    @property
+    def queue_capacity(self) -> int: ...
+    @property
+    def elapsed_seconds(self) -> float: ...
     @property
     def blocked_seconds(self) -> float: ...
 
@@ -798,6 +828,15 @@ class NativeCallbackSchedulerState:
         elapsed_seconds: float,
         blocked: bool,
     ) -> NativeCallbackQueueOperationObservationPlan: ...
+    def plan_queue_backpressure_observation(
+        self,
+        queue_name: str,
+        operation_name: str,
+        queue_depth: int,
+        queue_capacity: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> NativeCallbackQueueBackpressureObservation: ...
     def plan_queue_stage_observation(
         self,
         queue_name: str,
@@ -805,6 +844,15 @@ class NativeCallbackSchedulerState:
         elapsed_seconds: float,
         blocked: bool,
     ) -> NativeCallbackQueueStageObservationPlan: ...
+    def plan_queue_stage_backpressure_observation(
+        self,
+        queue_name: str,
+        operation_name: str,
+        queue_depth: int,
+        queue_capacity: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> NativeCallbackQueueStageBackpressureObservation: ...
     def plan_dosage_worker_join(self, timeout_seconds: float | None) -> NativeCallbackWorkerJoinPlan: ...
     def plan_result_worker_join(self, timeout_seconds: float | None) -> NativeCallbackWorkerJoinPlan: ...
     def plan_dosage_worker_stop(
@@ -1825,12 +1873,28 @@ def plan_callback_queue_operation_observation(
     elapsed_seconds: float,
     blocked: bool,
 ) -> NativeCallbackQueueOperationObservationPlan: ...
+def plan_callback_queue_backpressure_observation(
+    queue_name: str,
+    operation_name: str,
+    queue_depth: int,
+    queue_capacity: int,
+    elapsed_seconds: float,
+    blocked: bool,
+) -> NativeCallbackQueueBackpressureObservation: ...
 def plan_callback_queue_stage_observation(
     queue_name: str,
     operation_name: str,
     elapsed_seconds: float,
     blocked: bool,
 ) -> NativeCallbackQueueStageObservationPlan: ...
+def plan_callback_queue_stage_backpressure_observation(
+    queue_name: str,
+    operation_name: str,
+    queue_depth: int,
+    queue_capacity: int,
+    elapsed_seconds: float,
+    blocked: bool,
+) -> NativeCallbackQueueStageBackpressureObservation: ...
 def plan_multi_trait_chunk_write(
     writer_session_count: int,
     chunk_identifier: int,
