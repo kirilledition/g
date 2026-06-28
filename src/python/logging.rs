@@ -337,44 +337,19 @@ impl NativeTelemetrySession {
         let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
             return Ok(None);
         };
-        let metadata = PyDict::new(py);
-        metadata.set_item("writer_counters", telemetry_writer_counter_snapshot_to_py_dict(py, counter_snapshot)?)?;
-        Ok(Some(metadata))
+        let metadata = native_telemetry_session::build_telemetry_close_metadata(counter_snapshot.clone());
+        telemetry_close_metadata_to_py_dict(py, &metadata).map(Some)
     }
 
     pub fn finish<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let finish_start_time = Instant::now();
-        let mut writer_guard =
-            self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
-        let dropped_writer = writer_guard.take();
-        let mut guard =
-            self.guard.lock().map_err(|_| PyRuntimeError::new_err("Telemetry guard mutex was poisoned."))?;
-        let dropped_guard = guard.take();
-        drop(dropped_guard);
-        let finish_flush_duration_seconds = finish_start_time.elapsed().as_secs_f64();
-        clear_shared_telemetry_writer(&self.path)?;
-        let Some(writer) = dropped_writer.as_ref() else {
-            let last_counter_snapshot = self
-                .last_counter_snapshot
-                .lock()
-                .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
-            let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
-                return telemetry_writer_counter_snapshot_to_py_dict(
-                    py,
-                    &native_telemetry_session::TelemetryWriterCounterSnapshot::empty(),
-                );
-            };
-            return telemetry_writer_counter_snapshot_to_py_dict(py, counter_snapshot);
-        };
-
-        let counter_snapshot = writer.counter_snapshot(Some(finish_flush_duration_seconds));
-        let mut last_counter_snapshot = self
-            .last_counter_snapshot
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
-        *last_counter_snapshot = Some(counter_snapshot.clone());
-        writer.fail_if_lossless_cap_exceeded()?;
+        let counter_snapshot = self.finish_counter_snapshot()?;
         telemetry_writer_counter_snapshot_to_py_dict(py, &counter_snapshot)
+    }
+
+    pub fn finish_close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let counter_snapshot = self.finish_counter_snapshot()?;
+        let metadata = native_telemetry_session::build_telemetry_close_metadata(counter_snapshot);
+        telemetry_close_metadata_to_py_dict(py, &metadata)
     }
 
     pub fn finish_with_close_event<'py>(
@@ -400,11 +375,79 @@ impl NativeTelemetrySession {
         self.finish(py)
     }
 
+    pub fn finish_with_close_event_metadata<'py>(
+        &self,
+        py: Python<'py>,
+        run_id: &str,
+        timestamp: &str,
+        process_identifier: u32,
+        thread_name: &str,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let fields = PyDict::new(py);
+        fields.set_item("writer_counters", self.counters(py)?)?;
+        let _ = self.emit_event(
+            py,
+            run_id,
+            "telemetry_session_closed",
+            "debug",
+            timestamp,
+            process_identifier,
+            thread_name,
+            &fields,
+        );
+        self.finish_close_metadata(py)
+    }
+
     pub fn finish_with_current_close_event<'py>(&self, py: Python<'py>, run_id: &str) -> PyResult<Bound<'py, PyDict>> {
         let fields = PyDict::new(py);
         fields.set_item("writer_counters", self.counters(py)?)?;
         let _ = self.emit_current_event(py, run_id, "telemetry_session_closed", "debug", &fields);
         self.finish(py)
+    }
+
+    pub fn finish_with_current_close_event_metadata<'py>(
+        &self,
+        py: Python<'py>,
+        run_id: &str,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let fields = PyDict::new(py);
+        fields.set_item("writer_counters", self.counters(py)?)?;
+        let _ = self.emit_current_event(py, run_id, "telemetry_session_closed", "debug", &fields);
+        self.finish_close_metadata(py)
+    }
+}
+
+impl NativeTelemetrySession {
+    fn finish_counter_snapshot(&self) -> PyResult<native_telemetry_session::TelemetryWriterCounterSnapshot> {
+        let finish_start_time = Instant::now();
+        let mut writer_guard =
+            self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
+        let dropped_writer = writer_guard.take();
+        let mut guard =
+            self.guard.lock().map_err(|_| PyRuntimeError::new_err("Telemetry guard mutex was poisoned."))?;
+        let dropped_guard = guard.take();
+        drop(dropped_guard);
+        let finish_flush_duration_seconds = finish_start_time.elapsed().as_secs_f64();
+        clear_shared_telemetry_writer(&self.path)?;
+        let Some(writer) = dropped_writer.as_ref() else {
+            let last_counter_snapshot = self
+                .last_counter_snapshot
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
+            let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
+                return Ok(native_telemetry_session::TelemetryWriterCounterSnapshot::empty());
+            };
+            return Ok(counter_snapshot.clone());
+        };
+
+        let counter_snapshot = writer.counter_snapshot(Some(finish_flush_duration_seconds));
+        let mut last_counter_snapshot = self
+            .last_counter_snapshot
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
+        *last_counter_snapshot = Some(counter_snapshot.clone());
+        writer.fail_if_lossless_cap_exceeded()?;
+        Ok(counter_snapshot)
     }
 }
 
@@ -540,6 +583,16 @@ fn telemetry_writer_counter_snapshot_to_py_dict<'py>(
     counters.set_item("event_cap", snapshot.event_cap)?;
     counters.set_item("finish_flush_duration_seconds", snapshot.finish_flush_duration_seconds)?;
     Ok(counters)
+}
+
+fn telemetry_close_metadata_to_py_dict<'py>(
+    py: Python<'py>,
+    metadata: &native_telemetry_session::TelemetryCloseMetadataPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload
+        .set_item("writer_counters", telemetry_writer_counter_snapshot_to_py_dict(py, &metadata.writer_counters)?)?;
+    Ok(payload)
 }
 
 fn serialize_telemetry_payload_json_line(py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<String> {

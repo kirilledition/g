@@ -169,18 +169,16 @@ class TelemetrySession:
         """Flush buffered telemetry resources."""
         if self.native_telemetry_session is None:
             return None
-        writer_counters = typing.cast("TelemetryWriterCounters", dict(self.native_telemetry_session.finish()))
-        return {"writer_counters": writer_counters}
+        return typing.cast("TelemetryCloseMetadata", dict(self.native_telemetry_session.finish_close_metadata()))
 
     def close_with_event(self) -> TelemetryCloseMetadata | None:
         """Emit the close event and flush buffered telemetry resources."""
         if self.native_telemetry_session is None:
             return None
-        writer_counters = typing.cast(
-            "TelemetryWriterCounters",
-            dict(self.native_telemetry_session.finish_with_current_close_event(self.run_id)),
+        return typing.cast(
+            "TelemetryCloseMetadata",
+            dict(self.native_telemetry_session.finish_with_current_close_event_metadata(self.run_id)),
         )
-        return {"writer_counters": writer_counters}
 
 
 def format_timestamp(timestamp_seconds: float) -> str:

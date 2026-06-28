@@ -615,7 +615,7 @@ def test_telemetry_close_returns_writer_counters(tmp_path: Path) -> None:
 
     assert close_metadata is not None
     assert telemetry_session.close_metadata == close_metadata
-    writer_counters = close_metadata["writer_counters"]
+    writer_counters = typing.cast("dict[str, object]", close_metadata["writer_counters"])
     assert writer_counters["accepted_event_count"] == 2
     assert writer_counters["written_event_count"] == 2
     assert writer_counters["dropped_event_count"] == 0
@@ -625,6 +625,19 @@ def test_telemetry_close_returns_writer_counters(tmp_path: Path) -> None:
     assert writer_counters["lossy"] is True
     assert writer_counters["event_cap"] is None
     assert isinstance(writer_counters["finish_flush_duration_seconds"], float)
+
+
+def test_native_telemetry_finish_close_metadata_returns_writer_counters(tmp_path: Path) -> None:
+    native_session = _core.NativeTelemetrySession(str(tmp_path / "events.jsonl"), queue_size=1024, lossy=True)
+
+    native_session.emit_current_event("run-1", "first_profile_event", "info", {})
+    close_metadata = native_session.finish_close_metadata()
+
+    assert native_session.close_metadata() == close_metadata
+    writer_counters = typing.cast("dict[str, object]", close_metadata["writer_counters"])
+    assert writer_counters["accepted_event_count"] == 1
+    assert writer_counters["written_event_count"] == 1
+    assert writer_counters["dropped_event_count"] == 0
 
 
 def test_trace_telemetry_event_cap_fails_without_lossy_mode(tmp_path: Path) -> None:

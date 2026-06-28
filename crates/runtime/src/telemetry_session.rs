@@ -42,6 +42,11 @@ pub struct TelemetryWriterCounterSnapshot {
     pub finish_flush_duration_seconds: Option<f64>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TelemetryCloseMetadataPayload {
+    pub writer_counters: TelemetryWriterCounterSnapshot,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TelemetryEventEnvelope {
     pub schema_version: i64,
@@ -248,6 +253,13 @@ impl TelemetryWriterCounterSnapshot {
             finish_flush_duration_seconds: None,
         }
     }
+}
+
+#[must_use]
+pub fn build_telemetry_close_metadata(
+    writer_counters: TelemetryWriterCounterSnapshot,
+) -> TelemetryCloseMetadataPayload {
+    TelemetryCloseMetadataPayload { writer_counters }
 }
 
 #[must_use]
@@ -460,6 +472,15 @@ mod tests {
                 legacy_close_event_level: "debug".to_string(),
             },
         );
+    }
+
+    #[test]
+    fn builds_telemetry_close_metadata_payload() {
+        let writer_counters = TelemetryWriterCounterSnapshot::empty();
+
+        let metadata = build_telemetry_close_metadata(writer_counters.clone());
+
+        assert_eq!(metadata.writer_counters, writer_counters);
     }
 
     #[test]
