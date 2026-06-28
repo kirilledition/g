@@ -613,6 +613,25 @@ def test_native_jax_runtime_diagnostic_record_plan() -> None:
     }
 
 
+def test_native_default_local_cache_directory_value() -> None:
+    assert (
+        _core.build_default_local_cache_directory_value(
+            temporary_root="/tmp",
+            user_name="alice",
+            directory_name="g-jax-cache",
+        )
+        == "/tmp/alice/g-jax-cache"
+    )
+    assert (
+        _core.build_default_local_cache_directory_value(
+            temporary_root="/tmp",
+            user_name="",
+            directory_name="g-jax-cache",
+        )
+        == "/tmp/unknown/g-jax-cache"
+    )
+
+
 def test_native_jax_gpu_validation_plan() -> None:
     missing_driver_plan = _core.plan_jax_gpu_validation_payload(
         nvidia_driver_visible=False,

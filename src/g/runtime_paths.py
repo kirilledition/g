@@ -6,6 +6,8 @@ import getpass
 import tempfile
 from pathlib import Path
 
+from g import _core
+
 DEFAULT_LOCAL_TEMPORARY_ROOT = Path(tempfile.gettempdir()).expanduser()
 
 
@@ -19,5 +21,10 @@ def default_local_cache_directory(directory_name: str) -> Path:
         Default temporary cache directory path.
 
     """
-    user_name = getpass.getuser() or "unknown"
-    return DEFAULT_LOCAL_TEMPORARY_ROOT / user_name / directory_name
+    return Path(
+        _core.build_default_local_cache_directory_value(
+            temporary_root=str(DEFAULT_LOCAL_TEMPORARY_ROOT),
+            user_name=getpass.getuser(),
+            directory_name=directory_name,
+        )
+    )

@@ -41,6 +41,7 @@ mod profile;
 mod run_events;
 mod run_metadata;
 mod runtime;
+mod runtime_paths;
 mod runtime_policy;
 mod runtime_state;
 mod schedule;
@@ -100,6 +101,7 @@ use run_metadata::{
     build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload, build_run_manifest_extension_payload,
 };
 use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool};
+use runtime_paths::build_default_local_cache_directory_value;
 use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
 use runtime_state::{
     NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRuntimeCompatibilityToken,
@@ -1891,6 +1893,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_telemetry_session_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_default_local_cache_directory_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_jax_runtime_setup_diagnostic_payloads, module)?)?;
     module.add_function(wrap_pyfunction!(build_jax_runtime_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_config_update_payloads, module)?)?;

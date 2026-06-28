@@ -4,6 +4,7 @@ pub mod jax_runtime;
 pub mod rayon_runtime;
 pub mod run_events;
 pub mod run_metadata;
+pub mod runtime_paths;
 pub mod runtime_policy;
 pub mod runtime_state;
 pub mod shutdown;
@@ -31,6 +32,7 @@ pub use run_metadata::{
     RunManifestExtensionPayload, RunManifestRuntimePayload, build_multi_run_artifacts, build_phenotype_run_artifacts,
     build_run_manifest_extension,
 };
+pub use runtime_paths::build_default_local_cache_directory;
 pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_policy, describe_logging_runtime_policy};
 pub use runtime_state::{
     JaxRuntimePolicyPayload, JaxRuntimeSetupLifecyclePlan, ProcessRuntimeState, RayonThreadPoolConfigurationPlan,

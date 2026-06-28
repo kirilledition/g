@@ -1357,6 +1357,11 @@ def build_jax_runtime_policy_payload(
     xla_autotune_cache: bool,
     transfer_guard: bool,
 ) -> dict[str, object]: ...
+def build_default_local_cache_directory_value(
+    temporary_root: str,
+    user_name: str,
+    directory_name: str,
+) -> str: ...
 def resolve_jax_runtime_setup_payload(
     requested_device: str,
     cache_directory: str,

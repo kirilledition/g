@@ -83,6 +83,16 @@ def test_resolve_jax_cache_uses_fallback() -> None:
     assert report.cache_directory.name == "g-jax-cache"
 
 
+def test_default_local_cache_directory_uses_native_policy(tmp_path: Path) -> None:
+    with (
+        patch("g.runtime_paths.DEFAULT_LOCAL_TEMPORARY_ROOT", tmp_path),
+        patch("g.runtime_paths.getpass.getuser", return_value=""),
+    ):
+        cache_directory = runtime_paths.default_local_cache_directory("g-jax-cache")
+
+    assert cache_directory == tmp_path / "unknown" / "g-jax-cache"
+
+
 def test_resolve_jax_runtime_setup_defaults_xla_auxiliary_cache_to_disabled() -> None:
     """Ensure XLA auxiliary caches are opt-in."""
     report = resolution.resolve_jax_runtime_setup(
