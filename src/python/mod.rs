@@ -135,8 +135,9 @@ use schedule::{
     NativeDosageBufferReusePlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
     NativeGpuGenotypeFormatResolutionPlan, NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan,
     NativeResultInFlightAcquireAttemptPlan, NativeResultInFlightReleaseAttemptPlan, NativeResultInFlightSlotState,
-    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemResourceReleasePlan,
-    NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
+    NativeResultWriteItemResourceReleasePlan, NativeSingleTraitOutputWritePlan,
+    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
     format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
     intersect_committed_chunk_identifier_sets, plan_auto_gpu_genotype_format_after_trusted_validation,
     plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation, plan_callback_queue_backpressure_observation,
@@ -146,13 +147,14 @@ use schedule::{
     plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop, plan_dosage_work_handoff,
     plan_gpu_genotype_format_auto_to_dosage, plan_multi_trait_chunk_write, plan_multi_trait_output_write,
     plan_result_callback_worker_join, plan_result_callback_worker_stop, plan_result_write_handoff,
-    plan_single_trait_binary_gpu_genotype_format_resolution, plan_single_trait_output_write,
-    plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method_value,
-    resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
-    resolve_delivery_callback_batch_size, resolve_effective_trusted_no_missing_diploid,
-    resolve_grouped_union_callback_batch_size, resolve_manifest_gpu_genotype_format,
-    resolve_native_callback_queue_limits, resolve_native_callback_worker_shutdown_timeouts,
-    resolve_writer_finish_thread_count, should_attempt_callback_worker_stop,
+    plan_result_write_item_dispatch, plan_single_trait_binary_gpu_genotype_format_resolution,
+    plan_single_trait_output_write, plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution,
+    resolve_bgen_delivery_method_value, resolve_callback_worker_backpressure_poll_timeout_seconds,
+    resolve_callback_worker_stop_poll_timeout_seconds, resolve_delivery_callback_batch_size,
+    resolve_effective_trusted_no_missing_diploid, resolve_grouped_union_callback_batch_size,
+    resolve_manifest_gpu_genotype_format, resolve_native_callback_queue_limits,
+    resolve_native_callback_worker_shutdown_timeouts, resolve_writer_finish_thread_count,
+    should_attempt_callback_worker_stop,
 };
 use shutdown::{
     NativeSecondSignalExceptionPlan, NativeShutdownController, build_shutdown_signal_payload,
@@ -1868,6 +1870,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeResultInFlightSlotState>()?;
     module.add_class::<NativeResultWriteDrainCompletionPlan>()?;
     module.add_class::<NativeResultWriteHandoffPlan>()?;
+    module.add_class::<NativeResultWriteItemDispatchPlan>()?;
     module.add_class::<NativeResultWriteItemResourceReleasePlan>()?;
     module.add_class::<NativeSingleTraitOutputWritePlan>()?;
     module.add_class::<NativeVariantMajorDosageBatchHandoffPlan>()?;
@@ -1995,6 +1998,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_result_callback_worker_join, module)?)?;
     module.add_function(wrap_pyfunction!(plan_result_callback_worker_stop, module)?)?;
     module.add_function(wrap_pyfunction!(plan_result_write_handoff, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_result_write_item_dispatch, module)?)?;
     module.add_function(wrap_pyfunction!(plan_single_trait_binary_gpu_genotype_format_resolution, module)?)?;
     module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_work_handoff, module)?)?;

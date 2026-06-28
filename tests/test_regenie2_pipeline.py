@@ -2903,6 +2903,16 @@ class ResultWriteDrainCompletionPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class ResultWriteItemDispatchPlanProbe:
+    result_work_item_kind: str
+    expected_result_work_item_kind: str
+    should_process_result_write_item: bool
+    should_process_multi_result_write_item: bool
+    has_dispatch_error: bool
+    error_message: str | None
+
+
+@dataclasses.dataclass(frozen=True)
 class DosageWorkDrainCompletionPlanProbe:
     should_stop: bool
 
@@ -3365,6 +3375,29 @@ class ResultWriteDrainCompletionSchedulerProbe:
 
 
 @dataclasses.dataclass
+class ResultWriteItemDispatchSchedulerProbe:
+    result_work_item_kind: str | None = None
+    expected_result_work_item_kind: str | None = None
+
+    def plan_result_write_item_dispatch(
+        self,
+        *,
+        result_work_item_kind: str,
+        expected_result_work_item_kind: str,
+    ) -> ResultWriteItemDispatchPlanProbe:
+        self.result_work_item_kind = result_work_item_kind
+        self.expected_result_work_item_kind = expected_result_work_item_kind
+        return ResultWriteItemDispatchPlanProbe(
+            result_work_item_kind=result_work_item_kind,
+            expected_result_work_item_kind=expected_result_work_item_kind,
+            should_process_result_write_item=result_work_item_kind == "single_result",
+            should_process_multi_result_write_item=result_work_item_kind == "multi_result",
+            has_dispatch_error=False,
+            error_message=None,
+        )
+
+
+@dataclasses.dataclass
 class DosageWorkDrainCompletionSchedulerProbe:
     has_dosage_work_item: bool | None = None
 
@@ -3708,6 +3741,67 @@ def test_native_callback_runner_uses_scheduler_result_write_drain_completion_pla
     assert scheduler_state.flush_binary_correction_diagnostics_on_stop is True
     assert should_stop is True
     assert flushed is True
+
+
+def test_native_callback_runner_uses_scheduler_result_write_item_dispatch_plan() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = ResultWriteItemDispatchSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+    result_work_item = callback_shared.Regenie2ResultWriteWorkItem(
+        metadata=build_native_metadata(),
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=None,
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=None,
+    )
+
+    dispatch_plan = callback.plan_result_write_item_dispatch(
+        result_work_item,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+    )
+
+    assert scheduler_state.result_work_item_kind == "single_result"
+    assert scheduler_state.expected_result_work_item_kind == "single_result"
+    assert dispatch_plan.should_process_result_write_item is True
+    callback.apply_result_write_item_dispatch_plan(dispatch_plan)
+
+    multi_result_work_item = callback_shared.Regenie2MultiResultWriteWorkItem(
+        metadata=build_native_metadata(),
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        beta=jnp.asarray([[0.1, 0.2]], dtype=jnp.float32),
+        standard_error=jnp.asarray([[0.3, 0.4]], dtype=jnp.float32),
+        chi_squared=jnp.asarray([[1.0, 2.0]], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([[3.0, 4.0]], dtype=jnp.float32),
+        extra_code=None,
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=None,
+    )
+
+    dispatch_plan = callback.plan_result_write_item_dispatch(
+        multi_result_work_item,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.MULTI_RESULT,
+    )
+
+    assert scheduler_state.result_work_item_kind == "multi_result"
+    assert scheduler_state.expected_result_work_item_kind == "multi_result"
+    assert dispatch_plan.should_process_multi_result_write_item is True
+
+    error_plan = ResultWriteItemDispatchPlanProbe(
+        result_work_item_kind="stop_signal",
+        expected_result_work_item_kind="single_result",
+        should_process_result_write_item=False,
+        should_process_multi_result_write_item=False,
+        has_dispatch_error=True,
+        error_message="planned dispatch failure",
+    )
+    with pytest.raises(RuntimeError, match="planned dispatch failure"):
+        callback.apply_result_write_item_dispatch_plan(typing.cast("typing.Any", error_plan))
 
 
 def test_native_callback_runner_uses_scheduler_dosage_work_drain_completion_plan() -> None:

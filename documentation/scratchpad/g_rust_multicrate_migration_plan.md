@@ -1017,6 +1017,8 @@ Remove Python as the chunk-level scheduler.
   counts before callback queueing.
 - Result write handoffs now use native scheduler plans to classify result items
   and writer stop signals before callback queueing.
+- Result write item dispatch now uses native scheduler plans to validate
+  single-result versus multi-result consumer paths after queue drain checks.
 
 ### Tests
 

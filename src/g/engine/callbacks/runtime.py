@@ -6,6 +6,7 @@ import abc
 import collections
 import collections.abc
 import contextlib
+import enum
 import threading
 import time
 import typing
@@ -52,6 +53,28 @@ CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION = "join_result_worker"
 CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION = "raise_worker_error"
 CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION = "complete_progress"
 CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION = "emit_binary_correction_summary"
+
+
+class ResultWriteItemKind(enum.StrEnum):
+    """Native result-write work-item kind values."""
+
+    SINGLE_RESULT = "single_result"
+    MULTI_RESULT = "multi_result"
+    STOP_SIGNAL = "stop_signal"
+
+
+def classify_result_write_item(
+    work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+) -> ResultWriteItemKind:
+    """Classify one result write item for native scheduler dispatch."""
+    if work_item is None:
+        return ResultWriteItemKind.STOP_SIGNAL
+    if isinstance(work_item, Regenie2MultiResultWriteWorkItem):
+        return ResultWriteItemKind.MULTI_RESULT
+    if isinstance(work_item, Regenie2ResultWriteWorkItem):
+        return ResultWriteItemKind.SINGLE_RESULT
+    message = f"Unsupported result write work item type: {type(work_item).__name__}"
+    raise TypeError(message)
 
 
 def require_current_chromosome_state[ChromosomeStateType](
@@ -792,16 +815,23 @@ class NativeBgenCallbackRunner(abc.ABC):
                 )
                 if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
-                if work_item is None:
-                    message = "Native result write drain completion plan continued without a work item."
-                    raise RuntimeError(message)
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_queue",
                     operation_name="consumer_wait",
                     start_time=get_start_time,
                     blocked=True,
                 )
-                self.process_result_write_item(work_item)
+                dispatch_plan = self.plan_result_write_item_dispatch(
+                    work_item,
+                    expected_result_work_item_kind=ResultWriteItemKind.SINGLE_RESULT,
+                )
+                self.apply_result_write_item_dispatch_plan(dispatch_plan)
+                if dispatch_plan.should_process_result_write_item:
+                    result_work_item = typing.cast("Regenie2ResultWriteWorkItem", work_item)
+                    self.process_result_write_item(result_work_item)
+                    continue
+                message = "Native result write dispatch plan did not select a single-result processing path."
+                raise RuntimeError(message)
         except Exception as error:  # noqa: BLE001
             self.result_worker_error = error
 
@@ -815,14 +845,21 @@ class NativeBgenCallbackRunner(abc.ABC):
             )
             if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
-            if work_item is None:
-                message = "Native result write drain completion plan continued without a work item."
-                raise RuntimeError(message)
-            self.process_result_write_item(work_item)
+            dispatch_plan = self.plan_result_write_item_dispatch(
+                work_item,
+                expected_result_work_item_kind=ResultWriteItemKind.SINGLE_RESULT,
+            )
+            self.apply_result_write_item_dispatch_plan(dispatch_plan)
+            if dispatch_plan.should_process_result_write_item:
+                result_work_item = typing.cast("Regenie2ResultWriteWorkItem", work_item)
+                self.process_result_write_item(result_work_item)
+                continue
+            message = "Native result write dispatch plan did not select a single-result processing path."
+            raise RuntimeError(message)
 
     def process_result_write_item(
         self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+        work_item: Regenie2ResultWriteWorkItem,
     ) -> None:
         """Materialize and write one computed result work item."""
         host_dosage_buffer_released = False
@@ -1510,6 +1547,32 @@ class NativeBgenCallbackRunner(abc.ABC):
         if drain_completion_plan.should_flush_binary_correction_diagnostics:
             self.flush_binary_correction_diagnostics()
         return drain_completion_plan.should_stop
+
+    def plan_result_write_item_dispatch(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+        *,
+        expected_result_work_item_kind: ResultWriteItemKind,
+    ) -> _core.NativeResultWriteItemDispatchPlan:
+        """Plan which result write processing path should consume one item."""
+        result_work_item_kind = classify_result_write_item(work_item)
+        return self.callback_scheduler_state.plan_result_write_item_dispatch(
+            result_work_item_kind=result_work_item_kind.value,
+            expected_result_work_item_kind=expected_result_work_item_kind.value,
+        )
+
+    def apply_result_write_item_dispatch_plan(
+        self,
+        dispatch_plan: _core.NativeResultWriteItemDispatchPlan,
+    ) -> None:
+        """Raise native result write dispatch errors before processing."""
+        if not dispatch_plan.has_dispatch_error:
+            return
+        error_message = dispatch_plan.error_message
+        if error_message is None:
+            message = "Native result write dispatch plan omitted the error message."
+            raise RuntimeError(message)
+        raise RuntimeError(error_message)
 
     def release_result_work_item_resources(
         self,

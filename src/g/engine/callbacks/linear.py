@@ -434,17 +434,23 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 )
                 if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
-                if work_item is None:
-                    message = "Native result write drain completion plan continued without a work item."
-                    raise RuntimeError(message)
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_queue",
                     operation_name="consumer_wait",
                     start_time=get_start_time,
                     blocked=True,
                 )
-                multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
-                self.process_multi_result_write_item(multi_work_item)
+                dispatch_plan = self.plan_result_write_item_dispatch(
+                    work_item,
+                    expected_result_work_item_kind=runtime.ResultWriteItemKind.MULTI_RESULT,
+                )
+                self.apply_result_write_item_dispatch_plan(dispatch_plan)
+                if dispatch_plan.should_process_multi_result_write_item:
+                    multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
+                    self.process_multi_result_write_item(multi_work_item)
+                    continue
+                message = "Native result write dispatch plan did not select a multi-result processing path."
+                raise RuntimeError(message)
         except Exception as error:  # noqa: BLE001
             self.result_worker_error = error
 
@@ -458,11 +464,17 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             )
             if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
-            if work_item is None:
-                message = "Native result write drain completion plan continued without a work item."
-                raise RuntimeError(message)
-            multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
-            self.process_multi_result_write_item(multi_work_item)
+            dispatch_plan = self.plan_result_write_item_dispatch(
+                work_item,
+                expected_result_work_item_kind=runtime.ResultWriteItemKind.MULTI_RESULT,
+            )
+            self.apply_result_write_item_dispatch_plan(dispatch_plan)
+            if dispatch_plan.should_process_multi_result_write_item:
+                multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
+                self.process_multi_result_write_item(multi_work_item)
+                continue
+            message = "Native result write dispatch plan did not select a multi-result processing path."
+            raise RuntimeError(message)
 
     def process_multi_result_write_item(self, multi_work_item: Regenie2MultiResultWriteWorkItem) -> None:
         """Materialize and write one multi-trait linear result work item."""

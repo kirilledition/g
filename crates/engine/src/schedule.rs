@@ -52,6 +52,9 @@ const CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION: &str = "join_result_work
 const CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION: &str = "raise_worker_error";
 const CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION: &str = "complete_progress";
 const CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION: &str = "emit_binary_correction_summary";
+const RESULT_WRITE_ITEM_KIND_SINGLE_RESULT: &str = "single_result";
+const RESULT_WRITE_ITEM_KIND_MULTI_RESULT: &str = "multi_result";
+const RESULT_WRITE_ITEM_KIND_STOP_SIGNAL: &str = "stop_signal";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeCallbackQueueLimits {
@@ -285,6 +288,16 @@ pub struct ResultWriteHandoffPlan {
 pub struct ResultWriteDrainCompletionPlan {
     pub should_stop: bool,
     pub should_flush_binary_correction_diagnostics: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResultWriteItemDispatchPlan {
+    pub result_work_item_kind: String,
+    pub expected_result_work_item_kind: String,
+    pub should_process_result_write_item: bool,
+    pub should_process_multi_result_write_item: bool,
+    pub has_dispatch_error: bool,
+    pub error_message: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -796,6 +809,19 @@ impl CallbackSchedulerState {
             should_flush_binary_correction_diagnostics: !has_result_work_item
                 && flush_binary_correction_diagnostics_on_stop,
         }
+    }
+
+    /// Plan which result consumer should process a dequeued work item.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when either work-item kind is unsupported.
+    pub fn plan_result_write_item_dispatch(
+        &self,
+        result_work_item_kind: &str,
+        expected_result_work_item_kind: &str,
+    ) -> Result<ResultWriteItemDispatchPlan, ScheduleError> {
+        plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
     }
 
     #[must_use]
@@ -1839,6 +1865,8 @@ pub enum ScheduleError {
     UnsupportedCallbackQueueOperation { queue_name: String, operation_name: String },
     #[error("Unsupported BGEN delivery cleanup outcome: {outcome}")]
     UnsupportedBgenDeliveryCleanupOutcome { outcome: String },
+    #[error("Unsupported result write item kind: {result_work_item_kind}")]
+    UnsupportedResultWriteItemKind { result_work_item_kind: String },
 }
 
 #[must_use]
@@ -2136,6 +2164,63 @@ pub fn plan_dosage_work_handoff(chunk_count: usize) -> Result<DosageWorkHandoffP
 #[must_use]
 pub const fn plan_result_write_handoff(has_result_work_item: bool) -> ResultWriteHandoffPlan {
     ResultWriteHandoffPlan { should_enqueue: true, has_result_work_item, is_stop_signal: !has_result_work_item }
+}
+
+/// Plan which result write processing path should consume a dequeued item.
+///
+/// # Errors
+///
+/// Returns an error when either work-item kind is unsupported.
+pub fn plan_result_write_item_dispatch(
+    result_work_item_kind: &str,
+    expected_result_work_item_kind: &str,
+) -> Result<ResultWriteItemDispatchPlan, ScheduleError> {
+    validate_result_write_item_kind(result_work_item_kind)?;
+    validate_result_write_item_kind(expected_result_work_item_kind)?;
+
+    if result_work_item_kind == RESULT_WRITE_ITEM_KIND_STOP_SIGNAL {
+        return Ok(ResultWriteItemDispatchPlan {
+            result_work_item_kind: result_work_item_kind.to_owned(),
+            expected_result_work_item_kind: expected_result_work_item_kind.to_owned(),
+            should_process_result_write_item: false,
+            should_process_multi_result_write_item: false,
+            has_dispatch_error: true,
+            error_message: Some("Native result write dispatch plan continued without a work item.".to_owned()),
+        });
+    }
+
+    if result_work_item_kind != expected_result_work_item_kind {
+        return Ok(ResultWriteItemDispatchPlan {
+            result_work_item_kind: result_work_item_kind.to_owned(),
+            expected_result_work_item_kind: expected_result_work_item_kind.to_owned(),
+            should_process_result_write_item: false,
+            should_process_multi_result_write_item: false,
+            has_dispatch_error: true,
+            error_message: Some(format!(
+                "Native result write dispatch plan expected {expected_result_work_item_kind} but received {result_work_item_kind}."
+            )),
+        });
+    }
+
+    Ok(ResultWriteItemDispatchPlan {
+        result_work_item_kind: result_work_item_kind.to_owned(),
+        expected_result_work_item_kind: expected_result_work_item_kind.to_owned(),
+        should_process_result_write_item: result_work_item_kind == RESULT_WRITE_ITEM_KIND_SINGLE_RESULT,
+        should_process_multi_result_write_item: result_work_item_kind == RESULT_WRITE_ITEM_KIND_MULTI_RESULT,
+        has_dispatch_error: false,
+        error_message: None,
+    })
+}
+
+fn validate_result_write_item_kind(result_work_item_kind: &str) -> Result<(), ScheduleError> {
+    match result_work_item_kind {
+        RESULT_WRITE_ITEM_KIND_SINGLE_RESULT
+        | RESULT_WRITE_ITEM_KIND_MULTI_RESULT
+        | RESULT_WRITE_ITEM_KIND_STOP_SIGNAL => Ok(()),
+        _ => Err(ScheduleError::UnsupportedResultWriteItemKind {
+            result_work_item_kind: result_work_item_kind.to_owned(),
+        }),
+    }
 }
 
 /// Plan which multi-trait writer lanes still need one chunk.
@@ -3090,6 +3175,62 @@ mod tests {
         assert_eq!(
             scheduler_state.plan_result_write_drain_completion(false, false),
             ResultWriteDrainCompletionPlan { should_stop: true, should_flush_binary_correction_diagnostics: false },
+        );
+    }
+
+    #[test]
+    fn plans_result_write_item_dispatch() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
+
+        assert_eq!(
+            scheduler_state
+                .plan_result_write_item_dispatch(
+                    RESULT_WRITE_ITEM_KIND_SINGLE_RESULT,
+                    RESULT_WRITE_ITEM_KIND_SINGLE_RESULT,
+                )
+                .unwrap(),
+            ResultWriteItemDispatchPlan {
+                result_work_item_kind: RESULT_WRITE_ITEM_KIND_SINGLE_RESULT.to_owned(),
+                expected_result_work_item_kind: RESULT_WRITE_ITEM_KIND_SINGLE_RESULT.to_owned(),
+                should_process_result_write_item: true,
+                should_process_multi_result_write_item: false,
+                has_dispatch_error: false,
+                error_message: None,
+            },
+        );
+        assert_eq!(
+            plan_result_write_item_dispatch(RESULT_WRITE_ITEM_KIND_MULTI_RESULT, RESULT_WRITE_ITEM_KIND_MULTI_RESULT)
+                .unwrap(),
+            ResultWriteItemDispatchPlan {
+                result_work_item_kind: RESULT_WRITE_ITEM_KIND_MULTI_RESULT.to_owned(),
+                expected_result_work_item_kind: RESULT_WRITE_ITEM_KIND_MULTI_RESULT.to_owned(),
+                should_process_result_write_item: false,
+                should_process_multi_result_write_item: true,
+                has_dispatch_error: false,
+                error_message: None,
+            },
+        );
+
+        let missing_item_plan =
+            plan_result_write_item_dispatch(RESULT_WRITE_ITEM_KIND_STOP_SIGNAL, RESULT_WRITE_ITEM_KIND_SINGLE_RESULT)
+                .unwrap();
+        assert!(missing_item_plan.has_dispatch_error);
+        assert_eq!(
+            missing_item_plan.error_message.as_deref(),
+            Some("Native result write dispatch plan continued without a work item."),
+        );
+
+        let mismatched_item_plan =
+            plan_result_write_item_dispatch(RESULT_WRITE_ITEM_KIND_SINGLE_RESULT, RESULT_WRITE_ITEM_KIND_MULTI_RESULT)
+                .unwrap();
+        assert!(mismatched_item_plan.has_dispatch_error);
+        assert_eq!(
+            mismatched_item_plan.error_message.as_deref(),
+            Some("Native result write dispatch plan expected multi_result but received single_result."),
+        );
+        assert_eq!(
+            plan_result_write_item_dispatch("unknown", RESULT_WRITE_ITEM_KIND_SINGLE_RESULT).unwrap_err(),
+            ScheduleError::UnsupportedResultWriteItemKind { result_work_item_kind: "unknown".to_owned() },
         );
     }
 

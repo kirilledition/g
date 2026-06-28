@@ -165,6 +165,11 @@ pub(crate) struct NativeResultWriteDrainCompletionPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeResultWriteItemDispatchPlan {
+    inner: native_schedule::ResultWriteItemDispatchPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageWorkDrainCompletionPlan {
     inner: native_schedule::DosageWorkDrainCompletionPlan,
 }
@@ -572,6 +577,17 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_result_write_drain_completion(has_result_work_item, flush_binary_correction_diagnostics_on_stop)
             .into()
+    }
+
+    fn plan_result_write_item_dispatch(
+        &self,
+        result_work_item_kind: &str,
+        expected_result_work_item_kind: &str,
+    ) -> PyResult<NativeResultWriteItemDispatchPlan> {
+        self.inner
+            .plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
     }
 
     fn plan_dosage_work_drain_completion(&self, has_dosage_work_item: bool) -> NativeDosageWorkDrainCompletionPlan {
@@ -1603,6 +1619,39 @@ impl NativeResultWriteDrainCompletionPlan {
 }
 
 #[pymethods]
+impl NativeResultWriteItemDispatchPlan {
+    #[getter]
+    fn result_work_item_kind(&self) -> String {
+        self.inner.result_work_item_kind.clone()
+    }
+
+    #[getter]
+    fn expected_result_work_item_kind(&self) -> String {
+        self.inner.expected_result_work_item_kind.clone()
+    }
+
+    #[getter]
+    fn should_process_result_write_item(&self) -> bool {
+        self.inner.should_process_result_write_item
+    }
+
+    #[getter]
+    fn should_process_multi_result_write_item(&self) -> bool {
+        self.inner.should_process_multi_result_write_item
+    }
+
+    #[getter]
+    fn has_dispatch_error(&self) -> bool {
+        self.inner.has_dispatch_error
+    }
+
+    #[getter]
+    fn error_message(&self) -> Option<String> {
+        self.inner.error_message.clone()
+    }
+}
+
+#[pymethods]
 impl NativeDosageWorkDrainCompletionPlan {
     #[getter]
     fn should_stop(&self) -> bool {
@@ -1868,6 +1917,12 @@ impl From<native_schedule::ResultWriteHandoffPlan> for NativeResultWriteHandoffP
 impl From<native_schedule::ResultWriteDrainCompletionPlan> for NativeResultWriteDrainCompletionPlan {
     fn from(drain_completion_plan: native_schedule::ResultWriteDrainCompletionPlan) -> Self {
         Self { inner: drain_completion_plan }
+    }
+}
+
+impl From<native_schedule::ResultWriteItemDispatchPlan> for NativeResultWriteItemDispatchPlan {
+    fn from(dispatch_plan: native_schedule::ResultWriteItemDispatchPlan) -> Self {
+        Self { inner: dispatch_plan }
     }
 }
 
@@ -2209,6 +2264,16 @@ pub(crate) fn plan_dosage_work_handoff(chunk_count: usize) -> PyResult<NativeDos
 #[pyfunction]
 pub(crate) fn plan_result_write_handoff(has_result_work_item: bool) -> NativeResultWriteHandoffPlan {
     native_schedule::plan_result_write_handoff(has_result_work_item).into()
+}
+
+#[pyfunction]
+pub(crate) fn plan_result_write_item_dispatch(
+    result_work_item_kind: &str,
+    expected_result_work_item_kind: &str,
+) -> PyResult<NativeResultWriteItemDispatchPlan> {
+    native_schedule::plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
 }
 
 #[pyfunction]
