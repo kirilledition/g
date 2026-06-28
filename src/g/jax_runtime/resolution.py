@@ -24,18 +24,39 @@ def resolve_jax_runtime_policy(compute_config: config.GComputeConfig) -> models.
         Requested JAX runtime policy.
 
     """
-    cache_directory = None
-    if compute_config.jax_cache_dir is not None:
-        cache_directory = compute_config.jax_cache_dir.expanduser()
-    return models.JaxRuntimePolicy(
-        device=compute_config.device,
-        cache_directory=cache_directory,
-        matmul_precision=compute_config.jax_matmul_precision,
+    policy_payload = _core.build_jax_runtime_policy_payload(
+        device=compute_config.device.value,
+        cache_directory=(
+            None if compute_config.jax_cache_dir is None else str(compute_config.jax_cache_dir.expanduser())
+        ),
+        matmul_precision=None
+        if compute_config.jax_matmul_precision is None
+        else compute_config.jax_matmul_precision.value,
         persistent_cache=compute_config.jax_persistent_cache,
         persistent_cache_min_entry_size_bytes=compute_config.jax_persistent_cache_min_entry_size_bytes,
         persistent_cache_min_compile_time_seconds=compute_config.jax_persistent_cache_min_compile_time_seconds,
         xla_autotune_cache=compute_config.jax_xla_autotune_cache,
         transfer_guard=compute_config.jax_transfer_guard,
+    )
+    cache_directory_payload = typing.cast("str | None", policy_payload["cache_directory"])
+    matmul_precision_payload = typing.cast("str | None", policy_payload["matmul_precision"])
+    return models.JaxRuntimePolicy(
+        device=types.Device(typing.cast("str", policy_payload["device"])),
+        cache_directory=None if cache_directory_payload is None else Path(cache_directory_payload),
+        matmul_precision=(
+            None if matmul_precision_payload is None else types.JaxMatmulPrecision(matmul_precision_payload)
+        ),
+        persistent_cache=typing.cast("bool", policy_payload["persistent_cache"]),
+        persistent_cache_min_entry_size_bytes=typing.cast(
+            "int",
+            policy_payload["persistent_cache_min_entry_size_bytes"],
+        ),
+        persistent_cache_min_compile_time_seconds=typing.cast(
+            "int",
+            policy_payload["persistent_cache_min_compile_time_seconds"],
+        ),
+        xla_autotune_cache=typing.cast("bool", policy_payload["xla_autotune_cache"]),
+        transfer_guard=typing.cast("bool", policy_payload["transfer_guard"]),
     )
 
 

@@ -29,6 +29,33 @@ pub(crate) struct NativeRuntimeState {
     state: Mutex<native_runtime_state::ProcessRuntimeState>,
 }
 
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_jax_runtime_policy_payload<'py>(
+    py: Python<'py>,
+    device: String,
+    cache_directory: Option<String>,
+    matmul_precision: Option<String>,
+    persistent_cache: bool,
+    persistent_cache_min_entry_size_bytes: i64,
+    persistent_cache_min_compile_time_seconds: i64,
+    xla_autotune_cache: bool,
+    transfer_guard: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_runtime_state::build_jax_runtime_policy_payload(
+        &device,
+        cache_directory.as_deref(),
+        matmul_precision.as_deref(),
+        persistent_cache,
+        persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds,
+        xla_autotune_cache,
+        transfer_guard,
+    );
+    jax_runtime_policy_payload_to_dict(py, &payload)
+}
+
 #[pymethods]
 impl NativeRayonThreadPoolConfigurationPlan {
     #[getter]

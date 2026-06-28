@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from g import runtime_paths, types
+from g.interface import config
 from g.jax_runtime import models, resolution, setup
 
 if typing.TYPE_CHECKING:
@@ -27,6 +28,41 @@ def build_runtime_policy(**overrides: object) -> models.JaxRuntimePolicy:
         transfer_guard=False,
     )
     return dataclasses.replace(policy, **overrides)
+
+
+def test_resolve_jax_runtime_policy_uses_native_payload() -> None:
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "device": "gpu",
+            "jax_cache_dir": "~/custom/g/cache",
+            "jax_matmul_precision": "highest",
+            "jax_persistent_cache": False,
+            "jax_persistent_cache_min_entry_size_bytes": 1024,
+            "jax_persistent_cache_min_compile_time_seconds": 5,
+            "jax_xla_autotune_cache": True,
+            "jax_transfer_guard": True,
+        }
+    )
+
+    policy = resolution.resolve_jax_runtime_policy(regenie_config.g_compute)
+
+    assert policy == models.JaxRuntimePolicy(
+        device=types.Device.GPU,
+        cache_directory=Path("~/custom/g/cache").expanduser(),
+        matmul_precision=types.JaxMatmulPrecision.HIGHEST,
+        persistent_cache=False,
+        persistent_cache_min_entry_size_bytes=1024,
+        persistent_cache_min_compile_time_seconds=5,
+        xla_autotune_cache=True,
+        transfer_guard=True,
+    )
 
 
 def test_resolve_jax_cache_uses_explicit_config_path(monkeypatch: pytest.MonkeyPatch) -> None:

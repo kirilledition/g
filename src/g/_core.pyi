@@ -1347,6 +1347,16 @@ def build_phenotype_compute_group_id_value(
     prediction_alignment_fingerprint: str | None,
 ) -> str: ...
 def build_phenotype_output_directory_name(phenotype_index: int, phenotype_name: str) -> str: ...
+def build_jax_runtime_policy_payload(
+    device: str,
+    cache_directory: str | None,
+    matmul_precision: str | None,
+    persistent_cache: bool,
+    persistent_cache_min_entry_size_bytes: int,
+    persistent_cache_min_compile_time_seconds: int,
+    xla_autotune_cache: bool,
+    transfer_guard: bool,
+) -> dict[str, object]: ...
 def resolve_jax_runtime_setup_payload(
     requested_device: str,
     cache_directory: str,

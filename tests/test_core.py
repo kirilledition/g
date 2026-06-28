@@ -462,6 +462,30 @@ def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
         runtime_state.plan_jax_runtime_setup_lifecycle({**jax_policy_payload, "cache_directory": "/tmp/other-cache"})
 
 
+def test_native_jax_runtime_policy_payload() -> None:
+    jax_policy_payload = _core.build_jax_runtime_policy_payload(
+        device="gpu",
+        cache_directory="/tmp/g-jax-cache",
+        matmul_precision="highest",
+        persistent_cache=False,
+        persistent_cache_min_entry_size_bytes=1024,
+        persistent_cache_min_compile_time_seconds=5,
+        xla_autotune_cache=True,
+        transfer_guard=True,
+    )
+
+    assert jax_policy_payload == {
+        "device": "gpu",
+        "cache_directory": "/tmp/g-jax-cache",
+        "matmul_precision": "highest",
+        "persistent_cache": False,
+        "persistent_cache_min_entry_size_bytes": 1024,
+        "persistent_cache_min_compile_time_seconds": 5,
+        "xla_autotune_cache": True,
+        "transfer_guard": True,
+    }
+
+
 def test_native_rayon_thread_pool_rejects_zero_thread_count() -> None:
     with pytest.raises(ValueError, match="Rayon thread count must be positive"):
         _core.configure_rayon_global_thread_pool(0)

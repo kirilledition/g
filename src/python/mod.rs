@@ -102,7 +102,7 @@ use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_t
 use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
 use runtime_state::{
     NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRuntimeCompatibilityToken,
-    NativeRuntimeState,
+    NativeRuntimeState, build_jax_runtime_policy_payload,
 };
 use schedule::{
     NativeBgenDeliveryCleanupPlan, NativeBgenDeliveryInvocationPlan, NativeCallbackQueueLimits,
@@ -1891,6 +1891,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_jax_runtime_setup_diagnostic_payloads, module)?)?;
+    module.add_function(wrap_pyfunction!(build_jax_runtime_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_config_update_payloads, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;

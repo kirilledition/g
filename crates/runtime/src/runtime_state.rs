@@ -40,6 +40,30 @@ pub struct JaxRuntimeSetupLifecyclePlan {
     pub should_configure: bool,
 }
 
+#[allow(clippy::fn_params_excessive_bools)]
+#[must_use]
+pub fn build_jax_runtime_policy_payload(
+    device: &str,
+    cache_directory: Option<&str>,
+    matmul_precision: Option<&str>,
+    persistent_cache: bool,
+    persistent_cache_min_entry_size_bytes: i64,
+    persistent_cache_min_compile_time_seconds: i64,
+    xla_autotune_cache: bool,
+    transfer_guard: bool,
+) -> JaxRuntimePolicyPayload {
+    JaxRuntimePolicyPayload {
+        device: device.to_string(),
+        cache_directory: cache_directory.map(str::to_string),
+        matmul_precision: matmul_precision.map(str::to_string),
+        persistent_cache,
+        persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds,
+        xla_autotune_cache,
+        transfer_guard,
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeCompatibilityError {
     message: String,
@@ -247,16 +271,24 @@ mod tests {
     }
 
     fn build_jax_policy(cache_directory: Option<&str>) -> JaxRuntimePolicyPayload {
-        JaxRuntimePolicyPayload {
-            device: "cpu".to_string(),
-            cache_directory: cache_directory.map(str::to_string),
-            matmul_precision: None,
-            persistent_cache: true,
-            persistent_cache_min_entry_size_bytes: 0,
-            persistent_cache_min_compile_time_seconds: 0,
-            xla_autotune_cache: false,
-            transfer_guard: false,
-        }
+        build_jax_runtime_policy_payload("cpu", cache_directory, None, true, 0, 0, false, false)
+    }
+
+    #[test]
+    fn builds_jax_runtime_policy_payload() {
+        assert_eq!(
+            build_jax_runtime_policy_payload("gpu", Some("/tmp/cache"), Some("highest"), false, 1024, 5, true, true,),
+            JaxRuntimePolicyPayload {
+                device: "gpu".to_string(),
+                cache_directory: Some("/tmp/cache".to_string()),
+                matmul_precision: Some("highest".to_string()),
+                persistent_cache: false,
+                persistent_cache_min_entry_size_bytes: 1024,
+                persistent_cache_min_compile_time_seconds: 5,
+                xla_autotune_cache: true,
+                transfer_guard: true,
+            },
+        );
     }
 
     #[test]
