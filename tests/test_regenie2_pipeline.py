@@ -1854,7 +1854,6 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         self.progress_state = callback_runtime._core.NativeCallbackProgressState()
         self.stage_timing_recorder = None
         self.telemetry_session = None
-        self.native_callback_batch_size = 1
         self.dosage_queue: queue.Queue[
             callback_shared.PreprocessedDosageChunkWorkItem
             | callback_shared.PreprocessedVariantMajorDosageChunkWorkItem
@@ -1870,11 +1869,9 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             result_in_flight_limit=2,
             dosage_buffer_limit=2,
         )
-        self.result_in_flight_slots = threading.BoundedSemaphore(2)
-        self.result_in_flight_limit = self.callback_scheduler_state.result_in_flight_limit
+        self.result_in_flight_slots = threading.BoundedSemaphore(self.result_in_flight_limit)
         self.result_in_flight_slot_lock = threading.Lock()
-        self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
-        self.dosage_buffer_limit = self.callback_scheduler_state.dosage_buffer_limit
+        self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=self.dosage_buffer_limit)
         self.worker_error = None
         self.result_worker_error = None
         self.sample_major_metadata: list[object] = []

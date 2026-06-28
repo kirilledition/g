@@ -93,11 +93,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
-        self.dosage_queue_depth = self.callback_scheduler_state.dosage_queue_depth
-        self.result_queue_depth = self.callback_scheduler_state.result_queue_depth
-        self.result_in_flight_limit = self.callback_scheduler_state.result_in_flight_limit
-        self.dosage_buffer_limit = self.callback_scheduler_state.dosage_buffer_limit
-        self.native_callback_batch_size = self.callback_scheduler_state.native_callback_batch_size
         self.result_in_flight_slot_lock = threading.Lock()
         self.dosage_queue: queue.Queue[
             PreprocessedDosageChunkWorkItem
@@ -159,6 +154,31 @@ class NativeBgenCallbackRunner(abc.ABC):
     def worker_threads_have_started(self) -> bool:
         """Return whether callback worker threads have been started."""
         return self.worker_threads_started
+
+    @property
+    def native_callback_batch_size(self) -> int:
+        """Return the native callback batch size."""
+        return self.callback_scheduler_state.native_callback_batch_size
+
+    @property
+    def dosage_queue_depth(self) -> int:
+        """Return the native dosage queue depth."""
+        return self.callback_scheduler_state.dosage_queue_depth
+
+    @property
+    def result_queue_depth(self) -> int:
+        """Return the native result queue depth."""
+        return self.callback_scheduler_state.result_queue_depth
+
+    @property
+    def result_in_flight_limit(self) -> int:
+        """Return the native result in-flight limit."""
+        return self.callback_scheduler_state.result_in_flight_limit
+
+    @property
+    def dosage_buffer_limit(self) -> int:
+        """Return the native dosage buffer limit."""
+        return self.callback_scheduler_state.dosage_buffer_limit
 
     @property
     def dosage_buffer_count(self) -> int:
