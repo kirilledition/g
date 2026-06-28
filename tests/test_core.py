@@ -438,6 +438,30 @@ def test_native_runtime_state_plans_rayon_thread_pool_configuration() -> None:
         runtime_state.plan_rayon_thread_pool_configuration(8)
 
 
+def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
+    runtime_state = _core.NativeRuntimeState()
+    jax_policy_payload: dict[str, object] = {
+        "device": "cpu",
+        "cache_directory": "/tmp/g-jax-cache",
+        "matmul_precision": None,
+        "persistent_cache": True,
+        "persistent_cache_min_entry_size_bytes": 0,
+        "persistent_cache_min_compile_time_seconds": 0,
+        "xla_autotune_cache": False,
+        "transfer_guard": False,
+    }
+
+    configure_plan = runtime_state.plan_jax_runtime_setup_lifecycle(jax_policy_payload)
+    runtime_state.record_jax_runtime_policy(jax_policy_payload)
+    skip_plan = runtime_state.plan_jax_runtime_setup_lifecycle(jax_policy_payload)
+
+    assert isinstance(configure_plan, _core.NativeJaxRuntimeSetupLifecyclePlan)
+    assert configure_plan.should_configure is True
+    assert skip_plan.should_configure is False
+    with pytest.raises(RuntimeError, match="JAX runtime is already configured"):
+        runtime_state.plan_jax_runtime_setup_lifecycle({**jax_policy_payload, "cache_directory": "/tmp/other-cache"})
+
+
 def test_native_rayon_thread_pool_rejects_zero_thread_count() -> None:
     with pytest.raises(ValueError, match="Rayon thread count must be positive"):
         _core.configure_rayon_global_thread_pool(0)

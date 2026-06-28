@@ -146,8 +146,10 @@ def configure_runtime_before_jax_import(
 ) -> jax_runtime_models.JaxRuntimeSetupReport | None:
     """Configure JAX platform and runtime before compute modules are imported."""
     requested_policy = jax_runtime_resolution.resolve_jax_runtime_policy(compute_config)
-    require_compatible_jax_runtime_policy(requested_policy)
-    if requested_policy == configured_jax_runtime_policy():
+    setup_lifecycle_plan = PROCESS_RUNTIME_STATE.plan_jax_runtime_setup_lifecycle(
+        jax_runtime_policy_to_native_payload(requested_policy)
+    )
+    if not setup_lifecycle_plan.should_configure:
         return None
 
     def record_diagnostic_event(diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent) -> None:

@@ -36,6 +36,11 @@ pub struct RayonThreadPoolConfigurationPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JaxRuntimeSetupLifecyclePlan {
+    pub should_configure: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeCompatibilityError {
     message: String,
 }
@@ -184,6 +189,20 @@ impl ProcessRuntimeState {
     pub fn record_jax_policy(&mut self, jax_policy: JaxRuntimePolicyPayload) {
         self.jax_policy = Some(jax_policy);
     }
+
+    /// Plan whether JAX runtime setup should run for one request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a previous run configured incompatible
+    /// process-global JAX runtime settings.
+    pub fn plan_jax_runtime_setup_lifecycle(
+        &self,
+        requested_policy: &JaxRuntimePolicyPayload,
+    ) -> Result<JaxRuntimeSetupLifecyclePlan, RuntimeCompatibilityError> {
+        self.require_compatible_jax_policy(requested_policy)?;
+        Ok(JaxRuntimeSetupLifecyclePlan { should_configure: self.jax_policy.as_ref() != Some(requested_policy) })
+    }
 }
 
 #[must_use]
@@ -290,6 +309,30 @@ mod tests {
         assert!(error.to_string().contains("JAX runtime is already configured"));
         assert!(error.to_string().contains("jax-cache-dir=/tmp/first-cache"));
         assert!(error.to_string().contains("jax-cache-dir=/tmp/second-cache"));
+    }
+
+    #[test]
+    fn plans_jax_runtime_setup_lifecycle_from_process_state() {
+        let mut state = ProcessRuntimeState::default();
+        let requested_policy = build_jax_policy(Some("/tmp/cache"));
+
+        assert_eq!(
+            state.plan_jax_runtime_setup_lifecycle(&requested_policy).unwrap(),
+            JaxRuntimeSetupLifecyclePlan { should_configure: true },
+        );
+
+        state.record_jax_policy(requested_policy.clone());
+        assert_eq!(
+            state.plan_jax_runtime_setup_lifecycle(&requested_policy).unwrap(),
+            JaxRuntimeSetupLifecyclePlan { should_configure: false },
+        );
+        assert!(
+            state
+                .plan_jax_runtime_setup_lifecycle(&build_jax_policy(Some("/tmp/second-cache")))
+                .unwrap_err()
+                .to_string()
+                .contains("JAX runtime is already configured")
+        );
     }
 
     #[test]

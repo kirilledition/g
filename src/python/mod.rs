@@ -100,7 +100,10 @@ use run_metadata::{
 };
 use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool};
 use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
-use runtime_state::{NativeRayonThreadPoolConfigurationPlan, NativeRuntimeCompatibilityToken, NativeRuntimeState};
+use runtime_state::{
+    NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRuntimeCompatibilityToken,
+    NativeRuntimeState,
+};
 use schedule::{
     NativeBgenDeliveryCleanupPlan, NativeBgenDeliveryInvocationPlan, NativeCallbackQueueLimits,
     NativeCallbackQueueOperationObservationPlan, NativeCallbackQueueStageObservationPlan,
@@ -1827,6 +1830,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
+    module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
     module.add_class::<NativeRayonThreadPoolConfigurationPlan>()?;
     module.add_class::<NativeRuntimeCompatibilityToken>()?;
     module.add_class::<NativeRuntimeState>()?;

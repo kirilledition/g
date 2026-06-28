@@ -20,6 +20,11 @@ pub(crate) struct NativeRayonThreadPoolConfigurationPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeJaxRuntimeSetupLifecyclePlan {
+    inner: native_runtime_state::JaxRuntimeSetupLifecyclePlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeRuntimeState {
     state: Mutex<native_runtime_state::ProcessRuntimeState>,
 }
@@ -34,6 +39,14 @@ impl NativeRayonThreadPoolConfigurationPlan {
     #[getter]
     fn thread_count(&self) -> Option<i64> {
         self.inner.thread_count
+    }
+}
+
+#[pymethods]
+impl NativeJaxRuntimeSetupLifecyclePlan {
+    #[getter]
+    fn should_configure(&self) -> bool {
+        self.inner.should_configure
     }
 }
 
@@ -124,6 +137,18 @@ impl NativeRuntimeState {
         let jax_policy = parse_jax_runtime_policy_payload(payload)?;
         self.lock_state()?.record_jax_policy(jax_policy);
         Ok(())
+    }
+
+    fn plan_jax_runtime_setup_lifecycle(
+        &self,
+        payload: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeJaxRuntimeSetupLifecyclePlan> {
+        let jax_policy = parse_jax_runtime_policy_payload(payload)?;
+        let plan = self
+            .lock_state()?
+            .plan_jax_runtime_setup_lifecycle(&jax_policy)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(NativeJaxRuntimeSetupLifecyclePlan { inner: plan })
     }
 }
 

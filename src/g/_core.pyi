@@ -963,6 +963,9 @@ class NativeRayonThreadPoolConfigurationPlan:
     should_configure: bool
     thread_count: int | None
 
+class NativeJaxRuntimeSetupLifecyclePlan:
+    should_configure: bool
+
 class NativeRuntimeState:
     rayon_thread_count: int | None
     def __init__(self) -> None: ...
@@ -982,6 +985,10 @@ class NativeRuntimeState:
     def effective_rayon_thread_count(self, requested_thread_count: int | None) -> int | None: ...
     def require_compatible_jax_runtime_policy(self, payload: dict[str, object]) -> None: ...
     def record_jax_runtime_policy(self, payload: dict[str, object]) -> None: ...
+    def plan_jax_runtime_setup_lifecycle(
+        self,
+        payload: dict[str, object],
+    ) -> NativeJaxRuntimeSetupLifecyclePlan: ...
 
 class NativeSecondSignalExceptionPlan:
     raise_keyboard_interrupt: bool
