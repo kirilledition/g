@@ -149,6 +149,11 @@ pub(crate) struct NativeResultWriteItemResourceReleasePlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeResultWriteDrainCompletionPlan {
+    inner: native_schedule::ResultWriteDrainCompletionPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerLifecycleState {
     inner: native_schedule::CallbackWorkerLifecycleState,
 }
@@ -531,6 +536,16 @@ impl NativeCallbackSchedulerState {
                 has_released_host_dosage_buffer,
                 release_in_flight_slot,
             )
+            .into()
+    }
+
+    fn plan_result_write_drain_completion(
+        &self,
+        has_result_work_item: bool,
+        flush_binary_correction_diagnostics_on_stop: bool,
+    ) -> NativeResultWriteDrainCompletionPlan {
+        self.inner
+            .plan_result_write_drain_completion(has_result_work_item, flush_binary_correction_diagnostics_on_stop)
             .into()
     }
 
@@ -1498,6 +1513,19 @@ impl NativeResultWriteItemResourceReleasePlan {
 }
 
 #[pymethods]
+impl NativeResultWriteDrainCompletionPlan {
+    #[getter]
+    fn should_stop(&self) -> bool {
+        self.inner.should_stop
+    }
+
+    #[getter]
+    fn should_flush_binary_correction_diagnostics(&self) -> bool {
+        self.inner.should_flush_binary_correction_diagnostics
+    }
+}
+
+#[pymethods]
 impl NativeGpuGenotypeFormatResolutionPlan {
     #[getter]
     fn requested_gpu_genotype_format(&self) -> &str {
@@ -1731,6 +1759,12 @@ impl From<native_schedule::ResultInFlightReleaseAttemptPlan> for NativeResultInF
 impl From<native_schedule::ResultWriteItemResourceReleasePlan> for NativeResultWriteItemResourceReleasePlan {
     fn from(resource_release_plan: native_schedule::ResultWriteItemResourceReleasePlan) -> Self {
         Self { inner: resource_release_plan }
+    }
+}
+
+impl From<native_schedule::ResultWriteDrainCompletionPlan> for NativeResultWriteDrainCompletionPlan {
+    fn from(drain_completion_plan: native_schedule::ResultWriteDrainCompletionPlan) -> Self {
+        Self { inner: drain_completion_plan }
     }
 }
 

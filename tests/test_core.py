@@ -1557,6 +1557,36 @@ def test_native_callback_scheduler_state_plans_result_write_item_resource_releas
     assert cleanup_release_plan.should_release_result_in_flight_slot is False
 
 
+def test_native_callback_scheduler_state_plans_result_write_drain_completion() -> None:
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+
+    active_drain_plan = scheduler_state.plan_result_write_drain_completion(
+        has_result_work_item=True,
+        flush_binary_correction_diagnostics_on_stop=True,
+    )
+    assert active_drain_plan.should_stop is False
+    assert active_drain_plan.should_flush_binary_correction_diagnostics is False
+
+    binary_completion_plan = scheduler_state.plan_result_write_drain_completion(
+        has_result_work_item=False,
+        flush_binary_correction_diagnostics_on_stop=True,
+    )
+    assert binary_completion_plan.should_stop is True
+    assert binary_completion_plan.should_flush_binary_correction_diagnostics is True
+
+    linear_completion_plan = scheduler_state.plan_result_write_drain_completion(
+        has_result_work_item=False,
+        flush_binary_correction_diagnostics_on_stop=False,
+    )
+    assert linear_completion_plan.should_stop is True
+    assert linear_completion_plan.should_flush_binary_correction_diagnostics is False
+
+
 def test_native_callback_scheduler_state_plans_dosage_buffer_attempts() -> None:
     scheduler_state = _core.NativeCallbackSchedulerState(
         staging_depth=1,

@@ -428,8 +428,15 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             while True:
                 get_start_time = time.perf_counter()
                 work_item = self.get_result_write_item()
-                if work_item is None:
+                drain_completion_plan = self.plan_result_write_drain_completion(
+                    work_item,
+                    flush_binary_correction_diagnostics_on_stop=False,
+                )
+                if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
+                if work_item is None:
+                    message = "Native result write drain completion plan continued without a work item."
+                    raise RuntimeError(message)
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_queue",
                     operation_name="consumer_wait",
@@ -445,8 +452,15 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         """Consume multi-trait result write items without diagnostic queue timing."""
         while True:
             work_item = self.get_result_write_item()
-            if work_item is None:
+            drain_completion_plan = self.plan_result_write_drain_completion(
+                work_item,
+                flush_binary_correction_diagnostics_on_stop=False,
+            )
+            if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
+            if work_item is None:
+                message = "Native result write drain completion plan continued without a work item."
+                raise RuntimeError(message)
             multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
             self.process_multi_result_write_item(multi_work_item)
 

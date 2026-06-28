@@ -2829,6 +2829,12 @@ class ResultWriteItemResourceReleasePlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class ResultWriteDrainCompletionPlanProbe:
+    should_stop: bool
+    should_flush_binary_correction_diagnostics: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class DosageBufferAcquireAttemptPlanProbe:
     should_take_free_buffer: bool
     should_allocate: bool
@@ -3213,6 +3219,27 @@ class ResultWriteItemResourceReleaseSchedulerProbe:
 
 
 @dataclasses.dataclass
+class ResultWriteDrainCompletionSchedulerProbe:
+    has_result_work_item: bool | None = None
+    flush_binary_correction_diagnostics_on_stop: bool | None = None
+
+    def plan_result_write_drain_completion(
+        self,
+        *,
+        has_result_work_item: bool,
+        flush_binary_correction_diagnostics_on_stop: bool,
+    ) -> ResultWriteDrainCompletionPlanProbe:
+        self.has_result_work_item = has_result_work_item
+        self.flush_binary_correction_diagnostics_on_stop = flush_binary_correction_diagnostics_on_stop
+        return ResultWriteDrainCompletionPlanProbe(
+            should_stop=not has_result_work_item,
+            should_flush_binary_correction_diagnostics=(
+                not has_result_work_item and flush_binary_correction_diagnostics_on_stop
+            ),
+        )
+
+
+@dataclasses.dataclass
 class DosageBufferAttemptSchedulerProbe:
     dosage_buffer_limit: int = 2
     dosage_worker_error_message: str | None = None
@@ -3484,6 +3511,32 @@ def test_native_callback_runner_uses_scheduler_result_write_item_resource_releas
     assert scheduler_state.returned_buffer_identifier == id(host_dosage_buffer)
     assert scheduler_state.release_called is True
     assert callback.free_dosage_buffers.popleft() is host_dosage_buffer
+
+
+def test_native_callback_runner_uses_scheduler_result_write_drain_completion_plan() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = ResultWriteDrainCompletionSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+    flushed = False
+
+    def flush_binary_correction_diagnostics_probe() -> None:
+        nonlocal flushed
+        flushed = True
+
+    typing.cast("typing.Any", callback).flush_binary_correction_diagnostics = (
+        flush_binary_correction_diagnostics_probe
+    )
+
+    drain_completion_plan = callback.plan_result_write_drain_completion(
+        None,
+        flush_binary_correction_diagnostics_on_stop=True,
+    )
+    should_stop = callback.apply_result_write_drain_completion_plan(drain_completion_plan)
+
+    assert scheduler_state.has_result_work_item is False
+    assert scheduler_state.flush_binary_correction_diagnostics_on_stop is True
+    assert should_stop is True
+    assert flushed is True
 
 
 def test_native_callback_runner_uses_scheduler_dosage_buffer_attempt_plans() -> None:

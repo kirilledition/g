@@ -1007,6 +1007,8 @@ Remove Python as the chunk-level scheduler.
   final emission gating.
 - Result work-item cleanup now uses native release plans to select pre-write
   host buffer release and final in-flight slot cleanup decisions.
+- Result write drain completion now uses a native stop/diagnostic-flush plan
+  when callback result consumers observe the queue sentinel.
 
 ### Tests
 

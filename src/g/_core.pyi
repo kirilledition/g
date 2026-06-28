@@ -817,6 +817,12 @@ class NativeResultWriteItemResourceReleasePlan:
     @property
     def should_release_result_in_flight_slot(self) -> bool: ...
 
+class NativeResultWriteDrainCompletionPlan:
+    @property
+    def should_stop(self) -> bool: ...
+    @property
+    def should_flush_binary_correction_diagnostics(self) -> bool: ...
+
 class NativeCallbackWorkerErrorRaisePlan:
     @property
     def should_raise(self) -> bool: ...
@@ -951,6 +957,11 @@ class NativeCallbackSchedulerState:
         has_released_host_dosage_buffer: bool,
         release_in_flight_slot: bool,
     ) -> NativeResultWriteItemResourceReleasePlan: ...
+    def plan_result_write_drain_completion(
+        self,
+        has_result_work_item: bool,
+        flush_binary_correction_diagnostics_on_stop: bool,
+    ) -> NativeResultWriteDrainCompletionPlan: ...
     @property
     def dosage_buffer_pool_limit(self) -> int: ...
     @property

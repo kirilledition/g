@@ -766,9 +766,15 @@ class NativeBgenCallbackRunner(abc.ABC):
             while True:
                 get_start_time = time.perf_counter()
                 work_item = self.get_result_write_item()
-                if work_item is None:
-                    self.flush_binary_correction_diagnostics()
+                drain_completion_plan = self.plan_result_write_drain_completion(
+                    work_item,
+                    flush_binary_correction_diagnostics_on_stop=True,
+                )
+                if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
+                if work_item is None:
+                    message = "Native result write drain completion plan continued without a work item."
+                    raise RuntimeError(message)
                 self.record_bounded_resource_stage_duration(
                     resource_name="result_queue",
                     operation_name="consumer_wait",
@@ -783,9 +789,15 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume result write items without diagnostic queue timing overhead."""
         while True:
             work_item = self.get_result_write_item()
-            if work_item is None:
-                self.flush_binary_correction_diagnostics()
+            drain_completion_plan = self.plan_result_write_drain_completion(
+                work_item,
+                flush_binary_correction_diagnostics_on_stop=True,
+            )
+            if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
+            if work_item is None:
+                message = "Native result write drain completion plan continued without a work item."
+                raise RuntimeError(message)
             self.process_result_write_item(work_item)
 
     def process_result_write_item(
@@ -1445,6 +1457,27 @@ class NativeBgenCallbackRunner(abc.ABC):
             release_in_flight_slot=work_item.release_in_flight_slot,
         )
         self.release_result_work_item_resources(work_item, resource_release_plan)
+
+    def plan_result_write_drain_completion(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+        *,
+        flush_binary_correction_diagnostics_on_stop: bool,
+    ) -> _core.NativeResultWriteDrainCompletionPlan:
+        """Plan result write queue drain completion from native scheduler policy."""
+        return self.callback_scheduler_state.plan_result_write_drain_completion(
+            has_result_work_item=work_item is not None,
+            flush_binary_correction_diagnostics_on_stop=flush_binary_correction_diagnostics_on_stop,
+        )
+
+    def apply_result_write_drain_completion_plan(
+        self,
+        drain_completion_plan: _core.NativeResultWriteDrainCompletionPlan,
+    ) -> bool:
+        """Apply native result write drain completion side effects."""
+        if drain_completion_plan.should_flush_binary_correction_diagnostics:
+            self.flush_binary_correction_diagnostics()
+        return drain_completion_plan.should_stop
 
     def release_result_work_item_resources(
         self,

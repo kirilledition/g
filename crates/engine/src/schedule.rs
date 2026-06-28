@@ -269,6 +269,12 @@ pub struct ResultWriteItemResourceReleasePlan {
     pub should_release_result_in_flight_slot: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResultWriteDrainCompletionPlan {
+    pub should_stop: bool,
+    pub should_flush_binary_correction_diagnostics: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DosageBufferAcquireAttemptPlan {
     pub should_take_free_buffer: bool,
@@ -754,6 +760,19 @@ impl CallbackSchedulerState {
         ResultWriteItemResourceReleasePlan {
             should_release_host_buffer: has_host_dosage_buffer && !has_released_host_dosage_buffer,
             should_release_result_in_flight_slot: release_in_flight_slot,
+        }
+    }
+
+    #[must_use]
+    pub const fn plan_result_write_drain_completion(
+        &self,
+        has_result_work_item: bool,
+        flush_binary_correction_diagnostics_on_stop: bool,
+    ) -> ResultWriteDrainCompletionPlan {
+        ResultWriteDrainCompletionPlan {
+            should_stop: !has_result_work_item,
+            should_flush_binary_correction_diagnostics: !has_result_work_item
+                && flush_binary_correction_diagnostics_on_stop,
         }
     }
 
@@ -2937,6 +2956,24 @@ mod tests {
                 should_release_host_buffer: true,
                 should_release_result_in_flight_slot: false,
             },
+        );
+    }
+
+    #[test]
+    fn plans_result_write_drain_completion() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_result_write_drain_completion(true, true),
+            ResultWriteDrainCompletionPlan { should_stop: false, should_flush_binary_correction_diagnostics: false },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_write_drain_completion(false, true),
+            ResultWriteDrainCompletionPlan { should_stop: true, should_flush_binary_correction_diagnostics: true },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_write_drain_completion(false, false),
+            ResultWriteDrainCompletionPlan { should_stop: true, should_flush_binary_correction_diagnostics: false },
         );
     }
 
