@@ -652,6 +652,46 @@ impl NativeCallbackWorkerStopPlan {
 #[pymethods]
 impl NativeCallbackWorkerFinishPlan {
     #[getter]
+    fn finish_actions(&self) -> Vec<String> {
+        self.inner.finish_actions.clone()
+    }
+
+    #[getter]
+    fn stop_dosage_worker(&self) -> bool {
+        self.inner.stop_dosage_worker()
+    }
+
+    #[getter]
+    fn join_dosage_worker(&self) -> bool {
+        self.inner.join_dosage_worker()
+    }
+
+    #[getter]
+    fn stop_result_worker(&self) -> bool {
+        self.inner.stop_result_worker()
+    }
+
+    #[getter]
+    fn join_result_worker(&self) -> bool {
+        self.inner.join_result_worker()
+    }
+
+    #[getter]
+    fn raise_worker_error(&self) -> bool {
+        self.inner.raise_worker_error()
+    }
+
+    #[getter]
+    fn complete_progress(&self) -> bool {
+        self.inner.complete_progress()
+    }
+
+    #[getter]
+    fn emit_binary_correction_summary(&self) -> bool {
+        self.inner.emit_binary_correction_summary()
+    }
+
+    #[getter]
     fn dosage_stop_timeout_seconds(&self) -> f64 {
         self.inner.dosage_stop_timeout_seconds
     }
@@ -674,6 +714,21 @@ impl NativeCallbackWorkerFinishPlan {
 
 #[pymethods]
 impl NativeCallbackWorkerAbortPlan {
+    #[getter]
+    fn abort_actions(&self) -> Vec<String> {
+        self.inner.abort_actions.clone()
+    }
+
+    #[getter]
+    fn stop_dosage_worker(&self) -> bool {
+        self.inner.stop_dosage_worker()
+    }
+
+    #[getter]
+    fn stop_result_worker(&self) -> bool {
+        self.inner.stop_result_worker()
+    }
+
     #[getter]
     fn dosage_stop_timeout_seconds(&self) -> f64 {
         self.inner.dosage_stop_timeout_seconds

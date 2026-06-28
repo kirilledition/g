@@ -1136,11 +1136,30 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
 
     assert scheduler_state.backpressure_poll_timeout_seconds == 0.1
     finish_plan = scheduler_state.plan_worker_finish()
+    assert finish_plan.finish_actions == [
+        "stop_dosage_worker",
+        "join_dosage_worker",
+        "stop_result_worker",
+        "join_result_worker",
+        "raise_worker_error",
+        "complete_progress",
+        "emit_binary_correction_summary",
+    ]
+    assert finish_plan.stop_dosage_worker is True
+    assert finish_plan.join_dosage_worker is True
+    assert finish_plan.stop_result_worker is True
+    assert finish_plan.join_result_worker is True
+    assert finish_plan.raise_worker_error is True
+    assert finish_plan.complete_progress is True
+    assert finish_plan.emit_binary_correction_summary is True
     assert finish_plan.dosage_stop_timeout_seconds == 60.0
     assert finish_plan.dosage_join_timeout_seconds == 300.0
     assert finish_plan.result_stop_timeout_seconds == 60.0
     assert finish_plan.result_join_timeout_seconds == 300.0
     abort_plan = scheduler_state.plan_worker_abort()
+    assert abort_plan.abort_actions == ["stop_dosage_worker", "stop_result_worker"]
+    assert abort_plan.stop_dosage_worker is True
+    assert abort_plan.stop_result_worker is True
     assert abort_plan.dosage_stop_timeout_seconds == 1.0
     assert abort_plan.result_stop_timeout_seconds == 1.0
 
@@ -1420,12 +1439,31 @@ def test_plan_callback_worker_stop_uses_native_timeout_policy() -> None:
 
 def test_plan_callback_worker_finish_and_abort_use_native_timeout_policy() -> None:
     finish_plan = _core.plan_callback_worker_finish()
+    assert finish_plan.finish_actions == [
+        "stop_dosage_worker",
+        "join_dosage_worker",
+        "stop_result_worker",
+        "join_result_worker",
+        "raise_worker_error",
+        "complete_progress",
+        "emit_binary_correction_summary",
+    ]
+    assert finish_plan.stop_dosage_worker is True
+    assert finish_plan.join_dosage_worker is True
+    assert finish_plan.stop_result_worker is True
+    assert finish_plan.join_result_worker is True
+    assert finish_plan.raise_worker_error is True
+    assert finish_plan.complete_progress is True
+    assert finish_plan.emit_binary_correction_summary is True
     assert finish_plan.dosage_stop_timeout_seconds == 60.0
     assert finish_plan.dosage_join_timeout_seconds == 300.0
     assert finish_plan.result_stop_timeout_seconds == 60.0
     assert finish_plan.result_join_timeout_seconds == 300.0
 
     abort_plan = _core.plan_callback_worker_abort()
+    assert abort_plan.abort_actions == ["stop_dosage_worker", "stop_result_worker"]
+    assert abort_plan.stop_dosage_worker is True
+    assert abort_plan.stop_result_worker is True
     assert abort_plan.dosage_stop_timeout_seconds == 1.0
     assert abort_plan.result_stop_timeout_seconds == 1.0
 

@@ -45,6 +45,13 @@ const BGEN_DELIVERY_CLEANUP_ACTION_ABORT_WRITER_SESSIONS: &str = "abort_writer_s
 const BGEN_DELIVERY_CLEANUP_ACTION_WRITE_STAGE_TIMING_SNAPSHOT: &str = "write_stage_timing_snapshot";
 const CALLBACK_WORKER_START_RESULT_WORKER_ACTION: &str = "start_result_worker";
 const CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION: &str = "start_dosage_worker";
+const CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION: &str = "stop_dosage_worker";
+const CALLBACK_WORKER_FINISH_JOIN_DOSAGE_WORKER_ACTION: &str = "join_dosage_worker";
+const CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION: &str = "stop_result_worker";
+const CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION: &str = "join_result_worker";
+const CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION: &str = "raise_worker_error";
+const CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION: &str = "complete_progress";
+const CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION: &str = "emit_binary_correction_summary";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeCallbackQueueLimits {
@@ -844,18 +851,77 @@ pub struct CallbackWorkerStopPlan {
     pub timeout_seconds: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CallbackWorkerFinishPlan {
+    pub finish_actions: Vec<String>,
     pub dosage_stop_timeout_seconds: f64,
     pub dosage_join_timeout_seconds: f64,
     pub result_stop_timeout_seconds: f64,
     pub result_join_timeout_seconds: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+impl CallbackWorkerFinishPlan {
+    #[must_use]
+    pub fn stop_dosage_worker(&self) -> bool {
+        self.contains_finish_action(CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION)
+    }
+
+    #[must_use]
+    pub fn join_dosage_worker(&self) -> bool {
+        self.contains_finish_action(CALLBACK_WORKER_FINISH_JOIN_DOSAGE_WORKER_ACTION)
+    }
+
+    #[must_use]
+    pub fn stop_result_worker(&self) -> bool {
+        self.contains_finish_action(CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION)
+    }
+
+    #[must_use]
+    pub fn join_result_worker(&self) -> bool {
+        self.contains_finish_action(CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION)
+    }
+
+    #[must_use]
+    pub fn raise_worker_error(&self) -> bool {
+        self.contains_finish_action(CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION)
+    }
+
+    #[must_use]
+    pub fn complete_progress(&self) -> bool {
+        self.contains_finish_action(CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION)
+    }
+
+    #[must_use]
+    pub fn emit_binary_correction_summary(&self) -> bool {
+        self.contains_finish_action(CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION)
+    }
+
+    fn contains_finish_action(&self, finish_action: &str) -> bool {
+        self.finish_actions.iter().any(|candidate_action| candidate_action == finish_action)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct CallbackWorkerAbortPlan {
+    pub abort_actions: Vec<String>,
     pub dosage_stop_timeout_seconds: f64,
     pub result_stop_timeout_seconds: f64,
+}
+
+impl CallbackWorkerAbortPlan {
+    #[must_use]
+    pub fn stop_dosage_worker(&self) -> bool {
+        self.contains_abort_action(CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION)
+    }
+
+    #[must_use]
+    pub fn stop_result_worker(&self) -> bool {
+        self.contains_abort_action(CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION)
+    }
+
+    fn contains_abort_action(&self, abort_action: &str) -> bool {
+        self.abort_actions.iter().any(|candidate_action| candidate_action == abort_action)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -978,6 +1044,15 @@ pub fn plan_result_callback_worker_stop(
 pub fn plan_callback_worker_finish() -> CallbackWorkerFinishPlan {
     let shutdown_timeouts = callback_worker_shutdown_timeouts();
     CallbackWorkerFinishPlan {
+        finish_actions: vec![
+            CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION.to_string(),
+            CALLBACK_WORKER_FINISH_JOIN_DOSAGE_WORKER_ACTION.to_string(),
+            CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION.to_string(),
+            CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION.to_string(),
+            CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION.to_string(),
+            CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION.to_string(),
+            CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION.to_string(),
+        ],
         dosage_stop_timeout_seconds: shutdown_timeouts.dosage_worker_join_timeout_seconds,
         dosage_join_timeout_seconds: shutdown_timeouts.graceful_dosage_worker_join_timeout_seconds,
         result_stop_timeout_seconds: shutdown_timeouts.result_worker_join_timeout_seconds,
@@ -989,6 +1064,10 @@ pub fn plan_callback_worker_finish() -> CallbackWorkerFinishPlan {
 pub fn plan_callback_worker_abort() -> CallbackWorkerAbortPlan {
     let shutdown_timeouts = callback_worker_shutdown_timeouts();
     CallbackWorkerAbortPlan {
+        abort_actions: vec![
+            CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION.to_string(),
+            CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION.to_string(),
+        ],
         dosage_stop_timeout_seconds: shutdown_timeouts.worker_abort_stop_timeout_seconds,
         result_stop_timeout_seconds: shutdown_timeouts.worker_abort_stop_timeout_seconds,
     }
@@ -2131,6 +2210,37 @@ mod tests {
         assert!(already_started_plan.start_actions.is_empty());
     }
 
+    #[must_use]
+    fn expected_callback_worker_finish_plan() -> CallbackWorkerFinishPlan {
+        CallbackWorkerFinishPlan {
+            finish_actions: vec![
+                CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION.to_string(),
+                CALLBACK_WORKER_FINISH_JOIN_DOSAGE_WORKER_ACTION.to_string(),
+                CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION.to_string(),
+                CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION.to_string(),
+                CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION.to_string(),
+                CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION.to_string(),
+                CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION.to_string(),
+            ],
+            dosage_stop_timeout_seconds: 60.0,
+            dosage_join_timeout_seconds: 300.0,
+            result_stop_timeout_seconds: 60.0,
+            result_join_timeout_seconds: 300.0,
+        }
+    }
+
+    #[must_use]
+    fn expected_callback_worker_abort_plan() -> CallbackWorkerAbortPlan {
+        CallbackWorkerAbortPlan {
+            abort_actions: vec![
+                CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION.to_string(),
+                CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION.to_string(),
+            ],
+            dosage_stop_timeout_seconds: 1.0,
+            result_stop_timeout_seconds: 1.0,
+        }
+    }
+
     #[test]
     fn tracks_callback_scheduler_state() {
         let mut scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
@@ -2202,19 +2312,8 @@ mod tests {
         assert_eq!(scheduler_state.result_worker_error_message(), None);
 
         assert!((scheduler_state.backpressure_poll_timeout_seconds() - 0.1).abs() < f64::EPSILON);
-        assert_eq!(
-            scheduler_state.plan_worker_finish(),
-            CallbackWorkerFinishPlan {
-                dosage_stop_timeout_seconds: 60.0,
-                dosage_join_timeout_seconds: 300.0,
-                result_stop_timeout_seconds: 60.0,
-                result_join_timeout_seconds: 300.0,
-            },
-        );
-        assert_eq!(
-            scheduler_state.plan_worker_abort(),
-            CallbackWorkerAbortPlan { dosage_stop_timeout_seconds: 1.0, result_stop_timeout_seconds: 1.0 },
-        );
+        assert_eq!(scheduler_state.plan_worker_finish(), expected_callback_worker_finish_plan(),);
+        assert_eq!(scheduler_state.plan_worker_abort(), expected_callback_worker_abort_plan(),);
 
         assert_eq!(
             scheduler_state.plan_dosage_worker_join(None),
@@ -2374,19 +2473,19 @@ mod tests {
 
     #[test]
     fn plans_callback_worker_finish_and_abort_policy() {
-        assert_eq!(
-            plan_callback_worker_finish(),
-            CallbackWorkerFinishPlan {
-                dosage_stop_timeout_seconds: 60.0,
-                dosage_join_timeout_seconds: 300.0,
-                result_stop_timeout_seconds: 60.0,
-                result_join_timeout_seconds: 300.0,
-            },
-        );
-        assert_eq!(
-            plan_callback_worker_abort(),
-            CallbackWorkerAbortPlan { dosage_stop_timeout_seconds: 1.0, result_stop_timeout_seconds: 1.0 },
-        );
+        let finish_plan = plan_callback_worker_finish();
+        assert!(finish_plan.stop_dosage_worker());
+        assert!(finish_plan.join_dosage_worker());
+        assert!(finish_plan.stop_result_worker());
+        assert!(finish_plan.join_result_worker());
+        assert!(finish_plan.raise_worker_error());
+        assert!(finish_plan.complete_progress());
+        assert!(finish_plan.emit_binary_correction_summary());
+        assert_eq!(finish_plan, expected_callback_worker_finish_plan());
+        let abort_plan = plan_callback_worker_abort();
+        assert!(abort_plan.stop_dosage_worker());
+        assert!(abort_plan.stop_result_worker());
+        assert_eq!(abort_plan, expected_callback_worker_abort_plan());
     }
 
     #[test]

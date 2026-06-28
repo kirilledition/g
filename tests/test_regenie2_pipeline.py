@@ -2673,6 +2673,7 @@ def test_callback_runtime_does_not_export_legacy_worker_timeout_constants() -> N
 
 @dataclasses.dataclass(frozen=True)
 class CallbackFinishPlanProbe:
+    finish_actions: list[str]
     dosage_stop_timeout_seconds: float
     dosage_join_timeout_seconds: float
     result_stop_timeout_seconds: float
@@ -2681,6 +2682,7 @@ class CallbackFinishPlanProbe:
 
 @dataclasses.dataclass(frozen=True)
 class CallbackAbortPlanProbe:
+    abort_actions: list[str]
     dosage_stop_timeout_seconds: float
     result_stop_timeout_seconds: float
 
@@ -2693,6 +2695,15 @@ class CallbackSchedulerShutdownPlanProbe:
     def plan_worker_finish(self) -> CallbackFinishPlanProbe:
         self.finish_called = True
         return CallbackFinishPlanProbe(
+            finish_actions=[
+                "stop_dosage_worker",
+                "join_dosage_worker",
+                "stop_result_worker",
+                "join_result_worker",
+                "raise_worker_error",
+                "complete_progress",
+                "emit_binary_correction_summary",
+            ],
             dosage_stop_timeout_seconds=2.0,
             dosage_join_timeout_seconds=3.0,
             result_stop_timeout_seconds=4.0,
@@ -2702,6 +2713,7 @@ class CallbackSchedulerShutdownPlanProbe:
     def plan_worker_abort(self) -> CallbackAbortPlanProbe:
         self.abort_called = True
         return CallbackAbortPlanProbe(
+            abort_actions=["stop_dosage_worker", "stop_result_worker"],
             dosage_stop_timeout_seconds=0.25,
             result_stop_timeout_seconds=0.5,
         )
