@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections
 import concurrent.futures
 import dataclasses
 import queue
@@ -578,9 +579,9 @@ class BufferObservingWriterSession(FakeWriterSession):
         self.observed_buffer_before_write = False
 
     def write_regenie2_native_chunk(self, **kwargs: object) -> None:
-        observed_buffer = self.callback.free_dosage_buffers.get_nowait()
+        observed_buffer = self.callback.free_dosage_buffers.popleft()
         assert observed_buffer is self.expected_buffer
-        self.callback.free_dosage_buffers.put_nowait(observed_buffer)
+        self.callback.free_dosage_buffers.appendleft(observed_buffer)
         self.observed_buffer_before_write = True
         super().write_regenie2_native_chunk(**kwargs)
 
@@ -1871,7 +1872,8 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             dosage_buffer_limit=2,
         )
         self.result_in_flight_slot_condition = threading.Condition()
-        self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=self.dosage_buffer_limit)
+        self.dosage_buffer_pool_condition = threading.Condition()
+        self.free_dosage_buffers: collections.deque[callback_shared.HostGenotypeBuffer] = collections.deque()
         self.worker_error = None
         self.result_worker_error = None
         self.sample_major_metadata: list[object] = []
@@ -2413,6 +2415,34 @@ def test_native_callback_runner_uses_native_dosage_buffer_pool_accounting() -> N
     assert callback.callback_scheduler_state.owns_dosage_buffer(id(first_buffer)) is False
 
 
+def test_native_callback_runner_waits_on_native_dosage_buffer_pool_release() -> None:
+    callback = ManualCallbackRunner()
+    first_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    second_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=4)
+    acquisition_started = threading.Event()
+
+    def acquire_buffer_after_pool_capacity_is_full() -> callback_shared.HostGenotypeBuffer:
+        acquisition_started.set()
+        return callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(acquire_buffer_after_pool_capacity_is_full)
+        assert acquisition_started.wait(timeout=1.0)
+        time.sleep(0.2)
+        assert not future.done()
+
+        callback.release_dosage_buffer(first_buffer)
+        acquired_buffer = future.result(timeout=2.0)
+
+    assert acquired_buffer is first_buffer
+    assert callback.callback_scheduler_state.dosage_buffer_allocated_count == 2
+    assert callback.free_dosage_buffer_count == 0
+
+    callback.release_dosage_buffer(acquired_buffer)
+    callback.release_dosage_buffer(second_buffer)
+    assert callback.free_dosage_buffer_count == 2
+
+
 def test_native_callback_runner_records_native_dosage_buffer_operation_observations() -> None:
     callback = ManualCallbackRunner()
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
@@ -2480,7 +2510,7 @@ def test_native_callback_runner_ignores_unowned_host_dosage_buffers() -> None:
     callback.release_dosage_buffer(np.empty((2, 2), dtype=np.float32))
 
     assert callback.dosage_buffer_count == 0
-    assert callback.free_dosage_buffers.empty()
+    assert callback.free_dosage_buffer_count == 0
 
 
 def test_native_callback_runner_surfaces_worker_and_writer_errors() -> None:
@@ -2947,7 +2977,7 @@ def test_native_bgen_callback_runner_uses_native_scheduler_state() -> None:
     assert callback.dosage_buffer_limit == 14
     assert callback.dosage_queue.maxsize == 11
     assert callback.result_queue.maxsize == 12
-    assert callback.free_dosage_buffers.maxsize == 14
+    assert not hasattr(callback.free_dosage_buffers, "maxsize")
 
 
 def test_native_bgen_callback_runner_rejects_batch_size_above_dosage_buffer_limit() -> None:
@@ -3357,7 +3387,7 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
     assert callback.callback_scheduler_state.result_in_flight_occupied_count == 1
     callback.release_result_in_flight_slot()
     assert callback.callback_scheduler_state.result_in_flight_occupied_count == 0
-    assert callback.free_dosage_buffers.get_nowait() is host_dosage_buffer
+    assert callback.free_dosage_buffers.popleft() is host_dosage_buffer
     assert len(writer_session.native_chunks) == 1
 
 
@@ -3437,7 +3467,7 @@ def test_result_worker_releases_host_dosage_buffer_before_output_write() -> None
     )
 
     assert observing_writer_session.observed_buffer_before_write is True
-    assert callback.free_dosage_buffers.get_nowait() is host_dosage_buffer
+    assert callback.free_dosage_buffers.popleft() is host_dosage_buffer
     assert callback.callback_scheduler_state.result_in_flight_occupied_count == 0
 
 

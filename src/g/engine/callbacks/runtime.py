@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import abc
+import collections
+import collections.abc
 import contextlib
 import queue
 import threading
@@ -21,8 +23,6 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.engine import telemetry, timing
 
 if typing.TYPE_CHECKING:
-    import collections.abc
-
     import jax
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
@@ -88,6 +88,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
         self.result_in_flight_slot_condition = threading.Condition()
+        self.dosage_buffer_pool_condition = threading.Condition()
         self.dosage_queue: queue.Queue[
             PreprocessedDosageChunkWorkItem
             | PreprocessedVariantMajorDosageChunkWorkItem
@@ -98,7 +99,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.result_queue: queue.Queue[Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None] = (
             queue.Queue(maxsize=self.result_queue_depth)
         )
-        self.free_dosage_buffers: queue.Queue[HostGenotypeBuffer] = queue.Queue(maxsize=self.dosage_buffer_limit)
+        self.free_dosage_buffers: collections.deque[HostGenotypeBuffer] = collections.deque()
         self.worker_error_cause: BaseException | None = None
         self.result_worker_error_cause: BaseException | None = None
         self.binary_correction_summary = _core.NativeBinaryCorrectionSummary()
@@ -210,6 +211,11 @@ class NativeBgenCallbackRunner(abc.ABC):
     def dosage_buffer_identifiers(self) -> set[int]:
         """Return the native dosage-buffer pool ownership identifiers."""
         return set(self.callback_scheduler_state.dosage_buffer_identifiers)
+
+    @property
+    def free_dosage_buffer_count(self) -> int:
+        """Return the number of host buffers waiting for reuse."""
+        return len(self.free_dosage_buffers)
 
     @property
     def result_in_flight_slot_count(self) -> int:
@@ -1092,18 +1098,20 @@ class NativeBgenCallbackRunner(abc.ABC):
         backpressure_poll_timeout_seconds = self.callback_scheduler_state.backpressure_poll_timeout_seconds
         while True:
             self.raise_worker_error_if_present()
-            with contextlib.suppress(queue.Empty):
-                dosage_buffer = self.free_dosage_buffers.get_nowait()
+            with self.dosage_buffer_pool_condition:
+                dosage_buffer = self.free_dosage_buffers.popleft() if self.free_dosage_buffers else None
+            if dosage_buffer is not None:
                 reused_dosage_buffer = self._acquire_reused_dosage_buffer(
                     dosage_buffer,
                     expected_shape=expected_shape,
                     dtype=dtype,
                 )
                 if reused_dosage_buffer is not None:
-                    self.record_queue_operation(
-                        queue_name="dosage_buffer_pool",
+                    self.record_bounded_resource_operation(
+                        resource_name="dosage_buffer_pool",
                         operation_name="reuse",
-                        observed_queue=self.free_dosage_buffers,
+                        current_depth=self.free_dosage_buffer_count,
+                        capacity=self.dosage_buffer_limit,
                         elapsed_seconds=0.0,
                         blocked=False,
                     )
@@ -1114,60 +1122,48 @@ class NativeBgenCallbackRunner(abc.ABC):
                 continue
             if self.callback_scheduler_state.has_available_dosage_buffer_slot():
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
-            with contextlib.suppress(queue.Empty):
-                if self.stage_timing_recorder is None:
-                    dosage_buffer = self.free_dosage_buffers.get(timeout=backpressure_poll_timeout_seconds)
-                else:
-                    buffer_wait_start_time = time.perf_counter()
-                    dosage_buffer = self.free_dosage_buffers.get(timeout=backpressure_poll_timeout_seconds)
-                    self.record_queue_stage_duration(
-                        queue_name="dosage_buffer_pool",
-                        operation_name="consumer_wait",
-                        observed_queue=self.free_dosage_buffers,
-                        start_time=buffer_wait_start_time,
-                        blocked=True,
-                    )
-                reused_dosage_buffer = self._acquire_reused_dosage_buffer(
-                    dosage_buffer,
-                    expected_shape=expected_shape,
-                    dtype=dtype,
-                )
-                if reused_dosage_buffer is not None:
-                    self.record_queue_operation(
-                        queue_name="dosage_buffer_pool",
-                        operation_name="reuse",
-                        observed_queue=self.free_dosage_buffers,
-                        elapsed_seconds=0.0,
-                        blocked=False,
-                    )
-                    return reused_dosage_buffer
-                self.discard_dosage_buffer_slot(dosage_buffer)
-                if self.callback_scheduler_state.has_available_dosage_buffer_slot():
-                    return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
+            if self.stage_timing_recorder is None:
+                with self.dosage_buffer_pool_condition:
+                    if (
+                        not self.free_dosage_buffers
+                        and not self.callback_scheduler_state.has_available_dosage_buffer_slot()
+                    ):
+                        self.dosage_buffer_pool_condition.wait(timeout=backpressure_poll_timeout_seconds)
+                continue
+            buffer_wait_start_time = time.perf_counter()
+            with self.dosage_buffer_pool_condition:
+                if (
+                    not self.free_dosage_buffers
+                    and not self.callback_scheduler_state.has_available_dosage_buffer_slot()
+                ):
+                    self.dosage_buffer_pool_condition.wait(timeout=backpressure_poll_timeout_seconds)
+                current_depth = self.free_dosage_buffer_count
+            self.record_bounded_resource_stage_duration(
+                resource_name="dosage_buffer_pool",
+                operation_name="consumer_wait",
+                current_depth=current_depth,
+                capacity=self.dosage_buffer_limit,
+                start_time=buffer_wait_start_time,
+                blocked=True,
+            )
 
     def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Return a processed host dosage buffer to the reusable pool."""
         dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
         if not self.callback_scheduler_state.owns_dosage_buffer(id(dosage_buffer_owner)):
             return
-        try:
-            self.free_dosage_buffers.put_nowait(dosage_buffer_owner)
-            self.record_queue_operation(
-                queue_name="dosage_buffer_pool",
-                operation_name="return",
-                observed_queue=self.free_dosage_buffers,
-                elapsed_seconds=0.0,
-                blocked=False,
-            )
-        except queue.Full:
-            self.record_queue_operation(
-                queue_name="dosage_buffer_pool",
-                operation_name="return_full",
-                observed_queue=self.free_dosage_buffers,
-                elapsed_seconds=0.0,
-                blocked=False,
-            )
-            self.discard_dosage_buffer_slot(dosage_buffer)
+        with self.dosage_buffer_pool_condition:
+            self.free_dosage_buffers.append(dosage_buffer_owner)
+            current_depth = self.free_dosage_buffer_count
+            self.dosage_buffer_pool_condition.notify()
+        self.record_bounded_resource_operation(
+            resource_name="dosage_buffer_pool",
+            operation_name="return",
+            current_depth=current_depth,
+            capacity=self.dosage_buffer_limit,
+            elapsed_seconds=0.0,
+            blocked=False,
+        )
 
     def allocate_dosage_buffer_with_shape(
         self,
@@ -1176,13 +1172,16 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> HostGenotypeBuffer:
         """Allocate and register one host genotype buffer slot."""
         dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
-        if not self.callback_scheduler_state.register_dosage_buffer(id(dosage_buffer)):
-            message = "Native dosage-buffer pool has no available slot for allocation."
-            raise RuntimeError(message)
-        self.record_queue_operation(
-            queue_name="dosage_buffer_pool",
+        with self.dosage_buffer_pool_condition:
+            if not self.callback_scheduler_state.register_dosage_buffer(id(dosage_buffer)):
+                message = "Native dosage-buffer pool has no available slot for allocation."
+                raise RuntimeError(message)
+            current_depth = self.free_dosage_buffer_count
+        self.record_bounded_resource_operation(
+            resource_name="dosage_buffer_pool",
             operation_name="allocate",
-            observed_queue=self.free_dosage_buffers,
+            current_depth=current_depth,
+            capacity=self.dosage_buffer_limit,
             elapsed_seconds=0.0,
             blocked=False,
         )
@@ -1191,12 +1190,16 @@ class NativeBgenCallbackRunner(abc.ABC):
     def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Remove one discarded host genotype buffer slot from pool accounting."""
         dosage_buffer_identifier = id(dosage_buffer)
-        if not self.callback_scheduler_state.discard_dosage_buffer(dosage_buffer_identifier):
-            return
-        self.record_queue_operation(
-            queue_name="dosage_buffer_pool",
+        with self.dosage_buffer_pool_condition:
+            if not self.callback_scheduler_state.discard_dosage_buffer(dosage_buffer_identifier):
+                return
+            current_depth = self.free_dosage_buffer_count
+            self.dosage_buffer_pool_condition.notify()
+        self.record_bounded_resource_operation(
+            resource_name="dosage_buffer_pool",
             operation_name="discard",
-            observed_queue=self.free_dosage_buffers,
+            current_depth=current_depth,
+            capacity=self.dosage_buffer_limit,
             elapsed_seconds=0.0,
             blocked=False,
         )

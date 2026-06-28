@@ -72,7 +72,10 @@ callback runners. Callback modules no longer resolve worker shutdown timeout
 constants at import time; production shutdown timeout policy comes from native
 scheduler plans. Result in-flight capacity is no longer mirrored by a Python
 bounded semaphore; the native scheduler state is the capacity owner while the
-Python transition layer only waits on slot-release notifications.
+Python transition layer only waits on slot-release notifications. Free host
+dosage buffers are no longer held in a bounded Python queue; the native
+scheduler state owns buffer capacity and the Python transition layer keeps only
+an available-buffer free list.
 
 ## Phase Order
 
