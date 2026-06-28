@@ -621,9 +621,13 @@ def build_stage_timing_recorder(
     force: bool,
 ) -> StageTimingRecorder | None:
     """Create a diagnostic stage recorder when requested."""
-    if stage_timing_path is None and not force:
+    recorder_plan = _core.plan_stage_timing_recorder(
+        stage_timing_path_configured=stage_timing_path is not None,
+        force=force,
+    )
+    if not recorder_plan.should_create:
         return None
-    return StageTimingRecorder(exact_stage_timings=stage_timing_path is not None)
+    return StageTimingRecorder(exact_stage_timings=recorder_plan.exact_stage_timings)
 
 
 def should_collect_exact_stage_timings(stage_timing_recorder: StageTimingRecorder | None) -> bool:
@@ -636,11 +640,15 @@ def write_stage_timing_snapshot(
     stage_timing_path: pathlib.Path | None,
 ) -> None:
     """Persist diagnostic stage timings when requested."""
-    if stage_timing_recorder is None:
+    write_plan = _core.plan_timing_file_write(
+        has_stage_timing_recorder=stage_timing_recorder is not None,
+        path_configured=stage_timing_path is not None,
+    )
+    if not write_plan.should_write:
         return
-    if stage_timing_path is None:
-        return
-    stage_timing_recorder.write_stage_timing_snapshot(stage_timing_path)
+    active_stage_timing_recorder = typing.cast("StageTimingRecorder", stage_timing_recorder)
+    active_stage_timing_path = typing.cast("pathlib.Path", stage_timing_path)
+    active_stage_timing_recorder.write_stage_timing_snapshot(active_stage_timing_path)
 
 
 def write_profile_summary(
@@ -650,11 +658,15 @@ def write_profile_summary(
     run_id: str | None,
 ) -> None:
     """Persist aggregate profile summary metrics when requested."""
-    if stage_timing_recorder is None:
+    write_plan = _core.plan_timing_file_write(
+        has_stage_timing_recorder=stage_timing_recorder is not None,
+        path_configured=profile_summary_path is not None,
+    )
+    if not write_plan.should_write:
         return
-    if profile_summary_path is None:
-        return
-    stage_timing_recorder.write_profile_summary(profile_summary_path, run_id=run_id)
+    active_stage_timing_recorder = typing.cast("StageTimingRecorder", stage_timing_recorder)
+    active_profile_summary_path = typing.cast("pathlib.Path", profile_summary_path)
+    active_stage_timing_recorder.write_profile_summary(active_profile_summary_path, run_id=run_id)
 
 
 def serialize_chunk_stage_timings(

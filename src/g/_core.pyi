@@ -937,6 +937,13 @@ class NativeStageTimingRecorder:
     def profile_summary_payload(self, run_id: str | None) -> dict[str, object]: ...
     def write_profile_summary(self, path: str, run_id: str | None) -> None: ...
 
+class NativeStageTimingRecorderPlan:
+    should_create: bool
+    exact_stage_timings: bool
+
+class NativeTimingFileWritePlan:
+    should_write: bool
+
 class NativeRuntimeCompatibilityToken:
     pass
 
@@ -1537,6 +1544,14 @@ def plan_telemetry_progress_emission(
     has_native_telemetry_session: bool,
     should_emit_progress: bool,
 ) -> NativeTelemetryProgressEmissionPlan: ...
+def plan_stage_timing_recorder(
+    stage_timing_path_configured: bool,
+    force: bool,
+) -> NativeStageTimingRecorderPlan: ...
+def plan_timing_file_write(
+    has_stage_timing_recorder: bool,
+    path_configured: bool,
+) -> NativeTimingFileWritePlan: ...
 def plan_bgen_delivery_invocation(
     callback_batch_size: int | None,
     variant_major_packed8_probability_pairs: bool,

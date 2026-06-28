@@ -177,6 +177,17 @@ pub struct StageTimingState {
     pub transfer_metadata: BTreeMap<TransferMetadataKey, TransferMetadataAccumulator>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StageTimingRecorderPlan {
+    pub should_create: bool,
+    pub exact_stage_timings: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimingFileWritePlan {
+    pub should_write: bool,
+}
+
 #[derive(Debug)]
 pub enum TimingFileError {
     CreateParentDirectory { path: PathBuf, source: std::io::Error },
@@ -239,6 +250,19 @@ impl Error for TransferMetadataError {}
 #[must_use]
 pub const fn should_collect_exact_stage_timings(exact_stage_timings: bool) -> bool {
     exact_stage_timings
+}
+
+#[must_use]
+pub const fn plan_stage_timing_recorder(stage_timing_path_configured: bool, force: bool) -> StageTimingRecorderPlan {
+    StageTimingRecorderPlan {
+        should_create: stage_timing_path_configured || force,
+        exact_stage_timings: stage_timing_path_configured,
+    }
+}
+
+#[must_use]
+pub const fn plan_timing_file_write(has_stage_timing_recorder: bool, path_configured: bool) -> TimingFileWritePlan {
+    TimingFileWritePlan { should_write: has_stage_timing_recorder && path_configured }
 }
 
 /// Build one transfer metadata observation from array adapter fields.
@@ -803,6 +827,29 @@ mod tests {
     fn resolves_exact_stage_timing_collection_policy() {
         assert!(should_collect_exact_stage_timings(true));
         assert!(!should_collect_exact_stage_timings(false));
+    }
+
+    #[test]
+    fn plans_stage_timing_recorder_creation() {
+        assert_eq!(
+            plan_stage_timing_recorder(false, false),
+            StageTimingRecorderPlan { should_create: false, exact_stage_timings: false },
+        );
+        assert_eq!(
+            plan_stage_timing_recorder(false, true),
+            StageTimingRecorderPlan { should_create: true, exact_stage_timings: false },
+        );
+        assert_eq!(
+            plan_stage_timing_recorder(true, false),
+            StageTimingRecorderPlan { should_create: true, exact_stage_timings: true },
+        );
+    }
+
+    #[test]
+    fn plans_timing_file_writes() {
+        assert_eq!(plan_timing_file_write(true, true), TimingFileWritePlan { should_write: true },);
+        assert_eq!(plan_timing_file_write(false, true), TimingFileWritePlan { should_write: false },);
+        assert_eq!(plan_timing_file_write(true, false), TimingFileWritePlan { should_write: false },);
     }
 
     fn create_test_directory(test_name: &str) -> PathBuf {

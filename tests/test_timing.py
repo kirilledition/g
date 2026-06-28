@@ -5,6 +5,7 @@ import typing
 
 import pytest
 
+from g import _core
 from g.engine import timing
 
 if typing.TYPE_CHECKING:
@@ -192,12 +193,99 @@ def test_build_stage_timing_recorder_is_opt_in(tmp_path: Path) -> None:
     assert timing.should_collect_exact_stage_timings(exact_recorder)
 
 
+def test_native_stage_timing_recorder_and_file_write_plans() -> None:
+    disabled_recorder_plan = _core.plan_stage_timing_recorder(
+        stage_timing_path_configured=False,
+        force=False,
+    )
+    aggregate_recorder_plan = _core.plan_stage_timing_recorder(
+        stage_timing_path_configured=False,
+        force=True,
+    )
+    exact_recorder_plan = _core.plan_stage_timing_recorder(
+        stage_timing_path_configured=True,
+        force=False,
+    )
+    write_plan = _core.plan_timing_file_write(
+        has_stage_timing_recorder=True,
+        path_configured=True,
+    )
+    disabled_write_plan = _core.plan_timing_file_write(
+        has_stage_timing_recorder=True,
+        path_configured=False,
+    )
+
+    assert isinstance(disabled_recorder_plan, _core.NativeStageTimingRecorderPlan)
+    assert disabled_recorder_plan.should_create is False
+    assert disabled_recorder_plan.exact_stage_timings is False
+    assert aggregate_recorder_plan.should_create is True
+    assert aggregate_recorder_plan.exact_stage_timings is False
+    assert exact_recorder_plan.should_create is True
+    assert exact_recorder_plan.exact_stage_timings is True
+    assert isinstance(write_plan, _core.NativeTimingFileWritePlan)
+    assert write_plan.should_write is True
+    assert disabled_write_plan.should_write is False
+
+
+def test_build_stage_timing_recorder_uses_native_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStageTimingRecorderPlan:
+        def __init__(self, *, should_create: bool, exact_stage_timings: bool) -> None:
+            self.should_create = should_create
+            self.exact_stage_timings = exact_stage_timings
+
+    def plan_stage_timing_recorder(
+        *,
+        stage_timing_path_configured: bool,
+        force: bool,
+    ) -> FakeStageTimingRecorderPlan:
+        assert stage_timing_path_configured is True
+        assert force is False
+        return FakeStageTimingRecorderPlan(should_create=True, exact_stage_timings=False)
+
+    monkeypatch.setattr(timing._core, "plan_stage_timing_recorder", plan_stage_timing_recorder)
+
+    recorder = timing.build_stage_timing_recorder(tmp_path / "stage-timings.json", force=False)
+
+    assert isinstance(recorder, timing.StageTimingRecorder)
+    assert recorder.exact_stage_timings is False
+
+
 def test_write_stage_timing_snapshot_noops_without_recorder_or_path(tmp_path: Path) -> None:
     output_path = tmp_path / "missing" / "timings.json"
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)
 
     timing.write_stage_timing_snapshot(None, output_path)
     timing.write_stage_timing_snapshot(recorder, None)
+
+    assert not output_path.exists()
+
+
+def test_write_stage_timing_snapshot_uses_native_write_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTimingFileWritePlan:
+        def __init__(self, *, should_write: bool) -> None:
+            self.should_write = should_write
+
+    def plan_timing_file_write(
+        *,
+        has_stage_timing_recorder: bool,
+        path_configured: bool,
+    ) -> FakeTimingFileWritePlan:
+        assert has_stage_timing_recorder is True
+        assert path_configured is True
+        return FakeTimingFileWritePlan(should_write=False)
+
+    output_path = tmp_path / "blocked" / "timings.json"
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    recorder.add_stage_duration("native_engine_delivery", 2.0)
+    monkeypatch.setattr(timing._core, "plan_timing_file_write", plan_timing_file_write)
+
+    timing.write_stage_timing_snapshot(recorder, output_path)
 
     assert not output_path.exists()
 

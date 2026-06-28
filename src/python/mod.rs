@@ -131,7 +131,10 @@ use telemetry_policy::{
     paths_refer_to_same_file_value, resolve_telemetry_output_run_root_value, resolve_telemetry_paths_payload,
     resolve_telemetry_session_policy_payload, resolve_telemetry_stream_file_value,
 };
-use timing::NativeStageTimingRecorder;
+use timing::{
+    NativeStageTimingRecorder, NativeStageTimingRecorderPlan, NativeTimingFileWritePlan, plan_stage_timing_recorder,
+    plan_timing_file_write,
+};
 use trusted_validation::{
     build_trusted_bgen_validation_cache_path_value, build_trusted_bgen_validation_cache_payload,
     build_trusted_bgen_validation_fingerprint_value,
@@ -1826,6 +1829,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeRuntimeState>()?;
     module.add_class::<NativeShutdownController>()?;
     module.add_class::<NativeStageTimingRecorder>()?;
+    module.add_class::<NativeStageTimingRecorderPlan>()?;
+    module.add_class::<NativeTimingFileWritePlan>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
@@ -1917,6 +1922,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_stage_timing_recorder, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_timing_file_write, module)?)?;
     module.add_function(wrap_pyfunction!(build_current_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(generate_telemetry_run_id_value, module)?)?;

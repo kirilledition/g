@@ -51,7 +51,8 @@ pub use telemetry_session::{
 pub use timing::{
     ChunkStageSummary, ChunkStageTiming, NullLogisticDiagnosticValue, NullLogisticSummary, NumericDiagnosticValue,
     ProfileSummaryPayload, QueueBackpressureAccumulator, QueueBackpressureKey, QueueBackpressureSnapshot,
-    StageTimingSnapshotPayload, StageTimingState, TimingFileError, TransferMetadataAccumulator, TransferMetadataError,
-    TransferMetadataKey, TransferMetadataObservation, TransferMetadataSnapshot, build_transfer_metadata_observation,
+    StageTimingRecorderPlan, StageTimingSnapshotPayload, StageTimingState, TimingFileError, TimingFileWritePlan,
+    TransferMetadataAccumulator, TransferMetadataError, TransferMetadataKey, TransferMetadataObservation,
+    TransferMetadataSnapshot, build_transfer_metadata_observation, plan_stage_timing_recorder, plan_timing_file_write,
     should_collect_exact_stage_timings, write_profile_summary_payload, write_stage_timing_snapshot_payload,
 };

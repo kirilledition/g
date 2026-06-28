@@ -16,6 +16,37 @@ pub(crate) struct NativeStageTimingRecorder {
     state: Mutex<native_timing::StageTimingState>,
 }
 
+#[pyclass]
+pub(crate) struct NativeStageTimingRecorderPlan {
+    inner: native_timing::StageTimingRecorderPlan,
+}
+
+#[pyclass]
+pub(crate) struct NativeTimingFileWritePlan {
+    inner: native_timing::TimingFileWritePlan,
+}
+
+#[pymethods]
+impl NativeStageTimingRecorderPlan {
+    #[getter]
+    fn should_create(&self) -> bool {
+        self.inner.should_create
+    }
+
+    #[getter]
+    fn exact_stage_timings(&self) -> bool {
+        self.inner.exact_stage_timings
+    }
+}
+
+#[pymethods]
+impl NativeTimingFileWritePlan {
+    #[getter]
+    fn should_write(&self) -> bool {
+        self.inner.should_write
+    }
+}
+
 #[pymethods]
 impl NativeStageTimingRecorder {
     #[new]
@@ -178,6 +209,26 @@ impl NativeStageTimingRecorder {
 impl NativeStageTimingRecorder {
     fn lock_state(&self) -> PyResult<MutexGuard<'_, native_timing::StageTimingState>> {
         self.state.lock().map_err(|_| PyRuntimeError::new_err("Stage timing recorder lock was poisoned."))
+    }
+}
+
+#[pyfunction]
+pub(crate) fn plan_stage_timing_recorder(
+    stage_timing_path_configured: bool,
+    force: bool,
+) -> NativeStageTimingRecorderPlan {
+    NativeStageTimingRecorderPlan {
+        inner: native_timing::plan_stage_timing_recorder(stage_timing_path_configured, force),
+    }
+}
+
+#[pyfunction]
+pub(crate) fn plan_timing_file_write(
+    has_stage_timing_recorder: bool,
+    path_configured: bool,
+) -> NativeTimingFileWritePlan {
+    NativeTimingFileWritePlan {
+        inner: native_timing::plan_timing_file_write(has_stage_timing_recorder, path_configured),
     }
 }
 
