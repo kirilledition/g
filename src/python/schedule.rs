@@ -175,6 +175,11 @@ pub(crate) struct NativeDosageWorkDrainCompletionPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeDosageWorkItemDispatchPlan {
+    inner: native_schedule::DosageWorkItemDispatchPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerLifecycleState {
     inner: native_schedule::CallbackWorkerLifecycleState,
 }
@@ -592,6 +597,16 @@ impl NativeCallbackSchedulerState {
 
     fn plan_dosage_work_drain_completion(&self, has_dosage_work_item: bool) -> NativeDosageWorkDrainCompletionPlan {
         self.inner.plan_dosage_work_drain_completion(has_dosage_work_item).into()
+    }
+
+    fn plan_dosage_work_item_dispatch(
+        &self,
+        dosage_work_item_kind: &str,
+    ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
+        self.inner
+            .plan_dosage_work_item_dispatch(dosage_work_item_kind)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
     }
 
     #[getter]
@@ -1660,6 +1675,44 @@ impl NativeDosageWorkDrainCompletionPlan {
 }
 
 #[pymethods]
+impl NativeDosageWorkItemDispatchPlan {
+    #[getter]
+    fn dosage_work_item_kind(&self) -> String {
+        self.inner.dosage_work_item_kind.clone()
+    }
+
+    #[getter]
+    fn should_process_sample_major_dosage(&self) -> bool {
+        self.inner.should_process_sample_major_dosage()
+    }
+
+    #[getter]
+    fn should_process_variant_major_dosage(&self) -> bool {
+        self.inner.should_process_variant_major_dosage()
+    }
+
+    #[getter]
+    fn should_process_variant_major_dosage_batch(&self) -> bool {
+        self.inner.should_process_variant_major_dosage_batch()
+    }
+
+    #[getter]
+    fn should_process_variant_major_packed8_probability_pair(&self) -> bool {
+        self.inner.should_process_variant_major_packed8_probability_pair()
+    }
+
+    #[getter]
+    fn has_dispatch_error(&self) -> bool {
+        self.inner.has_dispatch_error()
+    }
+
+    #[getter]
+    fn error_message(&self) -> Option<String> {
+        self.inner.error_message.clone()
+    }
+}
+
+#[pymethods]
 impl NativeGpuGenotypeFormatResolutionPlan {
     #[getter]
     fn requested_gpu_genotype_format(&self) -> &str {
@@ -1929,6 +1982,12 @@ impl From<native_schedule::ResultWriteItemDispatchPlan> for NativeResultWriteIte
 impl From<native_schedule::DosageWorkDrainCompletionPlan> for NativeDosageWorkDrainCompletionPlan {
     fn from(drain_completion_plan: native_schedule::DosageWorkDrainCompletionPlan) -> Self {
         Self { inner: drain_completion_plan }
+    }
+}
+
+impl From<native_schedule::DosageWorkItemDispatchPlan> for NativeDosageWorkItemDispatchPlan {
+    fn from(dispatch_plan: native_schedule::DosageWorkItemDispatchPlan) -> Self {
+        Self { inner: dispatch_plan }
     }
 }
 
@@ -2272,6 +2331,15 @@ pub(crate) fn plan_result_write_item_dispatch(
     expected_result_work_item_kind: &str,
 ) -> PyResult<NativeResultWriteItemDispatchPlan> {
     native_schedule::plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn plan_dosage_work_item_dispatch(
+    dosage_work_item_kind: &str,
+) -> PyResult<NativeDosageWorkItemDispatchPlan> {
+    native_schedule::plan_dosage_work_item_dispatch(dosage_work_item_kind)
         .map(Into::into)
         .map_err(|error| schedule_error_to_py(&error))
 }

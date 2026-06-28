@@ -1019,6 +1019,9 @@ Remove Python as the chunk-level scheduler.
   and writer stop signals before callback queueing.
 - Result write item dispatch now uses native scheduler plans to validate
   single-result versus multi-result consumer paths after queue drain checks.
+- Dosage work item dispatch now uses native scheduler plans to select
+  sample-major, variant-major, variant-major batch, and packed8 processing
+  paths after queue drain checks.
 
 ### Tests
 

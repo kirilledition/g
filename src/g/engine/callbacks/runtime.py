@@ -32,6 +32,12 @@ PreprocessedVariantMajorDosageChunkWorkItem = shared.PreprocessedVariantMajorDos
 PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem = (
     shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
 )
+type PreprocessedDosageWorkItem = (
+    PreprocessedDosageChunkWorkItem
+    | PreprocessedVariantMajorDosageChunkWorkItem
+    | PreprocessedVariantMajorDosageChunkBatchWorkItem
+    | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+)
 Regenie2ResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem
 Regenie2MultiResultWriteWorkItem = shared.Regenie2MultiResultWriteWorkItem
 NativeBgenWorkerShutdownError = shared.NativeBgenWorkerShutdownError
@@ -63,6 +69,16 @@ class ResultWriteItemKind(enum.StrEnum):
     STOP_SIGNAL = "stop_signal"
 
 
+class DosageWorkItemKind(enum.StrEnum):
+    """Native dosage work-item kind values."""
+
+    SAMPLE_MAJOR_DOSAGE = "sample_major_dosage"
+    VARIANT_MAJOR_DOSAGE = "variant_major_dosage"
+    VARIANT_MAJOR_DOSAGE_BATCH = "variant_major_dosage_batch"
+    VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR = "variant_major_packed8_probability_pair"
+    STOP_SIGNAL = "stop_signal"
+
+
 def classify_result_write_item(
     work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
 ) -> ResultWriteItemKind:
@@ -74,6 +90,30 @@ def classify_result_write_item(
     if isinstance(work_item, Regenie2ResultWriteWorkItem):
         return ResultWriteItemKind.SINGLE_RESULT
     message = f"Unsupported result write work item type: {type(work_item).__name__}"
+    raise TypeError(message)
+
+
+def classify_dosage_work_item(
+    work_item: (
+        PreprocessedDosageChunkWorkItem
+        | PreprocessedVariantMajorDosageChunkWorkItem
+        | PreprocessedVariantMajorDosageChunkBatchWorkItem
+        | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+        | None
+    ),
+) -> DosageWorkItemKind:
+    """Classify one dosage work item for native scheduler dispatch."""
+    if work_item is None:
+        return DosageWorkItemKind.STOP_SIGNAL
+    if isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
+        return DosageWorkItemKind.VARIANT_MAJOR_DOSAGE_BATCH
+    if isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
+        return DosageWorkItemKind.VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR
+    if isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
+        return DosageWorkItemKind.VARIANT_MAJOR_DOSAGE
+    if isinstance(work_item, PreprocessedDosageChunkWorkItem):
+        return DosageWorkItemKind.SAMPLE_MAJOR_DOSAGE
+    message = f"Unsupported preprocessed dosage work item type: {type(work_item).__name__}"
     raise TypeError(message)
 
 
@@ -595,9 +635,12 @@ class NativeBgenCallbackRunner(abc.ABC):
                 drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
                 if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
                     return
-                if work_item is None:
-                    message = "Native dosage work drain completion plan continued without a work item."
-                    raise RuntimeError(message)
+                dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
+                self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
+                dosage_work_item = typing.cast(
+                    "PreprocessedDosageWorkItem",
+                    work_item,
+                )
                 self.record_bounded_resource_stage_duration(
                     resource_name="dosage_queue",
                     operation_name="consumer_wait",
@@ -606,10 +649,10 @@ class NativeBgenCallbackRunner(abc.ABC):
                 )
                 python_callback_start_time = time.perf_counter()
                 try:
-                    self.process_dosage_work_item(work_item)
+                    self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
                 finally:
                     elapsed_seconds = time.perf_counter() - python_callback_start_time
-                    self.record_work_item_stage_elapsed_duration(work_item, "python_callback", elapsed_seconds)
+                    self.record_work_item_stage_elapsed_duration(dosage_work_item, "python_callback", elapsed_seconds)
         except Exception as error:  # noqa: BLE001
             self.worker_error = error
 
@@ -620,10 +663,13 @@ class NativeBgenCallbackRunner(abc.ABC):
             drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
             if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
                 return
-            if work_item is None:
-                message = "Native dosage work drain completion plan continued without a work item."
-                raise RuntimeError(message)
-            self.process_dosage_work_item(work_item)
+            dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
+            self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
+            dosage_work_item = typing.cast(
+                "PreprocessedDosageWorkItem",
+                work_item,
+            )
+            self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
 
     def process_dosage_work_item(
         self,
@@ -635,31 +681,58 @@ class NativeBgenCallbackRunner(abc.ABC):
         ),
     ) -> None:
         """Run one preprocessed dosage work item."""
-        if isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
+        dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
+        self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
+        self.process_dosage_work_item_with_dispatch_plan(work_item, dispatch_plan)
+
+    def process_dosage_work_item_with_dispatch_plan(
+        self,
+        work_item: (
+            PreprocessedDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkBatchWorkItem
+            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+        ),
+        dispatch_plan: _core.NativeDosageWorkItemDispatchPlan,
+    ) -> None:
+        """Run one preprocessed dosage work item using native dispatch policy."""
+        if dispatch_plan.should_process_variant_major_dosage_batch:
+            if not isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
+                message = "Native dosage work dispatch plan selected a mismatched variant-major batch item."
+                raise RuntimeError(message)
             for chunk_work_item in work_item.work_items:
                 self.process_dosage_work_item(chunk_work_item)
             return
-        if isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
+        if dispatch_plan.should_process_variant_major_packed8_probability_pair:
+            if not isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
+                message = "Native dosage work dispatch plan selected a mismatched packed8 item."
+                raise RuntimeError(message)
             self.compute_preprocessed_variant_major_packed8_chunk(
                 variant_metadata=work_item.metadata,
                 packed_probability_pairs_by_variant=work_item.packed_probability_pairs_by_variant,
                 chunk_stats=work_item.chunk_stats,
             )
-        elif isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
+        elif dispatch_plan.should_process_variant_major_dosage:
+            if not isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
+                message = "Native dosage work dispatch plan selected a mismatched variant-major item."
+                raise RuntimeError(message)
             self.compute_preprocessed_variant_major_chunk(
                 variant_metadata=work_item.metadata,
                 genotype_matrix_by_variant=work_item.genotype_matrix_by_variant,
                 chunk_stats=work_item.chunk_stats,
             )
-        elif isinstance(work_item, PreprocessedDosageChunkWorkItem):
+        elif dispatch_plan.should_process_sample_major_dosage:
+            if not isinstance(work_item, PreprocessedDosageChunkWorkItem):
+                message = "Native dosage work dispatch plan selected a mismatched sample-major item."
+                raise RuntimeError(message)
             self.compute_preprocessed_chunk(
                 variant_metadata=work_item.metadata,
                 genotype_matrix=work_item.genotype_matrix,
                 chunk_stats=work_item.chunk_stats,
             )
         else:
-            message = f"Unsupported preprocessed dosage work item: {type(work_item).__name__}"
-            raise TypeError(message)
+            message = "Native dosage work dispatch plan did not select a processing path."
+            raise RuntimeError(message)
         self.record_progress(work_item.metadata)
 
     def plan_dosage_work_drain_completion(
@@ -683,6 +756,35 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> bool:
         """Apply native dosage work drain completion side effects."""
         return drain_completion_plan.should_stop
+
+    def plan_dosage_work_item_dispatch(
+        self,
+        work_item: (
+            PreprocessedDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkBatchWorkItem
+            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+            | None
+        ),
+    ) -> _core.NativeDosageWorkItemDispatchPlan:
+        """Plan which dosage processing path should consume one item."""
+        dosage_work_item_kind = classify_dosage_work_item(work_item)
+        return self.callback_scheduler_state.plan_dosage_work_item_dispatch(
+            dosage_work_item_kind=dosage_work_item_kind.value
+        )
+
+    def apply_dosage_work_item_dispatch_plan(
+        self,
+        dispatch_plan: _core.NativeDosageWorkItemDispatchPlan,
+    ) -> None:
+        """Raise native dosage work dispatch errors before processing."""
+        if not dispatch_plan.has_dispatch_error:
+            return
+        error_message = dispatch_plan.error_message
+        if error_message is None:
+            message = "Native dosage work dispatch plan omitted the error message."
+            raise RuntimeError(message)
+        raise RuntimeError(error_message)
 
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""

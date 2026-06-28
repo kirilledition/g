@@ -2918,6 +2918,17 @@ class DosageWorkDrainCompletionPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class DosageWorkItemDispatchPlanProbe:
+    dosage_work_item_kind: str
+    should_process_sample_major_dosage: bool
+    should_process_variant_major_dosage: bool
+    should_process_variant_major_dosage_batch: bool
+    should_process_variant_major_packed8_probability_pair: bool
+    has_dispatch_error: bool
+    error_message: str | None
+
+
+@dataclasses.dataclass(frozen=True)
 class DosageBufferAcquireAttemptPlanProbe:
     should_take_free_buffer: bool
     should_allocate: bool
@@ -3411,6 +3422,29 @@ class DosageWorkDrainCompletionSchedulerProbe:
 
 
 @dataclasses.dataclass
+class DosageWorkItemDispatchSchedulerProbe:
+    dosage_work_item_kind: str | None = None
+
+    def plan_dosage_work_item_dispatch(
+        self,
+        *,
+        dosage_work_item_kind: str,
+    ) -> DosageWorkItemDispatchPlanProbe:
+        self.dosage_work_item_kind = dosage_work_item_kind
+        return DosageWorkItemDispatchPlanProbe(
+            dosage_work_item_kind=dosage_work_item_kind,
+            should_process_sample_major_dosage=dosage_work_item_kind == "sample_major_dosage",
+            should_process_variant_major_dosage=dosage_work_item_kind == "variant_major_dosage",
+            should_process_variant_major_dosage_batch=dosage_work_item_kind == "variant_major_dosage_batch",
+            should_process_variant_major_packed8_probability_pair=(
+                dosage_work_item_kind == "variant_major_packed8_probability_pair"
+            ),
+            has_dispatch_error=False,
+            error_message=None,
+        )
+
+
+@dataclasses.dataclass
 class DosageBufferAttemptSchedulerProbe:
     dosage_buffer_limit: int = 2
     dosage_worker_error_message: str | None = None
@@ -3814,6 +3848,65 @@ def test_native_callback_runner_uses_scheduler_dosage_work_drain_completion_plan
 
     assert scheduler_state.has_dosage_work_item is False
     assert should_stop is True
+
+
+def test_native_callback_runner_uses_scheduler_dosage_work_item_dispatch_plan() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = DosageWorkItemDispatchSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("typing.Any", SimpleNamespace())
+
+    sample_major_work_item = callback_shared.PreprocessedDosageChunkWorkItem(
+        metadata=metadata,
+        genotype_matrix=np.ones((2, 2), dtype=np.float32),
+        chunk_stats=chunk_stats,
+    )
+    dispatch_plan = callback.plan_dosage_work_item_dispatch(sample_major_work_item)
+
+    assert scheduler_state.dosage_work_item_kind == "sample_major_dosage"
+    assert dispatch_plan.should_process_sample_major_dosage is True
+    callback.apply_dosage_work_item_dispatch_plan(dispatch_plan)
+
+    variant_major_work_item = callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
+        metadata=metadata,
+        genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+        chunk_stats=chunk_stats,
+    )
+    dispatch_plan = callback.plan_dosage_work_item_dispatch(variant_major_work_item)
+
+    assert scheduler_state.dosage_work_item_kind == "variant_major_dosage"
+    assert dispatch_plan.should_process_variant_major_dosage is True
+
+    batch_work_item = callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem(
+        work_items=(variant_major_work_item,)
+    )
+    dispatch_plan = callback.plan_dosage_work_item_dispatch(batch_work_item)
+
+    assert scheduler_state.dosage_work_item_kind == "variant_major_dosage_batch"
+    assert dispatch_plan.should_process_variant_major_dosage_batch is True
+
+    packed8_work_item = callback_shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
+        metadata=metadata,
+        packed_probability_pairs_by_variant=np.ones((2, 2, 2), dtype=np.uint8),
+        chunk_stats=chunk_stats,
+    )
+    dispatch_plan = callback.plan_dosage_work_item_dispatch(packed8_work_item)
+
+    assert scheduler_state.dosage_work_item_kind == "variant_major_packed8_probability_pair"
+    assert dispatch_plan.should_process_variant_major_packed8_probability_pair is True
+
+    error_plan = DosageWorkItemDispatchPlanProbe(
+        dosage_work_item_kind="stop_signal",
+        should_process_sample_major_dosage=False,
+        should_process_variant_major_dosage=False,
+        should_process_variant_major_dosage_batch=False,
+        should_process_variant_major_packed8_probability_pair=False,
+        has_dispatch_error=True,
+        error_message="planned dosage dispatch failure",
+    )
+    with pytest.raises(RuntimeError, match="planned dosage dispatch failure"):
+        callback.apply_dosage_work_item_dispatch_plan(typing.cast("typing.Any", error_plan))
 
 
 def test_native_callback_runner_uses_scheduler_dosage_buffer_attempt_plans() -> None:

@@ -55,6 +55,11 @@ const CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION: &str = "emit
 const RESULT_WRITE_ITEM_KIND_SINGLE_RESULT: &str = "single_result";
 const RESULT_WRITE_ITEM_KIND_MULTI_RESULT: &str = "multi_result";
 const RESULT_WRITE_ITEM_KIND_STOP_SIGNAL: &str = "stop_signal";
+const DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE: &str = "sample_major_dosage";
+const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE: &str = "variant_major_dosage";
+const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH: &str = "variant_major_dosage_batch";
+const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR: &str = "variant_major_packed8_probability_pair";
+const DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL: &str = "stop_signal";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeCallbackQueueLimits {
@@ -303,6 +308,40 @@ pub struct ResultWriteItemDispatchPlan {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DosageWorkDrainCompletionPlan {
     pub should_stop: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DosageWorkItemDispatchPlan {
+    pub dosage_work_item_kind: String,
+    pub processing_path: Option<String>,
+    pub error_message: Option<String>,
+}
+
+impl DosageWorkItemDispatchPlan {
+    #[must_use]
+    pub fn should_process_sample_major_dosage(&self) -> bool {
+        self.processing_path.as_deref() == Some(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE)
+    }
+
+    #[must_use]
+    pub fn should_process_variant_major_dosage(&self) -> bool {
+        self.processing_path.as_deref() == Some(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE)
+    }
+
+    #[must_use]
+    pub fn should_process_variant_major_dosage_batch(&self) -> bool {
+        self.processing_path.as_deref() == Some(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH)
+    }
+
+    #[must_use]
+    pub fn should_process_variant_major_packed8_probability_pair(&self) -> bool {
+        self.processing_path.as_deref() == Some(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR)
+    }
+
+    #[must_use]
+    pub fn has_dispatch_error(&self) -> bool {
+        self.error_message.is_some()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -827,6 +866,18 @@ impl CallbackSchedulerState {
     #[must_use]
     pub const fn plan_dosage_work_drain_completion(&self, has_dosage_work_item: bool) -> DosageWorkDrainCompletionPlan {
         DosageWorkDrainCompletionPlan { should_stop: !has_dosage_work_item }
+    }
+
+    /// Plan which dosage consumer path should process a dequeued work item.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the work-item kind is unsupported.
+    pub fn plan_dosage_work_item_dispatch(
+        &self,
+        dosage_work_item_kind: &str,
+    ) -> Result<DosageWorkItemDispatchPlan, ScheduleError> {
+        plan_dosage_work_item_dispatch(dosage_work_item_kind)
     }
 
     #[must_use]
@@ -1867,6 +1918,8 @@ pub enum ScheduleError {
     UnsupportedBgenDeliveryCleanupOutcome { outcome: String },
     #[error("Unsupported result write item kind: {result_work_item_kind}")]
     UnsupportedResultWriteItemKind { result_work_item_kind: String },
+    #[error("Unsupported dosage work item kind: {dosage_work_item_kind}")]
+    UnsupportedDosageWorkItemKind { dosage_work_item_kind: String },
 }
 
 #[must_use]
@@ -2219,6 +2272,44 @@ fn validate_result_write_item_kind(result_work_item_kind: &str) -> Result<(), Sc
         | RESULT_WRITE_ITEM_KIND_STOP_SIGNAL => Ok(()),
         _ => Err(ScheduleError::UnsupportedResultWriteItemKind {
             result_work_item_kind: result_work_item_kind.to_owned(),
+        }),
+    }
+}
+
+/// Plan which dosage processing path should consume a dequeued work item.
+///
+/// # Errors
+///
+/// Returns an error when the work-item kind is unsupported.
+pub fn plan_dosage_work_item_dispatch(
+    dosage_work_item_kind: &str,
+) -> Result<DosageWorkItemDispatchPlan, ScheduleError> {
+    validate_dosage_work_item_kind(dosage_work_item_kind)?;
+
+    if dosage_work_item_kind == DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL {
+        return Ok(DosageWorkItemDispatchPlan {
+            dosage_work_item_kind: dosage_work_item_kind.to_owned(),
+            processing_path: None,
+            error_message: Some("Native dosage work dispatch plan continued without a work item.".to_owned()),
+        });
+    }
+
+    Ok(DosageWorkItemDispatchPlan {
+        dosage_work_item_kind: dosage_work_item_kind.to_owned(),
+        processing_path: Some(dosage_work_item_kind.to_owned()),
+        error_message: None,
+    })
+}
+
+fn validate_dosage_work_item_kind(dosage_work_item_kind: &str) -> Result<(), ScheduleError> {
+    match dosage_work_item_kind {
+        DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE
+        | DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE
+        | DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH
+        | DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR
+        | DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL => Ok(()),
+        _ => Err(ScheduleError::UnsupportedDosageWorkItemKind {
+            dosage_work_item_kind: dosage_work_item_kind.to_owned(),
         }),
     }
 }
@@ -3245,6 +3336,55 @@ mod tests {
         assert_eq!(
             scheduler_state.plan_dosage_work_drain_completion(false),
             DosageWorkDrainCompletionPlan { should_stop: true },
+        );
+    }
+
+    #[test]
+    fn plans_dosage_work_item_dispatch() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_dosage_work_item_dispatch(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE).unwrap(),
+            DosageWorkItemDispatchPlan {
+                dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE.to_owned(),
+                processing_path: Some(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE.to_owned()),
+                error_message: None,
+            },
+        );
+        assert_eq!(
+            plan_dosage_work_item_dispatch(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE).unwrap(),
+            DosageWorkItemDispatchPlan {
+                dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE.to_owned(),
+                processing_path: Some(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE.to_owned()),
+                error_message: None,
+            },
+        );
+        assert_eq!(
+            plan_dosage_work_item_dispatch(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH).unwrap(),
+            DosageWorkItemDispatchPlan {
+                dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH.to_owned(),
+                processing_path: Some(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH.to_owned()),
+                error_message: None,
+            },
+        );
+        assert_eq!(
+            plan_dosage_work_item_dispatch(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR).unwrap(),
+            DosageWorkItemDispatchPlan {
+                dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR.to_owned(),
+                processing_path: Some(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR.to_owned()),
+                error_message: None,
+            },
+        );
+
+        let missing_item_plan = plan_dosage_work_item_dispatch(DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL).unwrap();
+        assert!(missing_item_plan.has_dispatch_error());
+        assert_eq!(
+            missing_item_plan.error_message.as_deref(),
+            Some("Native dosage work dispatch plan continued without a work item."),
+        );
+        assert_eq!(
+            plan_dosage_work_item_dispatch("unknown").unwrap_err(),
+            ScheduleError::UnsupportedDosageWorkItemKind { dosage_work_item_kind: "unknown".to_owned() },
         );
     }
 
