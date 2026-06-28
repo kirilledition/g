@@ -2217,6 +2217,23 @@ def test_plan_variant_major_dosage_batch_handoff_uses_native_batch_policy() -> N
         )
 
 
+def test_plan_dosage_work_handoff_uses_native_policy() -> None:
+    handoff_plan = _core.plan_dosage_work_handoff(chunk_count=2)
+    assert handoff_plan.chunk_count == 2
+
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+    scheduler_handoff_plan = scheduler_state.plan_dosage_work_handoff(chunk_count=1)
+    assert scheduler_handoff_plan.chunk_count == 1
+
+    with pytest.raises(ValueError, match="at least one chunk"):
+        _core.plan_dosage_work_handoff(chunk_count=0)
+
+
 def test_native_dosage_buffer_pool_state_tracks_capacity_and_ownership() -> None:
     buffer_pool_state = _core.NativeDosageBufferPoolState(buffer_limit=2)
 

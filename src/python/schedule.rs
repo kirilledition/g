@@ -39,6 +39,12 @@ pub(crate) struct NativeVariantMajorDosageBatchHandoffPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeDosageWorkHandoffPlan {
+    #[pyo3(get)]
+    chunk_count: usize,
+}
+
+#[pyclass]
 pub(crate) struct NativeGpuGenotypeFormatResolutionPlan {
     inner: native_schedule::GpuGenotypeFormatResolutionPlan,
 }
@@ -647,6 +653,10 @@ impl NativeCallbackSchedulerState {
             )
             .map(Into::into)
             .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    fn plan_dosage_work_handoff(&self, chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
+        self.inner.plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| schedule_error_to_py(&error))
     }
 
     #[getter]
@@ -1694,6 +1704,12 @@ impl From<native_schedule::VariantMajorDosageBatchHandoffPlan> for NativeVariant
     }
 }
 
+impl From<native_schedule::DosageWorkHandoffPlan> for NativeDosageWorkHandoffPlan {
+    fn from(handoff_plan: native_schedule::DosageWorkHandoffPlan) -> Self {
+        Self { chunk_count: handoff_plan.chunk_count }
+    }
+}
+
 impl From<native_schedule::GpuGenotypeFormatResolutionPlan> for NativeGpuGenotypeFormatResolutionPlan {
     fn from(resolution_plan: native_schedule::GpuGenotypeFormatResolutionPlan) -> Self {
         Self { inner: resolution_plan }
@@ -2150,6 +2166,11 @@ pub(crate) fn plan_bgen_delivery_invocation(
     )
     .map(Into::into)
     .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn plan_dosage_work_handoff(chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
+    native_schedule::plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| schedule_error_to_py(&error))
 }
 
 #[pyfunction]

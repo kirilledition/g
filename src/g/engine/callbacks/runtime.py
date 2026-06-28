@@ -450,24 +450,21 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed dosage chunk for JAX association."""
+        handoff_plan = self.callback_scheduler_state.plan_dosage_work_handoff(chunk_count=1)
+        if handoff_plan.chunk_count != 1:
+            message = "Native dosage work handoff plan disagrees with a single dosage work item."
+            raise RuntimeError(message)
+        work_item = PreprocessedDosageChunkWorkItem(
+            metadata=metadata,
+            genotype_matrix=genotype_matrix,
+            chunk_stats=chunk_stats,
+        )
         if self.stage_timing_recorder is None:
-            self.put_dosage_work_item(
-                PreprocessedDosageChunkWorkItem(
-                    metadata=metadata,
-                    genotype_matrix=genotype_matrix,
-                    chunk_stats=chunk_stats,
-                )
-            )
+            self.put_dosage_work_item(work_item)
             return
         native_delivery_start_time = time.perf_counter()
         try:
-            self.put_dosage_work_item(
-                PreprocessedDosageChunkWorkItem(
-                    metadata=metadata,
-                    genotype_matrix=genotype_matrix,
-                    chunk_stats=chunk_stats,
-                )
-            )
+            self.put_dosage_work_item(work_item)
         finally:
             self.record_chunk_stage_duration(metadata, "native_delivery", native_delivery_start_time)
 
@@ -478,24 +475,21 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed variant-major dosage chunk for JAX association."""
+        handoff_plan = self.callback_scheduler_state.plan_dosage_work_handoff(chunk_count=1)
+        if handoff_plan.chunk_count != 1:
+            message = "Native dosage work handoff plan disagrees with a single variant-major dosage work item."
+            raise RuntimeError(message)
+        work_item = PreprocessedVariantMajorDosageChunkWorkItem(
+            metadata=metadata,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            chunk_stats=chunk_stats,
+        )
         if self.stage_timing_recorder is None:
-            self.put_dosage_work_item(
-                PreprocessedVariantMajorDosageChunkWorkItem(
-                    metadata=metadata,
-                    genotype_matrix_by_variant=genotype_matrix_by_variant,
-                    chunk_stats=chunk_stats,
-                )
-            )
+            self.put_dosage_work_item(work_item)
             return
         native_delivery_start_time = time.perf_counter()
         try:
-            self.put_dosage_work_item(
-                PreprocessedVariantMajorDosageChunkWorkItem(
-                    metadata=metadata,
-                    genotype_matrix_by_variant=genotype_matrix_by_variant,
-                    chunk_stats=chunk_stats,
-                )
-            )
+            self.put_dosage_work_item(work_item)
         finally:
             self.record_chunk_stage_duration(metadata, "native_delivery", native_delivery_start_time)
 
@@ -511,6 +505,9 @@ class NativeBgenCallbackRunner(abc.ABC):
             genotype_matrix_by_variant_count=len(genotype_matrix_by_variant_batch),
             chunk_stats_count=len(chunk_stats_batch),
         )
+        dosage_handoff_plan = self.callback_scheduler_state.plan_dosage_work_handoff(
+            chunk_count=batch_handoff_plan.chunk_count
+        )
         work_items = tuple(
             PreprocessedVariantMajorDosageChunkWorkItem(
                 metadata=metadata,
@@ -524,8 +521,8 @@ class NativeBgenCallbackRunner(abc.ABC):
                 strict=True,
             )
         )
-        if len(work_items) != batch_handoff_plan.chunk_count:
-            message = "Native variant-major dosage batch handoff plan disagrees with prepared work items."
+        if len(work_items) != dosage_handoff_plan.chunk_count:
+            message = "Native dosage work handoff plan disagrees with prepared batch work items."
             raise RuntimeError(message)
         work_item = PreprocessedVariantMajorDosageChunkBatchWorkItem(work_items=work_items)
         if self.stage_timing_recorder is None:
@@ -545,24 +542,21 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed packed8 chunk for JAX association."""
+        handoff_plan = self.callback_scheduler_state.plan_dosage_work_handoff(chunk_count=1)
+        if handoff_plan.chunk_count != 1:
+            message = "Native dosage work handoff plan disagrees with a single packed8 dosage work item."
+            raise RuntimeError(message)
+        work_item = PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
+            metadata=metadata,
+            packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+            chunk_stats=chunk_stats,
+        )
         if self.stage_timing_recorder is None:
-            self.put_dosage_work_item(
-                PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
-                    metadata=metadata,
-                    packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
-                    chunk_stats=chunk_stats,
-                )
-            )
+            self.put_dosage_work_item(work_item)
             return
         native_delivery_start_time = time.perf_counter()
         try:
-            self.put_dosage_work_item(
-                PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
-                    metadata=metadata,
-                    packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
-                    chunk_stats=chunk_stats,
-                )
-            )
+            self.put_dosage_work_item(work_item)
         finally:
             self.record_chunk_stage_duration(metadata, "native_delivery", native_delivery_start_time)
 

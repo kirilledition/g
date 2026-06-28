@@ -1011,6 +1011,7 @@ class NativeCallbackSchedulerState:
         genotype_matrix_by_variant_count: int,
         chunk_stats_count: int,
     ) -> NativeVariantMajorDosageBatchHandoffPlan: ...
+    def plan_dosage_work_handoff(self, chunk_count: int) -> NativeDosageWorkHandoffPlan: ...
     @property
     def dosage_worker_error_message(self) -> str | None: ...
     @property
@@ -1194,6 +1195,10 @@ class NativeDosageBufferReusePlan:
     def slice_dimensions(self) -> list[int]: ...
 
 class NativeVariantMajorDosageBatchHandoffPlan:
+    @property
+    def chunk_count(self) -> int: ...
+
+class NativeDosageWorkHandoffPlan:
     @property
     def chunk_count(self) -> int: ...
 
@@ -2224,6 +2229,7 @@ def plan_variant_major_dosage_batch_handoff(
     genotype_matrix_by_variant_count: int,
     chunk_stats_count: int,
 ) -> NativeVariantMajorDosageBatchHandoffPlan: ...
+def plan_dosage_work_handoff(chunk_count: int) -> NativeDosageWorkHandoffPlan: ...
 def build_preflight_report_payload(
     sample_count: int,
     covariate_count: int,

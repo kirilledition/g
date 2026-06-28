@@ -72,6 +72,11 @@ pub struct VariantMajorDosageBatchHandoffPlan {
     pub chunk_count: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DosageWorkHandoffPlan {
+    pub chunk_count: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GpuGenotypeFormatResolutionPlan {
     pub requested_gpu_genotype_format: String,
@@ -873,6 +878,15 @@ impl CallbackSchedulerState {
         chunk_stats_count: usize,
     ) -> Result<VariantMajorDosageBatchHandoffPlan, ScheduleError> {
         plan_variant_major_dosage_batch_handoff(metadata_count, genotype_matrix_by_variant_count, chunk_stats_count)
+    }
+
+    /// Plan a dosage work handoff into the callback queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the handoff contains no chunks.
+    pub fn plan_dosage_work_handoff(&self, chunk_count: usize) -> Result<DosageWorkHandoffPlan, ScheduleError> {
+        plan_dosage_work_handoff(chunk_count)
     }
 
     #[must_use]
@@ -1795,6 +1809,8 @@ pub enum ScheduleError {
     VariantMajorDosageBatchLengthMismatch,
     #[error("Variant-major dosage batch must contain at least one chunk.")]
     EmptyVariantMajorDosageBatch,
+    #[error("Dosage work handoff must contain at least one chunk.")]
+    EmptyDosageWorkHandoff,
     #[error(
         "Committed chunk identifier set count ({committed_set_count}) must match writer session count ({writer_session_count})."
     )]
@@ -2089,7 +2105,20 @@ pub fn plan_variant_major_dosage_batch_handoff(
     if metadata_count == 0 {
         return Err(ScheduleError::EmptyVariantMajorDosageBatch);
     }
-    Ok(VariantMajorDosageBatchHandoffPlan { chunk_count: metadata_count })
+    let handoff_plan = plan_dosage_work_handoff(metadata_count)?;
+    Ok(VariantMajorDosageBatchHandoffPlan { chunk_count: handoff_plan.chunk_count })
+}
+
+/// Plan a dosage work handoff into the callback queue.
+///
+/// # Errors
+///
+/// Returns an error when the handoff contains no chunks.
+pub fn plan_dosage_work_handoff(chunk_count: usize) -> Result<DosageWorkHandoffPlan, ScheduleError> {
+    if chunk_count == 0 {
+        return Err(ScheduleError::EmptyDosageWorkHandoff);
+    }
+    Ok(DosageWorkHandoffPlan { chunk_count })
 }
 
 /// Plan which multi-trait writer lanes still need one chunk.
@@ -2724,6 +2753,15 @@ mod tests {
             plan_variant_major_dosage_batch_handoff(0, 0, 0).unwrap_err(),
             ScheduleError::EmptyVariantMajorDosageBatch,
         );
+    }
+
+    #[test]
+    fn plans_dosage_work_handoff() {
+        assert_eq!(plan_dosage_work_handoff(2).unwrap(), DosageWorkHandoffPlan { chunk_count: 2 });
+        assert_eq!(plan_dosage_work_handoff(0).unwrap_err(), ScheduleError::EmptyDosageWorkHandoff);
+
+        let scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
+        assert_eq!(scheduler_state.plan_dosage_work_handoff(1).unwrap(), DosageWorkHandoffPlan { chunk_count: 1 });
     }
 
     #[test]

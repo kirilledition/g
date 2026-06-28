@@ -1013,6 +1013,8 @@ Remove Python as the chunk-level scheduler.
   dosage consumers observe the queue sentinel.
 - Callback worker error updates now use native scheduler plans for record/clear
   state transitions and formatted error messages.
+- Dosage work handoffs now use native scheduler plans for non-empty chunk
+  counts before callback queueing.
 
 ### Tests
 
