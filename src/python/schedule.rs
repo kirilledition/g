@@ -249,6 +249,28 @@ impl NativeCallbackSchedulerState {
     }
 
     #[getter]
+    fn result_queue_capacity(&self) -> usize {
+        self.inner.result_queue_capacity()
+    }
+
+    #[getter]
+    fn result_queue_occupied_count(&self) -> usize {
+        self.inner.result_queue_occupied_count()
+    }
+
+    fn has_available_result_queue_slot(&self) -> bool {
+        self.inner.has_available_result_queue_slot()
+    }
+
+    fn acquire_result_queue_slot(&mut self) -> bool {
+        self.inner.acquire_result_queue_slot()
+    }
+
+    fn release_result_queue_slot(&mut self) -> bool {
+        self.inner.release_result_queue_slot()
+    }
+
+    #[getter]
     fn result_in_flight_limit(&self) -> usize {
         self.inner.result_in_flight_limit()
     }

@@ -1295,7 +1295,7 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
         kernel_config=build_default_binary_kernel_config(),
         telemetry_session=typing.cast("typing.Any", RecordingTelemetrySession()),
     )
-    callback.result_queue = queue.Queue(maxsize=2)
+    callback.result_queue = collections.deque()
     diagnostics = typing.cast(
         "regenie2_binary.BinaryChunkDiagnostics",
         SimpleNamespace(score_test_candidate_count=2),
@@ -1312,8 +1312,10 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
         release_in_flight_slot=False,
         binary_chunk_diagnostics=diagnostics,
     )
-    callback.result_queue.put_nowait(work_item)
-    callback.result_queue.put_nowait(None)
+    assert callback.callback_scheduler_state.acquire_result_queue_slot() is True
+    callback.result_queue.append(work_item)
+    assert callback.callback_scheduler_state.acquire_result_queue_slot() is True
+    callback.result_queue.append(None)
     with (
         patch(
             "g.engine.callbacks.runtime.write_materialized_regenie2_native_chunk_with_optional_timing",
@@ -1862,15 +1864,16 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             | callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
             | None
         ] = queue.Queue()
-        self.result_queue: queue.Queue[
+        self.result_queue: collections.deque[
             callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None
-        ] = queue.Queue()
+        ] = collections.deque()
         self.callback_scheduler_state = callback_runtime._core.NativeCallbackSchedulerState(
             staging_depth=1,
             native_callback_batch_size=1,
             result_in_flight_limit=2,
             dosage_buffer_limit=2,
         )
+        self.result_queue_condition = threading.Condition()
         self.result_in_flight_slot_condition = threading.Condition()
         self.dosage_buffer_pool_condition = threading.Condition()
         self.free_dosage_buffers: collections.deque[callback_shared.HostGenotypeBuffer] = collections.deque()
@@ -1918,6 +1921,8 @@ def attach_manual_callback_scheduler_state(callback: typing.Any) -> None:
         result_in_flight_limit=2,
         dosage_buffer_limit=2,
     )
+    callback.result_queue_condition = threading.Condition()
+    callback.result_queue = collections.deque()
 
 
 def mark_callback_workers_started(callback: typing.Any) -> None:
@@ -2695,16 +2700,13 @@ def test_native_callback_runner_uses_scheduler_abort_shutdown_plan() -> None:
 
 
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:
-    result_queue: queue.Queue[
-        callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None
-    ] = queue.Queue(maxsize=1)
-    result_queue.put_nowait(None)
     stop_event = threading.Event()
     result_worker_thread = threading.Thread(target=stop_event.wait, name="failed-result-worker")
     result_worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
     attach_manual_callback_scheduler_state(callback)
-    callback.result_queue = result_queue
+    assert callback.callback_scheduler_state.acquire_result_queue_slot() is True
+    callback.result_queue.append(None)
     callback.result_worker_error = RuntimeError("writer failed")
     callback.result_worker_thread = result_worker_thread
     mark_callback_workers_started(callback)
@@ -2715,7 +2717,7 @@ def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> No
         stop_event.set()
         result_worker_thread.join()
 
-    assert result_queue.full()
+    assert callback.callback_scheduler_state.has_available_result_queue_slot() is False
 
 
 def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> None:
@@ -2741,16 +2743,13 @@ def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> No
 
 
 def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
-    result_queue: queue.Queue[
-        callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None
-    ] = queue.Queue(maxsize=1)
-    result_queue.put_nowait(None)
     stop_event = threading.Event()
     result_worker_thread = threading.Thread(target=stop_event.wait, name="blocked-result-worker")
     result_worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
     attach_manual_callback_scheduler_state(callback)
-    callback.result_queue = result_queue
+    assert callback.callback_scheduler_state.acquire_result_queue_slot() is True
+    callback.result_queue.append(None)
     callback.result_worker_error = None
     callback.result_worker_thread = result_worker_thread
     mark_callback_workers_started(callback)
@@ -2761,6 +2760,31 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
     finally:
         stop_event.set()
         result_worker_thread.join()
+
+
+def test_native_callback_runner_waits_on_native_result_queue_release() -> None:
+    callback = ManualCallbackRunner()
+    assert callback.callback_scheduler_state.acquire_result_queue_slot() is True
+    callback.result_queue.append(None)
+
+    enqueue_started = threading.Event()
+
+    def enqueue_after_result_queue_is_full() -> bool:
+        enqueue_started.set()
+        return callback.try_put_result_write_item(None, timeout_seconds=2.0)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(enqueue_after_result_queue_is_full)
+        assert enqueue_started.wait(timeout=1.0)
+        time.sleep(0.2)
+        assert not future.done()
+
+        assert callback.get_result_write_item() is None
+        assert future.result(timeout=2.0) is True
+
+    assert callback.callback_scheduler_state.result_queue_occupied_count == 1
+    assert callback.get_result_write_item() is None
+    assert callback.callback_scheduler_state.result_queue_occupied_count == 0
 
 
 def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
@@ -2976,7 +3000,7 @@ def test_native_bgen_callback_runner_uses_native_scheduler_state() -> None:
     assert callback.result_in_flight_limit == 13
     assert callback.dosage_buffer_limit == 14
     assert callback.dosage_queue.maxsize == 11
-    assert callback.result_queue.maxsize == 12
+    assert not hasattr(callback.result_queue, "maxsize")
     assert not hasattr(callback.free_dosage_buffers, "maxsize")
 
 

@@ -192,6 +192,50 @@ pub struct CallbackQueueOperationObservationPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackQueueOccupancyState {
+    queue_capacity: usize,
+    occupied_count: usize,
+}
+
+impl CallbackQueueOccupancyState {
+    #[must_use]
+    pub const fn new(queue_capacity: usize) -> Self {
+        Self { queue_capacity, occupied_count: 0 }
+    }
+
+    #[must_use]
+    pub const fn queue_capacity(&self) -> usize {
+        self.queue_capacity
+    }
+
+    #[must_use]
+    pub const fn occupied_count(&self) -> usize {
+        self.occupied_count
+    }
+
+    #[must_use]
+    pub const fn has_available_slot(&self) -> bool {
+        self.occupied_count < self.queue_capacity
+    }
+
+    pub fn acquire_slot(&mut self) -> bool {
+        if !self.has_available_slot() {
+            return false;
+        }
+        self.occupied_count += 1;
+        true
+    }
+
+    pub fn release_slot(&mut self) -> bool {
+        if self.occupied_count == 0 {
+            return false;
+        }
+        self.occupied_count -= 1;
+        true
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DosageBufferPoolState {
     buffer_limit: usize,
     buffer_identifiers: BTreeSet<usize>,
@@ -313,6 +357,7 @@ impl CallbackWorkerLifecycleState {
 pub struct CallbackSchedulerState {
     queue_limits: NativeCallbackQueueLimits,
     native_callback_batch_size: usize,
+    result_queue_state: CallbackQueueOccupancyState,
     result_in_flight_slot_state: ResultInFlightSlotState,
     dosage_buffer_pool_state: DosageBufferPoolState,
     worker_lifecycle_state: CallbackWorkerLifecycleState,
@@ -344,6 +389,7 @@ impl CallbackSchedulerState {
         Ok(Self {
             queue_limits,
             native_callback_batch_size,
+            result_queue_state: CallbackQueueOccupancyState::new(queue_limits.result_queue_depth),
             result_in_flight_slot_state: ResultInFlightSlotState::new(queue_limits.result_in_flight_limit),
             dosage_buffer_pool_state: DosageBufferPoolState::new(queue_limits.dosage_buffer_limit),
             worker_lifecycle_state: CallbackWorkerLifecycleState::new(),
@@ -370,6 +416,29 @@ impl CallbackSchedulerState {
     #[must_use]
     pub const fn result_queue_depth(&self) -> usize {
         self.queue_limits.result_queue_depth
+    }
+
+    #[must_use]
+    pub const fn result_queue_capacity(&self) -> usize {
+        self.result_queue_state.queue_capacity()
+    }
+
+    #[must_use]
+    pub const fn result_queue_occupied_count(&self) -> usize {
+        self.result_queue_state.occupied_count()
+    }
+
+    #[must_use]
+    pub const fn has_available_result_queue_slot(&self) -> bool {
+        self.result_queue_state.has_available_slot()
+    }
+
+    pub fn acquire_result_queue_slot(&mut self) -> bool {
+        self.result_queue_state.acquire_slot()
+    }
+
+    pub fn release_result_queue_slot(&mut self) -> bool {
+        self.result_queue_state.release_slot()
     }
 
     #[must_use]
@@ -1854,6 +1923,9 @@ mod tests {
         assert_eq!(scheduler_state.native_callback_batch_size(), 2);
         assert_eq!(scheduler_state.dosage_queue_depth(), 3);
         assert_eq!(scheduler_state.result_queue_depth(), 3);
+        assert_eq!(scheduler_state.result_queue_capacity(), 3);
+        assert_eq!(scheduler_state.result_queue_occupied_count(), 0);
+        assert!(scheduler_state.has_available_result_queue_slot());
         assert_eq!(scheduler_state.result_in_flight_limit(), 7);
         assert_eq!(scheduler_state.result_in_flight_slot_limit(), 7);
         assert_eq!(scheduler_state.dosage_buffer_limit(), 8);
@@ -1862,6 +1934,12 @@ mod tests {
         assert!(scheduler_state.mark_started());
         assert!(scheduler_state.has_started());
         assert!(!scheduler_state.mark_started());
+
+        assert!(scheduler_state.acquire_result_queue_slot());
+        assert_eq!(scheduler_state.result_queue_occupied_count(), 1);
+        assert!(scheduler_state.has_available_result_queue_slot());
+        assert!(scheduler_state.release_result_queue_slot());
+        assert_eq!(scheduler_state.result_queue_occupied_count(), 0);
 
         assert!(scheduler_state.acquire_result_in_flight_slot());
         assert_eq!(scheduler_state.result_in_flight_occupied_count(), 1);

@@ -505,14 +505,15 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 return
             while True:
                 get_start_time = time.perf_counter()
-                work_item = self.result_queue.get()
+                work_item = self.get_result_write_item()
                 if work_item is None:
                     self.flush_binary_correction_diagnostics()
                     return
-                self.record_queue_stage_duration(
-                    queue_name="result_queue",
+                self.record_bounded_resource_stage_duration(
+                    resource_name="result_queue",
                     operation_name="consumer_wait",
-                    observed_queue=self.result_queue,
+                    current_depth=self.result_queue_count,
+                    capacity=self.result_queue_depth,
                     start_time=get_start_time,
                     blocked=True,
                 )
@@ -524,7 +525,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def consume_result_write_items_without_timing(self) -> None:
         """Consume multi-trait result write items without diagnostic queue timing."""
         while True:
-            work_item = self.result_queue.get()
+            work_item = self.get_result_write_item()
             if work_item is None:
                 self.flush_binary_correction_diagnostics()
                 return

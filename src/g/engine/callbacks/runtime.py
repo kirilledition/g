@@ -88,6 +88,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
         self.result_in_flight_slot_condition = threading.Condition()
+        self.result_queue_condition = threading.Condition()
         self.dosage_buffer_pool_condition = threading.Condition()
         self.dosage_queue: queue.Queue[
             PreprocessedDosageChunkWorkItem
@@ -96,8 +97,8 @@ class NativeBgenCallbackRunner(abc.ABC):
             | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
             | None
         ] = queue.Queue(maxsize=self.dosage_queue_depth)
-        self.result_queue: queue.Queue[Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None] = (
-            queue.Queue(maxsize=self.result_queue_depth)
+        self.result_queue: collections.deque[Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None] = (
+            collections.deque()
         )
         self.free_dosage_buffers: collections.deque[HostGenotypeBuffer] = collections.deque()
         self.worker_error_cause: BaseException | None = None
@@ -221,6 +222,11 @@ class NativeBgenCallbackRunner(abc.ABC):
     def result_in_flight_slot_count(self) -> int:
         """Return the native result in-flight occupied slot count."""
         return self.callback_scheduler_state.result_in_flight_occupied_count
+
+    @property
+    def result_queue_count(self) -> int:
+        """Return the native result-queue occupancy count."""
+        return self.callback_scheduler_state.result_queue_occupied_count
 
     def record_stage_duration(self, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage using this runner's timing recorder."""
@@ -726,14 +732,15 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             while True:
                 get_start_time = time.perf_counter()
-                work_item = self.result_queue.get()
+                work_item = self.get_result_write_item()
                 if work_item is None:
                     self.flush_binary_correction_diagnostics()
                     return
-                self.record_queue_stage_duration(
-                    queue_name="result_queue",
+                self.record_bounded_resource_stage_duration(
+                    resource_name="result_queue",
                     operation_name="consumer_wait",
-                    observed_queue=self.result_queue,
+                    current_depth=self.result_queue_count,
+                    capacity=self.result_queue_depth,
                     start_time=get_start_time,
                     blocked=True,
                 )
@@ -744,7 +751,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     def consume_result_write_items_without_timing(self) -> None:
         """Consume result write items without diagnostic queue timing overhead."""
         while True:
-            work_item = self.result_queue.get()
+            work_item = self.get_result_write_item()
             if work_item is None:
                 self.flush_binary_correction_diagnostics()
                 return
@@ -850,33 +857,71 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
-                try:
-                    self.result_queue.put(work_item, timeout=backpressure_poll_timeout_seconds)
+                if self.try_put_result_write_item(
+                    work_item,
+                    timeout_seconds=backpressure_poll_timeout_seconds,
+                ):
                     return
-                except queue.Full:
-                    continue
         while True:
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
-            try:
-                self.result_queue.put(work_item, timeout=backpressure_poll_timeout_seconds)
-                self.record_queue_stage_duration(
-                    queue_name="result_queue",
-                    operation_name="put",
-                    observed_queue=self.result_queue,
-                    start_time=put_start_time,
-                    blocked=False,
-                )
-                return
-            except queue.Full:
-                self.record_queue_stage_duration(
-                    queue_name="result_queue",
+            queued = self.try_put_result_write_item(
+                work_item,
+                timeout_seconds=backpressure_poll_timeout_seconds,
+            )
+            if not queued:
+                self.record_bounded_resource_stage_duration(
+                    resource_name="result_queue",
                     operation_name="producer_blocking",
-                    observed_queue=self.result_queue,
+                    current_depth=self.result_queue_count,
+                    capacity=self.result_queue_depth,
                     start_time=put_start_time,
                     blocked=True,
                 )
                 continue
+            self.record_bounded_resource_stage_duration(
+                resource_name="result_queue",
+                operation_name="put",
+                current_depth=self.result_queue_count,
+                capacity=self.result_queue_depth,
+                start_time=put_start_time,
+                blocked=False,
+            )
+            return
+
+    def try_put_result_write_item(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+        *,
+        timeout_seconds: float,
+    ) -> bool:
+        """Try to enqueue one result item under native result-queue capacity."""
+        deadline = time.monotonic() + max(timeout_seconds, 0.0)
+        while True:
+            with self.result_queue_condition:
+                if self.callback_scheduler_state.acquire_result_queue_slot():
+                    self.result_queue.append(work_item)
+                    self.result_queue_condition.notify()
+                    return True
+                remaining_timeout_seconds = deadline - time.monotonic()
+                if remaining_timeout_seconds <= 0.0:
+                    return False
+                self.result_queue_condition.wait(timeout=remaining_timeout_seconds)
+
+    def get_result_write_item(self) -> Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None:
+        """Wait for and return one result queue item while releasing native queue capacity."""
+        while True:
+            with self.result_queue_condition:
+                if self.result_queue:
+                    work_item = self.result_queue.popleft()
+                    if not self.callback_scheduler_state.release_result_queue_slot():
+                        message = "Native result-queue state has no occupied slot to release."
+                        raise RuntimeError(message)
+                    self.result_queue_condition.notify()
+                    return work_item
+                self.result_queue_condition.wait(
+                    timeout=self.callback_scheduler_state.backpressure_poll_timeout_seconds
+                )
 
     def acquire_result_in_flight_slot(self) -> None:
         """Reserve capacity for one chunk of pending GPU result work."""
@@ -1009,11 +1054,11 @@ class NativeBgenCallbackRunner(abc.ABC):
             )
             if not stop_poll_plan.should_stop:
                 return
-            try:
-                self.result_queue.put(None, timeout=stop_poll_plan.poll_timeout_seconds)
+            if self.try_put_result_write_item(
+                None,
+                timeout_seconds=stop_poll_plan.poll_timeout_seconds,
+            ):
                 return
-            except queue.Full:
-                continue
         raise NativeBgenWorkerShutdownError(
             worker_name=self.result_worker_thread.name,
             timeout_seconds=stop_plan.timeout_seconds,
