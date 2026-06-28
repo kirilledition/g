@@ -1011,6 +1011,8 @@ Remove Python as the chunk-level scheduler.
   when callback result consumers observe the queue sentinel.
 - Dosage work drain completion now uses a native stop plan when callback
   dosage consumers observe the queue sentinel.
+- Callback worker error updates now use native scheduler plans for record/clear
+  state transitions and formatted error messages.
 
 ### Tests
 

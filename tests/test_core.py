@@ -1365,6 +1365,33 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
         )
 
 
+def test_native_callback_scheduler_state_updates_worker_errors() -> None:
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+
+    dosage_update_plan = scheduler_state.update_dosage_worker_error("dosage failed")
+    assert dosage_update_plan.had_error is False
+    assert dosage_update_plan.has_error is True
+    assert dosage_update_plan.error_message == "native pipeline callback worker failed: dosage failed"
+    assert scheduler_state.dosage_worker_error_message == "native pipeline callback worker failed: dosage failed"
+
+    dosage_clear_plan = scheduler_state.update_dosage_worker_error(None)
+    assert dosage_clear_plan.had_error is True
+    assert dosage_clear_plan.has_error is False
+    assert dosage_clear_plan.error_message is None
+    assert scheduler_state.dosage_worker_error_message is None
+
+    result_update_plan = scheduler_state.update_result_worker_error("writer failed")
+    assert result_update_plan.had_error is False
+    assert result_update_plan.has_error is True
+    assert result_update_plan.error_message == "native pipeline result writer worker failed: writer failed"
+    assert scheduler_state.result_worker_error_message == "native pipeline result writer worker failed: writer failed"
+
+
 def test_native_callback_scheduler_state_plans_queue_put_and_get_attempts() -> None:
     scheduler_state = _core.NativeCallbackSchedulerState(
         staging_depth=1,

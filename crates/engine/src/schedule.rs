@@ -908,6 +908,22 @@ impl CallbackSchedulerState {
         self.result_worker_error_message = Some(format_result_callback_worker_error_message(error_message));
     }
 
+    pub fn update_dosage_worker_error(&mut self, error_message: Option<&str>) -> CallbackWorkerErrorUpdatePlan {
+        update_callback_worker_error(
+            &mut self.dosage_worker_error_message,
+            error_message,
+            format_dosage_callback_worker_error_message,
+        )
+    }
+
+    pub fn update_result_worker_error(&mut self, error_message: Option<&str>) -> CallbackWorkerErrorUpdatePlan {
+        update_callback_worker_error(
+            &mut self.result_worker_error_message,
+            error_message,
+            format_result_callback_worker_error_message,
+        )
+    }
+
     pub fn clear_dosage_worker_error(&mut self) -> bool {
         let had_error = self.has_dosage_worker_error();
         self.dosage_worker_error_message = None;
@@ -1314,6 +1330,13 @@ pub struct CallbackWorkerErrorRaisePlan {
     pub error_message: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackWorkerErrorUpdatePlan {
+    pub had_error: bool,
+    pub has_error: bool,
+    pub error_message: Option<String>,
+}
+
 #[must_use]
 pub const fn callback_worker_shutdown_timeouts() -> CallbackWorkerShutdownTimeouts {
     CallbackWorkerShutdownTimeouts {
@@ -1624,6 +1647,20 @@ pub fn format_dosage_callback_worker_error_message(error_message: &str) -> Strin
 #[must_use]
 pub fn format_result_callback_worker_error_message(error_message: &str) -> String {
     format!("native pipeline result writer worker failed: {error_message}")
+}
+
+fn update_callback_worker_error(
+    worker_error_message: &mut Option<String>,
+    error_message: Option<&str>,
+    format_worker_error_message: fn(&str) -> String,
+) -> CallbackWorkerErrorUpdatePlan {
+    let had_error = worker_error_message.is_some();
+    *worker_error_message = error_message.map(format_worker_error_message);
+    CallbackWorkerErrorUpdatePlan {
+        had_error,
+        has_error: worker_error_message.is_some(),
+        error_message: worker_error_message.clone(),
+    }
 }
 
 fn plan_callback_worker_error_raise(
@@ -3033,6 +3070,41 @@ mod tests {
                 raise_result_worker_error: false,
                 error_message: Some("native pipeline callback worker failed: dosage failed".to_string()),
             },
+        );
+    }
+
+    #[test]
+    fn updates_callback_scheduler_worker_errors() {
+        let mut scheduler_state = CallbackSchedulerState::new(1, 1, None, None).unwrap();
+
+        assert_eq!(
+            scheduler_state.update_dosage_worker_error(Some("dosage failed")),
+            CallbackWorkerErrorUpdatePlan {
+                had_error: false,
+                has_error: true,
+                error_message: Some("native pipeline callback worker failed: dosage failed".to_string()),
+            },
+        );
+        assert_eq!(
+            scheduler_state.dosage_worker_error_message(),
+            Some("native pipeline callback worker failed: dosage failed")
+        );
+        assert_eq!(
+            scheduler_state.update_dosage_worker_error(None),
+            CallbackWorkerErrorUpdatePlan { had_error: true, has_error: false, error_message: None },
+        );
+        assert_eq!(scheduler_state.dosage_worker_error_message(), None);
+        assert_eq!(
+            scheduler_state.update_result_worker_error(Some("writer failed")),
+            CallbackWorkerErrorUpdatePlan {
+                had_error: false,
+                has_error: true,
+                error_message: Some("native pipeline result writer worker failed: writer failed".to_string()),
+            },
+        );
+        assert_eq!(
+            scheduler_state.result_worker_error_message(),
+            Some("native pipeline result writer worker failed: writer failed"),
         );
     }
 

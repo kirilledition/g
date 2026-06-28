@@ -208,6 +208,11 @@ pub(crate) struct NativeCallbackWorkerErrorRaisePlan {
     inner: native_schedule::CallbackWorkerErrorRaisePlan,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerErrorUpdatePlan {
+    inner: native_schedule::CallbackWorkerErrorUpdatePlan,
+}
+
 #[pymethods]
 impl NativeDosageBufferPoolState {
     #[new]
@@ -672,6 +677,14 @@ impl NativeCallbackSchedulerState {
         self.inner.record_result_worker_error(error_message);
     }
 
+    fn update_dosage_worker_error(&mut self, error_message: Option<&str>) -> NativeCallbackWorkerErrorUpdatePlan {
+        self.inner.update_dosage_worker_error(error_message).into()
+    }
+
+    fn update_result_worker_error(&mut self, error_message: Option<&str>) -> NativeCallbackWorkerErrorUpdatePlan {
+        self.inner.update_result_worker_error(error_message).into()
+    }
+
     fn clear_dosage_worker_error(&mut self) -> bool {
         self.inner.clear_dosage_worker_error()
     }
@@ -1051,6 +1064,24 @@ impl NativeCallbackWorkerErrorRaisePlan {
     #[getter]
     fn raise_result_worker_error(&self) -> bool {
         self.inner.raise_result_worker_error
+    }
+
+    #[getter]
+    fn error_message(&self) -> Option<String> {
+        self.inner.error_message.clone()
+    }
+}
+
+#[pymethods]
+impl NativeCallbackWorkerErrorUpdatePlan {
+    #[getter]
+    fn had_error(&self) -> bool {
+        self.inner.had_error
+    }
+
+    #[getter]
+    fn has_error(&self) -> bool {
+        self.inner.has_error
     }
 
     #[getter]
@@ -1631,6 +1662,12 @@ impl From<native_schedule::CallbackWorkerStopPollPlan> for NativeCallbackWorkerS
 impl From<native_schedule::CallbackWorkerErrorRaisePlan> for NativeCallbackWorkerErrorRaisePlan {
     fn from(error_raise_plan: native_schedule::CallbackWorkerErrorRaisePlan) -> Self {
         Self { inner: error_raise_plan }
+    }
+}
+
+impl From<native_schedule::CallbackWorkerErrorUpdatePlan> for NativeCallbackWorkerErrorUpdatePlan {
+    fn from(error_update_plan: native_schedule::CallbackWorkerErrorUpdatePlan) -> Self {
+        Self { inner: error_update_plan }
     }
 }
 

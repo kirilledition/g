@@ -202,12 +202,10 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     @worker_error.setter
     def worker_error(self, error: BaseException | None) -> None:
-        """Record a dosage worker failure in native scheduler state."""
+        """Update dosage worker failure state in native scheduler state."""
         self.worker_error_cause = error
-        if error is None:
-            self.callback_scheduler_state.clear_dosage_worker_error()
-            return
-        self.callback_scheduler_state.record_dosage_worker_error(str(error))
+        error_message = None if error is None else str(error)
+        self.callback_scheduler_state.update_dosage_worker_error(error_message)
 
     @property
     def result_worker_error(self) -> BaseException | None:
@@ -216,12 +214,10 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     @result_worker_error.setter
     def result_worker_error(self, error: BaseException | None) -> None:
-        """Record a result worker failure in native scheduler state."""
+        """Update result worker failure state in native scheduler state."""
         self.result_worker_error_cause = error
-        if error is None:
-            self.callback_scheduler_state.clear_result_worker_error()
-            return
-        self.callback_scheduler_state.record_result_worker_error(str(error))
+        error_message = None if error is None else str(error)
+        self.callback_scheduler_state.update_result_worker_error(error_message)
 
     @property
     def dosage_buffer_count(self) -> int:

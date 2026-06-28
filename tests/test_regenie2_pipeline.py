@@ -2766,6 +2766,13 @@ class WorkerErrorRaisePlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class WorkerErrorUpdatePlanProbe:
+    had_error: bool
+    has_error: bool
+    error_message: str | None
+
+
+@dataclasses.dataclass(frozen=True)
 class CallbackQueuePutAttemptPlanProbe:
     should_put: bool
     should_wait: bool
@@ -3018,6 +3025,30 @@ class WorkerErrorRaiseSchedulerProbe:
             raise_dosage_worker_error=True,
             raise_result_worker_error=False,
             error_message="planned dosage worker failure",
+        )
+
+
+@dataclasses.dataclass
+class WorkerErrorUpdateSchedulerProbe:
+    dosage_error_message: str | None = None
+    result_error_message: str | None = None
+
+    def update_dosage_worker_error(self, error_message: str | None) -> WorkerErrorUpdatePlanProbe:
+        had_error = self.dosage_error_message is not None
+        self.dosage_error_message = error_message
+        return WorkerErrorUpdatePlanProbe(
+            had_error=had_error,
+            has_error=self.dosage_error_message is not None,
+            error_message=self.dosage_error_message,
+        )
+
+    def update_result_worker_error(self, error_message: str | None) -> WorkerErrorUpdatePlanProbe:
+        had_error = self.result_error_message is not None
+        self.result_error_message = error_message
+        return WorkerErrorUpdatePlanProbe(
+            had_error=had_error,
+            has_error=self.result_error_message is not None,
+            error_message=self.result_error_message,
         )
 
 
@@ -3483,6 +3514,27 @@ def test_native_callback_runner_uses_scheduler_worker_error_raise_plan() -> None
     assert error_info.value.__cause__ is callback.worker_error_cause
 
 
+def test_native_callback_runner_uses_scheduler_worker_error_update_plans() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = WorkerErrorUpdateSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+
+    dosage_error = ValueError("dosage failed")
+    result_error = RuntimeError("writer failed")
+    callback.worker_error = dosage_error
+    callback.result_worker_error = result_error
+
+    assert callback.worker_error is dosage_error
+    assert callback.result_worker_error is result_error
+    assert scheduler_state.dosage_error_message == "dosage failed"
+    assert scheduler_state.result_error_message == "writer failed"
+
+    callback.worker_error = None
+
+    assert callback.worker_error is None
+    assert scheduler_state.dosage_error_message is None
+
+
 def test_native_callback_runner_uses_scheduler_result_in_flight_attempt_plans() -> None:
     callback = ManualCallbackRunner()
     scheduler_state = ResultInFlightAttemptSchedulerProbe()
@@ -3541,9 +3593,7 @@ def test_native_callback_runner_uses_scheduler_result_write_drain_completion_pla
         nonlocal flushed
         flushed = True
 
-    typing.cast("typing.Any", callback).flush_binary_correction_diagnostics = (
-        flush_binary_correction_diagnostics_probe
-    )
+    typing.cast("typing.Any", callback).flush_binary_correction_diagnostics = flush_binary_correction_diagnostics_probe
 
     drain_completion_plan = callback.plan_result_write_drain_completion(
         None,
