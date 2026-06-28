@@ -1107,6 +1107,27 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     assert abort_plan.dosage_stop_timeout_seconds == 1.0
     assert abort_plan.result_stop_timeout_seconds == 1.0
 
+    queue_operation_plan = scheduler_state.plan_queue_operation_observation(
+        queue_name="dosage_buffer_pool",
+        operation_name="return",
+        elapsed_seconds=0.25,
+        blocked=True,
+    )
+    assert queue_operation_plan.queue_name == "dosage_buffer_pool"
+    assert queue_operation_plan.operation_name == "return"
+    assert queue_operation_plan.blocked_seconds == 0.25
+
+    queue_stage_plan = scheduler_state.plan_queue_stage_observation(
+        queue_name="dosage_queue",
+        operation_name="producer_blocking",
+        elapsed_seconds=0.5,
+        blocked=True,
+    )
+    assert queue_stage_plan.queue_name == "dosage_queue"
+    assert queue_stage_plan.operation_name == "producer_blocking"
+    assert queue_stage_plan.stage_name == "callback_queue_producer_blocking"
+    assert queue_stage_plan.blocked_seconds == 0.5
+
     dosage_join_plan = scheduler_state.plan_dosage_worker_join(timeout_seconds=None)
     assert dosage_join_plan.should_join is True
     assert dosage_join_plan.timeout_seconds == 60.0

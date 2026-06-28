@@ -2131,18 +2131,22 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
     second_metadata = build_native_metadata_for_chunk(chunk_identifier=2)
     callback = BatchedCallbackRunner()
     try:
-        callback.compute_preprocessed_variant_major_dosage_chunk_batch(
-            metadata_batch=(first_metadata, second_metadata),
-            genotype_matrix_by_variant_batch=(
-                np.ones((2, 2), dtype=np.float32),
-                np.full((2, 2), 2.0, dtype=np.float32),
-            ),
-            chunk_stats_batch=(
-                typing.cast("typing.Any", SimpleNamespace()),
-                typing.cast("typing.Any", SimpleNamespace()),
-            ),
-        )
-        callback.finish()
+        with patch(
+            "g.engine.callbacks.runtime._core.plan_callback_queue_stage_observation",
+            side_effect=AssertionError("runner should use scheduler queue stage planner"),
+        ):
+            callback.compute_preprocessed_variant_major_dosage_chunk_batch(
+                metadata_batch=(first_metadata, second_metadata),
+                genotype_matrix_by_variant_batch=(
+                    np.ones((2, 2), dtype=np.float32),
+                    np.full((2, 2), 2.0, dtype=np.float32),
+                ),
+                chunk_stats_batch=(
+                    typing.cast("typing.Any", SimpleNamespace()),
+                    typing.cast("typing.Any", SimpleNamespace()),
+                ),
+            )
+            callback.finish()
     finally:
         callback.abort()
 
@@ -2420,10 +2424,14 @@ def test_native_callback_runner_records_native_dosage_buffer_operation_observati
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     callback.stage_timing_recorder = stage_timing_recorder
 
-    dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
-    callback.release_dosage_buffer(dosage_buffer)
-    reused_dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
-    callback.discard_dosage_buffer_slot(reused_dosage_buffer)
+    with patch(
+        "g.engine.callbacks.runtime._core.plan_callback_queue_operation_observation",
+        side_effect=AssertionError("runner should use scheduler queue operation planner"),
+    ):
+        dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+        callback.release_dosage_buffer(dosage_buffer)
+        reused_dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+        callback.discard_dosage_buffer_slot(reused_dosage_buffer)
 
     queue_backpressure_by_operation = {
         queue_backpressure.operation_name: queue_backpressure

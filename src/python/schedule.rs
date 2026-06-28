@@ -369,6 +369,34 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_worker_abort().into()
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    fn plan_queue_operation_observation(
+        &self,
+        queue_name: String,
+        operation_name: String,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueOperationObservationPlan> {
+        self.inner
+            .plan_queue_operation_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn plan_queue_stage_observation(
+        &self,
+        queue_name: String,
+        operation_name: String,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueStageObservationPlan> {
+        self.inner
+            .plan_queue_stage_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
     fn plan_dosage_worker_join(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
         self.inner.plan_dosage_worker_join(timeout_seconds).into()
     }

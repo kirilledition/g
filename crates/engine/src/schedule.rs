@@ -502,6 +502,38 @@ impl CallbackSchedulerState {
         plan_callback_worker_abort()
     }
 
+    /// Plan one aggregate callback queue or bounded-resource observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the queue/resource and operation pair is not part
+    /// of the callback scheduler observation contract.
+    pub fn plan_queue_operation_observation(
+        &self,
+        queue_name: &str,
+        operation_name: &str,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> Result<CallbackQueueOperationObservationPlan, ScheduleError> {
+        plan_callback_queue_operation_observation(queue_name, operation_name, elapsed_seconds, blocked)
+    }
+
+    /// Plan one timed callback queue or bounded-resource observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the queue/resource and operation pair does not
+    /// have a canonical callback timing stage.
+    pub fn plan_queue_stage_observation(
+        &self,
+        queue_name: &str,
+        operation_name: &str,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> Result<CallbackQueueStageObservationPlan, ScheduleError> {
+        plan_callback_queue_stage_observation(queue_name, operation_name, elapsed_seconds, blocked)
+    }
+
     #[must_use]
     pub fn plan_dosage_worker_join(&self, timeout_seconds: Option<f64>) -> CallbackWorkerJoinPlan {
         plan_dosage_callback_worker_join(timeout_seconds, self.has_started())
@@ -1854,6 +1886,33 @@ mod tests {
         assert_eq!(
             scheduler_state.plan_result_worker_join(Some(0.25)),
             CallbackWorkerJoinPlan { should_join: true, timeout_seconds: 0.25 },
+        );
+    }
+
+    #[test]
+    fn plans_callback_scheduler_queue_observations() {
+        let scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
+
+        assert_eq!(
+            scheduler_state
+                .plan_queue_operation_observation(DOSAGE_BUFFER_POOL_NAME, QUEUE_RETURN_OPERATION, 0.25, true)
+                .unwrap(),
+            CallbackQueueOperationObservationPlan {
+                queue_name: DOSAGE_BUFFER_POOL_NAME.to_string(),
+                operation_name: QUEUE_RETURN_OPERATION.to_string(),
+                blocked_seconds: 0.25,
+            },
+        );
+        assert_eq!(
+            scheduler_state
+                .plan_queue_stage_observation(DOSAGE_QUEUE_NAME, QUEUE_PRODUCER_BLOCKING_OPERATION, 0.5, true)
+                .unwrap(),
+            CallbackQueueStageObservationPlan {
+                queue_name: DOSAGE_QUEUE_NAME.to_string(),
+                operation_name: QUEUE_PRODUCER_BLOCKING_OPERATION.to_string(),
+                stage_name: "callback_queue_producer_blocking".to_string(),
+                blocked_seconds: 0.5,
+            },
         );
     }
 

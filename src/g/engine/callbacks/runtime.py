@@ -287,7 +287,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record aggregate queue depth and wait metadata."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = _core.plan_callback_queue_operation_observation(
+        observation_plan = self.callback_scheduler_state.plan_queue_operation_observation(
             queue_name=queue_name,
             operation_name=operation_name,
             elapsed_seconds=elapsed_seconds,
@@ -315,7 +315,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         elapsed_seconds = time.perf_counter() - start_time
         if self.stage_timing_recorder is None:
             return
-        observation_plan = _core.plan_callback_queue_stage_observation(
+        observation_plan = self.callback_scheduler_state.plan_queue_stage_observation(
             queue_name=queue_name,
             operation_name=operation_name,
             elapsed_seconds=elapsed_seconds,
@@ -344,7 +344,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record aggregate bounded-resource occupancy metadata."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = _core.plan_callback_queue_operation_observation(
+        observation_plan = self.callback_scheduler_state.plan_queue_operation_observation(
             queue_name=resource_name,
             operation_name=operation_name,
             elapsed_seconds=elapsed_seconds,
@@ -373,7 +373,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         elapsed_seconds = time.perf_counter() - start_time
         if self.stage_timing_recorder is None:
             return
-        observation_plan = _core.plan_callback_queue_stage_observation(
+        observation_plan = self.callback_scheduler_state.plan_queue_stage_observation(
             queue_name=resource_name,
             operation_name=operation_name,
             elapsed_seconds=elapsed_seconds,
