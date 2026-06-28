@@ -1005,6 +1005,8 @@ Remove Python as the chunk-level scheduler.
 - Binary correction summary telemetry now uses native summary plans for
   diagnostics retention, pending flush decisions, pending chunk counts, and
   final emission gating.
+- Result work-item cleanup now uses native release plans to select pre-write
+  host buffer release and final in-flight slot cleanup decisions.
 
 ### Tests
 

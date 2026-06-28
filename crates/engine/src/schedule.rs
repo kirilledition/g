@@ -263,6 +263,12 @@ pub struct ResultInFlightReleaseAttemptPlan {
     pub slot_limit: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResultWriteItemResourceReleasePlan {
+    pub should_release_host_buffer: bool,
+    pub should_release_result_in_flight_slot: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DosageBufferAcquireAttemptPlan {
     pub should_take_free_buffer: bool,
@@ -724,6 +730,31 @@ impl CallbackSchedulerState {
     #[must_use]
     pub fn plan_result_in_flight_slot_release_attempt(&mut self) -> ResultInFlightReleaseAttemptPlan {
         plan_result_in_flight_slot_release_attempt(&mut self.result_in_flight_slot_state)
+    }
+
+    #[must_use]
+    pub const fn plan_result_write_item_pre_write_resource_release(
+        &self,
+        has_host_dosage_buffer: bool,
+    ) -> ResultWriteItemResourceReleasePlan {
+        ResultWriteItemResourceReleasePlan {
+            should_release_host_buffer: has_host_dosage_buffer,
+            should_release_result_in_flight_slot: false,
+        }
+    }
+
+    #[must_use]
+    #[allow(clippy::fn_params_excessive_bools)]
+    pub const fn plan_result_write_item_final_resource_release(
+        &self,
+        has_host_dosage_buffer: bool,
+        has_released_host_dosage_buffer: bool,
+        release_in_flight_slot: bool,
+    ) -> ResultWriteItemResourceReleasePlan {
+        ResultWriteItemResourceReleasePlan {
+            should_release_host_buffer: has_host_dosage_buffer && !has_released_host_dosage_buffer,
+            should_release_result_in_flight_slot: release_in_flight_slot,
+        }
     }
 
     #[must_use]
@@ -2871,6 +2902,40 @@ mod tests {
                 wait_timeout_seconds: 0.0,
                 occupied_count: 1,
                 slot_limit: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn plans_result_write_item_resource_release() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_result_write_item_pre_write_resource_release(true),
+            ResultWriteItemResourceReleasePlan {
+                should_release_host_buffer: true,
+                should_release_result_in_flight_slot: false,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_write_item_pre_write_resource_release(false),
+            ResultWriteItemResourceReleasePlan {
+                should_release_host_buffer: false,
+                should_release_result_in_flight_slot: false,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_write_item_final_resource_release(true, true, true),
+            ResultWriteItemResourceReleasePlan {
+                should_release_host_buffer: false,
+                should_release_result_in_flight_slot: true,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_write_item_final_resource_release(true, false, false),
+            ResultWriteItemResourceReleasePlan {
+                should_release_host_buffer: true,
+                should_release_result_in_flight_slot: false,
             },
         );
     }

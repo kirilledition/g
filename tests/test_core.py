@@ -1520,6 +1520,43 @@ def test_native_callback_scheduler_state_plans_result_in_flight_slot_attempts() 
     assert expired_acquire_plan.slot_limit == 1
 
 
+def test_native_callback_scheduler_state_plans_result_write_item_resource_release() -> None:
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+
+    pre_write_release_plan = scheduler_state.plan_result_write_item_pre_write_resource_release(
+        has_host_dosage_buffer=True,
+    )
+    assert pre_write_release_plan.should_release_host_buffer is True
+    assert pre_write_release_plan.should_release_result_in_flight_slot is False
+
+    empty_pre_write_release_plan = scheduler_state.plan_result_write_item_pre_write_resource_release(
+        has_host_dosage_buffer=False,
+    )
+    assert empty_pre_write_release_plan.should_release_host_buffer is False
+    assert empty_pre_write_release_plan.should_release_result_in_flight_slot is False
+
+    final_release_plan = scheduler_state.plan_result_write_item_final_resource_release(
+        has_host_dosage_buffer=True,
+        has_released_host_dosage_buffer=True,
+        release_in_flight_slot=True,
+    )
+    assert final_release_plan.should_release_host_buffer is False
+    assert final_release_plan.should_release_result_in_flight_slot is True
+
+    cleanup_release_plan = scheduler_state.plan_result_write_item_final_resource_release(
+        has_host_dosage_buffer=True,
+        has_released_host_dosage_buffer=False,
+        release_in_flight_slot=False,
+    )
+    assert cleanup_release_plan.should_release_host_buffer is True
+    assert cleanup_release_plan.should_release_result_in_flight_slot is False
+
+
 def test_native_callback_scheduler_state_plans_dosage_buffer_attempts() -> None:
     scheduler_state = _core.NativeCallbackSchedulerState(
         staging_depth=1,

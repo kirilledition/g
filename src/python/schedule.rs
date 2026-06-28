@@ -144,6 +144,11 @@ pub(crate) struct NativeResultInFlightReleaseAttemptPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeResultWriteItemResourceReleasePlan {
+    inner: native_schedule::ResultWriteItemResourceReleasePlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerLifecycleState {
     inner: native_schedule::CallbackWorkerLifecycleState,
 }
@@ -504,6 +509,29 @@ impl NativeCallbackSchedulerState {
 
     fn plan_result_in_flight_slot_release_attempt(&mut self) -> NativeResultInFlightReleaseAttemptPlan {
         self.inner.plan_result_in_flight_slot_release_attempt().into()
+    }
+
+    fn plan_result_write_item_pre_write_resource_release(
+        &self,
+        has_host_dosage_buffer: bool,
+    ) -> NativeResultWriteItemResourceReleasePlan {
+        self.inner.plan_result_write_item_pre_write_resource_release(has_host_dosage_buffer).into()
+    }
+
+    #[allow(clippy::fn_params_excessive_bools)]
+    fn plan_result_write_item_final_resource_release(
+        &self,
+        has_host_dosage_buffer: bool,
+        has_released_host_dosage_buffer: bool,
+        release_in_flight_slot: bool,
+    ) -> NativeResultWriteItemResourceReleasePlan {
+        self.inner
+            .plan_result_write_item_final_resource_release(
+                has_host_dosage_buffer,
+                has_released_host_dosage_buffer,
+                release_in_flight_slot,
+            )
+            .into()
     }
 
     #[getter]
@@ -1457,6 +1485,19 @@ impl NativeResultInFlightReleaseAttemptPlan {
 }
 
 #[pymethods]
+impl NativeResultWriteItemResourceReleasePlan {
+    #[getter]
+    fn should_release_host_buffer(&self) -> bool {
+        self.inner.should_release_host_buffer
+    }
+
+    #[getter]
+    fn should_release_result_in_flight_slot(&self) -> bool {
+        self.inner.should_release_result_in_flight_slot
+    }
+}
+
+#[pymethods]
 impl NativeGpuGenotypeFormatResolutionPlan {
     #[getter]
     fn requested_gpu_genotype_format(&self) -> &str {
@@ -1684,6 +1725,12 @@ impl From<native_schedule::ResultInFlightAcquireAttemptPlan> for NativeResultInF
 impl From<native_schedule::ResultInFlightReleaseAttemptPlan> for NativeResultInFlightReleaseAttemptPlan {
     fn from(release_attempt_plan: native_schedule::ResultInFlightReleaseAttemptPlan) -> Self {
         Self { inner: release_attempt_plan }
+    }
+}
+
+impl From<native_schedule::ResultWriteItemResourceReleasePlan> for NativeResultWriteItemResourceReleasePlan {
+    fn from(resource_release_plan: native_schedule::ResultWriteItemResourceReleasePlan) -> Self {
+        Self { inner: resource_release_plan }
     }
 }
 
