@@ -964,19 +964,27 @@ class NativeBgenCallbackRunner(abc.ABC):
             while True:
                 self.raise_worker_error_if_present()
                 with self.result_in_flight_slot_condition:
-                    if self.callback_scheduler_state.acquire_result_in_flight_slot():
+                    attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_attempt(
+                        wait_timeout_seconds=backpressure_poll_timeout_seconds
+                    )
+                    if attempt_plan.should_acquire:
                         return
-                    self.result_in_flight_slot_condition.wait(timeout=backpressure_poll_timeout_seconds)
+                    if attempt_plan.should_wait:
+                        self.result_in_flight_slot_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
         while True:
             self.raise_worker_error_if_present()
             acquire_start_time = time.perf_counter()
             with self.result_in_flight_slot_condition:
-                if self.callback_scheduler_state.acquire_result_in_flight_slot():
-                    current_depth = self.callback_scheduler_state.result_in_flight_occupied_count
+                attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_attempt(
+                    wait_timeout_seconds=backpressure_poll_timeout_seconds
+                )
+                if attempt_plan.should_acquire:
+                    current_depth = attempt_plan.occupied_count
                     blocked = False
                 else:
-                    current_depth = self.callback_scheduler_state.result_in_flight_occupied_count
-                    self.result_in_flight_slot_condition.wait(timeout=backpressure_poll_timeout_seconds)
+                    current_depth = attempt_plan.occupied_count
+                    if attempt_plan.should_wait:
+                        self.result_in_flight_slot_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
                     blocked = True
             if blocked:
                 self.record_bounded_resource_stage_duration(
@@ -1001,10 +1009,11 @@ class NativeBgenCallbackRunner(abc.ABC):
     def release_result_in_flight_slot(self) -> None:
         """Release capacity for one completed chunk of GPU result work."""
         with self.result_in_flight_slot_condition:
-            if not self.callback_scheduler_state.release_result_in_flight_slot():
+            release_plan = self.callback_scheduler_state.plan_result_in_flight_slot_release_attempt()
+            if release_plan.has_release_error:
                 message = "Native result in-flight slot state has no occupied slot to release."
                 raise RuntimeError(message)
-            current_depth = self.callback_scheduler_state.result_in_flight_occupied_count
+            current_depth = release_plan.occupied_count
             self.result_in_flight_slot_condition.notify()
         self.record_bounded_resource_operation(
             resource_name="result_in_flight_slots",

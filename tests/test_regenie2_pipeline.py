@@ -2706,6 +2706,23 @@ class CallbackQueueGetAttemptPlanProbe:
     queue_capacity: int
 
 
+@dataclasses.dataclass(frozen=True)
+class ResultInFlightAcquireAttemptPlanProbe:
+    should_acquire: bool
+    should_wait: bool
+    wait_timeout_seconds: float
+    occupied_count: int
+    slot_limit: int
+
+
+@dataclasses.dataclass(frozen=True)
+class ResultInFlightReleaseAttemptPlanProbe:
+    should_release: bool
+    has_release_error: bool
+    occupied_count: int
+    slot_limit: int
+
+
 @dataclasses.dataclass
 class CallbackSchedulerShutdownPlanProbe:
     finish_called: bool = False
@@ -2790,6 +2807,38 @@ class CallbackQueueAttemptSchedulerProbe:
         )
 
 
+@dataclasses.dataclass
+class ResultInFlightAttemptSchedulerProbe:
+    result_in_flight_limit: int = 1
+    backpressure_poll_timeout_seconds: float = 0.1
+    dosage_worker_error_message: str | None = None
+    result_worker_error_message: str | None = None
+    acquire_wait_timeout_seconds: float | None = None
+    release_called: bool = False
+
+    def plan_result_in_flight_slot_acquire_attempt(
+        self,
+        wait_timeout_seconds: float,
+    ) -> ResultInFlightAcquireAttemptPlanProbe:
+        self.acquire_wait_timeout_seconds = wait_timeout_seconds
+        return ResultInFlightAcquireAttemptPlanProbe(
+            should_acquire=True,
+            should_wait=False,
+            wait_timeout_seconds=0.0,
+            occupied_count=1,
+            slot_limit=1,
+        )
+
+    def plan_result_in_flight_slot_release_attempt(self) -> ResultInFlightReleaseAttemptPlanProbe:
+        self.release_called = True
+        return ResultInFlightReleaseAttemptPlanProbe(
+            should_release=True,
+            has_release_error=False,
+            occupied_count=0,
+            slot_limit=1,
+        )
+
+
 def test_native_callback_runner_uses_scheduler_finish_shutdown_plan() -> None:
     callback = RecordingShutdownCallbackRunner()
     scheduler_state = CallbackSchedulerShutdownPlanProbe()
@@ -2848,6 +2897,20 @@ def test_native_callback_runner_uses_scheduler_queue_attempt_plans() -> None:
     assert result_put_wait_timeout_seconds is not None
     assert 0.0 < result_put_wait_timeout_seconds <= 0.5
     assert scheduler_state.result_get_called is True
+
+
+def test_native_callback_runner_uses_scheduler_result_in_flight_attempt_plans() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = ResultInFlightAttemptSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+
+    callback.acquire_result_in_flight_slot()
+    callback.release_result_in_flight_slot()
+
+    acquire_wait_timeout_seconds = scheduler_state.acquire_wait_timeout_seconds
+    assert acquire_wait_timeout_seconds is not None
+    assert acquire_wait_timeout_seconds == 0.1
+    assert scheduler_state.release_called is True
 
 
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:

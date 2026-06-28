@@ -114,6 +114,16 @@ pub(crate) struct NativeResultInFlightSlotState {
 }
 
 #[pyclass]
+pub(crate) struct NativeResultInFlightAcquireAttemptPlan {
+    inner: native_schedule::ResultInFlightAcquireAttemptPlan,
+}
+
+#[pyclass]
+pub(crate) struct NativeResultInFlightReleaseAttemptPlan {
+    inner: native_schedule::ResultInFlightReleaseAttemptPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerLifecycleState {
     inner: native_schedule::CallbackWorkerLifecycleState,
 }
@@ -399,6 +409,17 @@ impl NativeCallbackSchedulerState {
 
     fn release_result_in_flight_slot(&mut self) -> bool {
         self.inner.release_result_in_flight_slot()
+    }
+
+    fn plan_result_in_flight_slot_acquire_attempt(
+        &mut self,
+        wait_timeout_seconds: f64,
+    ) -> NativeResultInFlightAcquireAttemptPlan {
+        self.inner.plan_result_in_flight_slot_acquire_attempt(wait_timeout_seconds).into()
+    }
+
+    fn plan_result_in_flight_slot_release_attempt(&mut self) -> NativeResultInFlightReleaseAttemptPlan {
+        self.inner.plan_result_in_flight_slot_release_attempt().into()
     }
 
     #[getter]
@@ -1081,6 +1102,57 @@ impl NativeCallbackQueueGetAttemptPlan {
 }
 
 #[pymethods]
+impl NativeResultInFlightAcquireAttemptPlan {
+    #[getter]
+    fn should_acquire(&self) -> bool {
+        self.inner.should_acquire
+    }
+
+    #[getter]
+    fn should_wait(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    #[getter]
+    fn wait_timeout_seconds(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+
+    #[getter]
+    fn occupied_count(&self) -> usize {
+        self.inner.occupied_count
+    }
+
+    #[getter]
+    fn slot_limit(&self) -> usize {
+        self.inner.slot_limit
+    }
+}
+
+#[pymethods]
+impl NativeResultInFlightReleaseAttemptPlan {
+    #[getter]
+    fn should_release(&self) -> bool {
+        self.inner.should_release
+    }
+
+    #[getter]
+    fn has_release_error(&self) -> bool {
+        self.inner.has_release_error
+    }
+
+    #[getter]
+    fn occupied_count(&self) -> usize {
+        self.inner.occupied_count
+    }
+
+    #[getter]
+    fn slot_limit(&self) -> usize {
+        self.inner.slot_limit
+    }
+}
+
+#[pymethods]
 impl NativeGpuGenotypeFormatResolutionPlan {
     #[getter]
     fn requested_gpu_genotype_format(&self) -> &str {
@@ -1260,6 +1332,18 @@ impl From<native_schedule::CallbackQueuePutAttemptPlan> for NativeCallbackQueueP
 impl From<native_schedule::CallbackQueueGetAttemptPlan> for NativeCallbackQueueGetAttemptPlan {
     fn from(get_attempt_plan: native_schedule::CallbackQueueGetAttemptPlan) -> Self {
         Self { inner: get_attempt_plan }
+    }
+}
+
+impl From<native_schedule::ResultInFlightAcquireAttemptPlan> for NativeResultInFlightAcquireAttemptPlan {
+    fn from(acquire_attempt_plan: native_schedule::ResultInFlightAcquireAttemptPlan) -> Self {
+        Self { inner: acquire_attempt_plan }
+    }
+}
+
+impl From<native_schedule::ResultInFlightReleaseAttemptPlan> for NativeResultInFlightReleaseAttemptPlan {
+    fn from(release_attempt_plan: native_schedule::ResultInFlightReleaseAttemptPlan) -> Self {
+        Self { inner: release_attempt_plan }
     }
 }
 

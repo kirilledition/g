@@ -1340,6 +1340,55 @@ def test_native_callback_scheduler_state_plans_queue_put_and_get_attempts() -> N
     assert expired_result_put_plan.queue_capacity == 1
 
 
+def test_native_callback_scheduler_state_plans_result_in_flight_slot_attempts() -> None:
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=None,
+    )
+
+    acquire_plan = scheduler_state.plan_result_in_flight_slot_acquire_attempt(wait_timeout_seconds=0.25)
+    assert acquire_plan.should_acquire is True
+    assert acquire_plan.should_wait is False
+    assert acquire_plan.wait_timeout_seconds == 0.0
+    assert acquire_plan.occupied_count == 1
+    assert acquire_plan.slot_limit == 1
+
+    blocked_acquire_plan = scheduler_state.plan_result_in_flight_slot_acquire_attempt(wait_timeout_seconds=0.25)
+    assert blocked_acquire_plan.should_acquire is False
+    assert blocked_acquire_plan.should_wait is True
+    assert blocked_acquire_plan.wait_timeout_seconds == 0.25
+    assert blocked_acquire_plan.occupied_count == 1
+    assert blocked_acquire_plan.slot_limit == 1
+
+    release_plan = scheduler_state.plan_result_in_flight_slot_release_attempt()
+    assert release_plan.should_release is True
+    assert release_plan.has_release_error is False
+    assert release_plan.occupied_count == 0
+    assert release_plan.slot_limit == 1
+
+    release_error_plan = scheduler_state.plan_result_in_flight_slot_release_attempt()
+    assert release_error_plan.should_release is False
+    assert release_error_plan.has_release_error is True
+    assert release_error_plan.occupied_count == 0
+    assert release_error_plan.slot_limit == 1
+
+    nan_acquire_plan = scheduler_state.plan_result_in_flight_slot_acquire_attempt(wait_timeout_seconds=float("nan"))
+    assert nan_acquire_plan.should_acquire is True
+    assert nan_acquire_plan.should_wait is False
+    assert nan_acquire_plan.wait_timeout_seconds == 0.0
+    assert nan_acquire_plan.occupied_count == 1
+    assert nan_acquire_plan.slot_limit == 1
+
+    expired_acquire_plan = scheduler_state.plan_result_in_flight_slot_acquire_attempt(wait_timeout_seconds=float("nan"))
+    assert expired_acquire_plan.should_acquire is False
+    assert expired_acquire_plan.should_wait is False
+    assert expired_acquire_plan.wait_timeout_seconds == 0.0
+    assert expired_acquire_plan.occupied_count == 1
+    assert expired_acquire_plan.slot_limit == 1
+
+
 def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
     progress_state = _core.NativeCallbackProgressState()
 

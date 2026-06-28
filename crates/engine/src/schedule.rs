@@ -240,6 +240,23 @@ pub struct CallbackQueueGetAttemptPlan {
     pub queue_capacity: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ResultInFlightAcquireAttemptPlan {
+    pub should_acquire: bool,
+    pub should_wait: bool,
+    pub wait_timeout_seconds: f64,
+    pub occupied_count: usize,
+    pub slot_limit: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ResultInFlightReleaseAttemptPlan {
+    pub should_release: bool,
+    pub has_release_error: bool,
+    pub occupied_count: usize,
+    pub slot_limit: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackWorkerStartPlan {
     pub start_actions: Vec<String>,
@@ -606,6 +623,19 @@ impl CallbackSchedulerState {
 
     pub fn release_result_in_flight_slot(&mut self) -> bool {
         self.result_in_flight_slot_state.release_slot()
+    }
+
+    #[must_use]
+    pub fn plan_result_in_flight_slot_acquire_attempt(
+        &mut self,
+        wait_timeout_seconds: f64,
+    ) -> ResultInFlightAcquireAttemptPlan {
+        plan_result_in_flight_slot_acquire_attempt(&mut self.result_in_flight_slot_state, wait_timeout_seconds)
+    }
+
+    #[must_use]
+    pub fn plan_result_in_flight_slot_release_attempt(&mut self) -> ResultInFlightReleaseAttemptPlan {
+        plan_result_in_flight_slot_release_attempt(&mut self.result_in_flight_slot_state)
     }
 
     #[must_use]
@@ -1162,6 +1192,41 @@ fn plan_callback_queue_get_attempt(
 
 fn normalize_callback_queue_wait_timeout_seconds(wait_timeout_seconds: f64) -> f64 {
     if wait_timeout_seconds.is_finite() && wait_timeout_seconds > 0.0 { wait_timeout_seconds } else { 0.0 }
+}
+
+fn plan_result_in_flight_slot_acquire_attempt(
+    slot_state: &mut ResultInFlightSlotState,
+    wait_timeout_seconds: f64,
+) -> ResultInFlightAcquireAttemptPlan {
+    if slot_state.acquire_slot() {
+        return ResultInFlightAcquireAttemptPlan {
+            should_acquire: true,
+            should_wait: false,
+            wait_timeout_seconds: 0.0,
+            occupied_count: slot_state.occupied_count(),
+            slot_limit: slot_state.slot_limit(),
+        };
+    }
+    let normalized_wait_timeout_seconds = normalize_callback_queue_wait_timeout_seconds(wait_timeout_seconds);
+    ResultInFlightAcquireAttemptPlan {
+        should_acquire: false,
+        should_wait: normalized_wait_timeout_seconds > 0.0,
+        wait_timeout_seconds: normalized_wait_timeout_seconds,
+        occupied_count: slot_state.occupied_count(),
+        slot_limit: slot_state.slot_limit(),
+    }
+}
+
+fn plan_result_in_flight_slot_release_attempt(
+    slot_state: &mut ResultInFlightSlotState,
+) -> ResultInFlightReleaseAttemptPlan {
+    let released_slot = slot_state.release_slot();
+    ResultInFlightReleaseAttemptPlan {
+        should_release: released_slot,
+        has_release_error: !released_slot,
+        occupied_count: slot_state.occupied_count(),
+        slot_limit: slot_state.slot_limit(),
+    }
 }
 
 #[must_use]
@@ -2267,6 +2332,70 @@ mod tests {
         assert!(slot_state.release_slot());
         assert_eq!(slot_state.occupied_count(), 0);
         assert!(!slot_state.release_slot());
+    }
+
+    #[test]
+    fn plans_result_in_flight_slot_attempts() {
+        let mut scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), None).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_result_in_flight_slot_acquire_attempt(0.25),
+            ResultInFlightAcquireAttemptPlan {
+                should_acquire: true,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                occupied_count: 1,
+                slot_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_in_flight_slot_acquire_attempt(0.25),
+            ResultInFlightAcquireAttemptPlan {
+                should_acquire: false,
+                should_wait: true,
+                wait_timeout_seconds: 0.25,
+                occupied_count: 1,
+                slot_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_in_flight_slot_release_attempt(),
+            ResultInFlightReleaseAttemptPlan {
+                should_release: true,
+                has_release_error: false,
+                occupied_count: 0,
+                slot_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_in_flight_slot_release_attempt(),
+            ResultInFlightReleaseAttemptPlan {
+                should_release: false,
+                has_release_error: true,
+                occupied_count: 0,
+                slot_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_in_flight_slot_acquire_attempt(f64::NAN),
+            ResultInFlightAcquireAttemptPlan {
+                should_acquire: true,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                occupied_count: 1,
+                slot_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_in_flight_slot_acquire_attempt(f64::NAN),
+            ResultInFlightAcquireAttemptPlan {
+                should_acquire: false,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                occupied_count: 1,
+                slot_limit: 1,
+            },
+        );
     }
 
     #[test]
