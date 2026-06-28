@@ -317,6 +317,35 @@ impl CallbackWorkerStartPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackWorkerStartAttemptPlan {
+    pub start_actions: Vec<String>,
+    pub has_marked_started: bool,
+    pub has_start_error: bool,
+    pub error_message: Option<String>,
+}
+
+impl CallbackWorkerStartAttemptPlan {
+    #[must_use]
+    pub fn should_start(&self) -> bool {
+        !self.start_actions.is_empty()
+    }
+
+    #[must_use]
+    pub fn start_result_worker(&self) -> bool {
+        self.contains_start_action(CALLBACK_WORKER_START_RESULT_WORKER_ACTION)
+    }
+
+    #[must_use]
+    pub fn start_dosage_worker(&self) -> bool {
+        self.contains_start_action(CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION)
+    }
+
+    fn contains_start_action(&self, start_action: &str) -> bool {
+        self.start_actions.iter().any(|candidate_action| candidate_action == start_action)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackQueueOccupancyState {
     queue_capacity: usize,
     occupied_count: usize,
@@ -633,6 +662,11 @@ impl CallbackSchedulerState {
     #[must_use]
     pub fn plan_worker_start(&self) -> CallbackWorkerStartPlan {
         plan_callback_worker_start(self.has_started())
+    }
+
+    #[must_use]
+    pub fn plan_worker_start_attempt(&mut self) -> CallbackWorkerStartAttemptPlan {
+        plan_callback_worker_start_attempt(&mut self.worker_lifecycle_state)
     }
 
     #[must_use]
@@ -1419,6 +1453,31 @@ pub fn plan_callback_worker_start(has_started: bool) -> CallbackWorkerStartPlan 
             CALLBACK_WORKER_START_RESULT_WORKER_ACTION.to_string(),
             CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION.to_string(),
         ],
+    }
+}
+
+fn plan_callback_worker_start_attempt(
+    lifecycle_state: &mut CallbackWorkerLifecycleState,
+) -> CallbackWorkerStartAttemptPlan {
+    let start_plan = plan_callback_worker_start(lifecycle_state.has_started());
+    if !start_plan.should_start() {
+        return CallbackWorkerStartAttemptPlan {
+            start_actions: Vec::new(),
+            has_marked_started: false,
+            has_start_error: false,
+            error_message: None,
+        };
+    }
+    let has_marked_started = lifecycle_state.mark_started();
+    CallbackWorkerStartAttemptPlan {
+        start_actions: start_plan.start_actions,
+        has_marked_started,
+        has_start_error: !has_marked_started,
+        error_message: if has_marked_started {
+            None
+        } else {
+            Some("Native callback worker lifecycle was already marked started.".to_string())
+        },
     }
 }
 
@@ -2708,6 +2767,34 @@ mod tests {
         assert!(!already_started_plan.start_result_worker());
         assert!(!already_started_plan.start_dosage_worker());
         assert!(already_started_plan.start_actions.is_empty());
+    }
+
+    #[test]
+    fn plans_callback_scheduler_worker_start_attempts() {
+        let mut scheduler_state = CallbackSchedulerState::new(1, 1, None, None).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_worker_start_attempt(),
+            CallbackWorkerStartAttemptPlan {
+                start_actions: vec![
+                    CALLBACK_WORKER_START_RESULT_WORKER_ACTION.to_string(),
+                    CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION.to_string(),
+                ],
+                has_marked_started: true,
+                has_start_error: false,
+                error_message: None,
+            },
+        );
+        assert!(scheduler_state.has_started());
+        assert_eq!(
+            scheduler_state.plan_worker_start_attempt(),
+            CallbackWorkerStartAttemptPlan {
+                start_actions: Vec::new(),
+                has_marked_started: false,
+                has_start_error: false,
+                error_message: None,
+            },
+        );
     }
 
     #[must_use]

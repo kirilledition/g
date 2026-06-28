@@ -1062,6 +1062,34 @@ def test_plan_callback_worker_start_uses_native_start_policy() -> None:
     assert already_started_plan.start_actions == []
 
 
+def test_native_callback_scheduler_state_plans_worker_start_attempts() -> None:
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+
+    start_attempt_plan = scheduler_state.plan_worker_start_attempt()
+    assert start_attempt_plan.should_start is True
+    assert start_attempt_plan.start_result_worker is True
+    assert start_attempt_plan.start_dosage_worker is True
+    assert start_attempt_plan.start_actions == ["start_result_worker", "start_dosage_worker"]
+    assert start_attempt_plan.has_marked_started is True
+    assert start_attempt_plan.has_start_error is False
+    assert start_attempt_plan.error_message is None
+    assert scheduler_state.has_started is True
+
+    already_started_attempt_plan = scheduler_state.plan_worker_start_attempt()
+    assert already_started_attempt_plan.should_start is False
+    assert already_started_attempt_plan.start_result_worker is False
+    assert already_started_attempt_plan.start_dosage_worker is False
+    assert already_started_attempt_plan.start_actions == []
+    assert already_started_attempt_plan.has_marked_started is False
+    assert already_started_attempt_plan.has_start_error is False
+    assert already_started_attempt_plan.error_message is None
+
+
 def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     scheduler_state = _core.NativeCallbackSchedulerState(
         staging_depth=3,

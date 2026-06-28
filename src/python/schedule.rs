@@ -154,6 +154,11 @@ pub(crate) struct NativeCallbackWorkerStartPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeCallbackWorkerStartAttemptPlan {
+    inner: native_schedule::CallbackWorkerStartAttemptPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerShutdownTimeouts {
     inner: native_schedule::CallbackWorkerShutdownTimeouts,
 }
@@ -298,6 +303,44 @@ impl NativeCallbackWorkerStartPlan {
 }
 
 #[pymethods]
+impl NativeCallbackWorkerStartAttemptPlan {
+    #[getter]
+    fn start_actions(&self) -> Vec<String> {
+        self.inner.start_actions.clone()
+    }
+
+    #[getter]
+    fn should_start(&self) -> bool {
+        self.inner.should_start()
+    }
+
+    #[getter]
+    fn start_result_worker(&self) -> bool {
+        self.inner.start_result_worker()
+    }
+
+    #[getter]
+    fn start_dosage_worker(&self) -> bool {
+        self.inner.start_dosage_worker()
+    }
+
+    #[getter]
+    fn has_marked_started(&self) -> bool {
+        self.inner.has_marked_started
+    }
+
+    #[getter]
+    fn has_start_error(&self) -> bool {
+        self.inner.has_start_error
+    }
+
+    #[getter]
+    fn error_message(&self) -> Option<String> {
+        self.inner.error_message.clone()
+    }
+}
+
+#[pymethods]
 impl NativeCallbackSchedulerState {
     #[new]
     fn new(
@@ -412,6 +455,10 @@ impl NativeCallbackSchedulerState {
 
     fn plan_worker_start(&self) -> NativeCallbackWorkerStartPlan {
         self.inner.plan_worker_start().into()
+    }
+
+    fn plan_worker_start_attempt(&mut self) -> NativeCallbackWorkerStartAttemptPlan {
+        self.inner.plan_worker_start_attempt().into()
     }
 
     #[getter]
@@ -1371,6 +1418,12 @@ impl From<native_schedule::CallbackWorkerShutdownTimeouts> for NativeCallbackWor
 impl From<native_schedule::CallbackWorkerStartPlan> for NativeCallbackWorkerStartPlan {
     fn from(start_plan: native_schedule::CallbackWorkerStartPlan) -> Self {
         Self { inner: start_plan }
+    }
+}
+
+impl From<native_schedule::CallbackWorkerStartAttemptPlan> for NativeCallbackWorkerStartAttemptPlan {
+    fn from(start_attempt_plan: native_schedule::CallbackWorkerStartAttemptPlan) -> Self {
+        Self { inner: start_attempt_plan }
     }
 }
 

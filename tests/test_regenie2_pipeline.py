@@ -2037,7 +2037,8 @@ def test_native_callback_runner_uses_native_worker_start_plan() -> None:
 
     start_events: list[str] = []
     callback = object.__new__(ManualCallbackRunner)
-    attach_manual_callback_scheduler_state(callback)
+    scheduler_state = CallbackStartAttemptSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
     callback_for_start = typing.cast("typing.Any", callback)
     callback_for_start.worker_start_lock = threading.Lock()
     callback_for_start.result_worker_thread = RecordingWorkerThread(
@@ -2057,8 +2058,7 @@ def test_native_callback_runner_uses_native_worker_start_plan() -> None:
         callback.start()
 
     assert start_events == ["result", "dosage"]
-    assert callback.callback_scheduler_state.has_started is True
-    assert callback.callback_scheduler_state.plan_worker_start().should_start is False
+    assert scheduler_state.start_attempt_count == 2
 
 
 def test_native_callback_runner_records_native_delivery_timing_for_enqueued_chunk() -> None:
@@ -2688,6 +2688,15 @@ class CallbackAbortPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class CallbackStartAttemptPlanProbe:
+    start_actions: list[str]
+    should_start: bool
+    has_marked_started: bool
+    has_start_error: bool
+    error_message: str | None
+
+
+@dataclasses.dataclass(frozen=True)
 class WorkerErrorRaisePlanProbe:
     should_raise: bool
     raise_dosage_worker_error: bool
@@ -2799,6 +2808,29 @@ class CallbackSchedulerShutdownPlanProbe:
             abort_actions=["stop_dosage_worker", "stop_result_worker"],
             dosage_stop_timeout_seconds=0.25,
             result_stop_timeout_seconds=0.5,
+        )
+
+
+@dataclasses.dataclass
+class CallbackStartAttemptSchedulerProbe:
+    start_attempt_count: int = 0
+
+    def plan_worker_start_attempt(self) -> CallbackStartAttemptPlanProbe:
+        self.start_attempt_count += 1
+        if self.start_attempt_count > 1:
+            return CallbackStartAttemptPlanProbe(
+                start_actions=[],
+                should_start=False,
+                has_marked_started=False,
+                has_start_error=False,
+                error_message=None,
+            )
+        return CallbackStartAttemptPlanProbe(
+            start_actions=["start_result_worker", "start_dosage_worker"],
+            should_start=True,
+            has_marked_started=True,
+            has_start_error=False,
+            error_message=None,
         )
 
 

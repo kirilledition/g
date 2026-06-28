@@ -126,13 +126,13 @@ use schedule::{
     NativeCallbackQueuePutAttemptPlan, NativeCallbackQueueStageBackpressureObservation,
     NativeCallbackQueueStageObservationPlan, NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan,
     NativeCallbackWorkerErrorRaisePlan, NativeCallbackWorkerFinishPlan, NativeCallbackWorkerJoinPlan,
-    NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts, NativeCallbackWorkerStartPlan,
-    NativeCallbackWorkerStopPlan, NativeCallbackWorkerStopPollPlan, NativeDosageBufferAcquireAttemptPlan,
-    NativeDosageBufferDiscardAttemptPlan, NativeDosageBufferPoolState, NativeDosageBufferRegisterAttemptPlan,
-    NativeDosageBufferReturnAttemptPlan, NativeDosageBufferReusePlan, NativeGpuGenotypeFormatResolutionPlan,
-    NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan, NativeResultInFlightAcquireAttemptPlan,
-    NativeResultInFlightReleaseAttemptPlan, NativeResultInFlightSlotState, NativeSingleTraitOutputWritePlan,
-    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts, NativeCallbackWorkerStartAttemptPlan,
+    NativeCallbackWorkerStartPlan, NativeCallbackWorkerStopPlan, NativeCallbackWorkerStopPollPlan,
+    NativeDosageBufferAcquireAttemptPlan, NativeDosageBufferDiscardAttemptPlan, NativeDosageBufferPoolState,
+    NativeDosageBufferRegisterAttemptPlan, NativeDosageBufferReturnAttemptPlan, NativeDosageBufferReusePlan,
+    NativeGpuGenotypeFormatResolutionPlan, NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan,
+    NativeResultInFlightAcquireAttemptPlan, NativeResultInFlightReleaseAttemptPlan, NativeResultInFlightSlotState,
+    NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
     format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
     intersect_committed_chunk_identifier_sets, plan_auto_gpu_genotype_format_after_trusted_validation,
     plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation, plan_callback_queue_backpressure_observation,
@@ -1837,6 +1837,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackWorkerFinishPlan>()?;
     module.add_class::<NativeCallbackWorkerJoinPlan>()?;
     module.add_class::<NativeCallbackWorkerStartPlan>()?;
+    module.add_class::<NativeCallbackWorkerStartAttemptPlan>()?;
     module.add_class::<NativeBgenDeliveryCleanupPlan>()?;
     module.add_class::<NativeBgenDeliveryInvocationPlan>()?;
     module.add_class::<NativeCallbackWorkerLifecycleState>()?;

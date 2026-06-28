@@ -144,10 +144,15 @@ class NativeBgenCallbackRunner(abc.ABC):
     def start(self) -> None:
         """Start asynchronous callback workers after owner setup is complete."""
         with self.worker_start_lock:
-            start_plan = self.callback_scheduler_state.plan_worker_start()
-            if not start_plan.should_start:
+            start_attempt_plan = self.callback_scheduler_state.plan_worker_start_attempt()
+            if start_attempt_plan.has_start_error:
+                error_message = start_attempt_plan.error_message
+                if error_message is None:
+                    error_message = "Native callback worker lifecycle failed to mark workers started."
+                raise RuntimeError(error_message)
+            if not start_attempt_plan.should_start:
                 return
-            for start_action in start_plan.start_actions:
+            for start_action in start_attempt_plan.start_actions:
                 if start_action == CALLBACK_WORKER_START_RESULT_WORKER_ACTION:
                     self.result_worker_thread.start()
                 elif start_action == CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION:
@@ -155,9 +160,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 else:
                     message = f"Unsupported native callback worker start action: {start_action}"
                     raise RuntimeError(message)
-            if not self.callback_scheduler_state.mark_started():
-                message = "Native callback worker lifecycle was already marked started."
-                raise RuntimeError(message)
 
     @property
     def worker_threads_started(self) -> bool:
