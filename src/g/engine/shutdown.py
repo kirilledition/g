@@ -73,10 +73,16 @@ class GracefulShutdownController:
 
     def __init__(self, handled_signals: tuple[signal.Signals, ...] | None) -> None:
         """Initialize the controller."""
-        self.handled_signals = handled_signals or (signal.SIGINT, signal.SIGTERM)
+        resolved_handled_signals = handled_signals or (signal.SIGINT, signal.SIGTERM)
         self.previous_handlers: dict[signal.Signals, typing.Any] = {}
-        self.native_controller = g._core.NativeShutdownController()
-        self.handlers_installed = False
+        self.native_controller = g._core.NativeShutdownController(
+            [int(handled_signal) for handled_signal in resolved_handled_signals]
+        )
+
+    @property
+    def handlers_installed(self) -> bool:
+        """Return whether native lifecycle state says handlers are installed."""
+        return self.native_controller.handlers_installed
 
     @property
     def requested_signal(self) -> ShutdownSignal | None:
@@ -88,12 +94,13 @@ class GracefulShutdownController:
 
     def __enter__(self) -> GracefulShutdownController:
         """Install signal handlers and return this controller."""
-        self.native_controller.reset()
+        install_plan = native_mapping_payload(self.native_controller.handler_install_plan_payload())
         self.previous_handlers = {}
-        for handled_signal in self.handled_signals:
+        for signal_payload in typing.cast("typing.Sequence[object]", install_plan["handled_signals"]):
+            handled_signal = signal.Signals(int(native_mapping_payload(signal_payload)["number"]))
             self.previous_handlers[handled_signal] = signal.getsignal(handled_signal)
             signal.signal(handled_signal, self.handle_signal)
-        self.handlers_installed = True
+        self.native_controller.mark_handlers_installed()
         return self
 
     def __exit__(
@@ -119,11 +126,13 @@ class GracefulShutdownController:
 
     def restore_previous_handlers(self) -> None:
         """Restore signal handlers captured when the controller was installed."""
-        if not self.handlers_installed:
+        restore_plan = native_mapping_payload(self.native_controller.handler_restore_plan_payload())
+        if not bool(restore_plan["should_restore"]):
             return
-        for handled_signal, previous_handler in self.previous_handlers.items():
-            signal.signal(handled_signal, previous_handler)
-        self.handlers_installed = False
+        for signal_payload in typing.cast("typing.Sequence[object]", restore_plan["handled_signals"]):
+            handled_signal = signal.Signals(int(native_mapping_payload(signal_payload)["number"]))
+            signal.signal(handled_signal, self.previous_handlers[handled_signal])
+        self.native_controller.mark_handlers_restored()
 
 
 def build_shutdown_signal(signal_number: int) -> ShutdownSignal:

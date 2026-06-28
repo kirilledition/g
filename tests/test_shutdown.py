@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import signal
+import typing
 import unittest.mock
 
 import pytest
@@ -41,6 +42,29 @@ def test_native_second_signal_exception_plan() -> None:
         _core.plan_second_signal_exception(0)
 
 
+def test_native_shutdown_controller_owns_handler_lifecycle() -> None:
+    native_controller = _core.NativeShutdownController([int(signal.SIGINT), int(signal.SIGTERM)])
+
+    install_plan = dict(native_controller.handler_install_plan_payload())
+    handled_signal_payloads = tuple(typing.cast("typing.Iterable[object]", install_plan["handled_signals"]))
+
+    assert native_controller.handlers_installed is False
+    assert [
+        typing.cast("typing.Mapping[str, object]", payload)["name"] for payload in handled_signal_payloads
+    ] == ["SIGINT", "SIGTERM"]
+    native_controller.mark_handlers_installed()
+    assert native_controller.handlers_installed is True
+    restore_plan = dict(native_controller.handler_restore_plan_payload())
+    assert restore_plan["should_restore"] is True
+    restore_signal_payloads = tuple(typing.cast("typing.Iterable[object]", restore_plan["handled_signals"]))
+    assert [
+        typing.cast("typing.Mapping[str, object]", payload)["name"] for payload in restore_signal_payloads
+    ] == ["SIGINT", "SIGTERM"]
+    native_controller.mark_handlers_restored()
+    assert native_controller.handlers_installed is False
+    assert dict(native_controller.handler_restore_plan_payload())["should_restore"] is False
+
+
 def test_shutdown_controller_records_first_signal_in_native_handle() -> None:
     controller = shutdown.GracefulShutdownController(handled_signals=(signal.SIGINT,))
 
@@ -59,7 +83,7 @@ def test_shutdown_controller_repeated_signal_restores_handlers_and_aborts() -> N
     controller = shutdown.GracefulShutdownController(handled_signals=(signal.SIGINT,))
     previous_handler = object()
     controller.previous_handlers = {signal.SIGINT: previous_handler}
-    controller.handlers_installed = True
+    controller.native_controller.mark_handlers_installed()
 
     with pytest.raises(shutdown.GracefulShutdownRequested):
         controller.handle_signal(int(signal.SIGINT), None)
