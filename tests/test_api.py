@@ -108,11 +108,7 @@ def build_test_runtime_compatibility_token(
     telemetry_paths = telemetry_module.resolve_telemetry_paths(regenie_config)
     runtime_policy = runner_runtime.build_runtime_policy(regenie_config, telemetry_paths)
     runtime_state = typing.cast("_core.NativeRuntimeState", build_test_process_runtime_state(None, None))
-    return runtime_state.require_compatible_runtime_policy(
-        runner_runtime.logging_runtime_policy_to_native_payload(runtime_policy.logging_policy),
-        runtime_policy.rayon_thread_count,
-        runner_runtime.jax_runtime_policy_to_native_payload(runtime_policy.jax_policy),
-    )
+    return runtime_state.require_compatible_runtime_policy_handle(runtime_policy.native_policy)
 
 
 def build_diagnostics_config(**overrides: object) -> config.GDiagnosticsConfig:
@@ -1211,6 +1207,7 @@ def test_describe_runtime_state_reports_process_global_state() -> None:
     telemetry_paths = telemetry_module.resolve_telemetry_paths(regenie_config)
     runtime_policy = runner_runtime.build_runtime_policy(regenie_config, telemetry_paths)
 
+    assert isinstance(runtime_policy.native_policy, _core.NativeRuntimePolicy)
     with (
         patch(
             "g.runner.runtime.PROCESS_RUNTIME_STATE",

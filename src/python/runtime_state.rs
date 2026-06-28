@@ -25,8 +25,28 @@ pub(crate) struct NativeJaxRuntimeSetupLifecyclePlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeRuntimePolicy {
+    policy: native_runtime_state::RuntimePolicyPayload,
+}
+
+#[pyclass]
 pub(crate) struct NativeRuntimeState {
     state: Mutex<native_runtime_state::ProcessRuntimeState>,
+}
+
+#[pyfunction]
+pub(crate) fn build_runtime_policy_handle(
+    logging_policy_payload: &Bound<'_, PyAny>,
+    rayon_thread_count: Option<i64>,
+    jax_policy_payload: &Bound<'_, PyAny>,
+) -> PyResult<NativeRuntimePolicy> {
+    Ok(NativeRuntimePolicy {
+        policy: native_runtime_state::RuntimePolicyPayload {
+            logging_policy: parse_logging_runtime_policy_payload(logging_policy_payload)?,
+            rayon_thread_count,
+            jax_policy: parse_jax_runtime_policy_payload(jax_policy_payload)?,
+        },
+    })
 }
 
 #[pyfunction]
@@ -78,6 +98,22 @@ impl NativeJaxRuntimeSetupLifecyclePlan {
 }
 
 #[pymethods]
+impl NativeRuntimePolicy {
+    #[getter]
+    fn rayon_thread_count(&self) -> Option<i64> {
+        self.policy.rayon_thread_count
+    }
+
+    fn logging_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        logging_runtime_policy_payload_to_dict(py, &self.policy.logging_policy)
+    }
+
+    fn jax_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        jax_runtime_policy_payload_to_dict(py, &self.policy.jax_policy)
+    }
+}
+
+#[pymethods]
 impl NativeRuntimeState {
     #[new]
     fn new() -> Self {
@@ -110,6 +146,17 @@ impl NativeRuntimeState {
         let token = self
             .lock_state()?
             .require_compatible_runtime_policy(&logging_policy, rayon_thread_count, &jax_policy)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(NativeRuntimeCompatibilityToken { token })
+    }
+
+    fn require_compatible_runtime_policy_handle(
+        &self,
+        runtime_policy: &NativeRuntimePolicy,
+    ) -> PyResult<NativeRuntimeCompatibilityToken> {
+        let token = self
+            .lock_state()?
+            .require_compatible_runtime_policy_payload(&runtime_policy.policy)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(NativeRuntimeCompatibilityToken { token })
     }

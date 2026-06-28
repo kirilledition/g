@@ -968,6 +968,11 @@ class NativeTimingFileWritePlan:
 class NativeRuntimeCompatibilityToken:
     pass
 
+class NativeRuntimePolicy:
+    rayon_thread_count: int | None
+    def logging_runtime_policy_payload(self) -> dict[str, object]: ...
+    def jax_runtime_policy_payload(self) -> dict[str, object]: ...
+
 class NativeRayonThreadPoolConfigurationPlan:
     should_configure: bool
     thread_count: int | None
@@ -985,6 +990,10 @@ class NativeRuntimeState:
         logging_policy_payload: dict[str, object],
         rayon_thread_count: int | None,
         jax_policy_payload: dict[str, object],
+    ) -> NativeRuntimeCompatibilityToken: ...
+    def require_compatible_runtime_policy_handle(
+        self,
+        runtime_policy: NativeRuntimePolicy,
     ) -> NativeRuntimeCompatibilityToken: ...
     def require_compatible_logging_runtime_policy(self, payload: dict[str, object]) -> None: ...
     def record_logging_runtime_policy(self, payload: dict[str, object]) -> None: ...
@@ -1203,6 +1212,11 @@ def build_logging_runtime_policy_payload(
     telemetry_mode: str,
     telemetry_stream_file: str | None,
 ) -> dict[str, object]: ...
+def build_runtime_policy_handle(
+    logging_policy_payload: dict[str, object],
+    rayon_thread_count: int | None,
+    jax_policy_payload: dict[str, object],
+) -> NativeRuntimePolicy: ...
 def describe_logging_runtime_policy_value(
     log_filter: str,
     log_file: str | None,

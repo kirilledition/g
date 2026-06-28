@@ -25,6 +25,13 @@ pub struct ProcessRuntimeState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimePolicyPayload {
+    pub logging_policy: LoggingRuntimePolicyPayload,
+    pub rayon_thread_count: Option<i64>,
+    pub jax_policy: JaxRuntimePolicyPayload,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeCompatibilityToken {
     _private: (),
 }
@@ -101,6 +108,23 @@ impl ProcessRuntimeState {
         self.require_compatible_rayon_thread_count(requested_rayon_thread_count)?;
         self.require_compatible_jax_policy(jax_policy)?;
         Ok(RuntimeCompatibilityToken { _private: () })
+    }
+
+    /// Require all process-global runtime settings from a run policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any requested process-global runtime setting
+    /// conflicts with previously configured state.
+    pub fn require_compatible_runtime_policy_payload(
+        &self,
+        runtime_policy: &RuntimePolicyPayload,
+    ) -> Result<RuntimeCompatibilityToken, RuntimeCompatibilityError> {
+        self.require_compatible_runtime_policy(
+            &runtime_policy.logging_policy,
+            runtime_policy.rayon_thread_count,
+            &runtime_policy.jax_policy,
+        )
     }
 
     /// Require logging compatibility with previously configured process state.
@@ -377,6 +401,24 @@ mod tests {
         let token = state
             .require_compatible_runtime_policy(&build_policy("info"), Some(4), &build_jax_policy(Some("/tmp/cache")))
             .expect("matching process-global policy should issue a token");
+
+        assert_eq!(token, RuntimeCompatibilityToken { _private: () });
+    }
+
+    #[test]
+    fn issues_runtime_compatibility_token_from_policy_payload() {
+        let mut state = ProcessRuntimeState::default();
+        state.record_logging_policy(build_policy("info"));
+        state.record_jax_policy(build_jax_policy(Some("/tmp/cache")));
+        let runtime_policy = RuntimePolicyPayload {
+            logging_policy: build_policy("info"),
+            rayon_thread_count: None,
+            jax_policy: build_jax_policy(Some("/tmp/cache")),
+        };
+
+        let token = state
+            .require_compatible_runtime_policy_payload(&runtime_policy)
+            .expect("matching runtime policy payload should issue a token");
 
         assert_eq!(token, RuntimeCompatibilityToken { _private: () });
     }

@@ -112,7 +112,7 @@ use runtime_paths::build_default_local_cache_directory_value;
 use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
 use runtime_state::{
     NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRuntimeCompatibilityToken,
-    NativeRuntimeState, build_jax_runtime_policy_payload,
+    NativeRuntimePolicy, NativeRuntimeState, build_jax_runtime_policy_payload, build_runtime_policy_handle,
 };
 use schedule::{
     NativeBgenDeliveryCleanupPlan, NativeBgenDeliveryInvocationPlan, NativeCallbackQueueLimits,
@@ -1843,6 +1843,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
     module.add_class::<NativeRayonThreadPoolConfigurationPlan>()?;
     module.add_class::<NativeRuntimeCompatibilityToken>()?;
+    module.add_class::<NativeRuntimePolicy>()?;
     module.add_class::<NativeRuntimeState>()?;
     module.add_class::<NativeSecondSignalExceptionPlan>()?;
     module.add_class::<NativeShutdownController>()?;
@@ -1886,6 +1887,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_phenotype_output_directory_name, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_manifest_extension_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runtime_policy_handle, module)?)?;
     module.add_function(wrap_pyfunction!(validate_pipeline_resume_compatibility, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_pipeline_output_runs, module)?)?;
     module.add_function(wrap_pyfunction!(build_preflight_report_payload, module)?)?;

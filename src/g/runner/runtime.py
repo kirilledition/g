@@ -54,15 +54,26 @@ class RuntimePolicy:
     """Process-global runtime choices requested by one run.
 
     Attributes:
-        logging_policy: Requested logging and tracing sink policy.
-        rayon_thread_count: Requested Rayon thread count, or None when unset.
-        jax_policy: Requested JAX runtime policy.
+        native_policy: Native aggregate process-runtime policy handle.
 
     """
 
-    logging_policy: LoggingRuntimePolicy
-    rayon_thread_count: int | None
-    jax_policy: jax_runtime_models.JaxRuntimePolicy
+    native_policy: _core.NativeRuntimePolicy
+
+    @property
+    def logging_policy(self) -> LoggingRuntimePolicy:
+        """Return the requested logging and tracing sink policy view."""
+        return logging_runtime_policy_from_native_payload(self.native_policy.logging_runtime_policy_payload())
+
+    @property
+    def rayon_thread_count(self) -> int | None:
+        """Return the requested Rayon thread count, or None when unset."""
+        return self.native_policy.rayon_thread_count
+
+    @property
+    def jax_policy(self) -> jax_runtime_models.JaxRuntimePolicy:
+        """Return the requested JAX runtime policy view."""
+        return jax_runtime_policy_from_native_payload(self.native_policy.jax_runtime_policy_payload())
 
 
 @dataclass(frozen=True)
@@ -275,10 +286,14 @@ def build_runtime_policy(
     telemetry_paths: telemetry.TelemetryPaths,
 ) -> RuntimePolicy:
     """Build the process-global runtime policy requested by a run."""
+    logging_policy = build_logging_runtime_policy(regenie_config.g_diagnostics, telemetry_paths)
+    jax_policy = jax_runtime_resolution.resolve_jax_runtime_policy(regenie_config.g_compute)
     return RuntimePolicy(
-        logging_policy=build_logging_runtime_policy(regenie_config.g_diagnostics, telemetry_paths),
-        rayon_thread_count=regenie_config.trait.threads,
-        jax_policy=jax_runtime_resolution.resolve_jax_runtime_policy(regenie_config.g_compute),
+        native_policy=_core.build_runtime_policy_handle(
+            logging_runtime_policy_to_native_payload(logging_policy),
+            regenie_config.trait.threads,
+            jax_runtime_policy_to_native_payload(jax_policy),
+        )
     )
 
 
@@ -332,11 +347,7 @@ def configured_jax_runtime_policy() -> jax_runtime_models.JaxRuntimePolicy | Non
 
 def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> _core.NativeRuntimeCompatibilityToken:
     """Return a native token after process-global runtime checks pass."""
-    return PROCESS_RUNTIME_STATE.require_compatible_runtime_policy(
-        logging_runtime_policy_to_native_payload(runtime_policy.logging_policy),
-        runtime_policy.rayon_thread_count,
-        jax_runtime_policy_to_native_payload(runtime_policy.jax_policy),
-    )
+    return PROCESS_RUNTIME_STATE.require_compatible_runtime_policy_handle(runtime_policy.native_policy)
 
 
 def describe_runtime_state() -> RuntimeState:
