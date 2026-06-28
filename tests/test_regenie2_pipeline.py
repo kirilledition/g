@@ -2571,11 +2571,50 @@ class FailingStopShutdownCallbackRunner(RecordingShutdownCallbackRunner):
         )
 
 
-def test_native_callback_runner_uses_native_finish_shutdown_plan() -> None:
+@dataclasses.dataclass(frozen=True)
+class CallbackFinishPlanProbe:
+    dosage_stop_timeout_seconds: float
+    dosage_join_timeout_seconds: float
+    result_stop_timeout_seconds: float
+    result_join_timeout_seconds: float
+
+
+@dataclasses.dataclass(frozen=True)
+class CallbackAbortPlanProbe:
+    dosage_stop_timeout_seconds: float
+    result_stop_timeout_seconds: float
+
+
+@dataclasses.dataclass
+class CallbackSchedulerShutdownPlanProbe:
+    finish_called: bool = False
+    abort_called: bool = False
+
+    def plan_worker_finish(self) -> CallbackFinishPlanProbe:
+        self.finish_called = True
+        return CallbackFinishPlanProbe(
+            dosage_stop_timeout_seconds=2.0,
+            dosage_join_timeout_seconds=3.0,
+            result_stop_timeout_seconds=4.0,
+            result_join_timeout_seconds=5.0,
+        )
+
+    def plan_worker_abort(self) -> CallbackAbortPlanProbe:
+        self.abort_called = True
+        return CallbackAbortPlanProbe(
+            dosage_stop_timeout_seconds=0.25,
+            result_stop_timeout_seconds=0.5,
+        )
+
+
+def test_native_callback_runner_uses_scheduler_finish_shutdown_plan() -> None:
     callback = RecordingShutdownCallbackRunner()
+    scheduler_state = CallbackSchedulerShutdownPlanProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
 
     callback.finish()
 
+    assert scheduler_state.finish_called is True
     assert callback.shutdown_calls == [
         "stop_dosage",
         "join_dosage",
@@ -2586,22 +2625,25 @@ def test_native_callback_runner_uses_native_finish_shutdown_plan() -> None:
         "emit_binary_correction_summary",
     ]
     assert callback.shutdown_timeouts == {
-        "stop_dosage": 60.0,
-        "join_dosage": 300.0,
-        "stop_result": 60.0,
-        "join_result": 300.0,
+        "stop_dosage": 2.0,
+        "join_dosage": 3.0,
+        "stop_result": 4.0,
+        "join_result": 5.0,
     }
 
 
-def test_native_callback_runner_uses_native_abort_shutdown_plan() -> None:
+def test_native_callback_runner_uses_scheduler_abort_shutdown_plan() -> None:
     callback = FailingStopShutdownCallbackRunner()
+    scheduler_state = CallbackSchedulerShutdownPlanProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
 
     callback.abort()
 
+    assert scheduler_state.abort_called is True
     assert callback.shutdown_calls == ["stop_dosage", "stop_result"]
     assert callback.shutdown_timeouts == {
-        "stop_dosage": 1.0,
-        "stop_result": 1.0,
+        "stop_dosage": 0.25,
+        "stop_result": 0.5,
     }
 
 

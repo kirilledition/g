@@ -1097,6 +1097,16 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     assert scheduler_state.dosage_worker_error_message is None
     assert scheduler_state.result_worker_error_message is None
 
+    assert scheduler_state.backpressure_poll_timeout_seconds == 0.1
+    finish_plan = scheduler_state.plan_worker_finish()
+    assert finish_plan.dosage_stop_timeout_seconds == 60.0
+    assert finish_plan.dosage_join_timeout_seconds == 300.0
+    assert finish_plan.result_stop_timeout_seconds == 60.0
+    assert finish_plan.result_join_timeout_seconds == 300.0
+    abort_plan = scheduler_state.plan_worker_abort()
+    assert abort_plan.dosage_stop_timeout_seconds == 1.0
+    assert abort_plan.result_stop_timeout_seconds == 1.0
+
     dosage_join_plan = scheduler_state.plan_dosage_worker_join(timeout_seconds=None)
     assert dosage_join_plan.should_join is True
     assert dosage_join_plan.timeout_seconds == 60.0

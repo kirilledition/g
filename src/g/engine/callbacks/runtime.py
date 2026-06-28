@@ -30,7 +30,6 @@ RESULT_WORKER_JOIN_TIMEOUT_SECONDS = shared.RESULT_WORKER_JOIN_TIMEOUT_SECONDS
 GRACEFUL_DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS = shared.GRACEFUL_DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS
 GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS = shared.GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS
 WORKER_ABORT_STOP_TIMEOUT_SECONDS = shared.WORKER_ABORT_STOP_TIMEOUT_SECONDS
-CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS = _core.resolve_callback_worker_backpressure_poll_timeout_seconds()
 HostGenotypeBuffer = shared.HostGenotypeBuffer
 PreprocessedDosageChunkWorkItem = shared.PreprocessedDosageChunkWorkItem
 PreprocessedVariantMajorDosageChunkBatchWorkItem = shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
@@ -800,11 +799,12 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Put work into the bounded worker queue while surfacing worker errors."""
         self.start()
+        backpressure_poll_timeout_seconds = self.callback_scheduler_state.backpressure_poll_timeout_seconds
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
                 try:
-                    self.dosage_queue.put(work_item, timeout=CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS)
+                    self.dosage_queue.put(work_item, timeout=backpressure_poll_timeout_seconds)
                     return
                 except queue.Full:
                     continue
@@ -812,7 +812,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
             try:
-                self.dosage_queue.put(work_item, timeout=CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS)
+                self.dosage_queue.put(work_item, timeout=backpressure_poll_timeout_seconds)
                 self.record_queue_stage_duration(
                     queue_name="dosage_queue",
                     operation_name="put",
@@ -846,11 +846,12 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Put a computed result into the bounded materialization/write queue."""
         self.start()
+        backpressure_poll_timeout_seconds = self.callback_scheduler_state.backpressure_poll_timeout_seconds
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
                 try:
-                    self.result_queue.put(work_item, timeout=CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS)
+                    self.result_queue.put(work_item, timeout=backpressure_poll_timeout_seconds)
                     return
                 except queue.Full:
                     continue
@@ -858,7 +859,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
             try:
-                self.result_queue.put(work_item, timeout=CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS)
+                self.result_queue.put(work_item, timeout=backpressure_poll_timeout_seconds)
                 self.record_queue_stage_duration(
                     queue_name="result_queue",
                     operation_name="put",
@@ -879,10 +880,11 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def acquire_result_in_flight_slot(self) -> None:
         """Reserve capacity for one chunk of pending GPU result work."""
+        backpressure_poll_timeout_seconds = self.callback_scheduler_state.backpressure_poll_timeout_seconds
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
-                if self.result_in_flight_slots.acquire(timeout=CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS):
+                if self.result_in_flight_slots.acquire(timeout=backpressure_poll_timeout_seconds):
                     with self.result_in_flight_slot_lock:
                         if not self.callback_scheduler_state.acquire_result_in_flight_slot():
                             self.result_in_flight_slots.release()
@@ -892,7 +894,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         while True:
             self.raise_worker_error_if_present()
             acquire_start_time = time.perf_counter()
-            if self.result_in_flight_slots.acquire(timeout=CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS):
+            if self.result_in_flight_slots.acquire(timeout=backpressure_poll_timeout_seconds):
                 with self.result_in_flight_slot_lock:
                     if not self.callback_scheduler_state.acquire_result_in_flight_slot():
                         self.result_in_flight_slots.release()
@@ -936,7 +938,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
-        finish_plan = _core.plan_callback_worker_finish()
+        finish_plan = self.callback_scheduler_state.plan_worker_finish()
         self.stop_dosage_worker(timeout_seconds=finish_plan.dosage_stop_timeout_seconds)
         self.join_dosage_worker(timeout_seconds=finish_plan.dosage_join_timeout_seconds)
         self.stop_result_worker(timeout_seconds=finish_plan.result_stop_timeout_seconds)
@@ -947,7 +949,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def abort(self) -> None:
         """Stop the worker after an upstream failure."""
-        abort_plan = _core.plan_callback_worker_abort()
+        abort_plan = self.callback_scheduler_state.plan_worker_abort()
         with contextlib.suppress(NativeBgenWorkerShutdownError):
             self.stop_dosage_worker(timeout_seconds=abort_plan.dosage_stop_timeout_seconds)
         with contextlib.suppress(NativeBgenWorkerShutdownError):
@@ -1093,6 +1095,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         dtype: npt.DTypeLike,
     ) -> HostGenotypeBuffer:
         """Return a reusable host dosage buffer with the requested shape."""
+        backpressure_poll_timeout_seconds = self.callback_scheduler_state.backpressure_poll_timeout_seconds
         while True:
             self.raise_worker_error_if_present()
             with contextlib.suppress(queue.Empty):
@@ -1119,14 +1122,10 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
             with contextlib.suppress(queue.Empty):
                 if self.stage_timing_recorder is None:
-                    dosage_buffer = self.free_dosage_buffers.get(
-                        timeout=CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS
-                    )
+                    dosage_buffer = self.free_dosage_buffers.get(timeout=backpressure_poll_timeout_seconds)
                 else:
                     buffer_wait_start_time = time.perf_counter()
-                    dosage_buffer = self.free_dosage_buffers.get(
-                        timeout=CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS
-                    )
+                    dosage_buffer = self.free_dosage_buffers.get(timeout=backpressure_poll_timeout_seconds)
                     self.record_queue_stage_duration(
                         queue_name="dosage_buffer_pool",
                         operation_name="consumer_wait",

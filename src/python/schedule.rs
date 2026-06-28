@@ -356,6 +356,19 @@ impl NativeCallbackSchedulerState {
         self.inner.clear_result_worker_error()
     }
 
+    #[getter]
+    fn backpressure_poll_timeout_seconds(&self) -> f64 {
+        self.inner.backpressure_poll_timeout_seconds()
+    }
+
+    fn plan_worker_finish(&self) -> NativeCallbackWorkerFinishPlan {
+        self.inner.plan_worker_finish().into()
+    }
+
+    fn plan_worker_abort(&self) -> NativeCallbackWorkerAbortPlan {
+        self.inner.plan_worker_abort().into()
+    }
+
     fn plan_dosage_worker_join(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
         self.inner.plan_dosage_worker_join(timeout_seconds).into()
     }

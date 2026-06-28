@@ -488,6 +488,21 @@ impl CallbackSchedulerState {
     }
 
     #[must_use]
+    pub const fn backpressure_poll_timeout_seconds(&self) -> f64 {
+        callback_worker_backpressure_poll_timeout_seconds()
+    }
+
+    #[must_use]
+    pub fn plan_worker_finish(&self) -> CallbackWorkerFinishPlan {
+        plan_callback_worker_finish()
+    }
+
+    #[must_use]
+    pub fn plan_worker_abort(&self) -> CallbackWorkerAbortPlan {
+        plan_callback_worker_abort()
+    }
+
+    #[must_use]
     pub fn plan_dosage_worker_join(&self, timeout_seconds: Option<f64>) -> CallbackWorkerJoinPlan {
         plan_dosage_callback_worker_join(timeout_seconds, self.has_started())
     }
@@ -1799,6 +1814,21 @@ mod tests {
         assert!(scheduler_state.clear_result_worker_error());
         assert_eq!(scheduler_state.dosage_worker_error_message(), None);
         assert_eq!(scheduler_state.result_worker_error_message(), None);
+
+        assert!((scheduler_state.backpressure_poll_timeout_seconds() - 0.1).abs() < f64::EPSILON);
+        assert_eq!(
+            scheduler_state.plan_worker_finish(),
+            CallbackWorkerFinishPlan {
+                dosage_stop_timeout_seconds: 60.0,
+                dosage_join_timeout_seconds: 300.0,
+                result_stop_timeout_seconds: 60.0,
+                result_join_timeout_seconds: 300.0,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_worker_abort(),
+            CallbackWorkerAbortPlan { dosage_stop_timeout_seconds: 1.0, result_stop_timeout_seconds: 1.0 },
+        );
 
         assert_eq!(
             scheduler_state.plan_dosage_worker_join(None),
