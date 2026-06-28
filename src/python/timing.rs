@@ -12,8 +12,7 @@ use g_runtime::timing as native_timing;
 
 #[pyclass]
 pub(crate) struct NativeStageTimingRecorder {
-    exact_stage_timings: bool,
-    state: Mutex<native_timing::StageTimingState>,
+    recorder: Mutex<native_timing::StageTimingRecorder>,
 }
 
 #[pyclass]
@@ -51,21 +50,26 @@ impl NativeTimingFileWritePlan {
 impl NativeStageTimingRecorder {
     #[new]
     fn new(exact_stage_timings: bool) -> Self {
-        Self { exact_stage_timings, state: Mutex::new(native_timing::StageTimingState::default()) }
+        Self::from_recorder(native_timing::StageTimingRecorder::new(exact_stage_timings))
+    }
+
+    #[staticmethod]
+    fn from_config(stage_timing_path_configured: bool, force: bool) -> Option<Self> {
+        native_timing::StageTimingRecorder::from_config(stage_timing_path_configured, force).map(Self::from_recorder)
     }
 
     #[getter]
-    fn exact_stage_timings(&self) -> bool {
-        self.exact_stage_timings
+    fn exact_stage_timings(&self) -> PyResult<bool> {
+        Ok(self.lock_recorder()?.exact_stage_timings())
     }
 
-    fn should_collect_exact_stage_timings(&self) -> bool {
-        native_timing::should_collect_exact_stage_timings(self.exact_stage_timings)
+    fn should_collect_exact_stage_timings(&self) -> PyResult<bool> {
+        Ok(self.lock_recorder()?.should_collect_exact_stage_timings())
     }
 
     #[allow(clippy::needless_pass_by_value)]
     fn add_stage_duration(&self, stage_name: String, duration_seconds: f64) -> PyResult<()> {
-        self.lock_state()?.add_stage_duration(stage_name, duration_seconds);
+        self.lock_recorder()?.add_stage_duration(stage_name, duration_seconds);
         Ok(())
     }
 
@@ -81,7 +85,7 @@ impl NativeStageTimingRecorder {
         stage_name: String,
         duration_seconds: f64,
     ) -> PyResult<()> {
-        self.lock_state()?.add_chunk_stage_duration(native_timing::ChunkStageTiming {
+        self.lock_recorder()?.add_chunk_stage_duration(native_timing::ChunkStageTiming {
             chunk_identifier,
             chromosome,
             variant_start_index,
@@ -95,19 +99,19 @@ impl NativeStageTimingRecorder {
 
     #[allow(clippy::needless_pass_by_value)]
     fn set_native_bgen_profile(&self, profile_snapshot: BTreeMap<String, i64>) -> PyResult<()> {
-        self.lock_state()?.set_native_bgen_profile(profile_snapshot);
+        self.lock_recorder()?.set_native_bgen_profile(profile_snapshot);
         Ok(())
     }
 
     fn add_binary_chunk_diagnostics(&self, diagnostics: &Bound<'_, PyAny>) -> PyResult<()> {
         let parsed_diagnostics = parse_numeric_diagnostics_mapping(diagnostics)?;
-        self.lock_state()?.add_binary_chunk_diagnostics(parsed_diagnostics);
+        self.lock_recorder()?.add_binary_chunk_diagnostics(parsed_diagnostics);
         Ok(())
     }
 
     fn add_null_logistic_diagnostics(&self, diagnostics: &Bound<'_, PyAny>) -> PyResult<()> {
         let parsed_diagnostics = parse_null_logistic_diagnostics_mapping(diagnostics)?;
-        self.lock_state()?.add_null_logistic_diagnostics(parsed_diagnostics);
+        self.lock_recorder()?.add_null_logistic_diagnostics(parsed_diagnostics);
         Ok(())
     }
 
@@ -122,7 +126,7 @@ impl NativeStageTimingRecorder {
         elapsed_seconds: f64,
         blocked_seconds: f64,
     ) -> PyResult<()> {
-        self.lock_state()?.add_queue_backpressure_observation(
+        self.lock_recorder()?.add_queue_backpressure_observation(
             native_timing::QueueBackpressureKey { queue_name, operation_name },
             queue_depth,
             queue_capacity,
@@ -143,7 +147,7 @@ impl NativeStageTimingRecorder {
         byte_count: i64,
         element_count: i64,
     ) -> PyResult<()> {
-        self.lock_state()?.add_transfer_metadata(
+        self.lock_recorder()?.add_transfer_metadata(
             native_timing::TransferMetadataKey { transfer_name, array_role, dtype_name, dimension_count: ndim },
             byte_count,
             element_count,
@@ -160,55 +164,75 @@ impl NativeStageTimingRecorder {
         shape_dimensions: Vec<i64>,
         item_size: i64,
     ) -> PyResult<()> {
-        self.lock_state()?
+        self.lock_recorder()?
             .add_transfer_metadata_for_shape(&transfer_name, &array_role, &dtype_name, &shape_dimensions, item_size)
             .map_err(|error| transfer_metadata_error_to_py(&error))
     }
 
     fn snapshot_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let state = self.lock_state()?;
-        build_stage_timing_snapshot_payload(py, &state.build_stage_timing_snapshot_payload())
+        let recorder = self.lock_recorder()?;
+        build_stage_timing_snapshot_payload(py, &recorder.build_stage_timing_snapshot_payload())
     }
 
     fn stage_timing_json_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let state = self.lock_state()?;
-        build_stage_timing_json_payload(py, &state.build_stage_timing_snapshot_payload())
+        let recorder = self.lock_recorder()?;
+        build_stage_timing_json_payload(py, &recorder.build_stage_timing_snapshot_payload())
     }
 
     #[allow(clippy::needless_pass_by_value)]
     fn write_stage_timing_snapshot(&self, path: String) -> PyResult<()> {
-        let payload = {
-            let state = self.lock_state()?;
-            state.build_stage_timing_snapshot_payload()
-        };
-        native_timing::write_stage_timing_snapshot_payload(Path::new(&path), &payload)
+        self.lock_recorder()?
+            .write_stage_timing_snapshot(Path::new(&path))
             .map_err(|error| timing_file_error_to_py(&error))
     }
 
+    fn write_stage_timing_snapshot_if_configured(&self, path: Option<String>) -> PyResult<bool> {
+        let Some(active_path) = path else {
+            return Ok(false);
+        };
+        if !self.lock_recorder()?.should_write_timing_file(true) {
+            return Ok(false);
+        }
+        self.write_stage_timing_snapshot(active_path)?;
+        Ok(true)
+    }
+
     fn derived_metrics_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let state = self.lock_state()?;
-        build_float_mapping(py, &state.build_derived_metrics())
+        let recorder = self.lock_recorder()?;
+        build_float_mapping(py, &recorder.build_derived_metrics())
     }
 
     fn profile_summary_payload<'py>(&self, py: Python<'py>, run_id: Option<String>) -> PyResult<Bound<'py, PyDict>> {
-        let state = self.lock_state()?;
-        build_profile_summary_payload(py, &state.build_profile_summary(run_id))
+        let recorder = self.lock_recorder()?;
+        build_profile_summary_payload(py, &recorder.build_profile_summary(run_id))
     }
 
     #[allow(clippy::needless_pass_by_value)]
     fn write_profile_summary(&self, path: String, run_id: Option<String>) -> PyResult<()> {
-        let payload = {
-            let state = self.lock_state()?;
-            state.build_profile_summary(run_id)
-        };
-        native_timing::write_profile_summary_payload(Path::new(&path), &payload)
+        self.lock_recorder()?
+            .write_profile_summary(Path::new(&path), run_id)
             .map_err(|error| timing_file_error_to_py(&error))
+    }
+
+    fn write_profile_summary_if_configured(&self, path: Option<String>, run_id: Option<String>) -> PyResult<bool> {
+        let Some(active_path) = path else {
+            return Ok(false);
+        };
+        if !self.lock_recorder()?.should_write_timing_file(true) {
+            return Ok(false);
+        }
+        self.write_profile_summary(active_path, run_id)?;
+        Ok(true)
     }
 }
 
 impl NativeStageTimingRecorder {
-    fn lock_state(&self) -> PyResult<MutexGuard<'_, native_timing::StageTimingState>> {
-        self.state.lock().map_err(|_| PyRuntimeError::new_err("Stage timing recorder lock was poisoned."))
+    fn from_recorder(recorder: native_timing::StageTimingRecorder) -> Self {
+        Self { recorder: Mutex::new(recorder) }
+    }
+
+    fn lock_recorder(&self) -> PyResult<MutexGuard<'_, native_timing::StageTimingRecorder>> {
+        self.recorder.lock().map_err(|_| PyRuntimeError::new_err("Stage timing recorder lock was poisoned."))
     }
 }
 

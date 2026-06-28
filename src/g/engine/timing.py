@@ -392,6 +392,13 @@ class StageTimingRecorder:
         """Initialize empty stage timing state."""
         self.native_recorder = _core.NativeStageTimingRecorder(exact_stage_timings)
 
+    @classmethod
+    def from_native_recorder(cls, native_recorder: _core.NativeStageTimingRecorder) -> typing.Self:
+        """Build a Python adapter around an existing native recorder."""
+        recorder = typing.cast("typing.Self", cls.__new__(cls))
+        recorder.native_recorder = native_recorder
+        return recorder
+
     @property
     def exact_stage_timings(self) -> bool:
         """Return whether exact synchronized stage timings are requested."""
@@ -509,6 +516,12 @@ class StageTimingRecorder:
         """Persist the native stage timing JSON payload."""
         self.native_recorder.write_stage_timing_snapshot(str(stage_timing_path))
 
+    def write_stage_timing_snapshot_if_configured(self, stage_timing_path: pathlib.Path | None) -> bool:
+        """Persist the native stage timing JSON payload when a path is configured."""
+        return self.native_recorder.write_stage_timing_snapshot_if_configured(
+            None if stage_timing_path is None else str(stage_timing_path)
+        )
+
     def derived_metrics_payload(self) -> dict[str, float]:
         """Build native derived metrics from the current timing state."""
         return dict(typing.cast("typing.Mapping[str, float]", self.native_recorder.derived_metrics_payload()))
@@ -525,6 +538,18 @@ class StageTimingRecorder:
     def write_profile_summary(self, profile_summary_path: pathlib.Path, *, run_id: str | None) -> None:
         """Persist the native profile summary JSON payload."""
         self.native_recorder.write_profile_summary(str(profile_summary_path), run_id)
+
+    def write_profile_summary_if_configured(
+        self,
+        profile_summary_path: pathlib.Path | None,
+        *,
+        run_id: str | None,
+    ) -> bool:
+        """Persist the native profile summary JSON payload when a path is configured."""
+        return self.native_recorder.write_profile_summary_if_configured(
+            None if profile_summary_path is None else str(profile_summary_path),
+            run_id,
+        )
 
 
 def adapt_stage_timing_snapshot_payload(snapshot_payload: dict[str, object]) -> StageTimingSnapshot:
@@ -621,13 +646,10 @@ def build_stage_timing_recorder(
     force: bool,
 ) -> StageTimingRecorder | None:
     """Create a diagnostic stage recorder when requested."""
-    recorder_plan = _core.plan_stage_timing_recorder(
-        stage_timing_path_configured=stage_timing_path is not None,
-        force=force,
-    )
-    if not recorder_plan.should_create:
+    native_recorder = _core.NativeStageTimingRecorder.from_config(stage_timing_path is not None, force)
+    if native_recorder is None:
         return None
-    return StageTimingRecorder(exact_stage_timings=recorder_plan.exact_stage_timings)
+    return StageTimingRecorder.from_native_recorder(native_recorder)
 
 
 def should_collect_exact_stage_timings(stage_timing_recorder: StageTimingRecorder | None) -> bool:
@@ -640,15 +662,9 @@ def write_stage_timing_snapshot(
     stage_timing_path: pathlib.Path | None,
 ) -> None:
     """Persist diagnostic stage timings when requested."""
-    write_plan = _core.plan_timing_file_write(
-        has_stage_timing_recorder=stage_timing_recorder is not None,
-        path_configured=stage_timing_path is not None,
-    )
-    if not write_plan.should_write:
+    if stage_timing_recorder is None:
         return
-    active_stage_timing_recorder = typing.cast("StageTimingRecorder", stage_timing_recorder)
-    active_stage_timing_path = typing.cast("pathlib.Path", stage_timing_path)
-    active_stage_timing_recorder.write_stage_timing_snapshot(active_stage_timing_path)
+    stage_timing_recorder.write_stage_timing_snapshot_if_configured(stage_timing_path)
 
 
 def write_profile_summary(
@@ -658,15 +674,9 @@ def write_profile_summary(
     run_id: str | None,
 ) -> None:
     """Persist aggregate profile summary metrics when requested."""
-    write_plan = _core.plan_timing_file_write(
-        has_stage_timing_recorder=stage_timing_recorder is not None,
-        path_configured=profile_summary_path is not None,
-    )
-    if not write_plan.should_write:
+    if stage_timing_recorder is None:
         return
-    active_stage_timing_recorder = typing.cast("StageTimingRecorder", stage_timing_recorder)
-    active_profile_summary_path = typing.cast("pathlib.Path", profile_summary_path)
-    active_stage_timing_recorder.write_profile_summary(active_profile_summary_path, run_id=run_id)
+    stage_timing_recorder.write_profile_summary_if_configured(profile_summary_path, run_id=run_id)
 
 
 def serialize_chunk_stage_timings(

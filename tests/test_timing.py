@@ -225,32 +225,29 @@ def test_native_stage_timing_recorder_and_file_write_plans() -> None:
     assert isinstance(write_plan, _core.NativeTimingFileWritePlan)
     assert write_plan.should_write is True
     assert disabled_write_plan.should_write is False
+    assert _core.NativeStageTimingRecorder.from_config(
+        stage_timing_path_configured=False,
+        force=False,
+    ) is None
+    native_aggregate_recorder = _core.NativeStageTimingRecorder.from_config(
+        stage_timing_path_configured=False,
+        force=True,
+    )
+    native_exact_recorder = _core.NativeStageTimingRecorder.from_config(
+        stage_timing_path_configured=True,
+        force=False,
+    )
+    assert isinstance(native_aggregate_recorder, _core.NativeStageTimingRecorder)
+    assert isinstance(native_exact_recorder, _core.NativeStageTimingRecorder)
+    assert native_aggregate_recorder.exact_stage_timings is False
+    assert native_exact_recorder.exact_stage_timings is True
 
 
-def test_build_stage_timing_recorder_uses_native_plan(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeStageTimingRecorderPlan:
-        def __init__(self, *, should_create: bool, exact_stage_timings: bool) -> None:
-            self.should_create = should_create
-            self.exact_stage_timings = exact_stage_timings
-
-    def plan_stage_timing_recorder(
-        *,
-        stage_timing_path_configured: bool,
-        force: bool,
-    ) -> FakeStageTimingRecorderPlan:
-        assert stage_timing_path_configured is True
-        assert force is False
-        return FakeStageTimingRecorderPlan(should_create=True, exact_stage_timings=False)
-
-    monkeypatch.setattr(timing._core, "plan_stage_timing_recorder", plan_stage_timing_recorder)
-
+def test_build_stage_timing_recorder_uses_native_handle_from_config(tmp_path: Path) -> None:
     recorder = timing.build_stage_timing_recorder(tmp_path / "stage-timings.json", force=False)
 
     assert isinstance(recorder, timing.StageTimingRecorder)
-    assert recorder.exact_stage_timings is False
+    assert recorder.exact_stage_timings is True
 
 
 def test_write_stage_timing_snapshot_noops_without_recorder_or_path(tmp_path: Path) -> None:
@@ -263,31 +260,19 @@ def test_write_stage_timing_snapshot_noops_without_recorder_or_path(tmp_path: Pa
     assert not output_path.exists()
 
 
-def test_write_stage_timing_snapshot_uses_native_write_plan(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeTimingFileWritePlan:
-        def __init__(self, *, should_write: bool) -> None:
-            self.should_write = should_write
-
-    def plan_timing_file_write(
-        *,
-        has_stage_timing_recorder: bool,
-        path_configured: bool,
-    ) -> FakeTimingFileWritePlan:
-        assert has_stage_timing_recorder is True
-        assert path_configured is True
-        return FakeTimingFileWritePlan(should_write=False)
-
-    output_path = tmp_path / "blocked" / "timings.json"
+def test_native_stage_timing_recorder_optional_file_writes(tmp_path: Path) -> None:
+    output_path = tmp_path / "diagnostics" / "timings.json"
+    profile_summary_path = tmp_path / "diagnostics" / "profile.summary.json"
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     recorder.add_stage_duration("native_engine_delivery", 2.0)
-    monkeypatch.setattr(timing._core, "plan_timing_file_write", plan_timing_file_write)
 
-    timing.write_stage_timing_snapshot(recorder, output_path)
+    assert recorder.write_stage_timing_snapshot_if_configured(None) is False
+    assert recorder.write_stage_timing_snapshot_if_configured(output_path) is True
+    assert recorder.write_profile_summary_if_configured(None, run_id="run-1") is False
+    assert recorder.write_profile_summary_if_configured(profile_summary_path, run_id="run-1") is True
 
-    assert not output_path.exists()
+    assert json.loads(output_path.read_text(encoding="utf-8"))["stage_counts"]["native_engine_delivery"] == 1
+    assert json.loads(profile_summary_path.read_text(encoding="utf-8"))["run_id"] == "run-1"
 
 
 def test_write_stage_timing_snapshot_persists_payload_and_derived_metrics(tmp_path: Path) -> None:
