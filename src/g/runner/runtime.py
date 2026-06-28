@@ -123,9 +123,11 @@ def record_jax_runtime_diagnostic_event(
 
     """
     event_fields = {diagnostic_field.name: diagnostic_field.value for diagnostic_field in diagnostic_event.fields}
-    logging_level = logging.INFO
-    if diagnostic_event.level == jax_runtime_models.JaxRuntimeDiagnosticLevel.ERROR:
-        logging_level = logging.ERROR
+    record_plan = _core.plan_jax_runtime_diagnostic_record_payload(
+        diagnostic_level=diagnostic_event.level.value,
+        has_telemetry_session=telemetry_session is not None,
+    )
+    logging_level = typing.cast("int", logging.getLevelName(str(record_plan["logging_level_name"])))
     logger.log(
         logging_level,
         "%s",
@@ -135,9 +137,14 @@ def record_jax_runtime_diagnostic_event(
             "g_fields": event_fields,
         },
     )
-    if telemetry_session is None:
+    if not typing.cast("bool", record_plan["should_emit_telemetry"]):
         return
-    telemetry_session.log_event(diagnostic_event.event_name, level=diagnostic_event.level.value, **event_fields)
+    active_telemetry_session = typing.cast("telemetry.TelemetrySession", telemetry_session)
+    active_telemetry_session.log_event(
+        diagnostic_event.event_name,
+        level=str(record_plan["telemetry_level"]),
+        **event_fields,
+    )
 
 
 def configure_runtime_before_jax_import(

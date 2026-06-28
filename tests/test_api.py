@@ -1053,6 +1053,62 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
     assert recorded_events[-1][2]["status"] == "skipped"
 
 
+def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
+    recorded_events: list[tuple[str, str, dict[str, object]]] = []
+    logged_records: list[tuple[int, str, dict[str, object]]] = []
+
+    class RecordingTelemetrySession:
+        def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
+            recorded_events.append((event_name, level, fields))
+
+    def plan_jax_runtime_diagnostic_record_payload(
+        *,
+        diagnostic_level: str,
+        has_telemetry_session: bool,
+    ) -> dict[str, object]:
+        assert diagnostic_level == "info"
+        assert has_telemetry_session is True
+        return {
+            "logging_level_name": "ERROR",
+            "should_emit_telemetry": True,
+            "telemetry_level": "trace",
+        }
+
+    diagnostic_event = jax_runtime_models.JaxRuntimeDiagnosticEvent(
+        event_name="jax_native_plan_test",
+        level=jax_runtime_models.JaxRuntimeDiagnosticLevel.INFO,
+        message="planned diagnostic",
+        fields=(jax_runtime_models.JaxRuntimeDiagnosticField(name="field", value="value"),),
+    )
+    telemetry_session = typing.cast("telemetry_module.TelemetrySession", RecordingTelemetrySession())
+
+    with (
+        patch(
+            "g.runner.runtime._core.plan_jax_runtime_diagnostic_record_payload",
+            side_effect=plan_jax_runtime_diagnostic_record_payload,
+        ),
+        patch("g.runner.runtime.logger.log") as logger_log_mock,
+    ):
+        runner_runtime.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session=telemetry_session)
+
+    for call in logger_log_mock.call_args_list:
+        logged_records.append(
+            (
+                typing.cast("int", call.args[0]),
+                typing.cast("str", call.args[1]),
+                typing.cast("dict[str, object]", call.kwargs),
+            )
+        )
+
+    assert logged_records[0][0] == runner_runtime.logging.ERROR
+    assert logged_records[0][1] == "%s"
+    assert logged_records[0][2]["extra"] == {
+        "g_event": "jax_native_plan_test",
+        "g_fields": {"field": "value"},
+    }
+    assert recorded_events == [("jax_native_plan_test", "trace", {"field": "value"})]
+
+
 def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_path: Path) -> None:
     run_paths = OutputRunPaths(
         run_directory=Path("results/output.g/trait.regenie2_linear.run"),

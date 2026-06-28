@@ -45,6 +45,17 @@ pub(crate) fn plan_jax_runtime_setup_side_effects_payload<'py>(
 }
 
 #[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_jax_runtime_diagnostic_record_payload<'py>(
+    py: Python<'py>,
+    diagnostic_level: String,
+    has_telemetry_session: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let plan = native_jax_runtime::plan_jax_runtime_diagnostic_record(&diagnostic_level, has_telemetry_session);
+    jax_runtime_diagnostic_record_plan_to_dict(py, &plan)
+}
+
+#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_jax_runtime_setup_diagnostic_payloads<'py>(
@@ -159,6 +170,17 @@ fn jax_runtime_setup_payload_to_dict<'py>(
     payload.set_item("transfer_guard_enabled", setup.transfer_guard_enabled)?;
     payload.set_item("gpu_validation_status", &setup.gpu_validation_status)?;
     set_optional_string(py, &payload, "gpu_validation_message", setup.gpu_validation_message.as_deref())?;
+    Ok(payload)
+}
+
+fn jax_runtime_diagnostic_record_plan_to_dict<'py>(
+    py: Python<'py>,
+    plan: &native_jax_runtime::JaxRuntimeDiagnosticRecordPlan,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("logging_level_name", &plan.logging_level_name)?;
+    payload.set_item("should_emit_telemetry", plan.should_emit_telemetry)?;
+    payload.set_item("telemetry_level", &plan.telemetry_level)?;
     Ok(payload)
 }
 

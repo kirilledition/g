@@ -591,6 +591,28 @@ def test_native_jax_runtime_setup_side_effect_plan() -> None:
     }
 
 
+def test_native_jax_runtime_diagnostic_record_plan() -> None:
+    info_plan = _core.plan_jax_runtime_diagnostic_record_payload(
+        diagnostic_level="info",
+        has_telemetry_session=True,
+    )
+    error_plan = _core.plan_jax_runtime_diagnostic_record_payload(
+        diagnostic_level="error",
+        has_telemetry_session=False,
+    )
+
+    assert info_plan == {
+        "logging_level_name": "INFO",
+        "should_emit_telemetry": True,
+        "telemetry_level": "info",
+    }
+    assert error_plan == {
+        "logging_level_name": "ERROR",
+        "should_emit_telemetry": False,
+        "telemetry_level": "error",
+    }
+
+
 def test_native_jax_gpu_validation_plan() -> None:
     missing_driver_plan = _core.plan_jax_gpu_validation_payload(
         nvidia_driver_visible=False,

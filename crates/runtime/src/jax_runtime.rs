@@ -15,6 +15,8 @@ const JAX_GPU_DEVICE_PLATFORM_NAME: &str = "gpu";
 const JAX_MATMUL_PRECISION_FLOAT32: &str = "float32";
 const JAX_RUNTIME_DIAGNOSTIC_LEVEL_ERROR: &str = "error";
 const JAX_RUNTIME_DIAGNOSTIC_LEVEL_INFO: &str = "info";
+const PYTHON_LOGGING_LEVEL_ERROR: &str = "ERROR";
+const PYTHON_LOGGING_LEVEL_INFO: &str = "INFO";
 const JAX_RUNTIME_GPU_VALIDATION_FAILED: &str = "failed";
 const JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED: &str = "succeeded";
 const JAX_TRANSFER_GUARD_DISALLOW: &str = "disallow";
@@ -90,6 +92,13 @@ pub struct JaxRuntimeDiagnosticEventPayload {
     pub fields: Vec<JaxRuntimeDiagnosticFieldPayload>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JaxRuntimeDiagnosticRecordPlan {
+    pub logging_level_name: String,
+    pub should_emit_telemetry: bool,
+    pub telemetry_level: String,
+}
+
 #[allow(clippy::fn_params_excessive_bools)]
 #[must_use]
 pub fn resolve_jax_runtime_setup(
@@ -129,6 +138,23 @@ pub fn resolve_jax_runtime_setup(
         transfer_guard_enabled: transfer_guard,
         gpu_validation_status,
         gpu_validation_message,
+    }
+}
+
+#[must_use]
+pub fn plan_jax_runtime_diagnostic_record(
+    diagnostic_level: &str,
+    has_telemetry_session: bool,
+) -> JaxRuntimeDiagnosticRecordPlan {
+    let logging_level_name = if diagnostic_level == JAX_RUNTIME_DIAGNOSTIC_LEVEL_ERROR {
+        PYTHON_LOGGING_LEVEL_ERROR
+    } else {
+        PYTHON_LOGGING_LEVEL_INFO
+    };
+    JaxRuntimeDiagnosticRecordPlan {
+        logging_level_name: logging_level_name.to_string(),
+        should_emit_telemetry: has_telemetry_session,
+        telemetry_level: diagnostic_level.to_string(),
     }
 }
 
@@ -335,6 +361,26 @@ mod tests {
         assert_eq!(cpu_setup.platform_name, JAX_CPU_PLATFORM_NAME);
         assert_eq!(cpu_setup.gpu_validation_status, "skipped");
         assert_eq!(cpu_setup.matmul_precision, "highest");
+    }
+
+    #[test]
+    fn plans_jax_runtime_diagnostic_recording() {
+        assert_eq!(
+            plan_jax_runtime_diagnostic_record("info", true),
+            JaxRuntimeDiagnosticRecordPlan {
+                logging_level_name: "INFO".to_string(),
+                should_emit_telemetry: true,
+                telemetry_level: "info".to_string(),
+            },
+        );
+        assert_eq!(
+            plan_jax_runtime_diagnostic_record("error", false),
+            JaxRuntimeDiagnosticRecordPlan {
+                logging_level_name: "ERROR".to_string(),
+                should_emit_telemetry: false,
+                telemetry_level: "error".to_string(),
+            },
+        );
     }
 
     #[test]

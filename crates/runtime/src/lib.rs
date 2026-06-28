@@ -13,10 +13,10 @@ pub mod timing;
 
 pub use jax_runtime::{
     JaxDeviceObservation, JaxGpuValidationPlan, JaxRuntimeConfigUpdatePayload, JaxRuntimeConfigValue,
-    JaxRuntimeDiagnosticEventPayload, JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticValue,
-    JaxRuntimeSetupPayload, JaxRuntimeSetupSideEffectPlan, build_jax_runtime_setup_diagnostic_events,
-    plan_jax_gpu_validation, plan_jax_runtime_config_updates, plan_jax_runtime_setup_side_effects,
-    resolve_jax_runtime_setup,
+    JaxRuntimeDiagnosticEventPayload, JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticRecordPlan,
+    JaxRuntimeDiagnosticValue, JaxRuntimeSetupPayload, JaxRuntimeSetupSideEffectPlan,
+    build_jax_runtime_setup_diagnostic_events, plan_jax_gpu_validation, plan_jax_runtime_config_updates,
+    plan_jax_runtime_diagnostic_record, plan_jax_runtime_setup_side_effects, resolve_jax_runtime_setup,
 };
 pub use rayon_runtime::{RayonRuntimeError, configure_global_rayon_thread_pool};
 pub use run_events::{
