@@ -155,6 +155,11 @@ pub(crate) struct NativeResultWriteItemResourceReleasePlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeResultWriteHandoffPlan {
+    inner: native_schedule::ResultWriteHandoffPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeResultWriteDrainCompletionPlan {
     inner: native_schedule::ResultWriteDrainCompletionPlan,
 }
@@ -553,6 +558,10 @@ impl NativeCallbackSchedulerState {
                 release_in_flight_slot,
             )
             .into()
+    }
+
+    fn plan_result_write_handoff(&self, has_result_work_item: bool) -> NativeResultWriteHandoffPlan {
+        self.inner.plan_result_write_handoff(has_result_work_item).into()
     }
 
     fn plan_result_write_drain_completion(
@@ -1563,6 +1572,24 @@ impl NativeResultWriteItemResourceReleasePlan {
 }
 
 #[pymethods]
+impl NativeResultWriteHandoffPlan {
+    #[getter]
+    fn should_enqueue(&self) -> bool {
+        self.inner.should_enqueue
+    }
+
+    #[getter]
+    fn has_result_work_item(&self) -> bool {
+        self.inner.has_result_work_item
+    }
+
+    #[getter]
+    fn is_stop_signal(&self) -> bool {
+        self.inner.is_stop_signal
+    }
+}
+
+#[pymethods]
 impl NativeResultWriteDrainCompletionPlan {
     #[getter]
     fn should_stop(&self) -> bool {
@@ -1829,6 +1856,12 @@ impl From<native_schedule::ResultInFlightReleaseAttemptPlan> for NativeResultInF
 impl From<native_schedule::ResultWriteItemResourceReleasePlan> for NativeResultWriteItemResourceReleasePlan {
     fn from(resource_release_plan: native_schedule::ResultWriteItemResourceReleasePlan) -> Self {
         Self { inner: resource_release_plan }
+    }
+}
+
+impl From<native_schedule::ResultWriteHandoffPlan> for NativeResultWriteHandoffPlan {
+    fn from(handoff_plan: native_schedule::ResultWriteHandoffPlan) -> Self {
+        Self { inner: handoff_plan }
     }
 }
 
@@ -2171,6 +2204,11 @@ pub(crate) fn plan_bgen_delivery_invocation(
 #[pyfunction]
 pub(crate) fn plan_dosage_work_handoff(chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
     native_schedule::plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn plan_result_write_handoff(has_result_work_item: bool) -> NativeResultWriteHandoffPlan {
+    native_schedule::plan_result_write_handoff(has_result_work_item).into()
 }
 
 #[pyfunction]

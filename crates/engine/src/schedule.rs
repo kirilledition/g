@@ -275,6 +275,13 @@ pub struct ResultWriteItemResourceReleasePlan {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResultWriteHandoffPlan {
+    pub should_enqueue: bool,
+    pub has_result_work_item: bool,
+    pub is_stop_signal: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResultWriteDrainCompletionPlan {
     pub should_stop: bool,
     pub should_flush_binary_correction_diagnostics: bool,
@@ -771,6 +778,11 @@ impl CallbackSchedulerState {
             should_release_host_buffer: has_host_dosage_buffer && !has_released_host_dosage_buffer,
             should_release_result_in_flight_slot: release_in_flight_slot,
         }
+    }
+
+    #[must_use]
+    pub const fn plan_result_write_handoff(&self, has_result_work_item: bool) -> ResultWriteHandoffPlan {
+        plan_result_write_handoff(has_result_work_item)
     }
 
     #[must_use]
@@ -2121,6 +2133,11 @@ pub fn plan_dosage_work_handoff(chunk_count: usize) -> Result<DosageWorkHandoffP
     Ok(DosageWorkHandoffPlan { chunk_count })
 }
 
+#[must_use]
+pub const fn plan_result_write_handoff(has_result_work_item: bool) -> ResultWriteHandoffPlan {
+    ResultWriteHandoffPlan { should_enqueue: true, has_result_work_item, is_stop_signal: !has_result_work_item }
+}
+
 /// Plan which multi-trait writer lanes still need one chunk.
 ///
 /// # Errors
@@ -3041,6 +3058,20 @@ mod tests {
                 should_release_host_buffer: true,
                 should_release_result_in_flight_slot: false,
             },
+        );
+    }
+
+    #[test]
+    fn plans_result_write_handoff() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
+
+        assert_eq!(
+            plan_result_write_handoff(true),
+            ResultWriteHandoffPlan { should_enqueue: true, has_result_work_item: true, is_stop_signal: false },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_write_handoff(false),
+            ResultWriteHandoffPlan { should_enqueue: true, has_result_work_item: false, is_stop_signal: true },
         );
     }
 

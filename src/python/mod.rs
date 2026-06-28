@@ -135,8 +135,8 @@ use schedule::{
     NativeDosageBufferReusePlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
     NativeGpuGenotypeFormatResolutionPlan, NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan,
     NativeResultInFlightAcquireAttemptPlan, NativeResultInFlightReleaseAttemptPlan, NativeResultInFlightSlotState,
-    NativeResultWriteDrainCompletionPlan, NativeResultWriteItemResourceReleasePlan, NativeSingleTraitOutputWritePlan,
-    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemResourceReleasePlan,
+    NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
     format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
     intersect_committed_chunk_identifier_sets, plan_auto_gpu_genotype_format_after_trusted_validation,
     plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation, plan_callback_queue_backpressure_observation,
@@ -145,7 +145,7 @@ use schedule::{
     plan_callback_worker_start, plan_callback_worker_stop_poll, plan_dosage_buffer_reuse,
     plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop, plan_dosage_work_handoff,
     plan_gpu_genotype_format_auto_to_dosage, plan_multi_trait_chunk_write, plan_multi_trait_output_write,
-    plan_result_callback_worker_join, plan_result_callback_worker_stop,
+    plan_result_callback_worker_join, plan_result_callback_worker_stop, plan_result_write_handoff,
     plan_single_trait_binary_gpu_genotype_format_resolution, plan_single_trait_output_write,
     plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method_value,
     resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
@@ -1867,6 +1867,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeResultInFlightReleaseAttemptPlan>()?;
     module.add_class::<NativeResultInFlightSlotState>()?;
     module.add_class::<NativeResultWriteDrainCompletionPlan>()?;
+    module.add_class::<NativeResultWriteHandoffPlan>()?;
     module.add_class::<NativeResultWriteItemResourceReleasePlan>()?;
     module.add_class::<NativeSingleTraitOutputWritePlan>()?;
     module.add_class::<NativeVariantMajorDosageBatchHandoffPlan>()?;
@@ -1993,6 +1994,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_multi_trait_output_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_result_callback_worker_join, module)?)?;
     module.add_function(wrap_pyfunction!(plan_result_callback_worker_stop, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_result_write_handoff, module)?)?;
     module.add_function(wrap_pyfunction!(plan_single_trait_binary_gpu_genotype_format_resolution, module)?)?;
     module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_work_handoff, module)?)?;

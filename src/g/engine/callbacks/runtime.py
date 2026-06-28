@@ -1034,6 +1034,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         timeout_seconds: float,
     ) -> bool:
         """Try to enqueue one result item under native result-queue capacity."""
+        handoff_plan = self.callback_scheduler_state.plan_result_write_handoff(
+            has_result_work_item=work_item is not None
+        )
+        if handoff_plan.has_result_work_item != (work_item is not None):
+            message = "Native result write handoff plan disagrees with the queued result item."
+            raise RuntimeError(message)
         deadline = time.monotonic() + max(timeout_seconds, 0.0)
         while True:
             with self.result_queue_condition:
@@ -1041,7 +1047,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 attempt_plan = self.callback_scheduler_state.plan_result_queue_put_attempt(
                     wait_timeout_seconds=remaining_timeout_seconds
                 )
-                if attempt_plan.should_put:
+                if attempt_plan.should_put and handoff_plan.should_enqueue:
                     self.result_queue.append(work_item)
                     self.result_queue_condition.notify()
                     return True
@@ -1054,6 +1060,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
     ) -> bool:
         """Try to enqueue one result item using native backpressure policy."""
+        handoff_plan = self.callback_scheduler_state.plan_result_write_handoff(
+            has_result_work_item=work_item is not None
+        )
+        if handoff_plan.has_result_work_item != (work_item is not None):
+            message = "Native result write handoff plan disagrees with the queued result item."
+            raise RuntimeError(message)
         deadline: float | None = None
         while True:
             with self.result_queue_condition:
@@ -1066,7 +1078,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                     attempt_plan = self.callback_scheduler_state.plan_result_queue_put_attempt(
                         wait_timeout_seconds=remaining_timeout_seconds
                     )
-                if attempt_plan.should_put:
+                if attempt_plan.should_put and handoff_plan.should_enqueue:
                     self.result_queue.append(work_item)
                     self.result_queue_condition.notify()
                     return True

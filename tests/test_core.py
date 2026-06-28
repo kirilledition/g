@@ -2234,6 +2234,24 @@ def test_plan_dosage_work_handoff_uses_native_policy() -> None:
         _core.plan_dosage_work_handoff(chunk_count=0)
 
 
+def test_plan_result_write_handoff_uses_native_policy() -> None:
+    result_handoff_plan = _core.plan_result_write_handoff(has_result_work_item=True)
+    assert result_handoff_plan.should_enqueue is True
+    assert result_handoff_plan.has_result_work_item is True
+    assert result_handoff_plan.is_stop_signal is False
+
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+    stop_handoff_plan = scheduler_state.plan_result_write_handoff(has_result_work_item=False)
+    assert stop_handoff_plan.should_enqueue is True
+    assert stop_handoff_plan.has_result_work_item is False
+    assert stop_handoff_plan.is_stop_signal is True
+
+
 def test_native_dosage_buffer_pool_state_tracks_capacity_and_ownership() -> None:
     buffer_pool_state = _core.NativeDosageBufferPoolState(buffer_limit=2)
 

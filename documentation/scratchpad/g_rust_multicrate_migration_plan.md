@@ -1015,6 +1015,8 @@ Remove Python as the chunk-level scheduler.
   state transitions and formatted error messages.
 - Dosage work handoffs now use native scheduler plans for non-empty chunk
   counts before callback queueing.
+- Result write handoffs now use native scheduler plans to classify result items
+  and writer stop signals before callback queueing.
 
 ### Tests
 

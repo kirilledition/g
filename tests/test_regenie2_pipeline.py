@@ -2812,6 +2812,13 @@ class VariantMajorDosageBatchHandoffPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class ResultWriteHandoffPlanProbe:
+    should_enqueue: bool
+    has_result_work_item: bool
+    is_stop_signal: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class WorkerErrorRaisePlanProbe:
     should_raise: bool
     raise_dosage_worker_error: bool
@@ -3021,6 +3028,7 @@ class CallbackQueueAttemptSchedulerProbe:
     result_put_wait_timeout_seconds: float | None = None
     result_put_backpressure_called: bool = False
     result_get_called: bool = False
+    result_handoff_has_work_items: list[bool] = dataclasses.field(default_factory=list)
 
     def plan_dosage_queue_put_attempt(self, wait_timeout_seconds: float) -> CallbackQueuePutAttemptPlanProbe:
         self.dosage_put_wait_timeout_seconds = wait_timeout_seconds
@@ -3072,6 +3080,14 @@ class CallbackQueueAttemptSchedulerProbe:
             wait_timeout_seconds=0.0,
             queue_depth=1,
             queue_capacity=1,
+        )
+
+    def plan_result_write_handoff(self, *, has_result_work_item: bool) -> ResultWriteHandoffPlanProbe:
+        self.result_handoff_has_work_items.append(has_result_work_item)
+        return ResultWriteHandoffPlanProbe(
+            should_enqueue=True,
+            has_result_work_item=has_result_work_item,
+            is_stop_signal=not has_result_work_item,
         )
 
     def plan_result_queue_get_attempt(self, *, has_queued_item: bool) -> CallbackQueueGetAttemptPlanProbe:
@@ -3534,6 +3550,20 @@ def test_native_callback_runner_uses_scheduler_queue_backpressure_attempt_plans(
 
     assert scheduler_state.dosage_put_backpressure_called is True
     assert scheduler_state.result_put_backpressure_called is True
+
+
+def test_native_callback_runner_uses_scheduler_result_write_handoff_plans() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = CallbackQueueAttemptSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+    result_work_item = typing.cast("typing.Any", SimpleNamespace())
+
+    assert callback.try_put_result_write_item(result_work_item, timeout_seconds=0.5) is True
+    assert callback.get_result_write_item() is result_work_item
+    assert callback.try_put_result_write_item_with_backpressure_timeout(None) is True
+    assert callback.get_result_write_item() is None
+
+    assert scheduler_state.result_handoff_has_work_items == [True, False]
 
 
 def test_native_callback_runner_uses_scheduler_resource_observation_plans() -> None:
