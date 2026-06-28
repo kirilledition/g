@@ -485,7 +485,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats_batch: collections.abc.Sequence[_core.ChunkStats],
     ) -> None:
         """Enqueue a native batch of variant-major dosage chunks for JAX association."""
-        batch_handoff_plan = _core.plan_variant_major_dosage_batch_handoff(
+        batch_handoff_plan = self.callback_scheduler_state.plan_variant_major_dosage_batch_handoff(
             metadata_count=len(metadata_batch),
             genotype_matrix_by_variant_count=len(genotype_matrix_by_variant_batch),
             chunk_stats_count=len(chunk_stats_batch),

@@ -329,6 +329,22 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_dosage_buffer_reuse(&buffered_shape, &expected_shape).map(Into::into)
     }
 
+    fn plan_variant_major_dosage_batch_handoff(
+        &self,
+        metadata_count: usize,
+        genotype_matrix_by_variant_count: usize,
+        chunk_stats_count: usize,
+    ) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
+        self.inner
+            .plan_variant_major_dosage_batch_handoff(
+                metadata_count,
+                genotype_matrix_by_variant_count,
+                chunk_stats_count,
+            )
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
     #[getter]
     fn dosage_worker_error_message(&self) -> Option<String> {
         self.inner.dosage_worker_error_message().map(str::to_string)

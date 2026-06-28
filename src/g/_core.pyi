@@ -755,6 +755,12 @@ class NativeCallbackSchedulerState:
         buffered_shape: typing.Sequence[int],
         expected_shape: typing.Sequence[int],
     ) -> NativeDosageBufferReusePlan | None: ...
+    def plan_variant_major_dosage_batch_handoff(
+        self,
+        metadata_count: int,
+        genotype_matrix_by_variant_count: int,
+        chunk_stats_count: int,
+    ) -> NativeVariantMajorDosageBatchHandoffPlan: ...
     @property
     def dosage_worker_error_message(self) -> str | None: ...
     @property

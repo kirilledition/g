@@ -2158,28 +2158,22 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
     assert snapshot.stage_counts["python_callback"] == 2
 
 
-def test_native_callback_runner_uses_native_variant_major_batch_handoff_plan() -> None:
+def test_native_callback_runner_uses_scheduler_variant_major_batch_handoff_plan() -> None:
     callback = ManualCallbackRunner()
     callback.worker_start_lock = threading.Lock()
     mark_callback_workers_started(callback)
     metadata = build_native_metadata()
-    batch_handoff_plan = SimpleNamespace(chunk_count=1)
 
     with patch(
         "g.engine.callbacks.runtime._core.plan_variant_major_dosage_batch_handoff",
-        return_value=batch_handoff_plan,
-    ) as mock_planner:
+        side_effect=AssertionError("runner should use scheduler variant-major batch handoff planner"),
+    ):
         callback.compute_preprocessed_variant_major_dosage_chunk_batch(
             metadata_batch=(metadata,),
             genotype_matrix_by_variant_batch=(np.ones((2, 2), dtype=np.float32),),
             chunk_stats_batch=(typing.cast("typing.Any", SimpleNamespace()),),
         )
 
-    mock_planner.assert_called_once_with(
-        metadata_count=1,
-        genotype_matrix_by_variant_count=1,
-        chunk_stats_count=1,
-    )
     queued_work_item = callback.dosage_queue.get_nowait()
     assert queued_work_item is not None
     assert isinstance(queued_work_item, callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem)

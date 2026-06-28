@@ -456,6 +456,21 @@ impl CallbackSchedulerState {
         plan_dosage_buffer_reuse(buffered_shape, expected_shape)
     }
 
+    /// Plan a variant-major dosage batch handoff into the callback queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the metadata, genotype matrix, and chunk-stat
+    /// batches have different lengths, or when the batch is empty.
+    pub fn plan_variant_major_dosage_batch_handoff(
+        &self,
+        metadata_count: usize,
+        genotype_matrix_by_variant_count: usize,
+        chunk_stats_count: usize,
+    ) -> Result<VariantMajorDosageBatchHandoffPlan, ScheduleError> {
+        plan_variant_major_dosage_batch_handoff(metadata_count, genotype_matrix_by_variant_count, chunk_stats_count)
+    }
+
     #[must_use]
     pub fn dosage_worker_error_message(&self) -> Option<&str> {
         self.dosage_worker_error_message.as_deref()
@@ -1720,6 +1735,20 @@ mod tests {
         assert_eq!(
             plan_variant_major_dosage_batch_handoff(2, 2, 2).unwrap(),
             VariantMajorDosageBatchHandoffPlan { chunk_count: 2 },
+        );
+    }
+
+    #[test]
+    fn plans_callback_scheduler_variant_major_dosage_batch_handoff() {
+        let scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_variant_major_dosage_batch_handoff(2, 2, 2).unwrap(),
+            VariantMajorDosageBatchHandoffPlan { chunk_count: 2 },
+        );
+        assert_eq!(
+            scheduler_state.plan_variant_major_dosage_batch_handoff(2, 1, 2).unwrap_err(),
+            ScheduleError::VariantMajorDosageBatchLengthMismatch,
         );
     }
 

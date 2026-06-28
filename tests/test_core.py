@@ -1143,6 +1143,19 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
         is None
     )
 
+    batch_handoff_plan = scheduler_state.plan_variant_major_dosage_batch_handoff(
+        metadata_count=2,
+        genotype_matrix_by_variant_count=2,
+        chunk_stats_count=2,
+    )
+    assert batch_handoff_plan.chunk_count == 2
+    with pytest.raises(ValueError, match="identical lengths"):
+        scheduler_state.plan_variant_major_dosage_batch_handoff(
+            metadata_count=2,
+            genotype_matrix_by_variant_count=1,
+            chunk_stats_count=2,
+        )
+
     dosage_join_plan = scheduler_state.plan_dosage_worker_join(timeout_seconds=None)
     assert dosage_join_plan.should_join is True
     assert dosage_join_plan.timeout_seconds == 60.0
