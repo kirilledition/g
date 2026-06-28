@@ -43,6 +43,8 @@ write_materialized_regenie2_native_chunk_with_optional_timing = (
 )
 record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
 binary_chunk_diagnostics_to_summary_counts = regenie2_binary.binary_chunk_diagnostics_to_summary_counts
+CALLBACK_WORKER_START_RESULT_WORKER_ACTION = "start_result_worker"
+CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION = "start_dosage_worker"
 
 
 def require_current_chromosome_state[ChromosomeStateType](
@@ -135,11 +137,20 @@ class NativeBgenCallbackRunner(abc.ABC):
     def start(self) -> None:
         """Start asynchronous callback workers after owner setup is complete."""
         with self.worker_start_lock:
-            if self.worker_threads_started:
+            start_plan = self.callback_scheduler_state.plan_worker_start()
+            if not start_plan.should_start:
                 return
-            self.result_worker_thread.start()
-            self.worker_thread.start()
-            self.callback_scheduler_state.mark_started()
+            for start_action in start_plan.start_actions:
+                if start_action == CALLBACK_WORKER_START_RESULT_WORKER_ACTION:
+                    self.result_worker_thread.start()
+                elif start_action == CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION:
+                    self.worker_thread.start()
+                else:
+                    message = f"Unsupported native callback worker start action: {start_action}"
+                    raise RuntimeError(message)
+            if not self.callback_scheduler_state.mark_started():
+                message = "Native callback worker lifecycle was already marked started."
+                raise RuntimeError(message)
 
     @property
     def worker_threads_started(self) -> bool:

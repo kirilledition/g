@@ -109,6 +109,11 @@ pub(crate) struct NativeCallbackWorkerLifecycleState {
 }
 
 #[pyclass]
+pub(crate) struct NativeCallbackWorkerStartPlan {
+    inner: native_schedule::CallbackWorkerStartPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerShutdownTimeouts {
     inner: native_schedule::CallbackWorkerShutdownTimeouts,
 }
@@ -225,6 +230,29 @@ impl NativeCallbackWorkerLifecycleState {
 }
 
 #[pymethods]
+impl NativeCallbackWorkerStartPlan {
+    #[getter]
+    fn start_actions(&self) -> Vec<String> {
+        self.inner.start_actions.clone()
+    }
+
+    #[getter]
+    fn should_start(&self) -> bool {
+        self.inner.should_start()
+    }
+
+    #[getter]
+    fn start_result_worker(&self) -> bool {
+        self.inner.start_result_worker()
+    }
+
+    #[getter]
+    fn start_dosage_worker(&self) -> bool {
+        self.inner.start_dosage_worker()
+    }
+}
+
+#[pymethods]
 impl NativeCallbackSchedulerState {
     #[new]
     fn new(
@@ -319,6 +347,10 @@ impl NativeCallbackSchedulerState {
 
     fn mark_started(&mut self) -> bool {
         self.inner.mark_started()
+    }
+
+    fn plan_worker_start(&self) -> NativeCallbackWorkerStartPlan {
+        self.inner.plan_worker_start().into()
     }
 
     #[getter]
@@ -950,6 +982,12 @@ impl From<native_schedule::CallbackWorkerShutdownTimeouts> for NativeCallbackWor
     }
 }
 
+impl From<native_schedule::CallbackWorkerStartPlan> for NativeCallbackWorkerStartPlan {
+    fn from(start_plan: native_schedule::CallbackWorkerStartPlan) -> Self {
+        Self { inner: start_plan }
+    }
+}
+
 impl From<native_schedule::CallbackWorkerJoinPlan> for NativeCallbackWorkerJoinPlan {
     fn from(join_plan: native_schedule::CallbackWorkerJoinPlan) -> Self {
         Self { inner: join_plan }
@@ -1233,6 +1271,11 @@ pub(crate) fn plan_callback_worker_finish() -> NativeCallbackWorkerFinishPlan {
 #[pyfunction]
 pub(crate) fn plan_callback_worker_abort() -> NativeCallbackWorkerAbortPlan {
     native_schedule::plan_callback_worker_abort().into()
+}
+
+#[pyfunction]
+pub(crate) fn plan_callback_worker_start(has_started: bool) -> NativeCallbackWorkerStartPlan {
+    native_schedule::plan_callback_worker_start(has_started).into()
 }
 
 #[pyfunction]

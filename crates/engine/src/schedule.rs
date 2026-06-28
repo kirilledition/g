@@ -43,6 +43,8 @@ const BGEN_DELIVERY_CLEANUP_ACTION_FINISH_INTERRUPTED_WRITER_SESSIONS: &str = "f
 const BGEN_DELIVERY_CLEANUP_ACTION_ABORT_CALLBACK: &str = "abort_callback";
 const BGEN_DELIVERY_CLEANUP_ACTION_ABORT_WRITER_SESSIONS: &str = "abort_writer_sessions";
 const BGEN_DELIVERY_CLEANUP_ACTION_WRITE_STAGE_TIMING_SNAPSHOT: &str = "write_stage_timing_snapshot";
+const CALLBACK_WORKER_START_RESULT_WORKER_ACTION: &str = "start_result_worker";
+const CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION: &str = "start_dosage_worker";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeCallbackQueueLimits {
@@ -210,6 +212,32 @@ pub struct CallbackQueueStageBackpressureObservation {
     pub queue_capacity: usize,
     pub elapsed_seconds: f64,
     pub blocked_seconds: f64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackWorkerStartPlan {
+    pub start_actions: Vec<String>,
+}
+
+impl CallbackWorkerStartPlan {
+    #[must_use]
+    pub fn should_start(&self) -> bool {
+        !self.start_actions.is_empty()
+    }
+
+    #[must_use]
+    pub fn start_result_worker(&self) -> bool {
+        self.contains_start_action(CALLBACK_WORKER_START_RESULT_WORKER_ACTION)
+    }
+
+    #[must_use]
+    pub fn start_dosage_worker(&self) -> bool {
+        self.contains_start_action(CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION)
+    }
+
+    fn contains_start_action(&self, start_action: &str) -> bool {
+        self.start_actions.iter().any(|candidate_action| candidate_action == start_action)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -504,6 +532,11 @@ impl CallbackSchedulerState {
 
     pub fn mark_started(&mut self) -> bool {
         self.worker_lifecycle_state.mark_started()
+    }
+
+    #[must_use]
+    pub fn plan_worker_start(&self) -> CallbackWorkerStartPlan {
+        plan_callback_worker_start(self.has_started())
     }
 
     #[must_use]
@@ -982,6 +1015,19 @@ pub fn format_dosage_callback_worker_error_message(error_message: &str) -> Strin
 #[must_use]
 pub fn format_result_callback_worker_error_message(error_message: &str) -> String {
     format!("native pipeline result writer worker failed: {error_message}")
+}
+
+#[must_use]
+pub fn plan_callback_worker_start(has_started: bool) -> CallbackWorkerStartPlan {
+    if has_started {
+        return CallbackWorkerStartPlan { start_actions: Vec::new() };
+    }
+    CallbackWorkerStartPlan {
+        start_actions: vec![
+            CALLBACK_WORKER_START_RESULT_WORKER_ACTION.to_string(),
+            CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION.to_string(),
+        ],
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2064,6 +2110,28 @@ mod tests {
     }
 
     #[test]
+    fn plans_callback_worker_start_policy() {
+        let start_plan = plan_callback_worker_start(false);
+
+        assert!(start_plan.should_start());
+        assert!(start_plan.start_result_worker());
+        assert!(start_plan.start_dosage_worker());
+        assert_eq!(
+            start_plan.start_actions,
+            vec![
+                CALLBACK_WORKER_START_RESULT_WORKER_ACTION.to_string(),
+                CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION.to_string(),
+            ],
+        );
+
+        let already_started_plan = plan_callback_worker_start(true);
+        assert!(!already_started_plan.should_start());
+        assert!(!already_started_plan.start_result_worker());
+        assert!(!already_started_plan.start_dosage_worker());
+        assert!(already_started_plan.start_actions.is_empty());
+    }
+
+    #[test]
     fn tracks_callback_scheduler_state() {
         let mut scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
 
@@ -2082,8 +2150,10 @@ mod tests {
         assert_eq!(scheduler_state.dosage_buffer_limit(), 8);
         assert_eq!(scheduler_state.dosage_buffer_pool_limit(), 8);
         assert!(!scheduler_state.has_started());
+        assert_eq!(scheduler_state.plan_worker_start(), plan_callback_worker_start(false));
         assert!(scheduler_state.mark_started());
         assert!(scheduler_state.has_started());
+        assert_eq!(scheduler_state.plan_worker_start(), plan_callback_worker_start(true));
         assert!(!scheduler_state.mark_started());
 
         assert!(scheduler_state.acquire_dosage_queue_slot());

@@ -1047,6 +1047,21 @@ def test_native_callback_worker_lifecycle_state_tracks_start() -> None:
     assert lifecycle_state.mark_started() is False
 
 
+def test_plan_callback_worker_start_uses_native_start_policy() -> None:
+    start_plan = _core.plan_callback_worker_start(has_started=False)
+
+    assert start_plan.should_start is True
+    assert start_plan.start_result_worker is True
+    assert start_plan.start_dosage_worker is True
+    assert start_plan.start_actions == ["start_result_worker", "start_dosage_worker"]
+
+    already_started_plan = _core.plan_callback_worker_start(has_started=True)
+    assert already_started_plan.should_start is False
+    assert already_started_plan.start_result_worker is False
+    assert already_started_plan.start_dosage_worker is False
+    assert already_started_plan.start_actions == []
+
+
 def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     scheduler_state = _core.NativeCallbackSchedulerState(
         staging_depth=3,
@@ -1069,8 +1084,12 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     assert scheduler_state.dosage_buffer_limit == 8
     assert scheduler_state.dosage_buffer_pool_limit == 8
     assert scheduler_state.has_started is False
+    start_plan = scheduler_state.plan_worker_start()
+    assert start_plan.should_start is True
+    assert start_plan.start_actions == ["start_result_worker", "start_dosage_worker"]
     assert scheduler_state.mark_started() is True
     assert scheduler_state.has_started is True
+    assert scheduler_state.plan_worker_start().should_start is False
     assert scheduler_state.mark_started() is False
 
     assert scheduler_state.acquire_dosage_queue_slot() is True

@@ -2026,6 +2026,41 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
     assert not callback.result_worker_thread.is_alive()
 
 
+def test_native_callback_runner_uses_native_worker_start_plan() -> None:
+    class RecordingWorkerThread:
+        def __init__(self, *, worker_name: str, start_events: list[str]) -> None:
+            self.worker_name = worker_name
+            self.start_events = start_events
+
+        def start(self) -> None:
+            self.start_events.append(self.worker_name)
+
+    start_events: list[str] = []
+    callback = object.__new__(ManualCallbackRunner)
+    attach_manual_callback_scheduler_state(callback)
+    callback_for_start = typing.cast("typing.Any", callback)
+    callback_for_start.worker_start_lock = threading.Lock()
+    callback_for_start.result_worker_thread = RecordingWorkerThread(
+        worker_name="result",
+        start_events=start_events,
+    )
+    callback_for_start.worker_thread = RecordingWorkerThread(
+        worker_name="dosage",
+        start_events=start_events,
+    )
+
+    with patch(
+        "g.engine.callbacks.runtime._core.plan_callback_worker_start",
+        side_effect=AssertionError("runner should use scheduler worker start planner"),
+    ):
+        callback.start()
+        callback.start()
+
+    assert start_events == ["result", "dosage"]
+    assert callback.callback_scheduler_state.has_started is True
+    assert callback.callback_scheduler_state.plan_worker_start().should_start is False
+
+
 def test_native_callback_runner_records_native_delivery_timing_for_enqueued_chunk() -> None:
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
 
