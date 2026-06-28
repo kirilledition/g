@@ -929,6 +929,12 @@ def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
             calls.append(("threads", thread_count))
             raise RuntimeError("global pool already initialized")
 
+        def format_rayon_thread_pool_configuration_error_value(self, thread_count: int, source_error: str) -> str:
+            return (
+                f"Unable to configure Rayon global thread pool for --threads={thread_count}; "
+                f"existing Rayon settings are unknown: {source_error}"
+            )
+
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime._core", FakeCoreModule()),

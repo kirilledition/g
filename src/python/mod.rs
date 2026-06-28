@@ -101,7 +101,10 @@ use run_events::{
 use run_metadata::{
     build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload, build_run_manifest_extension_payload,
 };
-use runtime::{configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool};
+use runtime::{
+    configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool,
+    format_rayon_thread_pool_configuration_error_value,
+};
 use runtime_paths::build_default_local_cache_directory_value;
 use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
 use runtime_state::{
@@ -1969,6 +1972,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(write_run_manifest_json, module)?)?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
+    module.add_function(wrap_pyfunction!(format_rayon_thread_pool_configuration_error_value, module)?)?;
     module.add_function(wrap_pyfunction!(describe_logging_runtime_policy_value, module)?)?;
     module.add_function(wrap_pyfunction!(emit_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;

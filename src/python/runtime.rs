@@ -2,7 +2,9 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use g_genotype::bgen::set_bgen_decode_tile_variant_count;
-use g_runtime::{RayonRuntimeError, configure_global_rayon_thread_pool};
+use g_runtime::{
+    RayonRuntimeError, configure_global_rayon_thread_pool, format_global_rayon_thread_pool_configuration_error,
+};
 
 use super::errors;
 
@@ -17,6 +19,12 @@ pub(super) fn configure_bgen_decode_tile_variant_count(tile_variant_count: usize
 #[allow(clippy::missing_errors_doc)]
 pub(super) fn configure_rayon_global_thread_pool(thread_count: usize) -> PyResult<()> {
     configure_global_rayon_thread_pool(thread_count).map_err(|error| rayon_runtime_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(super) fn format_rayon_thread_pool_configuration_error_value(thread_count: i64, source_error: String) -> String {
+    format_global_rayon_thread_pool_configuration_error(thread_count, &source_error)
 }
 
 fn rayon_runtime_error_to_py(error: &RayonRuntimeError) -> PyErr {

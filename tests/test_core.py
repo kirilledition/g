@@ -491,6 +491,18 @@ def test_native_rayon_thread_pool_rejects_zero_thread_count() -> None:
         _core.configure_rayon_global_thread_pool(0)
 
 
+def test_native_rayon_thread_pool_configuration_error_message() -> None:
+    message = _core.format_rayon_thread_pool_configuration_error_value(
+        thread_count=4,
+        source_error="global pool already initialized",
+    )
+
+    assert message == (
+        "Unable to configure Rayon global thread pool for --threads=4; "
+        "existing Rayon settings are unknown: global pool already initialized"
+    )
+
+
 def test_native_jax_runtime_setup_diagnostic_payloads() -> None:
     diagnostic_payloads = _core.build_jax_runtime_setup_diagnostic_payloads(
         requested_device="gpu",

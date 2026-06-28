@@ -20,7 +20,9 @@ pub use jax_runtime::{
     plan_jax_gpu_validation, plan_jax_runtime_config_updates, plan_jax_runtime_diagnostic_record,
     plan_jax_runtime_setup_side_effects, resolve_jax_runtime_setup,
 };
-pub use rayon_runtime::{RayonRuntimeError, configure_global_rayon_thread_pool};
+pub use rayon_runtime::{
+    RayonRuntimeError, configure_global_rayon_thread_pool, format_global_rayon_thread_pool_configuration_error,
+};
 pub use run_events::{
     RunArtifactPayload, RunArtifactTelemetryFields, RunCompletedEventPayload, RunCompletedTelemetryFields,
     RunFailedEventPayload, RunFailedTelemetryFields, RunInterruptedEventPayload, RunInterruptedTelemetryFields,

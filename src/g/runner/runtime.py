@@ -386,9 +386,9 @@ def configure_rayon_thread_pool(core_module: typing.Any, thread_count: int) -> N
     try:
         core_module.configure_rayon_global_thread_pool(planned_thread_count)
     except RuntimeError as error:
-        message = (
-            f"Unable to configure Rayon global thread pool for --threads={planned_thread_count}; "
-            f"existing Rayon settings are unknown: {error}"
+        message = core_module.format_rayon_thread_pool_configuration_error_value(
+            planned_thread_count,
+            str(error),
         )
         raise RuntimeError(message) from error
     PROCESS_RUNTIME_STATE.record_rayon_thread_count(planned_thread_count)

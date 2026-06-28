@@ -43,6 +43,14 @@ pub fn configure_global_rayon_thread_pool(thread_count: usize) -> Result<(), Ray
         .map_err(|source| RayonRuntimeError::GlobalThreadPool { source })
 }
 
+#[must_use]
+pub fn format_global_rayon_thread_pool_configuration_error(thread_count: i64, source_error: &str) -> String {
+    format!(
+        "Unable to configure Rayon global thread pool for --threads={thread_count}; \
+         existing Rayon settings are unknown: {source_error}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,5 +62,16 @@ mod tests {
         assert!(matches!(error, RayonRuntimeError::InvalidThreadCount));
         assert_eq!(error.to_string(), "Rayon thread count must be positive.");
         assert!(error.source().is_none());
+    }
+
+    #[test]
+    fn formats_global_thread_pool_configuration_error() {
+        let message = format_global_rayon_thread_pool_configuration_error(4, "global pool already initialized");
+
+        assert_eq!(
+            message,
+            "Unable to configure Rayon global thread pool for --threads=4; \
+             existing Rayon settings are unknown: global pool already initialized",
+        );
     }
 }
