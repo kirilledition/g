@@ -68,6 +68,19 @@ pub struct TelemetryProgressThrottleState {
     last_progress_chunk_count: i64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TelemetryRunSessionState {
+    run_id: String,
+    policy: telemetry_policy::TelemetrySessionPolicyPayload,
+    progress_throttle: TelemetryProgressThrottleState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryRunSessionWriterPlan {
+    pub should_open_writer: bool,
+    pub event_cap: Option<i64>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TelemetryEventEmissionPlan {
     pub should_emit: bool,
@@ -235,6 +248,73 @@ impl TelemetryProgressThrottleState {
         self.last_progress_time_seconds = Some(current_time_seconds);
         self.last_progress_chunk_count = processed_chunk_count;
         true
+    }
+}
+
+impl TelemetryRunSessionState {
+    #[must_use]
+    pub fn new(
+        telemetry_mode: &str,
+        trace_event_cap: i64,
+        progress_interval_seconds: f64,
+        progress_interval_chunks: i64,
+        run_id: Option<String>,
+    ) -> Self {
+        Self {
+            run_id: run_id.unwrap_or_else(generate_run_id),
+            policy: telemetry_policy::resolve_telemetry_session_policy(telemetry_mode, trace_event_cap),
+            progress_throttle: TelemetryProgressThrottleState::new(progress_interval_seconds, progress_interval_chunks),
+        }
+    }
+
+    #[must_use]
+    pub fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    #[must_use]
+    pub const fn enabled(&self) -> bool {
+        self.policy.enabled
+    }
+
+    #[must_use]
+    pub const fn profile_enabled(&self) -> bool {
+        self.policy.profile_enabled
+    }
+
+    #[must_use]
+    pub const fn event_cap(&self) -> Option<i64> {
+        self.policy.event_cap
+    }
+
+    #[must_use]
+    pub fn writer_plan(&self, stream_file_configured: bool) -> TelemetryRunSessionWriterPlan {
+        TelemetryRunSessionWriterPlan {
+            should_open_writer: self.policy.enabled && stream_file_configured,
+            event_cap: self.policy.event_cap,
+        }
+    }
+
+    #[must_use]
+    pub fn plan_event_emission(&self, has_native_telemetry_session: bool) -> TelemetryEventEmissionPlan {
+        plan_telemetry_event_emission(self.policy.enabled, has_native_telemetry_session)
+    }
+
+    #[must_use]
+    pub fn should_emit_progress_at(&mut self, processed_chunk_count: i64, current_time_seconds: f64) -> bool {
+        self.progress_throttle.should_emit_progress_at(processed_chunk_count, current_time_seconds)
+    }
+
+    #[must_use]
+    pub fn plan_progress_emission_at(
+        &mut self,
+        processed_chunk_count: i64,
+        current_time_seconds: f64,
+        has_native_telemetry_session: bool,
+    ) -> TelemetryProgressEmissionPlan {
+        let should_emit_progress = self.policy.enabled
+            && self.progress_throttle.should_emit_progress_at(processed_chunk_count, current_time_seconds);
+        plan_telemetry_progress_emission(self.policy.enabled, has_native_telemetry_session, should_emit_progress)
     }
 }
 
@@ -489,5 +569,40 @@ mod tests {
 
         assert_eq!(run_id.len(), 32);
         assert!(run_id.chars().all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn telemetry_run_session_state_owns_policy_writer_plan_and_progress() {
+        let mut state = TelemetryRunSessionState::new("trace", 2, 5.0, 10, Some("run-1".to_string()));
+
+        assert_eq!(state.run_id(), "run-1");
+        assert!(state.enabled());
+        assert!(state.profile_enabled());
+        assert_eq!(state.event_cap(), Some(2));
+        assert_eq!(
+            state.writer_plan(true),
+            TelemetryRunSessionWriterPlan { should_open_writer: true, event_cap: Some(2) },
+        );
+        assert_eq!(
+            state.writer_plan(false),
+            TelemetryRunSessionWriterPlan { should_open_writer: false, event_cap: Some(2) },
+        );
+        assert_eq!(state.plan_event_emission(true), TelemetryEventEmissionPlan { should_emit: true });
+        assert_eq!(
+            state.plan_progress_emission_at(1, 0.0, true),
+            TelemetryProgressEmissionPlan {
+                should_emit: true,
+                event_name: "progress_tick".to_string(),
+                level: "info".to_string(),
+            },
+        );
+        assert_eq!(
+            state.plan_progress_emission_at(2, 1.0, true),
+            TelemetryProgressEmissionPlan {
+                should_emit: false,
+                event_name: "progress_tick".to_string(),
+                level: "info".to_string(),
+            },
+        );
     }
 }

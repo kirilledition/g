@@ -66,6 +66,13 @@ pub struct NativeTelemetryClosePlan {
     inner: native_telemetry_session::TelemetryClosePlan,
 }
 
+#[pyclass]
+pub struct NativeTelemetryRunSession {
+    progress_start_time: Instant,
+    state: Mutex<native_telemetry_session::TelemetryRunSessionState>,
+    native_telemetry_session: Option<NativeTelemetrySession>,
+}
+
 impl TelemetryWriterFactory {
     fn new(writer: NonBlocking, event_cap_state: native_telemetry_session::TelemetryEventCapState) -> Self {
         Self { writer, event_cap_state: Arc::new(event_cap_state) }
@@ -215,6 +222,185 @@ impl NativeTelemetryClosePlan {
     #[getter]
     fn legacy_close_event_level(&self) -> &str {
         &self.inner.legacy_close_event_level
+    }
+}
+
+#[pymethods]
+impl NativeTelemetryRunSession {
+    #[new]
+    #[pyo3(signature = (
+        telemetry_mode,
+        stream_file,
+        progress_interval_seconds,
+        progress_interval_chunks,
+        queue_size=65536,
+        lossy=true,
+        trace_event_cap=0,
+        run_id=None,
+    ))]
+    pub fn new(
+        telemetry_mode: &str,
+        stream_file: Option<String>,
+        progress_interval_seconds: f64,
+        progress_interval_chunks: i64,
+        queue_size: usize,
+        lossy: bool,
+        trace_event_cap: i64,
+        run_id: Option<String>,
+    ) -> PyResult<Self> {
+        let state = native_telemetry_session::TelemetryRunSessionState::new(
+            telemetry_mode,
+            trace_event_cap,
+            progress_interval_seconds,
+            progress_interval_chunks,
+            run_id,
+        );
+        let writer_plan = state.writer_plan(stream_file.is_some());
+        let native_telemetry_session = if writer_plan.should_open_writer {
+            let stream_file = stream_file
+                .ok_or_else(|| PyValueError::new_err("Telemetry stream file is required when telemetry is enabled."))?;
+            Some(NativeTelemetrySession::new(
+                stream_file,
+                queue_size,
+                lossy,
+                telemetry_event_cap_to_usize(writer_plan.event_cap)?,
+            )?)
+        } else {
+            None
+        };
+
+        Ok(Self { progress_start_time: Instant::now(), state: Mutex::new(state), native_telemetry_session })
+    }
+
+    #[getter]
+    fn run_id(&self) -> PyResult<String> {
+        self.run_id_value()
+    }
+
+    #[getter]
+    fn enabled(&self) -> PyResult<bool> {
+        Ok(self.state_guard()?.enabled())
+    }
+
+    #[getter]
+    fn profile_enabled(&self) -> PyResult<bool> {
+        Ok(self.state_guard()?.profile_enabled())
+    }
+
+    #[getter]
+    fn event_cap(&self) -> PyResult<Option<i64>> {
+        Ok(self.state_guard()?.event_cap())
+    }
+
+    #[getter]
+    fn has_native_telemetry_session(&self) -> bool {
+        self.native_telemetry_session.is_some()
+    }
+
+    pub fn should_emit_progress(&self, processed_chunk_count: i64) -> PyResult<bool> {
+        let current_time_seconds = self.progress_start_time.elapsed().as_secs_f64();
+        let mut state = self.state_guard()?;
+        Ok(state.should_emit_progress_at(processed_chunk_count, current_time_seconds))
+    }
+
+    pub fn emit_current_event<'py>(
+        &self,
+        py: Python<'py>,
+        event: &str,
+        level: &str,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        let emission_plan = self.state_guard()?.plan_event_emission(self.native_telemetry_session.is_some());
+        if !emission_plan.should_emit {
+            return Ok(());
+        }
+        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
+            return Ok(());
+        };
+        native_telemetry_session.emit_current_event(py, &self.run_id_value()?, event, level, fields)
+    }
+
+    pub fn emit_progress<'py>(
+        &self,
+        py: Python<'py>,
+        processed_chunk_count: i64,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        let current_time_seconds = self.progress_start_time.elapsed().as_secs_f64();
+        let emission_plan = self.state_guard()?.plan_progress_emission_at(
+            processed_chunk_count,
+            current_time_seconds,
+            self.native_telemetry_session.is_some(),
+        );
+        if !emission_plan.should_emit {
+            return Ok(());
+        }
+        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
+            return Ok(());
+        };
+        let progress_fields = PyDict::new(py);
+        progress_fields.set_item("processed_chunk_count", processed_chunk_count)?;
+        for (key, value) in fields {
+            progress_fields.set_item(key, value)?;
+        }
+        native_telemetry_session.emit_current_event(
+            py,
+            &self.run_id_value()?,
+            &emission_plan.event_name,
+            &emission_plan.level,
+            &progress_fields,
+        )
+    }
+
+    pub fn build_current_event_payload<'py>(
+        &self,
+        py: Python<'py>,
+        event: &str,
+        level: &str,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        build_current_telemetry_event_payload(py, &self.run_id_value()?, event, level, fields)
+    }
+
+    pub fn emit_payload(&self, py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<()> {
+        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
+            return Ok(());
+        };
+        native_telemetry_session.emit_payload(py, payload)
+    }
+
+    pub fn counters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
+            return telemetry_writer_counter_snapshot_to_py_dict(
+                py,
+                &native_telemetry_session::TelemetryWriterCounterSnapshot::empty(),
+            );
+        };
+        native_telemetry_session.counters(py)
+    }
+
+    pub fn close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
+            return Ok(None);
+        };
+        native_telemetry_session.close_metadata(py)
+    }
+
+    pub fn finish_close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
+            return Ok(None);
+        };
+        native_telemetry_session.finish_close_metadata(py).map(Some)
+    }
+
+    pub fn finish_with_current_close_event_metadata<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
+            return Ok(None);
+        };
+        native_telemetry_session.finish_with_current_close_event_metadata(py, &self.run_id_value()?).map(Some)
     }
 }
 
@@ -448,6 +634,16 @@ impl NativeTelemetrySession {
         *last_counter_snapshot = Some(counter_snapshot.clone());
         writer.fail_if_lossless_cap_exceeded()?;
         Ok(counter_snapshot)
+    }
+}
+
+impl NativeTelemetryRunSession {
+    fn state_guard(&self) -> PyResult<std::sync::MutexGuard<'_, native_telemetry_session::TelemetryRunSessionState>> {
+        self.state.lock().map_err(|_| PyRuntimeError::new_err("Telemetry run session mutex was poisoned."))
+    }
+
+    fn run_id_value(&self) -> PyResult<String> {
+        Ok(self.state_guard()?.run_id().to_string())
     }
 }
 
@@ -815,6 +1011,14 @@ fn resolve_span_events(include_span_events: bool) -> FmtSpan {
 
 fn normalize_event_cap(event_cap: Option<usize>) -> Option<usize> {
     event_cap.filter(|cap| *cap > 0)
+}
+
+fn telemetry_event_cap_to_usize(event_cap: Option<i64>) -> PyResult<Option<usize>> {
+    event_cap
+        .map(|value| {
+            usize::try_from(value).map_err(|_| PyValueError::new_err("Telemetry event cap must be non-negative."))
+        })
+        .transpose()
 }
 
 fn build_log_file_writer(path: &Path, log_queue_size: usize, log_lossy: bool) -> PyResult<(NonBlocking, WorkerGuard)> {

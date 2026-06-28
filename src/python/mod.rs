@@ -72,9 +72,10 @@ use jax_runtime::{
 };
 use logging::{
     NativeTelemetryClosePlan, NativeTelemetryEventEmissionPlan, NativeTelemetryProgressEmissionPlan,
-    NativeTelemetryProgressThrottle, NativeTelemetrySession, build_current_telemetry_event_payload,
-    build_telemetry_event_payload, emit_diagnostic_event, generate_telemetry_run_id_value, initialize_logging,
-    plan_telemetry_close, plan_telemetry_event_emission, plan_telemetry_progress_emission, shutdown_logging,
+    NativeTelemetryProgressThrottle, NativeTelemetryRunSession, NativeTelemetrySession,
+    build_current_telemetry_event_payload, build_telemetry_event_payload, emit_diagnostic_event,
+    generate_telemetry_run_id_value, initialize_logging, plan_telemetry_close, plan_telemetry_event_emission,
+    plan_telemetry_progress_emission, shutdown_logging,
 };
 use output::{
     NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
@@ -1860,6 +1861,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeTelemetryEventEmissionPlan>()?;
     module.add_class::<NativeTelemetryProgressEmissionPlan>()?;
     module.add_class::<NativeTelemetryProgressThrottle>()?;
+    module.add_class::<NativeTelemetryRunSession>()?;
     module.add_class::<NativeTelemetrySessionPolicy>()?;
     module.add_class::<NativeTelemetrySession>()?;
     module.add_class::<VariantMetadata>()?;

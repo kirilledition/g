@@ -66,54 +66,60 @@ class TelemetrySession:
         """Initialize a run telemetry session."""
         self.mode = mode
         self.paths = paths
-        self.run_id = run_id or _core.generate_telemetry_run_id_value()
-        self.native_session_policy = _core.NativeTelemetrySessionPolicy(mode.value, trace_event_cap)
-        self.native_progress_throttle = _core.NativeTelemetryProgressThrottle(
-            progress_interval_seconds,
-            progress_interval_chunks,
-        )
-        self.native_telemetry_session = (
-            _core.NativeTelemetrySession(
-                str(paths.stream_file),
-                queue_size=queue_size,
-                lossy=lossy,
-                event_cap=self.native_session_policy.event_cap,
-            )
-            if self.enabled and paths.stream_file is not None
-            else None
+        self.native_session_handle = _core.NativeTelemetryRunSession(
+            telemetry_mode=mode.value,
+            stream_file=None if paths.stream_file is None else str(paths.stream_file),
+            progress_interval_seconds=progress_interval_seconds,
+            progress_interval_chunks=progress_interval_chunks,
+            queue_size=queue_size,
+            lossy=lossy,
+            trace_event_cap=trace_event_cap,
+            run_id=run_id,
         )
 
     @property
     def enabled(self) -> bool:
         """Return whether this session writes telemetry."""
-        return self.native_session_policy.enabled
+        return self.native_session_handle.enabled
 
     @property
     def profile_enabled(self) -> bool:
         """Return whether profiling-grade telemetry is enabled."""
-        return self.native_session_policy.profile_enabled
+        return self.native_session_handle.profile_enabled
+
+    @property
+    def run_id(self) -> str:
+        """Return the native run identifier."""
+        return self.native_session_handle.run_id
+
+    @property
+    def native_session_policy(self) -> _core.NativeTelemetryRunSession:
+        """Return the native session handle for policy compatibility."""
+        return self.native_session_handle
+
+    @property
+    def native_progress_throttle(self) -> _core.NativeTelemetryRunSession:
+        """Return the native session handle for progress compatibility."""
+        return self.native_session_handle
+
+    @property
+    def native_telemetry_session(self) -> _core.NativeTelemetryRunSession | None:
+        """Return the native session handle when a writer is configured."""
+        if not self.native_session_handle.has_native_telemetry_session:
+            return None
+        return self.native_session_handle
 
     @property
     def close_metadata(self) -> TelemetryCloseMetadata | None:
         """Return close metadata captured by the native telemetry handle."""
-        if self.native_telemetry_session is None:
-            return None
-        metadata = self.native_telemetry_session.close_metadata()
+        metadata = self.native_session_handle.close_metadata()
         if metadata is None:
             return None
         return typing.cast("TelemetryCloseMetadata", dict(metadata))
 
     def log_event(self, event: str, level: str, **fields: object) -> None:
         """Write one structured lifecycle or profile event."""
-        emission_plan = _core.plan_telemetry_event_emission(
-            telemetry_enabled=self.enabled,
-            has_native_telemetry_session=self.native_telemetry_session is not None,
-        )
-        if not emission_plan.should_emit:
-            return
-        native_telemetry_session = typing.cast("_core.NativeTelemetrySession", self.native_telemetry_session)
-        native_telemetry_session.emit_current_event(
-            self.run_id,
+        self.native_session_handle.emit_current_event(
             event,
             level,
             fields,
@@ -121,64 +127,40 @@ class TelemetrySession:
 
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
-        should_emit_progress = self.enabled and self.should_emit_progress(processed_chunk_count)
-        emission_plan = _core.plan_telemetry_progress_emission(
-            telemetry_enabled=self.enabled,
-            has_native_telemetry_session=self.native_telemetry_session is not None,
-            should_emit_progress=should_emit_progress,
-        )
-        if not emission_plan.should_emit:
-            return
-        native_telemetry_session = typing.cast("_core.NativeTelemetrySession", self.native_telemetry_session)
-        progress_fields = {"processed_chunk_count": processed_chunk_count, **fields}
-        native_telemetry_session.emit_current_event(
-            self.run_id,
-            emission_plan.event_name,
-            emission_plan.level,
-            progress_fields,
+        self.native_session_handle.emit_progress(
+            processed_chunk_count,
+            fields,
         )
 
     def should_emit_progress(self, processed_chunk_count: int) -> bool:
         """Return whether a progress event should be emitted now."""
-        return self.native_progress_throttle.should_emit_progress(processed_chunk_count)
+        return self.native_session_handle.should_emit_progress(processed_chunk_count)
 
     def build_event_payload(self, *, event: str, level: str, **fields: object) -> dict[str, object]:
         """Build a schema-versioned telemetry event payload."""
-        return dict(
-            _core.build_current_telemetry_event_payload(
-                self.run_id,
-                event,
-                level,
-                fields,
-            )
-        )
+        return dict(self.native_session_handle.build_current_event_payload(event, level, fields))
 
     def write_json_line(self, payload: dict[str, object]) -> None:
         """Append one JSON line when the destination path is configured."""
-        if self.native_telemetry_session is None:
-            return
-        self.native_telemetry_session.emit_payload(payload)
+        self.native_session_handle.emit_payload(payload)
 
     def writer_counters(self) -> TelemetryWriterCounters:
         """Return the current native telemetry writer counters."""
-        if self.native_telemetry_session is None:
-            return build_empty_writer_counters()
-        return typing.cast("TelemetryWriterCounters", dict(self.native_telemetry_session.counters()))
+        return typing.cast("TelemetryWriterCounters", dict(self.native_session_handle.counters()))
 
     def close(self) -> TelemetryCloseMetadata | None:
         """Flush buffered telemetry resources."""
-        if self.native_telemetry_session is None:
+        metadata = self.native_session_handle.finish_close_metadata()
+        if metadata is None:
             return None
-        return typing.cast("TelemetryCloseMetadata", dict(self.native_telemetry_session.finish_close_metadata()))
+        return typing.cast("TelemetryCloseMetadata", dict(metadata))
 
     def close_with_event(self) -> TelemetryCloseMetadata | None:
         """Emit the close event and flush buffered telemetry resources."""
-        if self.native_telemetry_session is None:
+        metadata = self.native_session_handle.finish_with_current_close_event_metadata()
+        if metadata is None:
             return None
-        return typing.cast(
-            "TelemetryCloseMetadata",
-            dict(self.native_telemetry_session.finish_with_current_close_event_metadata(self.run_id)),
-        )
+        return typing.cast("TelemetryCloseMetadata", dict(metadata))
 
 
 def format_timestamp(timestamp_seconds: float) -> str:

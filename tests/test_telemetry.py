@@ -423,18 +423,17 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     assert legacy_close_plan.use_native_close_with_event is False
     assert legacy_close_plan.should_emit_legacy_close_event is True
     assert disabled_close_plan.should_close is False
+    assert isinstance(off_session.native_session_handle, _core.NativeTelemetryRunSession)
     assert not off_session.enabled
     assert not off_session.profile_enabled
     assert off_session.native_session_policy.event_cap is None
     assert off_session.native_telemetry_session is None
+    assert isinstance(profile_session.native_telemetry_session, _core.NativeTelemetryRunSession)
     assert profile_session.enabled
     assert profile_session.profile_enabled
 
 
-def test_telemetry_session_uses_native_progress_emission_plan(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_native_telemetry_run_session_owns_progress_emission(tmp_path: Path) -> None:
     telemetry_paths = telemetry.TelemetryPaths(
         log_dir=tmp_path,
         stream_file=tmp_path / "events.jsonl",
@@ -452,26 +451,15 @@ def test_telemetry_session_uses_native_progress_emission_plan(
         run_id="run-1",
     )
 
-    def plan_telemetry_progress_emission(
-        *,
-        telemetry_enabled: bool,
-        has_native_telemetry_session: bool,
-        should_emit_progress: bool,
-    ) -> object:
-        assert telemetry_enabled is True
-        assert has_native_telemetry_session is True
-        assert should_emit_progress is True
-        return unittest.mock.Mock(should_emit=True, event_name="native_progress_tick", level="debug")
-
-    monkeypatch.setattr(telemetry._core, "plan_telemetry_progress_emission", plan_telemetry_progress_emission)
-
+    assert telemetry_session.native_session_handle.has_native_telemetry_session
     telemetry_session.log_progress(processed_chunk_count=1, chromosome="22")
+    telemetry_session.log_progress(processed_chunk_count=2, chromosome="22")
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
     event_payload = json.loads(telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()[0])
-    assert event_payload["event"] == "native_progress_tick"
-    assert event_payload["level"] == "DEBUG"
+    assert event_payload["event"] == "progress_tick"
+    assert event_payload["level"] == "INFO"
     assert event_payload["processed_chunk_count"] == 1
     assert event_payload["chromosome"] == "22"
 
