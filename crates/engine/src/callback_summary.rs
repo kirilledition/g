@@ -46,6 +46,17 @@ pub struct BinaryCorrectionSummaryState {
     pub null_model_failure_count: i64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BinaryCorrectionDiagnosticsRecordPlan {
+    pub should_record: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BinaryCorrectionSummaryEmitPlan {
+    pub should_flush_pending_diagnostics: bool,
+    pub should_emit_summary: bool,
+}
+
 impl BinaryCorrectionSummaryState {
     pub fn add_null_model_failure_count(&mut self, failure_count: i64) {
         self.null_model_failure_count += failure_count;
@@ -79,6 +90,32 @@ impl BinaryCorrectionSummaryState {
     #[must_use]
     pub const fn should_emit(&self) -> bool {
         self.chunk_count != 0 || self.null_model_failure_count != 0
+    }
+
+    #[must_use]
+    pub const fn chunk_count_with_pending(&self, pending_diagnostics_count: i64) -> i64 {
+        self.chunk_count + pending_diagnostics_count
+    }
+
+    #[must_use]
+    pub const fn plan_diagnostics_record(
+        has_telemetry_session: bool,
+        has_diagnostics: bool,
+    ) -> BinaryCorrectionDiagnosticsRecordPlan {
+        BinaryCorrectionDiagnosticsRecordPlan { should_record: has_telemetry_session && has_diagnostics }
+    }
+
+    #[must_use]
+    pub const fn plan_summary_emit(
+        &self,
+        has_telemetry_session: bool,
+        pending_diagnostics_count: i64,
+    ) -> BinaryCorrectionSummaryEmitPlan {
+        let should_flush_pending_diagnostics = has_telemetry_session && pending_diagnostics_count > 0;
+        BinaryCorrectionSummaryEmitPlan {
+            should_flush_pending_diagnostics,
+            should_emit_summary: has_telemetry_session && (self.should_emit() || should_flush_pending_diagnostics),
+        }
     }
 }
 
@@ -154,5 +191,37 @@ mod tests {
         let mut chunk_summary = BinaryCorrectionSummaryState::default();
         chunk_summary.add_diagnostics_totals(1, &BinaryChunkDiagnosticsInput::default());
         assert!(chunk_summary.should_emit());
+    }
+
+    #[test]
+    fn plans_binary_correction_summary_record_and_emit_policy() {
+        let mut summary = BinaryCorrectionSummaryState::default();
+
+        assert_eq!(
+            BinaryCorrectionSummaryState::plan_diagnostics_record(true, true),
+            BinaryCorrectionDiagnosticsRecordPlan { should_record: true },
+        );
+        assert_eq!(
+            BinaryCorrectionSummaryState::plan_diagnostics_record(false, true),
+            BinaryCorrectionDiagnosticsRecordPlan { should_record: false },
+        );
+        assert_eq!(summary.chunk_count_with_pending(3), 3);
+        assert_eq!(
+            summary.plan_summary_emit(true, 0),
+            BinaryCorrectionSummaryEmitPlan { should_flush_pending_diagnostics: false, should_emit_summary: false },
+        );
+        assert_eq!(
+            summary.plan_summary_emit(true, 2),
+            BinaryCorrectionSummaryEmitPlan { should_flush_pending_diagnostics: true, should_emit_summary: true },
+        );
+        summary.add_null_model_failure_count(1);
+        assert_eq!(
+            summary.plan_summary_emit(true, 0),
+            BinaryCorrectionSummaryEmitPlan { should_flush_pending_diagnostics: false, should_emit_summary: true },
+        );
+        assert_eq!(
+            summary.plan_summary_emit(false, 2),
+            BinaryCorrectionSummaryEmitPlan { should_flush_pending_diagnostics: false, should_emit_summary: false },
+        );
     }
 }

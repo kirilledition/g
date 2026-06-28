@@ -13,6 +13,16 @@ pub(crate) struct NativeBinaryCorrectionSummary {
     state: Mutex<native_callback_summary::BinaryCorrectionSummaryState>,
 }
 
+#[pyclass]
+pub(crate) struct NativeBinaryCorrectionDiagnosticsRecordPlan {
+    inner: native_callback_summary::BinaryCorrectionDiagnosticsRecordPlan,
+}
+
+#[pyclass]
+pub(crate) struct NativeBinaryCorrectionSummaryEmitPlan {
+    inner: native_callback_summary::BinaryCorrectionSummaryEmitPlan,
+}
+
 #[pymethods]
 impl NativeBinaryCorrectionSummary {
     #[new]
@@ -223,6 +233,31 @@ impl NativeBinaryCorrectionSummary {
         Ok(self.lock_state()?.should_emit())
     }
 
+    fn chunk_count_with_pending(&self, pending_diagnostics_count: i64) -> PyResult<i64> {
+        Ok(self.lock_state()?.chunk_count_with_pending(pending_diagnostics_count))
+    }
+
+    fn plan_diagnostics_record(
+        &self,
+        has_telemetry_session: bool,
+        has_diagnostics: bool,
+    ) -> PyResult<NativeBinaryCorrectionDiagnosticsRecordPlan> {
+        drop(self.lock_state()?);
+        Ok(native_callback_summary::BinaryCorrectionSummaryState::plan_diagnostics_record(
+            has_telemetry_session,
+            has_diagnostics,
+        )
+        .into())
+    }
+
+    fn plan_summary_emit(
+        &self,
+        has_telemetry_session: bool,
+        pending_diagnostics_count: i64,
+    ) -> PyResult<NativeBinaryCorrectionSummaryEmitPlan> {
+        Ok(self.lock_state()?.plan_summary_emit(has_telemetry_session, pending_diagnostics_count).into())
+    }
+
     fn summary_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let state = self.lock_state()?;
         let payload = PyDict::new(py);
@@ -249,9 +284,44 @@ impl NativeBinaryCorrectionSummary {
     }
 }
 
+#[pymethods]
+impl NativeBinaryCorrectionDiagnosticsRecordPlan {
+    #[getter]
+    fn should_record(&self) -> bool {
+        self.inner.should_record
+    }
+}
+
+#[pymethods]
+impl NativeBinaryCorrectionSummaryEmitPlan {
+    #[getter]
+    fn should_flush_pending_diagnostics(&self) -> bool {
+        self.inner.should_flush_pending_diagnostics
+    }
+
+    #[getter]
+    fn should_emit_summary(&self) -> bool {
+        self.inner.should_emit_summary
+    }
+}
+
 impl NativeBinaryCorrectionSummary {
     fn lock_state(&self) -> PyResult<MutexGuard<'_, native_callback_summary::BinaryCorrectionSummaryState>> {
         self.state.lock().map_err(|_| PyRuntimeError::new_err("Binary correction summary lock was poisoned."))
+    }
+}
+
+impl From<native_callback_summary::BinaryCorrectionDiagnosticsRecordPlan>
+    for NativeBinaryCorrectionDiagnosticsRecordPlan
+{
+    fn from(record_plan: native_callback_summary::BinaryCorrectionDiagnosticsRecordPlan) -> Self {
+        Self { inner: record_plan }
+    }
+}
+
+impl From<native_callback_summary::BinaryCorrectionSummaryEmitPlan> for NativeBinaryCorrectionSummaryEmitPlan {
+    fn from(emit_plan: native_callback_summary::BinaryCorrectionSummaryEmitPlan) -> Self {
+        Self { inner: emit_plan }
     }
 }
 

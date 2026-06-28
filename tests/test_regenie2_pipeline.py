@@ -1357,6 +1357,25 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
     assert callback.binary_correction_summary.score_test_candidate_count == 2
 
 
+def test_native_callback_runner_uses_native_binary_summary_plans() -> None:
+    callback = ManualCallbackRunner()
+    callback.binary_correction_summary = callback_runtime._core.NativeBinaryCorrectionSummary()
+    callback.binary_correction_pending_diagnostics = []
+    diagnostics = typing.cast(
+        "regenie2_binary.BinaryChunkDiagnostics",
+        SimpleNamespace(score_test_candidate_count=2),
+    )
+
+    callback.record_binary_correction_diagnostics(diagnostics)
+    assert callback.binary_correction_summary_chunk_count == 0
+    assert callback.binary_correction_pending_diagnostics == []
+
+    callback.telemetry_session = typing.cast("typing.Any", RecordingTelemetrySession())
+    callback.record_binary_correction_diagnostics(diagnostics)
+    assert callback.binary_correction_summary_chunk_count == 1
+    assert callback.binary_correction_pending_diagnostics == [diagnostics]
+
+
 class FakeRunEngine:
     instances: typing.ClassVar[list[FakeRunEngine]] = []
 

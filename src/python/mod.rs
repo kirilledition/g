@@ -56,7 +56,9 @@ use callback_progress::{
     NativeCallbackProgressTelemetryEvent, NativeCallbackProgressTelemetryPlan, NativeCallbackProgressTelemetryRecord,
     NativeCallbackProgressUpdate, build_callback_chunk_identity,
 };
-use callback_summary::NativeBinaryCorrectionSummary;
+use callback_summary::{
+    NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
+};
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
 use g_engine::Regenie2RunEngineCore;
 use host_policy::{
@@ -1816,7 +1818,9 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<ChunkStats>()?;
     module.add_class::<NativeAlignedPhenotypeGroup>()?;
     module.add_class::<NativeAlignedSampleData>()?;
+    module.add_class::<NativeBinaryCorrectionDiagnosticsRecordPlan>()?;
     module.add_class::<NativeBinaryCorrectionSummary>()?;
+    module.add_class::<NativeBinaryCorrectionSummaryEmitPlan>()?;
     module.add_class::<NativeCallbackChunkIdentity>()?;
     module.add_class::<NativeCallbackProgressCompletion>()?;
     module.add_class::<NativeCallbackProgressState>()?;

@@ -779,6 +779,48 @@ def test_native_jax_runtime_diagnostic_record_plan() -> None:
     }
 
 
+def test_native_binary_correction_summary_plans_record_and_emit_policy() -> None:
+    summary = _core.NativeBinaryCorrectionSummary()
+
+    record_plan = summary.plan_diagnostics_record(
+        has_telemetry_session=True,
+        has_diagnostics=True,
+    )
+    assert record_plan.should_record is True
+    missing_telemetry_record_plan = summary.plan_diagnostics_record(
+        has_telemetry_session=False,
+        has_diagnostics=True,
+    )
+    assert missing_telemetry_record_plan.should_record is False
+    assert summary.chunk_count_with_pending(3) == 3
+
+    empty_emit_plan = summary.plan_summary_emit(
+        has_telemetry_session=True,
+        pending_diagnostics_count=0,
+    )
+    assert empty_emit_plan.should_flush_pending_diagnostics is False
+    assert empty_emit_plan.should_emit_summary is False
+    pending_emit_plan = summary.plan_summary_emit(
+        has_telemetry_session=True,
+        pending_diagnostics_count=2,
+    )
+    assert pending_emit_plan.should_flush_pending_diagnostics is True
+    assert pending_emit_plan.should_emit_summary is True
+    summary.add_null_model_failure_count(1)
+    summary_emit_plan = summary.plan_summary_emit(
+        has_telemetry_session=True,
+        pending_diagnostics_count=0,
+    )
+    assert summary_emit_plan.should_flush_pending_diagnostics is False
+    assert summary_emit_plan.should_emit_summary is True
+    missing_telemetry_emit_plan = summary.plan_summary_emit(
+        has_telemetry_session=False,
+        pending_diagnostics_count=2,
+    )
+    assert missing_telemetry_emit_plan.should_flush_pending_diagnostics is False
+    assert missing_telemetry_emit_plan.should_emit_summary is False
+
+
 def test_native_nvidia_driver_visibility_uses_any_driver_path(tmp_path: Path) -> None:
     control_device_path = tmp_path / "nvidiactl"
     uvm_device_path = tmp_path / "nvidia-uvm"

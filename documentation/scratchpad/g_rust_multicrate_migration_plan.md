@@ -1002,6 +1002,9 @@ Remove Python as the chunk-level scheduler.
 - Callback queue, result-slot, and dosage-buffer pool timing observations now
   use scheduler-owned native planners for occupancy capacity and observation
   validation.
+- Binary correction summary telemetry now uses native summary plans for
+  diagnostics retention, pending flush decisions, pending chunk counts, and
+  final emission gating.
 
 ### Tests
 
