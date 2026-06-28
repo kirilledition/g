@@ -2835,6 +2835,11 @@ class ResultWriteDrainCompletionPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class DosageWorkDrainCompletionPlanProbe:
+    should_stop: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class DosageBufferAcquireAttemptPlanProbe:
     should_take_free_buffer: bool
     should_allocate: bool
@@ -3240,6 +3245,19 @@ class ResultWriteDrainCompletionSchedulerProbe:
 
 
 @dataclasses.dataclass
+class DosageWorkDrainCompletionSchedulerProbe:
+    has_dosage_work_item: bool | None = None
+
+    def plan_dosage_work_drain_completion(
+        self,
+        *,
+        has_dosage_work_item: bool,
+    ) -> DosageWorkDrainCompletionPlanProbe:
+        self.has_dosage_work_item = has_dosage_work_item
+        return DosageWorkDrainCompletionPlanProbe(should_stop=not has_dosage_work_item)
+
+
+@dataclasses.dataclass
 class DosageBufferAttemptSchedulerProbe:
     dosage_buffer_limit: int = 2
     dosage_worker_error_message: str | None = None
@@ -3537,6 +3555,18 @@ def test_native_callback_runner_uses_scheduler_result_write_drain_completion_pla
     assert scheduler_state.flush_binary_correction_diagnostics_on_stop is True
     assert should_stop is True
     assert flushed is True
+
+
+def test_native_callback_runner_uses_scheduler_dosage_work_drain_completion_plan() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = DosageWorkDrainCompletionSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+
+    drain_completion_plan = callback.plan_dosage_work_drain_completion(None)
+    should_stop = callback.apply_dosage_work_drain_completion_plan(drain_completion_plan)
+
+    assert scheduler_state.has_dosage_work_item is False
+    assert should_stop is True
 
 
 def test_native_callback_runner_uses_scheduler_dosage_buffer_attempt_plans() -> None:

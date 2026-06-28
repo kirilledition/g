@@ -275,6 +275,11 @@ pub struct ResultWriteDrainCompletionPlan {
     pub should_flush_binary_correction_diagnostics: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DosageWorkDrainCompletionPlan {
+    pub should_stop: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DosageBufferAcquireAttemptPlan {
     pub should_take_free_buffer: bool,
@@ -774,6 +779,11 @@ impl CallbackSchedulerState {
             should_flush_binary_correction_diagnostics: !has_result_work_item
                 && flush_binary_correction_diagnostics_on_stop,
         }
+    }
+
+    #[must_use]
+    pub const fn plan_dosage_work_drain_completion(&self, has_dosage_work_item: bool) -> DosageWorkDrainCompletionPlan {
+        DosageWorkDrainCompletionPlan { should_stop: !has_dosage_work_item }
     }
 
     #[must_use]
@@ -2974,6 +2984,20 @@ mod tests {
         assert_eq!(
             scheduler_state.plan_result_write_drain_completion(false, false),
             ResultWriteDrainCompletionPlan { should_stop: true, should_flush_binary_correction_diagnostics: false },
+        );
+    }
+
+    #[test]
+    fn plans_dosage_work_drain_completion() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_dosage_work_drain_completion(true),
+            DosageWorkDrainCompletionPlan { should_stop: false },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_work_drain_completion(false),
+            DosageWorkDrainCompletionPlan { should_stop: true },
         );
     }
 

@@ -823,6 +823,10 @@ class NativeResultWriteDrainCompletionPlan:
     @property
     def should_flush_binary_correction_diagnostics(self) -> bool: ...
 
+class NativeDosageWorkDrainCompletionPlan:
+    @property
+    def should_stop(self) -> bool: ...
+
 class NativeCallbackWorkerErrorRaisePlan:
     @property
     def should_raise(self) -> bool: ...
@@ -962,6 +966,10 @@ class NativeCallbackSchedulerState:
         has_result_work_item: bool,
         flush_binary_correction_diagnostics_on_stop: bool,
     ) -> NativeResultWriteDrainCompletionPlan: ...
+    def plan_dosage_work_drain_completion(
+        self,
+        has_dosage_work_item: bool,
+    ) -> NativeDosageWorkDrainCompletionPlan: ...
     @property
     def dosage_buffer_pool_limit(self) -> int: ...
     @property

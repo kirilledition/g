@@ -154,6 +154,11 @@ pub(crate) struct NativeResultWriteDrainCompletionPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeDosageWorkDrainCompletionPlan {
+    inner: native_schedule::DosageWorkDrainCompletionPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerLifecycleState {
     inner: native_schedule::CallbackWorkerLifecycleState,
 }
@@ -547,6 +552,10 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_result_write_drain_completion(has_result_work_item, flush_binary_correction_diagnostics_on_stop)
             .into()
+    }
+
+    fn plan_dosage_work_drain_completion(&self, has_dosage_work_item: bool) -> NativeDosageWorkDrainCompletionPlan {
+        self.inner.plan_dosage_work_drain_completion(has_dosage_work_item).into()
     }
 
     #[getter]
@@ -1526,6 +1535,14 @@ impl NativeResultWriteDrainCompletionPlan {
 }
 
 #[pymethods]
+impl NativeDosageWorkDrainCompletionPlan {
+    #[getter]
+    fn should_stop(&self) -> bool {
+        self.inner.should_stop
+    }
+}
+
+#[pymethods]
 impl NativeGpuGenotypeFormatResolutionPlan {
     #[getter]
     fn requested_gpu_genotype_format(&self) -> &str {
@@ -1764,6 +1781,12 @@ impl From<native_schedule::ResultWriteItemResourceReleasePlan> for NativeResultW
 
 impl From<native_schedule::ResultWriteDrainCompletionPlan> for NativeResultWriteDrainCompletionPlan {
     fn from(drain_completion_plan: native_schedule::ResultWriteDrainCompletionPlan) -> Self {
+        Self { inner: drain_completion_plan }
+    }
+}
+
+impl From<native_schedule::DosageWorkDrainCompletionPlan> for NativeDosageWorkDrainCompletionPlan {
+    fn from(drain_completion_plan: native_schedule::DosageWorkDrainCompletionPlan) -> Self {
         Self { inner: drain_completion_plan }
     }
 }

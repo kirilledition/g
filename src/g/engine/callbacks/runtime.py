@@ -579,8 +579,12 @@ class NativeBgenCallbackRunner(abc.ABC):
             while True:
                 get_start_time = time.perf_counter()
                 work_item = self.get_dosage_work_item()
-                if work_item is None:
+                drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
+                if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
                     return
+                if work_item is None:
+                    message = "Native dosage work drain completion plan continued without a work item."
+                    raise RuntimeError(message)
                 self.record_bounded_resource_stage_duration(
                     resource_name="dosage_queue",
                     operation_name="consumer_wait",
@@ -600,8 +604,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume queued dosage chunks without diagnostic timing overhead."""
         while True:
             work_item = self.get_dosage_work_item()
-            if work_item is None:
+            drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
+            if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
                 return
+            if work_item is None:
+                message = "Native dosage work drain completion plan continued without a work item."
+                raise RuntimeError(message)
             self.process_dosage_work_item(work_item)
 
     def process_dosage_work_item(
@@ -640,6 +648,28 @@ class NativeBgenCallbackRunner(abc.ABC):
             message = f"Unsupported preprocessed dosage work item: {type(work_item).__name__}"
             raise TypeError(message)
         self.record_progress(work_item.metadata)
+
+    def plan_dosage_work_drain_completion(
+        self,
+        work_item: (
+            PreprocessedDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkBatchWorkItem
+            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+            | None
+        ),
+    ) -> _core.NativeDosageWorkDrainCompletionPlan:
+        """Plan dosage work queue drain completion from native scheduler policy."""
+        return self.callback_scheduler_state.plan_dosage_work_drain_completion(
+            has_dosage_work_item=work_item is not None,
+        )
+
+    def apply_dosage_work_drain_completion_plan(
+        self,
+        drain_completion_plan: _core.NativeDosageWorkDrainCompletionPlan,
+    ) -> bool:
+        """Apply native dosage work drain completion side effects."""
+        return drain_completion_plan.should_stop
 
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""

@@ -132,10 +132,10 @@ use schedule::{
     NativeCallbackWorkerStartPlan, NativeCallbackWorkerStopPlan, NativeCallbackWorkerStopPollPlan,
     NativeDosageBufferAcquireAttemptPlan, NativeDosageBufferDiscardAttemptPlan, NativeDosageBufferPoolState,
     NativeDosageBufferRegisterAttemptPlan, NativeDosageBufferReturnAttemptPlan, NativeDosageBufferReusePlan,
-    NativeGpuGenotypeFormatResolutionPlan, NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan,
-    NativeResultInFlightAcquireAttemptPlan, NativeResultInFlightReleaseAttemptPlan, NativeResultInFlightSlotState,
-    NativeResultWriteDrainCompletionPlan, NativeResultWriteItemResourceReleasePlan, NativeSingleTraitOutputWritePlan,
-    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    NativeDosageWorkDrainCompletionPlan, NativeGpuGenotypeFormatResolutionPlan, NativeMultiTraitChunkWritePlan,
+    NativeMultiTraitOutputWritePlan, NativeResultInFlightAcquireAttemptPlan, NativeResultInFlightReleaseAttemptPlan,
+    NativeResultInFlightSlotState, NativeResultWriteDrainCompletionPlan, NativeResultWriteItemResourceReleasePlan,
+    NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
     format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
     intersect_committed_chunk_identifier_sets, plan_auto_gpu_genotype_format_after_trusted_validation,
     plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation, plan_callback_queue_backpressure_observation,
@@ -1855,6 +1855,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeDosageBufferRegisterAttemptPlan>()?;
     module.add_class::<NativeDosageBufferReturnAttemptPlan>()?;
     module.add_class::<NativeDosageBufferReusePlan>()?;
+    module.add_class::<NativeDosageWorkDrainCompletionPlan>()?;
     module.add_class::<NativeGpuGenotypeFormatResolutionPlan>()?;
     module.add_class::<NativeMultiTraitChunkWritePlan>()?;
     module.add_class::<NativeMultiTraitOutputWritePlan>()?;

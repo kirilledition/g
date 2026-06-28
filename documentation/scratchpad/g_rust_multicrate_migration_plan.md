@@ -1009,6 +1009,8 @@ Remove Python as the chunk-level scheduler.
   host buffer release and final in-flight slot cleanup decisions.
 - Result write drain completion now uses a native stop/diagnostic-flush plan
   when callback result consumers observe the queue sentinel.
+- Dosage work drain completion now uses a native stop plan when callback
+  dosage consumers observe the queue sentinel.
 
 ### Tests
 
