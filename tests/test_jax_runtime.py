@@ -227,6 +227,23 @@ def test_configure_before_backend_init_uses_native_side_effect_plan(tmp_path: Pa
     validate_gpu_device_mock.assert_not_called()
 
 
+def test_complete_jax_runtime_setup_validation_report_uses_native_payload(tmp_path: Path) -> None:
+    setup_report = resolution.resolve_jax_runtime_setup(
+        build_runtime_policy(device=types.Device.GPU, cache_directory=tmp_path / "jax-cache")
+    )
+
+    completed_report = setup.complete_jax_runtime_setup_validation_report(
+        setup_report,
+        validation_status=models.GpuValidationStatus.SUCCEEDED,
+        validation_message="gpu ready",
+    )
+
+    assert completed_report.requested_device == types.Device.GPU
+    assert completed_report.cache_directory == tmp_path / "jax-cache"
+    assert completed_report.gpu_validation_status == models.GpuValidationStatus.SUCCEEDED
+    assert completed_report.gpu_validation_message == "gpu ready"
+
+
 def test_configure_before_backend_init_emits_structured_diagnostics(tmp_path: Path) -> None:
     """Ensure setup choices are emitted as structured diagnostic events."""
     cache_directory = tmp_path / "jax-cache"

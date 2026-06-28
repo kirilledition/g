@@ -170,6 +170,18 @@ pub fn plan_jax_runtime_setup_side_effects(
 }
 
 #[must_use]
+pub fn complete_jax_runtime_setup_validation(
+    setup: &JaxRuntimeSetupPayload,
+    gpu_validation_status: &str,
+    gpu_validation_message: Option<&str>,
+) -> JaxRuntimeSetupPayload {
+    let mut completed_setup = setup.clone();
+    completed_setup.gpu_validation_status = gpu_validation_status.to_string();
+    completed_setup.gpu_validation_message = gpu_validation_message.map(str::to_string);
+    completed_setup
+}
+
+#[must_use]
 pub fn build_jax_runtime_setup_diagnostic_events(
     setup: &JaxRuntimeSetupPayload,
 ) -> Vec<JaxRuntimeDiagnosticEventPayload> {
@@ -393,6 +405,19 @@ mod tests {
             plan_jax_runtime_setup_side_effects("gpu", false),
             JaxRuntimeSetupSideEffectPlan { should_create_cache_directory: false, should_validate_gpu: true },
         );
+    }
+
+    #[test]
+    fn completes_jax_runtime_setup_validation() {
+        let setup = resolve_jax_runtime_setup("gpu", "cache", None, true, 0, 0, false, false);
+
+        let completed_setup =
+            complete_jax_runtime_setup_validation(&setup, JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED, Some("gpu ready"));
+
+        assert_eq!(completed_setup.requested_device, "gpu");
+        assert_eq!(completed_setup.cache_directory, "cache");
+        assert_eq!(completed_setup.gpu_validation_status, JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED);
+        assert_eq!(completed_setup.gpu_validation_message, Some("gpu ready".to_string()));
     }
 
     #[test]

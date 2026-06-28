@@ -1372,6 +1372,20 @@ def resolve_jax_runtime_setup_payload(
     xla_autotune_cache: bool,
     transfer_guard: bool,
 ) -> dict[str, object]: ...
+def complete_jax_runtime_setup_validation_payload(
+    requested_device: str,
+    platform_name: str,
+    cache_directory: str,
+    matmul_precision: str,
+    persistent_cache_enabled: bool,
+    persistent_cache_min_entry_size_bytes: int,
+    persistent_cache_min_compile_time_seconds: int,
+    xla_auxiliary_cache_mode: str,
+    xla_auxiliary_cache_reason: str,
+    transfer_guard_enabled: bool,
+    gpu_validation_status: str,
+    gpu_validation_message: str | None,
+) -> dict[str, object]: ...
 def build_jax_runtime_setup_diagnostic_payloads(
     requested_device: str,
     platform_name: str,

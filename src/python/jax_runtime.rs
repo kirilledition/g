@@ -58,6 +58,46 @@ pub(crate) fn plan_jax_runtime_diagnostic_record_payload<'py>(
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
+pub(crate) fn complete_jax_runtime_setup_validation_payload<'py>(
+    py: Python<'py>,
+    requested_device: String,
+    platform_name: String,
+    cache_directory: String,
+    matmul_precision: String,
+    persistent_cache_enabled: bool,
+    persistent_cache_min_entry_size_bytes: i64,
+    persistent_cache_min_compile_time_seconds: i64,
+    xla_auxiliary_cache_mode: String,
+    xla_auxiliary_cache_reason: String,
+    transfer_guard_enabled: bool,
+    gpu_validation_status: String,
+    gpu_validation_message: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let setup = native_jax_runtime::JaxRuntimeSetupPayload {
+        requested_device,
+        platform_name,
+        cache_directory,
+        matmul_precision,
+        persistent_cache_enabled,
+        persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds,
+        xla_auxiliary_cache_mode,
+        xla_auxiliary_cache_reason,
+        transfer_guard_enabled,
+        gpu_validation_status: String::new(),
+        gpu_validation_message: None,
+    };
+    let completed_setup = native_jax_runtime::complete_jax_runtime_setup_validation(
+        &setup,
+        &gpu_validation_status,
+        gpu_validation_message.as_deref(),
+    );
+    jax_runtime_setup_payload_to_dict(py, &completed_setup)
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_jax_runtime_setup_diagnostic_payloads<'py>(
     py: Python<'py>,
     requested_device: String,

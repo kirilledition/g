@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import typing
 from pathlib import Path
 
@@ -50,19 +49,19 @@ def configure_before_backend_init(
     try:
         gpu_validation_report = validate_gpu_device()
     except RuntimeError as error:
-        failed_report = dataclasses.replace(
+        failed_report = complete_jax_runtime_setup_validation_report(
             setup_report,
-            gpu_validation_status=models.GpuValidationStatus.FAILED,
-            gpu_validation_message=str(error),
+            validation_status=models.GpuValidationStatus.FAILED,
+            validation_message=str(error),
         )
         if diagnostic_sink is not None:
             for diagnostic_event in diagnostics.diagnostic_events_from_setup_report(failed_report):
                 diagnostic_sink(diagnostic_event)
         raise
-    validated_report = dataclasses.replace(
+    validated_report = complete_jax_runtime_setup_validation_report(
         setup_report,
-        gpu_validation_status=gpu_validation_report.status,
-        gpu_validation_message=gpu_validation_report.message,
+        validation_status=gpu_validation_report.status,
+        validation_message=gpu_validation_report.message,
     )
     if diagnostic_sink is not None:
         for diagnostic_event in diagnostics.diagnostic_events_from_setup_report(validated_report):
@@ -97,6 +96,40 @@ def apply_jax_runtime_config_updates(setup_report: models.JaxRuntimeSetupReport)
     for update_payload in update_payloads:
         update_mapping = dict(typing.cast("typing.Mapping[str, object]", update_payload))
         jax.config.update(str(update_mapping["setting_name"]), update_mapping["value"])
+
+
+def complete_jax_runtime_setup_validation_report(
+    setup_report: models.JaxRuntimeSetupReport,
+    *,
+    validation_status: models.GpuValidationStatus,
+    validation_message: str | None,
+) -> models.JaxRuntimeSetupReport:
+    """Complete a setup report after the JAX GPU validation side effect.
+
+    Args:
+        setup_report: Setup report before GPU validation has completed.
+        validation_status: Final GPU validation status.
+        validation_message: Optional validation detail.
+
+    Returns:
+        Completed setup report.
+
+    """
+    completed_payload = _core.complete_jax_runtime_setup_validation_payload(
+        requested_device=setup_report.requested_device.value,
+        platform_name=setup_report.platform_name,
+        cache_directory=str(setup_report.cache_directory),
+        matmul_precision=setup_report.matmul_precision.value,
+        persistent_cache_enabled=setup_report.persistent_cache_enabled,
+        persistent_cache_min_entry_size_bytes=setup_report.persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds=setup_report.persistent_cache_min_compile_time_seconds,
+        xla_auxiliary_cache_mode=setup_report.xla_auxiliary_cache_mode.value,
+        xla_auxiliary_cache_reason=setup_report.xla_auxiliary_cache_reason,
+        transfer_guard_enabled=setup_report.transfer_guard_enabled,
+        gpu_validation_status=validation_status.value,
+        gpu_validation_message=validation_message,
+    )
+    return resolution.jax_runtime_setup_report_from_native_payload(completed_payload)
 
 
 def require_gpu_device() -> None:

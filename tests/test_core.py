@@ -591,6 +591,28 @@ def test_native_jax_runtime_setup_side_effect_plan() -> None:
     }
 
 
+def test_native_jax_runtime_setup_validation_completion() -> None:
+    completed_setup = _core.complete_jax_runtime_setup_validation_payload(
+        requested_device="gpu",
+        platform_name="cuda",
+        cache_directory="cache",
+        matmul_precision="float32",
+        persistent_cache_enabled=True,
+        persistent_cache_min_entry_size_bytes=0,
+        persistent_cache_min_compile_time_seconds=0,
+        xla_auxiliary_cache_mode="none",
+        xla_auxiliary_cache_reason="XLA auxiliary cache was not requested",
+        transfer_guard_enabled=False,
+        gpu_validation_status="succeeded",
+        gpu_validation_message="gpu ready",
+    )
+
+    assert completed_setup["requested_device"] == "gpu"
+    assert completed_setup["cache_directory"] == "cache"
+    assert completed_setup["gpu_validation_status"] == "succeeded"
+    assert completed_setup["gpu_validation_message"] == "gpu ready"
+
+
 def test_native_jax_runtime_diagnostic_record_plan() -> None:
     info_plan = _core.plan_jax_runtime_diagnostic_record_payload(
         diagnostic_level="info",

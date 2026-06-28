@@ -84,6 +84,20 @@ def resolve_jax_runtime_setup(policy: models.JaxRuntimePolicy) -> models.JaxRunt
         policy.xla_autotune_cache,
         policy.transfer_guard,
     )
+    return jax_runtime_setup_report_from_native_payload(setup_payload)
+
+
+def jax_runtime_setup_report_from_native_payload(payload: object) -> models.JaxRuntimeSetupReport:
+    """Adapt a native JAX runtime setup payload.
+
+    Args:
+        payload: Native setup payload mapping.
+
+    Returns:
+        JAX runtime setup report.
+
+    """
+    setup_payload = dict(typing.cast("typing.Mapping[str, object]", payload))
     return models.JaxRuntimeSetupReport(
         requested_device=types.Device(typing.cast("str", setup_payload["requested_device"])),
         platform_name=typing.cast("str", setup_payload["platform_name"]),
