@@ -2688,6 +2688,14 @@ class CallbackAbortPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class WorkerErrorRaisePlanProbe:
+    should_raise: bool
+    raise_dosage_worker_error: bool
+    raise_result_worker_error: bool
+    error_message: str | None
+
+
+@dataclasses.dataclass(frozen=True)
 class CallbackQueuePutAttemptPlanProbe:
     should_put: bool
     should_wait: bool
@@ -2847,6 +2855,20 @@ class CallbackQueueAttemptSchedulerProbe:
 
 
 @dataclasses.dataclass
+class WorkerErrorRaiseSchedulerProbe:
+    error_raise_called: bool = False
+
+    def plan_worker_error_raise(self) -> WorkerErrorRaisePlanProbe:
+        self.error_raise_called = True
+        return WorkerErrorRaisePlanProbe(
+            should_raise=True,
+            raise_dosage_worker_error=True,
+            raise_result_worker_error=False,
+            error_message="planned dosage worker failure",
+        )
+
+
+@dataclasses.dataclass
 class ResultInFlightAttemptSchedulerProbe:
     result_in_flight_limit: int = 1
     backpressure_poll_timeout_seconds: float = 0.1
@@ -2854,6 +2876,14 @@ class ResultInFlightAttemptSchedulerProbe:
     result_worker_error_message: str | None = None
     acquire_wait_timeout_seconds: float | None = None
     release_called: bool = False
+
+    def plan_worker_error_raise(self) -> WorkerErrorRaisePlanProbe:
+        return WorkerErrorRaisePlanProbe(
+            should_raise=False,
+            raise_dosage_worker_error=False,
+            raise_result_worker_error=False,
+            error_message=None,
+        )
 
     def plan_result_in_flight_slot_acquire_attempt(
         self,
@@ -2891,6 +2921,14 @@ class DosageBufferAttemptSchedulerProbe:
     discarded_buffer_identifier: int | None = None
     reuse_buffered_shape: tuple[int, ...] | None = None
     reuse_expected_shape: tuple[int, ...] | None = None
+
+    def plan_worker_error_raise(self) -> WorkerErrorRaisePlanProbe:
+        return WorkerErrorRaisePlanProbe(
+            should_raise=False,
+            raise_dosage_worker_error=False,
+            raise_result_worker_error=False,
+            error_message=None,
+        )
 
     def plan_dosage_buffer_acquire_attempt(
         self,
@@ -3007,6 +3045,19 @@ def test_native_callback_runner_uses_scheduler_queue_attempt_plans() -> None:
     assert result_put_wait_timeout_seconds is not None
     assert 0.0 < result_put_wait_timeout_seconds <= 0.5
     assert scheduler_state.result_get_called is True
+
+
+def test_native_callback_runner_uses_scheduler_worker_error_raise_plan() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = WorkerErrorRaiseSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+    callback.worker_error_cause = ValueError("dosage cause")
+
+    with pytest.raises(RuntimeError, match="planned dosage worker failure") as error_info:
+        callback.raise_worker_error_if_present()
+
+    assert scheduler_state.error_raise_called is True
+    assert error_info.value.__cause__ is callback.worker_error_cause
 
 
 def test_native_callback_runner_uses_scheduler_result_in_flight_attempt_plans() -> None:

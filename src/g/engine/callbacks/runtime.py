@@ -869,12 +869,19 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
-        dosage_worker_error_message = self.callback_scheduler_state.dosage_worker_error_message
-        if dosage_worker_error_message is not None:
-            raise RuntimeError(dosage_worker_error_message) from self.worker_error_cause
-        result_worker_error_message = self.callback_scheduler_state.result_worker_error_message
-        if result_worker_error_message is not None:
-            raise RuntimeError(result_worker_error_message) from self.result_worker_error_cause
+        error_raise_plan = self.callback_scheduler_state.plan_worker_error_raise()
+        if not error_raise_plan.should_raise:
+            return
+        error_message = error_raise_plan.error_message
+        if error_message is None:
+            message = "Native callback worker error raise plan omitted the error message."
+            raise RuntimeError(message)
+        if error_raise_plan.raise_dosage_worker_error:
+            raise RuntimeError(error_message) from self.worker_error_cause
+        if error_raise_plan.raise_result_worker_error:
+            raise RuntimeError(error_message) from self.result_worker_error_cause
+        message = "Native callback worker error raise plan did not select a worker."
+        raise RuntimeError(message)
 
     def put_result_write_item(
         self,

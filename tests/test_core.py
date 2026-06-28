@@ -1121,14 +1121,30 @@ def test_native_callback_scheduler_state_owns_callback_resource_state() -> None:
     assert scheduler_state.has_result_worker_error is False
     assert scheduler_state.dosage_worker_error_message is None
     assert scheduler_state.result_worker_error_message is None
+    no_error_raise_plan = scheduler_state.plan_worker_error_raise()
+    assert no_error_raise_plan.should_raise is False
+    assert no_error_raise_plan.raise_dosage_worker_error is False
+    assert no_error_raise_plan.raise_result_worker_error is False
+    assert no_error_raise_plan.error_message is None
+
+    scheduler_state.record_result_worker_error("writer failed")
+    result_error_raise_plan = scheduler_state.plan_worker_error_raise()
+    assert result_error_raise_plan.should_raise is True
+    assert result_error_raise_plan.raise_dosage_worker_error is False
+    assert result_error_raise_plan.raise_result_worker_error is True
+    assert result_error_raise_plan.error_message == "native pipeline result writer worker failed: writer failed"
 
     scheduler_state.record_dosage_worker_error("dosage failed")
-    scheduler_state.record_result_worker_error("writer failed")
 
     assert scheduler_state.has_dosage_worker_error is True
     assert scheduler_state.has_result_worker_error is True
     assert scheduler_state.dosage_worker_error_message == "native pipeline callback worker failed: dosage failed"
     assert scheduler_state.result_worker_error_message == "native pipeline result writer worker failed: writer failed"
+    dosage_error_raise_plan = scheduler_state.plan_worker_error_raise()
+    assert dosage_error_raise_plan.should_raise is True
+    assert dosage_error_raise_plan.raise_dosage_worker_error is True
+    assert dosage_error_raise_plan.raise_result_worker_error is False
+    assert dosage_error_raise_plan.error_message == "native pipeline callback worker failed: dosage failed"
     assert scheduler_state.clear_dosage_worker_error() is True
     assert scheduler_state.clear_result_worker_error() is True
     assert scheduler_state.dosage_worker_error_message is None

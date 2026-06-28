@@ -183,6 +183,11 @@ pub(crate) struct NativeCallbackWorkerStopPollPlan {
     inner: native_schedule::CallbackWorkerStopPollPlan,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerErrorRaisePlan {
+    inner: native_schedule::CallbackWorkerErrorRaisePlan,
+}
+
 #[pymethods]
 impl NativeDosageBufferPoolState {
     #[new]
@@ -570,6 +575,10 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_worker_abort().into()
     }
 
+    fn plan_worker_error_raise(&self) -> NativeCallbackWorkerErrorRaisePlan {
+        self.inner.plan_worker_error_raise().into()
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     fn plan_queue_operation_observation(
         &self,
@@ -840,6 +849,29 @@ impl NativeCallbackWorkerStopPollPlan {
     #[getter]
     fn poll_timeout_seconds(&self) -> f64 {
         self.inner.poll_timeout_seconds
+    }
+}
+
+#[pymethods]
+impl NativeCallbackWorkerErrorRaisePlan {
+    #[getter]
+    fn should_raise(&self) -> bool {
+        self.inner.should_raise
+    }
+
+    #[getter]
+    fn raise_dosage_worker_error(&self) -> bool {
+        self.inner.raise_dosage_worker_error
+    }
+
+    #[getter]
+    fn raise_result_worker_error(&self) -> bool {
+        self.inner.raise_result_worker_error
+    }
+
+    #[getter]
+    fn error_message(&self) -> Option<String> {
+        self.inner.error_message.clone()
     }
 }
 
@@ -1369,6 +1401,12 @@ impl From<native_schedule::CallbackWorkerAbortPlan> for NativeCallbackWorkerAbor
 impl From<native_schedule::CallbackWorkerStopPollPlan> for NativeCallbackWorkerStopPollPlan {
     fn from(stop_poll_plan: native_schedule::CallbackWorkerStopPollPlan) -> Self {
         Self { inner: stop_poll_plan }
+    }
+}
+
+impl From<native_schedule::CallbackWorkerErrorRaisePlan> for NativeCallbackWorkerErrorRaisePlan {
+    fn from(error_raise_plan: native_schedule::CallbackWorkerErrorRaisePlan) -> Self {
+        Self { inner: error_raise_plan }
     }
 }
 
