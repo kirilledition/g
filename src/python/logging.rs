@@ -61,6 +61,11 @@ pub struct NativeTelemetryProgressEmissionPlan {
     inner: native_telemetry_session::TelemetryProgressEmissionPlan,
 }
 
+#[pyclass]
+pub struct NativeTelemetryClosePlan {
+    inner: native_telemetry_session::TelemetryClosePlan,
+}
+
 impl TelemetryWriterFactory {
     fn new(writer: NonBlocking, event_cap_state: native_telemetry_session::TelemetryEventCapState) -> Self {
         Self { writer, event_cap_state: Arc::new(event_cap_state) }
@@ -182,6 +187,34 @@ impl NativeTelemetryProgressEmissionPlan {
     #[getter]
     fn level(&self) -> &str {
         &self.inner.level
+    }
+}
+
+#[pymethods]
+impl NativeTelemetryClosePlan {
+    #[getter]
+    fn should_close(&self) -> bool {
+        self.inner.should_close
+    }
+
+    #[getter]
+    fn use_native_close_with_event(&self) -> bool {
+        self.inner.use_native_close_with_event
+    }
+
+    #[getter]
+    fn should_emit_legacy_close_event(&self) -> bool {
+        self.inner.should_emit_legacy_close_event
+    }
+
+    #[getter]
+    fn legacy_close_event_name(&self) -> &str {
+        &self.inner.legacy_close_event_name
+    }
+
+    #[getter]
+    fn legacy_close_event_level(&self) -> &str {
+        &self.inner.legacy_close_event_level
     }
 }
 
@@ -387,6 +420,12 @@ impl From<native_telemetry_session::TelemetryProgressEmissionPlan> for NativeTel
     }
 }
 
+impl From<native_telemetry_session::TelemetryClosePlan> for NativeTelemetryClosePlan {
+    fn from(close_plan: native_telemetry_session::TelemetryClosePlan) -> Self {
+        Self { inner: close_plan }
+    }
+}
+
 #[pyfunction]
 pub fn plan_telemetry_event_emission(
     telemetry_enabled: bool,
@@ -407,6 +446,14 @@ pub fn plan_telemetry_progress_emission(
         should_emit_progress,
     )
     .into()
+}
+
+#[pyfunction]
+pub fn plan_telemetry_close(
+    has_telemetry_session: bool,
+    is_native_telemetry_session: bool,
+) -> NativeTelemetryClosePlan {
+    native_telemetry_session::plan_telemetry_close(has_telemetry_session, is_native_telemetry_session).into()
 }
 
 #[pyfunction]

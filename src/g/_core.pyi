@@ -473,6 +473,18 @@ class NativeTelemetryProgressEmissionPlan:
     @property
     def level(self) -> str: ...
 
+class NativeTelemetryClosePlan:
+    @property
+    def should_close(self) -> bool: ...
+    @property
+    def use_native_close_with_event(self) -> bool: ...
+    @property
+    def should_emit_legacy_close_event(self) -> bool: ...
+    @property
+    def legacy_close_event_name(self) -> str: ...
+    @property
+    def legacy_close_event_level(self) -> str: ...
+
 class NativeTelemetrySessionPolicy:
     def __init__(self, telemetry_mode: str, trace_event_cap: int) -> None: ...
     @property
@@ -1540,6 +1552,10 @@ def plan_bgen_delivery_cleanup(
     cleanup_outcome: str,
     callback_finished: bool,
 ) -> NativeBgenDeliveryCleanupPlan: ...
+def plan_telemetry_close(
+    has_telemetry_session: bool,
+    is_native_telemetry_session: bool,
+) -> NativeTelemetryClosePlan: ...
 def plan_telemetry_event_emission(
     telemetry_enabled: bool,
     has_native_telemetry_session: bool,

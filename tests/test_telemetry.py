@@ -401,6 +401,28 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     assert progress_emission_plan.should_emit is True
     assert progress_emission_plan.event_name == "progress_tick"
     assert progress_emission_plan.level == "info"
+    native_close_plan = _core.plan_telemetry_close(
+        has_telemetry_session=True,
+        is_native_telemetry_session=True,
+    )
+    legacy_close_plan = _core.plan_telemetry_close(
+        has_telemetry_session=True,
+        is_native_telemetry_session=False,
+    )
+    disabled_close_plan = _core.plan_telemetry_close(
+        has_telemetry_session=False,
+        is_native_telemetry_session=False,
+    )
+    assert isinstance(native_close_plan, _core.NativeTelemetryClosePlan)
+    assert native_close_plan.should_close is True
+    assert native_close_plan.use_native_close_with_event is True
+    assert native_close_plan.should_emit_legacy_close_event is False
+    assert native_close_plan.legacy_close_event_name == "telemetry_session_closed"
+    assert native_close_plan.legacy_close_event_level == "debug"
+    assert legacy_close_plan.should_close is True
+    assert legacy_close_plan.use_native_close_with_event is False
+    assert legacy_close_plan.should_emit_legacy_close_event is True
+    assert disabled_close_plan.should_close is False
     assert not off_session.enabled
     assert not off_session.profile_enabled
     assert off_session.native_session_policy.event_cap is None
@@ -452,6 +474,54 @@ def test_telemetry_session_uses_native_progress_emission_plan(
     assert event_payload["level"] == "DEBUG"
     assert event_payload["processed_chunk_count"] == 1
     assert event_payload["chromosome"] == "22"
+
+
+def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeCloseableSession:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+            self.closed = False
+
+        def log_event(self, event: str, level: str, **fields: object) -> None:
+            self.events.append({"event": event, "level": level, "fields": fields})
+
+        def writer_counters(self) -> object:
+            return {"written_event_count": 3}
+
+        def close(self) -> object:
+            self.closed = True
+            return None
+
+    def plan_telemetry_close(
+        *,
+        has_telemetry_session: bool,
+        is_native_telemetry_session: bool,
+    ) -> object:
+        assert has_telemetry_session is True
+        assert is_native_telemetry_session is False
+        return unittest.mock.Mock(
+            should_close=True,
+            use_native_close_with_event=False,
+            should_emit_legacy_close_event=True,
+            legacy_close_event_name="native_close",
+            legacy_close_event_level="trace",
+        )
+
+    fake_session = FakeCloseableSession()
+    monkeypatch.setattr(telemetry._core, "plan_telemetry_close", plan_telemetry_close)
+
+    telemetry.close_telemetry_session(fake_session)
+
+    assert fake_session.events == [
+        {
+            "event": "native_close",
+            "level": "trace",
+            "fields": {"writer_counters": {"written_event_count": 3}},
+        }
+    ]
+    assert fake_session.closed is True
 
 
 def test_telemetry_progress_throttle_emits_after_chunk_interval(tmp_path: Path) -> None:
