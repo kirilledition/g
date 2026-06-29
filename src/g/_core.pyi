@@ -509,6 +509,25 @@ class NativeTelemetryRunSession:
         variant_limit: int | None,
         device: str,
     ) -> None: ...
+    def emit_effective_config_written_event(
+        self,
+        association_mode: str,
+        phenotype: str,
+        effective_config: str,
+        output_run_directory: str,
+    ) -> None: ...
+    def emit_phenotype_writer_finished_event(
+        self,
+        association_mode: str,
+        phenotype: str,
+        final_output_path: str | None,
+    ) -> None: ...
+    def emit_multi_phenotype_writer_finished_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        final_output_paths: tuple[str | None, ...],
+    ) -> None: ...
     def emit_progress(
         self,
         processed_chunk_count: int,

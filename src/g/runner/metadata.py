@@ -60,12 +60,10 @@ def log_writer_finished(
     """Record output writer completion."""
     if telemetry_session is None:
         return
-    telemetry_session.log_event(
-        "writer_finished",
-        level="info",
-        association_mode=association_mode.value,
+    telemetry_session.log_writer_finished(
+        association_mode=association_mode,
         phenotype=phenotype,
-        final_output_path=None if final_output_path is None else str(final_output_path),
+        final_output_path=final_output_path,
     )
 
 
@@ -83,13 +81,11 @@ def write_run_start_metadata(
         phenotype_run_plan=phenotype_run_plan,
     )
     if telemetry_session is not None:
-        telemetry_session.log_event(
-            "effective_config_written",
-            level="info",
-            association_mode=plan.association_mode.value,
+        telemetry_session.log_effective_config_written(
+            association_mode=plan.association_mode,
             phenotype=phenotype_run_plan.phenotype_name,
-            effective_config=str(phenotype_run_plan.effective_config_path),
-            output_run_directory=str(phenotype_run_plan.output_run_paths.run_directory),
+            effective_config=phenotype_run_plan.effective_config_path,
+            output_run_directory=phenotype_run_plan.output_run_paths.run_directory,
         )
 
 

@@ -174,6 +174,50 @@ class TelemetrySession:
             device.value,
         )
 
+    def log_effective_config_written(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str,
+        effective_config: Path,
+        output_run_directory: Path,
+    ) -> None:
+        """Write the canonical effective-config metadata event."""
+        self.native_session_handle.emit_effective_config_written_event(
+            association_mode.value,
+            phenotype,
+            str(effective_config),
+            str(output_run_directory),
+        )
+
+    def log_writer_finished(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str,
+        final_output_path: Path | None,
+    ) -> None:
+        """Write the canonical single-phenotype writer completion event."""
+        self.native_session_handle.emit_phenotype_writer_finished_event(
+            association_mode.value,
+            phenotype,
+            None if final_output_path is None else str(final_output_path),
+        )
+
+    def log_multi_writer_finished(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype_count: int,
+        final_output_paths: tuple[Path | None, ...],
+    ) -> None:
+        """Write the canonical multi-phenotype writer completion event."""
+        self.native_session_handle.emit_multi_phenotype_writer_finished_event(
+            association_mode.value,
+            phenotype_count,
+            tuple(None if path is None else str(path) for path in final_output_paths),
+        )
+
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
         self.native_session_handle.emit_progress(

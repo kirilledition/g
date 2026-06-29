@@ -322,6 +322,41 @@ pub(crate) fn execution_plan_prepared_telemetry_fields_to_py_dict<'py>(
     Ok(payload)
 }
 
+pub(crate) fn effective_config_written_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::EffectiveConfigWrittenTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("phenotype", &fields.phenotype)?;
+    payload.set_item("effective_config", &fields.effective_config)?;
+    payload.set_item("output_run_directory", &fields.output_run_directory)?;
+    Ok(payload)
+}
+
+pub(crate) fn phenotype_writer_finished_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::PhenotypeWriterFinishedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("phenotype", &fields.phenotype)?;
+    payload.set_item("final_output_path", &fields.final_output_path)?;
+    Ok(payload)
+}
+
+pub(crate) fn multi_phenotype_writer_finished_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::MultiPhenotypeWriterFinishedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    let final_output_paths = fields.final_output_paths.iter().map(|path| path.as_deref()).collect::<Vec<_>>();
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("phenotype_count", fields.phenotype_count)?;
+    payload.set_item("final_output_paths", PyTuple::new(py, final_output_paths)?)?;
+    Ok(payload)
+}
+
 fn artifact_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunArtifactTelemetryFields,

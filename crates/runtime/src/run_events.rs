@@ -4,6 +4,8 @@ pub const RUN_STARTED_EVENT_NAME: &str = "run_started";
 pub const RUN_COMPLETED_EVENT_NAME: &str = "run_completed";
 pub const RUN_FAILED_EVENT_NAME: &str = "run_failed";
 pub const EXECUTION_PLAN_PREPARED_EVENT_NAME: &str = "execution_plan_prepared";
+pub const EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME: &str = "effective_config_written";
+pub const WRITER_FINISHED_EVENT_NAME: &str = "writer_finished";
 pub const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
 pub const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
 pub const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
@@ -107,6 +109,28 @@ pub struct ExecutionPlanPreparedTelemetryFields {
     pub chunk_size: i64,
     pub variant_limit: Option<i64>,
     pub device: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EffectiveConfigWrittenTelemetryFields {
+    pub association_mode: String,
+    pub phenotype: String,
+    pub effective_config: String,
+    pub output_run_directory: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhenotypeWriterFinishedTelemetryFields {
+    pub association_mode: String,
+    pub phenotype: String,
+    pub final_output_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiPhenotypeWriterFinishedTelemetryFields {
+    pub association_mode: String,
+    pub phenotype_count: i64,
+    pub final_output_paths: Vec<Option<String>>,
 }
 
 #[must_use]
@@ -244,6 +268,47 @@ pub fn build_execution_plan_prepared_telemetry_fields(
         chunk_size,
         variant_limit,
         device: device.to_string(),
+    }
+}
+
+#[must_use]
+pub fn build_effective_config_written_telemetry_fields(
+    association_mode: &str,
+    phenotype: &str,
+    effective_config: &str,
+    output_run_directory: &str,
+) -> EffectiveConfigWrittenTelemetryFields {
+    EffectiveConfigWrittenTelemetryFields {
+        association_mode: association_mode.to_string(),
+        phenotype: phenotype.to_string(),
+        effective_config: effective_config.to_string(),
+        output_run_directory: output_run_directory.to_string(),
+    }
+}
+
+#[must_use]
+pub fn build_phenotype_writer_finished_telemetry_fields(
+    association_mode: &str,
+    phenotype: &str,
+    final_output_path: Option<&str>,
+) -> PhenotypeWriterFinishedTelemetryFields {
+    PhenotypeWriterFinishedTelemetryFields {
+        association_mode: association_mode.to_string(),
+        phenotype: phenotype.to_string(),
+        final_output_path: final_output_path.map(str::to_string),
+    }
+}
+
+#[must_use]
+pub fn build_multi_phenotype_writer_finished_telemetry_fields(
+    association_mode: &str,
+    phenotype_count: i64,
+    final_output_paths: &[Option<String>],
+) -> MultiPhenotypeWriterFinishedTelemetryFields {
+    MultiPhenotypeWriterFinishedTelemetryFields {
+        association_mode: association_mode.to_string(),
+        phenotype_count,
+        final_output_paths: final_output_paths.to_vec(),
     }
 }
 
@@ -455,6 +520,48 @@ mod tests {
                 chunk_size: 1024,
                 variant_limit: Some(4096),
                 device: "gpu".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn builds_writer_lifecycle_telemetry_fields() {
+        assert_eq!(
+            build_effective_config_written_telemetry_fields(
+                "regenie2_linear",
+                "height",
+                "run/height/effective_config.toml",
+                "run/height",
+            ),
+            EffectiveConfigWrittenTelemetryFields {
+                association_mode: "regenie2_linear".to_string(),
+                phenotype: "height".to_string(),
+                effective_config: "run/height/effective_config.toml".to_string(),
+                output_run_directory: "run/height".to_string(),
+            }
+        );
+        assert_eq!(
+            build_phenotype_writer_finished_telemetry_fields(
+                "regenie2_binary",
+                "case_status",
+                Some("run/case_status/results.parquet"),
+            ),
+            PhenotypeWriterFinishedTelemetryFields {
+                association_mode: "regenie2_binary".to_string(),
+                phenotype: "case_status".to_string(),
+                final_output_path: Some("run/case_status/results.parquet".to_string()),
+            }
+        );
+        assert_eq!(
+            build_multi_phenotype_writer_finished_telemetry_fields(
+                "regenie2_linear",
+                2,
+                &[Some("run/height.parquet".to_string()), None],
+            ),
+            MultiPhenotypeWriterFinishedTelemetryFields {
+                association_mode: "regenie2_linear".to_string(),
+                phenotype_count: 2,
+                final_output_paths: vec![Some("run/height.parquet".to_string()), None],
             }
         );
     }

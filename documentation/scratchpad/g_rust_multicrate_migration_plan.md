@@ -1136,6 +1136,8 @@ Remove Python as the chunk-level scheduler.
   and failed lifecycle event emission names, levels, and field construction.
 - Native telemetry run sessions now own production run-started and
   execution-plan-prepared lifecycle event names, levels, and field construction.
+- Native telemetry run sessions now own production effective-config-written and
+  writer-finished lifecycle event names, levels, and field construction.
 
 ### Tests
 

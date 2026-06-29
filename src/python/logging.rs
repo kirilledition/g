@@ -401,6 +401,73 @@ impl NativeTelemetryRunSession {
         )
     }
 
+    pub fn emit_effective_config_written_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype: &str,
+        effective_config: &str,
+        output_run_directory: &str,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_effective_config_written_telemetry_fields(
+            association_mode,
+            phenotype,
+            effective_config,
+            output_run_directory,
+        );
+        let fields = run_events::effective_config_written_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_phenotype_writer_finished_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype: &str,
+        final_output_path: Option<String>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_phenotype_writer_finished_telemetry_fields(
+            association_mode,
+            phenotype,
+            final_output_path.as_deref(),
+        );
+        let fields = run_events::phenotype_writer_finished_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::WRITER_FINISHED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_multi_phenotype_writer_finished_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype_count: i64,
+        final_output_paths: Vec<Option<String>>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_multi_phenotype_writer_finished_telemetry_fields(
+            association_mode,
+            phenotype_count,
+            &final_output_paths,
+        );
+        let fields = run_events::multi_phenotype_writer_finished_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::WRITER_FINISHED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
     pub fn emit_progress<'py>(
         &self,
         py: Python<'py>,

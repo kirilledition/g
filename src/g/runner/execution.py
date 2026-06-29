@@ -488,11 +488,9 @@ def dispatch_multi_phenotype_engine_pipeline(
             output_initialized_callback=common_request.output_initialized_callback,
         )
     if telemetry_session is not None:
-        telemetry_session.log_event(
-            "writer_finished",
-            level="info",
-            association_mode=plan.association_mode.value,
+        telemetry_session.log_multi_writer_finished(
+            association_mode=plan.association_mode,
             phenotype_count=len(plan.phenotype_run_plans),
-            final_output_paths=tuple(None if path is None else str(path) for path in final_output_paths),
+            final_output_paths=final_output_paths,
         )
     return final_output_paths
