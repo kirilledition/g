@@ -250,6 +250,40 @@ class TelemetrySession:
             sample_count,
         )
 
+    def log_sample_alignment_completed(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str | None,
+        phenotype_count: int | None,
+        sample_count: int | None,
+        covariate_count: int | None,
+        phenotype_group_count: int | None,
+    ) -> None:
+        """Write the canonical sample-alignment completion event."""
+        self.native_session_handle.emit_sample_alignment_completed_event(
+            association_mode.value,
+            phenotype,
+            phenotype_count,
+            sample_count,
+            covariate_count,
+            phenotype_group_count,
+        )
+
+    def log_prediction_source_loaded(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
+        """Write the canonical prediction-source loading event."""
+        self.native_session_handle.emit_prediction_source_loaded_event(
+            association_mode.value,
+            phenotype,
+            phenotype_count,
+        )
+
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
         self.native_session_handle.emit_progress(

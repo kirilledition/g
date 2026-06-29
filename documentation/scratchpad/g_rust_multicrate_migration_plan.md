@@ -1142,6 +1142,8 @@ Remove Python as the chunk-level scheduler.
   writer-finished lifecycle event names, levels, and field construction.
 - Native telemetry run sessions now own production preflight-completed event
   names, levels, and single-/multi-phenotype field construction.
+- Native telemetry run sessions now own production sample-alignment-completed
+  and prediction-source-loaded event names, levels, and optional fields.
 
 ### Tests
 

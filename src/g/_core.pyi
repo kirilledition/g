@@ -542,6 +542,21 @@ class NativeTelemetryRunSession:
         phenotype_count: int,
         sample_count: int,
     ) -> None: ...
+    def emit_sample_alignment_completed_event(
+        self,
+        association_mode: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+        sample_count: int | None,
+        covariate_count: int | None,
+        phenotype_group_count: int | None,
+    ) -> None: ...
+    def emit_prediction_source_loaded_event(
+        self,
+        association_mode: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None: ...
     def emit_progress(
         self,
         processed_chunk_count: int,

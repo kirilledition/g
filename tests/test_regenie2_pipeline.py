@@ -651,6 +651,43 @@ class RecordingTelemetrySession:
     def log_progress(self, **fields: object) -> None:
         self.progress_events.append(fields)
 
+    def log_sample_alignment_completed(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str | None,
+        phenotype_count: int | None,
+        sample_count: int | None,
+        covariate_count: int | None,
+        phenotype_group_count: int | None,
+    ) -> None:
+        fields: dict[str, object] = {"association_mode": association_mode.value}
+        if phenotype is not None:
+            fields["phenotype"] = phenotype
+        if phenotype_count is not None:
+            fields["phenotype_count"] = phenotype_count
+        if sample_count is not None:
+            fields["sample_count"] = sample_count
+        if covariate_count is not None:
+            fields["covariate_count"] = covariate_count
+        if phenotype_group_count is not None:
+            fields["phenotype_group_count"] = phenotype_group_count
+        self.events.append(("sample_alignment_completed", fields))
+
+    def log_prediction_source_loaded(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
+        fields: dict[str, object] = {"association_mode": association_mode.value}
+        if phenotype is not None:
+            fields["phenotype"] = phenotype
+        if phenotype_count is not None:
+            fields["phenotype_count"] = phenotype_count
+        self.events.append(("prediction_source_loaded", fields))
+
     def log_single_trait_preflight_completed(
         self,
         *,

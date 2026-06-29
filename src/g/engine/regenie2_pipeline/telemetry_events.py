@@ -25,23 +25,13 @@ def log_sample_alignment_completed(
     """Emit sample-alignment telemetry with mode-specific fields."""
     if context.telemetry_session is None:
         return
-    telemetry_fields: dict[str, typing.Any] = {
-        "association_mode": context.association_mode.value,
-    }
-    if phenotype_name is not None:
-        telemetry_fields["phenotype"] = phenotype_name
-    if phenotype_count is not None:
-        telemetry_fields["phenotype_count"] = phenotype_count
-    if sample_count is not None:
-        telemetry_fields["sample_count"] = sample_count
-    if covariate_count is not None:
-        telemetry_fields["covariate_count"] = covariate_count
-    if phenotype_group_count is not None:
-        telemetry_fields["phenotype_group_count"] = phenotype_group_count
-    context.telemetry_session.log_event(
-        "sample_alignment_completed",
-        level="info",
-        **telemetry_fields,
+    context.telemetry_session.log_sample_alignment_completed(
+        association_mode=context.association_mode,
+        phenotype=phenotype_name,
+        phenotype_count=phenotype_count,
+        sample_count=sample_count,
+        covariate_count=covariate_count,
+        phenotype_group_count=phenotype_group_count,
     )
 
 
@@ -101,15 +91,8 @@ def log_prediction_source_loaded(
     """Emit prediction-source telemetry with mode-specific fields."""
     if context.telemetry_session is None:
         return
-    telemetry_fields: dict[str, typing.Any] = {
-        "association_mode": context.association_mode.value,
-    }
-    if phenotype_name is not None:
-        telemetry_fields["phenotype"] = phenotype_name
-    if phenotype_count is not None:
-        telemetry_fields["phenotype_count"] = phenotype_count
-    context.telemetry_session.log_event(
-        "prediction_source_loaded",
-        level="info",
-        **telemetry_fields,
+    context.telemetry_session.log_prediction_source_loaded(
+        association_mode=context.association_mode,
+        phenotype=phenotype_name,
+        phenotype_count=phenotype_count,
     )

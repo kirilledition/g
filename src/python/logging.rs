@@ -515,6 +515,56 @@ impl NativeTelemetryRunSession {
         )
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_sample_alignment_completed_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype: Option<String>,
+        phenotype_count: Option<i64>,
+        sample_count: Option<i64>,
+        covariate_count: Option<i64>,
+        phenotype_group_count: Option<i64>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_sample_alignment_completed_telemetry_fields(
+            association_mode,
+            phenotype.as_deref(),
+            phenotype_count,
+            sample_count,
+            covariate_count,
+            phenotype_group_count,
+        );
+        let fields = run_events::sample_alignment_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_prediction_source_loaded_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype: Option<String>,
+        phenotype_count: Option<i64>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_prediction_source_loaded_telemetry_fields(
+            association_mode,
+            phenotype.as_deref(),
+            phenotype_count,
+        );
+        let fields = run_events::prediction_source_loaded_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::PREDICTION_SOURCE_LOADED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
     pub fn emit_progress<'py>(
         &self,
         py: Python<'py>,

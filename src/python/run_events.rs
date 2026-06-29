@@ -381,6 +381,31 @@ pub(crate) fn multi_phenotype_preflight_completed_telemetry_fields_to_py_dict<'p
     Ok(payload)
 }
 
+pub(crate) fn sample_alignment_completed_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::SampleAlignmentCompletedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    set_optional_string(&payload, "phenotype", fields.phenotype.as_deref())?;
+    set_optional_i64(&payload, "phenotype_count", fields.phenotype_count)?;
+    set_optional_i64(&payload, "sample_count", fields.sample_count)?;
+    set_optional_i64(&payload, "covariate_count", fields.covariate_count)?;
+    set_optional_i64(&payload, "phenotype_group_count", fields.phenotype_group_count)?;
+    Ok(payload)
+}
+
+pub(crate) fn prediction_source_loaded_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::PredictionSourceLoadedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    set_optional_string(&payload, "phenotype", fields.phenotype.as_deref())?;
+    set_optional_i64(&payload, "phenotype_count", fields.phenotype_count)?;
+    Ok(payload)
+}
+
 fn artifact_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunArtifactTelemetryFields,

@@ -7,6 +7,8 @@ pub const EXECUTION_PLAN_PREPARED_EVENT_NAME: &str = "execution_plan_prepared";
 pub const EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME: &str = "effective_config_written";
 pub const WRITER_FINISHED_EVENT_NAME: &str = "writer_finished";
 pub const PREFLIGHT_COMPLETED_EVENT_NAME: &str = "preflight_completed";
+pub const SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME: &str = "sample_alignment_completed";
+pub const PREDICTION_SOURCE_LOADED_EVENT_NAME: &str = "prediction_source_loaded";
 pub const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
 pub const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
 pub const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
@@ -148,6 +150,23 @@ pub struct MultiPhenotypePreflightCompletedTelemetryFields {
     pub association_mode: String,
     pub phenotype_count: i64,
     pub sample_count: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SampleAlignmentCompletedTelemetryFields {
+    pub association_mode: String,
+    pub phenotype: Option<String>,
+    pub phenotype_count: Option<i64>,
+    pub sample_count: Option<i64>,
+    pub covariate_count: Option<i64>,
+    pub phenotype_group_count: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionSourceLoadedTelemetryFields {
+    pub association_mode: String,
+    pub phenotype: Option<String>,
+    pub phenotype_count: Option<i64>,
 }
 
 #[must_use]
@@ -356,6 +375,38 @@ pub fn build_multi_phenotype_preflight_completed_telemetry_fields(
         association_mode: association_mode.to_string(),
         phenotype_count,
         sample_count,
+    }
+}
+
+#[must_use]
+pub fn build_sample_alignment_completed_telemetry_fields(
+    association_mode: &str,
+    phenotype: Option<&str>,
+    phenotype_count: Option<i64>,
+    sample_count: Option<i64>,
+    covariate_count: Option<i64>,
+    phenotype_group_count: Option<i64>,
+) -> SampleAlignmentCompletedTelemetryFields {
+    SampleAlignmentCompletedTelemetryFields {
+        association_mode: association_mode.to_string(),
+        phenotype: phenotype.map(str::to_string),
+        phenotype_count,
+        sample_count,
+        covariate_count,
+        phenotype_group_count,
+    }
+}
+
+#[must_use]
+pub fn build_prediction_source_loaded_telemetry_fields(
+    association_mode: &str,
+    phenotype: Option<&str>,
+    phenotype_count: Option<i64>,
+) -> PredictionSourceLoadedTelemetryFields {
+    PredictionSourceLoadedTelemetryFields {
+        association_mode: association_mode.to_string(),
+        phenotype: phenotype.map(str::to_string),
+        phenotype_count,
     }
 }
 
@@ -631,6 +682,36 @@ mod tests {
                 association_mode: "regenie2_binary".to_string(),
                 phenotype_count: 4,
                 sample_count: 2504,
+            }
+        );
+    }
+
+    #[test]
+    fn builds_pipeline_setup_telemetry_fields() {
+        assert_eq!(
+            build_sample_alignment_completed_telemetry_fields(
+                "regenie2_linear",
+                Some("height"),
+                None,
+                Some(2504),
+                Some(3),
+                None,
+            ),
+            SampleAlignmentCompletedTelemetryFields {
+                association_mode: "regenie2_linear".to_string(),
+                phenotype: Some("height".to_string()),
+                phenotype_count: None,
+                sample_count: Some(2504),
+                covariate_count: Some(3),
+                phenotype_group_count: None,
+            }
+        );
+        assert_eq!(
+            build_prediction_source_loaded_telemetry_fields("regenie2_binary", None, Some(4)),
+            PredictionSourceLoadedTelemetryFields {
+                association_mode: "regenie2_binary".to_string(),
+                phenotype: None,
+                phenotype_count: Some(4),
             }
         );
     }
