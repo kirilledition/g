@@ -2266,6 +2266,17 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert dosage_observed_get_result.observation_plan.queue_name == "dosage_queue"
     assert dosage_observed_get_result.observation_plan.operation_name == "consumer_wait"
     assert dosage_observed_get_result.observation_plan.blocked is True
+    assert runtime_resources.put_dosage_work_item_with_backpressure_observation(dosage_item).should_retry_put is False
+    dosage_work_item_get_result = runtime_resources.get_dosage_work_item_with_observation_and_drain_completion()
+    assert dosage_work_item_get_result.has_dosage_work_item is True
+    assert dosage_work_item_get_result.item is dosage_item
+    assert dosage_work_item_get_result.observation_plan.queue_name == "dosage_queue"
+    assert dosage_work_item_get_result.drain_completion_plan.should_stop is False
+    assert runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(None) is True
+    dosage_stop_get_result = runtime_resources.get_dosage_work_item_with_observation_and_drain_completion()
+    assert dosage_stop_get_result.has_dosage_work_item is False
+    assert dosage_stop_get_result.item is None
+    assert dosage_stop_get_result.drain_completion_plan.should_stop is True
 
     assert runtime_resources.try_put_result_write_item(result_item, timeout_seconds=0.0) is True
     assert runtime_resources.result_queue_occupied_count == 1
@@ -2313,6 +2324,21 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert result_observed_get_result.observation_plan.queue_name == "result_queue"
     assert result_observed_get_result.observation_plan.operation_name == "consumer_wait"
     assert result_observed_get_result.observation_plan.blocked is True
+    assert runtime_resources.put_result_write_item_with_backpressure_observation(result_item).should_retry_put is False
+    result_work_item_get_result = runtime_resources.get_result_write_item_with_observation_and_drain_completion(
+        flush_binary_correction_diagnostics_on_stop=True,
+    )
+    assert result_work_item_get_result.has_result_work_item is True
+    assert result_work_item_get_result.item is result_item
+    assert result_work_item_get_result.observation_plan.queue_name == "result_queue"
+    assert result_work_item_get_result.drain_completion_plan.should_stop is False
+    assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
+    result_stop_get_result = runtime_resources.get_result_write_item_with_observation_and_drain_completion(
+        flush_binary_correction_diagnostics_on_stop=True,
+    )
+    assert result_stop_get_result.has_result_work_item is False
+    assert result_stop_get_result.item is None
+    assert result_stop_get_result.drain_completion_plan.should_stop is True
 
 
 def test_native_callback_runtime_resources_own_progress_state() -> None:
