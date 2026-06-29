@@ -414,6 +414,12 @@ pub struct DosageBufferDiscardAttemptPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DosageBufferPoolObservationPlan {
+    pub operation_name: String,
+    pub blocked: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackWorkerStartPlan {
     pub start_actions: Vec<String>,
 }
@@ -1032,6 +1038,36 @@ impl CallbackSchedulerState {
     #[must_use]
     pub fn plan_dosage_buffer_discard_attempt(&mut self, buffer_identifier: usize) -> DosageBufferDiscardAttemptPlan {
         plan_dosage_buffer_discard_attempt(&mut self.dosage_buffer_pool_state, buffer_identifier)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_buffer_pool_reuse_observation(&self) -> DosageBufferPoolObservationPlan {
+        debug_assert!(self.dosage_buffer_pool_state.buffer_limit() > 0);
+        plan_dosage_buffer_pool_observation(QUEUE_REUSE_OPERATION, false)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_buffer_pool_return_observation(&self) -> DosageBufferPoolObservationPlan {
+        debug_assert!(self.dosage_buffer_pool_state.buffer_limit() > 0);
+        plan_dosage_buffer_pool_observation(QUEUE_RETURN_OPERATION, false)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_buffer_pool_allocate_observation(&self) -> DosageBufferPoolObservationPlan {
+        debug_assert!(self.dosage_buffer_pool_state.buffer_limit() > 0);
+        plan_dosage_buffer_pool_observation(QUEUE_ALLOCATE_OPERATION, false)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_buffer_pool_discard_observation(&self) -> DosageBufferPoolObservationPlan {
+        debug_assert!(self.dosage_buffer_pool_state.buffer_limit() > 0);
+        plan_dosage_buffer_pool_observation(QUEUE_DISCARD_OPERATION, false)
+    }
+
+    #[must_use]
+    pub fn plan_dosage_buffer_pool_consumer_wait_observation(&self) -> DosageBufferPoolObservationPlan {
+        debug_assert!(self.dosage_buffer_pool_state.buffer_limit() > 0);
+        plan_dosage_buffer_pool_observation(QUEUE_CONSUMER_WAIT_OPERATION, true)
     }
 
     #[must_use]
@@ -1872,6 +1908,11 @@ fn plan_dosage_buffer_discard_attempt(
         allocated_count: buffer_pool_state.allocated_count(),
         buffer_limit: buffer_pool_state.buffer_limit(),
     }
+}
+
+#[must_use]
+pub fn plan_dosage_buffer_pool_observation(operation_name: &str, blocked: bool) -> DosageBufferPoolObservationPlan {
+    DosageBufferPoolObservationPlan { operation_name: operation_name.to_string(), blocked }
 }
 
 #[must_use]
@@ -3289,6 +3330,35 @@ mod tests {
                 free_buffer_count: 0,
                 allocated_count: 0,
                 buffer_limit: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn plans_dosage_buffer_pool_observations() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, None, Some(1)).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_pool_reuse_observation(),
+            DosageBufferPoolObservationPlan { operation_name: QUEUE_REUSE_OPERATION.to_string(), blocked: false },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_pool_return_observation(),
+            DosageBufferPoolObservationPlan { operation_name: QUEUE_RETURN_OPERATION.to_string(), blocked: false },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_pool_allocate_observation(),
+            DosageBufferPoolObservationPlan { operation_name: QUEUE_ALLOCATE_OPERATION.to_string(), blocked: false },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_pool_discard_observation(),
+            DosageBufferPoolObservationPlan { operation_name: QUEUE_DISCARD_OPERATION.to_string(), blocked: false },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_buffer_pool_consumer_wait_observation(),
+            DosageBufferPoolObservationPlan {
+                operation_name: QUEUE_CONSUMER_WAIT_OPERATION.to_string(),
+                blocked: true,
             },
         );
     }

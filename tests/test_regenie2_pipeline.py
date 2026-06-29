@@ -3076,6 +3076,12 @@ class DosageBufferDiscardAttemptPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class DosageBufferPoolObservationPlanProbe:
+    operation_name: str
+    blocked: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class DosageBufferReusePlanProbe:
     requires_slice: bool
     slice_dimensions: list[int]
@@ -3814,6 +3820,9 @@ class DosageBufferAttemptSchedulerProbe:
     discarded_buffer_identifier: int | None = None
     reuse_buffered_shape: tuple[int, ...] | None = None
     reuse_expected_shape: tuple[int, ...] | None = None
+    pool_observation_names: list[str] = dataclasses.field(default_factory=list)
+    pool_backpressure_names: list[str] = dataclasses.field(default_factory=list)
+    pool_stage_names: list[str] = dataclasses.field(default_factory=list)
 
     @property
     def backpressure_poll_timeout_seconds(self) -> float:
@@ -3885,6 +3894,63 @@ class DosageBufferAttemptSchedulerProbe:
             should_discard=True,
             allocated_count=0,
             buffer_limit=self.dosage_buffer_limit,
+        )
+
+    def plan_dosage_buffer_pool_reuse_observation(self) -> DosageBufferPoolObservationPlanProbe:
+        self.pool_observation_names.append("reuse")
+        return DosageBufferPoolObservationPlanProbe(operation_name="reuse", blocked=False)
+
+    def plan_dosage_buffer_pool_return_observation(self) -> DosageBufferPoolObservationPlanProbe:
+        self.pool_observation_names.append("return")
+        return DosageBufferPoolObservationPlanProbe(operation_name="return", blocked=False)
+
+    def plan_dosage_buffer_pool_allocate_observation(self) -> DosageBufferPoolObservationPlanProbe:
+        self.pool_observation_names.append("allocate")
+        return DosageBufferPoolObservationPlanProbe(operation_name="allocate", blocked=False)
+
+    def plan_dosage_buffer_pool_discard_observation(self) -> DosageBufferPoolObservationPlanProbe:
+        self.pool_observation_names.append("discard")
+        return DosageBufferPoolObservationPlanProbe(operation_name="discard", blocked=False)
+
+    def plan_dosage_buffer_pool_consumer_wait_observation(self) -> DosageBufferPoolObservationPlanProbe:
+        self.pool_observation_names.append("consumer_wait")
+        return DosageBufferPoolObservationPlanProbe(operation_name="consumer_wait", blocked=True)
+
+    def plan_dosage_buffer_pool_backpressure_observation(
+        self,
+        *,
+        operation_name: str,
+        free_buffer_count: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> CallbackQueueBackpressureObservationProbe:
+        self.pool_backpressure_names.append(operation_name)
+        return CallbackQueueBackpressureObservationProbe(
+            queue_name="dosage_buffer_pool",
+            operation_name=operation_name,
+            queue_depth=free_buffer_count,
+            queue_capacity=self.dosage_buffer_limit,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=elapsed_seconds if blocked else 0.0,
+        )
+
+    def plan_dosage_buffer_pool_stage_backpressure_observation(
+        self,
+        *,
+        operation_name: str,
+        free_buffer_count: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> CallbackQueueStageBackpressureObservationProbe:
+        self.pool_stage_names.append(operation_name)
+        return CallbackQueueStageBackpressureObservationProbe(
+            queue_name="dosage_buffer_pool",
+            operation_name=operation_name,
+            stage_name="dosage_buffer_pool_consumer_wait",
+            queue_depth=free_buffer_count,
+            queue_capacity=self.dosage_buffer_limit,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=elapsed_seconds if blocked else 0.0,
         )
 
     def plan_dosage_buffer_reuse(
@@ -4197,6 +4263,33 @@ def test_native_callback_runner_uses_scheduler_result_in_flight_release_observat
     assert scheduler_state.operation_observation_called is True
     assert scheduler_state.observed_resource_name == "result_in_flight_slots"
     assert scheduler_state.observed_operation_name == "release"
+
+
+def test_native_callback_runner_uses_scheduler_dosage_buffer_pool_observation_plans() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = DosageBufferAttemptSchedulerProbe()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+    callback.stage_timing_recorder = stage_timing_recorder
+
+    dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    callback.release_dosage_buffer(dosage_buffer)
+    reused_dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    callback.discard_dosage_buffer_slot(reused_dosage_buffer)
+    callback.record_dosage_buffer_pool_consumer_wait_stage_duration(
+        free_buffer_count=0,
+        start_time=time.perf_counter(),
+    )
+
+    assert scheduler_state.pool_observation_names == [
+        "allocate",
+        "return",
+        "reuse",
+        "discard",
+        "consumer_wait",
+    ]
+    assert scheduler_state.pool_backpressure_names == ["allocate", "return", "reuse", "discard"]
+    assert scheduler_state.pool_stage_names == ["consumer_wait"]
 
 
 def test_native_callback_runner_uses_scheduler_result_write_item_resource_release_plans() -> None:

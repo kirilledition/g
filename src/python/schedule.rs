@@ -140,6 +140,11 @@ pub(crate) struct NativeDosageBufferDiscardAttemptPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeDosageBufferPoolObservationPlan {
+    inner: native_schedule::DosageBufferPoolObservationPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageBufferPoolState {
     inner: native_schedule::DosageBufferPoolState,
 }
@@ -733,6 +738,26 @@ impl NativeCallbackSchedulerState {
 
     fn plan_dosage_buffer_discard_attempt(&mut self, buffer_identifier: usize) -> NativeDosageBufferDiscardAttemptPlan {
         self.inner.plan_dosage_buffer_discard_attempt(buffer_identifier).into()
+    }
+
+    fn plan_dosage_buffer_pool_reuse_observation(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_reuse_observation().into()
+    }
+
+    fn plan_dosage_buffer_pool_return_observation(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_return_observation().into()
+    }
+
+    fn plan_dosage_buffer_pool_allocate_observation(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_allocate_observation().into()
+    }
+
+    fn plan_dosage_buffer_pool_discard_observation(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_discard_observation().into()
+    }
+
+    fn plan_dosage_buffer_pool_consumer_wait_observation(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_consumer_wait_observation().into()
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -1645,6 +1670,19 @@ impl NativeDosageBufferDiscardAttemptPlan {
 }
 
 #[pymethods]
+impl NativeDosageBufferPoolObservationPlan {
+    #[getter]
+    fn operation_name(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    #[getter]
+    fn blocked(&self) -> bool {
+        self.inner.blocked
+    }
+}
+
+#[pymethods]
 impl NativeResultInFlightAcquireAttemptPlan {
     #[getter]
     fn should_acquire(&self) -> bool {
@@ -2112,6 +2150,12 @@ impl From<native_schedule::DosageBufferReturnAttemptPlan> for NativeDosageBuffer
 impl From<native_schedule::DosageBufferDiscardAttemptPlan> for NativeDosageBufferDiscardAttemptPlan {
     fn from(discard_attempt_plan: native_schedule::DosageBufferDiscardAttemptPlan) -> Self {
         Self { inner: discard_attempt_plan }
+    }
+}
+
+impl From<native_schedule::DosageBufferPoolObservationPlan> for NativeDosageBufferPoolObservationPlan {
+    fn from(pool_observation_plan: native_schedule::DosageBufferPoolObservationPlan) -> Self {
+        Self { inner: pool_observation_plan }
     }
 }
 

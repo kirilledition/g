@@ -1034,6 +1034,8 @@ Remove Python as the chunk-level scheduler.
   plans for dosage and result queue consumers.
 - Result in-flight slot release timing now uses a native scheduler observation
   plan for release accounting.
+- Dosage-buffer pool operation timing now uses native scheduler observation
+  plans for reuse, return, allocation, discard, and consumer wait accounting.
 
 ### Tests
 

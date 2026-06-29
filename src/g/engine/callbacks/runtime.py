@@ -473,6 +473,71 @@ class NativeBgenCallbackRunner(abc.ABC):
             blocked_seconds=observation.blocked_seconds,
         )
 
+    def record_dosage_buffer_pool_reuse_operation(self, *, free_buffer_count: int) -> None:
+        """Record native dosage-buffer reuse accounting."""
+        if self.stage_timing_recorder is None:
+            return
+        observation_plan = self.callback_scheduler_state.plan_dosage_buffer_pool_reuse_observation()
+        self.record_dosage_buffer_pool_operation(
+            operation_name=observation_plan.operation_name,
+            free_buffer_count=free_buffer_count,
+            elapsed_seconds=0.0,
+            blocked=observation_plan.blocked,
+        )
+
+    def record_dosage_buffer_pool_return_operation(self, *, free_buffer_count: int) -> None:
+        """Record native dosage-buffer return accounting."""
+        if self.stage_timing_recorder is None:
+            return
+        observation_plan = self.callback_scheduler_state.plan_dosage_buffer_pool_return_observation()
+        self.record_dosage_buffer_pool_operation(
+            operation_name=observation_plan.operation_name,
+            free_buffer_count=free_buffer_count,
+            elapsed_seconds=0.0,
+            blocked=observation_plan.blocked,
+        )
+
+    def record_dosage_buffer_pool_allocate_operation(self, *, free_buffer_count: int) -> None:
+        """Record native dosage-buffer allocation accounting."""
+        if self.stage_timing_recorder is None:
+            return
+        observation_plan = self.callback_scheduler_state.plan_dosage_buffer_pool_allocate_observation()
+        self.record_dosage_buffer_pool_operation(
+            operation_name=observation_plan.operation_name,
+            free_buffer_count=free_buffer_count,
+            elapsed_seconds=0.0,
+            blocked=observation_plan.blocked,
+        )
+
+    def record_dosage_buffer_pool_discard_operation(self, *, free_buffer_count: int) -> None:
+        """Record native dosage-buffer discard accounting."""
+        if self.stage_timing_recorder is None:
+            return
+        observation_plan = self.callback_scheduler_state.plan_dosage_buffer_pool_discard_observation()
+        self.record_dosage_buffer_pool_operation(
+            operation_name=observation_plan.operation_name,
+            free_buffer_count=free_buffer_count,
+            elapsed_seconds=0.0,
+            blocked=observation_plan.blocked,
+        )
+
+    def record_dosage_buffer_pool_consumer_wait_stage_duration(
+        self,
+        *,
+        free_buffer_count: int,
+        start_time: float,
+    ) -> None:
+        """Record native dosage-buffer consumer wait accounting."""
+        if self.stage_timing_recorder is None:
+            return
+        observation_plan = self.callback_scheduler_state.plan_dosage_buffer_pool_consumer_wait_observation()
+        self.record_dosage_buffer_pool_stage_duration(
+            operation_name=observation_plan.operation_name,
+            free_buffer_count=free_buffer_count,
+            start_time=start_time,
+            blocked=observation_plan.blocked,
+        )
+
     @abc.abstractmethod
     def compute_preprocessed_chunk(
         self,
@@ -1494,11 +1559,8 @@ class NativeBgenCallbackRunner(abc.ABC):
                     dtype=dtype,
                 )
                 if reused_dosage_buffer is not None:
-                    self.record_dosage_buffer_pool_operation(
-                        operation_name="reuse",
+                    self.record_dosage_buffer_pool_reuse_operation(
                         free_buffer_count=self.free_dosage_buffer_count,
-                        elapsed_seconds=0.0,
-                        blocked=False,
                     )
                     return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
@@ -1526,20 +1588,15 @@ class NativeBgenCallbackRunner(abc.ABC):
                     dtype=dtype,
                 )
                 if reused_dosage_buffer is not None:
-                    self.record_dosage_buffer_pool_operation(
-                        operation_name="reuse",
+                    self.record_dosage_buffer_pool_reuse_operation(
                         free_buffer_count=self.free_dosage_buffer_count,
-                        elapsed_seconds=0.0,
-                        blocked=False,
                     )
                     return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
                 continue
-            self.record_dosage_buffer_pool_stage_duration(
-                operation_name="consumer_wait",
+            self.record_dosage_buffer_pool_consumer_wait_stage_duration(
                 free_buffer_count=current_depth,
                 start_time=buffer_wait_start_time,
-                blocked=True,
             )
 
     def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
@@ -1552,11 +1609,8 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.free_dosage_buffers.append(dosage_buffer_owner)
             current_depth = self.free_dosage_buffer_count
             self.dosage_buffer_pool_condition.notify()
-        self.record_dosage_buffer_pool_operation(
-            operation_name="return",
+        self.record_dosage_buffer_pool_return_operation(
             free_buffer_count=current_depth,
-            elapsed_seconds=0.0,
-            blocked=False,
         )
 
     def allocate_dosage_buffer_with_shape(
@@ -1572,11 +1626,8 @@ class NativeBgenCallbackRunner(abc.ABC):
                 message = "Native dosage-buffer pool has no available slot for allocation."
                 raise RuntimeError(message)
             current_depth = self.free_dosage_buffer_count
-        self.record_dosage_buffer_pool_operation(
-            operation_name="allocate",
+        self.record_dosage_buffer_pool_allocate_operation(
             free_buffer_count=current_depth,
-            elapsed_seconds=0.0,
-            blocked=False,
         )
         return dosage_buffer
 
@@ -1589,11 +1640,8 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             current_depth = self.free_dosage_buffer_count
             self.dosage_buffer_pool_condition.notify()
-        self.record_dosage_buffer_pool_operation(
-            operation_name="discard",
+        self.record_dosage_buffer_pool_discard_operation(
             free_buffer_count=current_depth,
-            elapsed_seconds=0.0,
-            blocked=False,
         )
 
     def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | HostGenotypeBuffer) -> None:
