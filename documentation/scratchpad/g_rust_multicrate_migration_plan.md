@@ -1189,6 +1189,8 @@ Remove Python as the chunk-level scheduler.
 - Binary callback null-logistic nonconvergence warnings now route through the
   native diagnostic emitter with policy and convergence-count context instead
   of Python logging.
+- Multi-phenotype sample-summary diagnostics now route through the native
+  diagnostic emitter while preserving native telemetry session events.
 
 ### Tests
 

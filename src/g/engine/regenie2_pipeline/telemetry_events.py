@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
-import logging
+import json
 import typing
 
-from g import types
+from g import _core, types
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
 
-logger = logging.getLogger(__name__)
+
+def emit_pipeline_telemetry_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured pipeline telemetry diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 def log_sample_alignment_completed(
@@ -46,9 +54,8 @@ def log_multi_phenotype_sample_summary(
     """Emit a user-visible summary of multi-phenotype sample semantics."""
     sample_counts_differ = len(set(sample_counts)) > 1
     if sample_mode == types.MultiPhenotypeSampleMode.COMPLETE_CASE:
-        logger.info(
-            "Analyzed %s phenotypes in complete-case sample mode; one shared sample set was used.",
-            len(sample_counts),
+        message = (
+            f"Analyzed {len(sample_counts)} phenotypes in complete-case sample mode; one shared sample set was used."
         )
     else:
         sample_count_summary = (
@@ -56,11 +63,18 @@ def log_multi_phenotype_sample_summary(
             if sample_counts_differ
             else "sample counts do not differ across phenotypes"
         )
-        logger.info(
-            "Analyzed %s phenotypes in per-phenotype sample mode; %s.",
-            len(sample_counts),
-            sample_count_summary,
-        )
+        message = f"Analyzed {len(sample_counts)} phenotypes in per-phenotype sample mode; {sample_count_summary}."
+    emit_pipeline_telemetry_diagnostic_event(
+        "info",
+        "pipeline_multi_phenotype_sample_summary",
+        message,
+        {
+            "phenotype_count": len(sample_counts),
+            "phenotype_group_count": phenotype_group_count,
+            "sample_counts_differ": sample_counts_differ,
+            "sample_mode": sample_mode.value,
+        },
+    )
     if context.telemetry_session is None:
         return
     context.telemetry_session.log_multi_phenotype_sample_summary(
