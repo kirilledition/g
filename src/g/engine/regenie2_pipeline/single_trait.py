@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+import json
 import time
 import typing
 
@@ -25,7 +25,15 @@ if typing.TYPE_CHECKING:
     from g.compute.regenie2_linear import config as regenie2_linear_config
     from g.io import source
 
-logger = logging.getLogger(__name__)
+
+def emit_single_trait_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured single-trait pipeline diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 def load_single_trait_run_input(
@@ -38,7 +46,15 @@ def load_single_trait_run_input(
 ) -> native_dispatch_models.NativeBgenRunInput:
     """Load one phenotype's aligned native inputs and emit telemetry."""
     alignment_start_time = time.perf_counter()
-    logger.debug("Loading aligned native sample, phenotype, and covariate inputs for %s pipeline.", pipeline_label)
+    emit_single_trait_diagnostic_event(
+        "debug",
+        "pipeline_single_trait_input_load_started",
+        f"Loading aligned native sample, phenotype, and covariate inputs for {pipeline_label} pipeline.",
+        {
+            "phenotype_name": phenotype_name,
+            "pipeline_label": pipeline_label,
+        },
+    )
     run_input = native_dispatch_loaders.load_native_bgen_run_input(
         genotype_source_config=context.genotype_source_config,
         engine=engine,
@@ -56,11 +72,16 @@ def load_single_trait_run_input(
     )
     sample_count = int(run_input.sample_indices.shape[0])
     covariate_count = len(run_input.native_aligned_sample_data.covariate_names)
-    logger.debug(
-        "Aligned %s pipeline inputs: sample_count=%s covariate_count=%s.",
-        pipeline_label,
-        sample_count,
-        covariate_count,
+    emit_single_trait_diagnostic_event(
+        "debug",
+        "pipeline_single_trait_input_aligned",
+        f"Aligned {pipeline_label} pipeline inputs: sample_count={sample_count} covariate_count={covariate_count}.",
+        {
+            "covariate_count": covariate_count,
+            "phenotype_name": phenotype_name,
+            "pipeline_label": pipeline_label,
+            "sample_count": sample_count,
+        },
     )
     telemetry_events.log_sample_alignment_completed(
         context=context,
@@ -82,7 +103,15 @@ def build_single_trait_prediction_source(
 ) -> typing.Any:
     """Load one phenotype's REGENIE prediction source and emit telemetry."""
     prediction_start_time = time.perf_counter()
-    logger.debug("Loading REGENIE prediction source for %s pipeline.", pipeline_label)
+    emit_single_trait_diagnostic_event(
+        "debug",
+        "pipeline_single_trait_prediction_source_load_started",
+        f"Loading REGENIE prediction source for {pipeline_label} pipeline.",
+        {
+            "phenotype_name": phenotype_name,
+            "pipeline_label": pipeline_label,
+        },
+    )
     prediction_source = native_dispatch_loaders.build_regenie_prediction_source(
         prediction_list_path=context.prediction_list_path,
         phenotype_name=phenotype_name,
@@ -109,7 +138,17 @@ def run_single_trait_preflight(
 ) -> None:
     """Run preflight validation for one phenotype and emit telemetry."""
     preflight_start_time = time.perf_counter()
-    logger.debug("Running preflight validation for %s pipeline.", pipeline_label)
+    emit_single_trait_diagnostic_event(
+        "debug",
+        "pipeline_single_trait_preflight_started",
+        f"Running preflight validation for {pipeline_label} pipeline.",
+        {
+            "phenotype_name": phenotype_name,
+            "pipeline_label": pipeline_label,
+            "trusted_no_missing_diploid": context.effective_trusted_no_missing_diploid,
+            "variant_limit": context.variant_limit,
+        },
+    )
     preflight_report = preflight.run_regenie2_preflight(
         run_input=run_input,
         prediction_source=prediction_source,
@@ -119,12 +158,22 @@ def run_single_trait_preflight(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
     )
     timing.record_stage_duration(context.stage_timing_recorder, "preflight_validation", preflight_start_time)
-    logger.debug(
-        "Preflight validation passed for %s pipeline: sample_count=%s covariate_count=%s chromosome_count=%s.",
-        pipeline_label,
-        preflight_report.sample_count,
-        preflight_report.covariate_count,
-        preflight_report.chromosome_count,
+    emit_single_trait_diagnostic_event(
+        "debug",
+        "pipeline_single_trait_preflight_completed",
+        (
+            f"Preflight validation passed for {pipeline_label} pipeline: "
+            f"sample_count={preflight_report.sample_count} "
+            f"covariate_count={preflight_report.covariate_count} "
+            f"chromosome_count={preflight_report.chromosome_count}."
+        ),
+        {
+            "chromosome_count": preflight_report.chromosome_count,
+            "covariate_count": preflight_report.covariate_count,
+            "phenotype_name": phenotype_name,
+            "pipeline_label": pipeline_label,
+            "sample_count": preflight_report.sample_count,
+        },
     )
     if context.telemetry_session is not None:
         context.telemetry_session.log_single_trait_preflight_completed(
@@ -200,7 +249,16 @@ def run_single_trait_bgen_pipeline(
 ) -> Path | None:
     """Run a single-trait REGENIE step 2 BGEN pipeline lifecycle."""
     pipeline_label = "binary" if context.is_binary_trait else "linear"
-    logger.info("Starting %s REGENIE step 2 BGEN pipeline.", pipeline_label)
+    emit_single_trait_diagnostic_event(
+        "info",
+        "pipeline_single_trait_started",
+        f"Starting {pipeline_label} REGENIE step 2 BGEN pipeline.",
+        {
+            "association_mode": context.association_mode.value,
+            "phenotype_name": phenotype_name,
+            "pipeline_label": pipeline_label,
+        },
+    )
     if prepared_engine is None:
         engine = outputs.open_pipeline_bgen_engine(
             context=context,
