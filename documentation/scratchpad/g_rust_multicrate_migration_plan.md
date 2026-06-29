@@ -1179,6 +1179,9 @@ Remove Python as the chunk-level scheduler.
   now route through the native diagnostic emitter instead of Python logging.
 - Native callback drain and writer finalization diagnostics now route through
   the native diagnostic emitter instead of Python logging.
+- Native BGEN delivery lifecycle, interruption, failure, and completion
+  diagnostics now route through the native diagnostic emitter instead of Python
+  logging.
 
 ### Tests
 
