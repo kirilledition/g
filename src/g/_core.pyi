@@ -856,6 +856,40 @@ class NativeCallbackRuntimeResources:
     def record_processed_chunk(self, chunk_identity: NativeCallbackChunkIdentity) -> NativeCallbackProgressUpdate: ...
     def record_processed_chunk_without_progress(self) -> None: ...
     def finish_progress(self) -> NativeCallbackProgressCompletion | None: ...
+    def binary_correction_chunk_count_with_pending(self, pending_diagnostics_count: int) -> int: ...
+    def add_binary_null_model_failure_count(self, failure_count: int) -> None: ...
+    def plan_binary_correction_diagnostics_record(
+        self,
+        has_telemetry_session: bool,
+        has_diagnostics: bool,
+    ) -> NativeBinaryCorrectionDiagnosticsRecordPlan: ...
+    def plan_binary_correction_summary_emit(
+        self,
+        has_telemetry_session: bool,
+        pending_diagnostics_count: int,
+    ) -> NativeBinaryCorrectionSummaryEmitPlan: ...
+    def add_binary_correction_diagnostics_totals(
+        self,
+        chunk_count: int,
+        score_only_count: int,
+        score_test_candidate_count: int,
+        firth_candidate_count: int,
+        firth_converged_count: int,
+        firth_failed_count: int,
+        firth_numerical_failure_count: int,
+        firth_max_iteration_failure_count: int,
+        firth_invalid_statistic_failure_count: int,
+        firth_step_halving_failure_count: int,
+        pseudo_firth_attempt_count: int,
+        pseudo_firth_success_count: int,
+        nr_zero_start_attempt_count: int,
+        nr_zero_start_success_count: int,
+        nr_warm_start_attempt_count: int,
+        nr_warm_start_success_count: int,
+        sparse_correction_count: int,
+        dense_correction_count: int,
+    ) -> None: ...
+    def binary_correction_summary_payload(self) -> dict[str, int]: ...
     def start_workers(self) -> NativeCallbackWorkerStartAttemptPlan: ...
     def stop_dosage_worker(self, timeout_seconds: float | None) -> float | None: ...
     def join_dosage_worker(self, timeout_seconds: float | None) -> float | None: ...

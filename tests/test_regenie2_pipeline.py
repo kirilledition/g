@@ -1418,6 +1418,61 @@ def test_native_callback_runner_uses_native_binary_summary_plans() -> None:
     assert callback.binary_correction_pending_diagnostics == [diagnostics]
 
 
+def test_native_callback_runner_uses_runtime_resource_binary_summary() -> None:
+    class ResourceBackedCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
+        def __init__(self) -> None:
+            super().__init__(
+                worker_name="native-resource-binary-summary-runner-test",
+                staging_depth=1,
+                native_callback_batch_size=1,
+                result_in_flight_limit=1,
+                dosage_buffer_limit=1,
+                stage_timing_recorder=None,
+                telemetry_session=typing.cast("typing.Any", RecordingTelemetrySession()),
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+            )
+
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    callback = ResourceBackedCallbackRunner()
+    diagnostics = typing.cast(
+        "regenie2_binary.BinaryChunkDiagnostics",
+        SimpleNamespace(score_test_candidate_count=2),
+    )
+
+    callback.record_binary_null_model_failure_count(2)
+    callback.record_binary_correction_diagnostics(diagnostics)
+
+    assert callback.binary_correction_summary.null_model_failure_count == 2
+    assert callback.binary_correction_summary_chunk_count == 1
+    assert callback.binary_correction_pending_diagnostics == [diagnostics]
+
+
 class FakeRunEngine:
     instances: typing.ClassVar[list[FakeRunEngine]] = []
 
@@ -2268,6 +2323,80 @@ def test_native_callback_runtime_resources_own_progress_state() -> None:
     untimed_runtime_resources.record_processed_chunk_without_progress()
     assert untimed_runtime_resources.processed_chunk_count == 1
     assert untimed_runtime_resources.current_progress_chromosome is None
+
+
+def test_native_callback_runtime_resources_own_binary_correction_summary() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-binary-summary-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+
+    assert runtime_resources.binary_correction_chunk_count_with_pending(0) == 0
+    has_telemetry_session = False
+    has_diagnostics = True
+    disabled_record_plan = runtime_resources.plan_binary_correction_diagnostics_record(
+        has_telemetry_session,
+        has_diagnostics,
+    )
+    assert disabled_record_plan.should_record is False
+    has_telemetry_session = True
+    enabled_record_plan = runtime_resources.plan_binary_correction_diagnostics_record(
+        has_telemetry_session,
+        has_diagnostics,
+    )
+    assert enabled_record_plan.should_record is True
+
+    runtime_resources.add_binary_null_model_failure_count(2)
+    runtime_resources.add_binary_correction_diagnostics_totals(
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+    )
+
+    assert runtime_resources.binary_correction_chunk_count_with_pending(1) == 2
+    pending_diagnostics_count = 0
+    emit_plan = runtime_resources.plan_binary_correction_summary_emit(
+        has_telemetry_session,
+        pending_diagnostics_count,
+    )
+    assert emit_plan.should_flush_pending_diagnostics is False
+    assert emit_plan.should_emit_summary is True
+    pending_diagnostics_count = 1
+    flush_plan = runtime_resources.plan_binary_correction_summary_emit(
+        has_telemetry_session,
+        pending_diagnostics_count,
+    )
+    assert flush_plan.should_flush_pending_diagnostics is True
+    assert flush_plan.should_emit_summary is True
+    summary_payload = runtime_resources.binary_correction_summary_payload()
+    assert summary_payload["chunk_count"] == 1
+    assert summary_payload["score_only_count"] == 2
+    assert summary_payload["firth_attempted_count"] == 4
+    assert summary_payload["dense_correction_count"] == 18
+    assert summary_payload["null_model_failure_count"] == 2
 
 
 def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> None:

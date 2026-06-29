@@ -1063,6 +1063,9 @@ Remove Python as the chunk-level scheduler.
   reads while Python keeps public runner property accessors.
 - Callback runtime resources now own production progress state reads, per-chunk
   records, and completion while Python keeps telemetry emission.
+- Callback runtime resources now own production binary correction summary
+  counters, retention/emit plans, and payload reads while Python keeps pending
+  diagnostics materialization and telemetry emission.
 - Callback runtime resources now own production dosage/result drain planning
   and validated work-item dispatch planning, leaving Python to classify work
   item dataclasses and perform JAX/write side effects.

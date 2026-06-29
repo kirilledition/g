@@ -177,6 +177,10 @@ class NativeBgenCallbackRunner(abc.ABC):
     @property
     def binary_correction_summary_chunk_count(self) -> int:
         """Return the number of chunks included in binary correction summary telemetry."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.binary_correction_chunk_count_with_pending(
+                len(self.binary_correction_pending_diagnostics)
+            )
         return self.binary_correction_summary.chunk_count_with_pending(len(self.binary_correction_pending_diagnostics))
 
     def start(self) -> None:
@@ -1132,6 +1136,9 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def record_binary_null_model_failure_count(self, failure_count: int) -> None:
         """Accumulate binary null-model failures for run-level telemetry."""
+        if self.uses_native_callback_runtime_resources():
+            self.callback_runtime_resources.add_binary_null_model_failure_count(failure_count)
+            return
         self.binary_correction_summary.add_null_model_failure_count(failure_count)
 
     def record_binary_correction_diagnostics(
@@ -1139,10 +1146,18 @@ class NativeBgenCallbackRunner(abc.ABC):
         binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None,
     ) -> None:
         """Accumulate binary correction diagnostics for run-level telemetry."""
-        diagnostics_record_plan = self.binary_correction_summary.plan_diagnostics_record(
-            has_telemetry_session=self.telemetry_session is not None,
-            has_diagnostics=binary_chunk_diagnostics is not None,
-        )
+        has_telemetry_session = self.telemetry_session is not None
+        has_diagnostics = binary_chunk_diagnostics is not None
+        if self.uses_native_callback_runtime_resources():
+            diagnostics_record_plan = self.callback_runtime_resources.plan_binary_correction_diagnostics_record(
+                has_telemetry_session,
+                has_diagnostics,
+            )
+        else:
+            diagnostics_record_plan = self.binary_correction_summary.plan_diagnostics_record(
+                has_telemetry_session=has_telemetry_session,
+                has_diagnostics=has_diagnostics,
+            )
         if not diagnostics_record_plan.should_record:
             return
         if binary_chunk_diagnostics is None:
@@ -1152,10 +1167,18 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def flush_binary_correction_diagnostics(self) -> None:
         """Materialize pending binary diagnostics and accumulate them into native summary counters."""
-        summary_emit_plan = self.binary_correction_summary.plan_summary_emit(
-            has_telemetry_session=True,
-            pending_diagnostics_count=len(self.binary_correction_pending_diagnostics),
-        )
+        has_telemetry_session = True
+        pending_diagnostics_count = len(self.binary_correction_pending_diagnostics)
+        if self.uses_native_callback_runtime_resources():
+            summary_emit_plan = self.callback_runtime_resources.plan_binary_correction_summary_emit(
+                has_telemetry_session,
+                pending_diagnostics_count,
+            )
+        else:
+            summary_emit_plan = self.binary_correction_summary.plan_summary_emit(
+                has_telemetry_session=has_telemetry_session,
+                pending_diagnostics_count=pending_diagnostics_count,
+            )
         if not summary_emit_plan.should_flush_pending_diagnostics:
             return
         pending_diagnostics = tuple(self.binary_correction_pending_diagnostics)
@@ -1168,6 +1191,28 @@ class NativeBgenCallbackRunner(abc.ABC):
         diagnostics_counts: regenie2_binary.BinaryCorrectionSummaryCounts,
     ) -> None:
         """Accumulate one host-materialized binary diagnostics summary."""
+        if self.uses_native_callback_runtime_resources():
+            self.callback_runtime_resources.add_binary_correction_diagnostics_totals(
+                diagnostics_counts.chunk_count,
+                diagnostics_counts.score_only_count,
+                diagnostics_counts.score_test_candidate_count,
+                diagnostics_counts.firth_candidate_count,
+                diagnostics_counts.firth_converged_count,
+                diagnostics_counts.firth_failed_count,
+                diagnostics_counts.firth_numerical_failure_count,
+                diagnostics_counts.firth_max_iteration_failure_count,
+                diagnostics_counts.firth_invalid_statistic_failure_count,
+                diagnostics_counts.firth_step_halving_failure_count,
+                diagnostics_counts.pseudo_firth_attempt_count,
+                diagnostics_counts.pseudo_firth_success_count,
+                diagnostics_counts.nr_zero_start_attempt_count,
+                diagnostics_counts.nr_zero_start_success_count,
+                diagnostics_counts.nr_warm_start_attempt_count,
+                diagnostics_counts.nr_warm_start_success_count,
+                diagnostics_counts.sparse_correction_count,
+                diagnostics_counts.dense_correction_count,
+            )
+            return
         self.binary_correction_summary.add_diagnostics_totals(
             diagnostics_counts.chunk_count,
             diagnostics_counts.score_only_count,
@@ -1191,10 +1236,18 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def emit_binary_correction_summary(self) -> None:
         """Emit aggregate binary correction diagnostics when a binary run produced them."""
-        summary_emit_plan = self.binary_correction_summary.plan_summary_emit(
-            has_telemetry_session=self.telemetry_session is not None,
-            pending_diagnostics_count=len(self.binary_correction_pending_diagnostics),
-        )
+        has_telemetry_session = self.telemetry_session is not None
+        pending_diagnostics_count = len(self.binary_correction_pending_diagnostics)
+        if self.uses_native_callback_runtime_resources():
+            summary_emit_plan = self.callback_runtime_resources.plan_binary_correction_summary_emit(
+                has_telemetry_session,
+                pending_diagnostics_count,
+            )
+        else:
+            summary_emit_plan = self.binary_correction_summary.plan_summary_emit(
+                has_telemetry_session=has_telemetry_session,
+                pending_diagnostics_count=pending_diagnostics_count,
+            )
         if summary_emit_plan.should_flush_pending_diagnostics:
             self.flush_binary_correction_diagnostics()
         if not summary_emit_plan.should_emit_summary:
@@ -1202,7 +1255,13 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.telemetry_session is None:
             message = "Native binary correction summary emit plan selected a missing telemetry session."
             raise RuntimeError(message)
-        summary_payload = typing.cast("dict[str, object]", self.binary_correction_summary.summary_payload())
+        if self.uses_native_callback_runtime_resources():
+            summary_payload = typing.cast(
+                "dict[str, object]",
+                self.callback_runtime_resources.binary_correction_summary_payload(),
+            )
+        else:
+            summary_payload = typing.cast("dict[str, object]", self.binary_correction_summary.summary_payload())
         self.telemetry_session.log_event(
             "binary_correction_summary",
             level="info",

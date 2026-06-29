@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyDict};
 
 use super::callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
@@ -14,7 +14,9 @@ use super::callback_progress::{
 use super::callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
 };
-use super::callback_summary::NativeBinaryCorrectionSummary;
+use super::callback_summary::{
+    NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
+};
 use super::schedule::{
     NativeCallbackQueueBackpressureObservation, NativeCallbackQueueGetObservationPlan,
     NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
@@ -254,6 +256,91 @@ impl NativeCallbackRuntimeResources {
 
     fn finish_progress(&self, py: Python<'_>) -> Option<NativeCallbackProgressCompletion> {
         self.progress_state.bind(py).borrow_mut().finish_progress_value()
+    }
+
+    fn binary_correction_chunk_count_with_pending(
+        &self,
+        py: Python<'_>,
+        pending_diagnostics_count: i64,
+    ) -> PyResult<i64> {
+        self.binary_correction_summary.bind(py).borrow().chunk_count_with_pending_value(pending_diagnostics_count)
+    }
+
+    fn add_binary_null_model_failure_count(&self, py: Python<'_>, failure_count: i64) -> PyResult<()> {
+        self.binary_correction_summary.bind(py).borrow().add_null_model_failure_count_value(failure_count)
+    }
+
+    fn plan_binary_correction_diagnostics_record(
+        &self,
+        py: Python<'_>,
+        has_telemetry_session: bool,
+        has_diagnostics: bool,
+    ) -> PyResult<NativeBinaryCorrectionDiagnosticsRecordPlan> {
+        self.binary_correction_summary
+            .bind(py)
+            .borrow()
+            .plan_diagnostics_record_value(has_telemetry_session, has_diagnostics)
+    }
+
+    fn plan_binary_correction_summary_emit(
+        &self,
+        py: Python<'_>,
+        has_telemetry_session: bool,
+        pending_diagnostics_count: i64,
+    ) -> PyResult<NativeBinaryCorrectionSummaryEmitPlan> {
+        self.binary_correction_summary
+            .bind(py)
+            .borrow()
+            .plan_summary_emit_value(has_telemetry_session, pending_diagnostics_count)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_binary_correction_diagnostics_totals(
+        &self,
+        py: Python<'_>,
+        chunk_count: i64,
+        score_only_count: i64,
+        score_test_candidate_count: i64,
+        firth_candidate_count: i64,
+        firth_converged_count: i64,
+        firth_failed_count: i64,
+        firth_numerical_failure_count: i64,
+        firth_max_iteration_failure_count: i64,
+        firth_invalid_statistic_failure_count: i64,
+        firth_step_halving_failure_count: i64,
+        pseudo_firth_attempt_count: i64,
+        pseudo_firth_success_count: i64,
+        nr_zero_start_attempt_count: i64,
+        nr_zero_start_success_count: i64,
+        nr_warm_start_attempt_count: i64,
+        nr_warm_start_success_count: i64,
+        sparse_correction_count: i64,
+        dense_correction_count: i64,
+    ) -> PyResult<()> {
+        self.binary_correction_summary.bind(py).borrow().add_diagnostics_totals_value(
+            chunk_count,
+            score_only_count,
+            score_test_candidate_count,
+            firth_candidate_count,
+            firth_converged_count,
+            firth_failed_count,
+            firth_numerical_failure_count,
+            firth_max_iteration_failure_count,
+            firth_invalid_statistic_failure_count,
+            firth_step_halving_failure_count,
+            pseudo_firth_attempt_count,
+            pseudo_firth_success_count,
+            nr_zero_start_attempt_count,
+            nr_zero_start_success_count,
+            nr_warm_start_attempt_count,
+            nr_warm_start_success_count,
+            sparse_correction_count,
+            dense_correction_count,
+        )
+    }
+
+    fn binary_correction_summary_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        self.binary_correction_summary.bind(py).borrow().summary_payload_value(py)
     }
 
     fn start_workers(&self, py: Python<'_>) -> PyResult<NativeCallbackWorkerStartAttemptPlan> {
