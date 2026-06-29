@@ -17,8 +17,8 @@ use super::schedule::{
     NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
     NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
     NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerStartAttemptPlan, NativeDosageBufferPoolObservationPlan,
-    NativeDosageBufferReusePlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
-    NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan,
+    NativeDosageBufferReturnAttemptPlan, NativeDosageBufferReusePlan, NativeDosageWorkDrainCompletionPlan,
+    NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan,
     NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseObservationPlan,
     NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
     NativeResultWriteItemResourceReleasePlan, NativeVariantMajorDosageBatchHandoffPlan,
@@ -543,6 +543,15 @@ impl NativeCallbackRuntimeResources {
         let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
         self.dosage_buffer_pool_signal.bind(py).borrow().notify_waiters_value()?;
         Ok(Some(free_buffer_count))
+    }
+
+    fn plan_dosage_buffer_return_attempt(
+        &self,
+        py: Python<'_>,
+        buffer_identifier: usize,
+    ) -> NativeDosageBufferReturnAttemptPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_buffer_return_attempt_value(buffer_identifier)
     }
 
     #[allow(clippy::needless_pass_by_value)]

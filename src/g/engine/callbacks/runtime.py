@@ -1822,6 +1822,16 @@ class NativeBgenCallbackRunner(abc.ABC):
             expected_shape=expected_shape,
         )
 
+    def plan_dosage_buffer_return_attempt(
+        self,
+        *,
+        buffer_identifier: int,
+    ) -> _core.NativeDosageBufferReturnAttemptPlan:
+        """Plan host dosage-buffer return eligibility through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_buffer_return_attempt(buffer_identifier)
+        return self.callback_scheduler_state.plan_dosage_buffer_return_attempt(buffer_identifier)
+
     def _acquire_reused_dosage_buffer(
         self,
         dosage_buffer: HostGenotypeBuffer,
@@ -1974,7 +1984,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 free_buffer_count=free_buffer_count,
             )
             return
-        return_plan = self.callback_scheduler_state.plan_dosage_buffer_return_attempt(id(dosage_buffer_owner))
+        return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
         if not return_plan.should_return:
             return
         queued = self.free_dosage_buffers.put(dosage_buffer_owner, timeout_seconds=0.0)
@@ -2043,7 +2053,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         if isinstance(dosage_buffer, np.ndarray):
             host_dosage_buffer = typing.cast("HostGenotypeBuffer", dosage_buffer)
             dosage_buffer_owner = self._dosage_buffer_owner(host_dosage_buffer)
-            return_plan = self.callback_scheduler_state.plan_dosage_buffer_return_attempt(id(dosage_buffer_owner))
+            return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
             if return_plan.should_return:
                 return dosage_buffer_owner
         return None

@@ -2346,6 +2346,9 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
 
     assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
     assert runtime_resources.callback_scheduler_state.dosage_buffer_allocated_count == 1
+    return_attempt_plan = runtime_resources.plan_dosage_buffer_return_attempt(id(dosage_buffer))
+    assert return_attempt_plan.should_return is True
+    assert runtime_resources.plan_dosage_buffer_return_attempt(id(object())).should_return is False
     with pytest.raises(RuntimeError, match="no available slot"):
         runtime_resources.register_dosage_buffer(id(np.empty((2, 2), dtype=np.float32)))
 
