@@ -267,6 +267,13 @@ pub struct CallbackQueueGetAttemptPlan {
     pub queue_capacity: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackQueueGetObservationPlan {
+    pub queue_name: String,
+    pub operation_name: String,
+    pub blocked: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ResultInFlightAcquireAttemptPlan {
     pub should_acquire: bool,
@@ -723,6 +730,12 @@ impl CallbackSchedulerState {
     }
 
     #[must_use]
+    pub fn plan_dosage_queue_get_observation(&self) -> CallbackQueueGetObservationPlan {
+        debug_assert!(self.dosage_queue_state.queue_capacity() > 0);
+        plan_callback_queue_get_observation(DOSAGE_QUEUE_NAME)
+    }
+
+    #[must_use]
     pub const fn result_queue_depth(&self) -> usize {
         self.queue_limits.result_queue_depth
     }
@@ -769,6 +782,12 @@ impl CallbackSchedulerState {
     #[must_use]
     pub fn plan_result_queue_get_attempt(&mut self, has_queued_item: bool) -> CallbackQueueGetAttemptPlan {
         plan_callback_queue_get_attempt(&mut self.result_queue_state, has_queued_item)
+    }
+
+    #[must_use]
+    pub fn plan_result_queue_get_observation(&self) -> CallbackQueueGetObservationPlan {
+        debug_assert!(self.result_queue_state.queue_capacity() > 0);
+        plan_callback_queue_get_observation(RESULT_QUEUE_NAME)
     }
 
     #[must_use]
@@ -1703,6 +1722,15 @@ fn plan_callback_queue_get_attempt(
         wait_timeout_seconds: callback_worker_backpressure_poll_timeout_seconds(),
         queue_depth: queue_state.occupied_count(),
         queue_capacity: queue_state.queue_capacity(),
+    }
+}
+
+#[must_use]
+pub fn plan_callback_queue_get_observation(queue_name: &str) -> CallbackQueueGetObservationPlan {
+    CallbackQueueGetObservationPlan {
+        queue_name: queue_name.to_string(),
+        operation_name: QUEUE_CONSUMER_WAIT_OPERATION.to_string(),
+        blocked: true,
     }
 }
 
@@ -4095,6 +4123,28 @@ mod tests {
                 operation_name: QUEUE_PRODUCER_BLOCKING_OPERATION.to_string(),
                 blocked: true,
                 should_retry_put: true,
+            },
+        );
+    }
+
+    #[test]
+    fn plans_callback_scheduler_queue_get_observations() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, None, None).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_dosage_queue_get_observation(),
+            CallbackQueueGetObservationPlan {
+                queue_name: DOSAGE_QUEUE_NAME.to_string(),
+                operation_name: QUEUE_CONSUMER_WAIT_OPERATION.to_string(),
+                blocked: true,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_queue_get_observation(),
+            CallbackQueueGetObservationPlan {
+                queue_name: RESULT_QUEUE_NAME.to_string(),
+                operation_name: QUEUE_CONSUMER_WAIT_OPERATION.to_string(),
+                blocked: true,
             },
         );
     }

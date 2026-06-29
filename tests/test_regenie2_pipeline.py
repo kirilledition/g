@@ -2939,6 +2939,13 @@ class CallbackQueueGetAttemptPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class CallbackQueueGetObservationPlanProbe:
+    queue_name: str
+    operation_name: str
+    blocked: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class CallbackQueueBackpressureObservationProbe:
     queue_name: str
     operation_name: str
@@ -3267,6 +3274,113 @@ class CallbackQueueAttemptSchedulerProbe:
             wait_timeout_seconds=0.0,
             queue_depth=0,
             queue_capacity=1,
+        )
+
+
+@dataclasses.dataclass
+class CallbackConsumerObservationSchedulerProbe:
+    get_observation_names: list[str] = dataclasses.field(default_factory=list)
+    stage_observation_names: list[str] = dataclasses.field(default_factory=list)
+
+    def plan_dosage_work_drain_completion(
+        self,
+        *,
+        has_dosage_work_item: bool,
+    ) -> DosageWorkDrainCompletionPlanProbe:
+        return DosageWorkDrainCompletionPlanProbe(should_stop=not has_dosage_work_item)
+
+    def plan_dosage_work_item_dispatch(
+        self,
+        *,
+        dosage_work_item_kind: str,
+    ) -> DosageWorkItemDispatchPlanProbe:
+        return DosageWorkItemDispatchPlanProbe(
+            dosage_work_item_kind=dosage_work_item_kind,
+            should_process_sample_major_dosage=dosage_work_item_kind == "sample_major_dosage",
+            should_process_variant_major_dosage=False,
+            should_process_variant_major_dosage_batch=False,
+            should_process_variant_major_packed8_probability_pair=False,
+            has_dispatch_error=False,
+            error_message=None,
+        )
+
+    def plan_dosage_work_item_stage_duration(
+        self,
+        *,
+        dosage_work_item_kind: str,
+        chunk_count: int,
+        elapsed_seconds: float,
+    ) -> DosageWorkItemStageDurationPlanProbe:
+        del dosage_work_item_kind
+        return DosageWorkItemStageDurationPlanProbe(
+            chunk_count=chunk_count,
+            duration_per_chunk=elapsed_seconds / chunk_count,
+        )
+
+    def plan_dosage_queue_get_observation(self) -> CallbackQueueGetObservationPlanProbe:
+        self.get_observation_names.append("dosage_queue")
+        return CallbackQueueGetObservationPlanProbe(
+            queue_name="dosage_queue",
+            operation_name="consumer_wait",
+            blocked=True,
+        )
+
+    def plan_result_write_drain_completion(
+        self,
+        *,
+        has_result_work_item: bool,
+        flush_binary_correction_diagnostics_on_stop: bool,
+    ) -> ResultWriteDrainCompletionPlanProbe:
+        del flush_binary_correction_diagnostics_on_stop
+        return ResultWriteDrainCompletionPlanProbe(
+            should_stop=not has_result_work_item,
+            should_flush_binary_correction_diagnostics=False,
+        )
+
+    def plan_result_write_item_dispatch(
+        self,
+        *,
+        result_work_item_kind: str,
+        expected_result_work_item_kind: str,
+    ) -> ResultWriteItemDispatchPlanProbe:
+        return ResultWriteItemDispatchPlanProbe(
+            result_work_item_kind=result_work_item_kind,
+            expected_result_work_item_kind=expected_result_work_item_kind,
+            should_process_result_write_item=result_work_item_kind == "single_result",
+            should_process_multi_result_write_item=False,
+            has_dispatch_error=False,
+            error_message=None,
+        )
+
+    def plan_result_queue_get_observation(self) -> CallbackQueueGetObservationPlanProbe:
+        self.get_observation_names.append("result_queue")
+        return CallbackQueueGetObservationPlanProbe(
+            queue_name="result_queue",
+            operation_name="consumer_wait",
+            blocked=True,
+        )
+
+    def plan_current_queue_stage_backpressure_observation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> CallbackQueueStageBackpressureObservationProbe:
+        stage_name = {
+            ("dosage_queue", "consumer_wait"): "callback_queue_consumer_wait",
+            ("result_queue", "consumer_wait"): "result_queue_consumer_wait",
+        }[(queue_name, operation_name)]
+        self.stage_observation_names.append(stage_name)
+        return CallbackQueueStageBackpressureObservationProbe(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            stage_name=stage_name,
+            queue_depth=1,
+            queue_capacity=1,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=elapsed_seconds if blocked else 0.0,
         )
 
 
@@ -3852,6 +3966,67 @@ def test_native_callback_runner_uses_scheduler_queue_put_observation_plans() -> 
     assert scheduler_state.dosage_put_observation_queued_values == [True]
     assert scheduler_state.result_put_observation_queued_values == [True]
     assert scheduler_state.stage_observation_names == ["callback_queue_put", "result_queue_put"]
+
+
+def test_native_callback_runner_uses_scheduler_queue_get_observation_plans() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = CallbackConsumerObservationSchedulerProbe()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    callback_for_observation = typing.cast("typing.Any", callback)
+    callback_for_observation.callback_scheduler_state = scheduler_state
+    callback.stage_timing_recorder = stage_timing_recorder
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("typing.Any", SimpleNamespace())
+    dosage_work_item = callback_shared.PreprocessedDosageChunkWorkItem(
+        metadata=metadata,
+        genotype_matrix=np.ones((2, 2), dtype=np.float32),
+        chunk_stats=chunk_stats,
+    )
+    result_work_item = callback_shared.Regenie2ResultWriteWorkItem(
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=None,
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=None,
+    )
+    dosage_work_items = iter((dosage_work_item, None))
+    result_work_items = iter((result_work_item, None))
+    processed_dosage_items: list[object] = []
+    processed_result_items: list[object] = []
+
+    def get_dosage_work_item_from_probe() -> object:
+        return next(dosage_work_items)
+
+    def get_result_write_item_from_probe() -> object:
+        return next(result_work_items)
+
+    def process_dosage_work_item_probe(work_item: object, dispatch_plan: object) -> None:
+        del dispatch_plan
+        processed_dosage_items.append(work_item)
+
+    def process_result_write_item_probe(work_item: object) -> None:
+        processed_result_items.append(work_item)
+
+    callback_for_observation.get_dosage_work_item = get_dosage_work_item_from_probe
+    callback_for_observation.get_result_write_item = get_result_write_item_from_probe
+    callback_for_observation.process_dosage_work_item_with_dispatch_plan = process_dosage_work_item_probe
+    callback_for_observation.process_result_write_item = process_result_write_item_probe
+
+    callback.consume_dosage_chunks()
+    callback.consume_result_write_items()
+
+    assert processed_dosage_items == [dosage_work_item]
+    assert processed_result_items == [result_work_item]
+    assert scheduler_state.get_observation_names == ["dosage_queue", "result_queue"]
+    assert scheduler_state.stage_observation_names == [
+        "callback_queue_consumer_wait",
+        "result_queue_consumer_wait",
+    ]
 
 
 def test_native_callback_runner_uses_scheduler_result_write_handoff_plans() -> None:

@@ -124,18 +124,18 @@ use runtime_state::{
 };
 use schedule::{
     NativeBgenDeliveryCleanupPlan, NativeBgenDeliveryInvocationPlan, NativeCallbackQueueBackpressureObservation,
-    NativeCallbackQueueGetAttemptPlan, NativeCallbackQueueLimits, NativeCallbackQueueOperationObservationPlan,
-    NativeCallbackQueuePutAttemptPlan, NativeCallbackQueuePutObservationPlan,
-    NativeCallbackQueueStageBackpressureObservation, NativeCallbackQueueStageObservationPlan,
-    NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
-    NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerFinishPlan, NativeCallbackWorkerJoinPlan,
-    NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts, NativeCallbackWorkerStartAttemptPlan,
-    NativeCallbackWorkerStartPlan, NativeCallbackWorkerStopPlan, NativeCallbackWorkerStopPollPlan,
-    NativeDosageBufferAcquireAttemptPlan, NativeDosageBufferDiscardAttemptPlan, NativeDosageBufferPoolState,
-    NativeDosageBufferRegisterAttemptPlan, NativeDosageBufferReturnAttemptPlan, NativeDosageBufferReusePlan,
-    NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan,
-    NativeDosageWorkItemStageDurationPlan, NativeGpuGenotypeFormatResolutionPlan, NativeMultiTraitChunkWritePlan,
-    NativeMultiTraitOutputWritePlan, NativeResultInFlightAcquireAttemptPlan,
+    NativeCallbackQueueGetAttemptPlan, NativeCallbackQueueGetObservationPlan, NativeCallbackQueueLimits,
+    NativeCallbackQueueOperationObservationPlan, NativeCallbackQueuePutAttemptPlan,
+    NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
+    NativeCallbackQueueStageObservationPlan, NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan,
+    NativeCallbackWorkerErrorRaisePlan, NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerFinishPlan,
+    NativeCallbackWorkerJoinPlan, NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts,
+    NativeCallbackWorkerStartAttemptPlan, NativeCallbackWorkerStartPlan, NativeCallbackWorkerStopPlan,
+    NativeCallbackWorkerStopPollPlan, NativeDosageBufferAcquireAttemptPlan, NativeDosageBufferDiscardAttemptPlan,
+    NativeDosageBufferPoolState, NativeDosageBufferRegisterAttemptPlan, NativeDosageBufferReturnAttemptPlan,
+    NativeDosageBufferReusePlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
+    NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan, NativeGpuGenotypeFormatResolutionPlan,
+    NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan, NativeResultInFlightAcquireAttemptPlan,
     NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseAttemptPlan, NativeResultInFlightSlotState,
     NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
     NativeResultWriteItemResourceReleasePlan, NativeSingleTraitOutputWritePlan,
@@ -1837,6 +1837,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackQueueLimits>()?;
     module.add_class::<NativeCallbackQueueBackpressureObservation>()?;
     module.add_class::<NativeCallbackQueueGetAttemptPlan>()?;
+    module.add_class::<NativeCallbackQueueGetObservationPlan>()?;
     module.add_class::<NativeCallbackQueueOperationObservationPlan>()?;
     module.add_class::<NativeCallbackQueuePutAttemptPlan>()?;
     module.add_class::<NativeCallbackQueuePutObservationPlan>()?;

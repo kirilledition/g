@@ -115,6 +115,11 @@ pub(crate) struct NativeCallbackQueueGetAttemptPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeCallbackQueueGetObservationPlan {
+    inner: native_schedule::CallbackQueueGetObservationPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeDosageBufferAcquireAttemptPlan {
     inner: native_schedule::DosageBufferAcquireAttemptPlan,
 }
@@ -463,6 +468,10 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_dosage_queue_get_attempt(has_queued_item).into()
     }
 
+    fn plan_dosage_queue_get_observation(&self) -> NativeCallbackQueueGetObservationPlan {
+        self.inner.plan_dosage_queue_get_observation().into()
+    }
+
     #[getter]
     fn result_queue_depth(&self) -> usize {
         self.inner.result_queue_depth()
@@ -504,6 +513,10 @@ impl NativeCallbackSchedulerState {
 
     fn plan_result_queue_get_attempt(&mut self, has_queued_item: bool) -> NativeCallbackQueueGetAttemptPlan {
         self.inner.plan_result_queue_get_attempt(has_queued_item).into()
+    }
+
+    fn plan_result_queue_get_observation(&self) -> NativeCallbackQueueGetObservationPlan {
+        self.inner.plan_result_queue_get_observation().into()
     }
 
     #[getter]
@@ -1508,6 +1521,24 @@ impl NativeCallbackQueueGetAttemptPlan {
 }
 
 #[pymethods]
+impl NativeCallbackQueueGetObservationPlan {
+    #[getter]
+    fn queue_name(&self) -> &str {
+        &self.inner.queue_name
+    }
+
+    #[getter]
+    fn operation_name(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    #[getter]
+    fn blocked(&self) -> bool {
+        self.inner.blocked
+    }
+}
+
+#[pymethods]
 impl NativeDosageBufferAcquireAttemptPlan {
     #[getter]
     fn should_take_free_buffer(&self) -> bool {
@@ -2024,6 +2055,12 @@ impl From<native_schedule::CallbackQueuePutObservationPlan> for NativeCallbackQu
 impl From<native_schedule::CallbackQueueGetAttemptPlan> for NativeCallbackQueueGetAttemptPlan {
     fn from(get_attempt_plan: native_schedule::CallbackQueueGetAttemptPlan) -> Self {
         Self { inner: get_attempt_plan }
+    }
+}
+
+impl From<native_schedule::CallbackQueueGetObservationPlan> for NativeCallbackQueueGetObservationPlan {
+    fn from(get_observation_plan: native_schedule::CallbackQueueGetObservationPlan) -> Self {
+        Self { inner: get_observation_plan }
     }
 }
 

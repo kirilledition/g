@@ -641,11 +641,12 @@ class NativeBgenCallbackRunner(abc.ABC):
                     "PreprocessedDosageWorkItem",
                     work_item,
                 )
+                get_observation_plan = self.callback_scheduler_state.plan_dosage_queue_get_observation()
                 self.record_bounded_resource_stage_duration(
-                    resource_name="dosage_queue",
-                    operation_name="consumer_wait",
+                    resource_name=get_observation_plan.queue_name,
+                    operation_name=get_observation_plan.operation_name,
                     start_time=get_start_time,
-                    blocked=True,
+                    blocked=get_observation_plan.blocked,
                 )
                 python_callback_start_time = time.perf_counter()
                 try:
@@ -917,11 +918,12 @@ class NativeBgenCallbackRunner(abc.ABC):
                 )
                 if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
+                get_observation_plan = self.callback_scheduler_state.plan_result_queue_get_observation()
                 self.record_bounded_resource_stage_duration(
-                    resource_name="result_queue",
-                    operation_name="consumer_wait",
+                    resource_name=get_observation_plan.queue_name,
+                    operation_name=get_observation_plan.operation_name,
                     start_time=get_start_time,
-                    blocked=True,
+                    blocked=get_observation_plan.blocked,
                 )
                 dispatch_plan = self.plan_result_write_item_dispatch(
                     work_item,

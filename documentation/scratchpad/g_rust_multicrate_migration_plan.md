@@ -1030,6 +1030,8 @@ Remove Python as the chunk-level scheduler.
   lifecycle selectors instead of matching action strings in Python.
 - Callback queue producer put timing now uses native scheduler observation
   plans to select put versus producer-blocking accounting.
+- Callback queue consumer wait timing now uses native scheduler observation
+  plans for dosage and result queue consumers.
 
 ### Tests
 
