@@ -35,6 +35,19 @@ class FakeTelemetrySession:
         self.logged_events.append(event)
         self.logged_payloads.append({"event": event, "level": level, **fields})
 
+    def log_run_failed(self, event: typing.Any) -> None:
+        """Record a native run-failed telemetry event."""
+        self.logged_events.append("run_failed")
+        self.logged_payloads.append(
+            {
+                "event": "run_failed",
+                "level": "error",
+                "failure_kind": "exception",
+                "error_type": event.error_type,
+                "error_message": event.error_message,
+            }
+        )
+
     def writer_counters(self) -> dict[str, object]:
         """Return empty writer counters."""
         return {}
