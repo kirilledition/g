@@ -2254,6 +2254,39 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
         runtime_resources.release_result_in_flight_slot()
 
 
+def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-dosage-buffer-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    dosage_buffer = np.empty((2, 2), dtype=np.float32)
+
+    assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
+    assert runtime_resources.callback_scheduler_state.dosage_buffer_allocated_count == 1
+    with pytest.raises(RuntimeError, match="no available slot"):
+        runtime_resources.register_dosage_buffer(id(np.empty((2, 2), dtype=np.float32)))
+
+    assert runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer) == 1
+    assert runtime_resources.free_dosage_buffers.occupied_count == 1
+    with pytest.raises(RuntimeError, match="no slot for returned buffer"):
+        runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer)
+    free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is dosage_buffer
+
+    assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) == 0
+    assert runtime_resources.callback_scheduler_state.dosage_buffer_allocated_count == 0
+    assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) is None
+
+
 def test_native_callback_runtime_resources_own_worker_stop_and_join() -> None:
     runtime_resources_holder: list[typing.Any] = []
 

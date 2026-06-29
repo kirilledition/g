@@ -2039,6 +2039,27 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_result_in_flight_slot_release_observation().into()
     }
 
+    pub(crate) fn plan_dosage_buffer_register_attempt_value(
+        &mut self,
+        buffer_identifier: usize,
+    ) -> NativeDosageBufferRegisterAttemptPlan {
+        self.inner.plan_dosage_buffer_register_attempt(buffer_identifier).into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_return_attempt_value(
+        &self,
+        buffer_identifier: usize,
+    ) -> NativeDosageBufferReturnAttemptPlan {
+        self.inner.plan_dosage_buffer_return_attempt(buffer_identifier).into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_discard_attempt_value(
+        &mut self,
+        buffer_identifier: usize,
+    ) -> NativeDosageBufferDiscardAttemptPlan {
+        self.inner.plan_dosage_buffer_discard_attempt(buffer_identifier).into()
+    }
+
     pub(crate) fn plan_dosage_queue_put_attempt_value(
         &mut self,
         wait_timeout_seconds: f64,
@@ -2195,6 +2216,24 @@ impl NativeResultInFlightAcquireAttemptPlan {
 impl NativeResultInFlightReleaseAttemptPlan {
     pub(crate) fn has_release_error_value(&self) -> bool {
         self.inner.has_release_error
+    }
+}
+
+impl NativeDosageBufferRegisterAttemptPlan {
+    pub(crate) fn has_registration_error_value(&self) -> bool {
+        self.inner.has_registration_error
+    }
+}
+
+impl NativeDosageBufferReturnAttemptPlan {
+    pub(crate) fn should_return_value(&self) -> bool {
+        self.inner.should_return
+    }
+}
+
+impl NativeDosageBufferDiscardAttemptPlan {
+    pub(crate) fn should_discard_value(&self) -> bool {
+        self.inner.should_discard
     }
 }
 

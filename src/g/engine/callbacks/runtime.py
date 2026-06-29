@@ -1695,6 +1695,17 @@ class NativeBgenCallbackRunner(abc.ABC):
     def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Return a processed host dosage buffer to the reusable pool."""
         dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
+        if self.uses_native_callback_runtime_resources():
+            free_buffer_count = self.callback_runtime_resources.return_dosage_buffer(
+                id(dosage_buffer_owner),
+                dosage_buffer_owner,
+            )
+            if free_buffer_count is None:
+                return
+            self.record_dosage_buffer_pool_return_operation(
+                free_buffer_count=free_buffer_count,
+            )
+            return
         return_plan = self.callback_scheduler_state.plan_dosage_buffer_return_attempt(id(dosage_buffer_owner))
         if not return_plan.should_return:
             return
@@ -1715,6 +1726,12 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> HostGenotypeBuffer:
         """Allocate and register one host genotype buffer slot."""
         dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
+        if self.uses_native_callback_runtime_resources():
+            free_buffer_count = self.callback_runtime_resources.register_dosage_buffer(id(dosage_buffer))
+            self.record_dosage_buffer_pool_allocate_operation(
+                free_buffer_count=free_buffer_count,
+            )
+            return dosage_buffer
         register_plan = self.callback_scheduler_state.plan_dosage_buffer_register_attempt(id(dosage_buffer))
         if register_plan.has_registration_error:
             message = "Native dosage-buffer pool has no available slot for allocation."
@@ -1728,6 +1745,14 @@ class NativeBgenCallbackRunner(abc.ABC):
     def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Remove one discarded host genotype buffer slot from pool accounting."""
         dosage_buffer_identifier = id(dosage_buffer)
+        if self.uses_native_callback_runtime_resources():
+            free_buffer_count = self.callback_runtime_resources.discard_dosage_buffer(dosage_buffer_identifier)
+            if free_buffer_count is None:
+                return
+            self.record_dosage_buffer_pool_discard_operation(
+                free_buffer_count=free_buffer_count,
+            )
+            return
         discard_plan = self.callback_scheduler_state.plan_dosage_buffer_discard_attempt(dosage_buffer_identifier)
         if not discard_plan.should_discard:
             return

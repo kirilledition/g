@@ -280,6 +280,52 @@ impl NativeCallbackRuntimeResources {
         Ok(scheduler_state.plan_result_in_flight_slot_release_observation_value())
     }
 
+    fn register_dosage_buffer(&self, py: Python<'_>, buffer_identifier: usize) -> PyResult<usize> {
+        let register_plan = {
+            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+            scheduler_state.plan_dosage_buffer_register_attempt_value(buffer_identifier)
+        };
+        if register_plan.has_registration_error_value() {
+            return Err(PyRuntimeError::new_err("Native dosage-buffer pool has no available slot for allocation."));
+        }
+        self.free_dosage_buffers.bind(py).borrow().occupied_count_value()
+    }
+
+    fn return_dosage_buffer(
+        &self,
+        py: Python<'_>,
+        buffer_identifier: usize,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<usize>> {
+        let return_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_buffer_return_attempt_value(buffer_identifier)
+        };
+        if !return_plan.should_return_value() {
+            return Ok(None);
+        }
+        let queued = self.free_dosage_buffers.bind(py).borrow().put_item(py, dosage_buffer.clone().unbind(), 0.0)?;
+        if !queued {
+            return Err(PyRuntimeError::new_err("Native dosage-buffer free queue had no slot for returned buffer."));
+        }
+        let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+        self.dosage_buffer_pool_signal.bind(py).borrow().notify_waiters_value()?;
+        Ok(Some(free_buffer_count))
+    }
+
+    fn discard_dosage_buffer(&self, py: Python<'_>, buffer_identifier: usize) -> PyResult<Option<usize>> {
+        let discard_plan = {
+            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+            scheduler_state.plan_dosage_buffer_discard_attempt_value(buffer_identifier)
+        };
+        if !discard_plan.should_discard_value() {
+            return Ok(None);
+        }
+        let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+        self.dosage_buffer_pool_signal.bind(py).borrow().notify_waiters_value()?;
+        Ok(Some(free_buffer_count))
+    }
+
     fn try_put_dosage_work_item(
         &self,
         py: Python<'_>,

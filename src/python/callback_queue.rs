@@ -130,6 +130,10 @@ impl NativeCallbackObjectQueue {
         Ok(self.lock_queue()?.has_queued_item())
     }
 
+    pub(crate) fn occupied_count_value(&self) -> PyResult<usize> {
+        Ok(self.lock_queue()?.occupied_count())
+    }
+
     fn lock_queue(&self) -> PyResult<MutexGuard<'_, g_engine::BoundedCallbackQueue<Py<PyAny>>>> {
         self.queue.lock().map_err(|_| PyRuntimeError::new_err("native callback object queue lock was poisoned"))
     }
