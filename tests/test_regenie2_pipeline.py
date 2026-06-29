@@ -2327,6 +2327,33 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is dosage_buffer
 
+    reuse_observation_plan = runtime_resources.plan_dosage_buffer_pool_reuse_observation()
+    assert reuse_observation_plan.operation_name == "reuse"
+    assert reuse_observation_plan.blocked is False
+    wait_observation_plan = runtime_resources.plan_dosage_buffer_pool_consumer_wait_observation()
+    assert wait_observation_plan.operation_name == "consumer_wait"
+    assert wait_observation_plan.blocked is True
+    pool_observation = runtime_resources.plan_dosage_buffer_pool_backpressure_observation(
+        operation_name="return",
+        free_buffer_count=1,
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    assert pool_observation.queue_name == "dosage_buffer_pool"
+    assert pool_observation.queue_depth == 1
+    assert pool_observation.queue_capacity == 1
+    assert pool_observation.blocked_seconds == 0.0
+    pool_stage_observation = runtime_resources.plan_dosage_buffer_pool_stage_backpressure_observation(
+        operation_name="consumer_wait",
+        free_buffer_count=0,
+        elapsed_seconds=0.5,
+        blocked=True,
+    )
+    assert pool_stage_observation.stage_name == "dosage_buffer_pool_consumer_wait"
+    assert pool_stage_observation.queue_depth == 0
+    assert pool_stage_observation.queue_capacity == 1
+    assert pool_stage_observation.blocked_seconds == 0.5
+
     assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) == 0
     assert runtime_resources.callback_scheduler_state.dosage_buffer_allocated_count == 0
     assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) is None

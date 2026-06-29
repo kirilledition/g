@@ -15,11 +15,12 @@ use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{
     NativeCallbackQueueBackpressureObservation, NativeCallbackQueueStageBackpressureObservation,
     NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
-    NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan,
-    NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan,
-    NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseObservationPlan,
-    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
-    NativeResultWriteItemResourceReleasePlan, NativeVariantMajorDosageBatchHandoffPlan,
+    NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerStartAttemptPlan, NativeDosageBufferPoolObservationPlan,
+    NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan,
+    NativeDosageWorkItemStageDurationPlan, NativeResultInFlightAcquireObservationPlan,
+    NativeResultInFlightReleaseObservationPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
+    NativeResultWriteItemDispatchPlan, NativeResultWriteItemResourceReleasePlan,
+    NativeVariantMajorDosageBatchHandoffPlan,
 };
 
 #[pyclass]
@@ -706,6 +707,68 @@ impl NativeCallbackRuntimeResources {
         scheduler_state.plan_current_queue_stage_backpressure_observation_value(
             queue_name,
             operation_name,
+            elapsed_seconds,
+            blocked,
+        )
+    }
+
+    fn plan_dosage_buffer_pool_reuse_observation(&self, py: Python<'_>) -> NativeDosageBufferPoolObservationPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_buffer_pool_reuse_observation_value()
+    }
+
+    fn plan_dosage_buffer_pool_return_observation(&self, py: Python<'_>) -> NativeDosageBufferPoolObservationPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_buffer_pool_return_observation_value()
+    }
+
+    fn plan_dosage_buffer_pool_allocate_observation(&self, py: Python<'_>) -> NativeDosageBufferPoolObservationPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_buffer_pool_allocate_observation_value()
+    }
+
+    fn plan_dosage_buffer_pool_discard_observation(&self, py: Python<'_>) -> NativeDosageBufferPoolObservationPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_buffer_pool_discard_observation_value()
+    }
+
+    fn plan_dosage_buffer_pool_consumer_wait_observation(
+        &self,
+        py: Python<'_>,
+    ) -> NativeDosageBufferPoolObservationPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_buffer_pool_consumer_wait_observation_value()
+    }
+
+    fn plan_dosage_buffer_pool_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        operation_name: &str,
+        free_buffer_count: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_buffer_pool_backpressure_observation_value(
+            operation_name,
+            free_buffer_count,
+            elapsed_seconds,
+            blocked,
+        )
+    }
+
+    fn plan_dosage_buffer_pool_stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        operation_name: &str,
+        free_buffer_count: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_buffer_pool_stage_backpressure_observation_value(
+            operation_name,
+            free_buffer_count,
             elapsed_seconds,
             blocked,
         )

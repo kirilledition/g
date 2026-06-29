@@ -2266,6 +2266,64 @@ impl NativeCallbackSchedulerState {
             .map(Into::into)
             .map_err(|error| schedule_error_to_py(&error))
     }
+
+    pub(crate) fn plan_dosage_buffer_pool_reuse_observation_value(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_reuse_observation().into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_return_observation_value(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_return_observation().into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_allocate_observation_value(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_allocate_observation().into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_discard_observation_value(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_discard_observation().into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_consumer_wait_observation_value(
+        &self,
+    ) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_consumer_wait_observation().into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_backpressure_observation_value(
+        &self,
+        operation_name: &str,
+        free_buffer_count: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+        self.inner
+            .plan_dosage_buffer_pool_backpressure_observation(
+                operation_name,
+                free_buffer_count,
+                elapsed_seconds,
+                blocked,
+            )
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_stage_backpressure_observation_value(
+        &self,
+        operation_name: &str,
+        free_buffer_count: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
+        self.inner
+            .plan_dosage_buffer_pool_stage_backpressure_observation(
+                operation_name,
+                free_buffer_count,
+                elapsed_seconds,
+                blocked,
+            )
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
 }
 
 impl NativeCallbackWorkerStartAttemptPlan {

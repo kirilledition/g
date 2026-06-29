@@ -1055,6 +1055,8 @@ Remove Python as the chunk-level scheduler.
   storage inconsistencies.
 - Callback runtime resources now own production current-queue/resource
   backpressure observation planning while Python keeps timing emission.
+- Callback runtime resources now own production dosage-buffer pool observation
+  planning while Python keeps free-buffer count calculation and timing emission.
 - Callback runtime resources now own production dosage/result drain planning
   and validated work-item dispatch planning, leaving Python to classify work
   item dataclasses and perform JAX/write side effects.

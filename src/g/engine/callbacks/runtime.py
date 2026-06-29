@@ -419,7 +419,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record dosage-buffer pool occupancy metadata."""
         if self.stage_timing_recorder is None:
             return
-        observation = self.callback_scheduler_state.plan_dosage_buffer_pool_backpressure_observation(
+        observation = self.plan_dosage_buffer_pool_backpressure_observation(
             operation_name=operation_name,
             free_buffer_count=free_buffer_count,
             elapsed_seconds=elapsed_seconds,
@@ -520,7 +520,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         elapsed_seconds = time.perf_counter() - start_time
         if self.stage_timing_recorder is None:
             return
-        observation = self.callback_scheduler_state.plan_dosage_buffer_pool_stage_backpressure_observation(
+        observation = self.plan_dosage_buffer_pool_stage_backpressure_observation(
             operation_name=operation_name,
             free_buffer_count=free_buffer_count,
             elapsed_seconds=elapsed_seconds,
@@ -536,11 +536,87 @@ class NativeBgenCallbackRunner(abc.ABC):
             blocked_seconds=observation.blocked_seconds,
         )
 
+    def plan_dosage_buffer_pool_backpressure_observation(
+        self,
+        *,
+        operation_name: str,
+        free_buffer_count: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> _core.NativeCallbackQueueBackpressureObservation:
+        """Plan dosage-buffer pool backpressure observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_buffer_pool_backpressure_observation(
+                operation_name,
+                free_buffer_count,
+                elapsed_seconds,
+                blocked,
+            )
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_backpressure_observation(
+            operation_name=operation_name,
+            free_buffer_count=free_buffer_count,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+
+    def plan_dosage_buffer_pool_stage_backpressure_observation(
+        self,
+        *,
+        operation_name: str,
+        free_buffer_count: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> _core.NativeCallbackQueueStageBackpressureObservation:
+        """Plan dosage-buffer pool stage observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_buffer_pool_stage_backpressure_observation(
+                operation_name,
+                free_buffer_count,
+                elapsed_seconds,
+                blocked,
+            )
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_stage_backpressure_observation(
+            operation_name=operation_name,
+            free_buffer_count=free_buffer_count,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+
+    def plan_dosage_buffer_pool_reuse_observation(self) -> _core.NativeDosageBufferPoolObservationPlan:
+        """Plan dosage-buffer reuse observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_buffer_pool_reuse_observation()
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_reuse_observation()
+
+    def plan_dosage_buffer_pool_return_observation(self) -> _core.NativeDosageBufferPoolObservationPlan:
+        """Plan dosage-buffer return observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_buffer_pool_return_observation()
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_return_observation()
+
+    def plan_dosage_buffer_pool_allocate_observation(self) -> _core.NativeDosageBufferPoolObservationPlan:
+        """Plan dosage-buffer allocation observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_buffer_pool_allocate_observation()
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_allocate_observation()
+
+    def plan_dosage_buffer_pool_discard_observation(self) -> _core.NativeDosageBufferPoolObservationPlan:
+        """Plan dosage-buffer discard observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_buffer_pool_discard_observation()
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_discard_observation()
+
+    def plan_dosage_buffer_pool_consumer_wait_observation(self) -> _core.NativeDosageBufferPoolObservationPlan:
+        """Plan dosage-buffer consumer-wait observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_buffer_pool_consumer_wait_observation()
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_consumer_wait_observation()
+
     def record_dosage_buffer_pool_reuse_operation(self, *, free_buffer_count: int) -> None:
         """Record native dosage-buffer reuse accounting."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.callback_scheduler_state.plan_dosage_buffer_pool_reuse_observation()
+        observation_plan = self.plan_dosage_buffer_pool_reuse_observation()
         self.record_dosage_buffer_pool_operation(
             operation_name=observation_plan.operation_name,
             free_buffer_count=free_buffer_count,
@@ -552,7 +628,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record native dosage-buffer return accounting."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.callback_scheduler_state.plan_dosage_buffer_pool_return_observation()
+        observation_plan = self.plan_dosage_buffer_pool_return_observation()
         self.record_dosage_buffer_pool_operation(
             operation_name=observation_plan.operation_name,
             free_buffer_count=free_buffer_count,
@@ -564,7 +640,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record native dosage-buffer allocation accounting."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.callback_scheduler_state.plan_dosage_buffer_pool_allocate_observation()
+        observation_plan = self.plan_dosage_buffer_pool_allocate_observation()
         self.record_dosage_buffer_pool_operation(
             operation_name=observation_plan.operation_name,
             free_buffer_count=free_buffer_count,
@@ -576,7 +652,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record native dosage-buffer discard accounting."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.callback_scheduler_state.plan_dosage_buffer_pool_discard_observation()
+        observation_plan = self.plan_dosage_buffer_pool_discard_observation()
         self.record_dosage_buffer_pool_operation(
             operation_name=observation_plan.operation_name,
             free_buffer_count=free_buffer_count,
@@ -593,7 +669,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record native dosage-buffer consumer wait accounting."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.callback_scheduler_state.plan_dosage_buffer_pool_consumer_wait_observation()
+        observation_plan = self.plan_dosage_buffer_pool_consumer_wait_observation()
         self.record_dosage_buffer_pool_stage_duration(
             operation_name=observation_plan.operation_name,
             free_buffer_count=free_buffer_count,
