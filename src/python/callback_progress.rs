@@ -222,6 +222,29 @@ impl NativeCallbackProgressState {
     pub(crate) fn new_state() -> Self {
         Self { inner: native_callback_progress::CallbackProgressState::new() }
     }
+
+    pub(crate) fn processed_chunk_count_value(&self) -> i64 {
+        self.inner.processed_chunk_count()
+    }
+
+    pub(crate) fn current_progress_chromosome_value(&self) -> Option<String> {
+        self.inner.current_progress_chromosome().map(str::to_owned)
+    }
+
+    pub(crate) fn record_processed_chunk_value(
+        &mut self,
+        chunk_identity: &NativeCallbackChunkIdentity,
+    ) -> NativeCallbackProgressUpdate {
+        self.inner.record_processed_chunk(chunk_identity.inner.clone()).into()
+    }
+
+    pub(crate) fn record_processed_chunk_without_progress_value(&mut self) {
+        self.inner.record_processed_chunk_without_progress();
+    }
+
+    pub(crate) fn finish_progress_value(&mut self) -> Option<NativeCallbackProgressCompletion> {
+        self.inner.finish_progress().map(Into::into)
+    }
 }
 
 impl From<native_callback_progress::CallbackChunkIdentity> for NativeCallbackChunkIdentity {

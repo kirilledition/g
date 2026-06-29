@@ -163,11 +163,15 @@ class NativeBgenCallbackRunner(abc.ABC):
     @property
     def processed_chunk_count(self) -> int:
         """Return the native processed chunk count."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.processed_chunk_count
         return self.progress_state.processed_chunk_count
 
     @property
     def current_progress_chromosome(self) -> str | None:
         """Return the native active progress chromosome."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.current_progress_chromosome
         return self.progress_state.current_progress_chromosome
 
     @property
@@ -317,6 +321,28 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.dosage_queue_occupied_count
         return self.callback_scheduler_state.dosage_queue_occupied_count
+
+    def record_processed_chunk(
+        self,
+        chunk_identity: _core.NativeCallbackChunkIdentity,
+    ) -> _core.NativeCallbackProgressUpdate:
+        """Record native progress through the active runtime owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.record_processed_chunk(chunk_identity)
+        return self.progress_state.record_processed_chunk(chunk_identity)
+
+    def record_processed_chunk_without_progress(self) -> None:
+        """Record native progress without telemetry through the active runtime owner."""
+        if self.uses_native_callback_runtime_resources():
+            self.callback_runtime_resources.record_processed_chunk_without_progress()
+            return
+        self.progress_state.record_processed_chunk_without_progress()
+
+    def finish_progress_state(self) -> _core.NativeCallbackProgressCompletion | None:
+        """Finish native progress through the active runtime owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.finish_progress()
+        return self.progress_state.finish_progress()
 
     def record_stage_duration(self, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage using this runner's timing recorder."""
@@ -1070,9 +1096,9 @@ class NativeBgenCallbackRunner(abc.ABC):
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""
         if self.telemetry_session is None:
-            self.progress_state.record_processed_chunk_without_progress()
+            self.record_processed_chunk_without_progress()
             return
-        progress_update = self.progress_state.record_processed_chunk(build_native_callback_chunk_identity(metadata))
+        progress_update = self.record_processed_chunk(build_native_callback_chunk_identity(metadata))
         telemetry_plan = progress_update.telemetry_plan
         for progress_event in telemetry_plan.events:
             self.telemetry_session.log_event(
@@ -1093,7 +1119,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def complete_progress(self) -> None:
         """Emit the native final progress completion event when telemetry consumed chunks."""
-        progress_completion = self.progress_state.finish_progress()
+        progress_completion = self.finish_progress_state()
         if self.telemetry_session is None or progress_completion is None:
             return
         progress_event = progress_completion.telemetry_event

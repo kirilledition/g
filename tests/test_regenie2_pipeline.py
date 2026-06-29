@@ -2224,6 +2224,52 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert runtime_resources.get_result_write_item().item is None
 
 
+def test_native_callback_runtime_resources_own_progress_state() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-progress-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    first_chunk_identity = callback_runtime.build_native_callback_chunk_identity(build_native_metadata())
+    second_chunk_identity = callback_runtime.build_native_callback_chunk_identity(
+        build_native_metadata_for_chunk(chunk_identifier=2)
+    )
+
+    assert runtime_resources.processed_chunk_count == 0
+    assert runtime_resources.current_progress_chromosome is None
+    first_update = runtime_resources.record_processed_chunk(first_chunk_identity)
+    assert first_update.processed_chunk_count == 1
+    assert runtime_resources.processed_chunk_count == 1
+    assert runtime_resources.current_progress_chromosome == "22"
+    runtime_resources.record_processed_chunk(second_chunk_identity)
+    assert runtime_resources.processed_chunk_count == 2
+    completion = runtime_resources.finish_progress()
+    assert completion is not None
+    assert completion.chromosome == "22"
+    assert completion.processed_chunk_count == 2
+    assert runtime_resources.finish_progress() is None
+
+    untimed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-progress-untimed-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    untimed_runtime_resources.record_processed_chunk_without_progress()
+    assert untimed_runtime_resources.processed_chunk_count == 1
+    assert untimed_runtime_resources.current_progress_chromosome is None
+
+
 def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> None:
     def worker_target() -> None:
         return None
@@ -5460,6 +5506,8 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
         result_in_flight_occupied_count=0,
         dosage_buffer_allocated_count=0,
         dosage_buffer_identifiers=[],
+        processed_chunk_count=0,
+        current_progress_chromosome=None,
     )
     with patch(
         "g.engine.callbacks.runtime._core.NativeCallbackRuntimeResources",

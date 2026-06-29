@@ -7,7 +7,10 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
-use super::callback_progress::NativeCallbackProgressState;
+use super::callback_progress::{
+    NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
+    NativeCallbackProgressUpdate,
+};
 use super::callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
 };
@@ -225,6 +228,32 @@ impl NativeCallbackRuntimeResources {
     #[getter]
     fn dosage_buffer_identifiers(&self, py: Python<'_>) -> Vec<usize> {
         self.callback_scheduler_state.bind(py).borrow().dosage_buffer_identifiers_value()
+    }
+
+    #[getter]
+    fn processed_chunk_count(&self, py: Python<'_>) -> i64 {
+        self.progress_state.bind(py).borrow().processed_chunk_count_value()
+    }
+
+    #[getter]
+    fn current_progress_chromosome(&self, py: Python<'_>) -> Option<String> {
+        self.progress_state.bind(py).borrow().current_progress_chromosome_value()
+    }
+
+    fn record_processed_chunk(
+        &self,
+        py: Python<'_>,
+        chunk_identity: &NativeCallbackChunkIdentity,
+    ) -> NativeCallbackProgressUpdate {
+        self.progress_state.bind(py).borrow_mut().record_processed_chunk_value(chunk_identity)
+    }
+
+    fn record_processed_chunk_without_progress(&self, py: Python<'_>) {
+        self.progress_state.bind(py).borrow_mut().record_processed_chunk_without_progress_value();
+    }
+
+    fn finish_progress(&self, py: Python<'_>) -> Option<NativeCallbackProgressCompletion> {
+        self.progress_state.bind(py).borrow_mut().finish_progress_value()
     }
 
     fn start_workers(&self, py: Python<'_>) -> PyResult<NativeCallbackWorkerStartAttemptPlan> {
