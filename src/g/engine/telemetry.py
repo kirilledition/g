@@ -16,6 +16,7 @@ TelemetryCloseMetadata = dict[str, TelemetryWriterCounters]
 if typing.TYPE_CHECKING:
     from g.engine import run_events
     from g.interface import config
+    from g.jax_runtime import models as jax_runtime_models
 
 
 class TelemetryCloseableSession(typing.Protocol):
@@ -365,6 +366,15 @@ class TelemetrySession:
     def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
         """Write the canonical binary correction summary event."""
         self.native_session_handle.emit_binary_correction_summary_event(summary_payload)
+
+    def log_jax_runtime_diagnostic_event(
+        self,
+        event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
+        *,
+        telemetry_level: str,
+    ) -> None:
+        """Write a canonical JAX runtime diagnostic telemetry event."""
+        self.native_session_handle.emit_jax_runtime_diagnostic_event(event, telemetry_level)
 
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""

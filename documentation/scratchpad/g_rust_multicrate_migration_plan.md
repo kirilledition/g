@@ -1154,6 +1154,8 @@ Remove Python as the chunk-level scheduler.
   directly for chromosome start/completion telemetry.
 - Native telemetry run sessions now own the binary-correction-summary event name
   and level while reusing native callback summary payloads.
+- Native telemetry run sessions now emit JAX runtime diagnostic model objects
+  directly while preserving the native record-plan policy.
 
 ### Tests
 

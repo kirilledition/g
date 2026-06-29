@@ -11,12 +11,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::callback_progress::NativeCallbackProgressTelemetryEvent;
+use super::jax_runtime;
 use super::run_events;
 use g_runtime::run_events as native_run_events;
 use g_runtime::telemetry_session as native_telemetry_session;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyAny, PyDict, PyModule};
 use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -694,6 +695,16 @@ impl NativeTelemetryRunSession {
             native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
             fields,
         )
+    }
+
+    pub fn emit_jax_runtime_diagnostic_event<'py>(
+        &self,
+        py: Python<'py>,
+        event: &Bound<'py, PyAny>,
+        telemetry_level: &str,
+    ) -> PyResult<()> {
+        let (event_name, fields) = jax_runtime::jax_runtime_diagnostic_event_fields_to_py_dict(py, event)?;
+        self.emit_current_event_fields(py, &event_name, telemetry_level, &fields)
     }
 
     pub fn emit_progress<'py>(

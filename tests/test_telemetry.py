@@ -10,6 +10,7 @@ import pytest
 from g import _core, types
 from g.engine import run_events, telemetry
 from g.interface import config
+from g.jax_runtime import models as jax_runtime_models
 from g.runner import runtime as runner_runtime
 
 if typing.TYPE_CHECKING:
@@ -972,6 +973,46 @@ def test_native_telemetry_run_session_owns_binary_correction_summary(tmp_path: P
     assert event_payload["firth_success_count"] == 6
     assert event_payload["firth_failed_count"] == 7
     assert event_payload["null_model_failure_count"] == 20
+
+
+def test_native_telemetry_run_session_owns_jax_runtime_diagnostic_event(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+    diagnostic_event = jax_runtime_models.JaxRuntimeDiagnosticEvent(
+        event_name="jax_native_diagnostic",
+        level=jax_runtime_models.JaxRuntimeDiagnosticLevel.INFO,
+        message="JAX diagnostic",
+        fields=(
+            jax_runtime_models.JaxRuntimeDiagnosticField(name="platform", value="cuda"),
+            jax_runtime_models.JaxRuntimeDiagnosticField(name="persistent_cache_enabled", value=True),
+            jax_runtime_models.JaxRuntimeDiagnosticField(name="cache_entries", value=7),
+        ),
+    )
+
+    telemetry_session.log_jax_runtime_diagnostic_event(diagnostic_event, telemetry_level="trace")
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payload = json.loads(telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()[0])
+    assert event_payload["event"] == "jax_native_diagnostic"
+    assert event_payload["level"] == "TRACE"
+    assert event_payload["platform"] == "cuda"
+    assert event_payload["persistent_cache_enabled"] is True
+    assert event_payload["cache_entries"] == 7
 
 
 def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(

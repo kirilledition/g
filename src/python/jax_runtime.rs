@@ -387,6 +387,21 @@ fn jax_runtime_diagnostic_event_payload_to_dict<'py>(
     Ok(payload)
 }
 
+pub(crate) fn jax_runtime_diagnostic_event_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    event: &Bound<'py, PyAny>,
+) -> PyResult<(String, Bound<'py, PyDict>)> {
+    let event_name = event.getattr("event_name")?.extract::<String>()?;
+    let fields = PyDict::new(py);
+    for field in event.getattr("fields")?.try_iter()? {
+        let field = field?;
+        let field_name = field.getattr("name")?.extract::<String>()?;
+        let field_value = field.getattr("value")?;
+        fields.set_item(field_name, field_value)?;
+    }
+    Ok((event_name, fields))
+}
+
 fn jax_runtime_diagnostic_field_payload_to_dict<'py>(
     py: Python<'py>,
     field: &native_jax_runtime::JaxRuntimeDiagnosticFieldPayload,

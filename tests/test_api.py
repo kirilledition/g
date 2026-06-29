@@ -1068,6 +1068,15 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
         def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
             recorded_events.append((event_name, level, fields))
 
+        def log_jax_runtime_diagnostic_event(
+            self,
+            diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
+            *,
+            telemetry_level: str,
+        ) -> None:
+            event_fields = {field.name: field.value for field in diagnostic_event.fields}
+            recorded_events.append((diagnostic_event.event_name, telemetry_level, event_fields))
+
     def plan_jax_runtime_diagnostic_record_payload(
         *,
         diagnostic_level: str,

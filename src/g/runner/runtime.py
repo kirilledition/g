@@ -183,10 +183,9 @@ def record_jax_runtime_diagnostic_event(
     if not typing.cast("bool", record_plan["should_emit_telemetry"]):
         return
     active_telemetry_session = typing.cast("telemetry.TelemetrySession", telemetry_session)
-    active_telemetry_session.log_event(
-        diagnostic_event.event_name,
-        level=str(record_plan["telemetry_level"]),
-        **event_fields,
+    active_telemetry_session.log_jax_runtime_diagnostic_event(
+        diagnostic_event,
+        telemetry_level=str(record_plan["telemetry_level"]),
     )
 
 

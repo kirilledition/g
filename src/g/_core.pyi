@@ -598,6 +598,11 @@ class NativeTelemetryRunSession:
         self,
         fields: dict[str, int],
     ) -> None: ...
+    def emit_jax_runtime_diagnostic_event(
+        self,
+        event: object,
+        telemetry_level: str,
+    ) -> None: ...
     def emit_progress(
         self,
         processed_chunk_count: int,
