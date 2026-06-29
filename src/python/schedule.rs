@@ -2004,6 +2004,27 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_result_write_handoff(has_result_work_item).into()
     }
 
+    pub(crate) fn plan_result_write_drain_completion_value(
+        &self,
+        has_result_work_item: bool,
+        flush_binary_correction_diagnostics_on_stop: bool,
+    ) -> NativeResultWriteDrainCompletionPlan {
+        self.inner
+            .plan_result_write_drain_completion(has_result_work_item, flush_binary_correction_diagnostics_on_stop)
+            .into()
+    }
+
+    pub(crate) fn plan_result_write_item_dispatch_value(
+        &self,
+        result_work_item_kind: &str,
+        expected_result_work_item_kind: &str,
+    ) -> PyResult<NativeResultWriteItemDispatchPlan> {
+        self.inner
+            .plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
     pub(crate) fn plan_result_queue_put_attempt_value(
         &mut self,
         wait_timeout_seconds: f64,
@@ -2028,6 +2049,23 @@ impl NativeCallbackSchedulerState {
         has_queued_item: bool,
     ) -> NativeCallbackQueueGetAttemptPlan {
         self.inner.plan_result_queue_get_attempt(has_queued_item).into()
+    }
+
+    pub(crate) fn plan_dosage_work_drain_completion_value(
+        &self,
+        has_dosage_work_item: bool,
+    ) -> NativeDosageWorkDrainCompletionPlan {
+        self.inner.plan_dosage_work_drain_completion(has_dosage_work_item).into()
+    }
+
+    pub(crate) fn plan_dosage_work_item_dispatch_value(
+        &self,
+        dosage_work_item_kind: &str,
+    ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
+        self.inner
+            .plan_dosage_work_item_dispatch(dosage_work_item_kind)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
     }
 }
 
@@ -2084,6 +2122,26 @@ impl NativeResultWriteHandoffPlan {
 
     pub(crate) fn has_result_work_item_value(&self) -> bool {
         self.inner.has_result_work_item
+    }
+}
+
+impl NativeResultWriteItemDispatchPlan {
+    pub(crate) fn has_dispatch_error_value(&self) -> bool {
+        self.inner.has_dispatch_error
+    }
+
+    pub(crate) fn error_message_value(&self) -> Option<&str> {
+        self.inner.error_message.as_deref()
+    }
+}
+
+impl NativeDosageWorkItemDispatchPlan {
+    pub(crate) fn has_dispatch_error_value(&self) -> bool {
+        self.inner.has_dispatch_error()
+    }
+
+    pub(crate) fn error_message_value(&self) -> Option<&str> {
+        self.inner.error_message.as_deref()
     }
 }
 

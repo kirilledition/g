@@ -803,6 +803,10 @@ class NativeBgenCallbackRunner(abc.ABC):
         ),
     ) -> _core.NativeDosageWorkDrainCompletionPlan:
         """Plan dosage work queue drain completion from native scheduler policy."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_work_drain_completion(
+                has_dosage_work_item=work_item is not None,
+            )
         return self.callback_scheduler_state.plan_dosage_work_drain_completion(
             has_dosage_work_item=work_item is not None,
         )
@@ -826,6 +830,8 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> _core.NativeDosageWorkItemDispatchPlan:
         """Plan which dosage processing path should consume one item."""
         dosage_work_item_kind = classify_dosage_work_item(work_item)
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_validated_dosage_work_item_dispatch(dosage_work_item_kind.value)
         return self.callback_scheduler_state.plan_dosage_work_item_dispatch(
             dosage_work_item_kind=dosage_work_item_kind.value
         )
@@ -1704,6 +1710,11 @@ class NativeBgenCallbackRunner(abc.ABC):
         flush_binary_correction_diagnostics_on_stop: bool,
     ) -> _core.NativeResultWriteDrainCompletionPlan:
         """Plan result write queue drain completion from native scheduler policy."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_result_write_drain_completion(
+                has_result_work_item=work_item is not None,
+                flush_binary_correction_diagnostics_on_stop=flush_binary_correction_diagnostics_on_stop,
+            )
         return self.callback_scheduler_state.plan_result_write_drain_completion(
             has_result_work_item=work_item is not None,
             flush_binary_correction_diagnostics_on_stop=flush_binary_correction_diagnostics_on_stop,
@@ -1726,6 +1737,11 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> _core.NativeResultWriteItemDispatchPlan:
         """Plan which result write processing path should consume one item."""
         result_work_item_kind = classify_result_write_item(work_item)
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_validated_result_write_item_dispatch(
+                result_work_item_kind.value,
+                expected_result_work_item_kind.value,
+            )
         return self.callback_scheduler_state.plan_result_write_item_dispatch(
             result_work_item_kind=result_work_item_kind.value,
             expected_result_work_item_kind=expected_result_work_item_kind.value,

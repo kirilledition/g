@@ -12,7 +12,11 @@ use super::callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
 };
 use super::callback_summary::NativeBinaryCorrectionSummary;
-use super::schedule::{NativeCallbackSchedulerState, NativeCallbackWorkerStartAttemptPlan};
+use super::schedule::{
+    NativeCallbackSchedulerState, NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan,
+    NativeDosageWorkItemDispatchPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
+    NativeResultWriteItemDispatchPlan,
+};
 
 #[pyclass]
 pub(crate) struct NativeCallbackRuntimeResources {
@@ -251,6 +255,33 @@ impl NativeCallbackRuntimeResources {
         }
     }
 
+    fn plan_dosage_work_drain_completion(
+        &self,
+        py: Python<'_>,
+        has_dosage_work_item: bool,
+    ) -> NativeDosageWorkDrainCompletionPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item)
+    }
+
+    fn plan_validated_dosage_work_item_dispatch(
+        &self,
+        py: Python<'_>,
+        dosage_work_item_kind: &str,
+    ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
+        let dispatch_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_work_item_dispatch_value(dosage_work_item_kind)?
+        };
+        if !dispatch_plan.has_dispatch_error_value() {
+            return Ok(dispatch_plan);
+        }
+        let error_message = dispatch_plan
+            .error_message_value()
+            .unwrap_or("Native dosage work dispatch plan omitted the error message.");
+        Err(PyRuntimeError::new_err(error_message.to_owned()))
+    }
+
     fn try_put_result_write_item(
         &self,
         py: Python<'_>,
@@ -348,6 +379,37 @@ impl NativeCallbackRuntimeResources {
             }
         }
     }
+
+    fn plan_result_write_drain_completion(
+        &self,
+        py: Python<'_>,
+        has_result_work_item: bool,
+        flush_binary_correction_diagnostics_on_stop: bool,
+    ) -> NativeResultWriteDrainCompletionPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state
+            .plan_result_write_drain_completion_value(has_result_work_item, flush_binary_correction_diagnostics_on_stop)
+    }
+
+    fn plan_validated_result_write_item_dispatch(
+        &self,
+        py: Python<'_>,
+        result_work_item_kind: &str,
+        expected_result_work_item_kind: &str,
+    ) -> PyResult<NativeResultWriteItemDispatchPlan> {
+        let dispatch_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state
+                .plan_result_write_item_dispatch_value(result_work_item_kind, expected_result_work_item_kind)?
+        };
+        if !dispatch_plan.has_dispatch_error_value() {
+            return Ok(dispatch_plan);
+        }
+        let error_message = dispatch_plan
+            .error_message_value()
+            .unwrap_or("Native result write dispatch plan omitted the error message.");
+        Err(PyRuntimeError::new_err(error_message.to_owned()))
+    }
 }
 
 impl NativeCallbackRuntimeResources {
@@ -397,7 +459,7 @@ impl NativeCallbackRuntimeResources {
         &self,
         py: Python<'_>,
         work_item: &Bound<'_, PyAny>,
-    ) -> PyResult<super::schedule::NativeResultWriteHandoffPlan> {
+    ) -> PyResult<NativeResultWriteHandoffPlan> {
         let has_result_work_item = !work_item.is_none();
         let handoff_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();

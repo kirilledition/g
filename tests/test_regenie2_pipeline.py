@@ -2166,6 +2166,57 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert runtime_resources.get_result_write_item().item is None
 
 
+def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-dispatch-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+
+    dosage_drain_plan = runtime_resources.plan_dosage_work_drain_completion(has_dosage_work_item=False)
+    assert dosage_drain_plan.should_stop is True
+    dosage_continue_plan = runtime_resources.plan_dosage_work_drain_completion(has_dosage_work_item=True)
+    assert dosage_continue_plan.should_stop is False
+    dosage_dispatch_plan = runtime_resources.plan_validated_dosage_work_item_dispatch(
+        callback_runtime.DosageWorkItemKind.SAMPLE_MAJOR_DOSAGE.value
+    )
+    assert dosage_dispatch_plan.should_process_sample_major_dosage is True
+    with pytest.raises(RuntimeError, match="continued without a work item"):
+        runtime_resources.plan_validated_dosage_work_item_dispatch(
+            callback_runtime.DosageWorkItemKind.STOP_SIGNAL.value
+        )
+
+    result_drain_plan = runtime_resources.plan_result_write_drain_completion(
+        has_result_work_item=False,
+        flush_binary_correction_diagnostics_on_stop=True,
+    )
+    assert result_drain_plan.should_stop is True
+    assert result_drain_plan.should_flush_binary_correction_diagnostics is True
+    result_continue_plan = runtime_resources.plan_result_write_drain_completion(
+        has_result_work_item=True,
+        flush_binary_correction_diagnostics_on_stop=True,
+    )
+    assert result_continue_plan.should_stop is False
+    assert result_continue_plan.should_flush_binary_correction_diagnostics is False
+    result_dispatch_plan = runtime_resources.plan_validated_result_write_item_dispatch(
+        callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+    )
+    assert result_dispatch_plan.should_process_result_write_item is True
+    with pytest.raises(RuntimeError, match="expected single_result but received multi_result"):
+        runtime_resources.plan_validated_result_write_item_dispatch(
+            callback_runtime.ResultWriteItemKind.MULTI_RESULT.value,
+            callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        )
+
+
 def test_native_callback_runner_uses_native_worker_start_plan() -> None:
     class RecordingWorkerThread:
         def __init__(self, *, worker_name: str, start_events: list[str]) -> None:
