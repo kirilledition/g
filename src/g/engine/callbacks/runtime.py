@@ -197,6 +197,8 @@ class NativeBgenCallbackRunner(abc.ABC):
     @property
     def worker_threads_started(self) -> bool:
         """Return whether callback worker threads have been started."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.has_started
         return self.callback_scheduler_state.has_started
 
     def worker_threads_have_started(self) -> bool:
@@ -214,26 +216,36 @@ class NativeBgenCallbackRunner(abc.ABC):
     @property
     def native_callback_batch_size(self) -> int:
         """Return the native callback batch size."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.native_callback_batch_size
         return self.callback_scheduler_state.native_callback_batch_size
 
     @property
     def dosage_queue_depth(self) -> int:
         """Return the native dosage queue depth."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.dosage_queue_depth
         return self.callback_scheduler_state.dosage_queue_depth
 
     @property
     def result_queue_depth(self) -> int:
         """Return the native result queue depth."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.result_queue_depth
         return self.callback_scheduler_state.result_queue_depth
 
     @property
     def result_in_flight_limit(self) -> int:
         """Return the native result in-flight limit."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.result_in_flight_limit
         return self.callback_scheduler_state.result_in_flight_limit
 
     @property
     def dosage_buffer_limit(self) -> int:
         """Return the native dosage buffer limit."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.dosage_buffer_limit
         return self.callback_scheduler_state.dosage_buffer_limit
 
     @property
@@ -269,11 +281,15 @@ class NativeBgenCallbackRunner(abc.ABC):
     @property
     def dosage_buffer_count(self) -> int:
         """Return the native dosage-buffer pool allocation count."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.dosage_buffer_allocated_count
         return self.callback_scheduler_state.dosage_buffer_allocated_count
 
     @property
     def dosage_buffer_identifiers(self) -> set[int]:
         """Return the native dosage-buffer pool ownership identifiers."""
+        if self.uses_native_callback_runtime_resources():
+            return set(self.callback_runtime_resources.dosage_buffer_identifiers)
         return set(self.callback_scheduler_state.dosage_buffer_identifiers)
 
     @property
@@ -284,16 +300,22 @@ class NativeBgenCallbackRunner(abc.ABC):
     @property
     def result_in_flight_slot_count(self) -> int:
         """Return the native result in-flight occupied slot count."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.result_in_flight_occupied_count
         return self.callback_scheduler_state.result_in_flight_occupied_count
 
     @property
     def result_queue_count(self) -> int:
         """Return the native result-queue occupancy count."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.result_queue_occupied_count
         return self.callback_scheduler_state.result_queue_occupied_count
 
     @property
     def dosage_queue_count(self) -> int:
         """Return the native dosage-queue occupancy count."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.dosage_queue_occupied_count
         return self.callback_scheduler_state.dosage_queue_occupied_count
 
     def record_stage_duration(self, stage_name: str, start_time: float) -> None:

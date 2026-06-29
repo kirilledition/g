@@ -172,6 +172,61 @@ impl NativeCallbackRuntimeResources {
         self.result_worker_thread.clone_ref(py)
     }
 
+    #[getter]
+    fn has_started(&self, py: Python<'_>) -> bool {
+        self.callback_scheduler_state.bind(py).borrow().has_started_value()
+    }
+
+    #[getter]
+    fn native_callback_batch_size(&self, py: Python<'_>) -> usize {
+        self.callback_scheduler_state.bind(py).borrow().native_callback_batch_size_value()
+    }
+
+    #[getter]
+    fn dosage_queue_depth(&self, py: Python<'_>) -> usize {
+        self.callback_scheduler_state.bind(py).borrow().dosage_queue_depth_value()
+    }
+
+    #[getter]
+    fn result_queue_depth(&self, py: Python<'_>) -> usize {
+        self.callback_scheduler_state.bind(py).borrow().result_queue_depth_value()
+    }
+
+    #[getter]
+    fn result_in_flight_limit(&self, py: Python<'_>) -> usize {
+        self.callback_scheduler_state.bind(py).borrow().result_in_flight_limit_value()
+    }
+
+    #[getter]
+    fn dosage_buffer_limit(&self, py: Python<'_>) -> usize {
+        self.callback_scheduler_state.bind(py).borrow().dosage_buffer_limit_value()
+    }
+
+    #[getter]
+    fn dosage_queue_occupied_count(&self, py: Python<'_>) -> usize {
+        self.callback_scheduler_state.bind(py).borrow().dosage_queue_occupied_count_value()
+    }
+
+    #[getter]
+    fn result_queue_occupied_count(&self, py: Python<'_>) -> usize {
+        self.callback_scheduler_state.bind(py).borrow().result_queue_occupied_count_value()
+    }
+
+    #[getter]
+    fn result_in_flight_occupied_count(&self, py: Python<'_>) -> usize {
+        self.callback_scheduler_state.bind(py).borrow().result_in_flight_occupied_count_value()
+    }
+
+    #[getter]
+    fn dosage_buffer_allocated_count(&self, py: Python<'_>) -> usize {
+        self.callback_scheduler_state.bind(py).borrow().dosage_buffer_allocated_count_value()
+    }
+
+    #[getter]
+    fn dosage_buffer_identifiers(&self, py: Python<'_>) -> Vec<usize> {
+        self.callback_scheduler_state.bind(py).borrow().dosage_buffer_identifiers_value()
+    }
+
     fn start_workers(&self, py: Python<'_>) -> PyResult<NativeCallbackWorkerStartAttemptPlan> {
         let _start_guard = self.worker_start_lock.lock().map_err(|_| {
             PyRuntimeError::new_err("native callback worker start lock was poisoned during worker startup")

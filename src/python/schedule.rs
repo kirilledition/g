@@ -1958,6 +1958,14 @@ impl NativeCallbackSchedulerState {
         .map_err(|error| schedule_error_to_py(&error))
     }
 
+    pub(crate) fn has_started_value(&self) -> bool {
+        self.inner.has_started()
+    }
+
+    pub(crate) fn native_callback_batch_size_value(&self) -> usize {
+        self.inner.native_callback_batch_size()
+    }
+
     pub(crate) fn dosage_queue_depth_value(&self) -> usize {
         self.inner.dosage_queue_depth()
     }
@@ -1966,8 +1974,32 @@ impl NativeCallbackSchedulerState {
         self.inner.result_queue_depth()
     }
 
+    pub(crate) fn result_in_flight_limit_value(&self) -> usize {
+        self.inner.result_in_flight_limit()
+    }
+
     pub(crate) fn dosage_buffer_limit_value(&self) -> usize {
         self.inner.dosage_buffer_limit()
+    }
+
+    pub(crate) fn dosage_queue_occupied_count_value(&self) -> usize {
+        self.inner.dosage_queue_occupied_count()
+    }
+
+    pub(crate) fn result_queue_occupied_count_value(&self) -> usize {
+        self.inner.result_queue_occupied_count()
+    }
+
+    pub(crate) fn result_in_flight_occupied_count_value(&self) -> usize {
+        self.inner.result_in_flight_occupied_count()
+    }
+
+    pub(crate) fn dosage_buffer_allocated_count_value(&self) -> usize {
+        self.inner.dosage_buffer_allocated_count()
+    }
+
+    pub(crate) fn dosage_buffer_identifiers_value(&self) -> Vec<usize> {
+        self.inner.dosage_buffer_identifiers()
     }
 
     pub(crate) fn plan_dosage_queue_put_observation_value(

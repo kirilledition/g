@@ -2142,10 +2142,16 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
+    assert runtime_resources.native_callback_batch_size == 1
+    assert runtime_resources.dosage_queue_depth == 1
+    assert runtime_resources.result_queue_depth == 1
+    assert runtime_resources.result_in_flight_limit == 1
+    assert runtime_resources.dosage_buffer_limit == 1
     dosage_item = object()
     result_item = object()
 
     assert runtime_resources.try_put_dosage_work_item(dosage_item, timeout_seconds=0.0) is True
+    assert runtime_resources.dosage_queue_occupied_count == 1
     assert runtime_resources.callback_scheduler_state.dosage_queue_occupied_count == 1
     queued = True
     dosage_put_observation = runtime_resources.plan_dosage_queue_put_observation(queued)
@@ -2172,6 +2178,7 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     dosage_result = runtime_resources.get_dosage_work_item()
     assert dosage_result.has_item is True
     assert dosage_result.item is dosage_item
+    assert runtime_resources.dosage_queue_occupied_count == 0
     assert runtime_resources.callback_scheduler_state.dosage_queue_occupied_count == 0
     dosage_get_observation = runtime_resources.plan_dosage_queue_get_observation()
     assert dosage_get_observation.queue_name == "dosage_queue"
@@ -2181,6 +2188,7 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert runtime_resources.get_dosage_work_item().item is None
 
     assert runtime_resources.try_put_result_write_item(result_item, timeout_seconds=0.0) is True
+    assert runtime_resources.result_queue_occupied_count == 1
     assert runtime_resources.callback_scheduler_state.result_queue_occupied_count == 1
     queued = True
     result_put_observation = runtime_resources.plan_result_queue_put_observation(queued)
@@ -2206,6 +2214,7 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     result = runtime_resources.get_result_write_item()
     assert result.has_item is True
     assert result.item is result_item
+    assert runtime_resources.result_queue_occupied_count == 0
     assert runtime_resources.callback_scheduler_state.result_queue_occupied_count == 0
     result_get_observation = runtime_resources.plan_result_queue_get_observation()
     assert result_get_observation.queue_name == "result_queue"
@@ -2345,6 +2354,8 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     dosage_buffer = np.empty((2, 2), dtype=np.float32)
 
     assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
+    assert runtime_resources.dosage_buffer_allocated_count == 1
+    assert id(dosage_buffer) in runtime_resources.dosage_buffer_identifiers
     assert runtime_resources.callback_scheduler_state.dosage_buffer_allocated_count == 1
     return_attempt_plan = runtime_resources.plan_dosage_buffer_return_attempt(id(dosage_buffer))
     assert return_attempt_plan.should_return is True
@@ -2397,6 +2408,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert pool_stage_observation.blocked_seconds == 0.5
 
     assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) == 0
+    assert runtime_resources.dosage_buffer_allocated_count == 0
     assert runtime_resources.callback_scheduler_state.dosage_buffer_allocated_count == 0
     assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) is None
 
@@ -5437,6 +5449,17 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
         binary_correction_summary=SimpleNamespace(),
         worker_thread=SimpleNamespace(),
         result_worker_thread=SimpleNamespace(),
+        has_started=False,
+        native_callback_batch_size=5,
+        dosage_queue_depth=11,
+        result_queue_depth=12,
+        result_in_flight_limit=13,
+        dosage_buffer_limit=14,
+        dosage_queue_occupied_count=0,
+        result_queue_occupied_count=0,
+        result_in_flight_occupied_count=0,
+        dosage_buffer_allocated_count=0,
+        dosage_buffer_identifiers=[],
     )
     with patch(
         "g.engine.callbacks.runtime._core.NativeCallbackRuntimeResources",
