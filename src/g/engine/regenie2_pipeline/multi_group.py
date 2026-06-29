@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+import json
 import time
 import typing
 
@@ -20,7 +20,15 @@ if typing.TYPE_CHECKING:
 
     from g.io import output
 
-logger = logging.getLogger(__name__)
+
+def emit_multi_group_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured multi-group pipeline diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 def intersect_committed_chunk_identifier_sets(
@@ -58,7 +66,17 @@ def prepare_multi_phenotype_bgen_group_delivery(
         phenotype_count=len(run_input.phenotype_names),
     )
     preflight_start_time = time.perf_counter()
-    logger.debug("Running preflight validation for multi-phenotype pipeline.")
+    emit_multi_group_diagnostic_event(
+        "debug",
+        "pipeline_multi_group_preflight_started",
+        "Running preflight validation for multi-phenotype pipeline.",
+        {
+            "phenotype_count": len(run_input.phenotype_names),
+            "sample_count": int(run_input.sample_indices.shape[0]),
+            "trusted_no_missing_diploid": context.effective_trusted_no_missing_diploid,
+            "variant_limit": context.variant_limit,
+        },
+    )
     run_multi_preflight(
         run_input=run_input,
         prediction_source=prediction_source,
@@ -67,7 +85,17 @@ def prepare_multi_phenotype_bgen_group_delivery(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
     )
     timing.record_stage_duration(context.stage_timing_recorder, "preflight_validation", preflight_start_time)
-    logger.debug("Preflight validation passed for multi-phenotype pipeline.")
+    emit_multi_group_diagnostic_event(
+        "debug",
+        "pipeline_multi_group_preflight_completed",
+        "Preflight validation passed for multi-phenotype pipeline.",
+        {
+            "phenotype_count": len(run_input.phenotype_names),
+            "sample_count": int(run_input.sample_indices.shape[0]),
+            "trusted_no_missing_diploid": context.effective_trusted_no_missing_diploid,
+            "variant_limit": context.variant_limit,
+        },
+    )
     if context.telemetry_session is not None:
         context.telemetry_session.log_multi_phenotype_preflight_completed(
             association_mode=context.association_mode,

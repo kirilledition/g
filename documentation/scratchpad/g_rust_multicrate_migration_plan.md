@@ -1191,6 +1191,8 @@ Remove Python as the chunk-level scheduler.
   of Python logging.
 - Multi-phenotype sample-summary diagnostics now route through the native
   diagnostic emitter while preserving native telemetry session events.
+- Multi-phenotype group preflight start and completion diagnostics now route
+  through the native diagnostic emitter instead of Python logging.
 
 ### Tests
 
