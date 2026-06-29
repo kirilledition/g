@@ -357,6 +357,30 @@ pub(crate) fn multi_phenotype_writer_finished_telemetry_fields_to_py_dict<'py>(
     Ok(payload)
 }
 
+pub(crate) fn single_trait_preflight_completed_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::SingleTraitPreflightCompletedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("phenotype", &fields.phenotype)?;
+    payload.set_item("sample_count", fields.sample_count)?;
+    payload.set_item("covariate_count", fields.covariate_count)?;
+    payload.set_item("chromosome_count", fields.chromosome_count)?;
+    Ok(payload)
+}
+
+pub(crate) fn multi_phenotype_preflight_completed_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::MultiPhenotypePreflightCompletedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("phenotype_count", fields.phenotype_count)?;
+    payload.set_item("sample_count", fields.sample_count)?;
+    Ok(payload)
+}
+
 fn artifact_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunArtifactTelemetryFields,

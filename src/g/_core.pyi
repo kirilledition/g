@@ -528,6 +528,20 @@ class NativeTelemetryRunSession:
         phenotype_count: int,
         final_output_paths: tuple[str | None, ...],
     ) -> None: ...
+    def emit_single_trait_preflight_completed_event(
+        self,
+        association_mode: str,
+        phenotype: str,
+        sample_count: int,
+        covariate_count: int,
+        chromosome_count: int,
+    ) -> None: ...
+    def emit_multi_phenotype_preflight_completed_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        sample_count: int,
+    ) -> None: ...
     def emit_progress(
         self,
         processed_chunk_count: int,

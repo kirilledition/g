@@ -69,10 +69,8 @@ def prepare_multi_phenotype_bgen_group_delivery(
     timing.record_stage_duration(context.stage_timing_recorder, "preflight_validation", preflight_start_time)
     logger.debug("Preflight validation passed for multi-phenotype pipeline.")
     if context.telemetry_session is not None:
-        context.telemetry_session.log_event(
-            "preflight_completed",
-            level="info",
-            association_mode=context.association_mode.value,
+        context.telemetry_session.log_multi_phenotype_preflight_completed(
+            association_mode=context.association_mode,
             phenotype_count=len(run_input.phenotype_names),
             sample_count=int(run_input.sample_indices.shape[0]),
         )

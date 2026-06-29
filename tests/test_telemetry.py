@@ -600,6 +600,55 @@ def test_native_telemetry_run_session_owns_writer_lifecycle_event_emission(tmp_p
     assert event_payloads[2]["final_output_paths"] == [str(tmp_path / "case_status.parquet"), None]
 
 
+def test_native_telemetry_run_session_owns_preflight_event_emission(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_single_trait_preflight_completed(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype="height",
+        sample_count=2504,
+        covariate_count=3,
+        chromosome_count=22,
+    )
+    telemetry_session.log_multi_phenotype_preflight_completed(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        phenotype_count=4,
+        sample_count=2504,
+    )
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "preflight_completed",
+        "preflight_completed",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO"]
+    assert event_payloads[0]["association_mode"] == "regenie2_linear"
+    assert event_payloads[0]["phenotype"] == "height"
+    assert event_payloads[0]["sample_count"] == 2504
+    assert event_payloads[0]["covariate_count"] == 3
+    assert event_payloads[0]["chromosome_count"] == 22
+    assert event_payloads[1]["association_mode"] == "regenie2_binary"
+    assert event_payloads[1]["phenotype_count"] == 4
+    assert event_payloads[1]["sample_count"] == 2504
+
+
 def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

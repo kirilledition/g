@@ -468,6 +468,53 @@ impl NativeTelemetryRunSession {
         )
     }
 
+    pub fn emit_single_trait_preflight_completed_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype: &str,
+        sample_count: i64,
+        covariate_count: i64,
+        chromosome_count: i64,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_single_trait_preflight_completed_telemetry_fields(
+            association_mode,
+            phenotype,
+            sample_count,
+            covariate_count,
+            chromosome_count,
+        );
+        let fields = run_events::single_trait_preflight_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::PREFLIGHT_COMPLETED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    pub fn emit_multi_phenotype_preflight_completed_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype_count: i64,
+        sample_count: i64,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_multi_phenotype_preflight_completed_telemetry_fields(
+            association_mode,
+            phenotype_count,
+            sample_count,
+        );
+        let fields =
+            run_events::multi_phenotype_preflight_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::PREFLIGHT_COMPLETED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
     pub fn emit_progress<'py>(
         &self,
         py: Python<'py>,

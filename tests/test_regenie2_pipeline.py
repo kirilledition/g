@@ -651,6 +651,46 @@ class RecordingTelemetrySession:
     def log_progress(self, **fields: object) -> None:
         self.progress_events.append(fields)
 
+    def log_single_trait_preflight_completed(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str,
+        sample_count: int,
+        covariate_count: int,
+        chromosome_count: int,
+    ) -> None:
+        self.events.append(
+            (
+                "preflight_completed",
+                {
+                    "association_mode": association_mode.value,
+                    "phenotype": phenotype,
+                    "sample_count": sample_count,
+                    "covariate_count": covariate_count,
+                    "chromosome_count": chromosome_count,
+                },
+            )
+        )
+
+    def log_multi_phenotype_preflight_completed(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype_count: int,
+        sample_count: int,
+    ) -> None:
+        self.events.append(
+            (
+                "preflight_completed",
+                {
+                    "association_mode": association_mode.value,
+                    "phenotype_count": phenotype_count,
+                    "sample_count": sample_count,
+                },
+            )
+        )
+
 
 class NoFinalWriterSession:
     def __init__(self) -> None:

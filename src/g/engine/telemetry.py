@@ -218,6 +218,38 @@ class TelemetrySession:
             tuple(None if path is None else str(path) for path in final_output_paths),
         )
 
+    def log_single_trait_preflight_completed(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str,
+        sample_count: int,
+        covariate_count: int,
+        chromosome_count: int,
+    ) -> None:
+        """Write the canonical single-trait preflight completion event."""
+        self.native_session_handle.emit_single_trait_preflight_completed_event(
+            association_mode.value,
+            phenotype,
+            sample_count,
+            covariate_count,
+            chromosome_count,
+        )
+
+    def log_multi_phenotype_preflight_completed(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype_count: int,
+        sample_count: int,
+    ) -> None:
+        """Write the canonical multi-phenotype preflight completion event."""
+        self.native_session_handle.emit_multi_phenotype_preflight_completed_event(
+            association_mode.value,
+            phenotype_count,
+            sample_count,
+        )
+
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
         self.native_session_handle.emit_progress(

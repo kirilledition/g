@@ -6,6 +6,7 @@ pub const RUN_FAILED_EVENT_NAME: &str = "run_failed";
 pub const EXECUTION_PLAN_PREPARED_EVENT_NAME: &str = "execution_plan_prepared";
 pub const EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME: &str = "effective_config_written";
 pub const WRITER_FINISHED_EVENT_NAME: &str = "writer_finished";
+pub const PREFLIGHT_COMPLETED_EVENT_NAME: &str = "preflight_completed";
 pub const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
 pub const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
 pub const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
@@ -131,6 +132,22 @@ pub struct MultiPhenotypeWriterFinishedTelemetryFields {
     pub association_mode: String,
     pub phenotype_count: i64,
     pub final_output_paths: Vec<Option<String>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SingleTraitPreflightCompletedTelemetryFields {
+    pub association_mode: String,
+    pub phenotype: String,
+    pub sample_count: i64,
+    pub covariate_count: i64,
+    pub chromosome_count: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiPhenotypePreflightCompletedTelemetryFields {
+    pub association_mode: String,
+    pub phenotype_count: i64,
+    pub sample_count: i64,
 }
 
 #[must_use]
@@ -309,6 +326,36 @@ pub fn build_multi_phenotype_writer_finished_telemetry_fields(
         association_mode: association_mode.to_string(),
         phenotype_count,
         final_output_paths: final_output_paths.to_vec(),
+    }
+}
+
+#[must_use]
+pub fn build_single_trait_preflight_completed_telemetry_fields(
+    association_mode: &str,
+    phenotype: &str,
+    sample_count: i64,
+    covariate_count: i64,
+    chromosome_count: i64,
+) -> SingleTraitPreflightCompletedTelemetryFields {
+    SingleTraitPreflightCompletedTelemetryFields {
+        association_mode: association_mode.to_string(),
+        phenotype: phenotype.to_string(),
+        sample_count,
+        covariate_count,
+        chromosome_count,
+    }
+}
+
+#[must_use]
+pub fn build_multi_phenotype_preflight_completed_telemetry_fields(
+    association_mode: &str,
+    phenotype_count: i64,
+    sample_count: i64,
+) -> MultiPhenotypePreflightCompletedTelemetryFields {
+    MultiPhenotypePreflightCompletedTelemetryFields {
+        association_mode: association_mode.to_string(),
+        phenotype_count,
+        sample_count,
     }
 }
 
@@ -562,6 +609,28 @@ mod tests {
                 association_mode: "regenie2_linear".to_string(),
                 phenotype_count: 2,
                 final_output_paths: vec![Some("run/height.parquet".to_string()), None],
+            }
+        );
+    }
+
+    #[test]
+    fn builds_preflight_completed_telemetry_fields() {
+        assert_eq!(
+            build_single_trait_preflight_completed_telemetry_fields("regenie2_linear", "height", 2504, 3, 22),
+            SingleTraitPreflightCompletedTelemetryFields {
+                association_mode: "regenie2_linear".to_string(),
+                phenotype: "height".to_string(),
+                sample_count: 2504,
+                covariate_count: 3,
+                chromosome_count: 22,
+            }
+        );
+        assert_eq!(
+            build_multi_phenotype_preflight_completed_telemetry_fields("regenie2_binary", 4, 2504),
+            MultiPhenotypePreflightCompletedTelemetryFields {
+                association_mode: "regenie2_binary".to_string(),
+                phenotype_count: 4,
+                sample_count: 2504,
             }
         );
     }
