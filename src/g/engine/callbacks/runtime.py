@@ -1884,10 +1884,11 @@ class NativeBgenCallbackRunner(abc.ABC):
             while True:
                 self.raise_worker_error_if_present()
                 if self.stage_timing_recorder is None:
-                    acquire_observation_plan = (
-                        self.callback_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+                    runtime_resources = self.callback_runtime_resources
+                    acquire_result = (
+                        runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
                     )
-                    if not acquire_observation_plan.should_retry_acquisition:
+                    if not acquire_result.should_retry_acquisition:
                         return
                     continue
                 acquire_start_time = time.perf_counter()

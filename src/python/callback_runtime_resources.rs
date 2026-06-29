@@ -59,6 +59,11 @@ pub(crate) struct NativeDosageBufferPoolOperationResult {
 }
 
 #[pyclass]
+pub(crate) struct NativeResultInFlightAcquireResult {
+    should_retry_acquisition: bool,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
     shutdown_worker_name: Option<String>,
     shutdown_timeout_seconds: Option<f64>,
@@ -622,6 +627,25 @@ impl NativeCallbackRuntimeResources {
             )?;
         }
         Ok(observation_plan)
+    }
+
+    fn acquire_result_in_flight_slot_with_backpressure_timeout_without_observation(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeResultInFlightAcquireResult> {
+        let observed_generation = self.result_in_flight_slot_signal.bind(py).borrow().generation_value()?;
+        let attempt_plan = {
+            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+            scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt_value()
+        };
+        if !attempt_plan.should_acquire_value() && attempt_plan.should_wait_value() {
+            self.result_in_flight_slot_signal.bind(py).borrow().wait_for_change_value(
+                py,
+                observed_generation,
+                attempt_plan.wait_timeout_seconds_value(),
+            )?;
+        }
+        Ok(NativeResultInFlightAcquireResult { should_retry_acquisition: !attempt_plan.should_acquire_value() })
     }
 
     fn release_result_in_flight_slot(&self, py: Python<'_>) -> PyResult<NativeResultInFlightReleaseObservationPlan> {
@@ -1464,6 +1488,14 @@ impl NativeDosageBufferPoolOperationResult {
         observation_plan: Option<NativeDosageBufferPoolObservationPlan>,
     ) -> PyResult<Self> {
         Ok(Self { free_buffer_count, observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()? })
+    }
+}
+
+#[pymethods]
+impl NativeResultInFlightAcquireResult {
+    #[getter]
+    fn should_retry_acquisition(&self) -> bool {
+        self.should_retry_acquisition
     }
 }
 

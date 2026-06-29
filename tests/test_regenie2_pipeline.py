@@ -2595,6 +2595,16 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
     assert release_observation_plan.operation_name == "release"
     assert release_observation_plan.blocked is False
     assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+    acquire_result = runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    assert acquire_result.should_retry_acquisition is False
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 1
+
+    retry_result = runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    assert retry_result.should_retry_acquisition is True
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 1
+
+    runtime_resources.release_result_in_flight_slot()
     with pytest.raises(RuntimeError, match="no occupied slot"):
         runtime_resources.release_result_in_flight_slot()
 

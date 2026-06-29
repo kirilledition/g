@@ -1109,6 +1109,8 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production result in-flight slot acquire
   attempts, native wait-signal waits, releases, and release notifications while
   Python keeps worker-error chaining and timing emission.
+- Callback runtime resources now own production untimed result in-flight slot
+  acquire attempts without building timing observation plans.
 - Callback runtime resources now own production dosage-buffer registration,
   return eligibility planning, free-buffer returns, free-queue storage
   failures, discard accounting, and buffer-pool wakeups while Python keeps
