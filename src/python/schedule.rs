@@ -2051,6 +2051,20 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_worker_error_raise().into()
     }
 
+    pub(crate) fn update_dosage_worker_error_value(
+        &mut self,
+        error_message: Option<&str>,
+    ) -> NativeCallbackWorkerErrorUpdatePlan {
+        self.inner.update_dosage_worker_error(error_message).into()
+    }
+
+    pub(crate) fn update_result_worker_error_value(
+        &mut self,
+        error_message: Option<&str>,
+    ) -> NativeCallbackWorkerErrorUpdatePlan {
+        self.inner.update_result_worker_error(error_message).into()
+    }
+
     pub(crate) fn plan_result_write_item_pre_write_resource_release_value(
         &self,
         has_host_dosage_buffer: bool,

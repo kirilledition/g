@@ -1059,6 +1059,8 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production dosage work handoff planning,
   including variant-major batch handoff validation, while Python keeps the
   temporary callback work-item dataclasses.
+- Callback runtime resources now own production worker-error scheduler state
+  updates while Python keeps the original exception objects for chaining.
 - Callback runtime resources now own production worker stop and join loops,
   including sentinel enqueue retries and native thread joins, while Python keeps
   the public shutdown exception type.

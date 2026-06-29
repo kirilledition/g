@@ -246,6 +246,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Update dosage worker failure state in native scheduler state."""
         self.worker_error_cause = error
         error_message = None if error is None else str(error)
+        if self.uses_native_callback_runtime_resources():
+            self.callback_runtime_resources.update_dosage_worker_error(error_message)
+            return
         self.callback_scheduler_state.update_dosage_worker_error(error_message)
 
     @property
@@ -258,6 +261,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Update result worker failure state in native scheduler state."""
         self.result_worker_error_cause = error
         error_message = None if error is None else str(error)
+        if self.uses_native_callback_runtime_resources():
+            self.callback_runtime_resources.update_result_worker_error(error_message)
+            return
         self.callback_scheduler_state.update_result_worker_error(error_message)
 
     @property

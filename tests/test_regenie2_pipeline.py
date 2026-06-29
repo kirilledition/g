@@ -2464,6 +2464,24 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
     assert finish_result.complete_progress is True
     assert finish_result.emit_binary_correction_summary is True
     assert finish_runtime_resources.plan_worker_error_raise().should_raise is False
+    dosage_error_update = finish_runtime_resources.update_dosage_worker_error("dosage failed")
+    assert dosage_error_update.had_error is False
+    assert dosage_error_update.has_error is True
+    assert dosage_error_update.error_message == "native pipeline callback worker failed: dosage failed"
+    dosage_error_raise_plan = finish_runtime_resources.plan_worker_error_raise()
+    assert dosage_error_raise_plan.should_raise is True
+    assert dosage_error_raise_plan.raise_dosage_worker_error is True
+    assert dosage_error_raise_plan.error_message == "native pipeline callback worker failed: dosage failed"
+    dosage_error_clear = finish_runtime_resources.update_dosage_worker_error(None)
+    assert dosage_error_clear.had_error is True
+    assert dosage_error_clear.has_error is False
+    result_error_update = finish_runtime_resources.update_result_worker_error("writer failed")
+    assert result_error_update.had_error is False
+    assert result_error_update.has_error is True
+    assert result_error_update.error_message == "native pipeline result writer worker failed: writer failed"
+    result_error_clear = finish_runtime_resources.update_result_worker_error(None)
+    assert result_error_clear.had_error is True
+    assert result_error_clear.has_error is False
     assert not finish_runtime_resources.worker_thread.is_alive()
     assert not finish_runtime_resources.result_worker_thread.is_alive()
 

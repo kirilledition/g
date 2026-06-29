@@ -14,8 +14,8 @@ use super::callback_queue::{
 use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{
     NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
-    NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
-    NativeDosageWorkItemDispatchPlan, NativeResultInFlightAcquireObservationPlan,
+    NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan,
+    NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan, NativeResultInFlightAcquireObservationPlan,
     NativeResultInFlightReleaseObservationPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
     NativeResultWriteItemDispatchPlan, NativeResultWriteItemResourceReleasePlan,
     NativeVariantMajorDosageBatchHandoffPlan,
@@ -341,6 +341,24 @@ impl NativeCallbackRuntimeResources {
     fn plan_worker_error_raise(&self, py: Python<'_>) -> NativeCallbackWorkerErrorRaisePlan {
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         scheduler_state.plan_worker_error_raise_value()
+    }
+
+    fn update_dosage_worker_error(
+        &self,
+        py: Python<'_>,
+        error_message: Option<&str>,
+    ) -> NativeCallbackWorkerErrorUpdatePlan {
+        let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+        scheduler_state.update_dosage_worker_error_value(error_message)
+    }
+
+    fn update_result_worker_error(
+        &self,
+        py: Python<'_>,
+        error_message: Option<&str>,
+    ) -> NativeCallbackWorkerErrorUpdatePlan {
+        let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+        scheduler_state.update_result_worker_error_value(error_message)
     }
 
     fn acquire_result_in_flight_slot_with_backpressure_timeout(
