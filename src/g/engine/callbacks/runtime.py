@@ -143,7 +143,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
         )
-        self.progress_state = self.callback_runtime_resources.progress_state
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
@@ -227,6 +226,22 @@ class NativeBgenCallbackRunner(abc.ABC):
     def callback_scheduler_state(self, callback_scheduler_state: _core.NativeCallbackSchedulerState) -> None:
         """Store a fallback scheduler state for manual callback runners."""
         self.fallback_callback_scheduler_state = callback_scheduler_state
+
+    @property
+    def progress_state(self) -> _core.NativeCallbackProgressState:
+        """Return the active native callback progress state."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.progress_state
+        fallback_progress_state = getattr(self, "fallback_progress_state", None)
+        if fallback_progress_state is None:
+            message = "Callback progress state has not been initialized."
+            raise AttributeError(message)
+        return typing.cast("_core.NativeCallbackProgressState", fallback_progress_state)
+
+    @progress_state.setter
+    def progress_state(self, progress_state: _core.NativeCallbackProgressState) -> None:
+        """Store a fallback progress state for manual callback runners."""
+        self.fallback_progress_state = progress_state
 
     @property
     def dosage_worker_name(self) -> str:
