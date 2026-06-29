@@ -1293,11 +1293,14 @@ class NativeBgenCallbackRunner(abc.ABC):
                 message = "Native result in-flight slot state has no occupied slot to release."
                 raise RuntimeError(message)
             self.result_in_flight_slot_condition.notify()
+        if self.stage_timing_recorder is None:
+            return
+        release_observation_plan = self.callback_scheduler_state.plan_result_in_flight_slot_release_observation()
         self.record_bounded_resource_operation(
-            resource_name="result_in_flight_slots",
-            operation_name="release",
+            resource_name=release_observation_plan.resource_name,
+            operation_name=release_observation_plan.operation_name,
             elapsed_seconds=0.0,
-            blocked=False,
+            blocked=release_observation_plan.blocked,
         )
 
     def finish(self) -> None:

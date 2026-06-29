@@ -1032,6 +1032,8 @@ Remove Python as the chunk-level scheduler.
   plans to select put versus producer-blocking accounting.
 - Callback queue consumer wait timing now uses native scheduler observation
   plans for dosage and result queue consumers.
+- Result in-flight slot release timing now uses a native scheduler observation
+  plan for release accounting.
 
 ### Tests
 

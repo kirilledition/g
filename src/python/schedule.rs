@@ -165,6 +165,11 @@ pub(crate) struct NativeResultInFlightReleaseAttemptPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeResultInFlightReleaseObservationPlan {
+    inner: native_schedule::ResultInFlightReleaseObservationPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeResultWriteItemResourceReleasePlan {
     inner: native_schedule::ResultWriteItemResourceReleasePlan,
 }
@@ -589,6 +594,10 @@ impl NativeCallbackSchedulerState {
 
     fn plan_result_in_flight_slot_release_attempt(&mut self) -> NativeResultInFlightReleaseAttemptPlan {
         self.inner.plan_result_in_flight_slot_release_attempt().into()
+    }
+
+    fn plan_result_in_flight_slot_release_observation(&self) -> NativeResultInFlightReleaseObservationPlan {
+        self.inner.plan_result_in_flight_slot_release_observation().into()
     }
 
     fn plan_result_write_item_pre_write_resource_release(
@@ -1710,6 +1719,24 @@ impl NativeResultInFlightReleaseAttemptPlan {
 }
 
 #[pymethods]
+impl NativeResultInFlightReleaseObservationPlan {
+    #[getter]
+    fn resource_name(&self) -> &str {
+        &self.inner.resource_name
+    }
+
+    #[getter]
+    fn operation_name(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    #[getter]
+    fn blocked(&self) -> bool {
+        self.inner.blocked
+    }
+}
+
+#[pymethods]
 impl NativeResultWriteItemResourceReleasePlan {
     #[getter]
     fn should_release_host_buffer(&self) -> bool {
@@ -2103,6 +2130,12 @@ impl From<native_schedule::ResultInFlightAcquireObservationPlan> for NativeResul
 impl From<native_schedule::ResultInFlightReleaseAttemptPlan> for NativeResultInFlightReleaseAttemptPlan {
     fn from(release_attempt_plan: native_schedule::ResultInFlightReleaseAttemptPlan) -> Self {
         Self { inner: release_attempt_plan }
+    }
+}
+
+impl From<native_schedule::ResultInFlightReleaseObservationPlan> for NativeResultInFlightReleaseObservationPlan {
+    fn from(release_observation_plan: native_schedule::ResultInFlightReleaseObservationPlan) -> Self {
+        Self { inner: release_observation_plan }
     }
 }
 

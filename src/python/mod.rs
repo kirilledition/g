@@ -136,10 +136,10 @@ use schedule::{
     NativeDosageBufferReusePlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
     NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan, NativeGpuGenotypeFormatResolutionPlan,
     NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan, NativeResultInFlightAcquireAttemptPlan,
-    NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseAttemptPlan, NativeResultInFlightSlotState,
-    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
-    NativeResultWriteItemResourceReleasePlan, NativeSingleTraitOutputWritePlan,
-    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseAttemptPlan,
+    NativeResultInFlightReleaseObservationPlan, NativeResultInFlightSlotState, NativeResultWriteDrainCompletionPlan,
+    NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan, NativeResultWriteItemResourceReleasePlan,
+    NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
     format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
     intersect_committed_chunk_identifier_sets, plan_auto_gpu_genotype_format_after_trusted_validation,
     plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation, plan_callback_queue_backpressure_observation,
@@ -1874,6 +1874,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeResultInFlightAcquireAttemptPlan>()?;
     module.add_class::<NativeResultInFlightAcquireObservationPlan>()?;
     module.add_class::<NativeResultInFlightReleaseAttemptPlan>()?;
+    module.add_class::<NativeResultInFlightReleaseObservationPlan>()?;
     module.add_class::<NativeResultInFlightSlotState>()?;
     module.add_class::<NativeResultWriteDrainCompletionPlan>()?;
     module.add_class::<NativeResultWriteHandoffPlan>()?;

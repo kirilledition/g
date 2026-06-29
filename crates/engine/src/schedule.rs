@@ -299,6 +299,13 @@ pub struct ResultInFlightReleaseAttemptPlan {
     pub slot_limit: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResultInFlightReleaseObservationPlan {
+    pub resource_name: String,
+    pub operation_name: String,
+    pub blocked: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResultWriteItemResourceReleasePlan {
     pub should_release_host_buffer: bool,
@@ -867,6 +874,12 @@ impl CallbackSchedulerState {
     #[must_use]
     pub fn plan_result_in_flight_slot_release_attempt(&mut self) -> ResultInFlightReleaseAttemptPlan {
         plan_result_in_flight_slot_release_attempt(&mut self.result_in_flight_slot_state)
+    }
+
+    #[must_use]
+    pub fn plan_result_in_flight_slot_release_observation(&self) -> ResultInFlightReleaseObservationPlan {
+        debug_assert!(self.result_in_flight_slot_state.slot_limit() > 0);
+        plan_result_in_flight_slot_release_observation()
     }
 
     #[must_use]
@@ -1790,6 +1803,15 @@ fn plan_result_in_flight_slot_release_attempt(
         has_release_error: !released_slot,
         occupied_count: slot_state.occupied_count(),
         slot_limit: slot_state.slot_limit(),
+    }
+}
+
+#[must_use]
+pub fn plan_result_in_flight_slot_release_observation() -> ResultInFlightReleaseObservationPlan {
+    ResultInFlightReleaseObservationPlan {
+        resource_name: RESULT_IN_FLIGHT_SLOTS_NAME.to_string(),
+        operation_name: RESULT_SLOT_RELEASE_OPERATION.to_string(),
+        blocked: false,
     }
 }
 
@@ -3391,6 +3413,20 @@ mod tests {
                 wait_timeout_seconds: 0.0,
                 occupied_count: 1,
                 slot_limit: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn plans_result_in_flight_slot_release_observation() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_result_in_flight_slot_release_observation(),
+            ResultInFlightReleaseObservationPlan {
+                resource_name: RESULT_IN_FLIGHT_SLOTS_NAME.to_string(),
+                operation_name: RESULT_SLOT_RELEASE_OPERATION.to_string(),
+                blocked: false,
             },
         );
     }
