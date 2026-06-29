@@ -13,10 +13,10 @@ use super::callback_queue::{
 };
 use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{
-    NativeCallbackSchedulerState, NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan,
-    NativeDosageWorkItemDispatchPlan, NativeResultInFlightAcquireObservationPlan,
-    NativeResultInFlightReleaseObservationPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
-    NativeResultWriteItemDispatchPlan,
+    NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
+    NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkItemDispatchPlan,
+    NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseObservationPlan,
+    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
 };
 
 #[pyclass]
@@ -40,6 +40,15 @@ pub(crate) struct NativeDosageBufferAcquireResult {
     should_allocate: bool,
     free_buffer_count: usize,
     waited: bool,
+}
+
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
+    shutdown_worker_name: Option<String>,
+    shutdown_timeout_seconds: Option<f64>,
+    raise_worker_error: bool,
+    complete_progress: bool,
+    emit_binary_correction_summary: bool,
 }
 
 #[pymethods]
@@ -252,6 +261,74 @@ impl NativeCallbackRuntimeResources {
             return Ok(Some(join_plan.timeout_seconds_value()));
         }
         Ok(None)
+    }
+
+    fn finish_worker_lifecycle(&self, py: Python<'_>) -> PyResult<NativeCallbackWorkerFinishLifecycleResult> {
+        let finish_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_worker_finish_value()
+        };
+        let mut finish_result = NativeCallbackWorkerFinishLifecycleResult::from_finish_plan(&finish_plan);
+        if finish_plan.stop_dosage_worker_value() {
+            let timeout_seconds = self.stop_dosage_worker(py, Some(finish_plan.dosage_stop_timeout_seconds_value()))?;
+            if let Some(timeout_seconds) = timeout_seconds {
+                finish_result.record_shutdown_timeout(
+                    self.worker_thread.bind(py).borrow().name_value().to_owned(),
+                    timeout_seconds,
+                );
+                return Ok(finish_result);
+            }
+        }
+        if finish_plan.join_dosage_worker_value() {
+            let timeout_seconds = self.join_dosage_worker(py, Some(finish_plan.dosage_join_timeout_seconds_value()))?;
+            if let Some(timeout_seconds) = timeout_seconds {
+                finish_result.record_shutdown_timeout(
+                    self.worker_thread.bind(py).borrow().name_value().to_owned(),
+                    timeout_seconds,
+                );
+                return Ok(finish_result);
+            }
+        }
+        if finish_plan.stop_result_worker_value() {
+            let timeout_seconds = self.stop_result_worker(py, Some(finish_plan.result_stop_timeout_seconds_value()))?;
+            if let Some(timeout_seconds) = timeout_seconds {
+                finish_result.record_shutdown_timeout(
+                    self.result_worker_thread.bind(py).borrow().name_value().to_owned(),
+                    timeout_seconds,
+                );
+                return Ok(finish_result);
+            }
+        }
+        if finish_plan.join_result_worker_value() {
+            let timeout_seconds = self.join_result_worker(py, Some(finish_plan.result_join_timeout_seconds_value()))?;
+            if let Some(timeout_seconds) = timeout_seconds {
+                finish_result.record_shutdown_timeout(
+                    self.result_worker_thread.bind(py).borrow().name_value().to_owned(),
+                    timeout_seconds,
+                );
+                return Ok(finish_result);
+            }
+        }
+        Ok(finish_result)
+    }
+
+    fn abort_worker_lifecycle(&self, py: Python<'_>) -> PyResult<NativeCallbackWorkerAbortPlan> {
+        let abort_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_worker_abort_value()
+        };
+        if abort_plan.stop_dosage_worker_value() {
+            let _ = self.stop_dosage_worker(py, Some(abort_plan.dosage_stop_timeout_seconds_value()))?;
+        }
+        if abort_plan.stop_result_worker_value() {
+            let _ = self.stop_result_worker(py, Some(abort_plan.result_stop_timeout_seconds_value()))?;
+        }
+        Ok(abort_plan)
+    }
+
+    fn plan_worker_error_raise(&self, py: Python<'_>) -> NativeCallbackWorkerErrorRaisePlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_worker_error_raise_value()
     }
 
     fn acquire_result_in_flight_slot_with_backpressure_timeout(
@@ -641,6 +718,56 @@ impl NativeCallbackRuntimeResources {
             .error_message_value()
             .unwrap_or("Native result write dispatch plan omitted the error message.");
         Err(PyRuntimeError::new_err(error_message.to_owned()))
+    }
+}
+
+#[pymethods]
+impl NativeCallbackWorkerFinishLifecycleResult {
+    #[getter]
+    fn has_shutdown_timeout(&self) -> bool {
+        self.shutdown_timeout_seconds.is_some()
+    }
+
+    #[getter]
+    fn shutdown_worker_name(&self) -> Option<&str> {
+        self.shutdown_worker_name.as_deref()
+    }
+
+    #[getter]
+    fn shutdown_timeout_seconds(&self) -> Option<f64> {
+        self.shutdown_timeout_seconds
+    }
+
+    #[getter]
+    fn raise_worker_error(&self) -> bool {
+        self.raise_worker_error
+    }
+
+    #[getter]
+    fn complete_progress(&self) -> bool {
+        self.complete_progress
+    }
+
+    #[getter]
+    fn emit_binary_correction_summary(&self) -> bool {
+        self.emit_binary_correction_summary
+    }
+}
+
+impl NativeCallbackWorkerFinishLifecycleResult {
+    fn from_finish_plan(finish_plan: &super::schedule::NativeCallbackWorkerFinishPlan) -> Self {
+        Self {
+            shutdown_worker_name: None,
+            shutdown_timeout_seconds: None,
+            raise_worker_error: finish_plan.raise_worker_error_value(),
+            complete_progress: finish_plan.complete_progress_value(),
+            emit_binary_correction_summary: finish_plan.emit_binary_correction_summary_value(),
+        }
+    }
+
+    fn record_shutdown_timeout(&mut self, worker_name: String, timeout_seconds: f64) {
+        self.shutdown_worker_name = Some(worker_name);
+        self.shutdown_timeout_seconds = Some(timeout_seconds);
     }
 }
 

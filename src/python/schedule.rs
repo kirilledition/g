@@ -2039,6 +2039,18 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_result_in_flight_slot_release_observation().into()
     }
 
+    pub(crate) fn plan_worker_finish_value(&self) -> NativeCallbackWorkerFinishPlan {
+        self.inner.plan_worker_finish().into()
+    }
+
+    pub(crate) fn plan_worker_abort_value(&self) -> NativeCallbackWorkerAbortPlan {
+        self.inner.plan_worker_abort().into()
+    }
+
+    pub(crate) fn plan_worker_error_raise_value(&self) -> NativeCallbackWorkerErrorRaisePlan {
+        self.inner.plan_worker_error_raise().into()
+    }
+
     pub(crate) fn plan_dosage_buffer_acquire_backpressure_attempt_value(
         &self,
         free_buffer_count: usize,
@@ -2203,6 +2215,70 @@ impl NativeCallbackWorkerStopPollPlan {
 
     pub(crate) fn poll_timeout_seconds_value(&self) -> f64 {
         self.inner.poll_timeout_seconds
+    }
+}
+
+impl NativeCallbackWorkerFinishPlan {
+    pub(crate) fn stop_dosage_worker_value(&self) -> bool {
+        self.inner.stop_dosage_worker()
+    }
+
+    pub(crate) fn join_dosage_worker_value(&self) -> bool {
+        self.inner.join_dosage_worker()
+    }
+
+    pub(crate) fn stop_result_worker_value(&self) -> bool {
+        self.inner.stop_result_worker()
+    }
+
+    pub(crate) fn join_result_worker_value(&self) -> bool {
+        self.inner.join_result_worker()
+    }
+
+    pub(crate) fn raise_worker_error_value(&self) -> bool {
+        self.inner.raise_worker_error()
+    }
+
+    pub(crate) fn complete_progress_value(&self) -> bool {
+        self.inner.complete_progress()
+    }
+
+    pub(crate) fn emit_binary_correction_summary_value(&self) -> bool {
+        self.inner.emit_binary_correction_summary()
+    }
+
+    pub(crate) fn dosage_stop_timeout_seconds_value(&self) -> f64 {
+        self.inner.dosage_stop_timeout_seconds
+    }
+
+    pub(crate) fn dosage_join_timeout_seconds_value(&self) -> f64 {
+        self.inner.dosage_join_timeout_seconds
+    }
+
+    pub(crate) fn result_stop_timeout_seconds_value(&self) -> f64 {
+        self.inner.result_stop_timeout_seconds
+    }
+
+    pub(crate) fn result_join_timeout_seconds_value(&self) -> f64 {
+        self.inner.result_join_timeout_seconds
+    }
+}
+
+impl NativeCallbackWorkerAbortPlan {
+    pub(crate) fn stop_dosage_worker_value(&self) -> bool {
+        self.inner.stop_dosage_worker()
+    }
+
+    pub(crate) fn stop_result_worker_value(&self) -> bool {
+        self.inner.stop_result_worker()
+    }
+
+    pub(crate) fn dosage_stop_timeout_seconds_value(&self) -> f64 {
+        self.inner.dosage_stop_timeout_seconds
+    }
+
+    pub(crate) fn result_stop_timeout_seconds_value(&self) -> f64 {
+        self.inner.result_stop_timeout_seconds
     }
 }
 

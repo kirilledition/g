@@ -1181,7 +1181,10 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
-        error_raise_plan = self.callback_scheduler_state.plan_worker_error_raise()
+        if self.uses_native_callback_runtime_resources():
+            error_raise_plan = self.callback_runtime_resources.plan_worker_error_raise()
+        else:
+            error_raise_plan = self.callback_scheduler_state.plan_worker_error_raise()
         if not error_raise_plan.should_raise:
             return
         error_message = error_raise_plan.error_message
@@ -1417,6 +1420,25 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
+        if self.uses_native_callback_runtime_resources():
+            finish_result = self.callback_runtime_resources.finish_worker_lifecycle()
+            if finish_result.has_shutdown_timeout:
+                worker_name = finish_result.shutdown_worker_name
+                timeout_seconds = finish_result.shutdown_timeout_seconds
+                if worker_name is None or timeout_seconds is None:
+                    message = "Native callback worker finish result omitted shutdown timeout details."
+                    raise RuntimeError(message)
+                raise NativeBgenWorkerShutdownError(
+                    worker_name=worker_name,
+                    timeout_seconds=timeout_seconds,
+                )
+            if finish_result.raise_worker_error:
+                self.raise_worker_error_if_present()
+            if finish_result.complete_progress:
+                self.complete_progress()
+            if finish_result.emit_binary_correction_summary:
+                self.emit_binary_correction_summary()
+            return
         finish_plan = self.callback_scheduler_state.plan_worker_finish()
         if finish_plan.stop_dosage_worker:
             self.stop_dosage_worker(timeout_seconds=finish_plan.dosage_stop_timeout_seconds)
@@ -1435,6 +1457,9 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def abort(self) -> None:
         """Stop the worker after an upstream failure."""
+        if self.uses_native_callback_runtime_resources():
+            self.callback_runtime_resources.abort_worker_lifecycle()
+            return
         abort_plan = self.callback_scheduler_state.plan_worker_abort()
         if abort_plan.stop_dosage_worker:
             with contextlib.suppress(NativeBgenWorkerShutdownError):

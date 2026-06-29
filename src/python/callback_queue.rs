@@ -367,6 +367,10 @@ impl NativeCallbackWorkerThread {
         Ok(())
     }
 
+    pub(crate) fn name_value(&self) -> &str {
+        &self.name
+    }
+
     pub(crate) fn join_thread(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<()> {
         match timeout {
             Some(timeout_seconds) => {

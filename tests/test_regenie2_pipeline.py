@@ -2371,6 +2371,71 @@ def test_native_callback_runtime_resources_own_worker_stop_and_join() -> None:
     assert not runtime_resources.result_worker_thread.is_alive()
 
 
+def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle() -> None:
+    finish_runtime_resources_holder: list[typing.Any] = []
+
+    def finish_dosage_worker_target() -> None:
+        finish_runtime_resources_holder[0].get_dosage_work_item()
+
+    def finish_result_worker_target() -> None:
+        finish_runtime_resources_holder[0].get_result_write_item()
+
+    finish_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-worker-finish-test",
+        dosage_worker_target=finish_dosage_worker_target,
+        result_worker_target=finish_result_worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    finish_runtime_resources_holder.append(finish_runtime_resources)
+
+    start_plan = finish_runtime_resources.start_workers()
+    assert start_plan.has_start_error is False
+    finish_result = finish_runtime_resources.finish_worker_lifecycle()
+
+    assert finish_result.has_shutdown_timeout is False
+    assert finish_result.shutdown_worker_name is None
+    assert finish_result.shutdown_timeout_seconds is None
+    assert finish_result.raise_worker_error is True
+    assert finish_result.complete_progress is True
+    assert finish_result.emit_binary_correction_summary is True
+    assert finish_runtime_resources.plan_worker_error_raise().should_raise is False
+    assert not finish_runtime_resources.worker_thread.is_alive()
+    assert not finish_runtime_resources.result_worker_thread.is_alive()
+
+    abort_runtime_resources_holder: list[typing.Any] = []
+
+    def abort_dosage_worker_target() -> None:
+        abort_runtime_resources_holder[0].get_dosage_work_item()
+
+    def abort_result_worker_target() -> None:
+        abort_runtime_resources_holder[0].get_result_write_item()
+
+    abort_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-worker-abort-test",
+        dosage_worker_target=abort_dosage_worker_target,
+        result_worker_target=abort_result_worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    abort_runtime_resources_holder.append(abort_runtime_resources)
+
+    start_plan = abort_runtime_resources.start_workers()
+    assert start_plan.has_start_error is False
+    abort_plan = abort_runtime_resources.abort_worker_lifecycle()
+
+    assert abort_plan.stop_dosage_worker is True
+    assert abort_plan.stop_result_worker is True
+    assert abort_runtime_resources.join_dosage_worker(1.0) is None
+    assert abort_runtime_resources.join_result_worker(1.0) is None
+    assert not abort_runtime_resources.worker_thread.is_alive()
+    assert not abort_runtime_resources.result_worker_thread.is_alive()
+
+
 def test_native_callback_runtime_resources_report_worker_shutdown_timeouts() -> None:
     release_event = threading.Event()
 
