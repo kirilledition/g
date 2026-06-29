@@ -2134,9 +2134,16 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
     assert not hasattr(callback, "fallback_callback_scheduler_state")
     assert callback.progress_state is callback.callback_runtime_resources.progress_state
     assert not hasattr(callback, "fallback_progress_state")
+    assert callback.result_in_flight_slot_signal is callback.callback_runtime_resources.result_in_flight_slot_signal
+    assert not hasattr(callback, "fallback_result_in_flight_slot_signal")
+    assert callback.dosage_buffer_pool_signal is callback.callback_runtime_resources.dosage_buffer_pool_signal
+    assert not hasattr(callback, "fallback_dosage_buffer_pool_signal")
     assert callback.dosage_queue is callback.callback_runtime_resources.dosage_queue
+    assert not hasattr(callback, "fallback_dosage_queue")
     assert callback.result_queue is callback.callback_runtime_resources.result_queue
+    assert not hasattr(callback, "fallback_result_queue")
     assert callback.free_dosage_buffers is callback.callback_runtime_resources.free_dosage_buffers
+    assert not hasattr(callback, "fallback_free_dosage_buffers")
     assert callback.binary_correction_summary is callback.callback_runtime_resources.binary_correction_summary
     assert not hasattr(callback, "fallback_binary_correction_summary")
     assert isinstance(callback.worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
@@ -5627,11 +5634,13 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
     resolved_dosage_queue = SimpleNamespace()
     resolved_result_queue = SimpleNamespace()
     resolved_free_dosage_buffers = SimpleNamespace()
+    resolved_result_in_flight_slot_signal = SimpleNamespace()
+    resolved_dosage_buffer_pool_signal = SimpleNamespace()
     resolved_runtime_resources = SimpleNamespace(
         callback_scheduler_state=resolved_scheduler_state,
         progress_state=SimpleNamespace(),
-        result_in_flight_slot_signal=SimpleNamespace(),
-        dosage_buffer_pool_signal=SimpleNamespace(),
+        result_in_flight_slot_signal=resolved_result_in_flight_slot_signal,
+        dosage_buffer_pool_signal=resolved_dosage_buffer_pool_signal,
         dosage_queue=resolved_dosage_queue,
         result_queue=resolved_result_queue,
         free_dosage_buffers=resolved_free_dosage_buffers,
@@ -5687,9 +5696,16 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
     assert callback.result_queue_depth == 12
     assert callback.result_in_flight_limit == 13
     assert callback.dosage_buffer_limit == 14
+    assert callback.result_in_flight_slot_signal is resolved_result_in_flight_slot_signal
+    assert not hasattr(callback, "fallback_result_in_flight_slot_signal")
+    assert callback.dosage_buffer_pool_signal is resolved_dosage_buffer_pool_signal
+    assert not hasattr(callback, "fallback_dosage_buffer_pool_signal")
     assert callback.dosage_queue is resolved_dosage_queue
+    assert not hasattr(callback, "fallback_dosage_queue")
     assert callback.result_queue is resolved_result_queue
+    assert not hasattr(callback, "fallback_result_queue")
     assert callback.free_dosage_buffers is resolved_free_dosage_buffers
+    assert not hasattr(callback, "fallback_free_dosage_buffers")
     assert not hasattr(callback.dosage_queue, "maxsize")
     assert not hasattr(callback.result_queue, "maxsize")
     assert not hasattr(callback.free_dosage_buffers, "maxsize")

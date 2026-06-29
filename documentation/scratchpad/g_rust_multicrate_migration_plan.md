@@ -1061,6 +1061,9 @@ Remove Python as the chunk-level scheduler.
 - Production callback runners now resolve binary correction summary state from
   the native runtime-resource owner, leaving direct summary assignment only for
   manual fallback runners.
+- Production callback runners now resolve callback queues, free-buffer storage,
+  and wait signals from the native runtime-resource owner, leaving direct handle
+  assignment only for manual fallback runners.
 - Callback runtime resources now own production dosage/result queue put,
   backpressure, and get loops, including scheduler slot rollback on native
   storage inconsistencies.

@@ -146,11 +146,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
-        self.result_in_flight_slot_signal = self.callback_runtime_resources.result_in_flight_slot_signal
-        self.dosage_buffer_pool_signal = self.callback_runtime_resources.dosage_buffer_pool_signal
-        self.dosage_queue = self.callback_runtime_resources.dosage_queue
-        self.result_queue = self.callback_runtime_resources.result_queue
-        self.free_dosage_buffers = self.callback_runtime_resources.free_dosage_buffers
         self.worker_error_cause: BaseException | None = None
         self.result_worker_error_cause: BaseException | None = None
         self.binary_correction_pending_diagnostics: list[regenie2_binary.BinaryChunkDiagnostics] = []
@@ -257,6 +252,86 @@ class NativeBgenCallbackRunner(abc.ABC):
     def binary_correction_summary(self, binary_correction_summary: _core.NativeBinaryCorrectionSummary) -> None:
         """Store a fallback binary correction summary for manual callback runners."""
         self.fallback_binary_correction_summary = binary_correction_summary
+
+    @property
+    def result_in_flight_slot_signal(self) -> _core.NativeCallbackWaitSignal:
+        """Return the active native result in-flight wait signal."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.result_in_flight_slot_signal
+        fallback_result_in_flight_slot_signal = getattr(self, "fallback_result_in_flight_slot_signal", None)
+        if fallback_result_in_flight_slot_signal is None:
+            message = "Result in-flight slot signal has not been initialized."
+            raise AttributeError(message)
+        return typing.cast("_core.NativeCallbackWaitSignal", fallback_result_in_flight_slot_signal)
+
+    @result_in_flight_slot_signal.setter
+    def result_in_flight_slot_signal(self, result_in_flight_slot_signal: _core.NativeCallbackWaitSignal) -> None:
+        """Store a fallback result in-flight wait signal for manual callback runners."""
+        self.fallback_result_in_flight_slot_signal = result_in_flight_slot_signal
+
+    @property
+    def dosage_buffer_pool_signal(self) -> _core.NativeCallbackWaitSignal:
+        """Return the active native dosage-buffer pool wait signal."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.dosage_buffer_pool_signal
+        fallback_dosage_buffer_pool_signal = getattr(self, "fallback_dosage_buffer_pool_signal", None)
+        if fallback_dosage_buffer_pool_signal is None:
+            message = "Dosage-buffer pool signal has not been initialized."
+            raise AttributeError(message)
+        return typing.cast("_core.NativeCallbackWaitSignal", fallback_dosage_buffer_pool_signal)
+
+    @dosage_buffer_pool_signal.setter
+    def dosage_buffer_pool_signal(self, dosage_buffer_pool_signal: _core.NativeCallbackWaitSignal) -> None:
+        """Store a fallback dosage-buffer pool wait signal for manual callback runners."""
+        self.fallback_dosage_buffer_pool_signal = dosage_buffer_pool_signal
+
+    @property
+    def dosage_queue(self) -> _core.NativeCallbackObjectQueue:
+        """Return the active native dosage work queue."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.dosage_queue
+        fallback_dosage_queue = getattr(self, "fallback_dosage_queue", None)
+        if fallback_dosage_queue is None:
+            message = "Dosage queue has not been initialized."
+            raise AttributeError(message)
+        return typing.cast("_core.NativeCallbackObjectQueue", fallback_dosage_queue)
+
+    @dosage_queue.setter
+    def dosage_queue(self, dosage_queue: _core.NativeCallbackObjectQueue) -> None:
+        """Store a fallback dosage work queue for manual callback runners."""
+        self.fallback_dosage_queue = dosage_queue
+
+    @property
+    def result_queue(self) -> _core.NativeCallbackObjectQueue:
+        """Return the active native result write queue."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.result_queue
+        fallback_result_queue = getattr(self, "fallback_result_queue", None)
+        if fallback_result_queue is None:
+            message = "Result queue has not been initialized."
+            raise AttributeError(message)
+        return typing.cast("_core.NativeCallbackObjectQueue", fallback_result_queue)
+
+    @result_queue.setter
+    def result_queue(self, result_queue: _core.NativeCallbackObjectQueue) -> None:
+        """Store a fallback result write queue for manual callback runners."""
+        self.fallback_result_queue = result_queue
+
+    @property
+    def free_dosage_buffers(self) -> _core.NativeCallbackObjectQueue:
+        """Return the active native free dosage-buffer queue."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.free_dosage_buffers
+        fallback_free_dosage_buffers = getattr(self, "fallback_free_dosage_buffers", None)
+        if fallback_free_dosage_buffers is None:
+            message = "Free dosage-buffer queue has not been initialized."
+            raise AttributeError(message)
+        return typing.cast("_core.NativeCallbackObjectQueue", fallback_free_dosage_buffers)
+
+    @free_dosage_buffers.setter
+    def free_dosage_buffers(self, free_dosage_buffers: _core.NativeCallbackObjectQueue) -> None:
+        """Store a fallback free dosage-buffer queue for manual callback runners."""
+        self.fallback_free_dosage_buffers = free_dosage_buffers
 
     @property
     def dosage_worker_name(self) -> str:
