@@ -1171,6 +1171,8 @@ Remove Python as the chunk-level scheduler.
   emitter while telemetry emission stays on the native run session.
 - Native runtime knob configuration debug diagnostics now route through the
   native diagnostic emitter instead of Python logging.
+- Runner execution lifecycle and dispatch diagnostics now route through the
+  native diagnostic emitter instead of Python logging.
 
 ### Tests
 
