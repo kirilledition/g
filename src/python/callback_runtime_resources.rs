@@ -17,11 +17,11 @@ use super::schedule::{
     NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
     NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
     NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerStartAttemptPlan, NativeDosageBufferPoolObservationPlan,
-    NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan,
-    NativeDosageWorkItemStageDurationPlan, NativeResultInFlightAcquireObservationPlan,
-    NativeResultInFlightReleaseObservationPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
-    NativeResultWriteItemDispatchPlan, NativeResultWriteItemResourceReleasePlan,
-    NativeVariantMajorDosageBatchHandoffPlan,
+    NativeDosageBufferReusePlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
+    NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan,
+    NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseObservationPlan,
+    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
+    NativeResultWriteItemResourceReleasePlan, NativeVariantMajorDosageBatchHandoffPlan,
 };
 
 #[pyclass]
@@ -543,6 +543,17 @@ impl NativeCallbackRuntimeResources {
         let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
         self.dosage_buffer_pool_signal.bind(py).borrow().notify_waiters_value()?;
         Ok(Some(free_buffer_count))
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn plan_dosage_buffer_reuse(
+        &self,
+        py: Python<'_>,
+        buffered_shape: Vec<usize>,
+        expected_shape: Vec<usize>,
+    ) -> Option<NativeDosageBufferReusePlan> {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_buffer_reuse_value(&buffered_shape, &expected_shape)
     }
 
     fn try_put_dosage_work_item(

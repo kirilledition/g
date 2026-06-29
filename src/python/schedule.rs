@@ -2137,6 +2137,14 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_dosage_buffer_discard_attempt(buffer_identifier).into()
     }
 
+    pub(crate) fn plan_dosage_buffer_reuse_value(
+        &self,
+        buffered_shape: &[usize],
+        expected_shape: &[usize],
+    ) -> Option<NativeDosageBufferReusePlan> {
+        self.inner.plan_dosage_buffer_reuse(buffered_shape, expected_shape).map(Into::into)
+    }
+
     pub(crate) fn plan_dosage_queue_put_attempt_value(
         &mut self,
         wait_timeout_seconds: f64,

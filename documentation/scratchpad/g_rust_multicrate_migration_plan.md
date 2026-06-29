@@ -1082,6 +1082,8 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production dosage-buffer acquisition
   attempts, free-buffer pops, wait-signal waits, and wait result accounting
   while Python keeps NumPy allocation and shape/dtype reuse checks.
+- Callback runtime resources now own production dosage-buffer reuse shape
+  planning while Python keeps dtype checks and NumPy view slicing.
 - Callback runtime resources now own production worker finish and abort
   lifecycle execution, including stop/join sequencing and worker-error raise
   planning, while Python keeps public shutdown exceptions, progress completion,

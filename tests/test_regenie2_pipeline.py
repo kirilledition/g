@@ -2363,6 +2363,15 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     wait_observation_plan = runtime_resources.plan_dosage_buffer_pool_consumer_wait_observation()
     assert wait_observation_plan.operation_name == "consumer_wait"
     assert wait_observation_plan.blocked is True
+    exact_reuse_plan = runtime_resources.plan_dosage_buffer_reuse((2, 2), (2, 2))
+    assert exact_reuse_plan is not None
+    assert exact_reuse_plan.requires_slice is False
+    assert exact_reuse_plan.slice_dimensions == [2, 2]
+    sliced_reuse_plan = runtime_resources.plan_dosage_buffer_reuse((4, 5), (2, 3))
+    assert sliced_reuse_plan is not None
+    assert sliced_reuse_plan.requires_slice is True
+    assert sliced_reuse_plan.slice_dimensions == [2, 3]
+    assert runtime_resources.plan_dosage_buffer_reuse((2, 2), (3, 2)) is None
     pool_observation = runtime_resources.plan_dosage_buffer_pool_backpressure_observation(
         operation_name="return",
         free_buffer_count=1,

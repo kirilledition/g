@@ -1808,6 +1808,20 @@ class NativeBgenCallbackRunner(abc.ABC):
             dosage_buffer_base = dosage_buffer_owner.base
         return dosage_buffer_owner
 
+    def plan_dosage_buffer_reuse(
+        self,
+        *,
+        buffered_shape: tuple[int, ...],
+        expected_shape: tuple[int, ...],
+    ) -> _core.NativeDosageBufferReusePlan | None:
+        """Plan host dosage-buffer reuse through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_buffer_reuse(buffered_shape, expected_shape)
+        return self.callback_scheduler_state.plan_dosage_buffer_reuse(
+            buffered_shape=buffered_shape,
+            expected_shape=expected_shape,
+        )
+
     def _acquire_reused_dosage_buffer(
         self,
         dosage_buffer: HostGenotypeBuffer,
@@ -1817,7 +1831,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Return a reused buffer if dtype/shape constraints are met, else None."""
         if dosage_buffer.dtype != dtype:
             return None
-        reuse_plan = self.callback_scheduler_state.plan_dosage_buffer_reuse(
+        reuse_plan = self.plan_dosage_buffer_reuse(
             buffered_shape=dosage_buffer.shape,
             expected_shape=expected_shape,
         )
