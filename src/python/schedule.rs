@@ -2014,6 +2014,31 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_result_worker_stop_poll(remaining_timeout_seconds, is_worker_alive).into()
     }
 
+    pub(crate) fn plan_result_in_flight_slot_acquire_backpressure_attempt_value(
+        &mut self,
+    ) -> NativeResultInFlightAcquireAttemptPlan {
+        self.inner.plan_result_in_flight_slot_acquire_backpressure_attempt().into()
+    }
+
+    pub(crate) fn plan_result_in_flight_slot_acquire_observation_value(
+        &self,
+        acquire_attempt_plan: &NativeResultInFlightAcquireAttemptPlan,
+    ) -> NativeResultInFlightAcquireObservationPlan {
+        self.inner.plan_result_in_flight_slot_acquire_observation(&acquire_attempt_plan.inner).into()
+    }
+
+    pub(crate) fn plan_result_in_flight_slot_release_attempt_value(
+        &mut self,
+    ) -> NativeResultInFlightReleaseAttemptPlan {
+        self.inner.plan_result_in_flight_slot_release_attempt().into()
+    }
+
+    pub(crate) fn plan_result_in_flight_slot_release_observation_value(
+        &self,
+    ) -> NativeResultInFlightReleaseObservationPlan {
+        self.inner.plan_result_in_flight_slot_release_observation().into()
+    }
+
     pub(crate) fn plan_dosage_queue_put_attempt_value(
         &mut self,
         wait_timeout_seconds: f64,
@@ -2150,6 +2175,26 @@ impl NativeCallbackWorkerStopPollPlan {
 
     pub(crate) fn poll_timeout_seconds_value(&self) -> f64 {
         self.inner.poll_timeout_seconds
+    }
+}
+
+impl NativeResultInFlightAcquireAttemptPlan {
+    pub(crate) fn should_acquire_value(&self) -> bool {
+        self.inner.should_acquire
+    }
+
+    pub(crate) fn should_wait_value(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    pub(crate) fn wait_timeout_seconds_value(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+}
+
+impl NativeResultInFlightReleaseAttemptPlan {
+    pub(crate) fn has_release_error_value(&self) -> bool {
+        self.inner.has_release_error
     }
 }
 

@@ -2217,6 +2217,43 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         )
 
 
+def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-result-slot-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+
+    acquire_observation_plan = runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+    assert acquire_observation_plan.resource_name == "result_in_flight_slots"
+    assert acquire_observation_plan.operation_name == "acquire"
+    assert acquire_observation_plan.blocked is False
+    assert acquire_observation_plan.should_retry_acquisition is False
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 1
+
+    retry_observation_plan = runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+    assert retry_observation_plan.resource_name == "result_in_flight_slots"
+    assert retry_observation_plan.operation_name == "producer_blocking"
+    assert retry_observation_plan.blocked is True
+    assert retry_observation_plan.should_retry_acquisition is True
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 1
+
+    release_observation_plan = runtime_resources.release_result_in_flight_slot()
+    assert release_observation_plan.resource_name == "result_in_flight_slots"
+    assert release_observation_plan.operation_name == "release"
+    assert release_observation_plan.blocked is False
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+    with pytest.raises(RuntimeError, match="no occupied slot"):
+        runtime_resources.release_result_in_flight_slot()
+
+
 def test_native_callback_runtime_resources_own_worker_stop_and_join() -> None:
     runtime_resources_holder: list[typing.Any] = []
 

@@ -1324,6 +1324,28 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def acquire_result_in_flight_slot(self) -> None:
         """Reserve capacity for one chunk of pending GPU result work."""
+        if self.uses_native_callback_runtime_resources():
+            while True:
+                self.raise_worker_error_if_present()
+                if self.stage_timing_recorder is None:
+                    acquire_observation_plan = (
+                        self.callback_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+                    )
+                    if not acquire_observation_plan.should_retry_acquisition:
+                        return
+                    continue
+                acquire_start_time = time.perf_counter()
+                acquire_observation_plan = (
+                    self.callback_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+                )
+                self.record_bounded_resource_stage_duration(
+                    resource_name=acquire_observation_plan.resource_name,
+                    operation_name=acquire_observation_plan.operation_name,
+                    start_time=acquire_start_time,
+                    blocked=acquire_observation_plan.blocked,
+                )
+                if not acquire_observation_plan.should_retry_acquisition:
+                    return
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
@@ -1367,6 +1389,17 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def release_result_in_flight_slot(self) -> None:
         """Release capacity for one completed chunk of GPU result work."""
+        if self.uses_native_callback_runtime_resources():
+            release_observation_plan = self.callback_runtime_resources.release_result_in_flight_slot()
+            if self.stage_timing_recorder is None:
+                return
+            self.record_bounded_resource_operation(
+                resource_name=release_observation_plan.resource_name,
+                operation_name=release_observation_plan.operation_name,
+                elapsed_seconds=0.0,
+                blocked=release_observation_plan.blocked,
+            )
+            return
         release_plan = self.callback_scheduler_state.plan_result_in_flight_slot_release_attempt()
         if release_plan.has_release_error:
             message = "Native result in-flight slot state has no occupied slot to release."

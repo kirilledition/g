@@ -14,7 +14,8 @@ use super::callback_queue::{
 use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{
     NativeCallbackSchedulerState, NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan,
-    NativeDosageWorkItemDispatchPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
+    NativeDosageWorkItemDispatchPlan, NativeResultInFlightAcquireObservationPlan,
+    NativeResultInFlightReleaseObservationPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
     NativeResultWriteItemDispatchPlan,
 };
 
@@ -243,6 +244,40 @@ impl NativeCallbackRuntimeResources {
             return Ok(Some(join_plan.timeout_seconds_value()));
         }
         Ok(None)
+    }
+
+    fn acquire_result_in_flight_slot_with_backpressure_timeout(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeResultInFlightAcquireObservationPlan> {
+        let observed_generation = self.result_in_flight_slot_signal.bind(py).borrow().generation_value()?;
+        let (attempt_plan, observation_plan) = {
+            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+            let attempt_plan = scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt_value();
+            let observation_plan = scheduler_state.plan_result_in_flight_slot_acquire_observation_value(&attempt_plan);
+            (attempt_plan, observation_plan)
+        };
+        if !attempt_plan.should_acquire_value() && attempt_plan.should_wait_value() {
+            self.result_in_flight_slot_signal.bind(py).borrow().wait_for_change_value(
+                py,
+                observed_generation,
+                attempt_plan.wait_timeout_seconds_value(),
+            )?;
+        }
+        Ok(observation_plan)
+    }
+
+    fn release_result_in_flight_slot(&self, py: Python<'_>) -> PyResult<NativeResultInFlightReleaseObservationPlan> {
+        let release_plan = {
+            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+            scheduler_state.plan_result_in_flight_slot_release_attempt_value()
+        };
+        if release_plan.has_release_error_value() {
+            return Err(PyRuntimeError::new_err("Native result in-flight slot state has no occupied slot to release."));
+        }
+        self.result_in_flight_slot_signal.bind(py).borrow().notify_waiters_value()?;
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        Ok(scheduler_state.plan_result_in_flight_slot_release_observation_value())
     }
 
     fn try_put_dosage_work_item(

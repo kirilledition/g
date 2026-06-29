@@ -251,6 +251,24 @@ impl NativeCallbackWaitSignal {
     }
 
     fn notify_waiters(&self) -> PyResult<u64> {
+        self.notify_waiters_value()
+    }
+
+    fn wait_for_change(&self, py: Python<'_>, observed_generation: u64, timeout_seconds: f64) -> PyResult<bool> {
+        self.wait_for_change_value(py, observed_generation, timeout_seconds)
+    }
+}
+
+impl NativeCallbackWaitSignal {
+    pub(crate) fn new_signal() -> Self {
+        Self { generation: Mutex::new(0), condition: Condvar::new() }
+    }
+
+    pub(crate) fn generation_value(&self) -> PyResult<u64> {
+        Ok(*self.lock_generation()?)
+    }
+
+    pub(crate) fn notify_waiters_value(&self) -> PyResult<u64> {
         let mut generation = self.lock_generation()?;
         *generation = generation.wrapping_add(1);
         let next_generation = *generation;
@@ -258,14 +276,13 @@ impl NativeCallbackWaitSignal {
         Ok(next_generation)
     }
 
-    fn wait_for_change(&self, py: Python<'_>, observed_generation: u64, timeout_seconds: f64) -> PyResult<bool> {
+    pub(crate) fn wait_for_change_value(
+        &self,
+        py: Python<'_>,
+        observed_generation: u64,
+        timeout_seconds: f64,
+    ) -> PyResult<bool> {
         py.detach(|| self.wait_for_change_without_gil(observed_generation, timeout_seconds))
-    }
-}
-
-impl NativeCallbackWaitSignal {
-    pub(crate) fn new_signal() -> Self {
-        Self { generation: Mutex::new(0), condition: Condvar::new() }
     }
 
     fn lock_generation(&self) -> PyResult<MutexGuard<'_, u64>> {

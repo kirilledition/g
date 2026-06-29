@@ -1059,6 +1059,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production worker stop and join loops,
   including sentinel enqueue retries and native thread joins, while Python keeps
   the public shutdown exception type.
+- Callback runtime resources now own production result in-flight slot acquire
+  attempts, native wait-signal waits, releases, and release notifications while
+  Python keeps worker-error chaining and timing emission.
 
 ### Tests
 
