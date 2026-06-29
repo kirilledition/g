@@ -2178,6 +2178,26 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_result_queue_get_attempt(has_queued_item).into()
     }
 
+    pub(crate) fn plan_variant_major_dosage_batch_handoff_value(
+        &self,
+        metadata_count: usize,
+        genotype_matrix_by_variant_count: usize,
+        chunk_stats_count: usize,
+    ) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
+        self.inner
+            .plan_variant_major_dosage_batch_handoff(
+                metadata_count,
+                genotype_matrix_by_variant_count,
+                chunk_stats_count,
+            )
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_dosage_work_handoff_value(&self, chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
+        self.inner.plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| schedule_error_to_py(&error))
+    }
+
     pub(crate) fn plan_dosage_work_drain_completion_value(
         &self,
         has_dosage_work_item: bool,

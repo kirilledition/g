@@ -14,10 +14,11 @@ use super::callback_queue::{
 use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{
     NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
-    NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkItemDispatchPlan,
-    NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseObservationPlan,
-    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
-    NativeResultWriteItemResourceReleasePlan,
+    NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
+    NativeDosageWorkItemDispatchPlan, NativeResultInFlightAcquireObservationPlan,
+    NativeResultInFlightReleaseObservationPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
+    NativeResultWriteItemDispatchPlan, NativeResultWriteItemResourceReleasePlan,
+    NativeVariantMajorDosageBatchHandoffPlan,
 };
 
 #[pyclass]
@@ -644,6 +645,26 @@ impl NativeCallbackRuntimeResources {
             .error_message_value()
             .unwrap_or("Native dosage work dispatch plan omitted the error message.");
         Err(PyRuntimeError::new_err(error_message.to_owned()))
+    }
+
+    fn plan_variant_major_dosage_batch_handoff(
+        &self,
+        py: Python<'_>,
+        metadata_count: usize,
+        genotype_matrix_by_variant_count: usize,
+        chunk_stats_count: usize,
+    ) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_variant_major_dosage_batch_handoff_value(
+            metadata_count,
+            genotype_matrix_by_variant_count,
+            chunk_stats_count,
+        )
+    }
+
+    fn plan_dosage_work_handoff(&self, py: Python<'_>, chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_work_handoff_value(chunk_count)
     }
 
     fn try_put_result_write_item(

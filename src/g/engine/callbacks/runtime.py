@@ -562,6 +562,32 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Compute one Rust-preprocessed packed8 chunk and write it."""
         raise NotImplementedError
 
+    def plan_dosage_work_handoff(self, *, chunk_count: int) -> _core.NativeDosageWorkHandoffPlan:
+        """Plan a dosage work-item handoff through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_work_handoff(chunk_count)
+        return self.callback_scheduler_state.plan_dosage_work_handoff(chunk_count=chunk_count)
+
+    def plan_variant_major_dosage_batch_handoff(
+        self,
+        *,
+        metadata_count: int,
+        genotype_matrix_by_variant_count: int,
+        chunk_stats_count: int,
+    ) -> _core.NativeVariantMajorDosageBatchHandoffPlan:
+        """Plan a variant-major batch handoff through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_variant_major_dosage_batch_handoff(
+                metadata_count=metadata_count,
+                genotype_matrix_by_variant_count=genotype_matrix_by_variant_count,
+                chunk_stats_count=chunk_stats_count,
+            )
+        return self.callback_scheduler_state.plan_variant_major_dosage_batch_handoff(
+            metadata_count=metadata_count,
+            genotype_matrix_by_variant_count=genotype_matrix_by_variant_count,
+            chunk_stats_count=chunk_stats_count,
+        )
+
     def compute_preprocessed_dosage_chunk(
         self,
         metadata: typing.Any,
@@ -569,7 +595,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed dosage chunk for JAX association."""
-        handoff_plan = self.callback_scheduler_state.plan_dosage_work_handoff(chunk_count=1)
+        handoff_plan = self.plan_dosage_work_handoff(chunk_count=1)
         if handoff_plan.chunk_count != 1:
             message = "Native dosage work handoff plan disagrees with a single dosage work item."
             raise RuntimeError(message)
@@ -594,7 +620,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed variant-major dosage chunk for JAX association."""
-        handoff_plan = self.callback_scheduler_state.plan_dosage_work_handoff(chunk_count=1)
+        handoff_plan = self.plan_dosage_work_handoff(chunk_count=1)
         if handoff_plan.chunk_count != 1:
             message = "Native dosage work handoff plan disagrees with a single variant-major dosage work item."
             raise RuntimeError(message)
@@ -619,14 +645,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats_batch: collections.abc.Sequence[_core.ChunkStats],
     ) -> None:
         """Enqueue a native batch of variant-major dosage chunks for JAX association."""
-        batch_handoff_plan = self.callback_scheduler_state.plan_variant_major_dosage_batch_handoff(
+        batch_handoff_plan = self.plan_variant_major_dosage_batch_handoff(
             metadata_count=len(metadata_batch),
             genotype_matrix_by_variant_count=len(genotype_matrix_by_variant_batch),
             chunk_stats_count=len(chunk_stats_batch),
         )
-        dosage_handoff_plan = self.callback_scheduler_state.plan_dosage_work_handoff(
-            chunk_count=batch_handoff_plan.chunk_count
-        )
+        dosage_handoff_plan = self.plan_dosage_work_handoff(chunk_count=batch_handoff_plan.chunk_count)
         work_items = tuple(
             PreprocessedVariantMajorDosageChunkWorkItem(
                 metadata=metadata,
@@ -661,7 +685,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed packed8 chunk for JAX association."""
-        handoff_plan = self.callback_scheduler_state.plan_dosage_work_handoff(chunk_count=1)
+        handoff_plan = self.plan_dosage_work_handoff(chunk_count=1)
         if handoff_plan.chunk_count != 1:
             message = "Native dosage work handoff plan disagrees with a single packed8 dosage work item."
             raise RuntimeError(message)

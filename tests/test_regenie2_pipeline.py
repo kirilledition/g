@@ -2216,6 +2216,24 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
             callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
         )
 
+    dosage_handoff_plan = runtime_resources.plan_dosage_work_handoff(2)
+    assert dosage_handoff_plan.chunk_count == 2
+    with pytest.raises(ValueError, match="at least one chunk"):
+        runtime_resources.plan_dosage_work_handoff(0)
+
+    variant_major_batch_handoff_plan = runtime_resources.plan_variant_major_dosage_batch_handoff(
+        metadata_count=2,
+        genotype_matrix_by_variant_count=2,
+        chunk_stats_count=2,
+    )
+    assert variant_major_batch_handoff_plan.chunk_count == 2
+    with pytest.raises(ValueError, match="identical lengths"):
+        runtime_resources.plan_variant_major_dosage_batch_handoff(
+            metadata_count=2,
+            genotype_matrix_by_variant_count=1,
+            chunk_stats_count=2,
+        )
+
 
 def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
     def worker_target() -> None:
