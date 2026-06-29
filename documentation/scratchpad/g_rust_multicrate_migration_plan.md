@@ -1202,6 +1202,9 @@ Remove Python as the chunk-level scheduler.
 - Complete-case multi-trait pipeline start, input alignment, and
   prediction-source loading diagnostics now route through the native diagnostic
   emitter instead of Python logging.
+- Grouped per-phenotype pipeline start, group preparation, and union-delivery
+  selection diagnostics now route through the native diagnostic emitter instead
+  of Python logging.
 
 ### Tests
 

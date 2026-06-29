@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+import json
 import time
 import typing
 
@@ -23,7 +23,15 @@ from g.io import output
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-logger = logging.getLogger(__name__)
+
+def emit_grouped_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured grouped pipeline diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 def run_regenie2_grouped_per_phenotype_bgen_pipeline(
@@ -42,7 +50,16 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
 ) -> tuple[Path | None, ...]:
     """Group independently aligned phenotypes and run one BGEN pass per compatible group."""
-    logger.info("Starting grouped per-phenotype REGENIE step 2 BGEN pipeline.")
+    emit_grouped_diagnostic_event(
+        "info",
+        "pipeline_grouped_per_phenotype_started",
+        "Starting grouped per-phenotype REGENIE step 2 BGEN pipeline.",
+        {
+            "association_mode": context.association_mode.value,
+            "phenotype_count": len(phenotype_names),
+            "sample_mode": types.MultiPhenotypeSampleMode.PER_PHENOTYPE.value,
+        },
+    )
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     engine = outputs.open_pipeline_bgen_engine(
         context=context,
@@ -66,10 +83,17 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     timing.record_stage_duration(
         context.stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time
     )
-    logger.info(
-        "Prepared %s compatible per-phenotype group(s) for %s phenotype(s).",
-        len(grouped_run_inputs),
-        len(phenotype_names),
+    prepared_group_message = (
+        f"Prepared {len(grouped_run_inputs)} compatible per-phenotype group(s) for {len(phenotype_names)} phenotype(s)."
+    )
+    emit_grouped_diagnostic_event(
+        "info",
+        "pipeline_grouped_per_phenotype_groups_prepared",
+        prepared_group_message,
+        {
+            "phenotype_count": len(phenotype_names),
+            "phenotype_group_count": len(grouped_run_inputs),
+        },
     )
     telemetry_events.log_sample_alignment_completed(
         context=context,
@@ -276,11 +300,20 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     """Run overlapping per-phenotype groups through one union-sample BGEN delivery."""
     _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=native_callback_batch_size)
     union_sample_indices = build_union_sample_indices(grouped_run_inputs)
-    logger.info(
-        "Using union per-phenotype BGEN delivery: group_count=%s union_sample_count=%s grouped_sample_count=%s.",
-        len(grouped_run_inputs),
-        int(union_sample_indices.shape[0]),
-        sum(int(grouped_run_input.run_input.sample_indices.shape[0]) for grouped_run_input in grouped_run_inputs),
+    grouped_sample_count = sum(
+        int(grouped_run_input.run_input.sample_indices.shape[0]) for grouped_run_input in grouped_run_inputs
+    )
+    union_sample_count = int(union_sample_indices.shape[0])
+    emit_grouped_diagnostic_event(
+        "info",
+        "pipeline_grouped_union_delivery_selected",
+        f"Using union per-phenotype BGEN delivery: group_count={len(grouped_run_inputs)} "
+        f"union_sample_count={union_sample_count} grouped_sample_count={grouped_sample_count}.",
+        {
+            "grouped_sample_count": grouped_sample_count,
+            "phenotype_group_count": len(grouped_run_inputs),
+            "union_sample_count": union_sample_count,
+        },
     )
     prepared_deliveries = tuple(
         multi_group.prepare_multi_phenotype_bgen_group_delivery(
