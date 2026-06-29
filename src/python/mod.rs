@@ -133,11 +133,11 @@ use schedule::{
     NativeCallbackWorkerStopPollPlan, NativeDosageBufferAcquireAttemptPlan, NativeDosageBufferDiscardAttemptPlan,
     NativeDosageBufferPoolState, NativeDosageBufferRegisterAttemptPlan, NativeDosageBufferReturnAttemptPlan,
     NativeDosageBufferReusePlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
-    NativeDosageWorkItemDispatchPlan, NativeGpuGenotypeFormatResolutionPlan, NativeMultiTraitChunkWritePlan,
-    NativeMultiTraitOutputWritePlan, NativeResultInFlightAcquireAttemptPlan, NativeResultInFlightReleaseAttemptPlan,
-    NativeResultInFlightSlotState, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
-    NativeResultWriteItemDispatchPlan, NativeResultWriteItemResourceReleasePlan, NativeSingleTraitOutputWritePlan,
-    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
+    NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan, NativeGpuGenotypeFormatResolutionPlan,
+    NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan, NativeResultInFlightAcquireAttemptPlan,
+    NativeResultInFlightReleaseAttemptPlan, NativeResultInFlightSlotState, NativeResultWriteDrainCompletionPlan,
+    NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan, NativeResultWriteItemResourceReleasePlan,
+    NativeSingleTraitOutputWritePlan, NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
     format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
     intersect_committed_chunk_identifier_sets, plan_auto_gpu_genotype_format_after_trusted_validation,
     plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation, plan_callback_queue_backpressure_observation,
@@ -145,9 +145,9 @@ use schedule::{
     plan_callback_queue_stage_observation, plan_callback_worker_abort, plan_callback_worker_finish,
     plan_callback_worker_start, plan_callback_worker_stop_poll, plan_dosage_buffer_reuse,
     plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop, plan_dosage_work_handoff,
-    plan_dosage_work_item_dispatch, plan_gpu_genotype_format_auto_to_dosage, plan_multi_trait_chunk_write,
-    plan_multi_trait_output_write, plan_result_callback_worker_join, plan_result_callback_worker_stop,
-    plan_result_write_handoff, plan_result_write_item_dispatch,
+    plan_dosage_work_item_dispatch, plan_dosage_work_item_stage_duration, plan_gpu_genotype_format_auto_to_dosage,
+    plan_multi_trait_chunk_write, plan_multi_trait_output_write, plan_result_callback_worker_join,
+    plan_result_callback_worker_stop, plan_result_write_handoff, plan_result_write_item_dispatch,
     plan_single_trait_binary_gpu_genotype_format_resolution, plan_single_trait_output_write,
     plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method_value,
     resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
@@ -1862,6 +1862,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeDosageWorkDrainCompletionPlan>()?;
     module.add_class::<NativeDosageWorkHandoffPlan>()?;
     module.add_class::<NativeDosageWorkItemDispatchPlan>()?;
+    module.add_class::<NativeDosageWorkItemStageDurationPlan>()?;
     module.add_class::<NativeGpuGenotypeFormatResolutionPlan>()?;
     module.add_class::<NativeMultiTraitChunkWritePlan>()?;
     module.add_class::<NativeMultiTraitOutputWritePlan>()?;
@@ -2004,6 +2005,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_work_handoff, module)?)?;
     module.add_function(wrap_pyfunction!(plan_dosage_work_item_dispatch, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_dosage_work_item_stage_duration, module)?)?;
     module.add_function(wrap_pyfunction!(plan_variant_major_dosage_batch_handoff, module)?)?;
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup, module)?)?;
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_invocation, module)?)?;

@@ -865,6 +865,12 @@ class NativeDosageWorkItemDispatchPlan:
     @property
     def error_message(self) -> str | None: ...
 
+class NativeDosageWorkItemStageDurationPlan:
+    @property
+    def chunk_count(self) -> int: ...
+    @property
+    def duration_per_chunk(self) -> float: ...
+
 class NativeCallbackWorkerErrorRaisePlan:
     @property
     def should_raise(self) -> bool: ...
@@ -1026,6 +1032,12 @@ class NativeCallbackSchedulerState:
         self,
         dosage_work_item_kind: str,
     ) -> NativeDosageWorkItemDispatchPlan: ...
+    def plan_dosage_work_item_stage_duration(
+        self,
+        dosage_work_item_kind: str,
+        chunk_count: int,
+        elapsed_seconds: float,
+    ) -> NativeDosageWorkItemStageDurationPlan: ...
     @property
     def dosage_buffer_pool_limit(self) -> int: ...
     @property
@@ -2160,6 +2172,11 @@ def plan_result_write_item_dispatch(
 def plan_dosage_work_item_dispatch(
     dosage_work_item_kind: str,
 ) -> NativeDosageWorkItemDispatchPlan: ...
+def plan_dosage_work_item_stage_duration(
+    dosage_work_item_kind: str,
+    chunk_count: int,
+    elapsed_seconds: float,
+) -> NativeDosageWorkItemStageDurationPlan: ...
 def plan_callback_worker_stop_poll(
     remaining_timeout_seconds: float,
     has_started: bool,

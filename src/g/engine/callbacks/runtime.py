@@ -352,12 +352,25 @@ class NativeBgenCallbackRunner(abc.ABC):
         elapsed_seconds: float,
     ) -> None:
         """Record a stage duration across one queued work item."""
+        dosage_work_item_kind = classify_dosage_work_item(work_item)
         if isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
-            duration_per_chunk = elapsed_seconds / len(work_item.work_items)
-            for chunk_work_item in work_item.work_items:
-                self.record_chunk_stage_elapsed_duration(chunk_work_item.metadata, stage_name, duration_per_chunk)
-            return
-        self.record_chunk_stage_elapsed_duration(work_item.metadata, stage_name, elapsed_seconds)
+            chunk_metadata_items = tuple(chunk_work_item.metadata for chunk_work_item in work_item.work_items)
+        else:
+            chunk_metadata_items = (work_item.metadata,)
+        stage_duration_plan = self.callback_scheduler_state.plan_dosage_work_item_stage_duration(
+            dosage_work_item_kind=dosage_work_item_kind.value,
+            chunk_count=len(chunk_metadata_items),
+            elapsed_seconds=elapsed_seconds,
+        )
+        if stage_duration_plan.chunk_count != len(chunk_metadata_items):
+            message = "Native dosage work stage duration plan disagrees with the work item chunk count."
+            raise RuntimeError(message)
+        for chunk_metadata in chunk_metadata_items:
+            self.record_chunk_stage_elapsed_duration(
+                chunk_metadata,
+                stage_name,
+                stage_duration_plan.duration_per_chunk,
+            )
 
     def get_stage_duration_recorder(self) -> collections.abc.Callable[[str, float], None] | None:
         """Return an optional nested stage recorder for lower-level compute helpers."""

@@ -345,6 +345,12 @@ impl DosageWorkItemDispatchPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DosageWorkItemStageDurationPlan {
+    pub chunk_count: usize,
+    pub duration_per_chunk: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DosageBufferAcquireAttemptPlan {
     pub should_take_free_buffer: bool,
     pub should_allocate: bool,
@@ -878,6 +884,20 @@ impl CallbackSchedulerState {
         dosage_work_item_kind: &str,
     ) -> Result<DosageWorkItemDispatchPlan, ScheduleError> {
         plan_dosage_work_item_dispatch(dosage_work_item_kind)
+    }
+
+    /// Plan chunk-level timing attribution for one dosage work item.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the work-item kind or chunk count is invalid.
+    pub fn plan_dosage_work_item_stage_duration(
+        &self,
+        dosage_work_item_kind: &str,
+        chunk_count: usize,
+        elapsed_seconds: f64,
+    ) -> Result<DosageWorkItemStageDurationPlan, ScheduleError> {
+        plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
     }
 
     #[must_use]
@@ -1920,6 +1940,14 @@ pub enum ScheduleError {
     UnsupportedResultWriteItemKind { result_work_item_kind: String },
     #[error("Unsupported dosage work item kind: {dosage_work_item_kind}")]
     UnsupportedDosageWorkItemKind { dosage_work_item_kind: String },
+    #[error("Dosage work item stage duration attribution requires at least one chunk.")]
+    EmptyDosageWorkItemStageDuration,
+    #[error("Cannot record stage duration for a dosage work stop signal.")]
+    DosageWorkItemStageDurationStopSignal,
+    #[error("Dosage work item kind {dosage_work_item_kind} must attribute to exactly one chunk, got {chunk_count}.")]
+    DosageWorkItemStageDurationChunkCountMismatch { dosage_work_item_kind: String, chunk_count: usize },
+    #[error("Dosage work item stage duration chunk count exceeds floating-point attribution capacity: {chunk_count}.")]
+    DosageWorkItemStageDurationChunkCountOverflow { chunk_count: usize },
 }
 
 #[must_use]
@@ -2312,6 +2340,37 @@ fn validate_dosage_work_item_kind(dosage_work_item_kind: &str) -> Result<(), Sch
             dosage_work_item_kind: dosage_work_item_kind.to_owned(),
         }),
     }
+}
+
+/// Plan chunk-level timing attribution for one dosage work item.
+///
+/// # Errors
+///
+/// Returns an error when the work-item kind or chunk count is invalid.
+pub fn plan_dosage_work_item_stage_duration(
+    dosage_work_item_kind: &str,
+    chunk_count: usize,
+    elapsed_seconds: f64,
+) -> Result<DosageWorkItemStageDurationPlan, ScheduleError> {
+    validate_dosage_work_item_kind(dosage_work_item_kind)?;
+    if dosage_work_item_kind == DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL {
+        return Err(ScheduleError::DosageWorkItemStageDurationStopSignal);
+    }
+    if chunk_count == 0 {
+        return Err(ScheduleError::EmptyDosageWorkItemStageDuration);
+    }
+    if dosage_work_item_kind != DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH && chunk_count != 1 {
+        return Err(ScheduleError::DosageWorkItemStageDurationChunkCountMismatch {
+            dosage_work_item_kind: dosage_work_item_kind.to_owned(),
+            chunk_count,
+        });
+    }
+    let chunk_count_for_duration = u32::try_from(chunk_count)
+        .map_err(|_| ScheduleError::DosageWorkItemStageDurationChunkCountOverflow { chunk_count })?;
+    Ok(DosageWorkItemStageDurationPlan {
+        chunk_count,
+        duration_per_chunk: elapsed_seconds / f64::from(chunk_count_for_duration),
+    })
 }
 
 /// Plan which multi-trait writer lanes still need one chunk.
@@ -3385,6 +3444,37 @@ mod tests {
         assert_eq!(
             plan_dosage_work_item_dispatch("unknown").unwrap_err(),
             ScheduleError::UnsupportedDosageWorkItemKind { dosage_work_item_kind: "unknown".to_owned() },
+        );
+    }
+
+    #[test]
+    fn plans_dosage_work_item_stage_duration_attribution() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
+
+        assert_eq!(
+            scheduler_state
+                .plan_dosage_work_item_stage_duration(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE, 1, 3.0)
+                .unwrap(),
+            DosageWorkItemStageDurationPlan { chunk_count: 1, duration_per_chunk: 3.0 },
+        );
+        assert_eq!(
+            plan_dosage_work_item_stage_duration(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH, 2, 5.0).unwrap(),
+            DosageWorkItemStageDurationPlan { chunk_count: 2, duration_per_chunk: 2.5 },
+        );
+        assert_eq!(
+            plan_dosage_work_item_stage_duration(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH, 0, 5.0).unwrap_err(),
+            ScheduleError::EmptyDosageWorkItemStageDuration,
+        );
+        assert_eq!(
+            plan_dosage_work_item_stage_duration(DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL, 1, 5.0).unwrap_err(),
+            ScheduleError::DosageWorkItemStageDurationStopSignal,
+        );
+        assert_eq!(
+            plan_dosage_work_item_stage_duration(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE, 2, 5.0).unwrap_err(),
+            ScheduleError::DosageWorkItemStageDurationChunkCountMismatch {
+                dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE.to_owned(),
+                chunk_count: 2,
+            },
         );
     }
 

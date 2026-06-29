@@ -1022,6 +1022,8 @@ Remove Python as the chunk-level scheduler.
 - Dosage work item dispatch now uses native scheduler plans to select
   sample-major, variant-major, variant-major batch, and packed8 processing
   paths after queue drain checks.
+- Dosage work stage timing attribution now uses native scheduler plans to split
+  batch-level elapsed durations across queued chunk work items.
 
 ### Tests
 

@@ -180,6 +180,11 @@ pub(crate) struct NativeDosageWorkItemDispatchPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeDosageWorkItemStageDurationPlan {
+    inner: native_schedule::DosageWorkItemStageDurationPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerLifecycleState {
     inner: native_schedule::CallbackWorkerLifecycleState,
 }
@@ -605,6 +610,18 @@ impl NativeCallbackSchedulerState {
     ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
         self.inner
             .plan_dosage_work_item_dispatch(dosage_work_item_kind)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    fn plan_dosage_work_item_stage_duration(
+        &self,
+        dosage_work_item_kind: &str,
+        chunk_count: usize,
+        elapsed_seconds: f64,
+    ) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
+        self.inner
+            .plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
             .map(Into::into)
             .map_err(|error| schedule_error_to_py(&error))
     }
@@ -1713,6 +1730,19 @@ impl NativeDosageWorkItemDispatchPlan {
 }
 
 #[pymethods]
+impl NativeDosageWorkItemStageDurationPlan {
+    #[getter]
+    fn chunk_count(&self) -> usize {
+        self.inner.chunk_count
+    }
+
+    #[getter]
+    fn duration_per_chunk(&self) -> f64 {
+        self.inner.duration_per_chunk
+    }
+}
+
+#[pymethods]
 impl NativeGpuGenotypeFormatResolutionPlan {
     #[getter]
     fn requested_gpu_genotype_format(&self) -> &str {
@@ -1988,6 +2018,12 @@ impl From<native_schedule::DosageWorkDrainCompletionPlan> for NativeDosageWorkDr
 impl From<native_schedule::DosageWorkItemDispatchPlan> for NativeDosageWorkItemDispatchPlan {
     fn from(dispatch_plan: native_schedule::DosageWorkItemDispatchPlan) -> Self {
         Self { inner: dispatch_plan }
+    }
+}
+
+impl From<native_schedule::DosageWorkItemStageDurationPlan> for NativeDosageWorkItemStageDurationPlan {
+    fn from(stage_duration_plan: native_schedule::DosageWorkItemStageDurationPlan) -> Self {
+        Self { inner: stage_duration_plan }
     }
 }
 
@@ -2340,6 +2376,17 @@ pub(crate) fn plan_dosage_work_item_dispatch(
     dosage_work_item_kind: &str,
 ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
     native_schedule::plan_dosage_work_item_dispatch(dosage_work_item_kind)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+pub(crate) fn plan_dosage_work_item_stage_duration(
+    dosage_work_item_kind: &str,
+    chunk_count: usize,
+    elapsed_seconds: f64,
+) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
+    native_schedule::plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
         .map(Into::into)
         .map_err(|error| schedule_error_to_py(&error))
 }

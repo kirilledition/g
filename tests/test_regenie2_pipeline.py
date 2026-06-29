@@ -2265,6 +2265,40 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
     assert snapshot.stage_counts["python_callback"] == 2
 
 
+def test_native_callback_runner_uses_scheduler_dosage_work_stage_duration_plan() -> None:
+    callback = ManualCallbackRunner()
+    callback.stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    scheduler_state = DosageWorkItemStageDurationSchedulerProbe()
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+    first_metadata = build_native_metadata_for_chunk(chunk_identifier=0)
+    second_metadata = build_native_metadata_for_chunk(chunk_identifier=2)
+    chunk_stats = typing.cast("typing.Any", SimpleNamespace())
+    batch_work_item = callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem(
+        work_items=(
+            callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
+                metadata=first_metadata,
+                genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+                chunk_stats=chunk_stats,
+            ),
+            callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
+                metadata=second_metadata,
+                genotype_matrix_by_variant=np.full((2, 2), 2.0, dtype=np.float32),
+                chunk_stats=chunk_stats,
+            ),
+        )
+    )
+
+    callback.record_work_item_stage_elapsed_duration(batch_work_item, "python_callback", 4.0)
+
+    assert scheduler_state.dosage_work_item_kind == "variant_major_dosage_batch"
+    assert scheduler_state.chunk_count == 2
+    assert scheduler_state.elapsed_seconds == 4.0
+    snapshot = callback.stage_timing_recorder.snapshot()
+    assert snapshot.stage_counts["python_callback"] == 2
+    assert tuple(chunk_timing.duration_seconds for chunk_timing in snapshot.chunk_stage_timings) == (2.0, 2.0)
+    assert tuple(chunk_timing.chunk_identifier for chunk_timing in snapshot.chunk_stage_timings) == (0, 2)
+
+
 def test_native_callback_runner_uses_scheduler_variant_major_batch_handoff_plan() -> None:
     callback = ManualCallbackRunner()
     callback.worker_start_lock = threading.Lock()
@@ -2929,6 +2963,12 @@ class DosageWorkItemDispatchPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class DosageWorkItemStageDurationPlanProbe:
+    chunk_count: int
+    duration_per_chunk: float
+
+
+@dataclasses.dataclass(frozen=True)
 class DosageBufferAcquireAttemptPlanProbe:
     should_take_free_buffer: bool
     should_allocate: bool
@@ -3441,6 +3481,28 @@ class DosageWorkItemDispatchSchedulerProbe:
             ),
             has_dispatch_error=False,
             error_message=None,
+        )
+
+
+@dataclasses.dataclass
+class DosageWorkItemStageDurationSchedulerProbe:
+    dosage_work_item_kind: str | None = None
+    chunk_count: int | None = None
+    elapsed_seconds: float | None = None
+
+    def plan_dosage_work_item_stage_duration(
+        self,
+        *,
+        dosage_work_item_kind: str,
+        chunk_count: int,
+        elapsed_seconds: float,
+    ) -> DosageWorkItemStageDurationPlanProbe:
+        self.dosage_work_item_kind = dosage_work_item_kind
+        self.chunk_count = chunk_count
+        self.elapsed_seconds = elapsed_seconds
+        return DosageWorkItemStageDurationPlanProbe(
+            chunk_count=chunk_count,
+            duration_per_chunk=elapsed_seconds / chunk_count,
         )
 
 
