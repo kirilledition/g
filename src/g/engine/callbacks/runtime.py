@@ -50,15 +50,6 @@ write_materialized_regenie2_native_chunk_with_optional_timing = (
 )
 record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
 binary_chunk_diagnostics_to_summary_counts = regenie2_binary.binary_chunk_diagnostics_to_summary_counts
-CALLBACK_WORKER_START_RESULT_WORKER_ACTION = "start_result_worker"
-CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION = "start_dosage_worker"
-CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION = "stop_dosage_worker"
-CALLBACK_WORKER_FINISH_JOIN_DOSAGE_WORKER_ACTION = "join_dosage_worker"
-CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION = "stop_result_worker"
-CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION = "join_result_worker"
-CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION = "raise_worker_error"
-CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION = "complete_progress"
-CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION = "emit_binary_correction_summary"
 
 
 class ResultWriteItemKind(enum.StrEnum):
@@ -215,14 +206,10 @@ class NativeBgenCallbackRunner(abc.ABC):
                 raise RuntimeError(error_message)
             if not start_attempt_plan.should_start:
                 return
-            for start_action in start_attempt_plan.start_actions:
-                if start_action == CALLBACK_WORKER_START_RESULT_WORKER_ACTION:
-                    self.result_worker_thread.start()
-                elif start_action == CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION:
-                    self.worker_thread.start()
-                else:
-                    message = f"Unsupported native callback worker start action: {start_action}"
-                    raise RuntimeError(message)
+            if start_attempt_plan.start_result_worker:
+                self.result_worker_thread.start()
+            if start_attempt_plan.start_dosage_worker:
+                self.worker_thread.start()
 
     @property
     def worker_threads_started(self) -> bool:
@@ -1312,38 +1299,30 @@ class NativeBgenCallbackRunner(abc.ABC):
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
         finish_plan = self.callback_scheduler_state.plan_worker_finish()
-        for finish_action in finish_plan.finish_actions:
-            if finish_action == CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION:
-                self.stop_dosage_worker(timeout_seconds=finish_plan.dosage_stop_timeout_seconds)
-            elif finish_action == CALLBACK_WORKER_FINISH_JOIN_DOSAGE_WORKER_ACTION:
-                self.join_dosage_worker(timeout_seconds=finish_plan.dosage_join_timeout_seconds)
-            elif finish_action == CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION:
-                self.stop_result_worker(timeout_seconds=finish_plan.result_stop_timeout_seconds)
-            elif finish_action == CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION:
-                self.join_result_worker(timeout_seconds=finish_plan.result_join_timeout_seconds)
-            elif finish_action == CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION:
-                self.raise_worker_error_if_present()
-            elif finish_action == CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION:
-                self.complete_progress()
-            elif finish_action == CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION:
-                self.emit_binary_correction_summary()
-            else:
-                message = f"Unsupported native callback worker finish action: {finish_action}"
-                raise RuntimeError(message)
+        if finish_plan.stop_dosage_worker:
+            self.stop_dosage_worker(timeout_seconds=finish_plan.dosage_stop_timeout_seconds)
+        if finish_plan.join_dosage_worker:
+            self.join_dosage_worker(timeout_seconds=finish_plan.dosage_join_timeout_seconds)
+        if finish_plan.stop_result_worker:
+            self.stop_result_worker(timeout_seconds=finish_plan.result_stop_timeout_seconds)
+        if finish_plan.join_result_worker:
+            self.join_result_worker(timeout_seconds=finish_plan.result_join_timeout_seconds)
+        if finish_plan.raise_worker_error:
+            self.raise_worker_error_if_present()
+        if finish_plan.complete_progress:
+            self.complete_progress()
+        if finish_plan.emit_binary_correction_summary:
+            self.emit_binary_correction_summary()
 
     def abort(self) -> None:
         """Stop the worker after an upstream failure."""
         abort_plan = self.callback_scheduler_state.plan_worker_abort()
-        for abort_action in abort_plan.abort_actions:
-            if abort_action == CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION:
-                with contextlib.suppress(NativeBgenWorkerShutdownError):
-                    self.stop_dosage_worker(timeout_seconds=abort_plan.dosage_stop_timeout_seconds)
-            elif abort_action == CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION:
-                with contextlib.suppress(NativeBgenWorkerShutdownError):
-                    self.stop_result_worker(timeout_seconds=abort_plan.result_stop_timeout_seconds)
-            else:
-                message = f"Unsupported native callback worker abort action: {abort_action}"
-                raise RuntimeError(message)
+        if abort_plan.stop_dosage_worker:
+            with contextlib.suppress(NativeBgenWorkerShutdownError):
+                self.stop_dosage_worker(timeout_seconds=abort_plan.dosage_stop_timeout_seconds)
+        if abort_plan.stop_result_worker:
+            with contextlib.suppress(NativeBgenWorkerShutdownError):
+                self.stop_result_worker(timeout_seconds=abort_plan.result_stop_timeout_seconds)
 
     def stop_dosage_worker(self, timeout_seconds: float | None) -> None:
         """Signal the dosage worker to exit after queued dosage chunks drain."""

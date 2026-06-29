@@ -2818,12 +2818,48 @@ class CallbackFinishPlanProbe:
     result_stop_timeout_seconds: float
     result_join_timeout_seconds: float
 
+    @property
+    def stop_dosage_worker(self) -> bool:
+        return "stop_dosage_worker" in self.finish_actions
+
+    @property
+    def join_dosage_worker(self) -> bool:
+        return "join_dosage_worker" in self.finish_actions
+
+    @property
+    def stop_result_worker(self) -> bool:
+        return "stop_result_worker" in self.finish_actions
+
+    @property
+    def join_result_worker(self) -> bool:
+        return "join_result_worker" in self.finish_actions
+
+    @property
+    def raise_worker_error(self) -> bool:
+        return "raise_worker_error" in self.finish_actions
+
+    @property
+    def complete_progress(self) -> bool:
+        return "complete_progress" in self.finish_actions
+
+    @property
+    def emit_binary_correction_summary(self) -> bool:
+        return "emit_binary_correction_summary" in self.finish_actions
+
 
 @dataclasses.dataclass(frozen=True)
 class CallbackAbortPlanProbe:
     abort_actions: list[str]
     dosage_stop_timeout_seconds: float
     result_stop_timeout_seconds: float
+
+    @property
+    def stop_dosage_worker(self) -> bool:
+        return "stop_dosage_worker" in self.abort_actions
+
+    @property
+    def stop_result_worker(self) -> bool:
+        return "stop_result_worker" in self.abort_actions
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2833,6 +2869,14 @@ class CallbackStartAttemptPlanProbe:
     has_marked_started: bool
     has_start_error: bool
     error_message: str | None
+
+    @property
+    def start_result_worker(self) -> bool:
+        return "start_result_worker" in self.start_actions
+
+    @property
+    def start_dosage_worker(self) -> bool:
+        return "start_dosage_worker" in self.start_actions
 
 
 @dataclasses.dataclass(frozen=True)

@@ -1026,6 +1026,8 @@ Remove Python as the chunk-level scheduler.
   batch-level elapsed durations across queued chunk work items.
 - Result in-flight slot acquire timing now uses a native scheduler observation
   plan to select acquire versus producer-blocking accounting.
+- Callback worker start, finish, and abort dispatch now consume native
+  lifecycle selectors instead of matching action strings in Python.
 
 ### Tests
 
