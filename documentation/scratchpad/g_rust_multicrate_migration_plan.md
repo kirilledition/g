@@ -1148,6 +1148,8 @@ Remove Python as the chunk-level scheduler.
   summary event names, levels, and derived sample-set fields.
 - Native telemetry run sessions now own production GPU genotype-format
   resolution event names, levels, and optional fallback fields.
+- Native telemetry run sessions now own production association-backend-selected
+  and BGEN-engine-opened event names, levels, and optional phenotype fields.
 
 ### Tests
 

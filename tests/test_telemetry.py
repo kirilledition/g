@@ -822,6 +822,63 @@ def test_native_telemetry_run_session_owns_gpu_genotype_format_resolution(tmp_pa
     assert event_payloads[1]["fallback_error"] == "packed8 incompatible"
 
 
+def test_native_telemetry_run_session_owns_engine_opening_events(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_association_backend_selected(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        association_backend_kind=types.AssociationBackendKind.JAX_PACKED8,
+        device=types.Device.GPU,
+        genotype_format=types.GpuGenotypeFormat.PACKED8,
+        phenotype="height",
+        phenotype_count=None,
+    )
+    telemetry_session.log_bgen_engine_opened(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        association_backend_kind=types.AssociationBackendKind.JAX_DOSAGE,
+        sample_count=2504,
+        variant_count=12345,
+        phenotype=None,
+        phenotype_count=3,
+    )
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "association_backend_selected",
+        "bgen_engine_opened",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO"]
+    assert event_payloads[0]["association_mode"] == "regenie2_linear"
+    assert event_payloads[0]["association_backend_kind"] == "jax_packed8"
+    assert event_payloads[0]["device"] == "gpu"
+    assert event_payloads[0]["genotype_format"] == "packed8"
+    assert event_payloads[0]["phenotype"] == "height"
+    assert "phenotype_count" not in event_payloads[0]
+    assert event_payloads[1]["association_mode"] == "regenie2_binary"
+    assert event_payloads[1]["association_backend_kind"] == "jax_dosage"
+    assert event_payloads[1]["sample_count"] == 2504
+    assert event_payloads[1]["variant_count"] == 12345
+    assert event_payloads[1]["phenotype_count"] == 3
+    assert "phenotype" not in event_payloads[1]
+
+
 def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

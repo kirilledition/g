@@ -615,6 +615,62 @@ impl NativeTelemetryRunSession {
         )
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_association_backend_selected_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        association_backend_kind: &str,
+        device: &str,
+        genotype_format: &str,
+        phenotype: Option<String>,
+        phenotype_count: Option<i64>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_association_backend_selected_telemetry_fields(
+            association_mode,
+            association_backend_kind,
+            device,
+            genotype_format,
+            phenotype.as_deref(),
+            phenotype_count,
+        );
+        let fields = run_events::association_backend_selected_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::ASSOCIATION_BACKEND_SELECTED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_bgen_engine_opened_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        association_backend_kind: &str,
+        sample_count: i64,
+        variant_count: i64,
+        phenotype: Option<String>,
+        phenotype_count: Option<i64>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_bgen_engine_opened_telemetry_fields(
+            association_mode,
+            association_backend_kind,
+            sample_count,
+            variant_count,
+            phenotype.as_deref(),
+            phenotype_count,
+        );
+        let fields = run_events::bgen_engine_opened_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::BGEN_ENGINE_OPENED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
     pub fn emit_progress<'py>(
         &self,
         py: Python<'py>,

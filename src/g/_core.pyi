@@ -572,6 +572,24 @@ class NativeTelemetryRunSession:
         resolution_reason: str,
         fallback_error: str | None,
     ) -> None: ...
+    def emit_association_backend_selected_event(
+        self,
+        association_mode: str,
+        association_backend_kind: str,
+        device: str,
+        genotype_format: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None: ...
+    def emit_bgen_engine_opened_event(
+        self,
+        association_mode: str,
+        association_backend_kind: str,
+        sample_count: int,
+        variant_count: int,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None: ...
     def emit_progress(
         self,
         processed_chunk_count: int,

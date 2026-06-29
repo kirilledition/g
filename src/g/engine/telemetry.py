@@ -318,6 +318,46 @@ class TelemetrySession:
             fallback_error,
         )
 
+    def log_association_backend_selected(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        association_backend_kind: types.AssociationBackendKind,
+        device: types.Device,
+        genotype_format: types.GpuGenotypeFormat,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
+        """Write the canonical association-backend selection event."""
+        self.native_session_handle.emit_association_backend_selected_event(
+            association_mode.value,
+            association_backend_kind.value,
+            device.value,
+            genotype_format.value,
+            phenotype,
+            phenotype_count,
+        )
+
+    def log_bgen_engine_opened(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        association_backend_kind: types.AssociationBackendKind,
+        sample_count: int,
+        variant_count: int,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
+        """Write the canonical BGEN engine-opened event."""
+        self.native_session_handle.emit_bgen_engine_opened_event(
+            association_mode.value,
+            association_backend_kind.value,
+            sample_count,
+            variant_count,
+            phenotype,
+            phenotype_count,
+        )
+
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
         self.native_session_handle.emit_progress(

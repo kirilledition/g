@@ -736,6 +736,50 @@ class RecordingTelemetrySession:
             fields["fallback_error"] = fallback_error
         self.events.append(("gpu_genotype_format_resolved", fields))
 
+    def log_association_backend_selected(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        association_backend_kind: types.AssociationBackendKind,
+        device: types.Device,
+        genotype_format: types.GpuGenotypeFormat,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "association_mode": association_mode.value,
+            "association_backend_kind": association_backend_kind.value,
+            "device": device.value,
+            "genotype_format": genotype_format.value,
+        }
+        if phenotype is not None:
+            fields["phenotype"] = phenotype
+        if phenotype_count is not None:
+            fields["phenotype_count"] = phenotype_count
+        self.events.append(("association_backend_selected", fields))
+
+    def log_bgen_engine_opened(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        association_backend_kind: types.AssociationBackendKind,
+        sample_count: int,
+        variant_count: int,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "association_mode": association_mode.value,
+            "association_backend_kind": association_backend_kind.value,
+            "sample_count": sample_count,
+            "variant_count": variant_count,
+        }
+        if phenotype is not None:
+            fields["phenotype"] = phenotype
+        if phenotype_count is not None:
+            fields["phenotype_count"] = phenotype_count
+        self.events.append(("bgen_engine_opened", fields))
+
     def log_single_trait_preflight_completed(
         self,
         *,

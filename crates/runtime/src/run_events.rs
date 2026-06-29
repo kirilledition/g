@@ -11,6 +11,8 @@ pub const SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME: &str = "sample_alignment_comple
 pub const PREDICTION_SOURCE_LOADED_EVENT_NAME: &str = "prediction_source_loaded";
 pub const MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME: &str = "multi_phenotype_sample_summary";
 pub const GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME: &str = "gpu_genotype_format_resolved";
+pub const ASSOCIATION_BACKEND_SELECTED_EVENT_NAME: &str = "association_backend_selected";
+pub const BGEN_ENGINE_OPENED_EVENT_NAME: &str = "bgen_engine_opened";
 pub const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
 pub const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
 pub const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
@@ -188,6 +190,26 @@ pub struct GpuGenotypeFormatResolvedTelemetryFields {
     pub resolved_gpu_genotype_format: String,
     pub resolution_reason: String,
     pub fallback_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssociationBackendSelectedTelemetryFields {
+    pub association_mode: String,
+    pub association_backend_kind: String,
+    pub device: String,
+    pub genotype_format: String,
+    pub phenotype: Option<String>,
+    pub phenotype_count: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BgenEngineOpenedTelemetryFields {
+    pub association_mode: String,
+    pub association_backend_kind: String,
+    pub sample_count: i64,
+    pub variant_count: i64,
+    pub phenotype: Option<String>,
+    pub phenotype_count: Option<i64>,
 }
 
 #[must_use]
@@ -473,6 +495,44 @@ pub fn build_gpu_genotype_format_resolved_telemetry_fields(
         resolved_gpu_genotype_format: resolved_gpu_genotype_format.to_string(),
         resolution_reason: resolution_reason.to_string(),
         fallback_error: fallback_error.map(str::to_string),
+    }
+}
+
+#[must_use]
+pub fn build_association_backend_selected_telemetry_fields(
+    association_mode: &str,
+    association_backend_kind: &str,
+    device: &str,
+    genotype_format: &str,
+    phenotype: Option<&str>,
+    phenotype_count: Option<i64>,
+) -> AssociationBackendSelectedTelemetryFields {
+    AssociationBackendSelectedTelemetryFields {
+        association_mode: association_mode.to_string(),
+        association_backend_kind: association_backend_kind.to_string(),
+        device: device.to_string(),
+        genotype_format: genotype_format.to_string(),
+        phenotype: phenotype.map(str::to_string),
+        phenotype_count,
+    }
+}
+
+#[must_use]
+pub fn build_bgen_engine_opened_telemetry_fields(
+    association_mode: &str,
+    association_backend_kind: &str,
+    sample_count: i64,
+    variant_count: i64,
+    phenotype: Option<&str>,
+    phenotype_count: Option<i64>,
+) -> BgenEngineOpenedTelemetryFields {
+    BgenEngineOpenedTelemetryFields {
+        association_mode: association_mode.to_string(),
+        association_backend_kind: association_backend_kind.to_string(),
+        sample_count,
+        variant_count,
+        phenotype: phenotype.map(str::to_string),
+        phenotype_count,
     }
 }
 
@@ -835,6 +895,39 @@ mod tests {
             build_gpu_genotype_format_resolved_telemetry_fields("auto", "packed8", "trusted_validation_passed", None,)
                 .fallback_error,
             None,
+        );
+    }
+
+    #[test]
+    fn builds_engine_opening_telemetry_fields() {
+        assert_eq!(
+            build_association_backend_selected_telemetry_fields(
+                "regenie2_linear",
+                "jax_packed8",
+                "gpu",
+                "packed8",
+                Some("height"),
+                None,
+            ),
+            AssociationBackendSelectedTelemetryFields {
+                association_mode: "regenie2_linear".to_string(),
+                association_backend_kind: "jax_packed8".to_string(),
+                device: "gpu".to_string(),
+                genotype_format: "packed8".to_string(),
+                phenotype: Some("height".to_string()),
+                phenotype_count: None,
+            }
+        );
+        assert_eq!(
+            build_bgen_engine_opened_telemetry_fields("regenie2_binary", "jax_dosage", 2504, 12345, None, Some(3),),
+            BgenEngineOpenedTelemetryFields {
+                association_mode: "regenie2_binary".to_string(),
+                association_backend_kind: "jax_dosage".to_string(),
+                sample_count: 2504,
+                variant_count: 12345,
+                phenotype: None,
+                phenotype_count: Some(3),
+            }
         );
     }
 

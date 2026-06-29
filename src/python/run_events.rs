@@ -433,6 +433,34 @@ pub(crate) fn gpu_genotype_format_resolved_telemetry_fields_to_py_dict<'py>(
     Ok(payload)
 }
 
+pub(crate) fn association_backend_selected_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::AssociationBackendSelectedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("association_backend_kind", &fields.association_backend_kind)?;
+    payload.set_item("device", &fields.device)?;
+    payload.set_item("genotype_format", &fields.genotype_format)?;
+    set_optional_string(&payload, "phenotype", fields.phenotype.as_deref())?;
+    set_optional_i64(&payload, "phenotype_count", fields.phenotype_count)?;
+    Ok(payload)
+}
+
+pub(crate) fn bgen_engine_opened_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::BgenEngineOpenedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("association_backend_kind", &fields.association_backend_kind)?;
+    payload.set_item("sample_count", fields.sample_count)?;
+    payload.set_item("variant_count", fields.variant_count)?;
+    set_optional_string(&payload, "phenotype", fields.phenotype.as_deref())?;
+    set_optional_i64(&payload, "phenotype_count", fields.phenotype_count)?;
+    Ok(payload)
+}
+
 fn artifact_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunArtifactTelemetryFields,

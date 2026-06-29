@@ -64,20 +64,13 @@ def log_association_backend_selected(
     """Emit telemetry for the concrete association backend selection."""
     if context.telemetry_session is None:
         return
-    telemetry_fields: dict[str, typing.Any] = {
-        "association_mode": context.association_mode.value,
-        "association_backend_kind": context.backend_plan.backend_kind.value,
-        "device": context.backend_plan.jax_device.value,
-        "genotype_format": context.backend_plan.genotype_format.value,
-    }
-    if phenotype_name is not None:
-        telemetry_fields["phenotype"] = phenotype_name
-    if phenotype_count is not None:
-        telemetry_fields["phenotype_count"] = phenotype_count
-    context.telemetry_session.log_event(
-        "association_backend_selected",
-        level="info",
-        **telemetry_fields,
+    context.telemetry_session.log_association_backend_selected(
+        association_mode=context.association_mode,
+        association_backend_kind=context.backend_plan.backend_kind,
+        device=context.backend_plan.jax_device,
+        genotype_format=context.backend_plan.genotype_format,
+        phenotype=phenotype_name,
+        phenotype_count=phenotype_count,
     )
 
 
@@ -91,20 +84,13 @@ def log_bgen_engine_opened(
     """Emit telemetry for an opened BGEN engine."""
     if context.telemetry_session is None:
         return
-    telemetry_fields: dict[str, typing.Any] = {
-        "association_mode": context.association_mode.value,
-        "association_backend_kind": context.backend_plan.backend_kind.value,
-        "sample_count": int(engine.sample_count),
-        "variant_count": int(engine.variant_count),
-    }
-    if phenotype_name is not None:
-        telemetry_fields["phenotype"] = phenotype_name
-    if phenotype_count is not None:
-        telemetry_fields["phenotype_count"] = phenotype_count
-    context.telemetry_session.log_event(
-        "bgen_engine_opened",
-        level="info",
-        **telemetry_fields,
+    context.telemetry_session.log_bgen_engine_opened(
+        association_mode=context.association_mode,
+        association_backend_kind=context.backend_plan.backend_kind,
+        sample_count=int(engine.sample_count),
+        variant_count=int(engine.variant_count),
+        phenotype=phenotype_name,
+        phenotype_count=phenotype_count,
     )
 
 
