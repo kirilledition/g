@@ -565,6 +565,13 @@ class NativeTelemetryRunSession:
         sample_set_fingerprints: tuple[str | None, ...],
         phenotype_group_count: int,
     ) -> None: ...
+    def emit_gpu_genotype_format_resolved_event(
+        self,
+        requested_gpu_genotype_format: str,
+        resolved_gpu_genotype_format: str,
+        resolution_reason: str,
+        fallback_error: str | None,
+    ) -> None: ...
     def emit_progress(
         self,
         processed_chunk_count: int,

@@ -591,6 +591,30 @@ impl NativeTelemetryRunSession {
         )
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_gpu_genotype_format_resolved_event<'py>(
+        &self,
+        py: Python<'py>,
+        requested_gpu_genotype_format: &str,
+        resolved_gpu_genotype_format: &str,
+        resolution_reason: &str,
+        fallback_error: Option<String>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_gpu_genotype_format_resolved_telemetry_fields(
+            requested_gpu_genotype_format,
+            resolved_gpu_genotype_format,
+            resolution_reason,
+            fallback_error.as_deref(),
+        );
+        let fields = run_events::gpu_genotype_format_resolved_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
     pub fn emit_progress<'py>(
         &self,
         py: Python<'py>,

@@ -302,6 +302,22 @@ class TelemetrySession:
             phenotype_group_count,
         )
 
+    def log_gpu_genotype_format_resolved(
+        self,
+        *,
+        requested_gpu_genotype_format: types.GpuGenotypeFormat,
+        resolved_gpu_genotype_format: types.GpuGenotypeFormat,
+        resolution_reason: str,
+        fallback_error: str | None,
+    ) -> None:
+        """Write the canonical GPU genotype-format resolution event."""
+        self.native_session_handle.emit_gpu_genotype_format_resolved_event(
+            requested_gpu_genotype_format.value,
+            resolved_gpu_genotype_format.value,
+            resolution_reason,
+            fallback_error,
+        )
+
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
         self.native_session_handle.emit_progress(

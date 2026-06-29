@@ -72,14 +72,12 @@ def log_auto_resolution(
     )
     if telemetry_session is None:
         return
-    event_fields: dict[str, typing.Any] = {
-        "requested_gpu_genotype_format": requested_gpu_genotype_format.value,
-        "resolved_gpu_genotype_format": resolved_gpu_genotype_format.value,
-        "resolution_reason": resolution_reason,
-    }
-    if fallback_error is not None:
-        event_fields["fallback_error"] = fallback_error
-    telemetry_session.log_event("gpu_genotype_format_resolved", level="info", **event_fields)
+    telemetry_session.log_gpu_genotype_format_resolved(
+        requested_gpu_genotype_format=requested_gpu_genotype_format,
+        resolved_gpu_genotype_format=resolved_gpu_genotype_format,
+        resolution_reason=resolution_reason,
+        fallback_error=fallback_error,
+    )
 
 
 def resolve_auto_to_dosage(

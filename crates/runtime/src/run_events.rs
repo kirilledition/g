@@ -10,6 +10,7 @@ pub const PREFLIGHT_COMPLETED_EVENT_NAME: &str = "preflight_completed";
 pub const SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME: &str = "sample_alignment_completed";
 pub const PREDICTION_SOURCE_LOADED_EVENT_NAME: &str = "prediction_source_loaded";
 pub const MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME: &str = "multi_phenotype_sample_summary";
+pub const GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME: &str = "gpu_genotype_format_resolved";
 pub const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
 pub const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
 pub const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
@@ -179,6 +180,14 @@ pub struct MultiPhenotypeSampleSummaryTelemetryFields {
     pub sample_counts: Vec<i64>,
     pub sample_counts_differ: bool,
     pub shared_sample_set: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GpuGenotypeFormatResolvedTelemetryFields {
+    pub requested_gpu_genotype_format: String,
+    pub resolved_gpu_genotype_format: String,
+    pub resolution_reason: String,
+    pub fallback_error: Option<String>,
 }
 
 #[must_use]
@@ -449,6 +458,21 @@ pub fn build_multi_phenotype_sample_summary_telemetry_fields(
         sample_counts: sample_counts.to_vec(),
         sample_counts_differ,
         shared_sample_set,
+    }
+}
+
+#[must_use]
+pub fn build_gpu_genotype_format_resolved_telemetry_fields(
+    requested_gpu_genotype_format: &str,
+    resolved_gpu_genotype_format: &str,
+    resolution_reason: &str,
+    fallback_error: Option<&str>,
+) -> GpuGenotypeFormatResolvedTelemetryFields {
+    GpuGenotypeFormatResolvedTelemetryFields {
+        requested_gpu_genotype_format: requested_gpu_genotype_format.to_string(),
+        resolved_gpu_genotype_format: resolved_gpu_genotype_format.to_string(),
+        resolution_reason: resolution_reason.to_string(),
+        fallback_error: fallback_error.map(str::to_string),
     }
 }
 
@@ -788,6 +812,29 @@ mod tests {
             )
             .shared_sample_set,
             true,
+        );
+    }
+
+    #[test]
+    fn builds_gpu_genotype_format_resolved_telemetry_fields() {
+        assert_eq!(
+            build_gpu_genotype_format_resolved_telemetry_fields(
+                "auto",
+                "dosage",
+                "trusted_validation_failed",
+                Some("packed8 incompatible"),
+            ),
+            GpuGenotypeFormatResolvedTelemetryFields {
+                requested_gpu_genotype_format: "auto".to_string(),
+                resolved_gpu_genotype_format: "dosage".to_string(),
+                resolution_reason: "trusted_validation_failed".to_string(),
+                fallback_error: Some("packed8 incompatible".to_string()),
+            }
+        );
+        assert_eq!(
+            build_gpu_genotype_format_resolved_telemetry_fields("auto", "packed8", "trusted_validation_passed", None,)
+                .fallback_error,
+            None,
         );
     }
 

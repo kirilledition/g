@@ -773,6 +773,55 @@ def test_native_telemetry_run_session_owns_multi_phenotype_sample_summary(tmp_pa
     assert event_payloads[1]["shared_sample_set"] is True
 
 
+def test_native_telemetry_run_session_owns_gpu_genotype_format_resolution(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_gpu_genotype_format_resolved(
+        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+        resolved_gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+        resolution_reason="trusted_validation_passed",
+        fallback_error=None,
+    )
+    telemetry_session.log_gpu_genotype_format_resolved(
+        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+        resolved_gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
+        resolution_reason="trusted_validation_failed",
+        fallback_error="packed8 incompatible",
+    )
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "gpu_genotype_format_resolved",
+        "gpu_genotype_format_resolved",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO"]
+    assert event_payloads[0]["requested_gpu_genotype_format"] == "auto"
+    assert event_payloads[0]["resolved_gpu_genotype_format"] == "packed8"
+    assert event_payloads[0]["resolution_reason"] == "trusted_validation_passed"
+    assert "fallback_error" not in event_payloads[0]
+    assert event_payloads[1]["requested_gpu_genotype_format"] == "auto"
+    assert event_payloads[1]["resolved_gpu_genotype_format"] == "dosage"
+    assert event_payloads[1]["resolution_reason"] == "trusted_validation_failed"
+    assert event_payloads[1]["fallback_error"] == "packed8 incompatible"
+
+
 def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

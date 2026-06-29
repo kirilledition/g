@@ -719,6 +719,23 @@ class RecordingTelemetrySession:
             )
         )
 
+    def log_gpu_genotype_format_resolved(
+        self,
+        *,
+        requested_gpu_genotype_format: types.GpuGenotypeFormat,
+        resolved_gpu_genotype_format: types.GpuGenotypeFormat,
+        resolution_reason: str,
+        fallback_error: str | None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "requested_gpu_genotype_format": requested_gpu_genotype_format.value,
+            "resolved_gpu_genotype_format": resolved_gpu_genotype_format.value,
+            "resolution_reason": resolution_reason,
+        }
+        if fallback_error is not None:
+            fields["fallback_error"] = fallback_error
+        self.events.append(("gpu_genotype_format_resolved", fields))
+
     def log_single_trait_preflight_completed(
         self,
         *,

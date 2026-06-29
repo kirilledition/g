@@ -421,6 +421,18 @@ pub(crate) fn multi_phenotype_sample_summary_telemetry_fields_to_py_dict<'py>(
     Ok(payload)
 }
 
+pub(crate) fn gpu_genotype_format_resolved_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::GpuGenotypeFormatResolvedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("requested_gpu_genotype_format", &fields.requested_gpu_genotype_format)?;
+    payload.set_item("resolved_gpu_genotype_format", &fields.resolved_gpu_genotype_format)?;
+    payload.set_item("resolution_reason", &fields.resolution_reason)?;
+    set_optional_string(&payload, "fallback_error", fields.fallback_error.as_deref())?;
+    Ok(payload)
+}
+
 fn artifact_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunArtifactTelemetryFields,
