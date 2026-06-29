@@ -1047,6 +1047,9 @@ Remove Python as the chunk-level scheduler.
 - Callback worker thread handles now use a native PyO3 wrapper for thread
   construction, start, liveness checks, and joins while Python still supplies
   coarse dosage/result worker targets.
+- Callback runtime resources now use one native PyO3 owner to construct and
+  retain scheduler state, progress state, queues, wait signals, binary summary
+  state, worker handles, and the worker-start lock for production runners.
 
 ### Tests
 

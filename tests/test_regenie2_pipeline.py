@@ -2074,8 +2074,18 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
 
     callback = ThreadedManualCallbackRunner()
 
+    assert isinstance(callback.callback_runtime_resources, callback_runtime._core.NativeCallbackRuntimeResources)
+    assert callback.callback_scheduler_state is callback.callback_runtime_resources.callback_scheduler_state
+    assert callback.progress_state is callback.callback_runtime_resources.progress_state
+    assert callback.dosage_queue is callback.callback_runtime_resources.dosage_queue
+    assert callback.result_queue is callback.callback_runtime_resources.result_queue
+    assert callback.free_dosage_buffers is callback.callback_runtime_resources.free_dosage_buffers
+    assert callback.binary_correction_summary is callback.callback_runtime_resources.binary_correction_summary
     assert isinstance(callback.worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
     assert isinstance(callback.result_worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
+    assert callback.worker_thread is callback.callback_runtime_resources.worker_thread
+    assert callback.result_worker_thread is callback.callback_runtime_resources.result_worker_thread
+    assert not hasattr(callback_runtime, "threading")
     assert callback.worker_threads_started is False
     assert not callback.worker_thread.is_alive()
     assert not callback.result_worker_thread.is_alive()
@@ -2133,7 +2143,6 @@ def test_native_callback_runner_uses_native_worker_start_plan() -> None:
     scheduler_state = CallbackStartAttemptSchedulerProbe()
     typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
     callback_for_start = typing.cast("typing.Any", callback)
-    callback_for_start.worker_start_lock = threading.Lock()
     callback_for_start.result_worker_thread = RecordingWorkerThread(
         worker_name="result",
         start_events=start_events,
@@ -2333,7 +2342,6 @@ def test_native_callback_runner_uses_scheduler_dosage_work_stage_duration_plan()
 
 def test_native_callback_runner_uses_scheduler_variant_major_batch_handoff_plan() -> None:
     callback = ManualCallbackRunner()
-    callback.worker_start_lock = threading.Lock()
     mark_callback_workers_started(callback)
     metadata = build_native_metadata()
 
@@ -4867,7 +4875,7 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
     assert explicit_callback.dosage_buffer_limit == 8
 
 
-def test_native_bgen_callback_runner_uses_native_scheduler_state() -> None:
+def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
     class ConcreteCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def compute_preprocessed_chunk(
             self,
@@ -4903,10 +4911,25 @@ def test_native_bgen_callback_runner_uses_native_scheduler_state() -> None:
         result_in_flight_limit=13,
         dosage_buffer_limit=14,
     )
+    resolved_dosage_queue = SimpleNamespace()
+    resolved_result_queue = SimpleNamespace()
+    resolved_free_dosage_buffers = SimpleNamespace()
+    resolved_runtime_resources = SimpleNamespace(
+        callback_scheduler_state=resolved_scheduler_state,
+        progress_state=SimpleNamespace(),
+        result_in_flight_slot_signal=SimpleNamespace(),
+        dosage_buffer_pool_signal=SimpleNamespace(),
+        dosage_queue=resolved_dosage_queue,
+        result_queue=resolved_result_queue,
+        free_dosage_buffers=resolved_free_dosage_buffers,
+        binary_correction_summary=SimpleNamespace(),
+        worker_thread=SimpleNamespace(),
+        result_worker_thread=SimpleNamespace(),
+    )
     with patch(
-        "g.engine.callbacks.runtime._core.NativeCallbackSchedulerState",
-        return_value=resolved_scheduler_state,
-    ) as mock_scheduler_state:
+        "g.engine.callbacks.runtime._core.NativeCallbackRuntimeResources",
+        return_value=resolved_runtime_resources,
+    ) as mock_runtime_resources:
         callback = ConcreteCallbackRunner(
             worker_name="native-policy",
             staging_depth=3,
@@ -4918,16 +4941,24 @@ def test_native_bgen_callback_runner_uses_native_scheduler_state() -> None:
             output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
         )
 
-    mock_scheduler_state.assert_called_once_with(
-        staging_depth=3,
-        native_callback_batch_size=5,
-        result_in_flight_limit=7,
-        dosage_buffer_limit=8,
-    )
+    mock_runtime_resources.assert_called_once()
+    runtime_resource_arguments = mock_runtime_resources.call_args.kwargs
+    assert runtime_resource_arguments["worker_name"] == "native-policy"
+    assert callable(runtime_resource_arguments["dosage_worker_target"])
+    assert callable(runtime_resource_arguments["result_worker_target"])
+    assert runtime_resource_arguments["staging_depth"] == 3
+    assert runtime_resource_arguments["native_callback_batch_size"] == 5
+    assert runtime_resource_arguments["result_in_flight_limit"] == 7
+    assert runtime_resource_arguments["dosage_buffer_limit"] == 8
+    assert callback.callback_runtime_resources is resolved_runtime_resources
+    assert callback.callback_scheduler_state is resolved_scheduler_state
     assert callback.dosage_queue_depth == 11
     assert callback.result_queue_depth == 12
     assert callback.result_in_flight_limit == 13
     assert callback.dosage_buffer_limit == 14
+    assert callback.dosage_queue is resolved_dosage_queue
+    assert callback.result_queue is resolved_result_queue
+    assert callback.free_dosage_buffers is resolved_free_dosage_buffers
     assert not hasattr(callback.dosage_queue, "maxsize")
     assert not hasattr(callback.result_queue, "maxsize")
     assert not hasattr(callback.free_dosage_buffers, "maxsize")

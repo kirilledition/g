@@ -192,7 +192,7 @@ impl NativeCallbackProgressCompletion {
 impl NativeCallbackProgressState {
     #[new]
     fn new() -> Self {
-        Self { inner: native_callback_progress::CallbackProgressState::new() }
+        Self::new_state()
     }
 
     #[getter]
@@ -215,6 +215,12 @@ impl NativeCallbackProgressState {
 
     fn finish_progress(&mut self) -> Option<NativeCallbackProgressCompletion> {
         self.inner.finish_progress().map(Into::into)
+    }
+}
+
+impl NativeCallbackProgressState {
+    pub(crate) fn new_state() -> Self {
+        Self { inner: native_callback_progress::CallbackProgressState::new() }
     }
 }
 

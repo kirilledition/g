@@ -27,7 +27,7 @@ pub(crate) struct NativeBinaryCorrectionSummaryEmitPlan {
 impl NativeBinaryCorrectionSummary {
     #[new]
     fn new() -> Self {
-        Self { state: Mutex::new(native_callback_summary::BinaryCorrectionSummaryState::default()) }
+        Self::new_summary()
     }
 
     #[getter]
@@ -306,6 +306,10 @@ impl NativeBinaryCorrectionSummaryEmitPlan {
 }
 
 impl NativeBinaryCorrectionSummary {
+    pub(crate) fn new_summary() -> Self {
+        Self { state: Mutex::new(native_callback_summary::BinaryCorrectionSummaryState::default()) }
+    }
+
     fn lock_state(&self) -> PyResult<MutexGuard<'_, native_callback_summary::BinaryCorrectionSummaryState>> {
         self.state.lock().map_err(|_| PyRuntimeError::new_err("Binary correction summary lock was poisoned."))
     }

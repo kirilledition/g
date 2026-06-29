@@ -420,14 +420,7 @@ impl NativeCallbackSchedulerState {
         result_in_flight_limit: Option<i64>,
         dosage_buffer_limit: Option<i64>,
     ) -> PyResult<Self> {
-        native_schedule::CallbackSchedulerState::new(
-            staging_depth,
-            native_callback_batch_size,
-            result_in_flight_limit,
-            dosage_buffer_limit,
-        )
-        .map(|inner| Self { inner })
-        .map_err(|error| schedule_error_to_py(&error))
+        Self::from_limits(staging_depth, native_callback_batch_size, result_in_flight_limit, dosage_buffer_limit)
     }
 
     #[getter]
@@ -1945,6 +1938,54 @@ impl NativeGpuGenotypeFormatResolutionPlan {
     #[getter]
     fn should_log_auto_resolution(&self) -> bool {
         self.inner.should_log_auto_resolution()
+    }
+}
+
+impl NativeCallbackSchedulerState {
+    pub(crate) fn from_limits(
+        staging_depth: i64,
+        native_callback_batch_size: i64,
+        result_in_flight_limit: Option<i64>,
+        dosage_buffer_limit: Option<i64>,
+    ) -> PyResult<Self> {
+        native_schedule::CallbackSchedulerState::new(
+            staging_depth,
+            native_callback_batch_size,
+            result_in_flight_limit,
+            dosage_buffer_limit,
+        )
+        .map(|inner| Self { inner })
+        .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn dosage_queue_depth_value(&self) -> usize {
+        self.inner.dosage_queue_depth()
+    }
+
+    pub(crate) fn result_queue_depth_value(&self) -> usize {
+        self.inner.result_queue_depth()
+    }
+
+    pub(crate) fn dosage_buffer_limit_value(&self) -> usize {
+        self.inner.dosage_buffer_limit()
+    }
+
+    pub(crate) fn plan_worker_start_attempt_value(&mut self) -> NativeCallbackWorkerStartAttemptPlan {
+        self.inner.plan_worker_start_attempt().into()
+    }
+}
+
+impl NativeCallbackWorkerStartAttemptPlan {
+    pub(crate) fn has_start_error_value(&self) -> bool {
+        self.inner.has_start_error
+    }
+
+    pub(crate) fn should_start_result_worker(&self) -> bool {
+        self.inner.start_result_worker()
+    }
+
+    pub(crate) fn should_start_dosage_worker(&self) -> bool {
+        self.inner.start_dosage_worker()
     }
 }
 

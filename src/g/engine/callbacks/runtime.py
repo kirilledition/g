@@ -5,7 +5,6 @@ from __future__ import annotations
 import abc
 import contextlib
 import enum
-import threading
 import time
 import typing
 
@@ -135,36 +134,31 @@ class NativeBgenCallbackRunner(abc.ABC):
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
         """Initialize shared native callback state."""
-        self.callback_scheduler_state = _core.NativeCallbackSchedulerState(
+        self.callback_runtime_resources = _core.NativeCallbackRuntimeResources(
+            worker_name=worker_name,
+            dosage_worker_target=self.consume_dosage_chunks,
+            result_worker_target=self.consume_result_write_items,
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
         )
-        self.progress_state = _core.NativeCallbackProgressState()
+        self.callback_scheduler_state = self.callback_runtime_resources.callback_scheduler_state
+        self.progress_state = self.callback_runtime_resources.progress_state
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
-        self.result_in_flight_slot_signal = _core.NativeCallbackWaitSignal()
-        self.dosage_buffer_pool_signal = _core.NativeCallbackWaitSignal()
-        self.dosage_queue = _core.NativeCallbackObjectQueue(self.callback_scheduler_state.dosage_queue_depth)
-        self.result_queue = _core.NativeCallbackObjectQueue(self.callback_scheduler_state.result_queue_depth)
-        self.free_dosage_buffers = _core.NativeCallbackObjectQueue(self.callback_scheduler_state.dosage_buffer_limit)
+        self.result_in_flight_slot_signal = self.callback_runtime_resources.result_in_flight_slot_signal
+        self.dosage_buffer_pool_signal = self.callback_runtime_resources.dosage_buffer_pool_signal
+        self.dosage_queue = self.callback_runtime_resources.dosage_queue
+        self.result_queue = self.callback_runtime_resources.result_queue
+        self.free_dosage_buffers = self.callback_runtime_resources.free_dosage_buffers
         self.worker_error_cause: BaseException | None = None
         self.result_worker_error_cause: BaseException | None = None
-        self.binary_correction_summary = _core.NativeBinaryCorrectionSummary()
+        self.binary_correction_summary = self.callback_runtime_resources.binary_correction_summary
         self.binary_correction_pending_diagnostics: list[regenie2_binary.BinaryChunkDiagnostics] = []
-        self.worker_thread = _core.NativeCallbackWorkerThread(
-            target=self.consume_dosage_chunks,
-            name=worker_name,
-            daemon=True,
-        )
-        self.result_worker_thread = _core.NativeCallbackWorkerThread(
-            target=self.consume_result_write_items,
-            name=f"{worker_name}-writer",
-            daemon=True,
-        )
-        self.worker_start_lock = threading.Lock()
+        self.worker_thread = self.callback_runtime_resources.worker_thread
+        self.result_worker_thread = self.callback_runtime_resources.result_worker_thread
 
     @property
     def processed_chunk_count(self) -> int:
@@ -183,15 +177,22 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def start(self) -> None:
         """Start asynchronous callback workers after owner setup is complete."""
-        with self.worker_start_lock:
+        runtime_resources = getattr(self, "callback_runtime_resources", None)
+        should_start_fallback_workers = False
+        if (
+            runtime_resources is not None
+            and self.callback_scheduler_state is typing.cast("typing.Any", runtime_resources).callback_scheduler_state
+        ):
+            start_attempt_plan = typing.cast("typing.Any", runtime_resources).start_workers()
+        else:
             start_attempt_plan = self.callback_scheduler_state.plan_worker_start_attempt()
-            if start_attempt_plan.has_start_error:
-                error_message = start_attempt_plan.error_message
-                if error_message is None:
-                    error_message = "Native callback worker lifecycle failed to mark workers started."
-                raise RuntimeError(error_message)
-            if not start_attempt_plan.should_start:
-                return
+            should_start_fallback_workers = True
+        if start_attempt_plan.has_start_error:
+            error_message = start_attempt_plan.error_message
+            if error_message is None:
+                error_message = "Native callback worker lifecycle failed to mark workers started."
+            raise RuntimeError(error_message)
+        if should_start_fallback_workers:
             if start_attempt_plan.start_result_worker:
                 self.result_worker_thread.start()
             if start_attempt_plan.start_dosage_worker:

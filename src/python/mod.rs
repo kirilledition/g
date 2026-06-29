@@ -29,6 +29,7 @@ use g_genotype::preprocess;
 mod callback_diagnostics;
 mod callback_progress;
 mod callback_queue;
+mod callback_runtime_resources;
 mod callback_summary;
 mod config;
 mod errors;
@@ -60,6 +61,7 @@ use callback_progress::{
 use callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
 };
+use callback_runtime_resources::NativeCallbackRuntimeResources;
 use callback_summary::{
     NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
 };
@@ -1835,6 +1837,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackChunkIdentity>()?;
     module.add_class::<NativeCallbackObjectQueue>()?;
     module.add_class::<NativeCallbackObjectQueueGetResult>()?;
+    module.add_class::<NativeCallbackRuntimeResources>()?;
     module.add_class::<NativeCallbackWaitSignal>()?;
     module.add_class::<NativeCallbackWorkerThread>()?;
     module.add_class::<NativeCallbackProgressCompletion>()?;
