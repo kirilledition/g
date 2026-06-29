@@ -1199,6 +1199,9 @@ Remove Python as the chunk-level scheduler.
 - Pipeline output lifecycle diagnostics for BGEN engine opening, prepared-engine
   reuse, resume committed chunks, and writer session creation now route through
   the native diagnostic emitter instead of Python logging.
+- Complete-case multi-trait pipeline start, input alignment, and
+  prediction-source loading diagnostics now route through the native diagnostic
+  emitter instead of Python logging.
 
 ### Tests
 
