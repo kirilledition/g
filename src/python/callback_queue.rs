@@ -403,6 +403,10 @@ impl NativeCallbackObjectQueueGetResult {
     pub(crate) fn has_item_value(&self) -> bool {
         self.item.is_some()
     }
+
+    pub(crate) fn into_item_value(self) -> Option<Py<PyAny>> {
+        self.item
+    }
 }
 
 fn normalize_timeout_duration(timeout_seconds: f64) -> Duration {

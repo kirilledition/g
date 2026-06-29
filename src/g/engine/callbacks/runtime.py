@@ -1609,12 +1609,47 @@ class NativeBgenCallbackRunner(abc.ABC):
         slices = tuple(slice(0, dimension_size) for dimension_size in reuse_plan.slice_dimensions)
         return dosage_buffer[slices]
 
+    def acquire_dosage_buffer_from_native_resources(
+        self,
+        expected_shape: tuple[int, ...],
+        dtype: npt.DTypeLike,
+    ) -> HostGenotypeBuffer:
+        """Acquire a host dosage buffer using native resource-owner waits and storage."""
+        while True:
+            self.raise_worker_error_if_present()
+            acquire_start_time = time.perf_counter()
+            acquire_result = self.callback_runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
+            if acquire_result.should_allocate:
+                return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
+            if acquire_result.dosage_buffer is not None:
+                dosage_buffer = typing.cast("HostGenotypeBuffer", acquire_result.dosage_buffer)
+                reused_dosage_buffer = self._acquire_reused_dosage_buffer(
+                    dosage_buffer,
+                    expected_shape=expected_shape,
+                    dtype=dtype,
+                )
+                if reused_dosage_buffer is not None:
+                    self.record_dosage_buffer_pool_reuse_operation(
+                        free_buffer_count=acquire_result.free_buffer_count,
+                    )
+                    return reused_dosage_buffer
+                self.discard_dosage_buffer_slot(dosage_buffer)
+                continue
+            if self.stage_timing_recorder is None or not acquire_result.waited:
+                continue
+            self.record_dosage_buffer_pool_consumer_wait_stage_duration(
+                free_buffer_count=acquire_result.free_buffer_count,
+                start_time=acquire_start_time,
+            )
+
     def acquire_dosage_buffer_with_shape(
         self,
         expected_shape: tuple[int, ...],
         dtype: npt.DTypeLike,
     ) -> HostGenotypeBuffer:
         """Return a reusable host dosage buffer with the requested shape."""
+        if self.uses_native_callback_runtime_resources():
+            return self.acquire_dosage_buffer_from_native_resources(expected_shape, dtype)
         while True:
             self.raise_worker_error_if_present()
             dosage_buffer: HostGenotypeBuffer | None = None

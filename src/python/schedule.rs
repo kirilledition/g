@@ -2039,6 +2039,13 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_result_in_flight_slot_release_observation().into()
     }
 
+    pub(crate) fn plan_dosage_buffer_acquire_backpressure_attempt_value(
+        &self,
+        free_buffer_count: usize,
+    ) -> NativeDosageBufferAcquireAttemptPlan {
+        self.inner.plan_dosage_buffer_acquire_backpressure_attempt(free_buffer_count).into()
+    }
+
     pub(crate) fn plan_dosage_buffer_register_attempt_value(
         &mut self,
         buffer_identifier: usize,
@@ -2216,6 +2223,24 @@ impl NativeResultInFlightAcquireAttemptPlan {
 impl NativeResultInFlightReleaseAttemptPlan {
     pub(crate) fn has_release_error_value(&self) -> bool {
         self.inner.has_release_error
+    }
+}
+
+impl NativeDosageBufferAcquireAttemptPlan {
+    pub(crate) fn should_take_free_buffer_value(&self) -> bool {
+        self.inner.should_take_free_buffer
+    }
+
+    pub(crate) fn should_allocate_value(&self) -> bool {
+        self.inner.should_allocate
+    }
+
+    pub(crate) fn should_wait_value(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    pub(crate) fn wait_timeout_seconds_value(&self) -> f64 {
+        self.inner.wait_timeout_seconds
     }
 }
 

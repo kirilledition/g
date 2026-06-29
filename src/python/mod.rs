@@ -61,7 +61,7 @@ use callback_progress::{
 use callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
 };
-use callback_runtime_resources::NativeCallbackRuntimeResources;
+use callback_runtime_resources::{NativeCallbackRuntimeResources, NativeDosageBufferAcquireResult};
 use callback_summary::{
     NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
 };
@@ -1869,6 +1869,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackWorkerShutdownTimeouts>()?;
     module.add_class::<NativeCallbackWorkerStopPlan>()?;
     module.add_class::<NativeCallbackWorkerStopPollPlan>()?;
+    module.add_class::<NativeDosageBufferAcquireResult>()?;
     module.add_class::<NativeDosageBufferAcquireAttemptPlan>()?;
     module.add_class::<NativeDosageBufferDiscardAttemptPlan>()?;
     module.add_class::<NativeDosageBufferPoolObservationPlan>()?;

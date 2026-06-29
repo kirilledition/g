@@ -34,6 +34,14 @@ pub(crate) struct NativeCallbackRuntimeResources {
     worker_start_lock: Mutex<()>,
 }
 
+#[pyclass]
+pub(crate) struct NativeDosageBufferAcquireResult {
+    dosage_buffer: Option<Py<PyAny>>,
+    should_allocate: bool,
+    free_buffer_count: usize,
+    waited: bool,
+}
+
 #[pymethods]
 impl NativeCallbackRuntimeResources {
     #[new]
@@ -278,6 +286,63 @@ impl NativeCallbackRuntimeResources {
         self.result_in_flight_slot_signal.bind(py).borrow().notify_waiters_value()?;
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         Ok(scheduler_state.plan_result_in_flight_slot_release_observation_value())
+    }
+
+    fn acquire_dosage_buffer_with_backpressure_timeout(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeDosageBufferAcquireResult> {
+        let observed_generation = self.dosage_buffer_pool_signal.bind(py).borrow().generation_value()?;
+        let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+        let acquire_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt_value(free_buffer_count)
+        };
+        if acquire_plan.should_take_free_buffer_value() {
+            let get_result = self.free_dosage_buffers.bind(py).borrow().get_item(py, 0.0)?;
+            if !get_result.has_item_value() {
+                return Err(PyRuntimeError::new_err(
+                    "Native dosage-buffer free queue was empty after scheduler selected reuse.",
+                ));
+            }
+            let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+            return Ok(NativeDosageBufferAcquireResult {
+                dosage_buffer: get_result.into_item_value(),
+                should_allocate: false,
+                free_buffer_count,
+                waited: false,
+            });
+        }
+        if acquire_plan.should_allocate_value() {
+            let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+            return Ok(NativeDosageBufferAcquireResult {
+                dosage_buffer: None,
+                should_allocate: true,
+                free_buffer_count,
+                waited: false,
+            });
+        }
+        if acquire_plan.should_wait_value() {
+            self.dosage_buffer_pool_signal.bind(py).borrow().wait_for_change_value(
+                py,
+                observed_generation,
+                acquire_plan.wait_timeout_seconds_value(),
+            )?;
+            let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+            return Ok(NativeDosageBufferAcquireResult {
+                dosage_buffer: None,
+                should_allocate: false,
+                free_buffer_count,
+                waited: true,
+            });
+        }
+        let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+        Ok(NativeDosageBufferAcquireResult {
+            dosage_buffer: None,
+            should_allocate: false,
+            free_buffer_count,
+            waited: false,
+        })
     }
 
     fn register_dosage_buffer(&self, py: Python<'_>, buffer_identifier: usize) -> PyResult<usize> {
@@ -576,6 +641,29 @@ impl NativeCallbackRuntimeResources {
             .error_message_value()
             .unwrap_or("Native result write dispatch plan omitted the error message.");
         Err(PyRuntimeError::new_err(error_message.to_owned()))
+    }
+}
+
+#[pymethods]
+impl NativeDosageBufferAcquireResult {
+    #[getter]
+    fn dosage_buffer(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.dosage_buffer.as_ref().map(|dosage_buffer| dosage_buffer.clone_ref(py))
+    }
+
+    #[getter]
+    fn should_allocate(&self) -> bool {
+        self.should_allocate
+    }
+
+    #[getter]
+    fn free_buffer_count(&self) -> usize {
+        self.free_buffer_count
+    }
+
+    #[getter]
+    fn waited(&self) -> bool {
+        self.waited
     }
 }
 

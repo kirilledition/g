@@ -2287,6 +2287,60 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) is None
 
 
+def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-dosage-buffer-acquire-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    dosage_buffer = np.empty((2, 2), dtype=np.float32)
+
+    allocate_result = runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
+    assert allocate_result.should_allocate is True
+    assert allocate_result.dosage_buffer is None
+    assert allocate_result.free_buffer_count == 0
+    assert allocate_result.waited is False
+
+    assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
+    assert runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer) == 1
+
+    reuse_result = runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
+    assert reuse_result.should_allocate is False
+    assert reuse_result.dosage_buffer is dosage_buffer
+    assert reuse_result.free_buffer_count == 0
+    assert reuse_result.waited is False
+
+    acquisition_started = threading.Event()
+
+    def acquire_after_pool_capacity_is_full() -> _core.NativeDosageBufferAcquireResult:
+        acquisition_started.set()
+        return runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(acquire_after_pool_capacity_is_full)
+        assert acquisition_started.wait(timeout=1.0)
+        time.sleep(0.02)
+        assert not future.done()
+
+        assert runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer) == 1
+        wait_result = future.result(timeout=2.0)
+
+    assert wait_result.should_allocate is False
+    assert wait_result.dosage_buffer is None
+    assert wait_result.free_buffer_count == 1
+    assert wait_result.waited is True
+
+    reused_after_wait_result = runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
+    assert reused_after_wait_result.dosage_buffer is dosage_buffer
+
+
 def test_native_callback_runtime_resources_own_worker_stop_and_join() -> None:
     runtime_resources_holder: list[typing.Any] = []
 
