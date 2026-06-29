@@ -1158,6 +1158,9 @@ Remove Python as the chunk-level scheduler.
   directly while preserving the native record-plan policy.
 - Native stage timing recorders now own combined final timing-output writes for
   stage-timing snapshots and profile summaries.
+- Native shutdown controllers now own Python signal handler install/restore
+  side effects while preserving Python exception raising for graceful and
+  repeated interrupts.
 
 ### Tests
 

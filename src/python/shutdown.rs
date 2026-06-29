@@ -1,16 +1,18 @@
 //! PyO3 adapters for deterministic graceful-shutdown signal helpers.
 
+use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyTuple};
 
 use g_runtime::shutdown as native_shutdown;
 
 #[pyclass]
 pub(crate) struct NativeShutdownController {
     controller: Mutex<native_shutdown::ShutdownController>,
+    previous_handlers: Mutex<BTreeMap<i32, Py<PyAny>>>,
 }
 
 #[pyclass]
@@ -40,6 +42,7 @@ impl NativeShutdownController {
             controller: Mutex::new(
                 native_shutdown::ShutdownController::new(&handled_signal_numbers).map_err(PyValueError::new_err)?,
             ),
+            previous_handlers: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -68,12 +71,30 @@ impl NativeShutdownController {
 
     fn handler_install_plan_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let plan = self.lock_controller()?.begin_handler_install();
+        self.lock_previous_handlers()?.clear();
         let python_payload = PyDict::new(py);
         python_payload.set_item("handled_signals", shutdown_signal_payloads_to_tuple(py, &plan.handled_signals)?)?;
         Ok(python_payload)
     }
 
     fn mark_handlers_installed(&self) -> PyResult<()> {
+        self.lock_controller()?.mark_handlers_installed();
+        Ok(())
+    }
+
+    fn install_python_signal_handlers(&self, py: Python<'_>, handler: &Bound<'_, PyAny>) -> PyResult<()> {
+        let plan = self.lock_controller()?.begin_handler_install();
+        let signal_module = py.import("signal")?;
+        let signal_class = signal_module.getattr("Signals")?;
+        let mut previous_handlers = self.lock_previous_handlers()?;
+        previous_handlers.clear();
+        for signal_payload in &plan.handled_signals {
+            let python_signal = signal_class.call1((signal_payload.number,))?;
+            let previous_handler = signal_module.call_method1("getsignal", (&python_signal,))?;
+            signal_module.call_method1("signal", (&python_signal, handler))?;
+            previous_handlers.insert(signal_payload.number, previous_handler.unbind());
+        }
+        drop(previous_handlers);
         self.lock_controller()?.mark_handlers_installed();
         Ok(())
     }
@@ -88,13 +109,41 @@ impl NativeShutdownController {
 
     fn mark_handlers_restored(&self) -> PyResult<()> {
         self.lock_controller()?.mark_handlers_restored();
+        self.lock_previous_handlers()?.clear();
         Ok(())
+    }
+
+    fn restore_python_signal_handlers(&self, py: Python<'_>) -> PyResult<bool> {
+        let plan = self.lock_controller()?.plan_handler_restore();
+        if !plan.should_restore {
+            return Ok(false);
+        }
+        let signal_module = py.import("signal")?;
+        let signal_class = signal_module.getattr("Signals")?;
+        let mut previous_handlers = self.lock_previous_handlers()?;
+        for signal_payload in &plan.handled_signals {
+            let python_signal = signal_class.call1((signal_payload.number,))?;
+            let Some(previous_handler) = previous_handlers.get(&signal_payload.number) else {
+                return Err(PyRuntimeError::new_err(format!("missing previous handler for {}", signal_payload.name)));
+            };
+            signal_module.call_method1("signal", (&python_signal, previous_handler.bind(py)))?;
+        }
+        previous_handlers.clear();
+        drop(previous_handlers);
+        self.lock_controller()?.mark_handlers_restored();
+        Ok(true)
     }
 }
 
 impl NativeShutdownController {
     fn lock_controller(&self) -> PyResult<MutexGuard<'_, native_shutdown::ShutdownController>> {
         self.controller.lock().map_err(|_| PyValueError::new_err("Shutdown controller mutex was poisoned."))
+    }
+
+    fn lock_previous_handlers(&self) -> PyResult<MutexGuard<'_, BTreeMap<i32, Py<PyAny>>>> {
+        self.previous_handlers
+            .lock()
+            .map_err(|_| PyValueError::new_err("Previous shutdown handlers mutex was poisoned."))
     }
 }
 

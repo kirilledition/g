@@ -74,7 +74,6 @@ class GracefulShutdownController:
     def __init__(self, handled_signals: tuple[signal.Signals, ...] | None) -> None:
         """Initialize the controller."""
         resolved_handled_signals = handled_signals or (signal.SIGINT, signal.SIGTERM)
-        self.previous_handlers: dict[signal.Signals, typing.Any] = {}
         self.native_controller = g._core.NativeShutdownController(
             [int(handled_signal) for handled_signal in resolved_handled_signals]
         )
@@ -94,13 +93,7 @@ class GracefulShutdownController:
 
     def __enter__(self) -> GracefulShutdownController:
         """Install signal handlers and return this controller."""
-        install_plan = native_mapping_payload(self.native_controller.handler_install_plan_payload())
-        self.previous_handlers = {}
-        for signal_payload in typing.cast("typing.Sequence[object]", install_plan["handled_signals"]):
-            handled_signal = signal.Signals(int(native_mapping_payload(signal_payload)["number"]))
-            self.previous_handlers[handled_signal] = signal.getsignal(handled_signal)
-            signal.signal(handled_signal, self.handle_signal)
-        self.native_controller.mark_handlers_installed()
+        self.native_controller.install_python_signal_handlers(self.handle_signal)
         return self
 
     def __exit__(
@@ -126,13 +119,7 @@ class GracefulShutdownController:
 
     def restore_previous_handlers(self) -> None:
         """Restore signal handlers captured when the controller was installed."""
-        restore_plan = native_mapping_payload(self.native_controller.handler_restore_plan_payload())
-        if not bool(restore_plan["should_restore"]):
-            return
-        for signal_payload in typing.cast("typing.Sequence[object]", restore_plan["handled_signals"]):
-            handled_signal = signal.Signals(int(native_mapping_payload(signal_payload)["number"]))
-            signal.signal(handled_signal, self.previous_handlers[handled_signal])
-        self.native_controller.mark_handlers_restored()
+        self.native_controller.restore_python_signal_handlers()
 
 
 def build_shutdown_signal(signal_number: int) -> ShutdownSignal:

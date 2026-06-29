@@ -49,20 +49,42 @@ def test_native_shutdown_controller_owns_handler_lifecycle() -> None:
     handled_signal_payloads = tuple(typing.cast("typing.Iterable[object]", install_plan["handled_signals"]))
 
     assert native_controller.handlers_installed is False
-    assert [
-        typing.cast("typing.Mapping[str, object]", payload)["name"] for payload in handled_signal_payloads
-    ] == ["SIGINT", "SIGTERM"]
+    assert [typing.cast("typing.Mapping[str, object]", payload)["name"] for payload in handled_signal_payloads] == [
+        "SIGINT",
+        "SIGTERM",
+    ]
     native_controller.mark_handlers_installed()
     assert native_controller.handlers_installed is True
     restore_plan = dict(native_controller.handler_restore_plan_payload())
     assert restore_plan["should_restore"] is True
     restore_signal_payloads = tuple(typing.cast("typing.Iterable[object]", restore_plan["handled_signals"]))
-    assert [
-        typing.cast("typing.Mapping[str, object]", payload)["name"] for payload in restore_signal_payloads
-    ] == ["SIGINT", "SIGTERM"]
+    assert [typing.cast("typing.Mapping[str, object]", payload)["name"] for payload in restore_signal_payloads] == [
+        "SIGINT",
+        "SIGTERM",
+    ]
     native_controller.mark_handlers_restored()
     assert native_controller.handlers_installed is False
     assert dict(native_controller.handler_restore_plan_payload())["should_restore"] is False
+
+
+def test_native_shutdown_controller_installs_and_restores_python_handlers() -> None:
+    native_controller = _core.NativeShutdownController([int(signal.SIGINT)])
+    previous_handler = object()
+    installed_handler = object()
+
+    with (
+        unittest.mock.patch("g.engine.shutdown.signal.getsignal", return_value=previous_handler) as get_signal_mock,
+        unittest.mock.patch("g.engine.shutdown.signal.signal") as signal_mock,
+    ):
+        native_controller.install_python_signal_handlers(installed_handler)
+        assert native_controller.handlers_installed is True
+        restored_handlers = native_controller.restore_python_signal_handlers()
+
+    assert restored_handlers is True
+    get_signal_mock.assert_called_once_with(signal.SIGINT)
+    signal_mock.assert_any_call(signal.SIGINT, installed_handler)
+    signal_mock.assert_any_call(signal.SIGINT, previous_handler)
+    assert native_controller.handlers_installed is False
 
 
 def test_shutdown_controller_records_first_signal_in_native_handle() -> None:
@@ -82,18 +104,20 @@ def test_shutdown_controller_records_first_signal_in_native_handle() -> None:
 def test_shutdown_controller_repeated_signal_restores_handlers_and_aborts() -> None:
     controller = shutdown.GracefulShutdownController(handled_signals=(signal.SIGINT,))
     previous_handler = object()
-    controller.previous_handlers = {signal.SIGINT: previous_handler}
-    controller.native_controller.mark_handlers_installed()
 
-    with pytest.raises(shutdown.GracefulShutdownRequested):
-        controller.handle_signal(int(signal.SIGINT), None)
     with (
+        unittest.mock.patch("g.engine.shutdown.signal.getsignal", return_value=previous_handler),
         unittest.mock.patch("g.engine.shutdown.signal.signal") as signal_mock,
-        pytest.raises(KeyboardInterrupt),
+        controller,
     ):
-        controller.handle_signal(int(signal.SIGINT), None)
+        with pytest.raises(shutdown.GracefulShutdownRequested):
+            controller.handle_signal(int(signal.SIGINT), None)
+        with pytest.raises(KeyboardInterrupt):
+            controller.handle_signal(int(signal.SIGINT), None)
+        assert not controller.handlers_installed
 
-    signal_mock.assert_called_once_with(signal.SIGINT, previous_handler)
+    signal_mock.assert_any_call(signal.SIGINT, controller.handle_signal)
+    signal_mock.assert_any_call(signal.SIGINT, previous_handler)
     assert not controller.handlers_installed
 
 
@@ -131,7 +155,7 @@ def test_shutdown_controller_context_resets_native_requested_signal() -> None:
         controller as active_controller,
     ):
         assert active_controller.requested_signal is None
-        assert active_controller.previous_handlers == {signal.SIGTERM: previous_handler}
+        assert active_controller.handlers_installed is True
 
     assert controller.requested_signal is None
     signal_mock.assert_any_call(signal.SIGTERM, controller.handle_signal)
