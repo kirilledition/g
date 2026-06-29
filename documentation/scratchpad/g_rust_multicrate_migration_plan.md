@@ -1128,6 +1128,8 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production result work-item resource
   cleanup, including host-buffer returns and result in-flight slot releases,
   while Python keeps materialization, writes, and timing emission.
+- Callback runtime resources now own production result cleanup buffer-pool
+  return observation selection in the same native call as host-buffer cleanup.
 
 ### Tests
 

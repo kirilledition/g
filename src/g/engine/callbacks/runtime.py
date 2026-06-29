@@ -2438,8 +2438,15 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Record Python-side telemetry from native result work item resource cleanup."""
         if release_result.free_buffer_count is not None:
-            self.record_dosage_buffer_pool_return_operation(
+            dosage_buffer_pool_observation_plan = release_result.dosage_buffer_pool_observation_plan
+            if dosage_buffer_pool_observation_plan is None:
+                message = "Native result work item resource release result omitted buffer-pool return details."
+                raise RuntimeError(message)
+            self.record_dosage_buffer_pool_operation(
+                operation_name=dosage_buffer_pool_observation_plan.operation_name,
                 free_buffer_count=release_result.free_buffer_count,
+                elapsed_seconds=0.0,
+                blocked=dosage_buffer_pool_observation_plan.blocked,
             )
         if not release_result.released_result_in_flight_slot:
             return

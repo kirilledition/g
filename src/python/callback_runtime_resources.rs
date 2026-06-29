@@ -71,6 +71,7 @@ pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
 pub(crate) struct NativeResultWorkItemResourceReleaseResult {
     released_host_buffer: bool,
     free_buffer_count: Option<usize>,
+    dosage_buffer_pool_observation_plan: Option<Py<NativeDosageBufferPoolObservationPlan>>,
     released_result_in_flight_slot: bool,
     result_in_flight_resource_name: Option<String>,
     result_in_flight_operation_name: Option<String>,
@@ -1375,6 +1376,11 @@ impl NativeResultWorkItemResourceReleaseResult {
     }
 
     #[getter]
+    fn dosage_buffer_pool_observation_plan(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolObservationPlan>> {
+        self.dosage_buffer_pool_observation_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+
+    #[getter]
     fn released_result_in_flight_slot(&self) -> bool {
         self.released_result_in_flight_slot
     }
@@ -1400,6 +1406,7 @@ impl NativeResultWorkItemResourceReleaseResult {
         Self {
             released_host_buffer: false,
             free_buffer_count: None,
+            dosage_buffer_pool_observation_plan: None,
             released_result_in_flight_slot: false,
             result_in_flight_resource_name: None,
             result_in_flight_operation_name: None,
@@ -1415,6 +1422,20 @@ impl NativeResultWorkItemResourceReleaseResult {
         self.result_in_flight_resource_name = Some(release_observation_plan.resource_name_value().to_owned());
         self.result_in_flight_operation_name = Some(release_observation_plan.operation_name_value().to_owned());
         self.result_in_flight_blocked = Some(release_observation_plan.blocked_value());
+    }
+
+    fn record_host_buffer_return(
+        &mut self,
+        py: Python<'_>,
+        free_buffer_count: Option<usize>,
+        observation_plan: NativeDosageBufferPoolObservationPlan,
+    ) -> PyResult<()> {
+        self.released_host_buffer = true;
+        self.free_buffer_count = free_buffer_count;
+        if free_buffer_count.is_some() {
+            self.dosage_buffer_pool_observation_plan = Some(Py::new(py, observation_plan)?);
+        }
+        Ok(())
     }
 }
 
@@ -1773,8 +1794,12 @@ impl NativeCallbackRuntimeResources {
                     "Native result work item resource release plan selected a missing host buffer identifier.",
                 ));
             };
-            release_result.released_host_buffer = true;
-            release_result.free_buffer_count = self.return_dosage_buffer(py, buffer_identifier, host_dosage_buffer)?;
+            let free_buffer_count = self.return_dosage_buffer(py, buffer_identifier, host_dosage_buffer)?;
+            let return_observation_plan = {
+                let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+                scheduler_state.plan_dosage_buffer_pool_return_observation_value()
+            };
+            release_result.record_host_buffer_return(py, free_buffer_count, return_observation_plan)?;
         }
         if resource_release_plan.should_release_result_in_flight_slot_value() {
             let release_observation_plan = self.release_result_in_flight_slot(py)?;
