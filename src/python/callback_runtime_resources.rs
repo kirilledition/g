@@ -178,6 +178,26 @@ impl NativeCallbackRuntimeResources {
     }
 
     #[getter]
+    fn dosage_worker_name(&self, py: Python<'_>) -> String {
+        self.worker_thread.bind(py).borrow().name_value().to_owned()
+    }
+
+    #[getter]
+    fn result_worker_name(&self, py: Python<'_>) -> String {
+        self.result_worker_thread.bind(py).borrow().name_value().to_owned()
+    }
+
+    #[getter]
+    fn dosage_worker_is_alive(&self, py: Python<'_>) -> PyResult<bool> {
+        self.worker_thread.bind(py).borrow().is_thread_alive(py)
+    }
+
+    #[getter]
+    fn result_worker_is_alive(&self, py: Python<'_>) -> PyResult<bool> {
+        self.result_worker_thread.bind(py).borrow().is_thread_alive(py)
+    }
+
+    #[getter]
     fn has_started(&self, py: Python<'_>) -> bool {
         self.callback_scheduler_state.bind(py).borrow().has_started_value()
     }

@@ -2142,19 +2142,21 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
     assert callback.result_worker_thread is callback.callback_runtime_resources.result_worker_thread
     assert not hasattr(callback_runtime, "threading")
     assert callback.worker_threads_started is False
-    assert not callback.worker_thread.is_alive()
-    assert not callback.result_worker_thread.is_alive()
+    assert callback.dosage_worker_name == "threaded-manual-callback"
+    assert callback.result_worker_name == "threaded-manual-callback-writer"
+    assert callback.dosage_worker_is_alive is False
+    assert callback.result_worker_is_alive is False
 
     callback.start()
     try:
         assert callback.worker_threads_started is True
-        assert callback.worker_thread.is_alive()
-        assert callback.result_worker_thread.is_alive()
+        assert callback.dosage_worker_is_alive is True
+        assert callback.result_worker_is_alive is True
     finally:
         callback.finish()
 
-    assert not callback.worker_thread.is_alive()
-    assert not callback.result_worker_thread.is_alive()
+    assert callback.dosage_worker_is_alive is False
+    assert callback.result_worker_is_alive is False
 
 
 def test_native_callback_worker_thread_starts_and_joins_python_target() -> None:
@@ -2709,14 +2711,20 @@ def test_native_callback_runtime_resources_own_worker_stop_and_join() -> None:
     )
     runtime_resources_holder.append(runtime_resources)
 
+    assert runtime_resources.dosage_worker_name == "native-resource-worker-shutdown-test"
+    assert runtime_resources.result_worker_name == "native-resource-worker-shutdown-test-writer"
+    assert runtime_resources.dosage_worker_is_alive is False
+    assert runtime_resources.result_worker_is_alive is False
     start_plan = runtime_resources.start_workers()
     assert start_plan.has_start_error is False
+    assert runtime_resources.dosage_worker_is_alive is True
+    assert runtime_resources.result_worker_is_alive is True
     assert runtime_resources.stop_dosage_worker(1.0) is None
     assert runtime_resources.stop_result_worker(1.0) is None
     assert runtime_resources.join_dosage_worker(1.0) is None
     assert runtime_resources.join_result_worker(1.0) is None
-    assert not runtime_resources.worker_thread.is_alive()
-    assert not runtime_resources.result_worker_thread.is_alive()
+    assert runtime_resources.dosage_worker_is_alive is False
+    assert runtime_resources.result_worker_is_alive is False
 
 
 def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle() -> None:

@@ -213,6 +213,34 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Return whether callback worker threads have been started."""
         return self.worker_threads_started
 
+    @property
+    def dosage_worker_name(self) -> str:
+        """Return the native dosage worker name."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.dosage_worker_name
+        return self.worker_thread.name
+
+    @property
+    def result_worker_name(self) -> str:
+        """Return the native result worker name."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.result_worker_name
+        return self.result_worker_thread.name
+
+    @property
+    def dosage_worker_is_alive(self) -> bool:
+        """Return whether the native dosage worker thread is alive."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.dosage_worker_is_alive
+        return self.worker_thread.is_alive()
+
+    @property
+    def result_worker_is_alive(self) -> bool:
+        """Return whether the native result worker thread is alive."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.result_worker_is_alive
+        return self.result_worker_thread.is_alive()
+
     def uses_native_callback_runtime_resources(self) -> bool:
         """Return whether this runner still uses its production native resource owner."""
         runtime_resources = getattr(self, "callback_runtime_resources", None)
@@ -1778,12 +1806,12 @@ class NativeBgenCallbackRunner(abc.ABC):
             if timeout_result is None:
                 return
             raise NativeBgenWorkerShutdownError(
-                worker_name=self.worker_thread.name,
+                worker_name=self.dosage_worker_name,
                 timeout_seconds=timeout_result,
             )
         stop_plan = self.callback_scheduler_state.plan_dosage_worker_stop(
             timeout_seconds=timeout_seconds,
-            is_worker_alive=self.worker_thread.is_alive(),
+            is_worker_alive=self.dosage_worker_is_alive,
         )
         if not stop_plan.should_stop:
             return
@@ -1791,7 +1819,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         while time.monotonic() < stop_deadline:
             stop_poll_plan = self.callback_scheduler_state.plan_dosage_worker_stop_poll(
                 remaining_timeout_seconds=stop_deadline - time.monotonic(),
-                is_worker_alive=self.worker_thread.is_alive(),
+                is_worker_alive=self.dosage_worker_is_alive,
             )
             if not stop_poll_plan.should_stop:
                 return
@@ -1801,7 +1829,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             ):
                 return
         raise NativeBgenWorkerShutdownError(
-            worker_name=self.worker_thread.name,
+            worker_name=self.dosage_worker_name,
             timeout_seconds=stop_plan.timeout_seconds,
         )
 
@@ -1812,16 +1840,16 @@ class NativeBgenCallbackRunner(abc.ABC):
             if timeout_result is None:
                 return
             raise NativeBgenWorkerShutdownError(
-                worker_name=self.worker_thread.name,
+                worker_name=self.dosage_worker_name,
                 timeout_seconds=timeout_result,
             )
         join_plan = self.callback_scheduler_state.plan_dosage_worker_join(timeout_seconds=timeout_seconds)
         if not join_plan.should_join:
             return
         self.worker_thread.join(timeout=join_plan.timeout_seconds)
-        if self.worker_thread.is_alive():
+        if self.dosage_worker_is_alive:
             raise NativeBgenWorkerShutdownError(
-                worker_name=self.worker_thread.name,
+                worker_name=self.dosage_worker_name,
                 timeout_seconds=join_plan.timeout_seconds,
             )
 
@@ -1832,12 +1860,12 @@ class NativeBgenCallbackRunner(abc.ABC):
             if timeout_result is None:
                 return
             raise NativeBgenWorkerShutdownError(
-                worker_name=self.result_worker_thread.name,
+                worker_name=self.result_worker_name,
                 timeout_seconds=timeout_result,
             )
         stop_plan = self.callback_scheduler_state.plan_result_worker_stop(
             timeout_seconds=timeout_seconds,
-            is_worker_alive=self.result_worker_thread.is_alive(),
+            is_worker_alive=self.result_worker_is_alive,
         )
         if not stop_plan.should_stop:
             return
@@ -1845,7 +1873,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         while time.monotonic() < stop_deadline:
             stop_poll_plan = self.callback_scheduler_state.plan_result_worker_stop_poll(
                 remaining_timeout_seconds=stop_deadline - time.monotonic(),
-                is_worker_alive=self.result_worker_thread.is_alive(),
+                is_worker_alive=self.result_worker_is_alive,
             )
             if not stop_poll_plan.should_stop:
                 return
@@ -1855,7 +1883,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             ):
                 return
         raise NativeBgenWorkerShutdownError(
-            worker_name=self.result_worker_thread.name,
+            worker_name=self.result_worker_name,
             timeout_seconds=stop_plan.timeout_seconds,
         )
 
@@ -1866,16 +1894,16 @@ class NativeBgenCallbackRunner(abc.ABC):
             if timeout_result is None:
                 return
             raise NativeBgenWorkerShutdownError(
-                worker_name=self.result_worker_thread.name,
+                worker_name=self.result_worker_name,
                 timeout_seconds=timeout_result,
             )
         join_plan = self.callback_scheduler_state.plan_result_worker_join(timeout_seconds=timeout_seconds)
         if not join_plan.should_join:
             return
         self.result_worker_thread.join(timeout=join_plan.timeout_seconds)
-        if self.result_worker_thread.is_alive():
+        if self.result_worker_is_alive:
             raise NativeBgenWorkerShutdownError(
-                worker_name=self.result_worker_thread.name,
+                worker_name=self.result_worker_name,
                 timeout_seconds=join_plan.timeout_seconds,
             )
 
