@@ -2917,6 +2917,14 @@ class ResultInFlightAcquireAttemptPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class ResultInFlightAcquireObservationPlanProbe:
+    resource_name: str
+    operation_name: str
+    blocked: bool
+    should_retry_acquisition: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class ResultInFlightReleaseAttemptPlanProbe:
     should_release: bool
     has_release_error: bool
@@ -3302,7 +3310,11 @@ class ResultInFlightAttemptSchedulerProbe:
     result_worker_error_message: str | None = None
     acquire_wait_timeout_seconds: float | None = None
     acquire_backpressure_called: bool = False
+    acquire_observation_called: bool = False
+    stage_observation_called: bool = False
     release_called: bool = False
+    observed_resource_name: str | None = None
+    observed_operation_name: str | None = None
 
     @property
     def backpressure_poll_timeout_seconds(self) -> float:
@@ -3339,6 +3351,40 @@ class ResultInFlightAttemptSchedulerProbe:
             wait_timeout_seconds=0.0,
             occupied_count=1,
             slot_limit=1,
+        )
+
+    def plan_result_in_flight_slot_acquire_observation(
+        self,
+        acquire_attempt_plan: ResultInFlightAcquireAttemptPlanProbe,
+    ) -> ResultInFlightAcquireObservationPlanProbe:
+        self.acquire_observation_called = True
+        assert acquire_attempt_plan.should_acquire is True
+        return ResultInFlightAcquireObservationPlanProbe(
+            resource_name="result_in_flight_slots",
+            operation_name="acquire",
+            blocked=False,
+            should_retry_acquisition=False,
+        )
+
+    def plan_current_queue_stage_backpressure_observation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> CallbackQueueStageBackpressureObservationProbe:
+        self.stage_observation_called = True
+        self.observed_resource_name = queue_name
+        self.observed_operation_name = operation_name
+        return CallbackQueueStageBackpressureObservationProbe(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            stage_name="result_in_flight_slot_acquire",
+            queue_depth=1,
+            queue_capacity=1,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=elapsed_seconds if blocked else 0.0,
         )
 
     def plan_result_in_flight_slot_release_attempt(self) -> ResultInFlightReleaseAttemptPlanProbe:
@@ -3780,6 +3826,22 @@ def test_native_callback_runner_uses_scheduler_result_in_flight_attempt_plans() 
     assert acquire_wait_timeout_seconds == 0.1
     assert scheduler_state.acquire_backpressure_called is True
     assert scheduler_state.release_called is True
+
+
+def test_native_callback_runner_uses_scheduler_result_in_flight_acquire_observation_plan() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = ResultInFlightAttemptSchedulerProbe()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+    callback.stage_timing_recorder = stage_timing_recorder
+
+    callback.acquire_result_in_flight_slot()
+
+    assert scheduler_state.acquire_observation_called is True
+    assert scheduler_state.stage_observation_called is True
+    assert scheduler_state.observed_resource_name == "result_in_flight_slots"
+    assert scheduler_state.observed_operation_name == "acquire"
+    assert stage_timing_recorder.snapshot().stage_counts["result_in_flight_slot_acquire"] == 1
 
 
 def test_native_callback_runner_uses_scheduler_result_write_item_resource_release_plans() -> None:

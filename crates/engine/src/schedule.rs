@@ -268,6 +268,14 @@ pub struct ResultInFlightAcquireAttemptPlan {
     pub slot_limit: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResultInFlightAcquireObservationPlan {
+    pub resource_name: String,
+    pub operation_name: String,
+    pub blocked: bool,
+    pub should_retry_acquisition: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ResultInFlightReleaseAttemptPlan {
     pub should_release: bool,
@@ -806,6 +814,15 @@ impl CallbackSchedulerState {
     #[must_use]
     pub fn plan_result_in_flight_slot_acquire_backpressure_attempt(&mut self) -> ResultInFlightAcquireAttemptPlan {
         self.plan_result_in_flight_slot_acquire_attempt(callback_worker_backpressure_poll_timeout_seconds())
+    }
+
+    #[must_use]
+    pub fn plan_result_in_flight_slot_acquire_observation(
+        &self,
+        acquire_attempt_plan: &ResultInFlightAcquireAttemptPlan,
+    ) -> ResultInFlightAcquireObservationPlan {
+        debug_assert_eq!(acquire_attempt_plan.slot_limit, self.result_in_flight_slot_state.slot_limit());
+        plan_result_in_flight_slot_acquire_observation(acquire_attempt_plan)
     }
 
     #[must_use]
@@ -1675,6 +1692,26 @@ fn plan_result_in_flight_slot_acquire_attempt(
         wait_timeout_seconds: normalized_wait_timeout_seconds,
         occupied_count: slot_state.occupied_count(),
         slot_limit: slot_state.slot_limit(),
+    }
+}
+
+#[must_use]
+pub fn plan_result_in_flight_slot_acquire_observation(
+    acquire_attempt_plan: &ResultInFlightAcquireAttemptPlan,
+) -> ResultInFlightAcquireObservationPlan {
+    if acquire_attempt_plan.should_acquire {
+        return ResultInFlightAcquireObservationPlan {
+            resource_name: RESULT_IN_FLIGHT_SLOTS_NAME.to_string(),
+            operation_name: RESULT_SLOT_ACQUIRE_OPERATION.to_string(),
+            blocked: false,
+            should_retry_acquisition: false,
+        };
+    }
+    ResultInFlightAcquireObservationPlan {
+        resource_name: RESULT_IN_FLIGHT_SLOTS_NAME.to_string(),
+        operation_name: QUEUE_PRODUCER_BLOCKING_OPERATION.to_string(),
+        blocked: true,
+        should_retry_acquisition: true,
     }
 }
 
@@ -3203,6 +3240,21 @@ mod tests {
             },
         );
         assert_eq!(
+            scheduler_state.plan_result_in_flight_slot_acquire_observation(&ResultInFlightAcquireAttemptPlan {
+                should_acquire: true,
+                should_wait: false,
+                wait_timeout_seconds: 0.0,
+                occupied_count: 1,
+                slot_limit: 1,
+            }),
+            ResultInFlightAcquireObservationPlan {
+                resource_name: RESULT_IN_FLIGHT_SLOTS_NAME.to_string(),
+                operation_name: RESULT_SLOT_ACQUIRE_OPERATION.to_string(),
+                blocked: false,
+                should_retry_acquisition: false,
+            },
+        );
+        assert_eq!(
             scheduler_state.plan_result_in_flight_slot_acquire_attempt(0.25),
             ResultInFlightAcquireAttemptPlan {
                 should_acquire: false,
@@ -3210,6 +3262,21 @@ mod tests {
                 wait_timeout_seconds: 0.25,
                 occupied_count: 1,
                 slot_limit: 1,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_in_flight_slot_acquire_observation(&ResultInFlightAcquireAttemptPlan {
+                should_acquire: false,
+                should_wait: true,
+                wait_timeout_seconds: 0.25,
+                occupied_count: 1,
+                slot_limit: 1,
+            }),
+            ResultInFlightAcquireObservationPlan {
+                resource_name: RESULT_IN_FLIGHT_SLOTS_NAME.to_string(),
+                operation_name: QUEUE_PRODUCER_BLOCKING_OPERATION.to_string(),
+                blocked: true,
+                should_retry_acquisition: true,
             },
         );
         assert_eq!(

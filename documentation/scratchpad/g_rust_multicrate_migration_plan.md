@@ -1024,6 +1024,8 @@ Remove Python as the chunk-level scheduler.
   paths after queue drain checks.
 - Dosage work stage timing attribution now uses native scheduler plans to split
   batch-level elapsed durations across queued chunk work items.
+- Result in-flight slot acquire timing now uses a native scheduler observation
+  plan to select acquire versus producer-blocking accounting.
 
 ### Tests
 

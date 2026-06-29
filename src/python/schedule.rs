@@ -145,6 +145,11 @@ pub(crate) struct NativeResultInFlightAcquireAttemptPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeResultInFlightAcquireObservationPlan {
+    inner: native_schedule::ResultInFlightAcquireObservationPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeResultInFlightReleaseAttemptPlan {
     inner: native_schedule::ResultInFlightReleaseAttemptPlan,
 }
@@ -546,6 +551,14 @@ impl NativeCallbackSchedulerState {
 
     fn plan_result_in_flight_slot_acquire_backpressure_attempt(&mut self) -> NativeResultInFlightAcquireAttemptPlan {
         self.inner.plan_result_in_flight_slot_acquire_backpressure_attempt().into()
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn plan_result_in_flight_slot_acquire_observation(
+        &self,
+        acquire_attempt_plan: PyRef<'_, NativeResultInFlightAcquireAttemptPlan>,
+    ) -> NativeResultInFlightAcquireObservationPlan {
+        self.inner.plan_result_in_flight_slot_acquire_observation(&acquire_attempt_plan.inner).into()
     }
 
     fn plan_result_in_flight_slot_release_attempt(&mut self) -> NativeResultInFlightReleaseAttemptPlan {
@@ -1584,6 +1597,29 @@ impl NativeResultInFlightAcquireAttemptPlan {
 }
 
 #[pymethods]
+impl NativeResultInFlightAcquireObservationPlan {
+    #[getter]
+    fn resource_name(&self) -> &str {
+        &self.inner.resource_name
+    }
+
+    #[getter]
+    fn operation_name(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    #[getter]
+    fn blocked(&self) -> bool {
+        self.inner.blocked
+    }
+
+    #[getter]
+    fn should_retry_acquisition(&self) -> bool {
+        self.inner.should_retry_acquisition
+    }
+}
+
+#[pymethods]
 impl NativeResultInFlightReleaseAttemptPlan {
     #[getter]
     fn should_release(&self) -> bool {
@@ -1976,6 +2012,12 @@ impl From<native_schedule::DosageBufferDiscardAttemptPlan> for NativeDosageBuffe
 impl From<native_schedule::ResultInFlightAcquireAttemptPlan> for NativeResultInFlightAcquireAttemptPlan {
     fn from(acquire_attempt_plan: native_schedule::ResultInFlightAcquireAttemptPlan) -> Self {
         Self { inner: acquire_attempt_plan }
+    }
+}
+
+impl From<native_schedule::ResultInFlightAcquireObservationPlan> for NativeResultInFlightAcquireObservationPlan {
+    fn from(acquire_observation_plan: native_schedule::ResultInFlightAcquireObservationPlan) -> Self {
+        Self { inner: acquire_observation_plan }
     }
 }
 

@@ -1273,25 +1273,24 @@ class NativeBgenCallbackRunner(abc.ABC):
             acquire_start_time = time.perf_counter()
             with self.result_in_flight_slot_condition:
                 attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
-                if attempt_plan.should_acquire:
-                    blocked = False
-                else:
-                    if attempt_plan.should_wait:
-                        self.result_in_flight_slot_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
-                    blocked = True
-            if blocked:
+                acquire_observation_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_observation(
+                    attempt_plan
+                )
+                if not attempt_plan.should_acquire and attempt_plan.should_wait:
+                    self.result_in_flight_slot_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
+            if acquire_observation_plan.should_retry_acquisition:
                 self.record_bounded_resource_stage_duration(
-                    resource_name="result_in_flight_slots",
-                    operation_name="producer_blocking",
+                    resource_name=acquire_observation_plan.resource_name,
+                    operation_name=acquire_observation_plan.operation_name,
                     start_time=acquire_start_time,
-                    blocked=True,
+                    blocked=acquire_observation_plan.blocked,
                 )
                 continue
             self.record_bounded_resource_stage_duration(
-                resource_name="result_in_flight_slots",
-                operation_name="acquire",
+                resource_name=acquire_observation_plan.resource_name,
+                operation_name=acquire_observation_plan.operation_name,
                 start_time=acquire_start_time,
-                blocked=False,
+                blocked=acquire_observation_plan.blocked,
             )
             return
 
