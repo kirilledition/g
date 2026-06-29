@@ -2138,6 +2138,7 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
     assert callback.result_queue is callback.callback_runtime_resources.result_queue
     assert callback.free_dosage_buffers is callback.callback_runtime_resources.free_dosage_buffers
     assert callback.binary_correction_summary is callback.callback_runtime_resources.binary_correction_summary
+    assert not hasattr(callback, "fallback_binary_correction_summary")
     assert isinstance(callback.worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
     assert isinstance(callback.result_worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
     assert callback.worker_thread is callback.callback_runtime_resources.worker_thread
@@ -5680,6 +5681,8 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
     assert not hasattr(callback, "fallback_callback_scheduler_state")
     assert callback.progress_state is resolved_runtime_resources.progress_state
     assert not hasattr(callback, "fallback_progress_state")
+    assert callback.binary_correction_summary is resolved_runtime_resources.binary_correction_summary
+    assert not hasattr(callback, "fallback_binary_correction_summary")
     assert callback.dosage_queue_depth == 11
     assert callback.result_queue_depth == 12
     assert callback.result_in_flight_limit == 13

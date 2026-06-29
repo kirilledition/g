@@ -153,7 +153,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.free_dosage_buffers = self.callback_runtime_resources.free_dosage_buffers
         self.worker_error_cause: BaseException | None = None
         self.result_worker_error_cause: BaseException | None = None
-        self.binary_correction_summary = self.callback_runtime_resources.binary_correction_summary
         self.binary_correction_pending_diagnostics: list[regenie2_binary.BinaryChunkDiagnostics] = []
         self.worker_thread = self.callback_runtime_resources.worker_thread
         self.result_worker_thread = self.callback_runtime_resources.result_worker_thread
@@ -242,6 +241,22 @@ class NativeBgenCallbackRunner(abc.ABC):
     def progress_state(self, progress_state: _core.NativeCallbackProgressState) -> None:
         """Store a fallback progress state for manual callback runners."""
         self.fallback_progress_state = progress_state
+
+    @property
+    def binary_correction_summary(self) -> _core.NativeBinaryCorrectionSummary:
+        """Return the active native binary correction summary."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.binary_correction_summary
+        fallback_binary_correction_summary = getattr(self, "fallback_binary_correction_summary", None)
+        if fallback_binary_correction_summary is None:
+            message = "Binary correction summary has not been initialized."
+            raise AttributeError(message)
+        return typing.cast("_core.NativeBinaryCorrectionSummary", fallback_binary_correction_summary)
+
+    @binary_correction_summary.setter
+    def binary_correction_summary(self, binary_correction_summary: _core.NativeBinaryCorrectionSummary) -> None:
+        """Store a fallback binary correction summary for manual callback runners."""
+        self.fallback_binary_correction_summary = binary_correction_summary
 
     @property
     def dosage_worker_name(self) -> str:
