@@ -874,6 +874,20 @@ class NativeCallbackRuntimeResources:
         chunk_count: int,
         elapsed_seconds: float,
     ) -> NativeDosageWorkItemStageDurationPlan: ...
+    def plan_current_queue_backpressure_observation(
+        self,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> NativeCallbackQueueBackpressureObservation: ...
+    def plan_current_queue_stage_backpressure_observation(
+        self,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> NativeCallbackQueueStageBackpressureObservation: ...
     def plan_variant_major_dosage_batch_handoff(
         self,
         metadata_count: int,

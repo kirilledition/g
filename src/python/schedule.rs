@@ -2240,6 +2240,32 @@ impl NativeCallbackSchedulerState {
             .map(Into::into)
             .map_err(|error| schedule_error_to_py(&error))
     }
+
+    pub(crate) fn plan_current_queue_backpressure_observation_value(
+        &self,
+        queue_name: &str,
+        operation_name: &str,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+        self.inner
+            .plan_current_queue_backpressure_observation(queue_name, operation_name, elapsed_seconds, blocked)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_current_queue_stage_backpressure_observation_value(
+        &self,
+        queue_name: &str,
+        operation_name: &str,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
+        self.inner
+            .plan_current_queue_stage_backpressure_observation(queue_name, operation_name, elapsed_seconds, blocked)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
 }
 
 impl NativeCallbackWorkerStartAttemptPlan {

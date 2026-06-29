@@ -393,7 +393,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record aggregate bounded-resource occupancy metadata."""
         if self.stage_timing_recorder is None:
             return
-        observation = self.callback_scheduler_state.plan_current_queue_backpressure_observation(
+        observation = self.plan_current_queue_backpressure_observation(
             queue_name=resource_name,
             operation_name=operation_name,
             elapsed_seconds=elapsed_seconds,
@@ -446,7 +446,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         elapsed_seconds = time.perf_counter() - start_time
         if self.stage_timing_recorder is None:
             return
-        observation = self.callback_scheduler_state.plan_current_queue_stage_backpressure_observation(
+        observation = self.plan_current_queue_stage_backpressure_observation(
             queue_name=resource_name,
             operation_name=operation_name,
             elapsed_seconds=elapsed_seconds,
@@ -460,6 +460,52 @@ class NativeBgenCallbackRunner(abc.ABC):
             queue_capacity=observation.queue_capacity,
             elapsed_seconds=observation.elapsed_seconds,
             blocked_seconds=observation.blocked_seconds,
+        )
+
+    def plan_current_queue_backpressure_observation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> _core.NativeCallbackQueueBackpressureObservation:
+        """Plan bounded-resource backpressure observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_current_queue_backpressure_observation(
+                queue_name,
+                operation_name,
+                elapsed_seconds,
+                blocked,
+            )
+        return self.callback_scheduler_state.plan_current_queue_backpressure_observation(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+
+    def plan_current_queue_stage_backpressure_observation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> _core.NativeCallbackQueueStageBackpressureObservation:
+        """Plan bounded-resource stage backpressure observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_current_queue_stage_backpressure_observation(
+                queue_name,
+                operation_name,
+                elapsed_seconds,
+                blocked,
+            )
+        return self.callback_scheduler_state.plan_current_queue_stage_backpressure_observation(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
         )
 
     def record_dosage_buffer_pool_stage_duration(

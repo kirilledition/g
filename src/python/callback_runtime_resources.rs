@@ -13,6 +13,7 @@ use super::callback_queue::{
 };
 use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{
+    NativeCallbackQueueBackpressureObservation, NativeCallbackQueueStageBackpressureObservation,
     NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
     NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan,
     NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan,
@@ -674,6 +675,40 @@ impl NativeCallbackRuntimeResources {
     ) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         scheduler_state.plan_dosage_work_item_stage_duration_value(dosage_work_item_kind, chunk_count, elapsed_seconds)
+    }
+
+    fn plan_current_queue_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        queue_name: &str,
+        operation_name: &str,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_current_queue_backpressure_observation_value(
+            queue_name,
+            operation_name,
+            elapsed_seconds,
+            blocked,
+        )
+    }
+
+    fn plan_current_queue_stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        queue_name: &str,
+        operation_name: &str,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_current_queue_stage_backpressure_observation_value(
+            queue_name,
+            operation_name,
+            elapsed_seconds,
+            blocked,
+        )
     }
 
     fn plan_variant_major_dosage_batch_handoff(

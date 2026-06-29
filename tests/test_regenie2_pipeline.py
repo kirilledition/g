@@ -2147,6 +2147,16 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
 
     assert runtime_resources.try_put_dosage_work_item(dosage_item, timeout_seconds=0.0) is True
     assert runtime_resources.callback_scheduler_state.dosage_queue_occupied_count == 1
+    dosage_stage_observation = runtime_resources.plan_current_queue_stage_backpressure_observation(
+        queue_name="dosage_queue",
+        operation_name="producer_blocking",
+        elapsed_seconds=0.5,
+        blocked=True,
+    )
+    assert dosage_stage_observation.stage_name == "callback_queue_producer_blocking"
+    assert dosage_stage_observation.queue_depth == 1
+    assert dosage_stage_observation.queue_capacity == 1
+    assert dosage_stage_observation.blocked_seconds == 0.5
     assert runtime_resources.try_put_dosage_work_item(object(), timeout_seconds=0.0) is False
     dosage_result = runtime_resources.get_dosage_work_item()
     assert dosage_result.has_item is True
@@ -2157,6 +2167,15 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
 
     assert runtime_resources.try_put_result_write_item(result_item, timeout_seconds=0.0) is True
     assert runtime_resources.callback_scheduler_state.result_queue_occupied_count == 1
+    result_observation = runtime_resources.plan_current_queue_backpressure_observation(
+        queue_name="result_queue",
+        operation_name="put",
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    assert result_observation.queue_depth == 1
+    assert result_observation.queue_capacity == 1
+    assert result_observation.blocked_seconds == 0.0
     assert runtime_resources.try_put_result_write_item(object(), timeout_seconds=0.0) is False
     result = runtime_resources.get_result_write_item()
     assert result.has_item is True
