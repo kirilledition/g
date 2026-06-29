@@ -2216,6 +2216,14 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
             callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
         )
 
+    stage_duration_plan = runtime_resources.plan_dosage_work_item_stage_duration(
+        callback_runtime.DosageWorkItemKind.VARIANT_MAJOR_DOSAGE_BATCH.value,
+        2,
+        4.0,
+    )
+    assert stage_duration_plan.chunk_count == 2
+    assert stage_duration_plan.duration_per_chunk == 2.0
+
     dosage_handoff_plan = runtime_resources.plan_dosage_work_handoff(2)
     assert dosage_handoff_plan.chunk_count == 2
     with pytest.raises(ValueError, match="at least one chunk"):

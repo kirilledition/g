@@ -341,7 +341,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             chunk_metadata_items = tuple(chunk_work_item.metadata for chunk_work_item in work_item.work_items)
         else:
             chunk_metadata_items = (work_item.metadata,)
-        stage_duration_plan = self.callback_scheduler_state.plan_dosage_work_item_stage_duration(
+        stage_duration_plan = self.plan_dosage_work_item_stage_duration(
             dosage_work_item_kind=dosage_work_item_kind.value,
             chunk_count=len(chunk_metadata_items),
             elapsed_seconds=elapsed_seconds,
@@ -355,6 +355,26 @@ class NativeBgenCallbackRunner(abc.ABC):
                 stage_name,
                 stage_duration_plan.duration_per_chunk,
             )
+
+    def plan_dosage_work_item_stage_duration(
+        self,
+        *,
+        dosage_work_item_kind: str,
+        chunk_count: int,
+        elapsed_seconds: float,
+    ) -> _core.NativeDosageWorkItemStageDurationPlan:
+        """Plan dosage work-item stage duration attribution through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_work_item_stage_duration(
+                dosage_work_item_kind,
+                chunk_count,
+                elapsed_seconds,
+            )
+        return self.callback_scheduler_state.plan_dosage_work_item_stage_duration(
+            dosage_work_item_kind=dosage_work_item_kind,
+            chunk_count=chunk_count,
+            elapsed_seconds=elapsed_seconds,
+        )
 
     def get_stage_duration_recorder(self) -> collections.abc.Callable[[str, float], None] | None:
         """Return an optional nested stage recorder for lower-level compute helpers."""

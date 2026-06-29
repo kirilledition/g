@@ -2228,6 +2228,18 @@ impl NativeCallbackSchedulerState {
             .map(Into::into)
             .map_err(|error| schedule_error_to_py(&error))
     }
+
+    pub(crate) fn plan_dosage_work_item_stage_duration_value(
+        &self,
+        dosage_work_item_kind: &str,
+        chunk_count: usize,
+        elapsed_seconds: f64,
+    ) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
+        self.inner
+            .plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
 }
 
 impl NativeCallbackWorkerStartAttemptPlan {

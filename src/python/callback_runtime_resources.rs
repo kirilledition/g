@@ -15,10 +15,10 @@ use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{
     NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
     NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan,
-    NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan, NativeResultInFlightAcquireObservationPlan,
-    NativeResultInFlightReleaseObservationPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
-    NativeResultWriteItemDispatchPlan, NativeResultWriteItemResourceReleasePlan,
-    NativeVariantMajorDosageBatchHandoffPlan,
+    NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan,
+    NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseObservationPlan,
+    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
+    NativeResultWriteItemResourceReleasePlan, NativeVariantMajorDosageBatchHandoffPlan,
 };
 
 #[pyclass]
@@ -663,6 +663,17 @@ impl NativeCallbackRuntimeResources {
             .error_message_value()
             .unwrap_or("Native dosage work dispatch plan omitted the error message.");
         Err(PyRuntimeError::new_err(error_message.to_owned()))
+    }
+
+    fn plan_dosage_work_item_stage_duration(
+        &self,
+        py: Python<'_>,
+        dosage_work_item_kind: &str,
+        chunk_count: usize,
+        elapsed_seconds: f64,
+    ) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_work_item_stage_duration_value(dosage_work_item_kind, chunk_count, elapsed_seconds)
     }
 
     fn plan_variant_major_dosage_batch_handoff(

@@ -868,6 +868,12 @@ class NativeCallbackRuntimeResources:
         self,
         dosage_work_item_kind: str,
     ) -> NativeDosageWorkItemDispatchPlan: ...
+    def plan_dosage_work_item_stage_duration(
+        self,
+        dosage_work_item_kind: str,
+        chunk_count: int,
+        elapsed_seconds: float,
+    ) -> NativeDosageWorkItemStageDurationPlan: ...
     def plan_variant_major_dosage_batch_handoff(
         self,
         metadata_count: int,
