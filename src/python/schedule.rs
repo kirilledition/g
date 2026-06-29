@@ -1973,6 +1973,62 @@ impl NativeCallbackSchedulerState {
     pub(crate) fn plan_worker_start_attempt_value(&mut self) -> NativeCallbackWorkerStartAttemptPlan {
         self.inner.plan_worker_start_attempt().into()
     }
+
+    pub(crate) fn plan_dosage_queue_put_attempt_value(
+        &mut self,
+        wait_timeout_seconds: f64,
+    ) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_dosage_queue_put_attempt(wait_timeout_seconds).into()
+    }
+
+    pub(crate) fn plan_dosage_queue_put_backpressure_attempt_value(&mut self) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_dosage_queue_put_backpressure_attempt().into()
+    }
+
+    pub(crate) fn release_dosage_queue_slot_value(&mut self) -> bool {
+        self.inner.release_dosage_queue_slot()
+    }
+
+    pub(crate) fn acquire_dosage_queue_slot_value(&mut self) -> bool {
+        self.inner.acquire_dosage_queue_slot()
+    }
+
+    pub(crate) fn plan_dosage_queue_get_attempt_value(
+        &mut self,
+        has_queued_item: bool,
+    ) -> NativeCallbackQueueGetAttemptPlan {
+        self.inner.plan_dosage_queue_get_attempt(has_queued_item).into()
+    }
+
+    pub(crate) fn plan_result_write_handoff_value(&self, has_result_work_item: bool) -> NativeResultWriteHandoffPlan {
+        self.inner.plan_result_write_handoff(has_result_work_item).into()
+    }
+
+    pub(crate) fn plan_result_queue_put_attempt_value(
+        &mut self,
+        wait_timeout_seconds: f64,
+    ) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_result_queue_put_attempt(wait_timeout_seconds).into()
+    }
+
+    pub(crate) fn plan_result_queue_put_backpressure_attempt_value(&mut self) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_result_queue_put_backpressure_attempt().into()
+    }
+
+    pub(crate) fn release_result_queue_slot_value(&mut self) -> bool {
+        self.inner.release_result_queue_slot()
+    }
+
+    pub(crate) fn acquire_result_queue_slot_value(&mut self) -> bool {
+        self.inner.acquire_result_queue_slot()
+    }
+
+    pub(crate) fn plan_result_queue_get_attempt_value(
+        &mut self,
+        has_queued_item: bool,
+    ) -> NativeCallbackQueueGetAttemptPlan {
+        self.inner.plan_result_queue_get_attempt(has_queued_item).into()
+    }
 }
 
 impl NativeCallbackWorkerStartAttemptPlan {
@@ -1986,6 +2042,48 @@ impl NativeCallbackWorkerStartAttemptPlan {
 
     pub(crate) fn should_start_dosage_worker(&self) -> bool {
         self.inner.start_dosage_worker()
+    }
+}
+
+impl NativeCallbackQueuePutAttemptPlan {
+    pub(crate) fn should_put_value(&self) -> bool {
+        self.inner.should_put
+    }
+
+    pub(crate) fn should_wait_value(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    pub(crate) fn wait_timeout_seconds_value(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+}
+
+impl NativeCallbackQueueGetAttemptPlan {
+    pub(crate) fn should_get_value(&self) -> bool {
+        self.inner.should_get
+    }
+
+    pub(crate) fn should_wait_value(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    pub(crate) fn has_release_error_value(&self) -> bool {
+        self.inner.has_release_error
+    }
+
+    pub(crate) fn wait_timeout_seconds_value(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+}
+
+impl NativeResultWriteHandoffPlan {
+    pub(crate) fn should_enqueue_value(&self) -> bool {
+        self.inner.should_enqueue
+    }
+
+    pub(crate) fn has_result_work_item_value(&self) -> bool {
+        self.inner.has_result_work_item
     }
 }
 

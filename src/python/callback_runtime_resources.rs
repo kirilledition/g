@@ -1,13 +1,16 @@
 //! PyO3 owner for callback runtime native resources.
 
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
 use super::callback_progress::NativeCallbackProgressState;
-use super::callback_queue::{NativeCallbackObjectQueue, NativeCallbackWaitSignal, NativeCallbackWorkerThread};
+use super::callback_queue::{
+    NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
+};
 use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{NativeCallbackSchedulerState, NativeCallbackWorkerStartAttemptPlan};
 
@@ -151,4 +154,272 @@ impl NativeCallbackRuntimeResources {
         }
         Ok(start_attempt_plan)
     }
+
+    fn try_put_dosage_work_item(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        timeout_seconds: f64,
+    ) -> PyResult<bool> {
+        let deadline = Instant::now() + normalize_timeout_duration(timeout_seconds);
+        loop {
+            let attempt_plan = {
+                let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+                scheduler_state.plan_dosage_queue_put_attempt_value(remaining_timeout_seconds(deadline))
+            };
+            if attempt_plan.should_put_value() {
+                return self.put_dosage_work_item_after_slot_acquisition(py, work_item);
+            }
+            if !attempt_plan.should_wait_value() {
+                return Ok(false);
+            }
+            self.dosage_queue
+                .bind(py)
+                .borrow()
+                .wait_for_available_slot_value(py, attempt_plan.wait_timeout_seconds_value())?;
+        }
+    }
+
+    fn try_put_dosage_work_item_with_backpressure_timeout(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
+        let mut deadline = None;
+        loop {
+            let attempt_plan = {
+                let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+                if let Some(deadline) = deadline {
+                    scheduler_state.plan_dosage_queue_put_attempt_value(remaining_timeout_seconds(deadline))
+                } else {
+                    let attempt_plan = scheduler_state.plan_dosage_queue_put_backpressure_attempt_value();
+                    if attempt_plan.should_wait_value() {
+                        deadline = Some(
+                            Instant::now() + normalize_timeout_duration(attempt_plan.wait_timeout_seconds_value()),
+                        );
+                    }
+                    attempt_plan
+                }
+            };
+            if attempt_plan.should_put_value() {
+                return self.put_dosage_work_item_after_slot_acquisition(py, work_item);
+            }
+            if !attempt_plan.should_wait_value() {
+                return Ok(false);
+            }
+            self.dosage_queue
+                .bind(py)
+                .borrow()
+                .wait_for_available_slot_value(py, attempt_plan.wait_timeout_seconds_value())?;
+        }
+    }
+
+    fn get_dosage_work_item(&self, py: Python<'_>) -> PyResult<NativeCallbackObjectQueueGetResult> {
+        loop {
+            let has_queued_item = self.dosage_queue.bind(py).borrow().has_queued_item_value()?;
+            let get_plan = {
+                let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+                scheduler_state.plan_dosage_queue_get_attempt_value(has_queued_item)
+            };
+            if get_plan.has_release_error_value() {
+                return Err(PyRuntimeError::new_err("Native dosage-queue state has no occupied slot to release."));
+            }
+            if get_plan.should_get_value() {
+                let get_result = self.dosage_queue.bind(py).borrow().get_item(py, 0.0)?;
+                if !get_result.has_item_value() {
+                    let reacquired_slot = {
+                        let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+                        scheduler_state.acquire_dosage_queue_slot_value()
+                    };
+                    if !reacquired_slot {
+                        return Err(PyRuntimeError::new_err(
+                            "Native dosage queue storage was empty after scheduler slot release.",
+                        ));
+                    }
+                    return Err(PyRuntimeError::new_err(
+                        "Native dosage queue storage had no queued item after scheduler selected get.",
+                    ));
+                }
+                return Ok(get_result);
+            }
+            if get_plan.should_wait_value() {
+                self.dosage_queue
+                    .bind(py)
+                    .borrow()
+                    .wait_for_queued_item_value(py, get_plan.wait_timeout_seconds_value())?;
+            }
+        }
+    }
+
+    fn try_put_result_write_item(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        timeout_seconds: f64,
+    ) -> PyResult<bool> {
+        let handoff_plan = self.plan_result_write_handoff(py, work_item)?;
+        let deadline = Instant::now() + normalize_timeout_duration(timeout_seconds);
+        loop {
+            let attempt_plan = {
+                let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+                scheduler_state.plan_result_queue_put_attempt_value(remaining_timeout_seconds(deadline))
+            };
+            if attempt_plan.should_put_value() && handoff_plan.should_enqueue_value() {
+                return self.put_result_write_item_after_slot_acquisition(py, work_item);
+            }
+            if !attempt_plan.should_wait_value() {
+                return Ok(false);
+            }
+            self.result_queue
+                .bind(py)
+                .borrow()
+                .wait_for_available_slot_value(py, attempt_plan.wait_timeout_seconds_value())?;
+        }
+    }
+
+    fn try_put_result_write_item_with_backpressure_timeout(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
+        let handoff_plan = self.plan_result_write_handoff(py, work_item)?;
+        let mut deadline = None;
+        loop {
+            let attempt_plan = {
+                let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+                if let Some(deadline) = deadline {
+                    scheduler_state.plan_result_queue_put_attempt_value(remaining_timeout_seconds(deadline))
+                } else {
+                    let attempt_plan = scheduler_state.plan_result_queue_put_backpressure_attempt_value();
+                    if attempt_plan.should_wait_value() {
+                        deadline = Some(
+                            Instant::now() + normalize_timeout_duration(attempt_plan.wait_timeout_seconds_value()),
+                        );
+                    }
+                    attempt_plan
+                }
+            };
+            if attempt_plan.should_put_value() && handoff_plan.should_enqueue_value() {
+                return self.put_result_write_item_after_slot_acquisition(py, work_item);
+            }
+            if !attempt_plan.should_wait_value() {
+                return Ok(false);
+            }
+            self.result_queue
+                .bind(py)
+                .borrow()
+                .wait_for_available_slot_value(py, attempt_plan.wait_timeout_seconds_value())?;
+        }
+    }
+
+    fn get_result_write_item(&self, py: Python<'_>) -> PyResult<NativeCallbackObjectQueueGetResult> {
+        loop {
+            let has_queued_item = self.result_queue.bind(py).borrow().has_queued_item_value()?;
+            let get_plan = {
+                let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+                scheduler_state.plan_result_queue_get_attempt_value(has_queued_item)
+            };
+            if get_plan.has_release_error_value() {
+                return Err(PyRuntimeError::new_err("Native result-queue state has no occupied slot to release."));
+            }
+            if get_plan.should_get_value() {
+                let get_result = self.result_queue.bind(py).borrow().get_item(py, 0.0)?;
+                if !get_result.has_item_value() {
+                    let reacquired_slot = {
+                        let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+                        scheduler_state.acquire_result_queue_slot_value()
+                    };
+                    if !reacquired_slot {
+                        return Err(PyRuntimeError::new_err(
+                            "Native result queue storage was empty after scheduler slot release.",
+                        ));
+                    }
+                    return Err(PyRuntimeError::new_err(
+                        "Native result queue storage had no queued item after scheduler selected get.",
+                    ));
+                }
+                return Ok(get_result);
+            }
+            if get_plan.should_wait_value() {
+                self.result_queue
+                    .bind(py)
+                    .borrow()
+                    .wait_for_queued_item_value(py, get_plan.wait_timeout_seconds_value())?;
+            }
+        }
+    }
+}
+
+impl NativeCallbackRuntimeResources {
+    fn put_dosage_work_item_after_slot_acquisition(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
+        let queued = self.dosage_queue.bind(py).borrow().put_item(py, work_item.clone().unbind(), 0.0)?;
+        if queued {
+            return Ok(true);
+        }
+        let released_slot = {
+            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+            scheduler_state.release_dosage_queue_slot_value()
+        };
+        if !released_slot {
+            return Err(PyRuntimeError::new_err(
+                "Native dosage queue storage rejected a put after scheduler slot acquisition.",
+            ));
+        }
+        Err(PyRuntimeError::new_err("Native dosage queue storage had no slot after scheduler selected put."))
+    }
+
+    fn put_result_write_item_after_slot_acquisition(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
+        let queued = self.result_queue.bind(py).borrow().put_item(py, work_item.clone().unbind(), 0.0)?;
+        if queued {
+            return Ok(true);
+        }
+        let released_slot = {
+            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+            scheduler_state.release_result_queue_slot_value()
+        };
+        if !released_slot {
+            return Err(PyRuntimeError::new_err(
+                "Native result queue storage rejected a put after scheduler slot acquisition.",
+            ));
+        }
+        Err(PyRuntimeError::new_err("Native result queue storage had no slot after scheduler selected put."))
+    }
+
+    fn plan_result_write_handoff(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<super::schedule::NativeResultWriteHandoffPlan> {
+        let has_result_work_item = !work_item.is_none();
+        let handoff_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_result_write_handoff_value(has_result_work_item)
+        };
+        if handoff_plan.has_result_work_item_value() != has_result_work_item {
+            return Err(PyRuntimeError::new_err(
+                "Native result write handoff plan disagrees with the queued result item.",
+            ));
+        }
+        Ok(handoff_plan)
+    }
+}
+
+fn normalize_timeout_duration(timeout_seconds: f64) -> Duration {
+    if timeout_seconds.is_finite() && timeout_seconds > 0.0 {
+        Duration::try_from_secs_f64(timeout_seconds).unwrap_or(Duration::MAX)
+    } else {
+        Duration::ZERO
+    }
+}
+
+fn remaining_timeout_seconds(deadline: Instant) -> f64 {
+    deadline.saturating_duration_since(Instant::now()).as_secs_f64()
 }

@@ -1050,6 +1050,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now use one native PyO3 owner to construct and
   retain scheduler state, progress state, queues, wait signals, binary summary
   state, worker handles, and the worker-start lock for production runners.
+- Callback runtime resources now own production dosage/result queue put,
+  backpressure, and get loops, including scheduler slot rollback on native
+  storage inconsistencies.
 
 ### Tests
 

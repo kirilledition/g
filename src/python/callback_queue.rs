@@ -94,6 +94,42 @@ impl NativeCallbackObjectQueue {
         Ok(Self { queue: Mutex::new(queue), condition: Condvar::new() })
     }
 
+    pub(crate) fn put_item(&self, py: Python<'_>, item: Py<PyAny>, timeout_seconds: f64) -> PyResult<bool> {
+        py.detach(|| self.put_without_gil(item, timeout_seconds))
+    }
+
+    pub(crate) fn get_item(
+        &self,
+        py: Python<'_>,
+        timeout_seconds: f64,
+    ) -> PyResult<NativeCallbackObjectQueueGetResult> {
+        py.detach(|| self.get_without_gil(timeout_seconds))
+    }
+
+    pub(crate) fn wait_for_available_slot_value(&self, py: Python<'_>, timeout_seconds: f64) -> PyResult<bool> {
+        py.detach(|| {
+            self.wait_until_without_gil(
+                timeout_seconds,
+                g_engine::BoundedCallbackQueue::has_available_slot,
+                "native callback object queue lock was poisoned during available-slot wait",
+            )
+        })
+    }
+
+    pub(crate) fn wait_for_queued_item_value(&self, py: Python<'_>, timeout_seconds: f64) -> PyResult<bool> {
+        py.detach(|| {
+            self.wait_until_without_gil(
+                timeout_seconds,
+                g_engine::BoundedCallbackQueue::has_queued_item,
+                "native callback object queue lock was poisoned during queued-item wait",
+            )
+        })
+    }
+
+    pub(crate) fn has_queued_item_value(&self) -> PyResult<bool> {
+        Ok(self.lock_queue()?.has_queued_item())
+    }
+
     fn lock_queue(&self) -> PyResult<MutexGuard<'_, g_engine::BoundedCallbackQueue<Py<PyAny>>>> {
         self.queue.lock().map_err(|_| PyRuntimeError::new_err("native callback object queue lock was poisoned"))
     }
@@ -339,6 +375,12 @@ impl NativeCallbackObjectQueueGetResult {
     #[getter]
     fn item(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.item.as_ref().map(|item| item.clone_ref(py))
+    }
+}
+
+impl NativeCallbackObjectQueueGetResult {
+    pub(crate) fn has_item_value(&self) -> bool {
+        self.item.is_some()
     }
 }
 

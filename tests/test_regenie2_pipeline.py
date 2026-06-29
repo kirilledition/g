@@ -2129,6 +2129,43 @@ def test_native_callback_worker_thread_starts_and_joins_python_target() -> None:
     assert not worker_thread.is_alive()
 
 
+def test_native_callback_runtime_resources_own_queue_operations() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-queue-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    dosage_item = object()
+    result_item = object()
+
+    assert runtime_resources.try_put_dosage_work_item(dosage_item, timeout_seconds=0.0) is True
+    assert runtime_resources.callback_scheduler_state.dosage_queue_occupied_count == 1
+    assert runtime_resources.try_put_dosage_work_item(object(), timeout_seconds=0.0) is False
+    dosage_result = runtime_resources.get_dosage_work_item()
+    assert dosage_result.has_item is True
+    assert dosage_result.item is dosage_item
+    assert runtime_resources.callback_scheduler_state.dosage_queue_occupied_count == 0
+    assert runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(None) is True
+    assert runtime_resources.get_dosage_work_item().item is None
+
+    assert runtime_resources.try_put_result_write_item(result_item, timeout_seconds=0.0) is True
+    assert runtime_resources.callback_scheduler_state.result_queue_occupied_count == 1
+    assert runtime_resources.try_put_result_write_item(object(), timeout_seconds=0.0) is False
+    result = runtime_resources.get_result_write_item()
+    assert result.has_item is True
+    assert result.item is result_item
+    assert runtime_resources.callback_scheduler_state.result_queue_occupied_count == 0
+    assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
+    assert runtime_resources.get_result_write_item().item is None
+
+
 def test_native_callback_runner_uses_native_worker_start_plan() -> None:
     class RecordingWorkerThread:
         def __init__(self, *, worker_name: str, start_events: list[str]) -> None:

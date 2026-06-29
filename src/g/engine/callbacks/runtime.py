@@ -177,13 +177,9 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def start(self) -> None:
         """Start asynchronous callback workers after owner setup is complete."""
-        runtime_resources = getattr(self, "callback_runtime_resources", None)
         should_start_fallback_workers = False
-        if (
-            runtime_resources is not None
-            and self.callback_scheduler_state is typing.cast("typing.Any", runtime_resources).callback_scheduler_state
-        ):
-            start_attempt_plan = typing.cast("typing.Any", runtime_resources).start_workers()
+        if self.uses_native_callback_runtime_resources():
+            start_attempt_plan = self.callback_runtime_resources.start_workers()
         else:
             start_attempt_plan = self.callback_scheduler_state.plan_worker_start_attempt()
             should_start_fallback_workers = True
@@ -206,6 +202,14 @@ class NativeBgenCallbackRunner(abc.ABC):
     def worker_threads_have_started(self) -> bool:
         """Return whether callback worker threads have been started."""
         return self.worker_threads_started
+
+    def uses_native_callback_runtime_resources(self) -> bool:
+        """Return whether this runner still uses its production native resource owner."""
+        runtime_resources = getattr(self, "callback_runtime_resources", None)
+        return (
+            runtime_resources is not None
+            and self.callback_scheduler_state is typing.cast("typing.Any", runtime_resources).callback_scheduler_state
+        )
 
     @property
     def native_callback_batch_size(self) -> int:
@@ -1091,6 +1095,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         timeout_seconds: float,
     ) -> bool:
         """Try to enqueue one dosage item under native dosage-queue capacity."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.try_put_dosage_work_item(work_item, timeout_seconds)
         deadline = time.monotonic() + max(timeout_seconds, 0.0)
         while True:
             remaining_timeout_seconds = deadline - time.monotonic()
@@ -1115,6 +1121,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         work_item: QueuedPreprocessedDosageWorkItem,
     ) -> bool:
         """Try to enqueue one dosage item using native backpressure policy."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(work_item)
         deadline: float | None = None
         while True:
             if deadline is None:
@@ -1143,6 +1151,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         self,
     ) -> QueuedPreprocessedDosageWorkItem:
         """Wait for and return one dosage queue item while releasing native queue capacity."""
+        if self.uses_native_callback_runtime_resources():
+            get_result = self.callback_runtime_resources.get_dosage_work_item()
+            return typing.cast("QueuedPreprocessedDosageWorkItem", get_result.item)
         while True:
             get_plan = self.callback_scheduler_state.plan_dosage_queue_get_attempt(
                 has_queued_item=self.dosage_queue.has_queued_item
@@ -1217,6 +1228,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         timeout_seconds: float,
     ) -> bool:
         """Try to enqueue one result item under native result-queue capacity."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.try_put_result_write_item(work_item, timeout_seconds)
         handoff_plan = self.callback_scheduler_state.plan_result_write_handoff(
             has_result_work_item=work_item is not None
         )
@@ -1247,6 +1260,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         work_item: QueuedResultWriteWorkItem,
     ) -> bool:
         """Try to enqueue one result item using native backpressure policy."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.try_put_result_write_item_with_backpressure_timeout(work_item)
         handoff_plan = self.callback_scheduler_state.plan_result_write_handoff(
             has_result_work_item=work_item is not None
         )
@@ -1279,6 +1294,9 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def get_result_write_item(self) -> QueuedResultWriteWorkItem:
         """Wait for and return one result queue item while releasing native queue capacity."""
+        if self.uses_native_callback_runtime_resources():
+            get_result = self.callback_runtime_resources.get_result_write_item()
+            return typing.cast("QueuedResultWriteWorkItem", get_result.item)
         while True:
             get_plan = self.callback_scheduler_state.plan_result_queue_get_attempt(
                 has_queued_item=self.result_queue.has_queued_item
