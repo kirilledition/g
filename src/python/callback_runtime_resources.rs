@@ -53,6 +53,12 @@ pub(crate) struct NativeDosageBufferAcquireResult {
 }
 
 #[pyclass]
+pub(crate) struct NativeDosageBufferPoolOperationResult {
+    free_buffer_count: Option<usize>,
+    observation_plan: Option<Py<NativeDosageBufferPoolObservationPlan>>,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
     shutdown_worker_name: Option<String>,
     shutdown_timeout_seconds: Option<f64>,
@@ -742,6 +748,19 @@ impl NativeCallbackRuntimeResources {
         self.free_dosage_buffers.bind(py).borrow().occupied_count_value()
     }
 
+    fn register_dosage_buffer_with_observation(
+        &self,
+        py: Python<'_>,
+        buffer_identifier: usize,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        let free_buffer_count = self.register_dosage_buffer(py, buffer_identifier)?;
+        let observation_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_buffer_pool_allocate_observation_value()
+        };
+        NativeDosageBufferPoolOperationResult::from_operation(py, Some(free_buffer_count), Some(observation_plan))
+    }
+
     fn return_dosage_buffer(
         &self,
         py: Python<'_>,
@@ -764,6 +783,23 @@ impl NativeCallbackRuntimeResources {
         Ok(Some(free_buffer_count))
     }
 
+    fn return_dosage_buffer_with_observation(
+        &self,
+        py: Python<'_>,
+        buffer_identifier: usize,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        let free_buffer_count = self.return_dosage_buffer(py, buffer_identifier, dosage_buffer)?;
+        if free_buffer_count.is_none() {
+            return NativeDosageBufferPoolOperationResult::from_operation(py, None, None);
+        }
+        let observation_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_buffer_pool_return_observation_value()
+        };
+        NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
+    }
+
     fn discard_dosage_buffer(&self, py: Python<'_>, buffer_identifier: usize) -> PyResult<Option<usize>> {
         let discard_plan = {
             let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
@@ -775,6 +811,22 @@ impl NativeCallbackRuntimeResources {
         let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
         self.dosage_buffer_pool_signal.bind(py).borrow().notify_waiters_value()?;
         Ok(Some(free_buffer_count))
+    }
+
+    fn discard_dosage_buffer_with_observation(
+        &self,
+        py: Python<'_>,
+        buffer_identifier: usize,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        let free_buffer_count = self.discard_dosage_buffer(py, buffer_identifier)?;
+        if free_buffer_count.is_none() {
+            return NativeDosageBufferPoolOperationResult::from_operation(py, None, None);
+        }
+        let observation_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_buffer_pool_discard_observation_value()
+        };
+        NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
     }
 
     fn plan_dosage_buffer_return_attempt(
@@ -1363,6 +1415,34 @@ impl NativeResultWorkItemResourceReleaseResult {
         self.result_in_flight_resource_name = Some(release_observation_plan.resource_name_value().to_owned());
         self.result_in_flight_operation_name = Some(release_observation_plan.operation_name_value().to_owned());
         self.result_in_flight_blocked = Some(release_observation_plan.blocked_value());
+    }
+}
+
+#[pymethods]
+impl NativeDosageBufferPoolOperationResult {
+    #[getter]
+    fn has_free_buffer_count(&self) -> bool {
+        self.free_buffer_count.is_some()
+    }
+
+    #[getter]
+    fn free_buffer_count(&self) -> Option<usize> {
+        self.free_buffer_count
+    }
+
+    #[getter]
+    fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolObservationPlan>> {
+        self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+}
+
+impl NativeDosageBufferPoolOperationResult {
+    fn from_operation(
+        py: Python<'_>,
+        free_buffer_count: Option<usize>,
+        observation_plan: Option<NativeDosageBufferPoolObservationPlan>,
+    ) -> PyResult<Self> {
+        Ok(Self { free_buffer_count, observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()? })
     }
 }
 

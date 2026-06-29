@@ -2603,6 +2603,54 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     def worker_target() -> None:
         return None
 
+    observed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-observed-dosage-buffer-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    observed_dosage_buffer = np.empty((2, 2), dtype=np.float32)
+    register_operation_result = observed_runtime_resources.register_dosage_buffer_with_observation(
+        id(observed_dosage_buffer)
+    )
+    assert register_operation_result.has_free_buffer_count is True
+    assert register_operation_result.free_buffer_count == 0
+    register_observation_plan = register_operation_result.observation_plan
+    assert register_observation_plan is not None
+    assert register_observation_plan.operation_name == "allocate"
+    assert register_observation_plan.blocked is False
+    return_operation_result = observed_runtime_resources.return_dosage_buffer_with_observation(
+        id(observed_dosage_buffer),
+        observed_dosage_buffer,
+    )
+    assert return_operation_result.has_free_buffer_count is True
+    assert return_operation_result.free_buffer_count == 1
+    return_observation_plan = return_operation_result.observation_plan
+    assert return_observation_plan is not None
+    assert return_observation_plan.operation_name == "return"
+    assert return_observation_plan.blocked is False
+    free_buffer_result = observed_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is observed_dosage_buffer
+    discard_operation_result = observed_runtime_resources.discard_dosage_buffer_with_observation(
+        id(observed_dosage_buffer)
+    )
+    assert discard_operation_result.has_free_buffer_count is True
+    assert discard_operation_result.free_buffer_count == 0
+    discard_observation_plan = discard_operation_result.observation_plan
+    assert discard_observation_plan is not None
+    assert discard_observation_plan.operation_name == "discard"
+    assert discard_observation_plan.blocked is False
+    missing_discard_operation_result = observed_runtime_resources.discard_dosage_buffer_with_observation(
+        id(observed_dosage_buffer)
+    )
+    assert missing_discard_operation_result.has_free_buffer_count is False
+    assert missing_discard_operation_result.free_buffer_count is None
+    assert missing_discard_operation_result.observation_plan is None
+
     runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
         worker_name="native-resource-dosage-buffer-test",
         dosage_worker_target=worker_target,

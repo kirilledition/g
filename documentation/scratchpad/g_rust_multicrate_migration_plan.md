@@ -1113,6 +1113,9 @@ Remove Python as the chunk-level scheduler.
   return eligibility planning, free-buffer returns, free-queue storage
   failures, discard accounting, and buffer-pool wakeups while Python keeps
   NumPy allocation and shape/dtype reuse checks.
+- Callback runtime resources now own production timing-enabled dosage-buffer
+  register, return, and discard observation selection in the same native call
+  as the buffer-pool state mutation.
 - Callback runtime resources now own production dosage-buffer acquisition
   attempts, free-buffer pops, wait-signal waits, and wait result accounting
   while Python keeps NumPy allocation and shape/dtype reuse checks.

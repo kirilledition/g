@@ -943,6 +943,24 @@ class NativeBgenCallbackRunner(abc.ABC):
             blocked=observation_plan.blocked,
         )
 
+    def record_dosage_buffer_pool_operation_result(
+        self,
+        operation_result: _core.NativeDosageBufferPoolOperationResult,
+    ) -> None:
+        """Record a native dosage-buffer pool operation result."""
+        if self.stage_timing_recorder is None:
+            return
+        free_buffer_count = operation_result.free_buffer_count
+        observation_plan = operation_result.observation_plan
+        if free_buffer_count is None or observation_plan is None:
+            return
+        self.record_dosage_buffer_pool_operation(
+            operation_name=observation_plan.operation_name,
+            free_buffer_count=free_buffer_count,
+            elapsed_seconds=0.0,
+            blocked=observation_plan.blocked,
+        )
+
     @abc.abstractmethod
     def compute_preprocessed_chunk(
         self,
@@ -2315,15 +2333,17 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Return a processed host dosage buffer to the reusable pool."""
         dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
         if self.uses_native_callback_runtime_resources():
-            free_buffer_count = self.callback_runtime_resources.return_dosage_buffer(
+            if self.stage_timing_recorder is None:
+                self.callback_runtime_resources.return_dosage_buffer(
+                    id(dosage_buffer_owner),
+                    dosage_buffer_owner,
+                )
+                return
+            operation_result = self.callback_runtime_resources.return_dosage_buffer_with_observation(
                 id(dosage_buffer_owner),
                 dosage_buffer_owner,
             )
-            if free_buffer_count is None:
-                return
-            self.record_dosage_buffer_pool_return_operation(
-                free_buffer_count=free_buffer_count,
-            )
+            self.record_dosage_buffer_pool_operation_result(operation_result)
             return
         return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
         if not return_plan.should_return:
@@ -2346,10 +2366,13 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Allocate and register one host genotype buffer slot."""
         dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
         if self.uses_native_callback_runtime_resources():
-            free_buffer_count = self.callback_runtime_resources.register_dosage_buffer(id(dosage_buffer))
-            self.record_dosage_buffer_pool_allocate_operation(
-                free_buffer_count=free_buffer_count,
+            if self.stage_timing_recorder is None:
+                self.callback_runtime_resources.register_dosage_buffer(id(dosage_buffer))
+                return dosage_buffer
+            operation_result = self.callback_runtime_resources.register_dosage_buffer_with_observation(
+                id(dosage_buffer)
             )
+            self.record_dosage_buffer_pool_operation_result(operation_result)
             return dosage_buffer
         register_plan = self.callback_scheduler_state.plan_dosage_buffer_register_attempt(id(dosage_buffer))
         if register_plan.has_registration_error:
@@ -2365,12 +2388,13 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Remove one discarded host genotype buffer slot from pool accounting."""
         dosage_buffer_identifier = id(dosage_buffer)
         if self.uses_native_callback_runtime_resources():
-            free_buffer_count = self.callback_runtime_resources.discard_dosage_buffer(dosage_buffer_identifier)
-            if free_buffer_count is None:
+            if self.stage_timing_recorder is None:
+                self.callback_runtime_resources.discard_dosage_buffer(dosage_buffer_identifier)
                 return
-            self.record_dosage_buffer_pool_discard_operation(
-                free_buffer_count=free_buffer_count,
+            operation_result = self.callback_runtime_resources.discard_dosage_buffer_with_observation(
+                dosage_buffer_identifier
             )
+            self.record_dosage_buffer_pool_operation_result(operation_result)
             return
         discard_plan = self.callback_scheduler_state.plan_dosage_buffer_discard_attempt(dosage_buffer_identifier)
         if not discard_plan.should_discard:
