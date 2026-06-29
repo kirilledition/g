@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError, PySystemExit, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyTuple};
 
@@ -157,6 +157,15 @@ pub(crate) fn build_shutdown_signal_payload<'py>(py: Python<'py>, signal_number:
 pub(crate) fn plan_second_signal_exception(signal_number: i32) -> PyResult<NativeSecondSignalExceptionPlan> {
     let plan = native_shutdown::plan_second_signal_exception(signal_number).map_err(PyValueError::new_err)?;
     Ok(NativeSecondSignalExceptionPlan { inner: plan })
+}
+
+#[pyfunction]
+pub(crate) fn raise_second_signal_exception(signal_number: i32) -> PyResult<()> {
+    let plan = native_shutdown::plan_second_signal_exception(signal_number).map_err(PyValueError::new_err)?;
+    if plan.raise_keyboard_interrupt {
+        return Err(PyKeyboardInterrupt::new_err(()));
+    }
+    Err(PySystemExit::new_err(plan.exit_code))
 }
 
 fn shutdown_signal_payload_to_dict<'py>(

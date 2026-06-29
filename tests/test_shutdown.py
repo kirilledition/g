@@ -42,6 +42,16 @@ def test_native_second_signal_exception_plan() -> None:
         _core.plan_second_signal_exception(0)
 
 
+def test_native_second_signal_exception_raiser() -> None:
+    with pytest.raises(KeyboardInterrupt):
+        _core.raise_second_signal_exception(int(signal.SIGINT))
+    with pytest.raises(SystemExit) as system_exit:
+        _core.raise_second_signal_exception(int(signal.SIGTERM))
+    assert system_exit.value.code == 128 + int(signal.SIGTERM)
+    with pytest.raises(ValueError, match="0 is not a valid Signals"):
+        _core.raise_second_signal_exception(0)
+
+
 def test_native_shutdown_controller_owns_handler_lifecycle() -> None:
     native_controller = _core.NativeShutdownController([int(signal.SIGINT), int(signal.SIGTERM)])
 
@@ -121,17 +131,12 @@ def test_shutdown_controller_repeated_signal_restores_handlers_and_aborts() -> N
     assert not controller.handlers_installed
 
 
-def test_second_signal_exception_uses_native_plan(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeSecondSignalExceptionPlan:
-        def __init__(self, *, raise_keyboard_interrupt: bool, exit_code: int) -> None:
-            self.raise_keyboard_interrupt = raise_keyboard_interrupt
-            self.exit_code = exit_code
-
-    def plan_second_signal_exception(signal_number: int) -> FakeSecondSignalExceptionPlan:
+def test_second_signal_exception_uses_native_raiser(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_second_signal_exception(signal_number: int) -> typing.NoReturn:
         assert signal_number == int(signal.SIGINT)
-        return FakeSecondSignalExceptionPlan(raise_keyboard_interrupt=False, exit_code=199)
+        raise SystemExit(199)
 
-    monkeypatch.setattr(shutdown.g._core, "plan_second_signal_exception", plan_second_signal_exception)
+    monkeypatch.setattr(shutdown.g._core, "raise_second_signal_exception", raise_second_signal_exception)
 
     with pytest.raises(SystemExit) as system_exit:
         shutdown.raise_second_signal_exception(

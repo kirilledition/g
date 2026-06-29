@@ -1159,8 +1159,10 @@ Remove Python as the chunk-level scheduler.
 - Native stage timing recorders now own combined final timing-output writes for
   stage-timing snapshots and profile summaries.
 - Native shutdown controllers now own Python signal handler install/restore
-  side effects while preserving Python exception raising for graceful and
-  repeated interrupts.
+  side effects while preserving Python public graceful-shutdown exception
+  handling.
+- Native shutdown adapters now raise repeated-signal `KeyboardInterrupt` and
+  `SystemExit` aborts from the PyO3 boundary.
 
 ### Tests
 
