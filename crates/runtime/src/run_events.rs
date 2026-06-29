@@ -1,5 +1,13 @@
 //! Runtime-owned run lifecycle event payloads and rendering policy.
 
+pub const RUN_STARTED_EVENT_NAME: &str = "run_started";
+pub const RUN_COMPLETED_EVENT_NAME: &str = "run_completed";
+pub const RUN_FAILED_EVENT_NAME: &str = "run_failed";
+pub const EXECUTION_PLAN_PREPARED_EVENT_NAME: &str = "execution_plan_prepared";
+pub const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
+pub const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
+pub const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunArtifactPayload {
     pub phenotype_name: Option<String>,
@@ -81,6 +89,24 @@ pub struct RunFailedTelemetryFields {
     pub failure_kind: &'static str,
     pub error_type: String,
     pub error_message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunStartedTelemetryFields {
+    pub association_mode: String,
+    pub trait_type: String,
+    pub phenotype_count: i64,
+    pub output_run_root: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionPlanPreparedTelemetryFields {
+    pub association_mode: String,
+    pub trait_type: String,
+    pub phenotype_count: i64,
+    pub chunk_size: i64,
+    pub variant_limit: Option<i64>,
+    pub device: String,
 }
 
 #[must_use]
@@ -184,6 +210,40 @@ pub fn build_run_failed_telemetry_fields(event: &RunFailedEventPayload) -> RunFa
         failure_kind: "exception",
         error_type: event.error_type.clone(),
         error_message: event.error_message.clone(),
+    }
+}
+
+#[must_use]
+pub fn build_run_started_telemetry_fields(
+    association_mode: &str,
+    trait_type: &str,
+    phenotype_count: i64,
+    output_run_root: &str,
+) -> RunStartedTelemetryFields {
+    RunStartedTelemetryFields {
+        association_mode: association_mode.to_string(),
+        trait_type: trait_type.to_string(),
+        phenotype_count,
+        output_run_root: output_run_root.to_string(),
+    }
+}
+
+#[must_use]
+pub fn build_execution_plan_prepared_telemetry_fields(
+    association_mode: &str,
+    trait_type: &str,
+    phenotype_count: i64,
+    chunk_size: i64,
+    variant_limit: Option<i64>,
+    device: &str,
+) -> ExecutionPlanPreparedTelemetryFields {
+    ExecutionPlanPreparedTelemetryFields {
+        association_mode: association_mode.to_string(),
+        trait_type: trait_type.to_string(),
+        phenotype_count,
+        chunk_size,
+        variant_limit,
+        device: device.to_string(),
     }
 }
 
@@ -372,6 +432,30 @@ mod tests {
                 .fields
                 .iter()
                 .any(|field| field.key == "final_parquet" && field.value == "run/final.parquet")
+        );
+    }
+
+    #[test]
+    fn builds_run_started_and_execution_plan_telemetry_fields() {
+        assert_eq!(
+            build_run_started_telemetry_fields("regenie2_linear", "quantitative", 2, "output.g"),
+            RunStartedTelemetryFields {
+                association_mode: "regenie2_linear".to_string(),
+                trait_type: "quantitative".to_string(),
+                phenotype_count: 2,
+                output_run_root: "output.g".to_string(),
+            }
+        );
+        assert_eq!(
+            build_execution_plan_prepared_telemetry_fields("regenie2_binary", "binary", 3, 1024, Some(4096), "gpu",),
+            ExecutionPlanPreparedTelemetryFields {
+                association_mode: "regenie2_binary".to_string(),
+                trait_type: "binary".to_string(),
+                phenotype_count: 3,
+                chunk_size: 1024,
+                variant_limit: Some(4096),
+                device: "gpu".to_string(),
+            }
         );
     }
 

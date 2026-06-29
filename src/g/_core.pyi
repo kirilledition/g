@@ -493,6 +493,22 @@ class NativeTelemetryRunSession:
     def emit_run_completed_event(self, event: object) -> None: ...
     def emit_run_interrupted_event(self, event: object) -> None: ...
     def emit_run_failed_event(self, event: object) -> None: ...
+    def emit_run_started_event(
+        self,
+        association_mode: str,
+        trait_type: str,
+        phenotype_count: int,
+        output_run_root: str,
+    ) -> None: ...
+    def emit_execution_plan_prepared_event(
+        self,
+        association_mode: str,
+        trait_type: str,
+        phenotype_count: int,
+        chunk_size: int,
+        variant_limit: int | None,
+        device: str,
+    ) -> None: ...
     def emit_progress(
         self,
         processed_chunk_count: int,

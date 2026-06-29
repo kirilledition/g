@@ -138,6 +138,42 @@ class TelemetrySession:
         """Write the canonical run failure event."""
         self.native_session_handle.emit_run_failed_event(event)
 
+    def log_run_started(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        trait_type: types.RegenieTraitType,
+        phenotype_count: int,
+        output_run_root: Path,
+    ) -> None:
+        """Write the canonical run start event."""
+        self.native_session_handle.emit_run_started_event(
+            association_mode.value,
+            trait_type.value,
+            phenotype_count,
+            str(output_run_root),
+        )
+
+    def log_execution_plan_prepared(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        trait_type: types.RegenieTraitType,
+        phenotype_count: int,
+        chunk_size: int,
+        variant_limit: int | None,
+        device: types.Device,
+    ) -> None:
+        """Write the canonical execution-plan preparation event."""
+        self.native_session_handle.emit_execution_plan_prepared_event(
+            association_mode.value,
+            trait_type.value,
+            phenotype_count,
+            chunk_size,
+            variant_limit,
+            device.value,
+        )
+
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
         self.native_session_handle.emit_progress(

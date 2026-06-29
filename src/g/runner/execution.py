@@ -100,13 +100,11 @@ def regenie(
             runtime.initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
         association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
         phenotype_count = len(regenie_config.input.pheno_columns)
-        active_telemetry_session.log_event(
-            "run_started",
-            level="info",
-            association_mode=association_mode.value,
-            trait_type=regenie_config.trait.trait_type.value,
+        active_telemetry_session.log_run_started(
+            association_mode=association_mode,
+            trait_type=regenie_config.trait.trait_type,
             phenotype_count=phenotype_count,
-            output_run_root=str(telemetry.resolve_output_run_root(regenie_config)),
+            output_run_root=telemetry.resolve_output_run_root(regenie_config),
         )
         logger.info("Starting REGENIE run.")
         runtime.configure_runtime(regenie_config.g_compute, regenie_config.trait)
@@ -171,15 +169,13 @@ def run_validated_regenie_config(
             runtime_compatibility_token=runtime_compatibility_token,
         )
         if telemetry_session is not None:
-            telemetry_session.log_event(
-                "execution_plan_prepared",
-                level="info",
-                association_mode=plan.association_mode.value,
-                trait_type=regenie_config.trait.trait_type.value,
+            telemetry_session.log_execution_plan_prepared(
+                association_mode=plan.association_mode,
+                trait_type=regenie_config.trait.trait_type,
                 phenotype_count=len(plan.phenotype_run_plans),
                 chunk_size=plan.kernel_config.chunk_size,
                 variant_limit=plan.kernel_config.variant_limit,
-                device=plan.kernel_config.device.value,
+                device=plan.kernel_config.device,
             )
         logger.info("Prepared REGENIE execution plan for %s phenotype(s).", len(plan.phenotype_run_plans))
         timing.record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)

@@ -1134,6 +1134,8 @@ Remove Python as the chunk-level scheduler.
   return observation selection in the same native call as host-buffer cleanup.
 - Native telemetry run sessions now own production run completed, interrupted,
   and failed lifecycle event emission names, levels, and field construction.
+- Native telemetry run sessions now own production run-started and
+  execution-plan-prepared lifecycle event names, levels, and field construction.
 
 ### Tests
 

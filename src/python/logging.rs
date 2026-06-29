@@ -319,21 +319,86 @@ impl NativeTelemetryRunSession {
         let event_payload = run_events::run_completed_event_from_py(event)?;
         let telemetry_fields = native_run_events::build_run_completed_telemetry_fields(&event_payload);
         let fields = run_events::run_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(py, "run_completed", "info", &fields)
+        self.emit_current_event_fields(
+            py,
+            native_run_events::RUN_COMPLETED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
     }
 
     pub fn emit_run_interrupted_event<'py>(&self, py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<()> {
         let event_payload = run_events::run_interrupted_event_from_py(event)?;
         let telemetry_fields = native_run_events::build_run_interrupted_telemetry_fields(&event_payload);
         let fields = run_events::run_interrupted_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(py, "run_failed", "warn", &fields)
+        self.emit_current_event_fields(
+            py,
+            native_run_events::RUN_FAILED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_WARN_LEVEL,
+            &fields,
+        )
     }
 
     pub fn emit_run_failed_event<'py>(&self, py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<()> {
         let event_payload = run_events::run_failed_event_from_py(event)?;
         let telemetry_fields = native_run_events::build_run_failed_telemetry_fields(&event_payload);
         let fields = run_events::run_failed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(py, "run_failed", "error", &fields)
+        self.emit_current_event_fields(
+            py,
+            native_run_events::RUN_FAILED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_ERROR_LEVEL,
+            &fields,
+        )
+    }
+
+    pub fn emit_run_started_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        trait_type: &str,
+        phenotype_count: i64,
+        output_run_root: &str,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_run_started_telemetry_fields(
+            association_mode,
+            trait_type,
+            phenotype_count,
+            output_run_root,
+        );
+        let fields = run_events::run_started_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::RUN_STARTED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    pub fn emit_execution_plan_prepared_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        trait_type: &str,
+        phenotype_count: i64,
+        chunk_size: i64,
+        variant_limit: Option<i64>,
+        device: &str,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_execution_plan_prepared_telemetry_fields(
+            association_mode,
+            trait_type,
+            phenotype_count,
+            chunk_size,
+            variant_limit,
+            device,
+        );
+        let fields = run_events::execution_plan_prepared_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::EXECUTION_PLAN_PREPARED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
     }
 
     pub fn emit_progress<'py>(

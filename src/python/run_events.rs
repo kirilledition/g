@@ -296,6 +296,32 @@ pub(crate) fn run_failed_telemetry_fields_to_py_dict<'py>(
     Ok(payload)
 }
 
+pub(crate) fn run_started_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::RunStartedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("trait_type", &fields.trait_type)?;
+    payload.set_item("phenotype_count", fields.phenotype_count)?;
+    payload.set_item("output_run_root", &fields.output_run_root)?;
+    Ok(payload)
+}
+
+pub(crate) fn execution_plan_prepared_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::ExecutionPlanPreparedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("trait_type", &fields.trait_type)?;
+    payload.set_item("phenotype_count", fields.phenotype_count)?;
+    payload.set_item("chunk_size", fields.chunk_size)?;
+    payload.set_item("variant_limit", fields.variant_limit)?;
+    payload.set_item("device", &fields.device)?;
+    Ok(payload)
+}
+
 fn artifact_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunArtifactTelemetryFields,
