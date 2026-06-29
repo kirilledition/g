@@ -1184,6 +1184,8 @@ Remove Python as the chunk-level scheduler.
   logging.
 - GPU genotype-format auto-resolution diagnostics now route through the native
   diagnostic emitter while preserving native telemetry session events.
+- Preflight non-fatal warnings now route through the native diagnostic emitter
+  with explicit shape and trusted-path context instead of Python logging.
 
 ### Tests
 

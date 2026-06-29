@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import logging
+import json
 import typing
 from dataclasses import dataclass
 
 import numpy as np
 
 import g
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -43,6 +41,40 @@ class SingleTraitPreflightShape:
 
     sample_count: int
     covariate_count: int
+
+
+def emit_preflight_warning_diagnostic_event(
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured preflight warning diagnostic through native tracing."""
+    g._core.emit_diagnostic_event(
+        "warning",
+        "preflight_warning",
+        message,
+        json.dumps(dict(fields), sort_keys=True, default=str),
+    )
+
+
+def emit_preflight_warnings(
+    *,
+    preflight_scope: str,
+    preflight_report: PreflightReport,
+    trusted_no_missing_diploid: bool,
+) -> None:
+    """Emit all non-fatal preflight warnings through native tracing."""
+    for warning_index, warning_message in enumerate(preflight_report.warning_messages):
+        emit_preflight_warning_diagnostic_event(
+            warning_message,
+            {
+                "chromosome_count": preflight_report.chromosome_count,
+                "covariate_count": preflight_report.covariate_count,
+                "preflight_scope": preflight_scope,
+                "sample_count": preflight_report.sample_count,
+                "trusted_no_missing_diploid": trusted_no_missing_diploid,
+                "warning_index": warning_index,
+            },
+        )
 
 
 @dataclass(frozen=True)
@@ -103,8 +135,11 @@ def run_regenie2_preflight(
         chromosome_count=len(required_chromosomes),
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
-    for warning_message in preflight_report.warning_messages:
-        logger.warning("%s", warning_message)
+    emit_preflight_warnings(
+        preflight_scope="single_trait",
+        preflight_report=preflight_report,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
     return preflight_report
 
 
@@ -153,8 +188,11 @@ def run_regenie2_multi_preflight(
         chromosome_count=len(required_chromosomes),
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
-    for warning_message in preflight_report.warning_messages:
-        logger.warning("%s", warning_message)
+    emit_preflight_warnings(
+        preflight_scope="multi_trait",
+        preflight_report=preflight_report,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
     return preflight_report
 
 
