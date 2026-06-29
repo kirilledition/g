@@ -508,6 +508,30 @@ class NativeBgenCallbackRunner(abc.ABC):
             blocked=blocked,
         )
 
+    def plan_dosage_queue_put_observation(self, *, queued: bool) -> _core.NativeCallbackQueuePutObservationPlan:
+        """Plan dosage queue put observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_queue_put_observation(queued)
+        return self.callback_scheduler_state.plan_dosage_queue_put_observation(queued=queued)
+
+    def plan_dosage_queue_get_observation(self) -> _core.NativeCallbackQueueGetObservationPlan:
+        """Plan dosage queue get observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_dosage_queue_get_observation()
+        return self.callback_scheduler_state.plan_dosage_queue_get_observation()
+
+    def plan_result_queue_put_observation(self, *, queued: bool) -> _core.NativeCallbackQueuePutObservationPlan:
+        """Plan result queue put observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_result_queue_put_observation(queued)
+        return self.callback_scheduler_state.plan_result_queue_put_observation(queued=queued)
+
+    def plan_result_queue_get_observation(self) -> _core.NativeCallbackQueueGetObservationPlan:
+        """Plan result queue get observation through the active native owner."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.plan_result_queue_get_observation()
+        return self.callback_scheduler_state.plan_result_queue_get_observation()
+
     def record_dosage_buffer_pool_stage_duration(
         self,
         *,
@@ -869,7 +893,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                     "PreprocessedDosageWorkItem",
                     work_item,
                 )
-                get_observation_plan = self.callback_scheduler_state.plan_dosage_queue_get_observation()
+                get_observation_plan = self.plan_dosage_queue_get_observation()
                 self.record_bounded_resource_stage_duration(
                     resource_name=get_observation_plan.queue_name,
                     operation_name=get_observation_plan.operation_name,
@@ -1152,7 +1176,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 )
                 if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
-                get_observation_plan = self.callback_scheduler_state.plan_result_queue_get_observation()
+                get_observation_plan = self.plan_result_queue_get_observation()
                 self.record_bounded_resource_stage_duration(
                     resource_name=get_observation_plan.queue_name,
                     operation_name=get_observation_plan.operation_name,
@@ -1247,7 +1271,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
             queued = self.try_put_dosage_work_item_with_backpressure_timeout(work_item)
-            put_observation_plan = self.callback_scheduler_state.plan_dosage_queue_put_observation(queued=queued)
+            put_observation_plan = self.plan_dosage_queue_put_observation(queued=queued)
             if put_observation_plan.should_retry_put:
                 self.record_bounded_resource_stage_duration(
                     resource_name=put_observation_plan.queue_name,
@@ -1383,7 +1407,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
             queued = self.try_put_result_write_item_with_backpressure_timeout(work_item)
-            put_observation_plan = self.callback_scheduler_state.plan_result_queue_put_observation(queued=queued)
+            put_observation_plan = self.plan_result_queue_put_observation(queued=queued)
             if put_observation_plan.should_retry_put:
                 self.record_bounded_resource_stage_duration(
                     resource_name=put_observation_plan.queue_name,

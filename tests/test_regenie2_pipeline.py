@@ -2147,6 +2147,17 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
 
     assert runtime_resources.try_put_dosage_work_item(dosage_item, timeout_seconds=0.0) is True
     assert runtime_resources.callback_scheduler_state.dosage_queue_occupied_count == 1
+    queued = True
+    dosage_put_observation = runtime_resources.plan_dosage_queue_put_observation(queued)
+    assert dosage_put_observation.queue_name == "dosage_queue"
+    assert dosage_put_observation.operation_name == "put"
+    assert dosage_put_observation.blocked is False
+    assert dosage_put_observation.should_retry_put is False
+    queued = False
+    dosage_put_retry_observation = runtime_resources.plan_dosage_queue_put_observation(queued)
+    assert dosage_put_retry_observation.operation_name == "producer_blocking"
+    assert dosage_put_retry_observation.blocked is True
+    assert dosage_put_retry_observation.should_retry_put is True
     dosage_stage_observation = runtime_resources.plan_current_queue_stage_backpressure_observation(
         queue_name="dosage_queue",
         operation_name="producer_blocking",
@@ -2162,11 +2173,26 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert dosage_result.has_item is True
     assert dosage_result.item is dosage_item
     assert runtime_resources.callback_scheduler_state.dosage_queue_occupied_count == 0
+    dosage_get_observation = runtime_resources.plan_dosage_queue_get_observation()
+    assert dosage_get_observation.queue_name == "dosage_queue"
+    assert dosage_get_observation.operation_name == "consumer_wait"
+    assert dosage_get_observation.blocked is True
     assert runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(None) is True
     assert runtime_resources.get_dosage_work_item().item is None
 
     assert runtime_resources.try_put_result_write_item(result_item, timeout_seconds=0.0) is True
     assert runtime_resources.callback_scheduler_state.result_queue_occupied_count == 1
+    queued = True
+    result_put_observation = runtime_resources.plan_result_queue_put_observation(queued)
+    assert result_put_observation.queue_name == "result_queue"
+    assert result_put_observation.operation_name == "put"
+    assert result_put_observation.blocked is False
+    assert result_put_observation.should_retry_put is False
+    queued = False
+    result_put_retry_observation = runtime_resources.plan_result_queue_put_observation(queued)
+    assert result_put_retry_observation.operation_name == "producer_blocking"
+    assert result_put_retry_observation.blocked is True
+    assert result_put_retry_observation.should_retry_put is True
     result_observation = runtime_resources.plan_current_queue_backpressure_observation(
         queue_name="result_queue",
         operation_name="put",
@@ -2181,6 +2207,10 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert result.has_item is True
     assert result.item is result_item
     assert runtime_resources.callback_scheduler_state.result_queue_occupied_count == 0
+    result_get_observation = runtime_resources.plan_result_queue_get_observation()
+    assert result_get_observation.queue_name == "result_queue"
+    assert result_get_observation.operation_name == "consumer_wait"
+    assert result_get_observation.blocked is True
     assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
     assert runtime_resources.get_result_write_item().item is None
 

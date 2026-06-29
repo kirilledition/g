@@ -1970,6 +1970,28 @@ impl NativeCallbackSchedulerState {
         self.inner.dosage_buffer_limit()
     }
 
+    pub(crate) fn plan_dosage_queue_put_observation_value(
+        &self,
+        queued: bool,
+    ) -> NativeCallbackQueuePutObservationPlan {
+        self.inner.plan_dosage_queue_put_observation(queued).into()
+    }
+
+    pub(crate) fn plan_dosage_queue_get_observation_value(&self) -> NativeCallbackQueueGetObservationPlan {
+        self.inner.plan_dosage_queue_get_observation().into()
+    }
+
+    pub(crate) fn plan_result_queue_put_observation_value(
+        &self,
+        queued: bool,
+    ) -> NativeCallbackQueuePutObservationPlan {
+        self.inner.plan_result_queue_put_observation(queued).into()
+    }
+
+    pub(crate) fn plan_result_queue_get_observation_value(&self) -> NativeCallbackQueueGetObservationPlan {
+        self.inner.plan_result_queue_get_observation().into()
+    }
+
     pub(crate) fn plan_worker_start_attempt_value(&mut self) -> NativeCallbackWorkerStartAttemptPlan {
         self.inner.plan_worker_start_attempt().into()
     }

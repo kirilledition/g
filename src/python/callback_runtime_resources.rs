@@ -13,7 +13,8 @@ use super::callback_queue::{
 };
 use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{
-    NativeCallbackQueueBackpressureObservation, NativeCallbackQueueStageBackpressureObservation,
+    NativeCallbackQueueBackpressureObservation, NativeCallbackQueueGetObservationPlan,
+    NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
     NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
     NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerStartAttemptPlan, NativeDosageBufferPoolObservationPlan,
     NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan,
@@ -710,6 +711,26 @@ impl NativeCallbackRuntimeResources {
             elapsed_seconds,
             blocked,
         )
+    }
+
+    fn plan_dosage_queue_put_observation(&self, py: Python<'_>, queued: bool) -> NativeCallbackQueuePutObservationPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_queue_put_observation_value(queued)
+    }
+
+    fn plan_dosage_queue_get_observation(&self, py: Python<'_>) -> NativeCallbackQueueGetObservationPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_queue_get_observation_value()
+    }
+
+    fn plan_result_queue_put_observation(&self, py: Python<'_>, queued: bool) -> NativeCallbackQueuePutObservationPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_result_queue_put_observation_value(queued)
+    }
+
+    fn plan_result_queue_get_observation(&self, py: Python<'_>) -> NativeCallbackQueueGetObservationPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_result_queue_get_observation_value()
     }
 
     fn plan_dosage_buffer_pool_reuse_observation(&self, py: Python<'_>) -> NativeDosageBufferPoolObservationPlan {
