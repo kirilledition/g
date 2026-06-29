@@ -143,7 +143,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
         )
-        self.callback_scheduler_state = self.callback_runtime_resources.callback_scheduler_state
         self.progress_state = self.callback_runtime_resources.progress_state
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
@@ -214,6 +213,22 @@ class NativeBgenCallbackRunner(abc.ABC):
         return self.worker_threads_started
 
     @property
+    def callback_scheduler_state(self) -> _core.NativeCallbackSchedulerState:
+        """Return the active native callback scheduler state."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.callback_scheduler_state
+        fallback_callback_scheduler_state = getattr(self, "fallback_callback_scheduler_state", None)
+        if fallback_callback_scheduler_state is None:
+            message = "Callback scheduler state has not been initialized."
+            raise AttributeError(message)
+        return typing.cast("_core.NativeCallbackSchedulerState", fallback_callback_scheduler_state)
+
+    @callback_scheduler_state.setter
+    def callback_scheduler_state(self, callback_scheduler_state: _core.NativeCallbackSchedulerState) -> None:
+        """Store a fallback scheduler state for manual callback runners."""
+        self.fallback_callback_scheduler_state = callback_scheduler_state
+
+    @property
     def dosage_worker_name(self) -> str:
         """Return the native dosage worker name."""
         if self.uses_native_callback_runtime_resources():
@@ -244,10 +259,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     def uses_native_callback_runtime_resources(self) -> bool:
         """Return whether this runner still uses its production native resource owner."""
         runtime_resources = getattr(self, "callback_runtime_resources", None)
-        return (
-            runtime_resources is not None
-            and self.callback_scheduler_state is typing.cast("typing.Any", runtime_resources).callback_scheduler_state
-        )
+        return runtime_resources is not None and getattr(self, "fallback_callback_scheduler_state", None) is None
 
     @property
     def native_callback_batch_size(self) -> int:
