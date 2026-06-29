@@ -1073,6 +1073,9 @@ Remove Python as the chunk-level scheduler.
   lifecycle execution, including stop/join sequencing and worker-error raise
   planning, while Python keeps public shutdown exceptions, progress completion,
   summary emission, and exception chaining.
+- Callback runtime resources now own production result work-item resource
+  cleanup, including host-buffer returns and result in-flight slot releases,
+  while Python keeps materialization, writes, and timing emission.
 
 ### Tests
 

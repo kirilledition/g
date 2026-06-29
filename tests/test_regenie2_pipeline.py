@@ -2287,6 +2287,50 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) is None
 
 
+def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-result-cleanup-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    dosage_buffer = np.empty((2, 2), dtype=np.float32)
+
+    assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
+    runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+
+    pre_write_result = runtime_resources.release_result_work_item_pre_write_resources(
+        id(dosage_buffer),
+        dosage_buffer,
+    )
+    assert pre_write_result.released_host_buffer is True
+    assert pre_write_result.free_buffer_count == 1
+    assert pre_write_result.released_result_in_flight_slot is False
+    free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is dosage_buffer
+
+    final_result = runtime_resources.release_result_work_item_final_resources(
+        id(dosage_buffer),
+        dosage_buffer,
+        has_released_host_dosage_buffer=True,
+        release_in_flight_slot=True,
+    )
+    assert final_result.released_host_buffer is False
+    assert final_result.free_buffer_count is None
+    assert final_result.released_result_in_flight_slot is True
+    assert final_result.result_in_flight_resource_name == "result_in_flight_slots"
+    assert final_result.result_in_flight_operation_name == "release"
+    assert final_result.result_in_flight_blocked is False
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+
 def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> None:
     def worker_target() -> None:
         return None

@@ -17,6 +17,7 @@ use super::schedule::{
     NativeCallbackWorkerStartAttemptPlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkItemDispatchPlan,
     NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseObservationPlan,
     NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
+    NativeResultWriteItemResourceReleasePlan,
 };
 
 #[pyclass]
@@ -49,6 +50,16 @@ pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
     raise_worker_error: bool,
     complete_progress: bool,
     emit_binary_correction_summary: bool,
+}
+
+#[pyclass]
+pub(crate) struct NativeResultWorkItemResourceReleaseResult {
+    released_host_buffer: bool,
+    free_buffer_count: Option<usize>,
+    released_result_in_flight_slot: bool,
+    result_in_flight_resource_name: Option<String>,
+    result_in_flight_operation_name: Option<String>,
+    result_in_flight_blocked: Option<bool>,
 }
 
 #[pymethods]
@@ -363,6 +374,50 @@ impl NativeCallbackRuntimeResources {
         self.result_in_flight_slot_signal.bind(py).borrow().notify_waiters_value()?;
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         Ok(scheduler_state.plan_result_in_flight_slot_release_observation_value())
+    }
+
+    fn release_result_work_item_pre_write_resources(
+        &self,
+        py: Python<'_>,
+        host_dosage_buffer_identifier: Option<usize>,
+        host_dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeResultWorkItemResourceReleaseResult> {
+        let has_host_dosage_buffer = !host_dosage_buffer.is_none();
+        let resource_release_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_result_write_item_pre_write_resource_release_value(has_host_dosage_buffer)
+        };
+        self.release_result_work_item_resources_with_plan(
+            py,
+            &resource_release_plan,
+            host_dosage_buffer_identifier,
+            host_dosage_buffer,
+        )
+    }
+
+    fn release_result_work_item_final_resources(
+        &self,
+        py: Python<'_>,
+        host_dosage_buffer_identifier: Option<usize>,
+        host_dosage_buffer: &Bound<'_, PyAny>,
+        has_released_host_dosage_buffer: bool,
+        release_in_flight_slot: bool,
+    ) -> PyResult<NativeResultWorkItemResourceReleaseResult> {
+        let has_host_dosage_buffer = !host_dosage_buffer.is_none();
+        let resource_release_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_result_write_item_final_resource_release_value(
+                has_host_dosage_buffer,
+                has_released_host_dosage_buffer,
+                release_in_flight_slot,
+            )
+        };
+        self.release_result_work_item_resources_with_plan(
+            py,
+            &resource_release_plan,
+            host_dosage_buffer_identifier,
+            host_dosage_buffer,
+        )
     }
 
     fn acquire_dosage_buffer_with_backpressure_timeout(
@@ -722,6 +777,62 @@ impl NativeCallbackRuntimeResources {
 }
 
 #[pymethods]
+impl NativeResultWorkItemResourceReleaseResult {
+    #[getter]
+    fn released_host_buffer(&self) -> bool {
+        self.released_host_buffer
+    }
+
+    #[getter]
+    fn free_buffer_count(&self) -> Option<usize> {
+        self.free_buffer_count
+    }
+
+    #[getter]
+    fn released_result_in_flight_slot(&self) -> bool {
+        self.released_result_in_flight_slot
+    }
+
+    #[getter]
+    fn result_in_flight_resource_name(&self) -> Option<&str> {
+        self.result_in_flight_resource_name.as_deref()
+    }
+
+    #[getter]
+    fn result_in_flight_operation_name(&self) -> Option<&str> {
+        self.result_in_flight_operation_name.as_deref()
+    }
+
+    #[getter]
+    fn result_in_flight_blocked(&self) -> Option<bool> {
+        self.result_in_flight_blocked
+    }
+}
+
+impl NativeResultWorkItemResourceReleaseResult {
+    fn empty() -> Self {
+        Self {
+            released_host_buffer: false,
+            free_buffer_count: None,
+            released_result_in_flight_slot: false,
+            result_in_flight_resource_name: None,
+            result_in_flight_operation_name: None,
+            result_in_flight_blocked: None,
+        }
+    }
+
+    fn record_result_in_flight_release(
+        &mut self,
+        release_observation_plan: &NativeResultInFlightReleaseObservationPlan,
+    ) {
+        self.released_result_in_flight_slot = true;
+        self.result_in_flight_resource_name = Some(release_observation_plan.resource_name_value().to_owned());
+        self.result_in_flight_operation_name = Some(release_observation_plan.operation_name_value().to_owned());
+        self.result_in_flight_blocked = Some(release_observation_plan.blocked_value());
+    }
+}
+
+#[pymethods]
 impl NativeCallbackWorkerFinishLifecycleResult {
     #[getter]
     fn has_shutdown_timeout(&self) -> bool {
@@ -853,6 +964,35 @@ impl NativeCallbackRuntimeResources {
             ));
         }
         Ok(handoff_plan)
+    }
+
+    fn release_result_work_item_resources_with_plan(
+        &self,
+        py: Python<'_>,
+        resource_release_plan: &NativeResultWriteItemResourceReleasePlan,
+        host_dosage_buffer_identifier: Option<usize>,
+        host_dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeResultWorkItemResourceReleaseResult> {
+        let mut release_result = NativeResultWorkItemResourceReleaseResult::empty();
+        if resource_release_plan.should_release_host_buffer_value() {
+            if host_dosage_buffer.is_none() {
+                return Err(PyRuntimeError::new_err(
+                    "Native result work item resource release plan selected a missing host buffer.",
+                ));
+            }
+            let Some(buffer_identifier) = host_dosage_buffer_identifier else {
+                return Err(PyRuntimeError::new_err(
+                    "Native result work item resource release plan selected a missing host buffer identifier.",
+                ));
+            };
+            release_result.released_host_buffer = true;
+            release_result.free_buffer_count = self.return_dosage_buffer(py, buffer_identifier, host_dosage_buffer)?;
+        }
+        if resource_release_plan.should_release_result_in_flight_slot_value() {
+            let release_observation_plan = self.release_result_in_flight_slot(py)?;
+            release_result.record_result_in_flight_release(&release_observation_plan);
+        }
+        Ok(release_result)
     }
 }
 

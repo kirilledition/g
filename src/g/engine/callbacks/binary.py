@@ -584,12 +584,10 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             )
             self.record_binary_correction_diagnostics(multi_work_item.binary_chunk_diagnostics)
         finally:
-            resource_release_plan = self.callback_scheduler_state.plan_result_write_item_final_resource_release(
-                has_host_dosage_buffer=multi_work_item.host_dosage_buffer is not None,
-                has_released_host_dosage_buffer=host_dosage_buffer_released,
-                release_in_flight_slot=multi_work_item.release_in_flight_slot,
+            self.release_result_work_item_final_resources(
+                multi_work_item,
+                host_dosage_buffer_released=host_dosage_buffer_released,
             )
-            self.release_result_work_item_resources(multi_work_item, resource_release_plan)
 
     def compute_preprocessed_chunk(
         self,

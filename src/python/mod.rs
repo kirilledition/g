@@ -63,6 +63,7 @@ use callback_queue::{
 };
 use callback_runtime_resources::{
     NativeCallbackRuntimeResources, NativeCallbackWorkerFinishLifecycleResult, NativeDosageBufferAcquireResult,
+    NativeResultWorkItemResourceReleaseResult,
 };
 use callback_summary::{
     NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
@@ -1873,6 +1874,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackWorkerStopPollPlan>()?;
     module.add_class::<NativeCallbackWorkerFinishLifecycleResult>()?;
     module.add_class::<NativeDosageBufferAcquireResult>()?;
+    module.add_class::<NativeResultWorkItemResourceReleaseResult>()?;
     module.add_class::<NativeDosageBufferAcquireAttemptPlan>()?;
     module.add_class::<NativeDosageBufferDiscardAttemptPlan>()?;
     module.add_class::<NativeDosageBufferPoolObservationPlan>()?;

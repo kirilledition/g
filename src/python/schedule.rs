@@ -2051,6 +2051,28 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_worker_error_raise().into()
     }
 
+    pub(crate) fn plan_result_write_item_pre_write_resource_release_value(
+        &self,
+        has_host_dosage_buffer: bool,
+    ) -> NativeResultWriteItemResourceReleasePlan {
+        self.inner.plan_result_write_item_pre_write_resource_release(has_host_dosage_buffer).into()
+    }
+
+    pub(crate) fn plan_result_write_item_final_resource_release_value(
+        &self,
+        has_host_dosage_buffer: bool,
+        has_released_host_dosage_buffer: bool,
+        release_in_flight_slot: bool,
+    ) -> NativeResultWriteItemResourceReleasePlan {
+        self.inner
+            .plan_result_write_item_final_resource_release(
+                has_host_dosage_buffer,
+                has_released_host_dosage_buffer,
+                release_in_flight_slot,
+            )
+            .into()
+    }
+
     pub(crate) fn plan_dosage_buffer_acquire_backpressure_attempt_value(
         &self,
         free_buffer_count: usize,
@@ -2299,6 +2321,30 @@ impl NativeResultInFlightAcquireAttemptPlan {
 impl NativeResultInFlightReleaseAttemptPlan {
     pub(crate) fn has_release_error_value(&self) -> bool {
         self.inner.has_release_error
+    }
+}
+
+impl NativeResultInFlightReleaseObservationPlan {
+    pub(crate) fn resource_name_value(&self) -> &str {
+        &self.inner.resource_name
+    }
+
+    pub(crate) fn operation_name_value(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    pub(crate) fn blocked_value(&self) -> bool {
+        self.inner.blocked
+    }
+}
+
+impl NativeResultWriteItemResourceReleasePlan {
+    pub(crate) fn should_release_host_buffer_value(&self) -> bool {
+        self.inner.should_release_host_buffer
+    }
+
+    pub(crate) fn should_release_result_in_flight_slot_value(&self) -> bool {
+        self.inner.should_release_result_in_flight_slot
     }
 }
 

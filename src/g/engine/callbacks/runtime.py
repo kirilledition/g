@@ -1055,12 +1055,10 @@ class NativeBgenCallbackRunner(abc.ABC):
             )
             self.record_binary_correction_diagnostics(work_item.binary_chunk_diagnostics)
         finally:
-            resource_release_plan = self.callback_scheduler_state.plan_result_write_item_final_resource_release(
-                has_host_dosage_buffer=work_item.host_dosage_buffer is not None,
-                has_released_host_dosage_buffer=host_dosage_buffer_released,
-                release_in_flight_slot=work_item.release_in_flight_slot,
+            self.release_result_work_item_final_resources(
+                work_item,
+                host_dosage_buffer_released=host_dosage_buffer_released,
             )
-            self.release_result_work_item_resources(work_item, resource_release_plan)
 
     def put_dosage_work_item(
         self,
@@ -1840,18 +1838,49 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return dosage_buffer_owner
         return None
 
+    def result_work_item_host_buffer_owner(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+    ) -> HostGenotypeBuffer | None:
+        """Return the reusable host buffer owner referenced by one result work item."""
+        if work_item.host_dosage_buffer is None:
+            return None
+        return self._dosage_buffer_owner(work_item.host_dosage_buffer)
+
+    def record_result_work_item_resource_release_result(
+        self,
+        release_result: _core.NativeResultWorkItemResourceReleaseResult,
+    ) -> None:
+        """Record Python-side telemetry from native result work item resource cleanup."""
+        if release_result.free_buffer_count is not None:
+            self.record_dosage_buffer_pool_return_operation(
+                free_buffer_count=release_result.free_buffer_count,
+            )
+        if not release_result.released_result_in_flight_slot:
+            return
+        resource_name = release_result.result_in_flight_resource_name
+        operation_name = release_result.result_in_flight_operation_name
+        blocked = release_result.result_in_flight_blocked
+        if resource_name is None or operation_name is None or blocked is None:
+            message = "Native result work item resource release result omitted in-flight release details."
+            raise RuntimeError(message)
+        self.record_bounded_resource_operation(
+            resource_name=resource_name,
+            operation_name=operation_name,
+            elapsed_seconds=0.0,
+            blocked=blocked,
+        )
+
     def release_result_work_item_buffer(
         self,
         work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
     ) -> None:
         """Release resources after a dependent JAX result is materialized."""
         host_dosage_buffer_released = self.release_result_work_item_host_buffer(work_item)
-        resource_release_plan = self.callback_scheduler_state.plan_result_write_item_final_resource_release(
-            has_host_dosage_buffer=work_item.host_dosage_buffer is not None,
-            has_released_host_dosage_buffer=host_dosage_buffer_released,
-            release_in_flight_slot=work_item.release_in_flight_slot,
+        self.release_result_work_item_final_resources(
+            work_item,
+            host_dosage_buffer_released=host_dosage_buffer_released,
         )
-        self.release_result_work_item_resources(work_item, resource_release_plan)
 
     def plan_result_write_drain_completion(
         self,
@@ -1929,11 +1958,43 @@ class NativeBgenCallbackRunner(abc.ABC):
         work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
     ) -> bool:
         """Release the host genotype buffer associated with one result."""
+        if self.uses_native_callback_runtime_resources():
+            host_dosage_buffer_owner = self.result_work_item_host_buffer_owner(work_item)
+            release_result = self.callback_runtime_resources.release_result_work_item_pre_write_resources(
+                None if host_dosage_buffer_owner is None else id(host_dosage_buffer_owner),
+                host_dosage_buffer_owner,
+            )
+            self.record_result_work_item_resource_release_result(release_result)
+            return release_result.released_host_buffer
         resource_release_plan = self.callback_scheduler_state.plan_result_write_item_pre_write_resource_release(
             has_host_dosage_buffer=work_item.host_dosage_buffer is not None,
         )
         self.release_result_work_item_resources(work_item, resource_release_plan)
         return resource_release_plan.should_release_host_buffer
+
+    def release_result_work_item_final_resources(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+        *,
+        host_dosage_buffer_released: bool,
+    ) -> None:
+        """Release final resources associated with one result work item."""
+        if self.uses_native_callback_runtime_resources():
+            host_dosage_buffer_owner = self.result_work_item_host_buffer_owner(work_item)
+            release_result = self.callback_runtime_resources.release_result_work_item_final_resources(
+                None if host_dosage_buffer_owner is None else id(host_dosage_buffer_owner),
+                host_dosage_buffer_owner,
+                host_dosage_buffer_released,
+                work_item.release_in_flight_slot,
+            )
+            self.record_result_work_item_resource_release_result(release_result)
+            return
+        resource_release_plan = self.callback_scheduler_state.plan_result_write_item_final_resource_release(
+            has_host_dosage_buffer=work_item.host_dosage_buffer is not None,
+            has_released_host_dosage_buffer=host_dosage_buffer_released,
+            release_in_flight_slot=work_item.release_in_flight_slot,
+        )
+        self.release_result_work_item_resources(work_item, resource_release_plan)
 
     def release_result_work_item_in_flight_slot(
         self,
