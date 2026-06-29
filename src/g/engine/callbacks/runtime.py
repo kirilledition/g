@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import abc
-import collections
-import collections.abc
 import contextlib
 import enum
 import threading
@@ -23,6 +21,8 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.engine import telemetry, timing
 
 if typing.TYPE_CHECKING:
+    import collections.abc
+
     import jax
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
@@ -149,7 +149,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.dosage_buffer_pool_signal = _core.NativeCallbackWaitSignal()
         self.dosage_queue = _core.NativeCallbackObjectQueue(self.callback_scheduler_state.dosage_queue_depth)
         self.result_queue = _core.NativeCallbackObjectQueue(self.callback_scheduler_state.result_queue_depth)
-        self.free_dosage_buffers: collections.deque[HostGenotypeBuffer] = collections.deque()
+        self.free_dosage_buffers = _core.NativeCallbackObjectQueue(self.callback_scheduler_state.dosage_buffer_limit)
         self.worker_error_cause: BaseException | None = None
         self.result_worker_error_cause: BaseException | None = None
         self.binary_correction_summary = _core.NativeBinaryCorrectionSummary()
@@ -268,7 +268,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     @property
     def free_dosage_buffer_count(self) -> int:
         """Return the number of host buffers waiting for reuse."""
-        return len(self.free_dosage_buffers)
+        return self.free_dosage_buffers.occupied_count
 
     @property
     def result_in_flight_slot_count(self) -> int:
@@ -1534,7 +1534,11 @@ class NativeBgenCallbackRunner(abc.ABC):
                 free_buffer_count=self.free_dosage_buffer_count
             )
             if acquire_plan.should_take_free_buffer:
-                dosage_buffer = self.free_dosage_buffers.popleft()
+                free_buffer_result = self.free_dosage_buffers.get(timeout_seconds=0.0)
+                if not free_buffer_result.has_item:
+                    message = "Native dosage-buffer free queue was empty after scheduler selected reuse."
+                    raise RuntimeError(message)
+                dosage_buffer = typing.cast("HostGenotypeBuffer", free_buffer_result.item)
             elif acquire_plan.should_allocate:
                 should_allocate_dosage_buffer = True
             elif self.stage_timing_recorder is None and acquire_plan.should_wait:
@@ -1565,7 +1569,11 @@ class NativeBgenCallbackRunner(abc.ABC):
                 free_buffer_count=self.free_dosage_buffer_count
             )
             if acquire_plan.should_take_free_buffer:
-                dosage_buffer = self.free_dosage_buffers.popleft()
+                free_buffer_result = self.free_dosage_buffers.get(timeout_seconds=0.0)
+                if not free_buffer_result.has_item:
+                    message = "Native dosage-buffer free queue was empty after scheduler selected reuse."
+                    raise RuntimeError(message)
+                dosage_buffer = typing.cast("HostGenotypeBuffer", free_buffer_result.item)
             elif acquire_plan.should_allocate:
                 should_allocate_dosage_buffer = True
             elif acquire_plan.should_wait:
@@ -1600,7 +1608,10 @@ class NativeBgenCallbackRunner(abc.ABC):
         return_plan = self.callback_scheduler_state.plan_dosage_buffer_return_attempt(id(dosage_buffer_owner))
         if not return_plan.should_return:
             return
-        self.free_dosage_buffers.append(dosage_buffer_owner)
+        queued = self.free_dosage_buffers.put(dosage_buffer_owner, timeout_seconds=0.0)
+        if not queued:
+            message = "Native dosage-buffer free queue had no slot for returned buffer."
+            raise RuntimeError(message)
         current_depth = self.free_dosage_buffer_count
         self.dosage_buffer_pool_signal.notify_waiters()
         self.record_dosage_buffer_pool_return_operation(

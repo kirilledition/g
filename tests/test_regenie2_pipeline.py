@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import collections
 import concurrent.futures
 import dataclasses
 import queue
@@ -621,9 +620,11 @@ class BufferObservingWriterSession(FakeWriterSession):
         self.observed_buffer_before_write = False
 
     def write_regenie2_native_chunk(self, **kwargs: object) -> None:
-        observed_buffer = self.callback.free_dosage_buffers.popleft()
+        observed_buffer_result = self.callback.free_dosage_buffers.get(timeout_seconds=0.0)
+        assert observed_buffer_result.has_item is True
+        observed_buffer = typing.cast("callback_shared.HostGenotypeBuffer", observed_buffer_result.item)
         assert observed_buffer is self.expected_buffer
-        self.callback.free_dosage_buffers.appendleft(observed_buffer)
+        assert self.callback.free_dosage_buffers.put(observed_buffer, timeout_seconds=0.0) is True
         self.observed_buffer_before_write = True
         super().write_regenie2_native_chunk(**kwargs)
 
@@ -1932,7 +1933,9 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         )
         self.result_in_flight_slot_signal = callback_runtime._core.NativeCallbackWaitSignal()
         self.dosage_buffer_pool_signal = callback_runtime._core.NativeCallbackWaitSignal()
-        self.free_dosage_buffers: collections.deque[callback_shared.HostGenotypeBuffer] = collections.deque()
+        self.free_dosage_buffers = callback_runtime._core.NativeCallbackObjectQueue(
+            self.callback_scheduler_state.dosage_buffer_limit
+        )
         self.worker_error = None
         self.result_worker_error = None
         self.sample_major_metadata: list[object] = []
@@ -1985,6 +1988,9 @@ def attach_manual_callback_scheduler_state(callback: typing.Any) -> None:
     )
     callback.result_in_flight_slot_signal = callback_runtime._core.NativeCallbackWaitSignal()
     callback.dosage_buffer_pool_signal = callback_runtime._core.NativeCallbackWaitSignal()
+    callback.free_dosage_buffers = callback_runtime._core.NativeCallbackObjectQueue(
+        callback.callback_scheduler_state.dosage_buffer_limit
+    )
 
 
 def mark_callback_workers_started(callback: typing.Any) -> None:
@@ -4388,7 +4394,9 @@ def test_native_callback_runner_uses_scheduler_result_write_item_resource_releas
     assert scheduler_state.final_release_in_flight_slot is True
     assert scheduler_state.returned_buffer_identifier == id(host_dosage_buffer)
     assert scheduler_state.release_called is True
-    assert callback.free_dosage_buffers.popleft() is host_dosage_buffer
+    free_buffer_result = callback.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is host_dosage_buffer
 
 
 def test_native_callback_runner_uses_scheduler_result_write_drain_completion_plan() -> None:
@@ -5303,7 +5311,9 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
     assert callback.callback_scheduler_state.result_in_flight_occupied_count == 1
     callback.release_result_in_flight_slot()
     assert callback.callback_scheduler_state.result_in_flight_occupied_count == 0
-    assert callback.free_dosage_buffers.popleft() is host_dosage_buffer
+    free_buffer_result = callback.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is host_dosage_buffer
     assert len(writer_session.native_chunks) == 1
 
 
@@ -5383,7 +5393,9 @@ def test_result_worker_releases_host_dosage_buffer_before_output_write() -> None
     )
 
     assert observing_writer_session.observed_buffer_before_write is True
-    assert callback.free_dosage_buffers.popleft() is host_dosage_buffer
+    free_buffer_result = callback.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is host_dosage_buffer
     assert callback.callback_scheduler_state.result_in_flight_occupied_count == 0
 
 

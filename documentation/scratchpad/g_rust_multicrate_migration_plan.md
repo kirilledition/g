@@ -1042,6 +1042,8 @@ Remove Python as the chunk-level scheduler.
   object queue while the native scheduler remains the occupancy authority.
 - Result in-flight slot and dosage-buffer pool waits now use native
   generation-counted wait signals instead of Python condition variables.
+- Free host dosage-buffer storage now uses the native callback object queue,
+  leaving Python to inspect buffer shape and dtype before reuse or discard.
 
 ### Tests
 
