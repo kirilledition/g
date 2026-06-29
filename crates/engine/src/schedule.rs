@@ -249,6 +249,14 @@ pub struct CallbackQueuePutAttemptPlan {
     pub queue_capacity: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackQueuePutObservationPlan {
+    pub queue_name: String,
+    pub operation_name: String,
+    pub blocked: bool,
+    pub should_retry_put: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CallbackQueueGetAttemptPlan {
     pub should_get: bool,
@@ -704,6 +712,12 @@ impl CallbackSchedulerState {
     }
 
     #[must_use]
+    pub fn plan_dosage_queue_put_observation(&self, queued: bool) -> CallbackQueuePutObservationPlan {
+        debug_assert!(self.dosage_queue_state.queue_capacity() > 0);
+        plan_callback_queue_put_observation(DOSAGE_QUEUE_NAME, queued)
+    }
+
+    #[must_use]
     pub fn plan_dosage_queue_get_attempt(&mut self, has_queued_item: bool) -> CallbackQueueGetAttemptPlan {
         plan_callback_queue_get_attempt(&mut self.dosage_queue_state, has_queued_item)
     }
@@ -744,6 +758,12 @@ impl CallbackSchedulerState {
     #[must_use]
     pub fn plan_result_queue_put_backpressure_attempt(&mut self) -> CallbackQueuePutAttemptPlan {
         self.plan_result_queue_put_attempt(callback_worker_backpressure_poll_timeout_seconds())
+    }
+
+    #[must_use]
+    pub fn plan_result_queue_put_observation(&self, queued: bool) -> CallbackQueuePutObservationPlan {
+        debug_assert!(self.result_queue_state.queue_capacity() > 0);
+        plan_callback_queue_put_observation(RESULT_QUEUE_NAME, queued)
     }
 
     #[must_use]
@@ -1640,6 +1660,24 @@ fn plan_callback_queue_put_attempt(
         wait_timeout_seconds: normalized_wait_timeout_seconds,
         queue_depth: queue_state.occupied_count(),
         queue_capacity: queue_state.queue_capacity(),
+    }
+}
+
+#[must_use]
+pub fn plan_callback_queue_put_observation(queue_name: &str, queued: bool) -> CallbackQueuePutObservationPlan {
+    if queued {
+        return CallbackQueuePutObservationPlan {
+            queue_name: queue_name.to_string(),
+            operation_name: QUEUE_PUT_OPERATION.to_string(),
+            blocked: false,
+            should_retry_put: false,
+        };
+    }
+    CallbackQueuePutObservationPlan {
+        queue_name: queue_name.to_string(),
+        operation_name: QUEUE_PRODUCER_BLOCKING_OPERATION.to_string(),
+        blocked: true,
+        should_retry_put: true,
     }
 }
 
@@ -4015,6 +4053,48 @@ mod tests {
                 wait_timeout_seconds: 0.0,
                 queue_depth: 1,
                 queue_capacity: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn plans_callback_scheduler_queue_put_observations() {
+        let scheduler_state = CallbackSchedulerState::new(1, 1, None, None).unwrap();
+
+        assert_eq!(
+            scheduler_state.plan_dosage_queue_put_observation(true),
+            CallbackQueuePutObservationPlan {
+                queue_name: DOSAGE_QUEUE_NAME.to_string(),
+                operation_name: QUEUE_PUT_OPERATION.to_string(),
+                blocked: false,
+                should_retry_put: false,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_dosage_queue_put_observation(false),
+            CallbackQueuePutObservationPlan {
+                queue_name: DOSAGE_QUEUE_NAME.to_string(),
+                operation_name: QUEUE_PRODUCER_BLOCKING_OPERATION.to_string(),
+                blocked: true,
+                should_retry_put: true,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_queue_put_observation(true),
+            CallbackQueuePutObservationPlan {
+                queue_name: RESULT_QUEUE_NAME.to_string(),
+                operation_name: QUEUE_PUT_OPERATION.to_string(),
+                blocked: false,
+                should_retry_put: false,
+            },
+        );
+        assert_eq!(
+            scheduler_state.plan_result_queue_put_observation(false),
+            CallbackQueuePutObservationPlan {
+                queue_name: RESULT_QUEUE_NAME.to_string(),
+                operation_name: QUEUE_PRODUCER_BLOCKING_OPERATION.to_string(),
+                blocked: true,
+                should_retry_put: true,
             },
         );
     }

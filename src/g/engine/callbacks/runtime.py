@@ -1019,19 +1019,20 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
             queued = self.try_put_dosage_work_item_with_backpressure_timeout(work_item)
-            if not queued:
+            put_observation_plan = self.callback_scheduler_state.plan_dosage_queue_put_observation(queued=queued)
+            if put_observation_plan.should_retry_put:
                 self.record_bounded_resource_stage_duration(
-                    resource_name="dosage_queue",
-                    operation_name="producer_blocking",
+                    resource_name=put_observation_plan.queue_name,
+                    operation_name=put_observation_plan.operation_name,
                     start_time=put_start_time,
-                    blocked=True,
+                    blocked=put_observation_plan.blocked,
                 )
                 continue
             self.record_bounded_resource_stage_duration(
-                resource_name="dosage_queue",
-                operation_name="put",
+                resource_name=put_observation_plan.queue_name,
+                operation_name=put_observation_plan.operation_name,
                 start_time=put_start_time,
-                blocked=False,
+                blocked=put_observation_plan.blocked,
             )
             return
 
@@ -1150,19 +1151,20 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
             queued = self.try_put_result_write_item_with_backpressure_timeout(work_item)
-            if not queued:
+            put_observation_plan = self.callback_scheduler_state.plan_result_queue_put_observation(queued=queued)
+            if put_observation_plan.should_retry_put:
                 self.record_bounded_resource_stage_duration(
-                    resource_name="result_queue",
-                    operation_name="producer_blocking",
+                    resource_name=put_observation_plan.queue_name,
+                    operation_name=put_observation_plan.operation_name,
                     start_time=put_start_time,
-                    blocked=True,
+                    blocked=put_observation_plan.blocked,
                 )
                 continue
             self.record_bounded_resource_stage_duration(
-                resource_name="result_queue",
-                operation_name="put",
+                resource_name=put_observation_plan.queue_name,
+                operation_name=put_observation_plan.operation_name,
                 start_time=put_start_time,
-                blocked=False,
+                blocked=put_observation_plan.blocked,
             )
             return
 

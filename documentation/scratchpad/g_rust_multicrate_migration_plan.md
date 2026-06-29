@@ -1028,6 +1028,8 @@ Remove Python as the chunk-level scheduler.
   plan to select acquire versus producer-blocking accounting.
 - Callback worker start, finish, and abort dispatch now consume native
   lifecycle selectors instead of matching action strings in Python.
+- Callback queue producer put timing now uses native scheduler observation
+  plans to select put versus producer-blocking accounting.
 
 ### Tests
 

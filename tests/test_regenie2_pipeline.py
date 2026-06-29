@@ -2921,6 +2921,14 @@ class CallbackQueuePutAttemptPlanProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class CallbackQueuePutObservationPlanProbe:
+    queue_name: str
+    operation_name: str
+    blocked: bool
+    should_retry_put: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class CallbackQueueGetAttemptPlanProbe:
     should_get: bool
     should_wait: bool
@@ -3137,11 +3145,14 @@ class DosageWorkHandoffSchedulerProbe:
 class CallbackQueueAttemptSchedulerProbe:
     dosage_put_wait_timeout_seconds: float | None = None
     dosage_put_backpressure_called: bool = False
+    dosage_put_observation_queued_values: list[bool] = dataclasses.field(default_factory=list)
     dosage_get_called: bool = False
     result_put_wait_timeout_seconds: float | None = None
     result_put_backpressure_called: bool = False
+    result_put_observation_queued_values: list[bool] = dataclasses.field(default_factory=list)
     result_get_called: bool = False
     result_handoff_has_work_items: list[bool] = dataclasses.field(default_factory=list)
+    stage_observation_names: list[str] = dataclasses.field(default_factory=list)
 
     def plan_dosage_queue_put_attempt(self, wait_timeout_seconds: float) -> CallbackQueuePutAttemptPlanProbe:
         self.dosage_put_wait_timeout_seconds = wait_timeout_seconds
@@ -3161,6 +3172,15 @@ class CallbackQueueAttemptSchedulerProbe:
             wait_timeout_seconds=0.0,
             queue_depth=1,
             queue_capacity=1,
+        )
+
+    def plan_dosage_queue_put_observation(self, *, queued: bool) -> CallbackQueuePutObservationPlanProbe:
+        self.dosage_put_observation_queued_values.append(queued)
+        return CallbackQueuePutObservationPlanProbe(
+            queue_name="dosage_queue",
+            operation_name="put" if queued else "producer_blocking",
+            blocked=not queued,
+            should_retry_put=not queued,
         )
 
     def plan_dosage_queue_get_attempt(self, *, has_queued_item: bool) -> CallbackQueueGetAttemptPlanProbe:
@@ -3195,12 +3215,46 @@ class CallbackQueueAttemptSchedulerProbe:
             queue_capacity=1,
         )
 
+    def plan_result_queue_put_observation(self, *, queued: bool) -> CallbackQueuePutObservationPlanProbe:
+        self.result_put_observation_queued_values.append(queued)
+        return CallbackQueuePutObservationPlanProbe(
+            queue_name="result_queue",
+            operation_name="put" if queued else "producer_blocking",
+            blocked=not queued,
+            should_retry_put=not queued,
+        )
+
     def plan_result_write_handoff(self, *, has_result_work_item: bool) -> ResultWriteHandoffPlanProbe:
         self.result_handoff_has_work_items.append(has_result_work_item)
         return ResultWriteHandoffPlanProbe(
             should_enqueue=True,
             has_result_work_item=has_result_work_item,
             is_stop_signal=not has_result_work_item,
+        )
+
+    def plan_current_queue_stage_backpressure_observation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> CallbackQueueStageBackpressureObservationProbe:
+        stage_name = {
+            ("dosage_queue", "put"): "callback_queue_put",
+            ("dosage_queue", "producer_blocking"): "callback_queue_producer_blocking",
+            ("result_queue", "put"): "result_queue_put",
+            ("result_queue", "producer_blocking"): "result_queue_producer_blocking",
+        }[(queue_name, operation_name)]
+        self.stage_observation_names.append(stage_name)
+        return CallbackQueueStageBackpressureObservationProbe(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            stage_name=stage_name,
+            queue_depth=1,
+            queue_capacity=1,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=elapsed_seconds if blocked else 0.0,
         )
 
     def plan_result_queue_get_attempt(self, *, has_queued_item: bool) -> CallbackQueueGetAttemptPlanProbe:
@@ -3769,6 +3823,35 @@ def test_native_callback_runner_uses_scheduler_queue_backpressure_attempt_plans(
 
     assert scheduler_state.dosage_put_backpressure_called is True
     assert scheduler_state.result_put_backpressure_called is True
+
+
+def test_native_callback_runner_uses_scheduler_queue_put_observation_plans() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = CallbackQueueAttemptSchedulerProbe()
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    callback_for_observation = typing.cast("typing.Any", callback)
+    callback_for_observation.callback_scheduler_state = scheduler_state
+    callback.stage_timing_recorder = stage_timing_recorder
+    callback_for_observation.start = lambda: None
+    callback_for_observation.raise_worker_error_if_present = lambda: None
+
+    def try_put_dosage_work_item_success(work_item: object) -> bool:
+        del work_item
+        return True
+
+    def try_put_result_write_item_success(work_item: object) -> bool:
+        del work_item
+        return True
+
+    callback_for_observation.try_put_dosage_work_item_with_backpressure_timeout = try_put_dosage_work_item_success
+    callback_for_observation.try_put_result_write_item_with_backpressure_timeout = try_put_result_write_item_success
+
+    callback.put_dosage_work_item(None)
+    callback.put_result_write_item(None)
+
+    assert scheduler_state.dosage_put_observation_queued_values == [True]
+    assert scheduler_state.result_put_observation_queued_values == [True]
+    assert scheduler_state.stage_observation_names == ["callback_queue_put", "result_queue_put"]
 
 
 def test_native_callback_runner_uses_scheduler_result_write_handoff_plans() -> None:

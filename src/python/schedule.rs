@@ -105,6 +105,11 @@ pub(crate) struct NativeCallbackQueuePutAttemptPlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeCallbackQueuePutObservationPlan {
+    inner: native_schedule::CallbackQueuePutObservationPlan,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackQueueGetAttemptPlan {
     inner: native_schedule::CallbackQueueGetAttemptPlan,
 }
@@ -450,6 +455,10 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_dosage_queue_put_backpressure_attempt().into()
     }
 
+    fn plan_dosage_queue_put_observation(&self, queued: bool) -> NativeCallbackQueuePutObservationPlan {
+        self.inner.plan_dosage_queue_put_observation(queued).into()
+    }
+
     fn plan_dosage_queue_get_attempt(&mut self, has_queued_item: bool) -> NativeCallbackQueueGetAttemptPlan {
         self.inner.plan_dosage_queue_get_attempt(has_queued_item).into()
     }
@@ -487,6 +496,10 @@ impl NativeCallbackSchedulerState {
 
     fn plan_result_queue_put_backpressure_attempt(&mut self) -> NativeCallbackQueuePutAttemptPlan {
         self.inner.plan_result_queue_put_backpressure_attempt().into()
+    }
+
+    fn plan_result_queue_put_observation(&self, queued: bool) -> NativeCallbackQueuePutObservationPlan {
+        self.inner.plan_result_queue_put_observation(queued).into()
     }
 
     fn plan_result_queue_get_attempt(&mut self, has_queued_item: bool) -> NativeCallbackQueueGetAttemptPlan {
@@ -1439,6 +1452,29 @@ impl NativeCallbackQueuePutAttemptPlan {
 }
 
 #[pymethods]
+impl NativeCallbackQueuePutObservationPlan {
+    #[getter]
+    fn queue_name(&self) -> &str {
+        &self.inner.queue_name
+    }
+
+    #[getter]
+    fn operation_name(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    #[getter]
+    fn blocked(&self) -> bool {
+        self.inner.blocked
+    }
+
+    #[getter]
+    fn should_retry_put(&self) -> bool {
+        self.inner.should_retry_put
+    }
+}
+
+#[pymethods]
 impl NativeCallbackQueueGetAttemptPlan {
     #[getter]
     fn should_get(&self) -> bool {
@@ -1976,6 +2012,12 @@ impl From<native_schedule::CallbackQueueStageBackpressureObservation>
 impl From<native_schedule::CallbackQueuePutAttemptPlan> for NativeCallbackQueuePutAttemptPlan {
     fn from(put_attempt_plan: native_schedule::CallbackQueuePutAttemptPlan) -> Self {
         Self { inner: put_attempt_plan }
+    }
+}
+
+impl From<native_schedule::CallbackQueuePutObservationPlan> for NativeCallbackQueuePutObservationPlan {
+    fn from(put_observation_plan: native_schedule::CallbackQueuePutObservationPlan) -> Self {
+        Self { inner: put_observation_plan }
     }
 }
 
