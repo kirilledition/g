@@ -651,6 +651,20 @@ class RecordingTelemetrySession:
     def log_progress(self, **fields: object) -> None:
         self.progress_events.append(fields)
 
+    def log_callback_progress_event(
+        self,
+        progress_event: callback_runtime._core.NativeCallbackProgressTelemetryEvent,
+    ) -> None:
+        self.events.append(
+            (
+                progress_event.event_name,
+                {
+                    "chromosome": progress_event.chromosome,
+                    "processed_chunk_count": progress_event.processed_chunk_count,
+                },
+            )
+        )
+
     def log_sample_alignment_completed(
         self,
         *,

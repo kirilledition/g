@@ -879,6 +879,45 @@ def test_native_telemetry_run_session_owns_engine_opening_events(tmp_path: Path)
     assert "phenotype" not in event_payloads[1]
 
 
+def test_native_telemetry_run_session_owns_callback_progress_events(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+    progress_state = _core.NativeCallbackProgressState()
+
+    progress_update = progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr1", 0, 8))
+    telemetry_session.log_callback_progress_event(progress_update.telemetry_plan.events[0])
+    progress_completion = progress_state.finish_progress()
+    assert progress_completion is not None
+    telemetry_session.log_callback_progress_event(progress_completion.telemetry_event)
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "chromosome_started",
+        "chromosome_completed",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO"]
+    assert event_payloads[0]["chromosome"] == "chr1"
+    assert event_payloads[0]["processed_chunk_count"] == 1
+    assert event_payloads[1]["chromosome"] == "chr1"
+    assert event_payloads[1]["processed_chunk_count"] == 1
+
+
 def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1328,12 +1328,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         progress_update = self.record_processed_chunk(build_native_callback_chunk_identity(metadata))
         telemetry_plan = progress_update.telemetry_plan
         for progress_event in telemetry_plan.events:
-            self.telemetry_session.log_event(
-                progress_event.event_name,
-                level=progress_event.level,
-                chromosome=progress_event.chromosome,
-                processed_chunk_count=progress_event.processed_chunk_count,
-            )
+            self.telemetry_session.log_callback_progress_event(progress_event)
         progress_record = telemetry_plan.progress
         self.telemetry_session.log_progress(
             processed_chunk_count=progress_record.processed_chunk_count,
@@ -1349,13 +1344,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         progress_completion = self.finish_progress_state()
         if self.telemetry_session is None or progress_completion is None:
             return
-        progress_event = progress_completion.telemetry_event
-        self.telemetry_session.log_event(
-            progress_event.event_name,
-            level=progress_event.level,
-            chromosome=progress_event.chromosome,
-            processed_chunk_count=progress_event.processed_chunk_count,
-        )
+        self.telemetry_session.log_callback_progress_event(progress_completion.telemetry_event)
 
     def record_binary_null_model_failure_count(self, failure_count: int) -> None:
         """Accumulate binary null-model failures for run-level telemetry."""

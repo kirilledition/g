@@ -1150,6 +1150,8 @@ Remove Python as the chunk-level scheduler.
   resolution event names, levels, and optional fallback fields.
 - Native telemetry run sessions now own production association-backend-selected
   and BGEN-engine-opened event names, levels, and optional phenotype fields.
+- Native telemetry run sessions now emit native callback progress event objects
+  directly for chromosome start/completion telemetry.
 
 ### Tests
 

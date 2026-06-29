@@ -78,6 +78,18 @@ class ProgressTrackingTelemetrySession:
         """Record a telemetry event call."""
         self.logged_events.append((event_name, level, kwargs))
 
+    def log_callback_progress_event(
+        self,
+        progress_event: callback_runtime._core.NativeCallbackProgressTelemetryEvent,
+    ) -> None:
+        """Record a native callback progress event call."""
+        self.log_event(
+            progress_event.event_name,
+            progress_event.level,
+            chromosome=progress_event.chromosome,
+            processed_chunk_count=progress_event.processed_chunk_count,
+        )
+
     def log_progress(self, **kwargs: typing.Any) -> None:
         """Record a progress callback call."""
         self.logged_progress.append(kwargs)

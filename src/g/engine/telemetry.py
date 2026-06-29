@@ -358,6 +358,10 @@ class TelemetrySession:
             phenotype_count,
         )
 
+    def log_callback_progress_event(self, progress_event: _core.NativeCallbackProgressTelemetryEvent) -> None:
+        """Write a canonical callback chromosome progress event."""
+        self.native_session_handle.emit_callback_progress_event(progress_event)
+
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
         self.native_session_handle.emit_progress(

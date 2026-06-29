@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use super::callback_progress::NativeCallbackProgressTelemetryEvent;
 use super::run_events;
 use g_runtime::run_events as native_run_events;
 use g_runtime::telemetry_session as native_telemetry_session;
@@ -669,6 +670,17 @@ impl NativeTelemetryRunSession {
             native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
             &fields,
         )
+    }
+
+    fn emit_callback_progress_event<'py>(
+        &self,
+        py: Python<'py>,
+        progress_event: &NativeCallbackProgressTelemetryEvent,
+    ) -> PyResult<()> {
+        let fields = PyDict::new(py);
+        fields.set_item("chromosome", progress_event.chromosome_value())?;
+        fields.set_item("processed_chunk_count", progress_event.processed_chunk_count_value())?;
+        self.emit_current_event_fields(py, progress_event.event_name_value(), progress_event.level_value(), &fields)
     }
 
     pub fn emit_progress<'py>(

@@ -101,6 +101,24 @@ impl NativeCallbackProgressUpdate {
     }
 }
 
+impl NativeCallbackProgressTelemetryEvent {
+    pub(crate) fn event_name_value(&self) -> &str {
+        self.inner.event_name.as_str()
+    }
+
+    pub(crate) fn level_value(&self) -> &str {
+        self.inner.level.as_str()
+    }
+
+    pub(crate) fn chromosome_value(&self) -> &str {
+        self.inner.chromosome.as_str()
+    }
+
+    pub(crate) const fn processed_chunk_count_value(&self) -> i64 {
+        self.inner.processed_chunk_count
+    }
+}
+
 #[pymethods]
 impl NativeCallbackProgressTelemetryEvent {
     #[getter]
