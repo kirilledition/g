@@ -1182,6 +1182,8 @@ Remove Python as the chunk-level scheduler.
 - Native BGEN delivery lifecycle, interruption, failure, and completion
   diagnostics now route through the native diagnostic emitter instead of Python
   logging.
+- GPU genotype-format auto-resolution diagnostics now route through the native
+  diagnostic emitter while preserving native telemetry session events.
 
 ### Tests
 
