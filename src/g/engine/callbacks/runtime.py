@@ -1125,7 +1125,13 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             while True:
                 get_start_time = time.perf_counter()
-                work_item = self.get_dosage_work_item()
+                if self.uses_native_callback_runtime_resources():
+                    observed_get_result = self.callback_runtime_resources.get_dosage_work_item_with_observation()
+                    work_item = typing.cast("QueuedPreprocessedDosageWorkItem", observed_get_result.item)
+                    get_observation_plan = observed_get_result.observation_plan
+                else:
+                    work_item = self.get_dosage_work_item()
+                    get_observation_plan = None
                 drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
                 if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
                     return
@@ -1135,7 +1141,8 @@ class NativeBgenCallbackRunner(abc.ABC):
                     "PreprocessedDosageWorkItem",
                     work_item,
                 )
-                get_observation_plan = self.plan_dosage_queue_get_observation()
+                if get_observation_plan is None:
+                    get_observation_plan = self.plan_dosage_queue_get_observation()
                 self.record_bounded_resource_stage_duration(
                     resource_name=get_observation_plan.queue_name,
                     operation_name=get_observation_plan.operation_name,
@@ -1466,14 +1473,21 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             while True:
                 get_start_time = time.perf_counter()
-                work_item = self.get_result_write_item()
+                if self.uses_native_callback_runtime_resources():
+                    observed_get_result = self.callback_runtime_resources.get_result_write_item_with_observation()
+                    work_item = typing.cast("QueuedResultWriteWorkItem", observed_get_result.item)
+                    get_observation_plan = observed_get_result.observation_plan
+                else:
+                    work_item = self.get_result_write_item()
+                    get_observation_plan = None
                 drain_completion_plan = self.plan_result_write_drain_completion(
                     work_item,
                     flush_binary_correction_diagnostics_on_stop=True,
                 )
                 if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
-                get_observation_plan = self.plan_result_queue_get_observation()
+                if get_observation_plan is None:
+                    get_observation_plan = self.plan_result_queue_get_observation()
                 self.record_bounded_resource_stage_duration(
                     resource_name=get_observation_plan.queue_name,
                     operation_name=get_observation_plan.operation_name,

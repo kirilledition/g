@@ -71,6 +71,12 @@ pub(crate) struct NativeResultWorkItemResourceReleaseResult {
     result_in_flight_blocked: Option<bool>,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackQueueGetObservedResult {
+    item: Option<Py<PyAny>>,
+    observation_plan: Py<NativeCallbackQueueGetObservationPlan>,
+}
+
 #[pymethods]
 impl NativeCallbackRuntimeResources {
     #[new]
@@ -867,6 +873,15 @@ impl NativeCallbackRuntimeResources {
         }
     }
 
+    fn get_dosage_work_item_with_observation(&self, py: Python<'_>) -> PyResult<NativeCallbackQueueGetObservedResult> {
+        let get_result = self.get_dosage_work_item(py)?;
+        let observation_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_queue_get_observation_value()
+        };
+        NativeCallbackQueueGetObservedResult::from_get_result(py, get_result, observation_plan)
+    }
+
     fn plan_dosage_work_drain_completion(
         &self,
         py: Python<'_>,
@@ -1149,6 +1164,15 @@ impl NativeCallbackRuntimeResources {
         }
     }
 
+    fn get_result_write_item_with_observation(&self, py: Python<'_>) -> PyResult<NativeCallbackQueueGetObservedResult> {
+        let get_result = self.get_result_write_item(py)?;
+        let observation_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_result_queue_get_observation_value()
+        };
+        NativeCallbackQueueGetObservedResult::from_get_result(py, get_result, observation_plan)
+    }
+
     fn plan_result_write_drain_completion(
         &self,
         py: Python<'_>,
@@ -1234,6 +1258,34 @@ impl NativeResultWorkItemResourceReleaseResult {
         self.result_in_flight_resource_name = Some(release_observation_plan.resource_name_value().to_owned());
         self.result_in_flight_operation_name = Some(release_observation_plan.operation_name_value().to_owned());
         self.result_in_flight_blocked = Some(release_observation_plan.blocked_value());
+    }
+}
+
+#[pymethods]
+impl NativeCallbackQueueGetObservedResult {
+    #[getter]
+    fn has_item(&self) -> bool {
+        self.item.is_some()
+    }
+
+    #[getter]
+    fn item(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.item.as_ref().map(|item| item.clone_ref(py))
+    }
+
+    #[getter]
+    fn observation_plan(&self, py: Python<'_>) -> Py<NativeCallbackQueueGetObservationPlan> {
+        self.observation_plan.clone_ref(py)
+    }
+}
+
+impl NativeCallbackQueueGetObservedResult {
+    fn from_get_result(
+        py: Python<'_>,
+        get_result: NativeCallbackObjectQueueGetResult,
+        observation_plan: NativeCallbackQueueGetObservationPlan,
+    ) -> PyResult<Self> {
+        Ok(Self { item: get_result.into_item_value(), observation_plan: Py::new(py, observation_plan)? })
     }
 }
 

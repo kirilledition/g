@@ -62,8 +62,8 @@ use callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
 };
 use callback_runtime_resources::{
-    NativeCallbackRuntimeResources, NativeCallbackWorkerFinishLifecycleResult, NativeDosageBufferAcquireResult,
-    NativeResultWorkItemResourceReleaseResult,
+    NativeCallbackQueueGetObservedResult, NativeCallbackRuntimeResources, NativeCallbackWorkerFinishLifecycleResult,
+    NativeDosageBufferAcquireResult, NativeResultWorkItemResourceReleaseResult,
 };
 use callback_summary::{
     NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
@@ -1840,6 +1840,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackChunkIdentity>()?;
     module.add_class::<NativeCallbackObjectQueue>()?;
     module.add_class::<NativeCallbackObjectQueueGetResult>()?;
+    module.add_class::<NativeCallbackQueueGetObservedResult>()?;
     module.add_class::<NativeCallbackRuntimeResources>()?;
     module.add_class::<NativeCallbackWaitSignal>()?;
     module.add_class::<NativeCallbackWorkerThread>()?;
