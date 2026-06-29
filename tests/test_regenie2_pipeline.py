@@ -4071,6 +4071,44 @@ def test_native_callback_runner_uses_scheduler_queue_put_observation_plans() -> 
     assert scheduler_state.stage_observation_names == ["callback_queue_put", "result_queue_put"]
 
 
+def test_native_callback_object_queue_preserves_fifo_capacity_and_sentinel_payloads() -> None:
+    callback_queue = callback_runtime._core.NativeCallbackObjectQueue(2)
+    first_item = object()
+
+    assert callback_queue.capacity == 2
+    assert callback_queue.occupied_count == 0
+    assert callback_queue.put(first_item, timeout_seconds=0.0) is True
+    assert callback_queue.put(None, timeout_seconds=0.0) is True
+    assert callback_queue.put(object(), timeout_seconds=0.0) is False
+    assert callback_queue.occupied_count == 2
+
+    first_result = callback_queue.get(timeout_seconds=0.0)
+    assert first_result.has_item is True
+    assert first_result.item is first_item
+    second_result = callback_queue.get(timeout_seconds=0.0)
+    assert second_result.has_item is True
+    assert second_result.item is None
+    empty_result = callback_queue.get(timeout_seconds=0.0)
+    assert empty_result.has_item is False
+    assert empty_result.item is None
+    assert callback_queue.occupied_count == 0
+
+
+def test_native_callback_object_queue_waits_for_producer_without_gil_deadlock() -> None:
+    callback_queue = callback_runtime._core.NativeCallbackObjectQueue(1)
+    produced_item = object()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(callback_queue.get, 2.0)
+        time.sleep(0.1)
+        assert not future.done()
+        assert callback_queue.put(produced_item, timeout_seconds=0.0) is True
+        get_result = future.result(timeout=2.0)
+
+    assert get_result.has_item is True
+    assert get_result.item is produced_item
+
+
 def test_native_callback_runner_uses_scheduler_queue_get_observation_plans() -> None:
     callback = ManualCallbackRunner()
     scheduler_state = CallbackConsumerObservationSchedulerProbe()

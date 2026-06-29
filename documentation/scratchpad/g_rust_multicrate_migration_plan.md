@@ -1036,6 +1036,8 @@ Remove Python as the chunk-level scheduler.
   plan for release accounting.
 - Dosage-buffer pool operation timing now uses native scheduler observation
   plans for reuse, return, allocation, discard, and consumer wait accounting.
+- A PyO3 native bounded callback object queue primitive now owns FIFO storage,
+  capacity checks, and blocking put/get waits for future queue-runtime swaps.
 
 ### Tests
 

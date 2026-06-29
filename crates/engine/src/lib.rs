@@ -3,6 +3,7 @@
 pub mod backend;
 pub mod callback_diagnostics;
 pub mod callback_progress;
+pub mod callback_queue;
 pub mod callback_summary;
 pub mod coordinator;
 pub mod effects;
@@ -25,6 +26,7 @@ pub use callback_progress::{
     CallbackChunkIdentity, CallbackProgressCompletion, CallbackProgressState, CallbackProgressTelemetryEvent,
     CallbackProgressTelemetryPlan, CallbackProgressTelemetryRecord, CallbackProgressUpdate,
 };
+pub use callback_queue::BoundedCallbackQueue;
 pub use callback_summary::{BinaryChunkDiagnosticsInput, BinaryCorrectionSummaryState};
 pub use coordinator::{EngineCoordinator, EngineError, EngineRunInput, EngineRunReport, InjectedCoordinatorFailure};
 pub use effects::{EngineEffectError, EngineEffectOperation, EngineRunEffects, NoopEngineRunEffects};
