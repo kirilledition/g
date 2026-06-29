@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+import json
 import typing
 
 from g import _core, execution_plan, types
@@ -13,8 +13,17 @@ from g.io import output
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-logger = logging.getLogger(__name__)
 RunArtifacts = run_events.RunArtifacts
+
+
+def emit_metadata_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured metadata diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
@@ -118,7 +127,15 @@ def finalize_execution_plan(
             ),
         )
     )
-    logger.info("Finalized REGENIE run artifacts for %s phenotype(s).", len(plan.phenotype_run_plans))
+    emit_metadata_diagnostic_event(
+        "info",
+        "runner_metadata_artifacts_finalized",
+        f"Finalized REGENIE run artifacts for {len(plan.phenotype_run_plans)} phenotype(s).",
+        {
+            "association_mode": plan.association_mode.value,
+            "phenotype_count": len(plan.phenotype_run_plans),
+        },
+    )
     return artifacts
 
 
