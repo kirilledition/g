@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import typing
 from dataclasses import dataclass
@@ -170,15 +171,11 @@ def record_jax_runtime_diagnostic_event(
         diagnostic_level=diagnostic_event.level.value,
         has_telemetry_session=telemetry_session is not None,
     )
-    logging_level = typing.cast("int", logging.getLevelName(str(record_plan["logging_level_name"])))
-    logger.log(
-        logging_level,
-        "%s",
+    _core.emit_diagnostic_event(
+        str(record_plan["logging_level_name"]).lower(),
+        diagnostic_event.event_name,
         diagnostic_event.message,
-        extra={
-            "g_event": diagnostic_event.event_name,
-            "g_fields": event_fields,
-        },
+        json.dumps(event_fields, sort_keys=True, default=str),
     )
     if not typing.cast("bool", record_plan["should_emit_telemetry"]):
         return

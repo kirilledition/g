@@ -1009,6 +1009,15 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
         def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
             recorded_events.append((event_name, level, fields))
 
+        def log_jax_runtime_diagnostic_event(
+            self,
+            diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
+            *,
+            telemetry_level: str,
+        ) -> None:
+            event_fields = {field.name: field.value for field in diagnostic_event.fields}
+            recorded_events.append((diagnostic_event.event_name, telemetry_level, event_fields))
+
     class FakeJaxSetupModule:
         def configure_before_backend_init(
             self,
@@ -1062,7 +1071,7 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
 
 def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
     recorded_events: list[tuple[str, str, dict[str, object]]] = []
-    logged_records: list[tuple[int, str, dict[str, object]]] = []
+    logged_records: list[tuple[str, str, str, str]] = []
 
     class RecordingTelemetrySession:
         def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
@@ -1103,25 +1112,23 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
             "g.runner.runtime._core.plan_jax_runtime_diagnostic_record_payload",
             side_effect=plan_jax_runtime_diagnostic_record_payload,
         ),
-        patch("g.runner.runtime.logger.log") as logger_log_mock,
+        patch("g.runner.runtime._core.emit_diagnostic_event") as emit_diagnostic_event_mock,
     ):
         runner_runtime.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session=telemetry_session)
 
-    for call in logger_log_mock.call_args_list:
+    for call in emit_diagnostic_event_mock.call_args_list:
         logged_records.append(
             (
-                typing.cast("int", call.args[0]),
+                typing.cast("str", call.args[0]),
                 typing.cast("str", call.args[1]),
-                typing.cast("dict[str, object]", call.kwargs),
+                typing.cast("str", call.args[2]),
+                typing.cast("str", call.args[3]),
             )
         )
 
-    assert logged_records[0][0] == runner_runtime.logging.ERROR
-    assert logged_records[0][1] == "%s"
-    assert logged_records[0][2]["extra"] == {
-        "g_event": "jax_native_plan_test",
-        "g_fields": {"field": "value"},
-    }
+    assert logged_records == [
+        ("error", "jax_native_plan_test", "planned diagnostic", json.dumps({"field": "value"}, sort_keys=True))
+    ]
     assert recorded_events == [("jax_native_plan_test", "trace", {"field": "value"})]
 
 

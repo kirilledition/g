@@ -1167,6 +1167,8 @@ Remove Python as the chunk-level scheduler.
   of a Python module-level cache.
 - Telemetry close helpers now require the native close-with-event contract
   instead of emitting legacy close events from Python.
+- JAX runtime diagnostic log records now route through the native diagnostic
+  emitter while telemetry emission stays on the native run session.
 
 ### Tests
 
