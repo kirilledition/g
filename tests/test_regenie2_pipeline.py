@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import dataclasses
+import json
 import queue
 import threading
 import time
@@ -7241,9 +7242,7 @@ def test_binary_callback_fails_when_null_logistic_does_not_converge() -> None:
         callback.finish()
 
 
-def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> None:
     callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
@@ -7255,7 +7254,9 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence(
 
     try:
         with (
-            caplog.at_level("WARNING", logger="g.engine.callbacks"),
+            patch(
+                "g.engine.callbacks.diagnostics._core.emit_diagnostic_event",
+            ) as emit_diagnostic_event_mock,
             patch(
                 "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
                 return_value=build_binary_chromosome_state(converged=False),
@@ -7266,7 +7267,18 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence(
         callback.finish()
 
     assert callback.current_chromosome == "22"
-    assert any("--null_logistic_nonconvergence_policy=warn" in record.message for record in caplog.records)
+    emit_diagnostic_event_mock.assert_called_once()
+    assert emit_diagnostic_event_mock.call_args.args[0] == "warning"
+    assert emit_diagnostic_event_mock.call_args.args[1] == "callback_null_logistic_nonconvergence_warning"
+    assert "--null_logistic_nonconvergence_policy=warn" in emit_diagnostic_event_mock.call_args.args[2]
+    assert json.loads(emit_diagnostic_event_mock.call_args.args[3]) == {
+        "chromosome": "22",
+        "nonconverged_count": 1,
+        "phenotype_count": 0,
+        "policy": "warn",
+        "scalar_convergence": True,
+        "total_fit_count": 1,
+    }
 
 
 def test_multi_binary_callback_fails_when_any_null_logistic_trait_does_not_converge() -> None:

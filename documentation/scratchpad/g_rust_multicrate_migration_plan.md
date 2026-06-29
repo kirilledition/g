@@ -1186,6 +1186,9 @@ Remove Python as the chunk-level scheduler.
   diagnostic emitter while preserving native telemetry session events.
 - Preflight non-fatal warnings now route through the native diagnostic emitter
   with explicit shape and trusted-path context instead of Python logging.
+- Binary callback null-logistic nonconvergence warnings now route through the
+  native diagnostic emitter with policy and convergence-count context instead
+  of Python logging.
 
 ### Tests
 
