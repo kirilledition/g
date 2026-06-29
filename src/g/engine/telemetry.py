@@ -284,6 +284,24 @@ class TelemetrySession:
             phenotype_count,
         )
 
+    def log_multi_phenotype_sample_summary(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        sample_mode: types.MultiPhenotypeSampleMode,
+        sample_counts: tuple[int, ...],
+        sample_set_fingerprints: tuple[str | None, ...],
+        phenotype_group_count: int,
+    ) -> None:
+        """Write the canonical multi-phenotype sample summary event."""
+        self.native_session_handle.emit_multi_phenotype_sample_summary_event(
+            association_mode.value,
+            sample_mode.value,
+            sample_counts,
+            sample_set_fingerprints,
+            phenotype_group_count,
+        )
+
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
         self.native_session_handle.emit_progress(

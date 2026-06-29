@@ -45,12 +45,6 @@ def log_multi_phenotype_sample_summary(
 ) -> None:
     """Emit a user-visible summary of multi-phenotype sample semantics."""
     sample_counts_differ = len(set(sample_counts)) > 1
-    observed_sample_set_fingerprints = {
-        sample_set_fingerprint
-        for sample_set_fingerprint in sample_set_fingerprints
-        if sample_set_fingerprint is not None
-    }
-    shared_sample_set = len(observed_sample_set_fingerprints) == 1 and len(sample_set_fingerprints) > 0
     if sample_mode == types.MultiPhenotypeSampleMode.COMPLETE_CASE:
         logger.info(
             "Analyzed %s phenotypes in complete-case sample mode; one shared sample set was used.",
@@ -69,16 +63,12 @@ def log_multi_phenotype_sample_summary(
         )
     if context.telemetry_session is None:
         return
-    context.telemetry_session.log_event(
-        "multi_phenotype_sample_summary",
-        level="info",
-        association_mode=context.association_mode.value,
-        multi_phenotype_sample_mode=sample_mode.value,
-        phenotype_count=len(sample_counts),
+    context.telemetry_session.log_multi_phenotype_sample_summary(
+        association_mode=context.association_mode,
+        sample_mode=sample_mode,
+        sample_counts=sample_counts,
+        sample_set_fingerprints=sample_set_fingerprints,
         phenotype_group_count=phenotype_group_count,
-        sample_counts=list(sample_counts),
-        sample_counts_differ=sample_counts_differ,
-        shared_sample_set=shared_sample_set,
     )
 
 

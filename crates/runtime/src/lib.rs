@@ -25,7 +25,8 @@ pub use rayon_runtime::{
 };
 pub use run_events::{
     EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME, EXECUTION_PLAN_PREPARED_EVENT_NAME, EffectiveConfigWrittenTelemetryFields,
-    ExecutionPlanPreparedTelemetryFields, MultiPhenotypePreflightCompletedTelemetryFields,
+    ExecutionPlanPreparedTelemetryFields, MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME,
+    MultiPhenotypePreflightCompletedTelemetryFields, MultiPhenotypeSampleSummaryTelemetryFields,
     MultiPhenotypeWriterFinishedTelemetryFields, PREDICTION_SOURCE_LOADED_EVENT_NAME, PREFLIGHT_COMPLETED_EVENT_NAME,
     PhenotypeWriterFinishedTelemetryFields, PredictionSourceLoadedTelemetryFields, RUN_COMPLETED_EVENT_NAME,
     RUN_FAILED_EVENT_NAME, RUN_LIFECYCLE_ERROR_LEVEL, RUN_LIFECYCLE_INFO_LEVEL, RUN_LIFECYCLE_WARN_LEVEL,
@@ -35,12 +36,12 @@ pub use run_events::{
     SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME, SampleAlignmentCompletedTelemetryFields,
     SingleTraitPreflightCompletedTelemetryFields, WRITER_FINISHED_EVENT_NAME, build_artifact_telemetry_fields,
     build_effective_config_written_telemetry_fields, build_execution_plan_prepared_telemetry_fields,
-    build_multi_phenotype_preflight_completed_telemetry_fields, build_multi_phenotype_writer_finished_telemetry_fields,
-    build_phenotype_writer_finished_telemetry_fields, build_prediction_source_loaded_telemetry_fields,
-    build_run_completed_telemetry_fields, build_run_failed_telemetry_fields, build_run_interrupted_telemetry_fields,
-    build_run_started_telemetry_fields, build_sample_alignment_completed_telemetry_fields,
-    build_single_trait_preflight_completed_telemetry_fields, render_artifact_lines, render_run_completed_lines,
-    render_run_failed_lines, render_run_interrupted_lines,
+    build_multi_phenotype_preflight_completed_telemetry_fields, build_multi_phenotype_sample_summary_telemetry_fields,
+    build_multi_phenotype_writer_finished_telemetry_fields, build_phenotype_writer_finished_telemetry_fields,
+    build_prediction_source_loaded_telemetry_fields, build_run_completed_telemetry_fields,
+    build_run_failed_telemetry_fields, build_run_interrupted_telemetry_fields, build_run_started_telemetry_fields,
+    build_sample_alignment_completed_telemetry_fields, build_single_trait_preflight_completed_telemetry_fields,
+    render_artifact_lines, render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
 };
 pub use run_metadata::{
     ExecutionRunArtifactsInput, PhenotypeRunArtifactsInput, RunArtifactsPayload, RunManifestCommandPayload,

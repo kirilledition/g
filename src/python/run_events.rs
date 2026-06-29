@@ -406,6 +406,21 @@ pub(crate) fn prediction_source_loaded_telemetry_fields_to_py_dict<'py>(
     Ok(payload)
 }
 
+pub(crate) fn multi_phenotype_sample_summary_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::MultiPhenotypeSampleSummaryTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("multi_phenotype_sample_mode", &fields.multi_phenotype_sample_mode)?;
+    payload.set_item("phenotype_count", fields.phenotype_count)?;
+    payload.set_item("phenotype_group_count", fields.phenotype_group_count)?;
+    payload.set_item("sample_counts", PyTuple::new(py, &fields.sample_counts)?)?;
+    payload.set_item("sample_counts_differ", fields.sample_counts_differ)?;
+    payload.set_item("shared_sample_set", fields.shared_sample_set)?;
+    Ok(payload)
+}
+
 fn artifact_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunArtifactTelemetryFields,

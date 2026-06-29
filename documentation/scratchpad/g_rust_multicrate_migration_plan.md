@@ -1144,6 +1144,8 @@ Remove Python as the chunk-level scheduler.
   names, levels, and single-/multi-phenotype field construction.
 - Native telemetry run sessions now own production sample-alignment-completed
   and prediction-source-loaded event names, levels, and optional fields.
+- Native telemetry run sessions now own production multi-phenotype sample
+  summary event names, levels, and derived sample-set fields.
 
 ### Tests
 

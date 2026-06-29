@@ -718,6 +718,61 @@ def test_native_telemetry_run_session_owns_pipeline_setup_event_emission(tmp_pat
     assert "phenotype" not in event_payloads[3]
 
 
+def test_native_telemetry_run_session_owns_multi_phenotype_sample_summary(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_multi_phenotype_sample_summary(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        sample_counts=(3, 2),
+        sample_set_fingerprints=("sample-a", "sample-b"),
+        phenotype_group_count=2,
+    )
+    telemetry_session.log_multi_phenotype_sample_summary(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        sample_counts=(2504, 2504),
+        sample_set_fingerprints=("shared", "shared"),
+        phenotype_group_count=1,
+    )
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "multi_phenotype_sample_summary",
+        "multi_phenotype_sample_summary",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO"]
+    assert event_payloads[0]["association_mode"] == "regenie2_linear"
+    assert event_payloads[0]["multi_phenotype_sample_mode"] == "per-phenotype"
+    assert event_payloads[0]["phenotype_count"] == 2
+    assert event_payloads[0]["phenotype_group_count"] == 2
+    assert event_payloads[0]["sample_counts"] == [3, 2]
+    assert event_payloads[0]["sample_counts_differ"] is True
+    assert event_payloads[0]["shared_sample_set"] is False
+    assert event_payloads[1]["association_mode"] == "regenie2_binary"
+    assert event_payloads[1]["multi_phenotype_sample_mode"] == "complete-case"
+    assert event_payloads[1]["sample_counts"] == [2504, 2504]
+    assert event_payloads[1]["sample_counts_differ"] is False
+    assert event_payloads[1]["shared_sample_set"] is True
+
+
 def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

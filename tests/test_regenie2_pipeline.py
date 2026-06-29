@@ -688,6 +688,37 @@ class RecordingTelemetrySession:
             fields["phenotype_count"] = phenotype_count
         self.events.append(("prediction_source_loaded", fields))
 
+    def log_multi_phenotype_sample_summary(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        sample_mode: types.MultiPhenotypeSampleMode,
+        sample_counts: tuple[int, ...],
+        sample_set_fingerprints: tuple[str | None, ...],
+        phenotype_group_count: int,
+    ) -> None:
+        sample_counts_differ = len(set(sample_counts)) > 1
+        observed_sample_set_fingerprints = {
+            sample_set_fingerprint
+            for sample_set_fingerprint in sample_set_fingerprints
+            if sample_set_fingerprint is not None
+        }
+        shared_sample_set = len(observed_sample_set_fingerprints) == 1 and len(sample_set_fingerprints) > 0
+        self.events.append(
+            (
+                "multi_phenotype_sample_summary",
+                {
+                    "association_mode": association_mode.value,
+                    "multi_phenotype_sample_mode": sample_mode.value,
+                    "phenotype_count": len(sample_counts),
+                    "phenotype_group_count": phenotype_group_count,
+                    "sample_counts": list(sample_counts),
+                    "sample_counts_differ": sample_counts_differ,
+                    "shared_sample_set": shared_sample_set,
+                },
+            )
+        )
+
     def log_single_trait_preflight_completed(
         self,
         *,

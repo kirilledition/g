@@ -9,6 +9,7 @@ pub const WRITER_FINISHED_EVENT_NAME: &str = "writer_finished";
 pub const PREFLIGHT_COMPLETED_EVENT_NAME: &str = "preflight_completed";
 pub const SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME: &str = "sample_alignment_completed";
 pub const PREDICTION_SOURCE_LOADED_EVENT_NAME: &str = "prediction_source_loaded";
+pub const MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME: &str = "multi_phenotype_sample_summary";
 pub const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
 pub const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
 pub const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
@@ -167,6 +168,17 @@ pub struct PredictionSourceLoadedTelemetryFields {
     pub association_mode: String,
     pub phenotype: Option<String>,
     pub phenotype_count: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiPhenotypeSampleSummaryTelemetryFields {
+    pub association_mode: String,
+    pub multi_phenotype_sample_mode: String,
+    pub phenotype_count: usize,
+    pub phenotype_group_count: i64,
+    pub sample_counts: Vec<i64>,
+    pub sample_counts_differ: bool,
+    pub shared_sample_set: bool,
 }
 
 #[must_use]
@@ -407,6 +419,36 @@ pub fn build_prediction_source_loaded_telemetry_fields(
         association_mode: association_mode.to_string(),
         phenotype: phenotype.map(str::to_string),
         phenotype_count,
+    }
+}
+
+#[must_use]
+pub fn build_multi_phenotype_sample_summary_telemetry_fields(
+    association_mode: &str,
+    multi_phenotype_sample_mode: &str,
+    sample_counts: &[i64],
+    sample_set_fingerprints: &[Option<String>],
+    phenotype_group_count: i64,
+) -> MultiPhenotypeSampleSummaryTelemetryFields {
+    let sample_counts_differ = sample_counts
+        .first()
+        .is_some_and(|first_sample_count| sample_counts.iter().any(|sample_count| sample_count != first_sample_count));
+    let mut observed_sample_set_fingerprints =
+        sample_set_fingerprints.iter().filter_map(|sample_set_fingerprint| sample_set_fingerprint.as_ref());
+    let first_observed_sample_set_fingerprint = observed_sample_set_fingerprints.next();
+    let shared_sample_set = first_observed_sample_set_fingerprint.is_some_and(|first_sample_set_fingerprint| {
+        observed_sample_set_fingerprints
+            .all(|sample_set_fingerprint| sample_set_fingerprint == first_sample_set_fingerprint)
+    });
+
+    MultiPhenotypeSampleSummaryTelemetryFields {
+        association_mode: association_mode.to_string(),
+        multi_phenotype_sample_mode: multi_phenotype_sample_mode.to_string(),
+        phenotype_count: sample_counts.len(),
+        phenotype_group_count,
+        sample_counts: sample_counts.to_vec(),
+        sample_counts_differ,
+        shared_sample_set,
     }
 }
 
@@ -713,6 +755,39 @@ mod tests {
                 phenotype: None,
                 phenotype_count: Some(4),
             }
+        );
+    }
+
+    #[test]
+    fn builds_multi_phenotype_sample_summary_telemetry_fields() {
+        assert_eq!(
+            build_multi_phenotype_sample_summary_telemetry_fields(
+                "regenie2_linear",
+                "per-phenotype",
+                &[3, 2],
+                &[Some("sample-a".to_string()), Some("sample-b".to_string())],
+                2,
+            ),
+            MultiPhenotypeSampleSummaryTelemetryFields {
+                association_mode: "regenie2_linear".to_string(),
+                multi_phenotype_sample_mode: "per-phenotype".to_string(),
+                phenotype_count: 2,
+                phenotype_group_count: 2,
+                sample_counts: vec![3, 2],
+                sample_counts_differ: true,
+                shared_sample_set: false,
+            }
+        );
+        assert_eq!(
+            build_multi_phenotype_sample_summary_telemetry_fields(
+                "regenie2_binary",
+                "complete-case",
+                &[2504, 2504],
+                &[Some("shared".to_string()), Some("shared".to_string())],
+                1,
+            )
+            .shared_sample_set,
+            true,
         );
     }
 

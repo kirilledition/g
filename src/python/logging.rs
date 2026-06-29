@@ -565,6 +565,32 @@ impl NativeTelemetryRunSession {
         )
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_multi_phenotype_sample_summary_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        multi_phenotype_sample_mode: &str,
+        sample_counts: Vec<i64>,
+        sample_set_fingerprints: Vec<Option<String>>,
+        phenotype_group_count: i64,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_multi_phenotype_sample_summary_telemetry_fields(
+            association_mode,
+            multi_phenotype_sample_mode,
+            &sample_counts,
+            &sample_set_fingerprints,
+            phenotype_group_count,
+        );
+        let fields = run_events::multi_phenotype_sample_summary_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
     pub fn emit_progress<'py>(
         &self,
         py: Python<'py>,

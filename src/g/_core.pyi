@@ -557,6 +557,14 @@ class NativeTelemetryRunSession:
         phenotype: str | None,
         phenotype_count: int | None,
     ) -> None: ...
+    def emit_multi_phenotype_sample_summary_event(
+        self,
+        association_mode: str,
+        multi_phenotype_sample_mode: str,
+        sample_counts: tuple[int, ...],
+        sample_set_fingerprints: tuple[str | None, ...],
+        phenotype_group_count: int,
+    ) -> None: ...
     def emit_progress(
         self,
         processed_chunk_count: int,
