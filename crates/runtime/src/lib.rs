@@ -25,8 +25,8 @@ pub use rayon_runtime::{
 };
 pub use run_events::{
     ASSOCIATION_BACKEND_SELECTED_EVENT_NAME, AssociationBackendSelectedTelemetryFields, BGEN_ENGINE_OPENED_EVENT_NAME,
-    BgenEngineOpenedTelemetryFields, EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME, EXECUTION_PLAN_PREPARED_EVENT_NAME,
-    EffectiveConfigWrittenTelemetryFields, ExecutionPlanPreparedTelemetryFields,
+    BINARY_CORRECTION_SUMMARY_EVENT_NAME, BgenEngineOpenedTelemetryFields, EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME,
+    EXECUTION_PLAN_PREPARED_EVENT_NAME, EffectiveConfigWrittenTelemetryFields, ExecutionPlanPreparedTelemetryFields,
     GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME, GpuGenotypeFormatResolvedTelemetryFields,
     MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME, MultiPhenotypePreflightCompletedTelemetryFields,
     MultiPhenotypeSampleSummaryTelemetryFields, MultiPhenotypeWriterFinishedTelemetryFields,

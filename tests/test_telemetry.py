@@ -918,6 +918,62 @@ def test_native_telemetry_run_session_owns_callback_progress_events(tmp_path: Pa
     assert event_payloads[1]["processed_chunk_count"] == 1
 
 
+def test_native_telemetry_run_session_owns_binary_correction_summary(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+    summary = _core.NativeBinaryCorrectionSummary()
+    summary.add_diagnostics_totals(
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+    )
+    summary.add_null_model_failure_count(20)
+
+    telemetry_session.log_binary_correction_summary(summary.summary_payload())
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payload = json.loads(telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()[0])
+    assert event_payload["event"] == "binary_correction_summary"
+    assert event_payload["level"] == "INFO"
+    assert event_payload["chunk_count"] == 2
+    assert event_payload["score_only_count"] == 3
+    assert event_payload["score_test_candidate_count"] == 4
+    assert event_payload["firth_attempted_count"] == 5
+    assert event_payload["firth_success_count"] == 6
+    assert event_payload["firth_failed_count"] == 7
+    assert event_payload["null_model_failure_count"] == 20
+
+
 def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

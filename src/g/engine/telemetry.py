@@ -362,6 +362,10 @@ class TelemetrySession:
         """Write a canonical callback chromosome progress event."""
         self.native_session_handle.emit_callback_progress_event(progress_event)
 
+    def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
+        """Write the canonical binary correction summary event."""
+        self.native_session_handle.emit_binary_correction_summary_event(summary_payload)
+
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
         self.native_session_handle.emit_progress(

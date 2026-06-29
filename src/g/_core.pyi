@@ -594,6 +594,10 @@ class NativeTelemetryRunSession:
         self,
         progress_event: NativeCallbackProgressTelemetryEvent,
     ) -> None: ...
+    def emit_binary_correction_summary_event(
+        self,
+        fields: dict[str, int],
+    ) -> None: ...
     def emit_progress(
         self,
         processed_chunk_count: int,

@@ -90,6 +90,10 @@ class ProgressTrackingTelemetrySession:
             processed_chunk_count=progress_event.processed_chunk_count,
         )
 
+    def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
+        """Record a native binary correction summary event call."""
+        self.log_event("binary_correction_summary", "info", **summary_payload)
+
     def log_progress(self, **kwargs: typing.Any) -> None:
         """Record a progress callback call."""
         self.logged_progress.append(kwargs)

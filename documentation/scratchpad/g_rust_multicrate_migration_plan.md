@@ -1152,6 +1152,8 @@ Remove Python as the chunk-level scheduler.
   and BGEN-engine-opened event names, levels, and optional phenotype fields.
 - Native telemetry run sessions now emit native callback progress event objects
   directly for chromosome start/completion telemetry.
+- Native telemetry run sessions now own the binary-correction-summary event name
+  and level while reusing native callback summary payloads.
 
 ### Tests
 

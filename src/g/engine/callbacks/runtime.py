@@ -1468,17 +1468,10 @@ class NativeBgenCallbackRunner(abc.ABC):
             message = "Native binary correction summary emit plan selected a missing telemetry session."
             raise RuntimeError(message)
         if self.uses_native_callback_runtime_resources():
-            summary_payload = typing.cast(
-                "dict[str, object]",
-                self.callback_runtime_resources.binary_correction_summary_payload(),
-            )
+            summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
         else:
-            summary_payload = typing.cast("dict[str, object]", self.binary_correction_summary.summary_payload())
-        self.telemetry_session.log_event(
-            "binary_correction_summary",
-            level="info",
-            **summary_payload,
-        )
+            summary_payload = self.binary_correction_summary.summary_payload()
+        self.telemetry_session.log_binary_correction_summary(summary_payload)
 
     def consume_result_write_items(self) -> None:
         """Materialize computed JAX results and write them in order."""

@@ -683,6 +683,19 @@ impl NativeTelemetryRunSession {
         self.emit_current_event_fields(py, progress_event.event_name_value(), progress_event.level_value(), &fields)
     }
 
+    pub fn emit_binary_correction_summary_event<'py>(
+        &self,
+        py: Python<'py>,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        self.emit_current_event_fields(
+            py,
+            native_run_events::BINARY_CORRECTION_SUMMARY_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            fields,
+        )
+    }
+
     pub fn emit_progress<'py>(
         &self,
         py: Python<'py>,
