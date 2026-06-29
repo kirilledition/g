@@ -1015,52 +1015,23 @@ def test_native_telemetry_run_session_owns_jax_runtime_diagnostic_event(tmp_path
     assert event_payload["cache_entries"] == 7
 
 
-def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_close_telemetry_session_uses_close_with_event_contract() -> None:
     class FakeCloseableSession:
         def __init__(self) -> None:
-            self.events: list[dict[str, object]] = []
             self.closed = False
+            self.close_metadata: dict[str, object] | None = None
 
-        def log_event(self, event: str, level: str, **fields: object) -> None:
-            self.events.append({"event": event, "level": level, "fields": fields})
-
-        def writer_counters(self) -> object:
-            return {"written_event_count": 3}
-
-        def close(self) -> object:
+        def close_with_event(self) -> object:
             self.closed = True
-            return None
-
-    def plan_telemetry_close(
-        *,
-        has_telemetry_session: bool,
-        is_native_telemetry_session: bool,
-    ) -> object:
-        assert has_telemetry_session is True
-        assert is_native_telemetry_session is False
-        return unittest.mock.Mock(
-            should_close=True,
-            use_native_close_with_event=False,
-            should_emit_legacy_close_event=True,
-            legacy_close_event_name="native_close",
-            legacy_close_event_level="trace",
-        )
+            self.close_metadata = {"writer_counters": {"written_event_count": 3}}
+            return self.close_metadata
 
     fake_session = FakeCloseableSession()
-    monkeypatch.setattr(telemetry._core, "plan_telemetry_close", plan_telemetry_close)
 
     telemetry.close_telemetry_session(fake_session)
 
-    assert fake_session.events == [
-        {
-            "event": "native_close",
-            "level": "trace",
-            "fields": {"writer_counters": {"written_event_count": 3}},
-        }
-    ]
     assert fake_session.closed is True
+    assert fake_session.close_metadata == {"writer_counters": {"written_event_count": 3}}
 
 
 def test_telemetry_progress_throttle_emits_after_chunk_interval(tmp_path: Path) -> None:

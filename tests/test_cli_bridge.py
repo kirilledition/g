@@ -58,6 +58,11 @@ class FakeTelemetrySession:
             raise self.close_error
         self.closed = True
 
+    def close_with_event(self) -> None:
+        """Record native-style session closure."""
+        self.log_event("telemetry_session_closed", level="debug", writer_counters=self.writer_counters())
+        self.close()
+
 
 def test_run_args_configless_paths_print_without_runtime_imports() -> None:
     """Ensure help and parse errors only parse and print native output."""

@@ -1165,6 +1165,8 @@ Remove Python as the chunk-level scheduler.
   `SystemExit` aborts from the PyO3 boundary.
 - Shutdown signal metadata is now resolved directly from native payloads instead
   of a Python module-level cache.
+- Telemetry close helpers now require the native close-with-event contract
+  instead of emitting legacy close events from Python.
 
 ### Tests
 

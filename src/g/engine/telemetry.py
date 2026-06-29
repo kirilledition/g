@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,14 +21,8 @@ if typing.TYPE_CHECKING:
 class TelemetryCloseableSession(typing.Protocol):
     """Telemetry session shape accepted by the close helper."""
 
-    def log_event(self, event: str, level: str, **fields: object) -> None:
-        """Write one telemetry event."""
-
-    def writer_counters(self) -> object:
-        """Return writer counters for close telemetry."""
-
-    def close(self) -> object:
-        """Close the telemetry resources."""
+    def close_with_event(self) -> object:
+        """Emit the close event and close telemetry resources."""
 
 
 @dataclass(frozen=True)
@@ -520,22 +513,6 @@ def build_empty_writer_counters() -> TelemetryWriterCounters:
 
 def close_telemetry_session(telemetry_session: TelemetryCloseableSession | None) -> None:
     """Flush telemetry teardown hooks and preserve close failures."""
-    close_plan = _core.plan_telemetry_close(
-        has_telemetry_session=telemetry_session is not None,
-        is_native_telemetry_session=isinstance(telemetry_session, TelemetrySession),
-    )
-    if not close_plan.should_close:
+    if telemetry_session is None:
         return
-    active_telemetry_session = typing.cast("TelemetryCloseableSession", telemetry_session)
-    if close_plan.use_native_close_with_event:
-        native_telemetry_session = typing.cast("TelemetrySession", active_telemetry_session)
-        native_telemetry_session.close_with_event()
-        return
-    if close_plan.should_emit_legacy_close_event:
-        with contextlib.suppress(Exception):
-            active_telemetry_session.log_event(
-                close_plan.legacy_close_event_name,
-                level=close_plan.legacy_close_event_level,
-                writer_counters=active_telemetry_session.writer_counters(),
-            )
-    active_telemetry_session.close()
+    telemetry_session.close_with_event()
