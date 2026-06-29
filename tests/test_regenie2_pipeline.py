@@ -1930,8 +1930,8 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         self.result_queue = callback_runtime._core.NativeCallbackObjectQueue(
             self.callback_scheduler_state.result_queue_depth
         )
-        self.result_in_flight_slot_condition = threading.Condition()
-        self.dosage_buffer_pool_condition = threading.Condition()
+        self.result_in_flight_slot_signal = callback_runtime._core.NativeCallbackWaitSignal()
+        self.dosage_buffer_pool_signal = callback_runtime._core.NativeCallbackWaitSignal()
         self.free_dosage_buffers: collections.deque[callback_shared.HostGenotypeBuffer] = collections.deque()
         self.worker_error = None
         self.result_worker_error = None
@@ -1983,6 +1983,8 @@ def attach_manual_callback_scheduler_state(callback: typing.Any) -> None:
     callback.result_queue = callback_runtime._core.NativeCallbackObjectQueue(
         callback.callback_scheduler_state.result_queue_depth
     )
+    callback.result_in_flight_slot_signal = callback_runtime._core.NativeCallbackWaitSignal()
+    callback.dosage_buffer_pool_signal = callback_runtime._core.NativeCallbackWaitSignal()
 
 
 def mark_callback_workers_started(callback: typing.Any) -> None:
@@ -4115,6 +4117,24 @@ def test_native_callback_object_queue_waits_for_producer_without_gil_deadlock() 
 
     assert get_result.has_item is True
     assert get_result.item is produced_item
+
+
+def test_native_callback_wait_signal_tracks_generation_without_gil_deadlock() -> None:
+    wait_signal = callback_runtime._core.NativeCallbackWaitSignal()
+    observed_generation = wait_signal.generation
+
+    assert wait_signal.wait_for_change(observed_generation, timeout_seconds=0.0) is False
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(wait_signal.wait_for_change, observed_generation, 2.0)
+        time.sleep(0.1)
+        assert not future.done()
+        notified_generation = wait_signal.notify_waiters()
+        assert notified_generation != observed_generation
+        assert future.result(timeout=2.0) is True
+
+    assert wait_signal.generation == notified_generation
+    assert wait_signal.wait_for_change(observed_generation, timeout_seconds=0.0) is True
 
 
 def test_native_callback_runner_uses_scheduler_queue_get_observation_plans() -> None:

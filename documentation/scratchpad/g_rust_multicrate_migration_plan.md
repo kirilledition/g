@@ -1040,6 +1040,8 @@ Remove Python as the chunk-level scheduler.
   capacity checks, and blocking put/get waits for future queue-runtime swaps.
 - Callback dosage/result queue storage and wait predicates now use the native
   object queue while the native scheduler remains the occupancy authority.
+- Result in-flight slot and dosage-buffer pool waits now use native
+  generation-counted wait signals instead of Python condition variables.
 
 ### Tests
 

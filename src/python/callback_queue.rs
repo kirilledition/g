@@ -18,6 +18,12 @@ pub(crate) struct NativeCallbackObjectQueueGetResult {
     item: Option<Py<PyAny>>,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackWaitSignal {
+    generation: Mutex<u64>,
+    condition: Condvar,
+}
+
 #[pymethods]
 impl NativeCallbackObjectQueue {
     #[new]
@@ -181,6 +187,67 @@ impl NativeCallbackObjectQueue {
                 next_queue
             } else {
                 self.condition.wait(queue).map_err(|_| PyRuntimeError::new_err(wait_error_message))?
+            };
+        }
+    }
+}
+
+#[pymethods]
+impl NativeCallbackWaitSignal {
+    #[new]
+    fn new() -> Self {
+        Self { generation: Mutex::new(0), condition: Condvar::new() }
+    }
+
+    #[getter]
+    fn generation(&self) -> PyResult<u64> {
+        Ok(*self.lock_generation()?)
+    }
+
+    fn notify_waiters(&self) -> PyResult<u64> {
+        let mut generation = self.lock_generation()?;
+        *generation = generation.wrapping_add(1);
+        let next_generation = *generation;
+        self.condition.notify_all();
+        Ok(next_generation)
+    }
+
+    fn wait_for_change(&self, py: Python<'_>, observed_generation: u64, timeout_seconds: f64) -> PyResult<bool> {
+        py.detach(|| self.wait_for_change_without_gil(observed_generation, timeout_seconds))
+    }
+}
+
+impl NativeCallbackWaitSignal {
+    fn lock_generation(&self) -> PyResult<MutexGuard<'_, u64>> {
+        self.generation.lock().map_err(|_| PyRuntimeError::new_err("native callback wait signal lock was poisoned"))
+    }
+
+    fn wait_for_change_without_gil(&self, observed_generation: u64, timeout_seconds: f64) -> PyResult<bool> {
+        let timeout_duration = normalize_timeout_duration(timeout_seconds);
+        let deadline = Instant::now().checked_add(timeout_duration);
+        let mut generation = self.lock_generation()?;
+
+        loop {
+            if *generation != observed_generation {
+                return Ok(true);
+            }
+            if timeout_duration.is_zero() {
+                return Ok(false);
+            }
+            generation = if let Some(deadline) = deadline {
+                let remaining_timeout = deadline.saturating_duration_since(Instant::now());
+                if remaining_timeout.is_zero() {
+                    return Ok(false);
+                }
+                let (next_generation, _) =
+                    self.condition.wait_timeout(generation, remaining_timeout).map_err(|_| {
+                        PyRuntimeError::new_err("native callback wait signal lock was poisoned during wait")
+                    })?;
+                next_generation
+            } else {
+                self.condition
+                    .wait(generation)
+                    .map_err(|_| PyRuntimeError::new_err("native callback wait signal lock was poisoned during wait"))?
             };
         }
     }

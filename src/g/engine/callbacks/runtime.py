@@ -145,8 +145,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
-        self.result_in_flight_slot_condition = threading.Condition()
-        self.dosage_buffer_pool_condition = threading.Condition()
+        self.result_in_flight_slot_signal = _core.NativeCallbackWaitSignal()
+        self.dosage_buffer_pool_signal = _core.NativeCallbackWaitSignal()
         self.dosage_queue = _core.NativeCallbackObjectQueue(self.callback_scheduler_state.dosage_queue_depth)
         self.result_queue = _core.NativeCallbackObjectQueue(self.callback_scheduler_state.result_queue_depth)
         self.free_dosage_buffers: collections.deque[HostGenotypeBuffer] = collections.deque()
@@ -1302,24 +1302,28 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
-                with self.result_in_flight_slot_condition:
-                    attempt_plan = (
-                        self.callback_scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
+                observed_generation = self.result_in_flight_slot_signal.generation
+                attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
+                if attempt_plan.should_acquire:
+                    return
+                if attempt_plan.should_wait:
+                    self.result_in_flight_slot_signal.wait_for_change(
+                        observed_generation,
+                        timeout_seconds=attempt_plan.wait_timeout_seconds,
                     )
-                    if attempt_plan.should_acquire:
-                        return
-                    if attempt_plan.should_wait:
-                        self.result_in_flight_slot_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
         while True:
             self.raise_worker_error_if_present()
             acquire_start_time = time.perf_counter()
-            with self.result_in_flight_slot_condition:
-                attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
-                acquire_observation_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_observation(
-                    attempt_plan
+            observed_generation = self.result_in_flight_slot_signal.generation
+            attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
+            acquire_observation_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_observation(
+                attempt_plan
+            )
+            if not attempt_plan.should_acquire and attempt_plan.should_wait:
+                self.result_in_flight_slot_signal.wait_for_change(
+                    observed_generation,
+                    timeout_seconds=attempt_plan.wait_timeout_seconds,
                 )
-                if not attempt_plan.should_acquire and attempt_plan.should_wait:
-                    self.result_in_flight_slot_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
             if acquire_observation_plan.should_retry_acquisition:
                 self.record_bounded_resource_stage_duration(
                     resource_name=acquire_observation_plan.resource_name,
@@ -1338,12 +1342,11 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def release_result_in_flight_slot(self) -> None:
         """Release capacity for one completed chunk of GPU result work."""
-        with self.result_in_flight_slot_condition:
-            release_plan = self.callback_scheduler_state.plan_result_in_flight_slot_release_attempt()
-            if release_plan.has_release_error:
-                message = "Native result in-flight slot state has no occupied slot to release."
-                raise RuntimeError(message)
-            self.result_in_flight_slot_condition.notify()
+        release_plan = self.callback_scheduler_state.plan_result_in_flight_slot_release_attempt()
+        if release_plan.has_release_error:
+            message = "Native result in-flight slot state has no occupied slot to release."
+            raise RuntimeError(message)
+        self.result_in_flight_slot_signal.notify_waiters()
         if self.stage_timing_recorder is None:
             return
         release_observation_plan = self.callback_scheduler_state.plan_result_in_flight_slot_release_observation()
@@ -1526,16 +1529,19 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.raise_worker_error_if_present()
             dosage_buffer: HostGenotypeBuffer | None = None
             should_allocate_dosage_buffer = False
-            with self.dosage_buffer_pool_condition:
-                acquire_plan = self.callback_scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt(
-                    free_buffer_count=self.free_dosage_buffer_count
+            observed_generation = self.dosage_buffer_pool_signal.generation
+            acquire_plan = self.callback_scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt(
+                free_buffer_count=self.free_dosage_buffer_count
+            )
+            if acquire_plan.should_take_free_buffer:
+                dosage_buffer = self.free_dosage_buffers.popleft()
+            elif acquire_plan.should_allocate:
+                should_allocate_dosage_buffer = True
+            elif self.stage_timing_recorder is None and acquire_plan.should_wait:
+                self.dosage_buffer_pool_signal.wait_for_change(
+                    observed_generation,
+                    timeout_seconds=acquire_plan.wait_timeout_seconds,
                 )
-                if acquire_plan.should_take_free_buffer:
-                    dosage_buffer = self.free_dosage_buffers.popleft()
-                elif acquire_plan.should_allocate:
-                    should_allocate_dosage_buffer = True
-                elif self.stage_timing_recorder is None and acquire_plan.should_wait:
-                    self.dosage_buffer_pool_condition.wait(timeout=acquire_plan.wait_timeout_seconds)
             if should_allocate_dosage_buffer:
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
             if dosage_buffer is not None:
@@ -1554,17 +1560,20 @@ class NativeBgenCallbackRunner(abc.ABC):
             if self.stage_timing_recorder is None:
                 continue
             buffer_wait_start_time = time.perf_counter()
-            with self.dosage_buffer_pool_condition:
-                acquire_plan = self.callback_scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt(
-                    free_buffer_count=self.free_dosage_buffer_count
+            observed_generation = self.dosage_buffer_pool_signal.generation
+            acquire_plan = self.callback_scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt(
+                free_buffer_count=self.free_dosage_buffer_count
+            )
+            if acquire_plan.should_take_free_buffer:
+                dosage_buffer = self.free_dosage_buffers.popleft()
+            elif acquire_plan.should_allocate:
+                should_allocate_dosage_buffer = True
+            elif acquire_plan.should_wait:
+                self.dosage_buffer_pool_signal.wait_for_change(
+                    observed_generation,
+                    timeout_seconds=acquire_plan.wait_timeout_seconds,
                 )
-                if acquire_plan.should_take_free_buffer:
-                    dosage_buffer = self.free_dosage_buffers.popleft()
-                elif acquire_plan.should_allocate:
-                    should_allocate_dosage_buffer = True
-                elif acquire_plan.should_wait:
-                    self.dosage_buffer_pool_condition.wait(timeout=acquire_plan.wait_timeout_seconds)
-                current_depth = self.free_dosage_buffer_count
+            current_depth = self.free_dosage_buffer_count
             if should_allocate_dosage_buffer:
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
             if dosage_buffer is not None:
@@ -1591,10 +1600,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         return_plan = self.callback_scheduler_state.plan_dosage_buffer_return_attempt(id(dosage_buffer_owner))
         if not return_plan.should_return:
             return
-        with self.dosage_buffer_pool_condition:
-            self.free_dosage_buffers.append(dosage_buffer_owner)
-            current_depth = self.free_dosage_buffer_count
-            self.dosage_buffer_pool_condition.notify()
+        self.free_dosage_buffers.append(dosage_buffer_owner)
+        current_depth = self.free_dosage_buffer_count
+        self.dosage_buffer_pool_signal.notify_waiters()
         self.record_dosage_buffer_pool_return_operation(
             free_buffer_count=current_depth,
         )
@@ -1606,12 +1614,11 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> HostGenotypeBuffer:
         """Allocate and register one host genotype buffer slot."""
         dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
-        with self.dosage_buffer_pool_condition:
-            register_plan = self.callback_scheduler_state.plan_dosage_buffer_register_attempt(id(dosage_buffer))
-            if register_plan.has_registration_error:
-                message = "Native dosage-buffer pool has no available slot for allocation."
-                raise RuntimeError(message)
-            current_depth = self.free_dosage_buffer_count
+        register_plan = self.callback_scheduler_state.plan_dosage_buffer_register_attempt(id(dosage_buffer))
+        if register_plan.has_registration_error:
+            message = "Native dosage-buffer pool has no available slot for allocation."
+            raise RuntimeError(message)
+        current_depth = self.free_dosage_buffer_count
         self.record_dosage_buffer_pool_allocate_operation(
             free_buffer_count=current_depth,
         )
@@ -1620,12 +1627,11 @@ class NativeBgenCallbackRunner(abc.ABC):
     def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Remove one discarded host genotype buffer slot from pool accounting."""
         dosage_buffer_identifier = id(dosage_buffer)
-        with self.dosage_buffer_pool_condition:
-            discard_plan = self.callback_scheduler_state.plan_dosage_buffer_discard_attempt(dosage_buffer_identifier)
-            if not discard_plan.should_discard:
-                return
-            current_depth = self.free_dosage_buffer_count
-            self.dosage_buffer_pool_condition.notify()
+        discard_plan = self.callback_scheduler_state.plan_dosage_buffer_discard_attempt(dosage_buffer_identifier)
+        if not discard_plan.should_discard:
+            return
+        current_depth = self.free_dosage_buffer_count
+        self.dosage_buffer_pool_signal.notify_waiters()
         self.record_dosage_buffer_pool_discard_operation(
             free_buffer_count=current_depth,
         )
