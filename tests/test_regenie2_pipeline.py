@@ -2255,6 +2255,12 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert dosage_get_observation.blocked is True
     assert runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(None) is True
     assert runtime_resources.get_dosage_work_item().item is None
+    dosage_combined_observation = runtime_resources.put_dosage_work_item_with_backpressure_observation(dosage_item)
+    assert dosage_combined_observation.queue_name == "dosage_queue"
+    assert dosage_combined_observation.operation_name == "put"
+    assert dosage_combined_observation.blocked is False
+    assert dosage_combined_observation.should_retry_put is False
+    assert runtime_resources.get_dosage_work_item().item is dosage_item
 
     assert runtime_resources.try_put_result_write_item(result_item, timeout_seconds=0.0) is True
     assert runtime_resources.result_queue_occupied_count == 1
@@ -2291,6 +2297,12 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert result_get_observation.blocked is True
     assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
     assert runtime_resources.get_result_write_item().item is None
+    result_combined_observation = runtime_resources.put_result_write_item_with_backpressure_observation(result_item)
+    assert result_combined_observation.queue_name == "result_queue"
+    assert result_combined_observation.operation_name == "put"
+    assert result_combined_observation.blocked is False
+    assert result_combined_observation.should_retry_put is False
+    assert runtime_resources.get_result_write_item().item is result_item
 
 
 def test_native_callback_runtime_resources_own_progress_state() -> None:

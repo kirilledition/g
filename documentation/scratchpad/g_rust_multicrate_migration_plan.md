@@ -1076,6 +1076,9 @@ Remove Python as the chunk-level scheduler.
   planning while Python keeps free-buffer count calculation and timing emission.
 - Callback runtime resources now own production dosage/result queue put/get
   observation planning while Python keeps queue timing emission.
+- Callback runtime resources now own production timed dosage/result queue
+  producer put attempts and observation selection in one native call while
+  Python keeps timing measurement and emission.
 - Callback runtime resources now own production callback limit, queue/resource
   occupancy, and free-buffer reads while Python keeps public runner property
   accessors.

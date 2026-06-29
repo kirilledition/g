@@ -820,6 +820,16 @@ impl NativeCallbackRuntimeResources {
         }
     }
 
+    fn put_dosage_work_item_with_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackQueuePutObservationPlan> {
+        let queued = self.try_put_dosage_work_item_with_backpressure_timeout(py, work_item)?;
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        Ok(scheduler_state.plan_dosage_queue_put_observation_value(queued))
+    }
+
     fn get_dosage_work_item(&self, py: Python<'_>) -> PyResult<NativeCallbackObjectQueueGetResult> {
         loop {
             let has_queued_item = self.dosage_queue.bind(py).borrow().has_queued_item_value()?;
@@ -1090,6 +1100,16 @@ impl NativeCallbackRuntimeResources {
                 .borrow()
                 .wait_for_available_slot_value(py, attempt_plan.wait_timeout_seconds_value())?;
         }
+    }
+
+    fn put_result_write_item_with_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackQueuePutObservationPlan> {
+        let queued = self.try_put_result_write_item_with_backpressure_timeout(py, work_item)?;
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        Ok(scheduler_state.plan_result_queue_put_observation_value(queued))
     }
 
     fn get_result_write_item(&self, py: Python<'_>) -> PyResult<NativeCallbackObjectQueueGetResult> {
