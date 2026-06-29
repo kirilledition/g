@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyDict, PyModule};
 
 #[pyclass]
 pub(crate) struct NativeCallbackObjectQueue {
@@ -22,6 +22,12 @@ pub(crate) struct NativeCallbackObjectQueueGetResult {
 pub(crate) struct NativeCallbackWaitSignal {
     generation: Mutex<u64>,
     condition: Condvar,
+}
+
+#[pyclass]
+pub(crate) struct NativeCallbackWorkerThread {
+    thread: Py<PyAny>,
+    name: String,
 }
 
 #[pymethods]
@@ -250,6 +256,50 @@ impl NativeCallbackWaitSignal {
                     .map_err(|_| PyRuntimeError::new_err("native callback wait signal lock was poisoned during wait"))?
             };
         }
+    }
+}
+
+#[pymethods]
+impl NativeCallbackWorkerThread {
+    #[new]
+    #[pyo3(signature = (*, target, name, daemon = true))]
+    fn new(py: Python<'_>, target: &Bound<'_, PyAny>, name: String, daemon: bool) -> PyResult<Self> {
+        let threading_module = PyModule::import(py, "threading")?;
+        let keyword_arguments = PyDict::new(py);
+        keyword_arguments.set_item("target", target)?;
+        keyword_arguments.set_item("name", name.as_str())?;
+        keyword_arguments.set_item("daemon", daemon)?;
+        let thread = threading_module.getattr("Thread")?.call((), Some(&keyword_arguments))?.unbind();
+        Ok(Self { thread, name })
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn start(&self, py: Python<'_>) -> PyResult<()> {
+        self.thread.bind(py).call_method0("start")?;
+        Ok(())
+    }
+
+    #[pyo3(signature = (timeout = None))]
+    fn join(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<()> {
+        match timeout {
+            Some(timeout_seconds) => {
+                let keyword_arguments = PyDict::new(py);
+                keyword_arguments.set_item("timeout", timeout_seconds)?;
+                self.thread.bind(py).call_method("join", (), Some(&keyword_arguments))?;
+            }
+            None => {
+                self.thread.bind(py).call_method0("join")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn is_alive(&self, py: Python<'_>) -> PyResult<bool> {
+        self.thread.bind(py).call_method0("is_alive")?.extract()
     }
 }
 

@@ -154,12 +154,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.result_worker_error_cause: BaseException | None = None
         self.binary_correction_summary = _core.NativeBinaryCorrectionSummary()
         self.binary_correction_pending_diagnostics: list[regenie2_binary.BinaryChunkDiagnostics] = []
-        self.worker_thread = threading.Thread(
+        self.worker_thread = _core.NativeCallbackWorkerThread(
             target=self.consume_dosage_chunks,
             name=worker_name,
             daemon=True,
         )
-        self.result_worker_thread = threading.Thread(
+        self.result_worker_thread = _core.NativeCallbackWorkerThread(
             target=self.consume_result_write_items,
             name=f"{worker_name}-writer",
             daemon=True,

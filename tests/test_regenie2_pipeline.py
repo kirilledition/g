@@ -2074,6 +2074,8 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
 
     callback = ThreadedManualCallbackRunner()
 
+    assert isinstance(callback.worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
+    assert isinstance(callback.result_worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
     assert callback.worker_threads_started is False
     assert not callback.worker_thread.is_alive()
     assert not callback.result_worker_thread.is_alive()
@@ -2088,6 +2090,33 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
 
     assert not callback.worker_thread.is_alive()
     assert not callback.result_worker_thread.is_alive()
+
+
+def test_native_callback_worker_thread_starts_and_joins_python_target() -> None:
+    started_event = threading.Event()
+    release_event = threading.Event()
+
+    def worker_target() -> None:
+        started_event.set()
+        release_event.wait(timeout=2.0)
+
+    worker_thread = callback_runtime._core.NativeCallbackWorkerThread(
+        target=worker_target,
+        name="native-callback-worker-test",
+    )
+
+    assert worker_thread.name == "native-callback-worker-test"
+    assert not worker_thread.is_alive()
+
+    worker_thread.start()
+    try:
+        assert started_event.wait(timeout=1.0)
+        assert worker_thread.is_alive()
+    finally:
+        release_event.set()
+        worker_thread.join(timeout=1.0)
+
+    assert not worker_thread.is_alive()
 
 
 def test_native_callback_runner_uses_native_worker_start_plan() -> None:

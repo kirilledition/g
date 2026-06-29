@@ -1044,6 +1044,9 @@ Remove Python as the chunk-level scheduler.
   generation-counted wait signals instead of Python condition variables.
 - Free host dosage-buffer storage now uses the native callback object queue,
   leaving Python to inspect buffer shape and dtype before reuse or discard.
+- Callback worker thread handles now use a native PyO3 wrapper for thread
+  construction, start, liveness checks, and joins while Python still supplies
+  coarse dosage/result worker targets.
 
 ### Tests
 
