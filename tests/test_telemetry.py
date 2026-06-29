@@ -8,7 +8,7 @@ import unittest.mock
 import pytest
 
 from g import _core, types
-from g.engine import telemetry
+from g.engine import run_events, telemetry
 from g.interface import config
 from g.runner import runtime as runner_runtime
 
@@ -462,6 +462,67 @@ def test_native_telemetry_run_session_owns_progress_emission(tmp_path: Path) -> 
     assert event_payload["level"] == "INFO"
     assert event_payload["processed_chunk_count"] == 1
     assert event_payload["chromosome"] == "22"
+
+
+def test_native_telemetry_run_session_owns_run_lifecycle_event_emission(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+    completed_event = run_events.RunCompletedEvent(
+        run_id="run-1",
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype_count=1,
+        artifacts=(
+            run_events.RunArtifactPayload(
+                phenotype_name="trait",
+                output_run_directory=tmp_path / "run",
+                final_dataset=None,
+                final_parquet=None,
+                final_regenie=tmp_path / "results.regenie",
+                effective_config=tmp_path / "config.toml",
+            ),
+        ),
+    )
+    interrupted_event = run_events.RunInterruptedEvent(
+        signal_number=2,
+        signal_name="SIGINT",
+        exit_code=130,
+        flushed_for_resume=True,
+    )
+    failed_event = run_events.RunFailedEvent(error_type="RuntimeError", error_message="boom")
+
+    telemetry_session.log_run_completed(completed_event)
+    telemetry_session.log_run_interrupted(interrupted_event)
+    telemetry_session.log_run_failed(failed_event)
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "run_completed",
+        "run_failed",
+        "run_failed",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "WARN", "ERROR"]
+    assert event_payloads[0]["association_mode"] == "regenie2_linear"
+    assert event_payloads[0]["phenotype_count"] == 1
+    assert event_payloads[1]["failure_kind"] == "graceful_shutdown"
+    assert event_payloads[1]["signal_name"] == "SIGINT"
+    assert event_payloads[2]["failure_kind"] == "exception"
+    assert event_payloads[2]["error_message"] == "boom"
 
 
 def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(

@@ -106,7 +106,9 @@ pub fn render_run_failed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) 
     PyTuple::new(py, native_run_events::render_run_failed_lines(&event_payload))
 }
 
-fn run_completed_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunCompletedEventPayload> {
+pub(crate) fn run_completed_event_from_py(
+    event: &Bound<'_, PyAny>,
+) -> PyResult<native_run_events::RunCompletedEventPayload> {
     Ok(native_run_events::RunCompletedEventPayload {
         run_id: optional_string_attribute(event, "run_id")?,
         association_mode: optional_enum_value(event, "association_mode")?,
@@ -115,7 +117,9 @@ fn run_completed_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_
     })
 }
 
-fn run_interrupted_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunInterruptedEventPayload> {
+pub(crate) fn run_interrupted_event_from_py(
+    event: &Bound<'_, PyAny>,
+) -> PyResult<native_run_events::RunInterruptedEventPayload> {
     Ok(native_run_events::RunInterruptedEventPayload {
         signal_number: event.getattr("signal_number")?.extract::<i64>()?,
         signal_name: event.getattr("signal_name")?.extract::<String>()?,
@@ -124,7 +128,7 @@ fn run_interrupted_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_ru
     })
 }
 
-fn run_failed_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunFailedEventPayload> {
+pub(crate) fn run_failed_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunFailedEventPayload> {
     Ok(native_run_events::RunFailedEventPayload {
         error_type: event.getattr("error_type")?.extract::<String>()?,
         error_message: event.getattr("error_message")?.extract::<String>()?,
@@ -247,7 +251,7 @@ fn run_failed_event_payload_to_py_dict<'py>(
     Ok(payload)
 }
 
-fn run_completed_telemetry_fields_to_py_dict<'py>(
+pub(crate) fn run_completed_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunCompletedTelemetryFields,
 ) -> PyResult<Bound<'py, PyDict>> {
@@ -268,7 +272,7 @@ fn run_completed_telemetry_fields_to_py_dict<'py>(
     Ok(payload)
 }
 
-fn run_interrupted_telemetry_fields_to_py_dict<'py>(
+pub(crate) fn run_interrupted_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunInterruptedTelemetryFields,
 ) -> PyResult<Bound<'py, PyDict>> {
@@ -281,7 +285,7 @@ fn run_interrupted_telemetry_fields_to_py_dict<'py>(
     Ok(payload)
 }
 
-fn run_failed_telemetry_fields_to_py_dict<'py>(
+pub(crate) fn run_failed_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunFailedTelemetryFields,
 ) -> PyResult<Bound<'py, PyDict>> {

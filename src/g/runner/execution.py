@@ -117,20 +117,12 @@ def regenie(
         )
     except shutdown.GracefulShutdownRequested as shutdown_request:
         interrupted_event = run_events.build_run_interrupted_event(shutdown_request)
-        active_telemetry_session.log_event(
-            "run_failed",
-            level="warn",
-            **run_events.run_interrupted_telemetry_fields(interrupted_event),
-        )
+        active_telemetry_session.log_run_interrupted(interrupted_event)
         logger.warning("REGENIE run interrupted by %s.", interrupted_event.signal_name)
         raise
     except Exception as error:
-        failed_event = run_events.RunFailedEvent(error_type=type(error).__name__, error_message=str(error))
-        active_telemetry_session.log_event(
-            "run_failed",
-            level="error",
-            **run_events.run_failed_telemetry_fields(failed_event),
-        )
+        failed_event = run_events.build_run_failed_event(error)
+        active_telemetry_session.log_run_failed(failed_event)
         logger.exception("REGENIE run failed.")
         raise
     else:
@@ -141,11 +133,7 @@ def regenie(
             phenotype_count=phenotype_count,
         )
         completed_event = run_events.build_run_completed_event(artifacts)
-        active_telemetry_session.log_event(
-            "run_completed",
-            level="info",
-            **run_events.run_completed_telemetry_fields(completed_event),
-        )
+        active_telemetry_session.log_run_completed(completed_event)
         logger.info("Finished REGENIE run.")
         return artifacts
     finally:

@@ -14,6 +14,7 @@ TelemetryWriterCounters = dict[str, TelemetryCounterValue]
 TelemetryCloseMetadata = dict[str, TelemetryWriterCounters]
 
 if typing.TYPE_CHECKING:
+    from g.engine import run_events
     from g.interface import config
 
 
@@ -124,6 +125,18 @@ class TelemetrySession:
             level,
             fields,
         )
+
+    def log_run_completed(self, event: run_events.RunCompletedEvent) -> None:
+        """Write the canonical run completion event."""
+        self.native_session_handle.emit_run_completed_event(event)
+
+    def log_run_interrupted(self, event: run_events.RunInterruptedEvent) -> None:
+        """Write the canonical graceful-interruption event."""
+        self.native_session_handle.emit_run_interrupted_event(event)
+
+    def log_run_failed(self, event: run_events.RunFailedEvent) -> None:
+        """Write the canonical run failure event."""
+        self.native_session_handle.emit_run_failed_event(event)
 
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""

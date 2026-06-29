@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use super::run_events;
+use g_runtime::run_events as native_run_events;
 use g_runtime::telemetry_session as native_telemetry_session;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -310,14 +312,28 @@ impl NativeTelemetryRunSession {
         level: &str,
         fields: &Bound<'py, PyDict>,
     ) -> PyResult<()> {
-        let emission_plan = self.state_guard()?.plan_event_emission(self.native_telemetry_session.is_some());
-        if !emission_plan.should_emit {
-            return Ok(());
-        }
-        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
-            return Ok(());
-        };
-        native_telemetry_session.emit_current_event(py, &self.run_id_value()?, event, level, fields)
+        self.emit_current_event_fields(py, event, level, fields)
+    }
+
+    pub fn emit_run_completed_event<'py>(&self, py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<()> {
+        let event_payload = run_events::run_completed_event_from_py(event)?;
+        let telemetry_fields = native_run_events::build_run_completed_telemetry_fields(&event_payload);
+        let fields = run_events::run_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(py, "run_completed", "info", &fields)
+    }
+
+    pub fn emit_run_interrupted_event<'py>(&self, py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<()> {
+        let event_payload = run_events::run_interrupted_event_from_py(event)?;
+        let telemetry_fields = native_run_events::build_run_interrupted_telemetry_fields(&event_payload);
+        let fields = run_events::run_interrupted_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(py, "run_failed", "warn", &fields)
+    }
+
+    pub fn emit_run_failed_event<'py>(&self, py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<()> {
+        let event_payload = run_events::run_failed_event_from_py(event)?;
+        let telemetry_fields = native_run_events::build_run_failed_telemetry_fields(&event_payload);
+        let fields = run_events::run_failed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(py, "run_failed", "error", &fields)
     }
 
     pub fn emit_progress<'py>(
@@ -644,6 +660,23 @@ impl NativeTelemetryRunSession {
 
     fn run_id_value(&self) -> PyResult<String> {
         Ok(self.state_guard()?.run_id().to_string())
+    }
+
+    fn emit_current_event_fields<'py>(
+        &self,
+        py: Python<'py>,
+        event: &str,
+        level: &str,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        let emission_plan = self.state_guard()?.plan_event_emission(self.native_telemetry_session.is_some());
+        if !emission_plan.should_emit {
+            return Ok(());
+        }
+        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
+            return Ok(());
+        };
+        native_telemetry_session.emit_current_event(py, &self.run_id_value()?, event, level, fields)
     }
 }
 
