@@ -1974,6 +1974,46 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_worker_start_attempt().into()
     }
 
+    pub(crate) fn plan_dosage_worker_join_value(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
+        self.inner.plan_dosage_worker_join(timeout_seconds).into()
+    }
+
+    pub(crate) fn plan_result_worker_join_value(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
+        self.inner.plan_result_worker_join(timeout_seconds).into()
+    }
+
+    pub(crate) fn plan_dosage_worker_stop_value(
+        &self,
+        timeout_seconds: Option<f64>,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPlan {
+        self.inner.plan_dosage_worker_stop(timeout_seconds, is_worker_alive).into()
+    }
+
+    pub(crate) fn plan_result_worker_stop_value(
+        &self,
+        timeout_seconds: Option<f64>,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPlan {
+        self.inner.plan_result_worker_stop(timeout_seconds, is_worker_alive).into()
+    }
+
+    pub(crate) fn plan_dosage_worker_stop_poll_value(
+        &self,
+        remaining_timeout_seconds: f64,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPollPlan {
+        self.inner.plan_dosage_worker_stop_poll(remaining_timeout_seconds, is_worker_alive).into()
+    }
+
+    pub(crate) fn plan_result_worker_stop_poll_value(
+        &self,
+        remaining_timeout_seconds: f64,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPollPlan {
+        self.inner.plan_result_worker_stop_poll(remaining_timeout_seconds, is_worker_alive).into()
+    }
+
     pub(crate) fn plan_dosage_queue_put_attempt_value(
         &mut self,
         wait_timeout_seconds: f64,
@@ -2080,6 +2120,36 @@ impl NativeCallbackWorkerStartAttemptPlan {
 
     pub(crate) fn should_start_dosage_worker(&self) -> bool {
         self.inner.start_dosage_worker()
+    }
+}
+
+impl NativeCallbackWorkerJoinPlan {
+    pub(crate) fn should_join_value(&self) -> bool {
+        self.inner.should_join
+    }
+
+    pub(crate) fn timeout_seconds_value(&self) -> f64 {
+        self.inner.timeout_seconds
+    }
+}
+
+impl NativeCallbackWorkerStopPlan {
+    pub(crate) fn should_stop_value(&self) -> bool {
+        self.inner.should_stop
+    }
+
+    pub(crate) fn timeout_seconds_value(&self) -> f64 {
+        self.inner.timeout_seconds
+    }
+}
+
+impl NativeCallbackWorkerStopPollPlan {
+    pub(crate) fn should_stop_value(&self) -> bool {
+        self.inner.should_stop
+    }
+
+    pub(crate) fn poll_timeout_seconds_value(&self) -> f64 {
+        self.inner.poll_timeout_seconds
     }
 }
 

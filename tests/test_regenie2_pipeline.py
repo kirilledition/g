@@ -2217,6 +2217,65 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         )
 
 
+def test_native_callback_runtime_resources_own_worker_stop_and_join() -> None:
+    runtime_resources_holder: list[typing.Any] = []
+
+    def dosage_worker_target() -> None:
+        runtime_resources_holder[0].get_dosage_work_item()
+
+    def result_worker_target() -> None:
+        runtime_resources_holder[0].get_result_write_item()
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-worker-shutdown-test",
+        dosage_worker_target=dosage_worker_target,
+        result_worker_target=result_worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    runtime_resources_holder.append(runtime_resources)
+
+    start_plan = runtime_resources.start_workers()
+    assert start_plan.has_start_error is False
+    assert runtime_resources.stop_dosage_worker(1.0) is None
+    assert runtime_resources.stop_result_worker(1.0) is None
+    assert runtime_resources.join_dosage_worker(1.0) is None
+    assert runtime_resources.join_result_worker(1.0) is None
+    assert not runtime_resources.worker_thread.is_alive()
+    assert not runtime_resources.result_worker_thread.is_alive()
+
+
+def test_native_callback_runtime_resources_report_worker_shutdown_timeouts() -> None:
+    release_event = threading.Event()
+
+    def worker_target() -> None:
+        release_event.wait(timeout=2.0)
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-worker-timeout-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+
+    start_plan = runtime_resources.start_workers()
+    assert start_plan.has_start_error is False
+    try:
+        assert runtime_resources.stop_dosage_worker(0.0) == 0.0
+        assert runtime_resources.stop_result_worker(0.0) == 0.0
+        assert runtime_resources.join_dosage_worker(0.0) == 0.0
+        assert runtime_resources.join_result_worker(0.0) == 0.0
+    finally:
+        release_event.set()
+        runtime_resources.join_dosage_worker(1.0)
+        runtime_resources.join_result_worker(1.0)
+
+
 def test_native_callback_runner_uses_native_worker_start_plan() -> None:
     class RecordingWorkerThread:
         def __init__(self, *, worker_name: str, start_events: list[str]) -> None:

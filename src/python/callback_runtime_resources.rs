@@ -159,6 +159,92 @@ impl NativeCallbackRuntimeResources {
         Ok(start_attempt_plan)
     }
 
+    fn stop_dosage_worker(&self, py: Python<'_>, timeout_seconds: Option<f64>) -> PyResult<Option<f64>> {
+        let is_worker_alive = self.worker_thread.bind(py).borrow().is_thread_alive(py)?;
+        let stop_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_worker_stop_value(timeout_seconds, is_worker_alive)
+        };
+        if !stop_plan.should_stop_value() {
+            return Ok(None);
+        }
+        let stop_deadline = Instant::now() + normalize_timeout_duration(stop_plan.timeout_seconds_value());
+        while Instant::now() < stop_deadline {
+            let remaining_seconds = remaining_timeout_seconds(stop_deadline);
+            let is_worker_alive = self.worker_thread.bind(py).borrow().is_thread_alive(py)?;
+            let stop_poll_plan = {
+                let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+                scheduler_state.plan_dosage_worker_stop_poll_value(remaining_seconds, is_worker_alive)
+            };
+            if !stop_poll_plan.should_stop_value() {
+                return Ok(None);
+            }
+            let stop_signal = py.None();
+            if self.try_put_dosage_work_item(py, stop_signal.bind(py), stop_poll_plan.poll_timeout_seconds_value())? {
+                return Ok(None);
+            }
+        }
+        Ok(Some(stop_plan.timeout_seconds_value()))
+    }
+
+    fn join_dosage_worker(&self, py: Python<'_>, timeout_seconds: Option<f64>) -> PyResult<Option<f64>> {
+        let join_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_worker_join_value(timeout_seconds)
+        };
+        if !join_plan.should_join_value() {
+            return Ok(None);
+        }
+        self.worker_thread.bind(py).borrow().join_thread(py, Some(join_plan.timeout_seconds_value()))?;
+        if self.worker_thread.bind(py).borrow().is_thread_alive(py)? {
+            return Ok(Some(join_plan.timeout_seconds_value()));
+        }
+        Ok(None)
+    }
+
+    fn stop_result_worker(&self, py: Python<'_>, timeout_seconds: Option<f64>) -> PyResult<Option<f64>> {
+        let is_worker_alive = self.result_worker_thread.bind(py).borrow().is_thread_alive(py)?;
+        let stop_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_result_worker_stop_value(timeout_seconds, is_worker_alive)
+        };
+        if !stop_plan.should_stop_value() {
+            return Ok(None);
+        }
+        let stop_deadline = Instant::now() + normalize_timeout_duration(stop_plan.timeout_seconds_value());
+        while Instant::now() < stop_deadline {
+            let remaining_seconds = remaining_timeout_seconds(stop_deadline);
+            let is_worker_alive = self.result_worker_thread.bind(py).borrow().is_thread_alive(py)?;
+            let stop_poll_plan = {
+                let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+                scheduler_state.plan_result_worker_stop_poll_value(remaining_seconds, is_worker_alive)
+            };
+            if !stop_poll_plan.should_stop_value() {
+                return Ok(None);
+            }
+            let stop_signal = py.None();
+            if self.try_put_result_write_item(py, stop_signal.bind(py), stop_poll_plan.poll_timeout_seconds_value())? {
+                return Ok(None);
+            }
+        }
+        Ok(Some(stop_plan.timeout_seconds_value()))
+    }
+
+    fn join_result_worker(&self, py: Python<'_>, timeout_seconds: Option<f64>) -> PyResult<Option<f64>> {
+        let join_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_result_worker_join_value(timeout_seconds)
+        };
+        if !join_plan.should_join_value() {
+            return Ok(None);
+        }
+        self.result_worker_thread.bind(py).borrow().join_thread(py, Some(join_plan.timeout_seconds_value()))?;
+        if self.result_worker_thread.bind(py).borrow().is_thread_alive(py)? {
+            return Ok(Some(join_plan.timeout_seconds_value()));
+        }
+        Ok(None)
+    }
+
     fn try_put_dosage_work_item(
         &self,
         py: Python<'_>,

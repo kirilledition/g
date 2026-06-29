@@ -1056,6 +1056,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production dosage/result drain planning
   and validated work-item dispatch planning, leaving Python to classify work
   item dataclasses and perform JAX/write side effects.
+- Callback runtime resources now own production worker stop and join loops,
+  including sentinel enqueue retries and native thread joins, while Python keeps
+  the public shutdown exception type.
 
 ### Tests
 
