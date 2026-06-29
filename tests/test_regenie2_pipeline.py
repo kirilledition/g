@@ -2267,6 +2267,16 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert dosage_observed_get_result.observation_plan.operation_name == "consumer_wait"
     assert dosage_observed_get_result.observation_plan.blocked is True
     assert runtime_resources.put_dosage_work_item_with_backpressure_observation(dosage_item).should_retry_put is False
+    dosage_work_item_drain_result = runtime_resources.get_dosage_work_item_with_drain_completion()
+    assert dosage_work_item_drain_result.has_dosage_work_item is True
+    assert dosage_work_item_drain_result.item is dosage_item
+    assert dosage_work_item_drain_result.drain_completion_plan.should_stop is False
+    assert runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(None) is True
+    dosage_stop_drain_result = runtime_resources.get_dosage_work_item_with_drain_completion()
+    assert dosage_stop_drain_result.has_dosage_work_item is False
+    assert dosage_stop_drain_result.item is None
+    assert dosage_stop_drain_result.drain_completion_plan.should_stop is True
+    assert runtime_resources.put_dosage_work_item_with_backpressure_observation(dosage_item).should_retry_put is False
     dosage_work_item_get_result = runtime_resources.get_dosage_work_item_with_observation_and_drain_completion()
     assert dosage_work_item_get_result.has_dosage_work_item is True
     assert dosage_work_item_get_result.item is dosage_item
@@ -2324,6 +2334,20 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert result_observed_get_result.observation_plan.queue_name == "result_queue"
     assert result_observed_get_result.observation_plan.operation_name == "consumer_wait"
     assert result_observed_get_result.observation_plan.blocked is True
+    assert runtime_resources.put_result_write_item_with_backpressure_observation(result_item).should_retry_put is False
+    result_work_item_drain_result = runtime_resources.get_result_write_item_with_drain_completion(
+        flush_binary_correction_diagnostics_on_stop=True,
+    )
+    assert result_work_item_drain_result.has_result_work_item is True
+    assert result_work_item_drain_result.item is result_item
+    assert result_work_item_drain_result.drain_completion_plan.should_stop is False
+    assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
+    result_stop_drain_result = runtime_resources.get_result_write_item_with_drain_completion(
+        flush_binary_correction_diagnostics_on_stop=True,
+    )
+    assert result_stop_drain_result.has_result_work_item is False
+    assert result_stop_drain_result.item is None
+    assert result_stop_drain_result.drain_completion_plan.should_stop is True
     assert runtime_resources.put_result_write_item_with_backpressure_observation(result_item).should_retry_put is False
     result_work_item_get_result = runtime_resources.get_result_write_item_with_observation_and_drain_completion(
         flush_binary_correction_diagnostics_on_stop=True,
@@ -5765,6 +5789,94 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
     assert not hasattr(callback.dosage_queue, "maxsize")
     assert not hasattr(callback.result_queue, "maxsize")
     assert not hasattr(callback.free_dosage_buffers, "maxsize")
+
+
+def test_native_bgen_callback_runner_uses_native_untimed_queue_get_drain_results() -> None:
+    class RecordingCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
+        def __init__(self) -> None:
+            super().__init__(
+                worker_name="native-untimed-drain",
+                staging_depth=2,
+                native_callback_batch_size=1,
+                result_in_flight_limit=None,
+                dosage_buffer_limit=None,
+                stage_timing_recorder=None,
+                telemetry_session=None,
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+            )
+            self.sample_major_metadata: list[object] = []
+            self.variant_major_metadata: list[object] = []
+            self.packed_metadata: list[object] = []
+            self.result_metadata: list[object] = []
+
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del genotype_matrix, chunk_stats
+            self.sample_major_metadata.append(variant_metadata)
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del genotype_matrix_by_variant, chunk_stats
+            self.variant_major_metadata.append(variant_metadata)
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del packed_probability_pairs_by_variant, chunk_stats
+            self.packed_metadata.append(variant_metadata)
+
+        def process_result_write_item(self, work_item: callback_shared.Regenie2ResultWriteWorkItem) -> None:
+            self.result_metadata.append(work_item.metadata)
+
+    callback = RecordingCallbackRunner()
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("typing.Any", SimpleNamespace())
+    dosage_work_item = callback_shared.PreprocessedDosageChunkWorkItem(
+        metadata=metadata,
+        genotype_matrix=np.ones((2, 2), dtype=np.float32),
+        chunk_stats=chunk_stats,
+    )
+    result_work_item = callback_shared.Regenie2ResultWriteWorkItem(
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=None,
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=None,
+    )
+
+    assert callback.try_put_dosage_work_item_with_backpressure_timeout(dosage_work_item) is True
+    assert callback.try_put_dosage_work_item_with_backpressure_timeout(None) is True
+    callback.consume_dosage_chunks_without_timing()
+    assert callback.sample_major_metadata == [metadata]
+    assert callback.variant_major_metadata == []
+    assert callback.packed_metadata == []
+    assert callback.processed_chunk_count == 1
+    assert callback.worker_error_cause is None
+
+    assert callback.try_put_result_write_item_with_backpressure_timeout(result_work_item) is True
+    assert callback.try_put_result_write_item_with_backpressure_timeout(None) is True
+    callback.consume_result_write_items_without_timing()
+    assert callback.result_metadata == [metadata]
+    assert callback.result_worker_error_cause is None
 
 
 def test_native_bgen_callback_runner_rejects_batch_size_above_dosage_buffer_limit() -> None:

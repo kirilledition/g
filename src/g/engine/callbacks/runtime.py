@@ -1164,8 +1164,13 @@ class NativeBgenCallbackRunner(abc.ABC):
     def consume_dosage_chunks_without_timing(self) -> None:
         """Consume queued dosage chunks without diagnostic timing overhead."""
         while True:
-            work_item = self.get_dosage_work_item()
-            drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
+            if self.uses_native_callback_runtime_resources():
+                work_item_get_result = self.callback_runtime_resources.get_dosage_work_item_with_drain_completion()
+                work_item = typing.cast("QueuedPreprocessedDosageWorkItem", work_item_get_result.item)
+                drain_completion_plan = work_item_get_result.drain_completion_plan
+            else:
+                work_item = self.get_dosage_work_item()
+                drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
             if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
                 return
             dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
@@ -1519,11 +1524,18 @@ class NativeBgenCallbackRunner(abc.ABC):
     def consume_result_write_items_without_timing(self) -> None:
         """Consume result write items without diagnostic queue timing overhead."""
         while True:
-            work_item = self.get_result_write_item()
-            drain_completion_plan = self.plan_result_write_drain_completion(
-                work_item,
-                flush_binary_correction_diagnostics_on_stop=True,
-            )
+            if self.uses_native_callback_runtime_resources():
+                work_item_get_result = self.callback_runtime_resources.get_result_write_item_with_drain_completion(
+                    flush_binary_correction_diagnostics_on_stop=True,
+                )
+                work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
+                drain_completion_plan = work_item_get_result.drain_completion_plan
+            else:
+                work_item = self.get_result_write_item()
+                drain_completion_plan = self.plan_result_write_drain_completion(
+                    work_item,
+                    flush_binary_correction_diagnostics_on_stop=True,
+                )
             if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
             dispatch_plan = self.plan_result_write_item_dispatch(

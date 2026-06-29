@@ -63,8 +63,8 @@ use callback_queue::{
 };
 use callback_runtime_resources::{
     NativeCallbackQueueGetObservedResult, NativeCallbackRuntimeResources, NativeCallbackWorkerFinishLifecycleResult,
-    NativeDosageBufferAcquireResult, NativeDosageWorkItemGetResult, NativeResultWorkItemResourceReleaseResult,
-    NativeResultWriteItemGetResult,
+    NativeDosageBufferAcquireResult, NativeDosageWorkItemDrainResult, NativeDosageWorkItemGetResult,
+    NativeResultWorkItemResourceReleaseResult, NativeResultWriteItemDrainResult, NativeResultWriteItemGetResult,
 };
 use callback_summary::{
     NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
@@ -1876,8 +1876,10 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackWorkerStopPollPlan>()?;
     module.add_class::<NativeCallbackWorkerFinishLifecycleResult>()?;
     module.add_class::<NativeDosageBufferAcquireResult>()?;
+    module.add_class::<NativeDosageWorkItemDrainResult>()?;
     module.add_class::<NativeDosageWorkItemGetResult>()?;
     module.add_class::<NativeResultWorkItemResourceReleaseResult>()?;
+    module.add_class::<NativeResultWriteItemDrainResult>()?;
     module.add_class::<NativeResultWriteItemGetResult>()?;
     module.add_class::<NativeDosageBufferAcquireAttemptPlan>()?;
     module.add_class::<NativeDosageBufferDiscardAttemptPlan>()?;
