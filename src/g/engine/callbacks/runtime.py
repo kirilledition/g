@@ -71,6 +71,19 @@ class DosageWorkItemKind(enum.StrEnum):
     STOP_SIGNAL = "stop_signal"
 
 
+class CallbackWorkerThreadHandle(typing.Protocol):
+    """Thread-like callback worker handle used by manual fallback runners."""
+
+    @property
+    def name(self) -> str: ...
+
+    def start(self) -> None: ...
+
+    def join(self, timeout: float | None) -> None: ...
+
+    def is_alive(self) -> bool: ...
+
+
 def classify_result_write_item(
     work_item: QueuedResultWriteWorkItem,
 ) -> ResultWriteItemKind:
@@ -149,8 +162,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.worker_error_cause: BaseException | None = None
         self.result_worker_error_cause: BaseException | None = None
         self.binary_correction_pending_diagnostics: list[regenie2_binary.BinaryChunkDiagnostics] = []
-        self.worker_thread = self.callback_runtime_resources.worker_thread
-        self.result_worker_thread = self.callback_runtime_resources.result_worker_thread
 
     @property
     def processed_chunk_count(self) -> int:
@@ -332,6 +343,38 @@ class NativeBgenCallbackRunner(abc.ABC):
     def free_dosage_buffers(self, free_dosage_buffers: _core.NativeCallbackObjectQueue) -> None:
         """Store a fallback free dosage-buffer queue for manual callback runners."""
         self.fallback_free_dosage_buffers = free_dosage_buffers
+
+    @property
+    def worker_thread(self) -> CallbackWorkerThreadHandle:
+        """Return the active dosage worker thread handle."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.worker_thread
+        fallback_worker_thread = getattr(self, "fallback_worker_thread", None)
+        if fallback_worker_thread is None:
+            message = "Dosage worker thread has not been initialized."
+            raise AttributeError(message)
+        return typing.cast("CallbackWorkerThreadHandle", fallback_worker_thread)
+
+    @worker_thread.setter
+    def worker_thread(self, worker_thread: CallbackWorkerThreadHandle) -> None:
+        """Store a fallback dosage worker thread for manual callback runners."""
+        self.fallback_worker_thread = worker_thread
+
+    @property
+    def result_worker_thread(self) -> CallbackWorkerThreadHandle:
+        """Return the active result worker thread handle."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.result_worker_thread
+        fallback_result_worker_thread = getattr(self, "fallback_result_worker_thread", None)
+        if fallback_result_worker_thread is None:
+            message = "Result worker thread has not been initialized."
+            raise AttributeError(message)
+        return typing.cast("CallbackWorkerThreadHandle", fallback_result_worker_thread)
+
+    @result_worker_thread.setter
+    def result_worker_thread(self, result_worker_thread: CallbackWorkerThreadHandle) -> None:
+        """Store a fallback result worker thread for manual callback runners."""
+        self.fallback_result_worker_thread = result_worker_thread
 
     @property
     def dosage_worker_name(self) -> str:

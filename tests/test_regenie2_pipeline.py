@@ -2149,7 +2149,9 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
     assert isinstance(callback.worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
     assert isinstance(callback.result_worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
     assert callback.worker_thread is callback.callback_runtime_resources.worker_thread
+    assert not hasattr(callback, "fallback_worker_thread")
     assert callback.result_worker_thread is callback.callback_runtime_resources.result_worker_thread
+    assert not hasattr(callback, "fallback_result_worker_thread")
     assert not hasattr(callback_runtime, "threading")
     assert callback.worker_threads_started is False
     assert callback.dosage_worker_name == "threaded-manual-callback"
@@ -5636,6 +5638,8 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
     resolved_free_dosage_buffers = SimpleNamespace()
     resolved_result_in_flight_slot_signal = SimpleNamespace()
     resolved_dosage_buffer_pool_signal = SimpleNamespace()
+    resolved_worker_thread = SimpleNamespace()
+    resolved_result_worker_thread = SimpleNamespace()
     resolved_runtime_resources = SimpleNamespace(
         callback_scheduler_state=resolved_scheduler_state,
         progress_state=SimpleNamespace(),
@@ -5645,8 +5649,8 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
         result_queue=resolved_result_queue,
         free_dosage_buffers=resolved_free_dosage_buffers,
         binary_correction_summary=SimpleNamespace(),
-        worker_thread=SimpleNamespace(),
-        result_worker_thread=SimpleNamespace(),
+        worker_thread=resolved_worker_thread,
+        result_worker_thread=resolved_result_worker_thread,
         has_started=False,
         native_callback_batch_size=5,
         dosage_queue_depth=11,
@@ -5706,6 +5710,10 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
     assert not hasattr(callback, "fallback_result_queue")
     assert callback.free_dosage_buffers is resolved_free_dosage_buffers
     assert not hasattr(callback, "fallback_free_dosage_buffers")
+    assert callback.worker_thread is resolved_worker_thread
+    assert not hasattr(callback, "fallback_worker_thread")
+    assert callback.result_worker_thread is resolved_result_worker_thread
+    assert not hasattr(callback, "fallback_result_worker_thread")
     assert not hasattr(callback.dosage_queue, "maxsize")
     assert not hasattr(callback.result_queue, "maxsize")
     assert not hasattr(callback.free_dosage_buffers, "maxsize")
