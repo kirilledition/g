@@ -228,6 +228,11 @@ impl NativeCallbackRuntimeResources {
     }
 
     #[getter]
+    fn free_dosage_buffer_count(&self, py: Python<'_>) -> PyResult<usize> {
+        self.free_dosage_buffers.bind(py).borrow().occupied_count_value()
+    }
+
+    #[getter]
     fn dosage_buffer_identifiers(&self, py: Python<'_>) -> Vec<usize> {
         self.callback_scheduler_state.bind(py).borrow().dosage_buffer_identifiers_value()
     }

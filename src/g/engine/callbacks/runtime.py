@@ -303,6 +303,8 @@ class NativeBgenCallbackRunner(abc.ABC):
     @property
     def free_dosage_buffer_count(self) -> int:
         """Return the number of host buffers waiting for reuse."""
+        if self.uses_native_callback_runtime_resources():
+            return self.callback_runtime_resources.free_dosage_buffer_count
         return self.free_dosage_buffers.occupied_count
 
     @property

@@ -2528,6 +2528,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     )
     dosage_buffer = np.empty((2, 2), dtype=np.float32)
 
+    assert runtime_resources.free_dosage_buffer_count == 0
     assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
     assert runtime_resources.dosage_buffer_allocated_count == 1
     assert id(dosage_buffer) in runtime_resources.dosage_buffer_identifiers
@@ -2540,11 +2541,13 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
 
     assert runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer) == 1
     assert runtime_resources.free_dosage_buffers.occupied_count == 1
+    assert runtime_resources.free_dosage_buffer_count == 1
     with pytest.raises(RuntimeError, match="no slot for returned buffer"):
         runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer)
     free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is dosage_buffer
+    assert runtime_resources.free_dosage_buffer_count == 0
 
     reuse_observation_plan = runtime_resources.plan_dosage_buffer_pool_reuse_observation()
     assert reuse_observation_plan.operation_name == "reuse"
