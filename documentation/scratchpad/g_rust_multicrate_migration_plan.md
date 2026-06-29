@@ -1156,6 +1156,8 @@ Remove Python as the chunk-level scheduler.
   and level while reusing native callback summary payloads.
 - Native telemetry run sessions now emit JAX runtime diagnostic model objects
   directly while preserving the native record-plan policy.
+- Native stage timing recorders now own combined final timing-output writes for
+  stage-timing snapshots and profile summaries.
 
 ### Tests
 

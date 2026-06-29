@@ -224,6 +224,21 @@ impl NativeStageTimingRecorder {
         self.write_profile_summary(active_path, run_id)?;
         Ok(true)
     }
+
+    fn write_final_timing_outputs<'py>(
+        &self,
+        py: Python<'py>,
+        stage_timing_path: Option<String>,
+        profile_summary_path: Option<String>,
+        run_id: Option<String>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let wrote_stage_timing_snapshot = self.write_stage_timing_snapshot_if_configured(stage_timing_path)?;
+        let wrote_profile_summary = self.write_profile_summary_if_configured(profile_summary_path, run_id)?;
+        let payload = PyDict::new(py);
+        payload.set_item("wrote_stage_timing_snapshot", wrote_stage_timing_snapshot)?;
+        payload.set_item("wrote_profile_summary", wrote_profile_summary)?;
+        Ok(payload)
+    }
 }
 
 impl NativeStageTimingRecorder {

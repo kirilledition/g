@@ -196,11 +196,11 @@ def run_validated_regenie_config(
     finally:
         if stage_timing_recorder is not None:
             timing.record_stage_duration(stage_timing_recorder, "python_api_entry", api_entry_start_time)
-            logger.debug("Writing final stage timing snapshot.")
-            timing.write_stage_timing_snapshot(stage_timing_recorder, stage_timing_path)
-            timing.write_profile_summary(
+            logger.debug("Writing final timing outputs.")
+            timing.write_final_timing_outputs(
                 stage_timing_recorder,
-                profile_summary_path,
+                stage_timing_path=stage_timing_path,
+                profile_summary_path=profile_summary_path,
                 run_id=None if telemetry_session is None else telemetry_session.run_id,
             )
 

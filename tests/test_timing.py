@@ -225,10 +225,13 @@ def test_native_stage_timing_recorder_and_file_write_plans() -> None:
     assert isinstance(write_plan, _core.NativeTimingFileWritePlan)
     assert write_plan.should_write is True
     assert disabled_write_plan.should_write is False
-    assert _core.NativeStageTimingRecorder.from_config(
-        stage_timing_path_configured=False,
-        force=False,
-    ) is None
+    assert (
+        _core.NativeStageTimingRecorder.from_config(
+            stage_timing_path_configured=False,
+            force=False,
+        )
+        is None
+    )
     native_aggregate_recorder = _core.NativeStageTimingRecorder.from_config(
         stage_timing_path_configured=False,
         force=True,
@@ -273,6 +276,30 @@ def test_native_stage_timing_recorder_optional_file_writes(tmp_path: Path) -> No
 
     assert json.loads(output_path.read_text(encoding="utf-8"))["stage_counts"]["native_engine_delivery"] == 1
     assert json.loads(profile_summary_path.read_text(encoding="utf-8"))["run_id"] == "run-1"
+
+
+def test_native_stage_timing_recorder_writes_final_timing_outputs(tmp_path: Path) -> None:
+    output_path = tmp_path / "diagnostics" / "timings.json"
+    profile_summary_path = tmp_path / "diagnostics" / "profile.summary.json"
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    recorder.add_stage_duration("native_engine_delivery", 2.0)
+
+    write_result = timing.write_final_timing_outputs(
+        recorder,
+        stage_timing_path=output_path,
+        profile_summary_path=profile_summary_path,
+        run_id="run-1",
+    )
+
+    assert write_result == {"wrote_stage_timing_snapshot": True, "wrote_profile_summary": True}
+    assert json.loads(output_path.read_text(encoding="utf-8"))["stage_counts"]["native_engine_delivery"] == 1
+    assert json.loads(profile_summary_path.read_text(encoding="utf-8"))["run_id"] == "run-1"
+    assert timing.write_final_timing_outputs(
+        None,
+        stage_timing_path=output_path,
+        profile_summary_path=profile_summary_path,
+        run_id="run-1",
+    ) == {"wrote_stage_timing_snapshot": False, "wrote_profile_summary": False}
 
 
 def test_write_stage_timing_snapshot_persists_payload_and_derived_metrics(tmp_path: Path) -> None:
