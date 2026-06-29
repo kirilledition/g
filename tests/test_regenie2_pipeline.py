@@ -1337,7 +1337,6 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
         kernel_config=build_default_binary_kernel_config(),
         telemetry_session=typing.cast("typing.Any", RecordingTelemetrySession()),
     )
-    callback.result_queue = collections.deque()
     diagnostics = typing.cast(
         "regenie2_binary.BinaryChunkDiagnostics",
         SimpleNamespace(score_test_candidate_count=2),
@@ -1355,9 +1354,9 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
         binary_chunk_diagnostics=diagnostics,
     )
     assert callback.callback_scheduler_state.acquire_result_queue_slot() is True
-    callback.result_queue.append(work_item)
+    assert callback.result_queue.put(work_item, timeout_seconds=0.0) is True
     assert callback.callback_scheduler_state.acquire_result_queue_slot() is True
-    callback.result_queue.append(None)
+    assert callback.result_queue.put(None, timeout_seconds=0.0) is True
     with (
         patch(
             "g.engine.callbacks.runtime.write_materialized_regenie2_native_chunk_with_optional_timing",
@@ -1919,24 +1918,18 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         self.progress_state = callback_runtime._core.NativeCallbackProgressState()
         self.stage_timing_recorder = None
         self.telemetry_session = None
-        self.dosage_queue: collections.deque[
-            callback_shared.PreprocessedDosageChunkWorkItem
-            | callback_shared.PreprocessedVariantMajorDosageChunkWorkItem
-            | callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
-            | callback_shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-            | None
-        ] = collections.deque()
-        self.result_queue: collections.deque[
-            callback_shared.Regenie2ResultWriteWorkItem | callback_shared.Regenie2MultiResultWriteWorkItem | None
-        ] = collections.deque()
         self.callback_scheduler_state = callback_runtime._core.NativeCallbackSchedulerState(
             staging_depth=1,
             native_callback_batch_size=1,
             result_in_flight_limit=2,
             dosage_buffer_limit=2,
         )
-        self.dosage_queue_condition = threading.Condition()
-        self.result_queue_condition = threading.Condition()
+        self.dosage_queue = callback_runtime._core.NativeCallbackObjectQueue(
+            self.callback_scheduler_state.dosage_queue_depth
+        )
+        self.result_queue = callback_runtime._core.NativeCallbackObjectQueue(
+            self.callback_scheduler_state.result_queue_depth
+        )
         self.result_in_flight_slot_condition = threading.Condition()
         self.dosage_buffer_pool_condition = threading.Condition()
         self.free_dosage_buffers: collections.deque[callback_shared.HostGenotypeBuffer] = collections.deque()
@@ -1984,10 +1977,12 @@ def attach_manual_callback_scheduler_state(callback: typing.Any) -> None:
         result_in_flight_limit=2,
         dosage_buffer_limit=2,
     )
-    callback.dosage_queue_condition = threading.Condition()
-    callback.dosage_queue = collections.deque()
-    callback.result_queue_condition = threading.Condition()
-    callback.result_queue = collections.deque()
+    callback.dosage_queue = callback_runtime._core.NativeCallbackObjectQueue(
+        callback.callback_scheduler_state.dosage_queue_depth
+    )
+    callback.result_queue = callback_runtime._core.NativeCallbackObjectQueue(
+        callback.callback_scheduler_state.result_queue_depth
+    )
 
 
 def mark_callback_workers_started(callback: typing.Any) -> None:
@@ -2390,6 +2385,12 @@ def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
         native_callback_batch_size=1,
         result_in_flight_limit=2,
         dosage_buffer_limit=2,
+    )
+    callback.dosage_queue = callback_runtime._core.NativeCallbackObjectQueue(
+        callback.callback_scheduler_state.dosage_queue_depth
+    )
+    callback.result_queue = callback_runtime._core.NativeCallbackObjectQueue(
+        callback.callback_scheduler_state.result_queue_depth
     )
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     callback.stage_timing_recorder = stage_timing_recorder
@@ -4077,14 +4078,21 @@ def test_native_callback_object_queue_preserves_fifo_capacity_and_sentinel_paylo
 
     assert callback_queue.capacity == 2
     assert callback_queue.occupied_count == 0
+    assert callback_queue.has_available_slot is True
+    assert callback_queue.has_queued_item is False
+    assert callback_queue.wait_for_queued_item(timeout_seconds=0.0) is False
     assert callback_queue.put(first_item, timeout_seconds=0.0) is True
+    assert callback_queue.has_queued_item is True
     assert callback_queue.put(None, timeout_seconds=0.0) is True
+    assert callback_queue.has_available_slot is False
+    assert callback_queue.wait_for_available_slot(timeout_seconds=0.0) is False
     assert callback_queue.put(object(), timeout_seconds=0.0) is False
     assert callback_queue.occupied_count == 2
 
     first_result = callback_queue.get(timeout_seconds=0.0)
     assert first_result.has_item is True
     assert first_result.item is first_item
+    assert callback_queue.wait_for_available_slot(timeout_seconds=0.0) is True
     second_result = callback_queue.get(timeout_seconds=0.0)
     assert second_result.has_item is True
     assert second_result.item is None
@@ -4547,7 +4555,7 @@ def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> No
     callback = object.__new__(ManualCallbackRunner)
     attach_manual_callback_scheduler_state(callback)
     assert callback.callback_scheduler_state.acquire_result_queue_slot() is True
-    callback.result_queue.append(None)
+    assert callback.result_queue.put(None, timeout_seconds=0.0) is True
     callback.result_worker_error = RuntimeError("writer failed")
     callback.result_worker_thread = result_worker_thread
     mark_callback_workers_started(callback)
@@ -4568,7 +4576,7 @@ def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> No
     callback = object.__new__(ManualCallbackRunner)
     attach_manual_callback_scheduler_state(callback)
     assert callback.callback_scheduler_state.acquire_dosage_queue_slot() is True
-    callback.dosage_queue.append(None)
+    assert callback.dosage_queue.put(None, timeout_seconds=0.0) is True
     callback.worker_error = RuntimeError("dosage failed")
     callback.worker_thread = worker_thread
     mark_callback_workers_started(callback)
@@ -4589,7 +4597,7 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
     callback = object.__new__(ManualCallbackRunner)
     attach_manual_callback_scheduler_state(callback)
     assert callback.callback_scheduler_state.acquire_result_queue_slot() is True
-    callback.result_queue.append(None)
+    assert callback.result_queue.put(None, timeout_seconds=0.0) is True
     callback.result_worker_error = None
     callback.result_worker_thread = result_worker_thread
     mark_callback_workers_started(callback)
@@ -4605,7 +4613,7 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
 def test_native_callback_runner_waits_on_native_result_queue_release() -> None:
     callback = ManualCallbackRunner()
     assert callback.callback_scheduler_state.acquire_result_queue_slot() is True
-    callback.result_queue.append(None)
+    assert callback.result_queue.put(None, timeout_seconds=0.0) is True
 
     enqueue_started = threading.Event()
 
@@ -4630,7 +4638,7 @@ def test_native_callback_runner_waits_on_native_result_queue_release() -> None:
 def test_native_callback_runner_waits_on_native_dosage_queue_release() -> None:
     callback = ManualCallbackRunner()
     assert callback.callback_scheduler_state.acquire_dosage_queue_slot() is True
-    callback.dosage_queue.append(None)
+    assert callback.dosage_queue.put(None, timeout_seconds=0.0) is True
 
     enqueue_started = threading.Event()
 
@@ -4659,7 +4667,7 @@ def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
     callback = object.__new__(ManualCallbackRunner)
     attach_manual_callback_scheduler_state(callback)
     assert callback.callback_scheduler_state.acquire_dosage_queue_slot() is True
-    callback.dosage_queue.append(None)
+    assert callback.dosage_queue.put(None, timeout_seconds=0.0) is True
     callback.worker_error = None
     callback.worker_thread = worker_thread
     mark_callback_workers_started(callback)

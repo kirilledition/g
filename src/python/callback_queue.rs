@@ -38,12 +38,42 @@ impl NativeCallbackObjectQueue {
         Ok(self.lock_queue()?.occupied_count())
     }
 
+    #[getter]
+    fn has_available_slot(&self) -> PyResult<bool> {
+        Ok(self.lock_queue()?.has_available_slot())
+    }
+
+    #[getter]
+    fn has_queued_item(&self) -> PyResult<bool> {
+        Ok(self.lock_queue()?.has_queued_item())
+    }
+
     fn put(&self, py: Python<'_>, item: Py<PyAny>, timeout_seconds: f64) -> PyResult<bool> {
         py.detach(|| self.put_without_gil(item, timeout_seconds))
     }
 
     fn get(&self, py: Python<'_>, timeout_seconds: f64) -> PyResult<NativeCallbackObjectQueueGetResult> {
         py.detach(|| self.get_without_gil(timeout_seconds))
+    }
+
+    fn wait_for_available_slot(&self, py: Python<'_>, timeout_seconds: f64) -> PyResult<bool> {
+        py.detach(|| {
+            self.wait_until_without_gil(
+                timeout_seconds,
+                g_engine::BoundedCallbackQueue::has_available_slot,
+                "native callback object queue lock was poisoned during available-slot wait",
+            )
+        })
+    }
+
+    fn wait_for_queued_item(&self, py: Python<'_>, timeout_seconds: f64) -> PyResult<bool> {
+        py.detach(|| {
+            self.wait_until_without_gil(
+                timeout_seconds,
+                g_engine::BoundedCallbackQueue::has_queued_item,
+                "native callback object queue lock was poisoned during queued-item wait",
+            )
+        })
     }
 }
 
@@ -118,6 +148,39 @@ impl NativeCallbackObjectQueue {
                 self.condition.wait(queue).map_err(|_| {
                     PyRuntimeError::new_err("native callback object queue lock was poisoned during get wait")
                 })?
+            };
+        }
+    }
+
+    fn wait_until_without_gil(
+        &self,
+        timeout_seconds: f64,
+        queue_condition: fn(&g_engine::BoundedCallbackQueue<Py<PyAny>>) -> bool,
+        wait_error_message: &'static str,
+    ) -> PyResult<bool> {
+        let timeout_duration = normalize_timeout_duration(timeout_seconds);
+        let deadline = Instant::now().checked_add(timeout_duration);
+        let mut queue = self.lock_queue()?;
+
+        loop {
+            if queue_condition(&queue) {
+                return Ok(true);
+            }
+            if timeout_duration.is_zero() {
+                return Ok(false);
+            }
+            queue = if let Some(deadline) = deadline {
+                let remaining_timeout = deadline.saturating_duration_since(Instant::now());
+                if remaining_timeout.is_zero() {
+                    return Ok(false);
+                }
+                let (next_queue, _) = self
+                    .condition
+                    .wait_timeout(queue, remaining_timeout)
+                    .map_err(|_| PyRuntimeError::new_err(wait_error_message))?;
+                next_queue
+            } else {
+                self.condition.wait(queue).map_err(|_| PyRuntimeError::new_err(wait_error_message))?
             };
         }
     }

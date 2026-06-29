@@ -38,8 +38,10 @@ type PreprocessedDosageWorkItem = (
     | PreprocessedVariantMajorDosageChunkBatchWorkItem
     | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
 )
+type QueuedPreprocessedDosageWorkItem = PreprocessedDosageWorkItem | None
 Regenie2ResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem
 Regenie2MultiResultWriteWorkItem = shared.Regenie2MultiResultWriteWorkItem
+type QueuedResultWriteWorkItem = Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None
 NativeBgenWorkerShutdownError = shared.NativeBgenWorkerShutdownError
 record_stage_duration_with_optional_chunk = transfers.record_stage_duration_with_optional_chunk
 build_native_callback_chunk_identity = transfers.build_native_callback_chunk_identity
@@ -71,7 +73,7 @@ class DosageWorkItemKind(enum.StrEnum):
 
 
 def classify_result_write_item(
-    work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+    work_item: QueuedResultWriteWorkItem,
 ) -> ResultWriteItemKind:
     """Classify one result write item for native scheduler dispatch."""
     if work_item is None:
@@ -85,13 +87,7 @@ def classify_result_write_item(
 
 
 def classify_dosage_work_item(
-    work_item: (
-        PreprocessedDosageChunkWorkItem
-        | PreprocessedVariantMajorDosageChunkWorkItem
-        | PreprocessedVariantMajorDosageChunkBatchWorkItem
-        | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-        | None
-    ),
+    work_item: QueuedPreprocessedDosageWorkItem,
 ) -> DosageWorkItemKind:
     """Classify one dosage work item for native scheduler dispatch."""
     if work_item is None:
@@ -149,20 +145,10 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
-        self.dosage_queue_condition = threading.Condition()
         self.result_in_flight_slot_condition = threading.Condition()
-        self.result_queue_condition = threading.Condition()
         self.dosage_buffer_pool_condition = threading.Condition()
-        self.dosage_queue: collections.deque[
-            PreprocessedDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkBatchWorkItem
-            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-            | None
-        ] = collections.deque()
-        self.result_queue: collections.deque[Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None] = (
-            collections.deque()
-        )
+        self.dosage_queue = _core.NativeCallbackObjectQueue(self.callback_scheduler_state.dosage_queue_depth)
+        self.result_queue = _core.NativeCallbackObjectQueue(self.callback_scheduler_state.result_queue_depth)
         self.free_dosage_buffers: collections.deque[HostGenotypeBuffer] = collections.deque()
         self.worker_error_cause: BaseException | None = None
         self.result_worker_error_cause: BaseException | None = None
@@ -1067,13 +1053,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def put_dosage_work_item(
         self,
-        work_item: (
-            PreprocessedDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkBatchWorkItem
-            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-            | None
-        ),
+        work_item: QueuedPreprocessedDosageWorkItem,
     ) -> None:
         """Put work into the bounded worker queue while surfacing worker errors."""
         self.start()
@@ -1105,87 +1085,81 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def try_put_dosage_work_item(
         self,
-        work_item: (
-            PreprocessedDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkBatchWorkItem
-            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-            | None
-        ),
+        work_item: QueuedPreprocessedDosageWorkItem,
         *,
         timeout_seconds: float,
     ) -> bool:
         """Try to enqueue one dosage item under native dosage-queue capacity."""
         deadline = time.monotonic() + max(timeout_seconds, 0.0)
         while True:
-            with self.dosage_queue_condition:
-                remaining_timeout_seconds = deadline - time.monotonic()
-                attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_attempt(
-                    wait_timeout_seconds=remaining_timeout_seconds
-                )
-                if attempt_plan.should_put:
-                    self.dosage_queue.append(work_item)
-                    self.dosage_queue_condition.notify()
-                    return True
-                if not attempt_plan.should_wait:
-                    return False
-                self.dosage_queue_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
+            remaining_timeout_seconds = deadline - time.monotonic()
+            attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_attempt(
+                wait_timeout_seconds=remaining_timeout_seconds
+            )
+            if attempt_plan.should_put:
+                queued = self.dosage_queue.put(work_item, timeout_seconds=0.0)
+                if not queued:
+                    if not self.callback_scheduler_state.release_dosage_queue_slot():
+                        message = "Native dosage queue storage rejected a put after scheduler slot acquisition."
+                        raise RuntimeError(message)
+                    message = "Native dosage queue storage had no slot after scheduler selected put."
+                    raise RuntimeError(message)
+                return True
+            if not attempt_plan.should_wait:
+                return False
+            self.dosage_queue.wait_for_available_slot(timeout_seconds=attempt_plan.wait_timeout_seconds)
 
     def try_put_dosage_work_item_with_backpressure_timeout(
         self,
-        work_item: (
-            PreprocessedDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkBatchWorkItem
-            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-            | None
-        ),
+        work_item: QueuedPreprocessedDosageWorkItem,
     ) -> bool:
         """Try to enqueue one dosage item using native backpressure policy."""
         deadline: float | None = None
         while True:
-            with self.dosage_queue_condition:
-                if deadline is None:
-                    attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_backpressure_attempt()
-                    if attempt_plan.should_wait:
-                        deadline = time.monotonic() + attempt_plan.wait_timeout_seconds
-                else:
-                    remaining_timeout_seconds = deadline - time.monotonic()
-                    attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_attempt(
-                        wait_timeout_seconds=remaining_timeout_seconds
-                    )
-                if attempt_plan.should_put:
-                    self.dosage_queue.append(work_item)
-                    self.dosage_queue_condition.notify()
-                    return True
-                if not attempt_plan.should_wait:
-                    return False
-                self.dosage_queue_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
+            if deadline is None:
+                attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_backpressure_attempt()
+                if attempt_plan.should_wait:
+                    deadline = time.monotonic() + attempt_plan.wait_timeout_seconds
+            else:
+                remaining_timeout_seconds = deadline - time.monotonic()
+                attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_attempt(
+                    wait_timeout_seconds=remaining_timeout_seconds
+                )
+            if attempt_plan.should_put:
+                queued = self.dosage_queue.put(work_item, timeout_seconds=0.0)
+                if not queued:
+                    if not self.callback_scheduler_state.release_dosage_queue_slot():
+                        message = "Native dosage queue storage rejected a put after scheduler slot acquisition."
+                        raise RuntimeError(message)
+                    message = "Native dosage queue storage had no slot after scheduler selected put."
+                    raise RuntimeError(message)
+                return True
+            if not attempt_plan.should_wait:
+                return False
+            self.dosage_queue.wait_for_available_slot(timeout_seconds=attempt_plan.wait_timeout_seconds)
 
     def get_dosage_work_item(
         self,
-    ) -> (
-        PreprocessedDosageChunkWorkItem
-        | PreprocessedVariantMajorDosageChunkWorkItem
-        | PreprocessedVariantMajorDosageChunkBatchWorkItem
-        | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-        | None
-    ):
+    ) -> QueuedPreprocessedDosageWorkItem:
         """Wait for and return one dosage queue item while releasing native queue capacity."""
         while True:
-            with self.dosage_queue_condition:
-                get_plan = self.callback_scheduler_state.plan_dosage_queue_get_attempt(
-                    has_queued_item=bool(self.dosage_queue)
-                )
-                if get_plan.has_release_error:
-                    message = "Native dosage-queue state has no occupied slot to release."
+            get_plan = self.callback_scheduler_state.plan_dosage_queue_get_attempt(
+                has_queued_item=self.dosage_queue.has_queued_item
+            )
+            if get_plan.has_release_error:
+                message = "Native dosage-queue state has no occupied slot to release."
+                raise RuntimeError(message)
+            if get_plan.should_get:
+                get_result = self.dosage_queue.get(timeout_seconds=0.0)
+                if not get_result.has_item:
+                    if not self.callback_scheduler_state.acquire_dosage_queue_slot():
+                        message = "Native dosage queue storage was empty after scheduler slot release."
+                        raise RuntimeError(message)
+                    message = "Native dosage queue storage had no queued item after scheduler selected get."
                     raise RuntimeError(message)
-                if get_plan.should_get:
-                    work_item = self.dosage_queue.popleft()
-                    self.dosage_queue_condition.notify()
-                    return work_item
-                if get_plan.should_wait:
-                    self.dosage_queue_condition.wait(timeout=get_plan.wait_timeout_seconds)
+                return typing.cast("QueuedPreprocessedDosageWorkItem", get_result.item)
+            if get_plan.should_wait:
+                self.dosage_queue.wait_for_queued_item(timeout_seconds=get_plan.wait_timeout_seconds)
 
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
@@ -1205,7 +1179,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def put_result_write_item(
         self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+        work_item: QueuedResultWriteWorkItem,
     ) -> None:
         """Put a computed result into the bounded materialization/write queue."""
         self.start()
@@ -1237,7 +1211,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def try_put_result_write_item(
         self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+        work_item: QueuedResultWriteWorkItem,
         *,
         timeout_seconds: float,
     ) -> bool:
@@ -1250,22 +1224,26 @@ class NativeBgenCallbackRunner(abc.ABC):
             raise RuntimeError(message)
         deadline = time.monotonic() + max(timeout_seconds, 0.0)
         while True:
-            with self.result_queue_condition:
-                remaining_timeout_seconds = deadline - time.monotonic()
-                attempt_plan = self.callback_scheduler_state.plan_result_queue_put_attempt(
-                    wait_timeout_seconds=remaining_timeout_seconds
-                )
-                if attempt_plan.should_put and handoff_plan.should_enqueue:
-                    self.result_queue.append(work_item)
-                    self.result_queue_condition.notify()
-                    return True
-                if not attempt_plan.should_wait:
-                    return False
-                self.result_queue_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
+            remaining_timeout_seconds = deadline - time.monotonic()
+            attempt_plan = self.callback_scheduler_state.plan_result_queue_put_attempt(
+                wait_timeout_seconds=remaining_timeout_seconds
+            )
+            if attempt_plan.should_put and handoff_plan.should_enqueue:
+                queued = self.result_queue.put(work_item, timeout_seconds=0.0)
+                if not queued:
+                    if not self.callback_scheduler_state.release_result_queue_slot():
+                        message = "Native result queue storage rejected a put after scheduler slot acquisition."
+                        raise RuntimeError(message)
+                    message = "Native result queue storage had no slot after scheduler selected put."
+                    raise RuntimeError(message)
+                return True
+            if not attempt_plan.should_wait:
+                return False
+            self.result_queue.wait_for_available_slot(timeout_seconds=attempt_plan.wait_timeout_seconds)
 
     def try_put_result_write_item_with_backpressure_timeout(
         self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+        work_item: QueuedResultWriteWorkItem,
     ) -> bool:
         """Try to enqueue one result item using native backpressure policy."""
         handoff_plan = self.callback_scheduler_state.plan_result_write_handoff(
@@ -1276,40 +1254,48 @@ class NativeBgenCallbackRunner(abc.ABC):
             raise RuntimeError(message)
         deadline: float | None = None
         while True:
-            with self.result_queue_condition:
-                if deadline is None:
-                    attempt_plan = self.callback_scheduler_state.plan_result_queue_put_backpressure_attempt()
-                    if attempt_plan.should_wait:
-                        deadline = time.monotonic() + attempt_plan.wait_timeout_seconds
-                else:
-                    remaining_timeout_seconds = deadline - time.monotonic()
-                    attempt_plan = self.callback_scheduler_state.plan_result_queue_put_attempt(
-                        wait_timeout_seconds=remaining_timeout_seconds
-                    )
-                if attempt_plan.should_put and handoff_plan.should_enqueue:
-                    self.result_queue.append(work_item)
-                    self.result_queue_condition.notify()
-                    return True
-                if not attempt_plan.should_wait:
-                    return False
-                self.result_queue_condition.wait(timeout=attempt_plan.wait_timeout_seconds)
+            if deadline is None:
+                attempt_plan = self.callback_scheduler_state.plan_result_queue_put_backpressure_attempt()
+                if attempt_plan.should_wait:
+                    deadline = time.monotonic() + attempt_plan.wait_timeout_seconds
+            else:
+                remaining_timeout_seconds = deadline - time.monotonic()
+                attempt_plan = self.callback_scheduler_state.plan_result_queue_put_attempt(
+                    wait_timeout_seconds=remaining_timeout_seconds
+                )
+            if attempt_plan.should_put and handoff_plan.should_enqueue:
+                queued = self.result_queue.put(work_item, timeout_seconds=0.0)
+                if not queued:
+                    if not self.callback_scheduler_state.release_result_queue_slot():
+                        message = "Native result queue storage rejected a put after scheduler slot acquisition."
+                        raise RuntimeError(message)
+                    message = "Native result queue storage had no slot after scheduler selected put."
+                    raise RuntimeError(message)
+                return True
+            if not attempt_plan.should_wait:
+                return False
+            self.result_queue.wait_for_available_slot(timeout_seconds=attempt_plan.wait_timeout_seconds)
 
-    def get_result_write_item(self) -> Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None:
+    def get_result_write_item(self) -> QueuedResultWriteWorkItem:
         """Wait for and return one result queue item while releasing native queue capacity."""
         while True:
-            with self.result_queue_condition:
-                get_plan = self.callback_scheduler_state.plan_result_queue_get_attempt(
-                    has_queued_item=bool(self.result_queue)
-                )
-                if get_plan.has_release_error:
-                    message = "Native result-queue state has no occupied slot to release."
+            get_plan = self.callback_scheduler_state.plan_result_queue_get_attempt(
+                has_queued_item=self.result_queue.has_queued_item
+            )
+            if get_plan.has_release_error:
+                message = "Native result-queue state has no occupied slot to release."
+                raise RuntimeError(message)
+            if get_plan.should_get:
+                get_result = self.result_queue.get(timeout_seconds=0.0)
+                if not get_result.has_item:
+                    if not self.callback_scheduler_state.acquire_result_queue_slot():
+                        message = "Native result queue storage was empty after scheduler slot release."
+                        raise RuntimeError(message)
+                    message = "Native result queue storage had no queued item after scheduler selected get."
                     raise RuntimeError(message)
-                if get_plan.should_get:
-                    work_item = self.result_queue.popleft()
-                    self.result_queue_condition.notify()
-                    return work_item
-                if get_plan.should_wait:
-                    self.result_queue_condition.wait(timeout=get_plan.wait_timeout_seconds)
+                return typing.cast("QueuedResultWriteWorkItem", get_result.item)
+            if get_plan.should_wait:
+                self.result_queue.wait_for_queued_item(timeout_seconds=get_plan.wait_timeout_seconds)
 
     def acquire_result_in_flight_slot(self) -> None:
         """Reserve capacity for one chunk of pending GPU result work."""
@@ -1677,7 +1663,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def plan_result_write_drain_completion(
         self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+        work_item: QueuedResultWriteWorkItem,
         *,
         flush_binary_correction_diagnostics_on_stop: bool,
     ) -> _core.NativeResultWriteDrainCompletionPlan:
@@ -1698,7 +1684,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def plan_result_write_item_dispatch(
         self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+        work_item: QueuedResultWriteWorkItem,
         *,
         expected_result_work_item_kind: ResultWriteItemKind,
     ) -> _core.NativeResultWriteItemDispatchPlan:

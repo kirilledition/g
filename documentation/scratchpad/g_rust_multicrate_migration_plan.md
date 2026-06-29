@@ -1038,6 +1038,8 @@ Remove Python as the chunk-level scheduler.
   plans for reuse, return, allocation, discard, and consumer wait accounting.
 - A PyO3 native bounded callback object queue primitive now owns FIFO storage,
   capacity checks, and blocking put/get waits for future queue-runtime swaps.
+- Callback dosage/result queue storage and wait predicates now use the native
+  object queue while the native scheduler remains the occupancy authority.
 
 ### Tests
 
