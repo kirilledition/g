@@ -1169,6 +1169,8 @@ Remove Python as the chunk-level scheduler.
   instead of emitting legacy close events from Python.
 - JAX runtime diagnostic log records now route through the native diagnostic
   emitter while telemetry emission stays on the native run session.
+- Native runtime knob configuration debug diagnostics now route through the
+  native diagnostic emitter instead of Python logging.
 
 ### Tests
 

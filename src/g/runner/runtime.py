@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import logging
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,8 +15,6 @@ from g.jax_runtime import resolution as jax_runtime_resolution
 if typing.TYPE_CHECKING:
     from g.engine import telemetry
     from g.interface import config
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -447,7 +444,19 @@ def effective_rayon_thread_count(requested_thread_count: int | None) -> int | No
 
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
     """Apply native runtime knobs before engine execution."""
-    logger.debug("Configuring native runtime knobs.")
+    _core.emit_diagnostic_event(
+        "debug",
+        "native_runtime_knobs_configured",
+        "Configuring native runtime knobs.",
+        json.dumps(
+            {
+                "bgen_decode_tile_variant_count": compute_config.bgen_decode_tile_variant_count,
+                "threads": trait_config.threads,
+            },
+            sort_keys=True,
+            default=str,
+        ),
+    )
     _core.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
     if trait_config.threads is not None:
         configure_rayon_thread_pool(_core, trait_config.threads)

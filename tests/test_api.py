@@ -38,6 +38,20 @@ class NativeLoggingPolicyCore:
         return native_build_logging_policy(*arguments)
 
 
+class NativeDiagnosticCore:
+    """Fake-core mixin that accepts native diagnostic events."""
+
+    def emit_diagnostic_event(
+        self,
+        level: str,
+        event: str,
+        message: str,
+        fields_json: str | None = None,
+    ) -> None:
+        """Accept one structured native diagnostic event."""
+        del level, event, message, fields_json
+
+
 def complete_mock_output_initialization(
     keyword_arguments: dict[str, object],
     phenotype_names: tuple[str, ...] = ("trait",),
@@ -812,8 +826,25 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
 
 def test_configure_runtime_sets_native_knobs_and_threads() -> None:
     calls: list[tuple[str, int | str]] = []
+    diagnostic_calls: list[tuple[str, str, str, dict[str, object]]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeDiagnosticCore):
+        def emit_diagnostic_event(
+            self,
+            level: str,
+            event: str,
+            message: str,
+            fields_json: str | None = None,
+        ) -> None:
+            diagnostic_calls.append(
+                (
+                    level,
+                    event,
+                    message,
+                    {} if fields_json is None else typing.cast("dict[str, object]", json.loads(fields_json)),
+                )
+            )
+
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
 
@@ -829,13 +860,21 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
             build_trait_config(threads=4),
         )
 
+    assert diagnostic_calls == [
+        (
+            "debug",
+            "native_runtime_knobs_configured",
+            "Configuring native runtime knobs.",
+            {"bgen_decode_tile_variant_count": 32, "threads": 4},
+        )
+    ]
     assert calls == [("tile", 32), ("threads", 4)]
 
 
 def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None:
     calls: list[tuple[str, int | str]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeDiagnosticCore):
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
 
@@ -871,7 +910,7 @@ def test_configure_runtime_uses_native_rayon_configuration_plan() -> None:
         def record_rayon_thread_count(self, thread_count: int) -> None:
             raise AssertionError(f"unexpected Rayon thread-count recording: {thread_count}")
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeDiagnosticCore):
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
 
@@ -894,7 +933,7 @@ def test_configure_runtime_uses_native_rayon_configuration_plan() -> None:
 def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -> None:
     calls: list[tuple[str, int | str]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeDiagnosticCore):
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
 
@@ -917,7 +956,7 @@ def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -
 def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
     calls: list[tuple[str, int | str]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeDiagnosticCore):
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
 
