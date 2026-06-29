@@ -1163,6 +1163,8 @@ Remove Python as the chunk-level scheduler.
   handling.
 - Native shutdown adapters now raise repeated-signal `KeyboardInterrupt` and
   `SystemExit` aborts from the PyO3 boundary.
+- Shutdown signal metadata is now resolved directly from native payloads instead
+  of a Python module-level cache.
 
 ### Tests
 

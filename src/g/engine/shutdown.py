@@ -12,8 +12,6 @@ import g._core
 if typing.TYPE_CHECKING:
     import types as python_types
 
-NATIVE_SHUTDOWN_SIGNAL_CACHE: dict[int, ShutdownSignal]
-
 
 class ShutdownRequestAction(enum.StrEnum):
     """Native shutdown decision action."""
@@ -36,17 +34,6 @@ class ShutdownSignal:
     number: int
     name: str
     exit_code: int
-
-
-def build_native_shutdown_signal_cache() -> dict[int, ShutdownSignal]:
-    """Build cached native metadata for the default handled signals."""
-    cached_signals: dict[int, ShutdownSignal] = {}
-    for handled_signal in (signal.SIGINT, signal.SIGTERM):
-        signal_number = int(handled_signal)
-        cached_signals[signal_number] = shutdown_signal_from_native_payload(
-            g._core.build_shutdown_signal_payload(signal_number)
-        )
-    return cached_signals
 
 
 class GracefulShutdownRequested(Exception):  # noqa: N818
@@ -124,9 +111,6 @@ class GracefulShutdownController:
 
 def build_shutdown_signal(signal_number: int) -> ShutdownSignal:
     """Build shutdown metadata for a POSIX signal."""
-    cached_signal = NATIVE_SHUTDOWN_SIGNAL_CACHE.get(signal_number)
-    if cached_signal is not None:
-        return cached_signal
     return shutdown_signal_from_native_payload(g._core.build_shutdown_signal_payload(signal_number))
 
 
@@ -143,9 +127,6 @@ def shutdown_signal_from_native_payload(payload: object) -> ShutdownSignal:
 def native_mapping_payload(payload: object) -> typing.Mapping[str, typing.Any]:
     """Adapt a native mapping payload to a Python mapping."""
     return typing.cast("typing.Mapping[str, typing.Any]", payload)
-
-
-NATIVE_SHUTDOWN_SIGNAL_CACHE = build_native_shutdown_signal_cache()
 
 
 def raise_second_signal_exception(shutdown_signal: ShutdownSignal) -> typing.NoReturn:
