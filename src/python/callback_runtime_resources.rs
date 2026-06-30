@@ -90,6 +90,7 @@ pub(crate) struct NativeDosageBufferAcquireResult {
     free_buffer_count: usize,
     waited: bool,
     observation_plan: Option<Py<NativeDosageBufferPoolObservationPlan>>,
+    stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
 }
 
 #[pyclass]
@@ -966,6 +967,7 @@ impl NativeCallbackRuntimeResources {
                 free_buffer_count,
                 waited: false,
                 observation_plan: None,
+                stage_backpressure_observation: None,
             });
         }
         if acquire_plan.should_allocate_value() {
@@ -976,20 +978,31 @@ impl NativeCallbackRuntimeResources {
                 free_buffer_count,
                 waited: false,
                 observation_plan: None,
+                stage_backpressure_observation: None,
             });
         }
         if acquire_plan.should_wait_value() {
+            let wait_start_time = Instant::now();
             self.dosage_buffer_pool_signal.bind(py).borrow().wait_for_change_value(
                 py,
                 observed_generation,
                 acquire_plan.wait_timeout_seconds_value(),
             )?;
+            let elapsed_seconds = wait_start_time.elapsed().as_secs_f64();
             let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
-            let observation_plan = if self.has_stage_timing_recorder {
+            let (observation_plan, stage_backpressure_observation) = if self.has_stage_timing_recorder {
                 let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-                Some(Py::new(py, scheduler_state.plan_dosage_buffer_pool_consumer_wait_observation_value())?)
+                let observation_plan = scheduler_state.plan_dosage_buffer_pool_consumer_wait_observation_value();
+                let stage_backpressure_observation = scheduler_state
+                    .plan_dosage_buffer_pool_stage_backpressure_observation_value(
+                        observation_plan.operation_name_value(),
+                        free_buffer_count,
+                        elapsed_seconds,
+                        observation_plan.blocked_value(),
+                    )?;
+                (Some(Py::new(py, observation_plan)?), Some(Py::new(py, stage_backpressure_observation)?))
             } else {
-                None
+                (None, None)
             };
             return Ok(NativeDosageBufferAcquireResult {
                 dosage_buffer: None,
@@ -997,6 +1010,7 @@ impl NativeCallbackRuntimeResources {
                 free_buffer_count,
                 waited: true,
                 observation_plan,
+                stage_backpressure_observation,
             });
         }
         let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
@@ -1006,6 +1020,7 @@ impl NativeCallbackRuntimeResources {
             free_buffer_count,
             waited: false,
             observation_plan: None,
+            stage_backpressure_observation: None,
         })
     }
 
@@ -2684,6 +2699,14 @@ impl NativeDosageBufferAcquireResult {
     #[getter]
     fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolObservationPlan>> {
         self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+
+    #[getter]
+    fn stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueStageBackpressureObservation>> {
+        self.stage_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
     }
 }
 

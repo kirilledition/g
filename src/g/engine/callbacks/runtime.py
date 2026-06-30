@@ -684,6 +684,25 @@ class NativeBgenCallbackRunner(abc.ABC):
             blocked_seconds=observation.blocked_seconds,
         )
 
+    def record_queue_stage_backpressure_observation(
+        self,
+        observation: _core.NativeCallbackQueueStageBackpressureObservation | None,
+    ) -> None:
+        """Record a native queue stage and backpressure observation."""
+        if observation is None:
+            return
+        if self.stage_timing_recorder is None:
+            return
+        self.stage_timing_recorder.add_stage_duration(observation.stage_name, observation.elapsed_seconds)
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=observation.queue_name,
+            operation_name=observation.operation_name,
+            queue_depth=observation.queue_depth,
+            queue_capacity=observation.queue_capacity,
+            elapsed_seconds=observation.elapsed_seconds,
+            blocked_seconds=observation.blocked_seconds,
+        )
+
     def record_dosage_buffer_pool_operation(
         self,
         *,
@@ -2423,7 +2442,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Acquire a host dosage buffer using native resource-owner waits and storage."""
         while True:
             self.raise_worker_error_if_present()
-            acquire_start_time = time.perf_counter()
             acquire_result = self.callback_runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
             if acquire_result.should_allocate:
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
@@ -2439,15 +2457,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 if reused_dosage_buffer is not None:
                     return typing.cast("HostGenotypeBuffer", reused_dosage_buffer)
                 continue
-            acquire_observation_plan = acquire_result.observation_plan
-            if acquire_observation_plan is None:
-                continue
-            self.record_dosage_buffer_pool_stage_duration(
-                operation_name=acquire_observation_plan.operation_name,
-                free_buffer_count=acquire_result.free_buffer_count,
-                start_time=acquire_start_time,
-                blocked=acquire_observation_plan.blocked,
-            )
+            self.record_queue_stage_backpressure_observation(acquire_result.stage_backpressure_observation)
 
     def acquire_dosage_buffer_with_shape(
         self,

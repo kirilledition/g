@@ -3831,6 +3831,52 @@ def test_native_callback_runner_releases_numpy_dosage_buffers_natively() -> None
         callback.finish()
 
 
+def test_native_callback_runner_records_native_dosage_buffer_acquire_wait_observation() -> None:
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        stage_timing_recorder=stage_timing_recorder,
+        dosage_buffer_limit=1,
+    )
+    first_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    acquisition_started = threading.Event()
+
+    def acquire_after_pool_capacity_is_full() -> callback_shared.HostGenotypeBuffer:
+        acquisition_started.set()
+        return callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+
+    try:
+        with (
+            patch.object(
+                callback_runtime.NativeBgenCallbackRunner,
+                "record_dosage_buffer_pool_stage_duration",
+                side_effect=AssertionError("production runner should emit native dosage-buffer wait observations"),
+            ),
+            concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor,
+        ):
+            future = executor.submit(acquire_after_pool_capacity_is_full)
+            assert acquisition_started.wait(timeout=1.0)
+            time.sleep(0.02)
+            assert not future.done()
+
+            callback.release_dosage_buffer(first_buffer)
+            acquired_buffer = future.result(timeout=2.0)
+
+        assert acquired_buffer is first_buffer
+        snapshot = stage_timing_recorder.snapshot()
+        assert snapshot.stage_counts["dosage_buffer_pool_consumer_wait"] == 1
+        queue_backpressure_by_operation = {
+            queue_backpressure.operation_name: queue_backpressure for queue_backpressure in snapshot.queue_backpressure
+        }
+        assert queue_backpressure_by_operation["consumer_wait"].queue_name == "dosage_buffer_pool"
+        assert queue_backpressure_by_operation["consumer_wait"].observation_count == 1
+    finally:
+        callback.release_dosage_buffer(first_buffer)
+        callback.finish()
+
+
 def test_native_callback_runner_uses_native_dosage_buffer_reuse_selection() -> None:
     class DosageBufferReuseSelectionResultProbe:
         def __init__(self, result: callback_runtime._core.NativeDosageBufferReuseSelectionResult) -> None:
@@ -4411,6 +4457,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> No
     assert allocate_result.free_buffer_count == 0
     assert allocate_result.waited is False
     assert allocate_result.observation_plan is None
+    assert allocate_result.stage_backpressure_observation is None
 
     assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
     assert runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer) == 1
@@ -4421,6 +4468,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> No
     assert reuse_result.free_buffer_count == 0
     assert reuse_result.waited is False
     assert reuse_result.observation_plan is None
+    assert reuse_result.stage_backpressure_observation is None
 
     acquisition_started = threading.Event()
 
@@ -4442,6 +4490,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> No
     assert wait_result.free_buffer_count == 1
     assert wait_result.waited is True
     assert wait_result.observation_plan is None
+    assert wait_result.stage_backpressure_observation is None
 
     reused_after_wait_result = runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
     assert reused_after_wait_result.dosage_buffer is dosage_buffer
@@ -4480,10 +4529,22 @@ def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> No
         observed_wait_result = observed_future.result(timeout=2.0)
 
     observed_wait_plan = observed_wait_result.observation_plan
+    observed_stage_backpressure_observation = observed_wait_result.stage_backpressure_observation
     assert observed_wait_result.waited is True
     assert observed_wait_plan is not None
     assert observed_wait_plan.operation_name == "consumer_wait"
     assert observed_wait_plan.blocked is True
+    assert observed_stage_backpressure_observation is not None
+    assert observed_stage_backpressure_observation.queue_name == "dosage_buffer_pool"
+    assert observed_stage_backpressure_observation.operation_name == "consumer_wait"
+    assert observed_stage_backpressure_observation.stage_name == "dosage_buffer_pool_consumer_wait"
+    assert observed_stage_backpressure_observation.queue_depth == 1
+    assert observed_stage_backpressure_observation.queue_capacity == 1
+    assert observed_stage_backpressure_observation.elapsed_seconds >= 0.0
+    assert (
+        observed_stage_backpressure_observation.blocked_seconds
+        == observed_stage_backpressure_observation.elapsed_seconds
+    )
 
 
 def test_native_callback_runtime_resources_own_worker_stop_and_join() -> None:
