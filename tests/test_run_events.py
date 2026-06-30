@@ -562,6 +562,79 @@ def test_native_dispatch_writer_diagnostic_payloads_use_native_builders() -> Non
     }
 
 
+def test_native_dispatch_delivery_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_native_dispatch_delivery_started_diagnostic_payload(
+        committed_chunk_count=2,
+        pipeline_label="Native BGEN",
+        variant_major_packed8_probability_pairs=True,
+    ) == {
+        "level": "debug",
+        "event_name": "native_dispatch_delivery_started",
+        "message": (
+            "Starting Native BGEN delivery: committed_chunk_count=2 variant_major_packed8_probability_pairs=true."
+        ),
+        "fields": {
+            "committed_chunk_count": 2,
+            "pipeline_label": "Native BGEN",
+            "variant_major_packed8_probability_pairs": True,
+        },
+    }
+    assert run_events.build_native_dispatch_delivery_finished_diagnostic_payload(
+        pipeline_label="Native BGEN",
+        processed_chunk_count=3,
+    ) == {
+        "level": "debug",
+        "event_name": "native_dispatch_delivery_finished",
+        "message": "Native BGEN delivery finished: processed_chunk_count=3.",
+        "fields": {
+            "pipeline_label": "Native BGEN",
+            "processed_chunk_count": 3,
+        },
+    }
+    assert run_events.build_native_dispatch_delivery_interrupted_diagnostic_payload(
+        pipeline_label="Native BGEN",
+        signal_exit_code=130,
+        signal_name="SIGINT",
+        signal_number=2,
+    ) == {
+        "level": "info",
+        "event_name": "native_dispatch_delivery_interrupted",
+        "message": "Native BGEN delivery interrupted by SIGINT.",
+        "fields": {
+            "pipeline_label": "Native BGEN",
+            "signal_exit_code": 130,
+            "signal_name": "SIGINT",
+            "signal_number": 2,
+        },
+    }
+    assert run_events.build_native_dispatch_delivery_failed_diagnostic_payload(
+        exception_message="decode failed",
+        exception_type="RuntimeError",
+        pipeline_label="Native BGEN",
+    ) == {
+        "level": "error",
+        "event_name": "native_dispatch_delivery_failed",
+        "message": "Native BGEN delivery failed.",
+        "fields": {
+            "exception_message": "decode failed",
+            "exception_type": "RuntimeError",
+            "pipeline_label": "Native BGEN",
+        },
+    }
+    assert run_events.build_native_dispatch_pipeline_finished_diagnostic_payload(
+        final_parquet_path_count=1,
+        pipeline_label="Native BGEN",
+    ) == {
+        "level": "info",
+        "event_name": "native_dispatch_pipeline_finished",
+        "message": "Native BGEN pipeline finished.",
+        "fields": {
+            "final_parquet_path_count": 1,
+            "pipeline_label": "Native BGEN",
+        },
+    }
+
+
 def test_run_completed_rendering_uses_native_renderer() -> None:
     event = run_events.RunCompletedEvent(
         run_id=None,

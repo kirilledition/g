@@ -8,21 +8,21 @@ import typing
 from dataclasses import dataclass
 
 from g import _core
-from g.engine import shutdown, timing
+from g.engine import run_events, shutdown, timing
 from g.engine.native_dispatch import models, writers
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
 
-def emit_native_dispatch_delivery_diagnostic_event(
-    level: str,
-    event: str,
-    message: str,
-    fields: typing.Mapping[str, object],
-) -> None:
-    """Emit one structured native-dispatch delivery diagnostic through native tracing."""
-    _core.emit_diagnostic_event_fields(level, event, message, fields)
+def emit_native_dispatch_delivery_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
+    """Emit one native-dispatch delivery diagnostic payload through native tracing."""
+    _core.emit_diagnostic_event_fields(
+        str(payload["level"]),
+        str(payload["event_name"]),
+        str(payload["message"]),
+        typing.cast("typing.Mapping[str, object]", payload["fields"]),
+    )
 
 
 class BgenDeliveryMethod(enum.StrEnum):
@@ -273,19 +273,12 @@ def run_bgen_engine_with_writer_sessions(
             engine.reset_profile()
         engine_delivery_start_time = time.perf_counter()
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
-        emit_native_dispatch_delivery_diagnostic_event(
-            "debug",
-            "native_dispatch_delivery_started",
-            (
-                f"Starting {pipeline_label} delivery: "
-                f"committed_chunk_count={len(committed_chunk_identifier_list)} "
-                f"variant_major_packed8_probability_pairs={variant_major_packed8_probability_pairs}."
-            ),
-            {
-                "committed_chunk_count": len(committed_chunk_identifier_list),
-                "pipeline_label": pipeline_label,
-                "variant_major_packed8_probability_pairs": variant_major_packed8_probability_pairs,
-            },
+        emit_native_dispatch_delivery_diagnostic_event_payload(
+            run_events.build_native_dispatch_delivery_started_diagnostic_payload(
+                committed_chunk_count=len(committed_chunk_identifier_list),
+                pipeline_label=pipeline_label,
+                variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
+            )
         )
         writers.start_callback(callback)
         if variant_major_packed8_probability_pairs:
@@ -303,14 +296,11 @@ def run_bgen_engine_with_writer_sessions(
                 committed_chunk_identifier_list=committed_chunk_identifier_list,
             )
         timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
-        emit_native_dispatch_delivery_diagnostic_event(
-            "debug",
-            "native_dispatch_delivery_finished",
-            f"{pipeline_label} delivery finished: processed_chunk_count={processed_chunk_count}.",
-            {
-                "pipeline_label": pipeline_label,
-                "processed_chunk_count": processed_chunk_count,
-            },
+        emit_native_dispatch_delivery_diagnostic_event_payload(
+            run_events.build_native_dispatch_delivery_finished_diagnostic_payload(
+                pipeline_label=pipeline_label,
+                processed_chunk_count=processed_chunk_count,
+            )
         )
         if stage_timing_recorder is not None:
             stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
@@ -331,16 +321,13 @@ def run_bgen_engine_with_writer_sessions(
         callback_finished = cleanup_execution.callback_finished
         final_parquet_paths = cleanup_execution.final_parquet_paths
     except shutdown.GracefulShutdownRequested as shutdown_request:
-        emit_native_dispatch_delivery_diagnostic_event(
-            "info",
-            "native_dispatch_delivery_interrupted",
-            f"{pipeline_label} delivery interrupted by {shutdown_request.signal_name}.",
-            {
-                "pipeline_label": pipeline_label,
-                "signal_exit_code": shutdown_request.exit_code,
-                "signal_name": shutdown_request.signal_name,
-                "signal_number": shutdown_request.shutdown_signal.number,
-            },
+        emit_native_dispatch_delivery_diagnostic_event_payload(
+            run_events.build_native_dispatch_delivery_interrupted_diagnostic_payload(
+                pipeline_label=pipeline_label,
+                signal_exit_code=shutdown_request.exit_code,
+                signal_name=shutdown_request.signal_name,
+                signal_number=shutdown_request.shutdown_signal.number,
+            )
         )
         cleanup_plan = plan_bgen_delivery_cleanup(
             cleanup_outcome=BgenDeliveryCleanupOutcome.INTERRUPTED,
@@ -376,15 +363,12 @@ def run_bgen_engine_with_writer_sessions(
             raise
         raise
     except BaseException as exception:
-        emit_native_dispatch_delivery_diagnostic_event(
-            "error",
-            "native_dispatch_delivery_failed",
-            f"{pipeline_label} delivery failed.",
-            {
-                "exception_message": str(exception),
-                "exception_type": type(exception).__name__,
-                "pipeline_label": pipeline_label,
-            },
+        emit_native_dispatch_delivery_diagnostic_event_payload(
+            run_events.build_native_dispatch_delivery_failed_diagnostic_payload(
+                exception_message=str(exception),
+                exception_type=type(exception).__name__,
+                pipeline_label=pipeline_label,
+            )
         )
         cleanup_plan = plan_bgen_delivery_cleanup(
             cleanup_outcome=BgenDeliveryCleanupOutcome.FAILURE,
@@ -401,14 +385,11 @@ def run_bgen_engine_with_writer_sessions(
             shutdown_request=None,
         )
         raise
-    emit_native_dispatch_delivery_diagnostic_event(
-        "info",
-        "native_dispatch_pipeline_finished",
-        f"{pipeline_label} pipeline finished.",
-        {
-            "final_parquet_path_count": len(final_parquet_paths),
-            "pipeline_label": pipeline_label,
-        },
+    emit_native_dispatch_delivery_diagnostic_event_payload(
+        run_events.build_native_dispatch_pipeline_finished_diagnostic_payload(
+            final_parquet_path_count=len(final_parquet_paths),
+            pipeline_label=pipeline_label,
+        )
     )
     return final_parquet_paths
 

@@ -513,6 +513,84 @@ def build_native_dispatch_callback_drain_started_diagnostic_payload() -> dict[st
     )
 
 
+def build_native_dispatch_delivery_started_diagnostic_payload(
+    *,
+    committed_chunk_count: int,
+    pipeline_label: str,
+    variant_major_packed8_probability_pairs: bool,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for native BGEN delivery start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_delivery_started_diagnostic_payload(
+            committed_chunk_count,
+            pipeline_label,
+            variant_major_packed8_probability_pairs,
+        )
+    )
+
+
+def build_native_dispatch_delivery_finished_diagnostic_payload(
+    *,
+    pipeline_label: str,
+    processed_chunk_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for native BGEN delivery completion."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_delivery_finished_diagnostic_payload(
+            pipeline_label,
+            processed_chunk_count,
+        )
+    )
+
+
+def build_native_dispatch_delivery_interrupted_diagnostic_payload(
+    *,
+    pipeline_label: str,
+    signal_exit_code: int,
+    signal_name: str,
+    signal_number: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for interrupted native BGEN delivery."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_delivery_interrupted_diagnostic_payload(
+            pipeline_label,
+            signal_exit_code,
+            signal_name,
+            signal_number,
+        )
+    )
+
+
+def build_native_dispatch_delivery_failed_diagnostic_payload(
+    *,
+    exception_message: str,
+    exception_type: str,
+    pipeline_label: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for failed native BGEN delivery."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_delivery_failed_diagnostic_payload(
+            exception_message,
+            exception_type,
+            pipeline_label,
+        )
+    )
+
+
+def build_native_dispatch_pipeline_finished_diagnostic_payload(
+    *,
+    final_parquet_path_count: int,
+    pipeline_label: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for native-dispatch pipeline completion."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_pipeline_finished_diagnostic_payload(
+            final_parquet_path_count,
+            pipeline_label,
+        )
+    )
+
+
 def build_native_dispatch_writer_session_finish_started_diagnostic_payload() -> dict[str, typing.Any]:
     """Return the native diagnostic payload for single writer finish start."""
     return diagnostic_event_payload_from_native(

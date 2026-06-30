@@ -2852,6 +2852,30 @@ def build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
     trusted_bgen_validation_mode: str,
 ) -> dict[str, object]: ...
 def build_native_dispatch_callback_drain_started_diagnostic_payload() -> dict[str, object]: ...
+def build_native_dispatch_delivery_started_diagnostic_payload(
+    committed_chunk_count: int,
+    pipeline_label: str,
+    variant_major_packed8_probability_pairs: bool,
+) -> dict[str, object]: ...
+def build_native_dispatch_delivery_finished_diagnostic_payload(
+    pipeline_label: str,
+    processed_chunk_count: int,
+) -> dict[str, object]: ...
+def build_native_dispatch_delivery_interrupted_diagnostic_payload(
+    pipeline_label: str,
+    signal_exit_code: int,
+    signal_name: str,
+    signal_number: int,
+) -> dict[str, object]: ...
+def build_native_dispatch_delivery_failed_diagnostic_payload(
+    exception_message: str,
+    exception_type: str,
+    pipeline_label: str,
+) -> dict[str, object]: ...
+def build_native_dispatch_pipeline_finished_diagnostic_payload(
+    final_parquet_path_count: int,
+    pipeline_label: str,
+) -> dict[str, object]: ...
 def build_native_dispatch_writer_session_finish_started_diagnostic_payload() -> dict[str, object]: ...
 def build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
     requested_thread_count: int,

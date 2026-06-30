@@ -46,6 +46,11 @@ pub const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_MESSAGE: &s
     "Validating trusted no-missing diploid BGEN mode.";
 pub const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_callback_drain_started";
 pub const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Draining native callback worker queues.";
+pub const NATIVE_DISPATCH_DELIVERY_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_started";
+pub const NATIVE_DISPATCH_DELIVERY_FINISHED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_finished";
+pub const NATIVE_DISPATCH_DELIVERY_INTERRUPTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_interrupted";
+pub const NATIVE_DISPATCH_DELIVERY_FAILED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_failed";
+pub const NATIVE_DISPATCH_PIPELINE_FINISHED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_pipeline_finished";
 pub const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_writer_session_finish_started";
 pub const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
@@ -740,6 +745,100 @@ pub fn build_native_dispatch_callback_drain_started_diagnostic_payload() -> RunD
 }
 
 #[must_use]
+pub fn build_native_dispatch_delivery_started_diagnostic_payload(
+    committed_chunk_count: i64,
+    pipeline_label: &str,
+    variant_major_packed8_probability_pairs: bool,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: NATIVE_DISPATCH_DELIVERY_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!(
+            "Starting {pipeline_label} delivery: committed_chunk_count={committed_chunk_count} \
+             variant_major_packed8_probability_pairs={variant_major_packed8_probability_pairs}."
+        ),
+        fields: vec![
+            integer_diagnostic_field("committed_chunk_count", committed_chunk_count),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+            boolean_diagnostic_field(
+                "variant_major_packed8_probability_pairs",
+                variant_major_packed8_probability_pairs,
+            ),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_native_dispatch_delivery_finished_diagnostic_payload(
+    pipeline_label: &str,
+    processed_chunk_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: NATIVE_DISPATCH_DELIVERY_FINISHED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("{pipeline_label} delivery finished: processed_chunk_count={processed_chunk_count}."),
+        fields: vec![
+            text_diagnostic_field("pipeline_label", pipeline_label),
+            integer_diagnostic_field("processed_chunk_count", processed_chunk_count),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_native_dispatch_delivery_interrupted_diagnostic_payload(
+    pipeline_label: &str,
+    signal_exit_code: i64,
+    signal_name: &str,
+    signal_number: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: NATIVE_DISPATCH_DELIVERY_INTERRUPTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("{pipeline_label} delivery interrupted by {signal_name}."),
+        fields: vec![
+            text_diagnostic_field("pipeline_label", pipeline_label),
+            integer_diagnostic_field("signal_exit_code", signal_exit_code),
+            text_diagnostic_field("signal_name", signal_name),
+            integer_diagnostic_field("signal_number", signal_number),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_native_dispatch_delivery_failed_diagnostic_payload(
+    exception_message: &str,
+    exception_type: &str,
+    pipeline_label: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "error",
+        event_name: NATIVE_DISPATCH_DELIVERY_FAILED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("{pipeline_label} delivery failed."),
+        fields: vec![
+            text_diagnostic_field("exception_message", exception_message),
+            text_diagnostic_field("exception_type", exception_type),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_native_dispatch_pipeline_finished_diagnostic_payload(
+    final_parquet_path_count: i64,
+    pipeline_label: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: NATIVE_DISPATCH_PIPELINE_FINISHED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("{pipeline_label} pipeline finished."),
+        fields: vec![
+            integer_diagnostic_field("final_parquet_path_count", final_parquet_path_count),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+        ],
+    }
+}
+
+#[must_use]
 pub fn build_native_dispatch_writer_session_finish_started_diagnostic_payload() -> RunDiagnosticEventPayload {
     RunDiagnosticEventPayload {
         level: "debug",
@@ -1397,6 +1496,27 @@ mod tests {
         assert_eq!(interrupted_payload.message, "Flushing interrupted output writer after SIGINT.");
         assert_eq!(interrupted_writers_payload.event_name, "native_dispatch_writer_sessions_interrupted_flush_started");
         assert_eq!(interrupted_writers_payload.fields[4].value, RunDiagnosticFieldValue::Integer(5));
+    }
+
+    #[test]
+    fn builds_native_dispatch_delivery_diagnostic_payloads() {
+        let started_payload = build_native_dispatch_delivery_started_diagnostic_payload(2, "Native BGEN", true);
+        let finished_payload = build_native_dispatch_delivery_finished_diagnostic_payload("Native BGEN", 3);
+        let interrupted_payload =
+            build_native_dispatch_delivery_interrupted_diagnostic_payload("Native BGEN", 130, "SIGINT", 2);
+        let failed_payload =
+            build_native_dispatch_delivery_failed_diagnostic_payload("decode failed", "RuntimeError", "Native BGEN");
+        let pipeline_finished_payload = build_native_dispatch_pipeline_finished_diagnostic_payload(1, "Native BGEN");
+
+        assert_eq!(started_payload.event_name, "native_dispatch_delivery_started");
+        assert_eq!(
+            started_payload.message,
+            "Starting Native BGEN delivery: committed_chunk_count=2 variant_major_packed8_probability_pairs=true."
+        );
+        assert_eq!(finished_payload.fields[1].value, RunDiagnosticFieldValue::Integer(3));
+        assert_eq!(interrupted_payload.event_name, "native_dispatch_delivery_interrupted");
+        assert_eq!(failed_payload.fields[1].value, RunDiagnosticFieldValue::Text("RuntimeError".to_string()));
+        assert_eq!(pipeline_finished_payload.message, "Native BGEN pipeline finished.");
     }
 
     #[test]

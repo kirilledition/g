@@ -124,6 +124,11 @@ use run_events::{
     attach_run_metadata_payload, build_io_output_resume_committed_chunks_diagnostic_payload,
     build_native_dispatch_bgen_engine_constructing_diagnostic_payload,
     build_native_dispatch_callback_drain_started_diagnostic_payload,
+    build_native_dispatch_delivery_failed_diagnostic_payload,
+    build_native_dispatch_delivery_finished_diagnostic_payload,
+    build_native_dispatch_delivery_interrupted_diagnostic_payload,
+    build_native_dispatch_delivery_started_diagnostic_payload,
+    build_native_dispatch_pipeline_finished_diagnostic_payload,
     build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
     build_native_dispatch_writer_session_finish_started_diagnostic_payload,
     build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload,
@@ -2042,6 +2047,11 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(build_native_dispatch_callback_drain_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_finished_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_interrupted_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_failed_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_pipeline_finished_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(
         build_native_dispatch_writer_session_finish_started_diagnostic_payload,
         module

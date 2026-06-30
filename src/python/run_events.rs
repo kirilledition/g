@@ -361,6 +361,79 @@ pub fn build_native_dispatch_callback_drain_started_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn build_native_dispatch_delivery_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    committed_chunk_count: i64,
+    pipeline_label: &str,
+    variant_major_packed8_probability_pairs: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_dispatch_delivery_started_diagnostic_payload(
+        committed_chunk_count,
+        pipeline_label,
+        variant_major_packed8_probability_pairs,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_dispatch_delivery_finished_diagnostic_payload<'py>(
+    py: Python<'py>,
+    pipeline_label: &str,
+    processed_chunk_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_dispatch_delivery_finished_diagnostic_payload(
+        pipeline_label,
+        processed_chunk_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_dispatch_delivery_interrupted_diagnostic_payload<'py>(
+    py: Python<'py>,
+    pipeline_label: &str,
+    signal_exit_code: i64,
+    signal_name: &str,
+    signal_number: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_dispatch_delivery_interrupted_diagnostic_payload(
+        pipeline_label,
+        signal_exit_code,
+        signal_name,
+        signal_number,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_dispatch_delivery_failed_diagnostic_payload<'py>(
+    py: Python<'py>,
+    exception_message: &str,
+    exception_type: &str,
+    pipeline_label: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_dispatch_delivery_failed_diagnostic_payload(
+        exception_message,
+        exception_type,
+        pipeline_label,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_dispatch_pipeline_finished_diagnostic_payload<'py>(
+    py: Python<'py>,
+    final_parquet_path_count: i64,
+    pipeline_label: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_dispatch_pipeline_finished_diagnostic_payload(
+        final_parquet_path_count,
+        pipeline_label,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn build_native_dispatch_writer_session_finish_started_diagnostic_payload<'py>(
     py: Python<'py>,
 ) -> PyResult<Bound<'py, PyDict>> {
