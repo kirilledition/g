@@ -70,6 +70,7 @@ pub(crate) struct NativeDosageBufferAcquireResult {
 #[pyclass]
 pub(crate) struct NativeDosageBufferReuseSelectionResult {
     dosage_buffer: Option<Py<PyAny>>,
+    reuse_operation_result: Option<Py<NativeDosageBufferPoolOperationResult>>,
     discard_operation_result: Option<Py<NativeDosageBufferPoolOperationResult>>,
 }
 
@@ -1155,7 +1156,20 @@ impl NativeCallbackRuntimeResources {
         let reusable_dosage_buffer =
             self.get_reusable_dosage_buffer(py, dosage_buffer, expected_shape, expected_dtype)?;
         if let Some(reusable_dosage_buffer) = reusable_dosage_buffer {
-            return Ok(NativeDosageBufferReuseSelectionResult::from_reusable_dosage_buffer(reusable_dosage_buffer));
+            let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+            let observation_plan = if self.has_stage_timing_recorder {
+                let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+                Some(scheduler_state.plan_dosage_buffer_pool_reuse_observation_value())
+            } else {
+                None
+            };
+            let reuse_operation_result =
+                NativeDosageBufferPoolOperationResult::from_operation(py, Some(free_buffer_count), observation_plan)?;
+            return NativeDosageBufferReuseSelectionResult::from_reusable_dosage_buffer(
+                py,
+                reusable_dosage_buffer,
+                reuse_operation_result,
+            );
         }
         let discard_operation_result = self.discard_dosage_buffer_owner_with_optional_observation(py, dosage_buffer)?;
         NativeDosageBufferReuseSelectionResult::from_discard(py, discard_operation_result)
@@ -1875,18 +1889,35 @@ impl NativeDosageBufferReuseSelectionResult {
     }
 
     #[getter]
+    fn reuse_operation_result(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolOperationResult>> {
+        self.reuse_operation_result.as_ref().map(|reuse_operation_result| reuse_operation_result.clone_ref(py))
+    }
+
+    #[getter]
     fn discard_operation_result(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolOperationResult>> {
         self.discard_operation_result.as_ref().map(|discard_operation_result| discard_operation_result.clone_ref(py))
     }
 }
 
 impl NativeDosageBufferReuseSelectionResult {
-    fn from_reusable_dosage_buffer(dosage_buffer: Py<PyAny>) -> Self {
-        Self { dosage_buffer: Some(dosage_buffer), discard_operation_result: None }
+    fn from_reusable_dosage_buffer(
+        py: Python<'_>,
+        dosage_buffer: Py<PyAny>,
+        reuse_operation_result: NativeDosageBufferPoolOperationResult,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            dosage_buffer: Some(dosage_buffer),
+            reuse_operation_result: Some(Py::new(py, reuse_operation_result)?),
+            discard_operation_result: None,
+        })
     }
 
     fn from_discard(py: Python<'_>, discard_operation_result: NativeDosageBufferPoolOperationResult) -> PyResult<Self> {
-        Ok(Self { dosage_buffer: None, discard_operation_result: Some(Py::new(py, discard_operation_result)?) })
+        Ok(Self {
+            dosage_buffer: None,
+            reuse_operation_result: None,
+            discard_operation_result: Some(Py::new(py, discard_operation_result)?),
+        })
     }
 }
 

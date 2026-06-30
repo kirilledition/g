@@ -1316,6 +1316,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now discard unusable production free-buffer
   candidates during native reuse selection instead of returning that decision to
   Python acquisition loops.
+- Callback runtime resources now return production dosage-buffer reuse
+  operation results from native reuse selection, including optional timing
+  observation payloads.
 - Native output writer PyO3 entry points now release the GIL around Rust
   chunk enqueue/write dispatch after copying Python array inputs into owned
   Arrow arrays.

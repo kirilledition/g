@@ -3214,6 +3214,11 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
         np.float32,
     )
     assert reusable_selection_result.dosage_buffer is not None
+    reuse_operation_result = reusable_selection_result.reuse_operation_result
+    assert reuse_operation_result is not None
+    assert reuse_operation_result.has_free_buffer_count is True
+    assert reuse_operation_result.free_buffer_count == 0
+    assert reuse_operation_result.observation_plan is None
     assert reusable_selection_result.discard_operation_result is None
     assert runtime_resources.plan_dosage_buffer_reuse((2, 2), (3, 2)) is None
     pool_observation = runtime_resources.plan_dosage_buffer_pool_backpressure_observation(
@@ -3266,6 +3271,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
         np.float32,
     )
     assert discard_selection_result.dosage_buffer is None
+    assert discard_selection_result.reuse_operation_result is None
     discard_operation_result = discard_selection_result.discard_operation_result
     assert discard_operation_result is not None
     assert discard_operation_result.has_free_buffer_count is True
@@ -3303,10 +3309,12 @@ def test_native_callback_runner_uses_native_releasable_dosage_buffer_owner_resol
 
 
 def test_native_callback_runner_uses_native_dosage_buffer_reuse_selection() -> None:
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     callback = build_test_linear_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=FakeWriterSession(),
+        stage_timing_recorder=stage_timing_recorder,
         dosage_buffer_limit=1,
     )
     oversized_buffer = np.empty((4, 5), dtype=np.float32)
@@ -3318,11 +3326,21 @@ def test_native_callback_runner_uses_native_dosage_buffer_reuse_selection() -> N
             callback_runtime.NativeBgenCallbackRunner,
             "_acquire_reused_dosage_buffer",
             side_effect=AssertionError("production runner should use native reuse selection"),
+        ), patch.object(
+            callback_runtime.NativeBgenCallbackRunner,
+            "record_dosage_buffer_pool_reuse_operation",
+            side_effect=AssertionError("production runner should record native reuse operation results"),
         ):
             sliced_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
             assert sliced_buffer.shape == (2, 3)
             assert np.shares_memory(sliced_buffer, oversized_buffer)
             assert sliced_buffer.base is oversized_buffer
+            queue_backpressure_by_operation = {
+                queue_backpressure.operation_name: queue_backpressure
+                for queue_backpressure in stage_timing_recorder.snapshot().queue_backpressure
+            }
+            assert queue_backpressure_by_operation["reuse"].observation_count == 1
+            assert queue_backpressure_by_operation["reuse"].queue_name == "dosage_buffer_pool"
             callback.discard_dosage_buffer_slot(sliced_buffer)
             assert callback.callback_runtime_resources.dosage_buffer_allocated_count == 0
     finally:
