@@ -964,17 +964,18 @@ class NativeBgenCallbackRunner(abc.ABC):
         operation_result: _core.NativeDosageBufferPoolOperationResult,
     ) -> None:
         """Record a native dosage-buffer pool operation result."""
-        free_buffer_count = operation_result.free_buffer_count
-        if free_buffer_count is None:
+        observation = operation_result.backpressure_observation
+        if observation is None:
             return
-        observation_plan = operation_result.observation_plan
-        if observation_plan is None:
+        if self.stage_timing_recorder is None:
             return
-        self.record_dosage_buffer_pool_operation(
-            operation_name=observation_plan.operation_name,
-            free_buffer_count=free_buffer_count,
-            elapsed_seconds=0.0,
-            blocked=observation_plan.blocked,
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=observation.queue_name,
+            operation_name=observation.operation_name,
+            queue_depth=observation.queue_depth,
+            queue_capacity=observation.queue_capacity,
+            elapsed_seconds=observation.elapsed_seconds,
+            blocked_seconds=observation.blocked_seconds,
         )
 
     @abc.abstractmethod

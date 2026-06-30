@@ -102,6 +102,7 @@ pub(crate) struct NativeDosageBufferReuseSelectionResult {
 pub(crate) struct NativeDosageBufferPoolOperationResult {
     free_buffer_count: Option<usize>,
     observation_plan: Option<Py<NativeDosageBufferPoolObservationPlan>>,
+    backpressure_observation: Option<Py<NativeCallbackQueueBackpressureObservation>>,
 }
 
 #[pyclass]
@@ -1008,7 +1009,7 @@ impl NativeCallbackRuntimeResources {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state.plan_dosage_buffer_pool_allocate_observation_value()
         };
-        NativeDosageBufferPoolOperationResult::from_operation(py, Some(free_buffer_count), Some(observation_plan))
+        self.dosage_buffer_pool_operation_result(py, Some(free_buffer_count), Some(observation_plan))
     }
 
     fn register_dosage_buffer_with_optional_observation(
@@ -1018,13 +1019,13 @@ impl NativeCallbackRuntimeResources {
     ) -> PyResult<NativeDosageBufferPoolOperationResult> {
         let free_buffer_count = self.register_dosage_buffer(py, buffer_identifier)?;
         if !self.has_stage_timing_recorder {
-            return NativeDosageBufferPoolOperationResult::from_operation(py, Some(free_buffer_count), None);
+            return self.dosage_buffer_pool_operation_result(py, Some(free_buffer_count), None);
         }
         let observation_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state.plan_dosage_buffer_pool_allocate_observation_value()
         };
-        NativeDosageBufferPoolOperationResult::from_operation(py, Some(free_buffer_count), Some(observation_plan))
+        self.dosage_buffer_pool_operation_result(py, Some(free_buffer_count), Some(observation_plan))
     }
 
     fn register_dosage_buffer_object_with_optional_observation(
@@ -1065,13 +1066,13 @@ impl NativeCallbackRuntimeResources {
     ) -> PyResult<NativeDosageBufferPoolOperationResult> {
         let free_buffer_count = self.return_dosage_buffer(py, buffer_identifier, dosage_buffer)?;
         if free_buffer_count.is_none() {
-            return NativeDosageBufferPoolOperationResult::from_operation(py, None, None);
+            return self.dosage_buffer_pool_operation_result(py, None, None);
         }
         let observation_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state.plan_dosage_buffer_pool_return_observation_value()
         };
-        NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
+        self.dosage_buffer_pool_operation_result(py, free_buffer_count, Some(observation_plan))
     }
 
     fn return_dosage_buffer_with_optional_observation(
@@ -1082,13 +1083,13 @@ impl NativeCallbackRuntimeResources {
     ) -> PyResult<NativeDosageBufferPoolOperationResult> {
         let free_buffer_count = self.return_dosage_buffer(py, buffer_identifier, dosage_buffer)?;
         if free_buffer_count.is_none() || !self.has_stage_timing_recorder {
-            return NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, None);
+            return self.dosage_buffer_pool_operation_result(py, free_buffer_count, None);
         }
         let observation_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state.plan_dosage_buffer_pool_return_observation_value()
         };
-        NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
+        self.dosage_buffer_pool_operation_result(py, free_buffer_count, Some(observation_plan))
     }
 
     fn return_dosage_buffer_object_with_optional_observation(
@@ -1118,7 +1119,7 @@ impl NativeCallbackRuntimeResources {
         dosage_buffer: &Bound<'_, PyAny>,
     ) -> PyResult<NativeDosageBufferPoolOperationResult> {
         if !is_numpy_ndarray(dosage_buffer)? {
-            return NativeDosageBufferPoolOperationResult::from_operation(py, None, None);
+            return self.dosage_buffer_pool_operation_result(py, None, None);
         }
         self.return_dosage_buffer_owner_with_optional_observation(py, dosage_buffer)
     }
@@ -1143,13 +1144,13 @@ impl NativeCallbackRuntimeResources {
     ) -> PyResult<NativeDosageBufferPoolOperationResult> {
         let free_buffer_count = self.discard_dosage_buffer(py, buffer_identifier)?;
         if free_buffer_count.is_none() {
-            return NativeDosageBufferPoolOperationResult::from_operation(py, None, None);
+            return self.dosage_buffer_pool_operation_result(py, None, None);
         }
         let observation_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state.plan_dosage_buffer_pool_discard_observation_value()
         };
-        NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
+        self.dosage_buffer_pool_operation_result(py, free_buffer_count, Some(observation_plan))
     }
 
     fn discard_dosage_buffer_with_optional_observation(
@@ -1159,13 +1160,13 @@ impl NativeCallbackRuntimeResources {
     ) -> PyResult<NativeDosageBufferPoolOperationResult> {
         let free_buffer_count = self.discard_dosage_buffer(py, buffer_identifier)?;
         if free_buffer_count.is_none() || !self.has_stage_timing_recorder {
-            return NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, None);
+            return self.dosage_buffer_pool_operation_result(py, free_buffer_count, None);
         }
         let observation_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state.plan_dosage_buffer_pool_discard_observation_value()
         };
-        NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
+        self.dosage_buffer_pool_operation_result(py, free_buffer_count, Some(observation_plan))
     }
 
     fn discard_dosage_buffer_object_with_optional_observation(
@@ -1275,7 +1276,7 @@ impl NativeCallbackRuntimeResources {
                 None
             };
             let reuse_operation_result =
-                NativeDosageBufferPoolOperationResult::from_operation(py, Some(free_buffer_count), observation_plan)?;
+                self.dosage_buffer_pool_operation_result(py, Some(free_buffer_count), observation_plan)?;
             return NativeDosageBufferReuseSelectionResult::from_reusable_dosage_buffer(
                 py,
                 reusable_dosage_buffer,
@@ -2150,6 +2151,11 @@ impl NativeDosageBufferPoolOperationResult {
     fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolObservationPlan>> {
         self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
     }
+
+    #[getter]
+    fn backpressure_observation(&self, py: Python<'_>) -> Option<Py<NativeCallbackQueueBackpressureObservation>> {
+        self.backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
+    }
 }
 
 impl NativeDosageBufferPoolOperationResult {
@@ -2157,8 +2163,15 @@ impl NativeDosageBufferPoolOperationResult {
         py: Python<'_>,
         free_buffer_count: Option<usize>,
         observation_plan: Option<NativeDosageBufferPoolObservationPlan>,
+        backpressure_observation: Option<NativeCallbackQueueBackpressureObservation>,
     ) -> PyResult<Self> {
-        Ok(Self { free_buffer_count, observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()? })
+        Ok(Self {
+            free_buffer_count,
+            observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
+            backpressure_observation: backpressure_observation
+                .map(|observation| Py::new(py, observation))
+                .transpose()?,
+        })
     }
 }
 
@@ -2602,6 +2615,32 @@ impl NativeDosageBufferAcquireResult {
 }
 
 impl NativeCallbackRuntimeResources {
+    fn dosage_buffer_pool_operation_result(
+        &self,
+        py: Python<'_>,
+        free_buffer_count: Option<usize>,
+        observation_plan: Option<NativeDosageBufferPoolObservationPlan>,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        let backpressure_observation =
+            if let (Some(free_buffer_count), Some(observation_plan)) = (free_buffer_count, observation_plan.as_ref()) {
+                let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+                Some(scheduler_state.plan_dosage_buffer_pool_backpressure_observation_value(
+                    observation_plan.operation_name_value(),
+                    free_buffer_count,
+                    0.0,
+                    observation_plan.blocked_value(),
+                )?)
+            } else {
+                None
+            };
+        NativeDosageBufferPoolOperationResult::from_operation(
+            py,
+            free_buffer_count,
+            observation_plan,
+            backpressure_observation,
+        )
+    }
+
     fn result_write_dispatch_plan_for_kind(
         &self,
         py: Python<'_>,

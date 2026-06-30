@@ -3492,6 +3492,14 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert register_observation_plan is not None
     assert register_observation_plan.operation_name == "allocate"
     assert register_observation_plan.blocked is False
+    register_backpressure_observation = register_operation_result.backpressure_observation
+    assert register_backpressure_observation is not None
+    assert register_backpressure_observation.queue_name == "dosage_buffer_pool"
+    assert register_backpressure_observation.operation_name == "allocate"
+    assert register_backpressure_observation.queue_depth == 0
+    assert register_backpressure_observation.queue_capacity == 1
+    assert register_backpressure_observation.elapsed_seconds == 0.0
+    assert register_backpressure_observation.blocked_seconds == 0.0
     return_operation_result = observed_runtime_resources.return_dosage_buffer_object_with_optional_observation(
         observed_dosage_buffer,
     )
@@ -3501,6 +3509,14 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert return_observation_plan is not None
     assert return_observation_plan.operation_name == "return"
     assert return_observation_plan.blocked is False
+    return_backpressure_observation = return_operation_result.backpressure_observation
+    assert return_backpressure_observation is not None
+    assert return_backpressure_observation.queue_name == "dosage_buffer_pool"
+    assert return_backpressure_observation.operation_name == "return"
+    assert return_backpressure_observation.queue_depth == 1
+    assert return_backpressure_observation.queue_capacity == 1
+    assert return_backpressure_observation.elapsed_seconds == 0.0
+    assert return_backpressure_observation.blocked_seconds == 0.0
     free_buffer_result = observed_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is observed_dosage_buffer
@@ -3513,12 +3529,21 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert discard_observation_plan is not None
     assert discard_observation_plan.operation_name == "discard"
     assert discard_observation_plan.blocked is False
+    discard_backpressure_observation = discard_operation_result.backpressure_observation
+    assert discard_backpressure_observation is not None
+    assert discard_backpressure_observation.queue_name == "dosage_buffer_pool"
+    assert discard_backpressure_observation.operation_name == "discard"
+    assert discard_backpressure_observation.queue_depth == 0
+    assert discard_backpressure_observation.queue_capacity == 1
+    assert discard_backpressure_observation.elapsed_seconds == 0.0
+    assert discard_backpressure_observation.blocked_seconds == 0.0
     missing_discard_operation_result = (
         observed_runtime_resources.discard_dosage_buffer_object_with_optional_observation(observed_dosage_buffer)
     )
     assert missing_discard_operation_result.has_free_buffer_count is False
     assert missing_discard_operation_result.free_buffer_count is None
     assert missing_discard_operation_result.observation_plan is None
+    assert missing_discard_operation_result.backpressure_observation is None
 
     runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
         worker_name="native-resource-dosage-buffer-test",
@@ -3541,6 +3566,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert unobserved_register_result.has_free_buffer_count is True
     assert unobserved_register_result.free_buffer_count == 0
     assert unobserved_register_result.observation_plan is None
+    assert unobserved_register_result.backpressure_observation is None
     unobserved_dosage_buffer_view = unobserved_dosage_buffer[:1, :1]
     assert (
         runtime_resources.get_releasable_dosage_buffer_owner(unobserved_dosage_buffer_view) is unobserved_dosage_buffer
@@ -3556,6 +3582,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert unobserved_return_result.has_free_buffer_count is True
     assert unobserved_return_result.free_buffer_count == 1
     assert unobserved_return_result.observation_plan is None
+    assert unobserved_return_result.backpressure_observation is None
     free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is unobserved_dosage_buffer
@@ -3565,6 +3592,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert unobserved_discard_result.has_free_buffer_count is True
     assert unobserved_discard_result.free_buffer_count == 0
     assert unobserved_discard_result.observation_plan is None
+    assert unobserved_discard_result.backpressure_observation is None
     missing_unobserved_return_attempt_plan = runtime_resources.plan_dosage_buffer_object_return_attempt(
         unobserved_dosage_buffer
     )
@@ -3575,6 +3603,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert non_numpy_release_result.has_free_buffer_count is False
     assert non_numpy_release_result.free_buffer_count is None
     assert non_numpy_release_result.observation_plan is None
+    assert non_numpy_release_result.backpressure_observation is None
     numpy_release_buffer = np.empty((2, 2), dtype=np.float32)
     numpy_release_view = numpy_release_buffer[:1, :1]
     assert runtime_resources.register_dosage_buffer(id(numpy_release_buffer)) == 0
@@ -3584,6 +3613,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert numpy_release_result.has_free_buffer_count is True
     assert numpy_release_result.free_buffer_count == 1
     assert numpy_release_result.observation_plan is None
+    assert numpy_release_result.backpressure_observation is None
     free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is numpy_release_buffer
@@ -3651,6 +3681,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert selection_operation_result.has_free_buffer_count is True
     assert selection_operation_result.free_buffer_count == 0
     assert selection_operation_result.observation_plan is None
+    assert selection_operation_result.backpressure_observation is None
     reuse_operation_result = reusable_selection_result.reuse_operation_result
     assert reuse_operation_result is not None
     assert reuse_operation_result.has_free_buffer_count is True
@@ -3712,6 +3743,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     discard_selection_operation_result = discard_selection_result.operation_result
     assert discard_selection_operation_result.has_free_buffer_count is True
     assert discard_selection_operation_result.free_buffer_count == 0
+    assert discard_selection_operation_result.backpressure_observation is None
     discard_operation_result = discard_selection_result.discard_operation_result
     assert discard_operation_result is not None
     assert discard_operation_result.has_free_buffer_count is True
@@ -3849,6 +3881,11 @@ def test_native_callback_runner_uses_native_dosage_buffer_reuse_selection() -> N
                 callback_runtime.NativeBgenCallbackRunner,
                 "record_dosage_buffer_pool_reuse_operation",
                 side_effect=AssertionError("production runner should record native reuse operation results"),
+            ),
+            patch.object(
+                callback_runtime.NativeBgenCallbackRunner,
+                "record_dosage_buffer_pool_operation",
+                side_effect=AssertionError("production runner should emit native dosage-buffer operation observations"),
             ),
         ):
             sliced_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)

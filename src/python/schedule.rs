@@ -2521,6 +2521,16 @@ impl NativeResultInFlightAcquireAttemptPlan {
     }
 }
 
+impl NativeDosageBufferPoolObservationPlan {
+    pub(crate) fn operation_name_value(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    pub(crate) fn blocked_value(&self) -> bool {
+        self.inner.blocked
+    }
+}
+
 impl NativeResultInFlightReleaseAttemptPlan {
     pub(crate) fn has_release_error_value(&self) -> bool {
         self.inner.has_release_error

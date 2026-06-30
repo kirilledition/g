@@ -1159,6 +1159,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now return the selected dosage-buffer reuse or
   discard operation result directly, so Python no longer validates split
   optional reuse/discard telemetry fields after native selection.
+- Callback runtime resources now attach typed dosage-buffer pool backpressure
+  observations to native operation results, so Python no longer derives
+  operation telemetry from separate count and operation-plan fields.
 - Callback runtime resources now own production worker finish and abort
   lifecycle execution, including stop/join sequencing and worker-error raise
   planning, while Python keeps public shutdown exceptions, pending-diagnostics
