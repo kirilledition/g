@@ -3095,6 +3095,7 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
     assert finish_result.raise_worker_error is True
     assert finish_result.complete_progress is True
     assert finish_result.emit_binary_correction_summary is True
+    assert finish_result.flush_binary_correction_pending_diagnostics is False
     summary_payload = finish_result.binary_correction_summary_payload
     assert summary_payload is not None
     assert summary_payload["null_model_failure_count"] == 2

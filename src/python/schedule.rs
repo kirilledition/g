@@ -239,7 +239,8 @@ pub(crate) struct NativeCallbackWorkerStopPlan {
     inner: native_schedule::CallbackWorkerStopPlan,
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
 pub(crate) struct NativeCallbackWorkerFinishPlan {
     inner: native_schedule::CallbackWorkerFinishPlan,
 }

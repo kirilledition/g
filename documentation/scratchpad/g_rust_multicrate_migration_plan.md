@@ -1226,6 +1226,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now return complete binary-correction summary
   payloads during production worker finalization when no pending JAX
   diagnostics require Python materialization.
+- Callback runtime resources now return the production pending-diagnostics
+  flush decision during worker finalization; Python only materializes pending
+  JAX diagnostics before emitting the native summary payload.
 
 ### Tests
 

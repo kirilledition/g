@@ -532,6 +532,12 @@ def test_native_callback_runner_emits_binary_correction_summary() -> None:
 
     callback.record_binary_correction_diagnostics(diagnostics)
     callback.record_binary_null_model_failure_count(2)
+
+    def fail_emit_binary_correction_summary() -> typing.NoReturn:
+        message = "native runtime resources should return the pending diagnostics flush decision during worker finish"
+        raise AssertionError(message)
+
+    typing.cast("typing.Any", callback).emit_binary_correction_summary = fail_emit_binary_correction_summary
     callback.finish()
 
     assert telemetry_session.logged_events == [

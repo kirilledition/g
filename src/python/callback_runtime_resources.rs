@@ -21,12 +21,13 @@ use super::schedule::{
     NativeCallbackQueueBackpressureObservation, NativeCallbackQueueGetObservationPlan,
     NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
     NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
-    NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerStartAttemptPlan, NativeDosageBufferPoolObservationPlan,
-    NativeDosageBufferReturnAttemptPlan, NativeDosageBufferReusePlan, NativeDosageWorkDrainCompletionPlan,
-    NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan,
-    NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseObservationPlan,
-    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
-    NativeResultWriteItemResourceReleasePlan, NativeVariantMajorDosageBatchHandoffPlan,
+    NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerFinishPlan, NativeCallbackWorkerStartAttemptPlan,
+    NativeDosageBufferPoolObservationPlan, NativeDosageBufferReturnAttemptPlan, NativeDosageBufferReusePlan,
+    NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan,
+    NativeDosageWorkItemStageDurationPlan, NativeResultInFlightAcquireObservationPlan,
+    NativeResultInFlightReleaseObservationPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
+    NativeResultWriteItemDispatchPlan, NativeResultWriteItemResourceReleasePlan,
+    NativeVariantMajorDosageBatchHandoffPlan,
 };
 
 #[pyclass]
@@ -65,12 +66,11 @@ pub(crate) struct NativeResultInFlightAcquireResult {
 
 #[pyclass]
 pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
+    finish_plan: NativeCallbackWorkerFinishPlan,
     shutdown_worker_name: Option<String>,
     shutdown_timeout_seconds: Option<f64>,
-    raise_worker_error: bool,
-    complete_progress: bool,
     progress_completion_event: Option<NativeCallbackProgressTelemetryEvent>,
-    emit_binary_correction_summary: bool,
+    flush_binary_correction_pending_diagnostics: bool,
     binary_correction_summary_payload: Option<Py<PyDict>>,
 }
 
@@ -585,6 +585,9 @@ impl NativeCallbackRuntimeResources {
                 .bind(py)
                 .borrow()
                 .plan_summary_emit_value(has_telemetry_session, pending_diagnostics_count)?;
+            finish_result.record_binary_correction_pending_diagnostics_flush(
+                summary_emit_plan.should_flush_pending_diagnostics_value(),
+            );
             if summary_emit_plan.should_emit_summary_value()
                 && !summary_emit_plan.should_flush_pending_diagnostics_value()
             {
@@ -1716,12 +1719,12 @@ impl NativeCallbackWorkerFinishLifecycleResult {
 
     #[getter]
     fn raise_worker_error(&self) -> bool {
-        self.raise_worker_error
+        self.finish_plan.raise_worker_error_value()
     }
 
     #[getter]
     fn complete_progress(&self) -> bool {
-        self.complete_progress
+        self.finish_plan.complete_progress_value()
     }
 
     #[getter]
@@ -1731,7 +1734,12 @@ impl NativeCallbackWorkerFinishLifecycleResult {
 
     #[getter]
     fn emit_binary_correction_summary(&self) -> bool {
-        self.emit_binary_correction_summary
+        self.finish_plan.emit_binary_correction_summary_value()
+    }
+
+    #[getter]
+    fn flush_binary_correction_pending_diagnostics(&self) -> bool {
+        self.flush_binary_correction_pending_diagnostics
     }
 
     #[getter]
@@ -1741,14 +1749,13 @@ impl NativeCallbackWorkerFinishLifecycleResult {
 }
 
 impl NativeCallbackWorkerFinishLifecycleResult {
-    fn from_finish_plan(finish_plan: &super::schedule::NativeCallbackWorkerFinishPlan) -> Self {
+    fn from_finish_plan(finish_plan: &NativeCallbackWorkerFinishPlan) -> Self {
         Self {
+            finish_plan: finish_plan.clone(),
             shutdown_worker_name: None,
             shutdown_timeout_seconds: None,
-            raise_worker_error: finish_plan.raise_worker_error_value(),
-            complete_progress: finish_plan.complete_progress_value(),
             progress_completion_event: None,
-            emit_binary_correction_summary: finish_plan.emit_binary_correction_summary_value(),
+            flush_binary_correction_pending_diagnostics: false,
             binary_correction_summary_payload: None,
         }
     }
@@ -1764,6 +1771,10 @@ impl NativeCallbackWorkerFinishLifecycleResult {
 
     fn record_binary_correction_summary_payload(&mut self, summary_payload: Py<PyDict>) {
         self.binary_correction_summary_payload = Some(summary_payload);
+    }
+
+    fn record_binary_correction_pending_diagnostics_flush(&mut self, should_flush_pending_diagnostics: bool) {
+        self.flush_binary_correction_pending_diagnostics = should_flush_pending_diagnostics;
     }
 }
 

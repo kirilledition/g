@@ -1393,7 +1393,13 @@ class NativeBgenCallbackRunner(abc.ABC):
             )
         if not summary_emit_plan.should_flush_pending_diagnostics:
             return
+        self.materialize_binary_correction_pending_diagnostics()
+
+    def materialize_binary_correction_pending_diagnostics(self) -> None:
+        """Materialize pending binary diagnostics into native summary counters."""
         pending_diagnostics = tuple(self.binary_correction_pending_diagnostics)
+        if not pending_diagnostics:
+            return
         diagnostics_counts = binary_chunk_diagnostics_to_summary_counts(pending_diagnostics)
         self.binary_correction_pending_diagnostics.clear()
         self.add_binary_correction_summary_counts(diagnostics_counts)
@@ -1986,8 +1992,14 @@ class NativeBgenCallbackRunner(abc.ABC):
                         message = "Native callback worker finish result selected a missing telemetry session."
                         raise RuntimeError(message)
                     self.telemetry_session.log_binary_correction_summary(summary_payload)
-                else:
-                    self.emit_binary_correction_summary()
+                elif finish_result.flush_binary_correction_pending_diagnostics:
+                    self.materialize_binary_correction_pending_diagnostics()
+                    if self.telemetry_session is None:
+                        message = "Native callback worker finish result selected a missing telemetry session."
+                        raise RuntimeError(message)
+                    self.telemetry_session.log_binary_correction_summary(
+                        self.callback_runtime_resources.binary_correction_summary_payload()
+                    )
             return
         finish_plan = self.callback_scheduler_state.plan_worker_finish()
         if finish_plan.stop_dosage_worker:
