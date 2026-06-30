@@ -2,853 +2,359 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Canonical public algorithm and result-interpretation reference | BGEN-backed REGENIE Step 2 quantitative, binary score, and binary approximate-Firth modes in this checkout | Public interface and compute maintainers |
+| Public algorithm and result-interpretation reference | BGEN-backed REGENIE Step 2 quantitative, binary score, and binary approximate-Firth modes | Public interface and compute maintainers |
 
-`g` runs BGEN-backed REGENIE Step 2 association scans. It tests one marker at a
-time while using chromosome-specific leave-one-chromosome-out (LOCO)
-predictions from REGENIE Step 1 as fixed adjustment terms. It does not fit
-REGENIE Step 1; `--pred` must point to a prediction list produced by upstream
-`regenie`.[^source-regenie-step2]
+`g` runs REGENIE-compatible Step 2 single-variant association tests on BGEN input. It does **not** run REGENIE Step 1. Step 2 needs the chromosome-specific leave-one-chromosome-out prediction file produced by Step 1; pass that file with `--pred`.[^regenie-step2]
 
-The implemented statistical surface is:
+At a high level, `g` tests one variant at a time:
 
-| Mode | User options | What is tested |
+1. align genotype samples, phenotypes, covariates, and Step 1 LOCO predictions;
+2. remove incomplete phenotype/covariate rows;
+3. build a reusable null model for each phenotype and chromosome;
+4. stream BGEN variants in chunks;
+5. compute additive allele-one association statistics;
+6. write chunked output plus a manifest that describes the run.
+
+Supported statistical modes:
+
+| Mode | User options | What the row means |
 | --- | --- | --- |
-| Quantitative | `--step 2 --qt` | Additive dosage effect in a linear model after covariate and LOCO adjustment. |
-| Binary score test | `--step 2 --bt` | Additive dosage effect in a logistic model, evaluated by a score test at the null model. |
-| Binary approximate Firth fallback | `--step 2 --bt --firth --approx` | Score test for all variants, then approximate Firth logistic correction for score-test candidates selected by `--pThresh`. |
+| Quantitative | `--step 2 --qt` | Linear additive effect of `ALLELE1` dosage after covariate and LOCO adjustment. |
+| Binary score | `--step 2 --bt` | Logistic score test for additive `ALLELE1` dosage at the null model. |
+| Binary approximate Firth | `--step 2 --bt --firth --approx` | Score test for all variants, then approximate Firth correction for variants passing `--pThresh`. |
 
-Recognized REGENIE options outside this surface, such as `--bed`, `--pgen`,
-`--spa`, categorical covariates, and exact Firth without `--approx`, fail
-clearly instead of being ignored.
+Unsupported REGENIE behavior should fail clearly. For example, `--bed`, `--pgen`, categorical covariates, `--spa`, and exact Firth without `--approx` are not silently ignored.
 
-Approximate-Firth result labels are current experimental correction diagnostics.
-They describe which fallback path produced a row and do not imply exact Firth
-support.
+> Approximate Firth labels are correction diagnostics. They do not imply exact Firth support.
 
-## Algorithm Flow
+## Notation used on this page
+
+The main text uses words for data and conventional symbols for scalar statistics.
+
+| Term | Meaning |
+| --- | --- |
+| `Samples` | Aligned, complete-case samples used for the current phenotype or phenotype group. |
+| `Trait` | Quantitative phenotype vector, or binary phenotype vector after REGENIE `1/2` coding is recoded to internal `0/1`. |
+| `Covariates` | Complete-case covariate matrix, including the intercept that `g` adds internally. |
+| `LOCO` | Chromosome-specific Step 1 prediction. For binary traits this is used as a logistic offset. |
+| `Genotype` | Allele-one dosage vector for one variant, with values in `[0, 2]`. |
+| `Residualize(value)` | Remove the part of `value` explained by `Covariates`. |
+| `WeightedResidualize(value, weights)` | Remove weighted covariate effects under the binary null model. |
+| `β` | Reported additive allele-one effect estimate. |
+| `SE` | Reported standard error. |
+| `χ²` | One-degree-of-freedom chi-squared statistic. |
+| `p` | Chi-squared tail probability. |
+| `LOG10P` | `-log10(p)`. Larger values mean stronger evidence. |
+
+Public output columns remain uppercase (`BETA`, `SE`, `CHISQ`, `LOG10P`) because those are schema fields.
+
+## Execution flow
 
 ```mermaid
 flowchart TD
-    configuration["Merge defaults, TOML config, and CLI flags"]
-    openInputs["Open BGEN 1.2, sample, phenotype, covariate, and Step 1 prediction inputs"]
-    alignSamples["Align rows by IID or FID/IID and drop incomplete phenotype/covariate rows"]
-    prepareNull["Prepare reusable null-model state for each phenotype and chromosome"]
-    streamVariants["Stream BGEN variants in --bsize chunks"]
-    decodeDosage["Decode allele-one dosages and mean-impute missing compute values"]
-    dispatchDevice["Dispatch chunk to JAX on CPU or GPU"]
-    quantitativeTest["Quantitative linear association test"]
-    binaryScore["Binary logistic score test"]
-    firthFallback["Approximate Firth fallback for selected binary candidates"]
-    writeOutput["Write result chunks, manifest, and effective config"]
+    config["Merge defaults, TOML, and CLI flags"]
+    inputs["Open BGEN, sample, phenotype, covariate, and Step 1 prediction inputs"]
+    alignment["Align samples and remove incomplete rows"]
+    nullModel["Prepare per-phenotype and per-chromosome null state"]
+    chunks["Stream BGEN variants in --bsize chunks"]
+    dosage["Decode allele-one dosages; mean-impute missing compute values"]
+    device["Dispatch chunk to JAX CPU or GPU"]
+    linear["Quantitative linear test"]
+    score["Binary logistic score test"]
+    firth["Approximate Firth correction for selected binary candidates"]
+    output["Write result chunks, manifest, and effective config"]
 
-    configuration --> openInputs --> alignSamples --> prepareNull --> streamVariants
-    streamVariants --> decodeDosage --> dispatchDevice
-    dispatchDevice --> quantitativeTest --> writeOutput
-    dispatchDevice --> binaryScore --> writeOutput
-    binaryScore --> firthFallback --> writeOutput
+    config --> inputs --> alignment --> nullModel --> chunks --> dosage --> device
+    device --> linear --> output
+    device --> score --> output
+    score --> firth --> output
 ```
 
-Every run follows that execution shape:
+Changing the phenotype, covariates, Step 1 predictions, sample-key mode, multi-phenotype sample mode, trait type, or binary correction plan changes the statistical analysis, not just runtime behavior.[^regenie-step2]
 
-1. Merge defaults, TOML config, and CLI flags into one execution plan.
-2. Open the BGEN 1.2 source and resolve sample identifiers from the `.sample`
-   file or embedded BGEN samples.
-3. Align genotype samples, phenotype rows, covariate rows, and Step 1 LOCO
-   predictions using `IID` or `(FID, IID)` according to
-   `--sample_key_mode`.
-4. Drop rows that are incomplete for the requested phenotype and covariates.
-   Require Step 1 LOCO predictions for the remaining aligned samples. Binary
-   phenotypes are recoded from REGENIE coding `1 = control`, `2 = case` to
-   internal `0/1`.
-5. Build reusable null-model state for the aligned samples.
-6. Stream BGEN variants in chunks of `--bsize` variants.
-7. Decode each chunk to allele-one dosages in `[0, 2]`, mean-impute missing
-   genotypes for the compute matrix, and retain observed genotype counts for
-   output and numerical statistics.
-8. Dispatch the chunk to JAX on `--device cpu` or `--device gpu`.
-9. Write Arrow, Parquet, or REGENIE-text result chunks with a run manifest and
-   effective config.
+## Sample and input alignment
 
-Step 2 is conditional on the Step 1 prediction file, the aligned sample set,
-covariates, trait mode, and binary correction plan. Changing any of those can
-change the statistics, not just the runtime.[^source-regenie-step2]
+For each requested phenotype, `g` builds the analysis sample set by matching rows across:
 
-## Formula Names
+- BGEN sample identifiers;
+- optional `.sample` file identifiers;
+- phenotype table;
+- optional covariate table;
+- Step 1 LOCO predictions.
 
-The formulas use whole-word variable names. Public output field names such as
-`BETA`, `SE`, `CHISQ`, and `LOG10P` stay uppercase because they are output
-schema fields, not local mathematical symbols.
+The matching key is controlled by `--sample_key_mode`: either `IID` or `(FID, IID)`. Rows with missing selected phenotype or covariate values are excluded for that phenotype. Binary phenotypes use REGENIE coding in the input file (`1 = control`, `2 = case`) and are recoded internally to `0/1`.
 
-| Name in formulas | Meaning |
-| --- | --- |
-| `sampleCount` | Number of aligned, complete samples for this phenotype or phenotype group. |
-| `covariateCount` | Number of covariate columns after adding the intercept. |
-| `covariateDesignMatrix` | Complete-case covariate matrix, including the intercept that `g` adds internally. |
-| `quantitativePhenotypeVector` | Quantitative phenotype vector for the current complete-case sample set. |
-| `binaryPhenotypeVector` | Binary phenotype vector after `1/2` REGENIE coding is recoded to internal `0/1`. |
-| `variantDosageVector` | Allele-one expected allele count for one tested variant. |
-| `chromosomeLocoPredictionVector` | Quantitative LOCO prediction vector for the tested chromosome. |
-| `chromosomeLocoOffsetVector` | Binary LOCO offset vector for the tested chromosome. |
-| `covariateProjectionMatrix` | Projection onto the covariate column space. |
-| `residualProjectionMatrix` | Projection that removes the covariate column space. |
-| `nullProbabilityVector` | Fitted binary null probabilities. |
-| `bernoulliVarianceVector` | Per-sample binary variance under the fitted logistic null. |
-
-The public result fields are written as `float32` by default, even when an
-internal kernel uses a wider dtype for parity-sensitive work. Set
-`[output].output_statistic_dtype = "float64"` when persisted public statistics
-must retain float64 precision.
+This sample set is part of the scientific analysis. Changing it changes `N`, covariate adjustment, LOCO alignment, and all downstream statistics.
 
 ## Quantitative Step 2
 
-For `--qt`, `g` uses a covariate-adjusted linear association test. The model for
-one variant on a chromosome is:[^source-quantitative]
+For `--qt`, the intended model for one variant is:
 
-$$
-\mathrm{quantitativePhenotypeVector}
-=
-\mathrm{covariateDesignMatrix}\,\mathrm{covariateCoefficientVector}
-+
-\mathrm{chromosomeLocoPredictionVector}
-+
-\mathrm{variantDosageVector}\,\mathrm{alleleEffect}
-+
-\mathrm{errorVector}
-$$
+```text
+Trait = Covariates × covariate effects
+      + LOCO
+      + Genotype × β
+      + error
+```
 
-The implementation avoids refitting this model from scratch for every variant.
-It precomputes the covariate projection once, then reuses it across BGEN
-chunks:
-
-$$
-\mathrm{covariateProjectionMatrix}
-=
-\mathrm{covariateDesignMatrix}
-\left(
-\mathrm{covariateDesignMatrix}^{\mathsf T}
-\mathrm{covariateDesignMatrix}
-\right)^{-1}
-\mathrm{covariateDesignMatrix}^{\mathsf T}
-$$
-
-$$
-\mathrm{residualProjectionMatrix}
-=
-\mathrm{identityMatrix}
--
-\mathrm{covariateProjectionMatrix}
-$$
+`g` avoids refitting this full model for every variant. Instead, it removes covariate effects once, then reuses the result across BGEN chunks.[^quantitative]
 
 For each phenotype and chromosome:
 
-$$
-\mathrm{phenotypeResidualVector}
-=
-\mathrm{quantitativePhenotypeVector}
--
-\mathrm{covariateProjectionMatrix}\,
-\mathrm{quantitativePhenotypeVector}
-$$
-
-$$
-\mathrm{locoAdjustedPhenotypeVector}
-=
-\mathrm{phenotypeResidualVector}
--
-\mathrm{chromosomeLocoPredictionVector}
-$$
-
-$$
-\mathrm{analysisResidualVector}
-=
-\mathrm{residualProjectionMatrix}\,
-\mathrm{locoAdjustedPhenotypeVector}
-$$
-
-$$
-\mathrm{residualMeanSquare}
-=
-\frac{
-\mathrm{analysisResidualVector}^{\mathsf T}
-\mathrm{analysisResidualVector}
-}{
-\mathrm{sampleCount}
--
-\mathrm{covariateCount}
-}
-$$
+```text
+AdjustedTrait = Trait - LOCO
+TraitResidual = Residualize(AdjustedTrait)
+ResidualVariance = sum(TraitResidual²) / residualDegreesOfFreedom
+```
 
 For each variant:
 
-$$
-\mathrm{genotypeResidualVector}
-=
-\mathrm{residualProjectionMatrix}\,
-\mathrm{variantDosageVector}
-$$
+```text
+GenotypeResidual = Residualize(Genotype)
 
-$$
-\mathrm{genotypeResidualSumSquares}
-=
-\mathrm{genotypeResidualVector}^{\mathsf T}
-\mathrm{genotypeResidualVector}
-$$
+GenotypeInformation = sum(GenotypeResidual²)
 
-$$
-\mathrm{effectNumerator}
-=
-\mathrm{genotypeResidualVector}^{\mathsf T}
-\mathrm{analysisResidualVector}
-$$
+β = dot(GenotypeResidual, TraitResidual) / GenotypeInformation
 
-$$
-\mathrm{alleleEffectEstimate}
-=
-\frac{\mathrm{effectNumerator}}{\mathrm{genotypeResidualSumSquares}}
-$$
+SE = sqrt(ResidualVariance / GenotypeInformation)
 
-$$
-\mathrm{standardError}
-=
-\sqrt{
-\frac{\mathrm{residualMeanSquare}}{\mathrm{genotypeResidualSumSquares}}
-}
-$$
+χ² = (β / SE)²
 
-$$
-\mathrm{chiSquaredStatistic}
-=
-\frac{
-\mathrm{alleleEffectEstimate}^{2}
-}{
-\mathrm{standardError}^{2}
-}
-$$
+LOG10P = -log10(Pr[χ² with 1 degree of freedom ≥ observed χ²])
+```
 
-$$
-\mathrm{logTenPValue}
-=
--
-\log_{10}
-\left(
-\Pr\left[
-\chi^{2}_{\mathrm{oneDegreeOfFreedom}}
-\ge
-\mathrm{chiSquaredStatistic}
-\right]
-\right)
-$$
+The same test can be viewed as the one-degree-of-freedom additive least-squares update after the null model has been removed.[^score-test]
 
-This is the same one-degree-of-freedom additive association test that can be
-viewed as a score, Wald, or single-variant least-squares update after the null
-model has been projected out.[^source-score-test]
+Numerical policy:
 
-Numerical safeguards:
+- If allele-one mean dosage is greater than `1`, `g` may shift or flip the internal genotype representation to reduce cancellation. The public `BETA` is restored to `ALLELE1` orientation.
+- A variant is invalid when residualized genotype variance is too close to zero under `--linear_minimum_variance` and `--linear_relative_variance_tolerance`.
+- A phenotype/chromosome state is invalid when the adjusted residual variance is not positive.
 
-- If the allele-one mean dosage is greater than `1`, `g` subtracts `2` from the
-  genotype vector before projection. Because the model contains an intercept,
-  this constant shift does not change the residualized genotype or statistic;
-  it reduces float32 cancellation for high-frequency allele-one variants.
-- A variant is marked invalid when residualized genotype variance is not larger
-  than `max(--linear_minimum_variance, raw_sum_squares *
-  --linear_relative_variance_tolerance)`.
-- A phenotype/chromosome state is invalid if the adjusted residual variance is
-  not positive.
+## Binary score test
 
-Changing `--covarCol`, `--covarColList`, `--pred`, `--phenoCol`, sample-key
-mode, or multi-phenotype sample mode changes the projection or residual and
-therefore can change `BETA`, `SE`, `CHISQ`, and `LOG10P`.
+For `--bt`, `g` fits a chromosome-specific logistic null model. The LOCO prediction is a fixed offset in the logistic linear predictor:[^binary]
 
-## Binary Score Test
+```text
+logit(NullProbability) = Covariates × null effects + LOCO
+```
 
-For `--bt`, `g` fits a chromosome-specific logistic null model with the LOCO
-offset fixed:[^source-binary]
+The null coefficients are estimated by iteratively reweighted least squares. The controls are:
 
-$$
-\mathrm{linearPredictor}_{\mathrm{sample}}
-=
-\mathrm{covariateRow}_{\mathrm{sample}}\,
-\mathrm{nullCoefficientVector}
-+
-\mathrm{chromosomeLocoOffset}_{\mathrm{sample}}
-$$
+- `--binary_null_maximum_iterations`
+- `--binary_null_coefficient_tolerance`
+- `--null_logistic_nonconvergence_policy`
 
-$$
-\mathrm{nullProbability}_{\mathrm{sample}}
-=
-\operatorname{logistic}
-\left(
-\mathrm{linearPredictor}_{\mathrm{sample}}
-\right)
-$$
+After fitting the null model:
 
-$$
-\mathrm{binaryPhenotype}_{\mathrm{sample}}
-\sim
-\operatorname{Bernoulli}
-\left(
-\mathrm{nullProbability}_{\mathrm{sample}}
-\right)
-$$
+```text
+ScoreResidual = Trait - NullProbability
 
-The null coefficients are estimated by iteratively reweighted least squares
-(IRLS). The maximum iteration count and coefficient tolerance are controlled by
-`--binary_null_maximum_iterations` and
-`--binary_null_coefficient_tolerance`.
+BernoulliWeight = max(
+    NullProbability × (1 - NullProbability),
+    minimumVarianceFloor
+)
+```
 
-After the null model is fitted:
+For each variant:
 
-$$
-\mathrm{scoreResidualVector}
-=
-\mathrm{binaryPhenotypeVector}
--
-\mathrm{nullProbabilityVector}
-$$
+```text
+WeightedGenotypeResidual =
+    WeightedResidualize(Genotype, BernoulliWeight)
 
-$$
-\mathrm{bernoulliVariance}_{\mathrm{sample}}
-=
-\operatorname{max}
-\left(
-\mathrm{nullProbability}_{\mathrm{sample}}
-\left(1 - \mathrm{nullProbability}_{\mathrm{sample}}\right),
-\mathrm{minimumVarianceFloor}
-\right)
-$$
+Score = dot(Genotype, ScoreResidual)
 
-For each variant, `g` computes a weighted genotype residual variance without
-materializing a full residualized matrix:
+Information = sum(WeightedGenotypeResidual²)
 
-$$
-\mathrm{weightedCovariateMatrix}
-=
-\operatorname{diagonal}
-\left(
-\sqrt{\mathrm{bernoulliVarianceVector}}
-\right)
-\mathrm{covariateDesignMatrix}
-$$
+β_score = Score / Information
 
-$$
-\mathrm{weightedVariantDosageVector}
-=
-\sqrt{\mathrm{bernoulliVarianceVector}}
-\odot
-\mathrm{variantDosageVector}
-$$
+SE_score = 1 / sqrt(Information)
 
-$$
-\mathrm{weightedCovariateProjectionMatrix}
-=
-\mathrm{weightedCovariateMatrix}
-\left(
-\mathrm{weightedCovariateMatrix}^{\mathsf T}
-\mathrm{weightedCovariateMatrix}
-\right)^{-1}
-\mathrm{weightedCovariateMatrix}^{\mathsf T}
-$$
+χ²_score = Score² / Information
 
-$$
-\mathrm{weightedGenotypeResidualVector}
-=
-\mathrm{weightedVariantDosageVector}
--
-\mathrm{weightedCovariateProjectionMatrix}\,
-\mathrm{weightedVariantDosageVector}
-$$
+LOG10P = -log10(Pr[χ² with 1 degree of freedom ≥ observed χ²_score])
+```
 
-$$
-\mathrm{scoreNumerator}
-=
-\mathrm{variantDosageVector}^{\mathsf T}
-\mathrm{scoreResidualVector}
-$$
+For score-test rows, `BETA` is a score-test effect estimate at the null model. It is not a full per-variant logistic maximum-likelihood estimate unless approximate Firth correction replaces that row.
 
-$$
-\mathrm{scoreInformation}
-=
-\mathrm{weightedGenotypeResidualVector}^{\mathsf T}
-\mathrm{weightedGenotypeResidualVector}
-$$
-
-$$
-\mathrm{scoreEffectEstimate}
-=
-\frac{\mathrm{scoreNumerator}}{\mathrm{scoreInformation}}
-$$
-
-$$
-\mathrm{scoreStandardError}
-=
-\sqrt{\frac{1}{\mathrm{scoreInformation}}}
-$$
-
-$$
-\mathrm{scoreChiSquaredStatistic}
-=
-\frac{\mathrm{scoreNumerator}^{2}}{\mathrm{scoreInformation}}
-$$
-
-$$
-\mathrm{logTenPValue}
-=
--
-\log_{10}
-\left(
-\Pr\left[
-\chi^{2}_{\mathrm{oneDegreeOfFreedom}}
-\ge
-\mathrm{scoreChiSquaredStatistic}
-\right]
-\right)
-$$
-
-Here `BETA` is the score-test effect estimate for allele-one dosage under the
-null model. It is not a full per-variant logistic maximum-likelihood fit unless
-the approximate Firth fallback replaces that row.[^source-binary]
-
-Numerical safeguards:
+Numerical policy:
 
 - Fitted probabilities are clipped by `--binary_minimum_probability`.
-- Binary variance and information matrices use `--binary_minimum_variance`
-  as an absolute floor.
-- The score statistic is invalid when `scoreInformation` is not larger than
-  `max(--binary_minimum_variance, weighted_sum_squares *
-  --binary_relative_variance_tolerance)`.
-- By default, `--null_logistic_nonconvergence_policy fail` aborts when a
-  chromosome's null logistic model does not converge. With `warn`, the run
-  continues, but nonconverged chromosome/trait rows fail the statistic mask.
-- High-frequency allele-one variants may be tested internally after flipping
-  genotype coding to keep rare carriers near zero; successful `BETA` values are
-  restored to the public `ALLELE1` orientation.
+- Bernoulli variances and information matrices use `--binary_minimum_variance`.
+- A score row is invalid when the information is too close to zero under `--binary_relative_variance_tolerance`.
+- High-frequency allele-one variants may be internally flipped; successful output is restored to `ALLELE1` orientation.
 
-## Binary Approximate Firth Fallback
+## Binary approximate Firth fallback
 
-For `--bt --firth --approx`, all variants first receive the binary score test.
-Then `g` selects Firth candidates with:[^source-firth]
+For `--bt --firth --approx`, every variant first receives the score test. Then `g` chooses correction candidates:
 
-$$
-\mathrm{scorePValue}
-<
-\mathrm{pThreshold}
-$$
+```text
+score p-value < pThreshold
+```
 
-Equivalently, because output stores the negative base-ten logarithm of the
-p-value, candidates satisfy:
+Because output stores `LOG10P`, this is equivalent to:
 
-$$
-\mathrm{logTenPValue}
->
--
-\log_{10}
-\left(
-\mathrm{pThreshold}
-\right)
-$$
+```text
+LOG10P > -log10(pThreshold)
+```
 
-Lowering `--pThresh` reduces the number of Firth candidates and makes the run
-closer to score-only behavior. Raising it sends more variants into the slower
-correction path and can change more binary rows.
+Firth correction maximizes a bias-reduced logistic objective:
 
-Firth correction uses the bias-reduced logistic objective:
+```text
+Firth objective = logistic log-likelihood
+                + 1/2 × log(det(information matrix))
+```
 
-$$
-\mathrm{penalizedLogLikelihood}
-\left(
-\mathrm{coefficientVector}
-\right)
-=
-\mathrm{logisticLogLikelihood}
-\left(
-\mathrm{coefficientVector}
-\right)
-+
-\frac{1}{2}
-\log
-\left|
-\mathrm{informationMatrix}
-\left(
-\mathrm{coefficientVector}
-\right)
-\right|
-$$
+The determinant term is the Jeffreys-prior penalty used by Firth’s bias-reduction method. It is especially relevant for rare variants, imbalanced case-control traits, and separation-prone logistic models.[^firth]
 
-The determinant penalty is the Jeffreys-prior penalty used by Firth's
-bias-reduction method. It is useful for rare variants, unbalanced case-control
-traits, and separation-prone binary models.[^source-firth]
+`g` implements a REGENIE-style approximate Firth path:
 
-`g` implements the REGENIE-style approximate Firth fallback path:
+1. prepare a covariate-only Firth null model for the chromosome;
+2. select variants by score-test p-value;
+3. try scalar pseudo-Firth and sparse-carrier paths when applicable;
+4. fall back through configured Newton, warm-start, line-search, and step-halving attempts;
+5. report the penalized likelihood-ratio statistic for successful corrected rows.
 
-1. Fit or prepare a covariate-only Firth null model for the chromosome.
-2. For candidate variants, recode high-frequency variants if needed and restore
-   public allele-one sign after correction.
-3. Try the scalar pseudo-Firth approximation and sparse-carrier compaction paths
-   when applicable.
-4. Fall back through Newton-Raphson zero-start and warm-start attempts according
-   to the configured iteration and line-search limits.
-5. Use the penalized likelihood-ratio statistic for the corrected row.
+For corrected rows:
 
-Successful corrected rows are labeled
-`CORRECTION_METHOD = firth_approximate` and
-`CORRECTION_STATUS = success`. Failed approximate-Firth candidates are labeled
-`CORRECTION_METHOD = firth_approximate`,
-`CORRECTION_STATUS = failed`, and `EXTRA = TEST_FAIL`.
+```text
+χ²_LRT = max(2 × (full Firth objective - null Firth objective), 0)
 
-The scalar approximate path uses a one-parameter Firth model after genotype
-residualization:
+LOG10P = -log10(Pr[χ² with 1 degree of freedom ≥ observed χ²_LRT])
+```
 
-$$
-\mathrm{firthLinearPredictor}_{\mathrm{sample}}
-\left(
-\mathrm{alleleEffect}
-\right)
-=
-\mathrm{nullFirthOffset}_{\mathrm{sample}}
-+
-\mathrm{alleleEffect}\,
-\mathrm{residualizedVariantDosage}_{\mathrm{sample}}
-$$
+Successful corrected rows have:
 
-The corrected likelihood-ratio statistic is:
+```text
+CORRECTION_METHOD = firth_approximate
+CORRECTION_STATUS = success
+```
 
-$$
-\mathrm{likelihoodRatioChiSquaredStatistic}
-=
-\operatorname{max}
-\left(
-2
-\left(
-\mathrm{fullPenalizedLogLikelihood}
--
-\mathrm{nullPenalizedLogLikelihood}
-\right),
-0
-\right)
-$$
+Failed correction candidates have:
 
-$$
-\mathrm{logTenPValue}
-=
--
-\log_{10}
-\left(
-\Pr\left[
-\chi^{2}_{\mathrm{oneDegreeOfFreedom}}
-\ge
-\mathrm{likelihoodRatioChiSquaredStatistic}
-\right]
-\right)
-$$
+```text
+CORRECTION_METHOD = firth_approximate
+CORRECTION_STATUS = failed
+EXTRA = TEST_FAIL
+```
 
-`--firth-se` changes only the reported `SE` for successful Firth rows. When it
-is enabled, `g` reports:
+`--firth-se` affects only the reported `SE` for successful Firth rows. It does not change candidate selection, the Firth fit, `BETA`, `CHISQ`, or `LOG10P`.[^firth-se]
 
-$$
-\mathrm{reportedStandardError}
-=
-\frac{
-\left|
-\mathrm{alleleEffectEstimate}
-\right|
-}{
-\sqrt{\mathrm{likelihoodRatioChiSquaredStatistic}}
-}
-$$
+## Genotype handling
 
-for corrected rows with positive `CHISQ`. This ties the standard error to the
-likelihood-ratio statistic. It does not change candidate selection, the Firth
-fit, `BETA`, `CHISQ`, or `LOG10P`.[^source-firth-se]
+`g` reads BGEN 1.2 genotype probabilities and converts them to allele-one dosage.
 
-Firth-specific tuning options such as `--firth_batch_size`,
-`--firth_candidate_capacity`, `--firth_maximum_iterations`,
-`--firth_gradient_tolerance`, `--firth_coefficient_tolerance`,
-`--firth_likelihood_tolerance`, line-search limits, and sparse-carrier
-thresholds should normally stay at their defaults. They affect performance,
-convergence, or numerical acceptance of candidate rows, not the intended
-scientific model.
+For unphased diploid biallelic records:
 
-## Genotype Handling
+```text
+AlleleOneDosage =
+    heterozygousProbability
+    + 2 × homozygousAlleleOneProbability
+```
 
-`g` reads BGEN 1.2 genotype probability records and converts them to allele-one
-dosage. For unphased diploid biallelic records:
+For trusted 8-bit BGEN probability-pair records:
 
-$$
-\mathrm{alleleOneDosage}
-=
-\mathrm{heterozygousProbability}
-+
-2\,
-\mathrm{homozygousAlleleOneProbability}
-$$
+```text
+AlleleOneDosage =
+    (510 - 2 × homozygousReferenceByte - heterozygousByte) / 255
+```
 
-For trusted unphased 8-bit BGEN records, the packed probability-pair path uses:
+The constants come from BGEN Layout 2 probability storage with 8 bits per stored probability. A stored byte represents `storedByte / (2^8 - 1)`, and the homozygous allele-one probability is inferred as the unstored final genotype probability.[^bgen]
 
-$$
-\mathrm{alleleOneDosage}
-=
-\frac{
-510
--
-2\,\mathrm{homozygousReferenceByte}
--
-\mathrm{heterozygousByte}
-}{
-255
-}
-$$
-
-The `510` and `255` constants come from BGEN Layout 2 probability storage with
-8 bits per stored probability: a stored byte represents
-`storedByte / (2^8 - 1)`, and the homozygous allele-one probability is inferred
-as the unstored last genotype probability.[^source-bgen]
-
-Missing genotype dosages are represented as `NaN` during decode. Before the
-statistical kernel runs, each missing dosage is replaced by that variant's
-observed mean dosage among aligned samples:
-
-$$
-\mathrm{observedMeanDosage}
-=
-\frac{
-\sum_{\mathrm{observedSample}}
-\mathrm{alleleOneDosage}_{\mathrm{observedSample}}
-}{
-\mathrm{observedGenotypeCount}
-}
-$$
-
-$$
-\mathrm{computeDosage}_{\mathrm{sample}}
-=
-\begin{cases}
-\mathrm{observedMeanDosage}, & \mathrm{ifMissingDosage} \\
-\mathrm{alleleOneDosage}_{\mathrm{sample}}, & \mathrm{otherwise}
-\end{cases}
-$$
-
-The output `N`, `A1FREQ`, and `INFO` are based on observed genotype calls:
+Missing genotype dosages are represented as `NaN` during decode. Before the statistical kernel runs, missing dosages are replaced by the variant’s observed mean dosage among aligned samples. Output `N`, `A1FREQ`, and `INFO` use observed genotype calls, not the imputed compute values.
 
 | Field | Meaning |
 | --- | --- |
-| `N` | Observed genotype count for the variant after sample alignment. |
-| `A1FREQ` | Observed mean allele-one dosage divided by `2`. |
-| `INFO` | Observed dosage variance divided by the expected Hardy-Weinberg dosage variance, clamped to `[0, 1]`; missing calls are not counted in the expected denominator. |
+| `N` | Observed genotype count after sample alignment. |
+| `A1FREQ` | Observed allele-one frequency: mean observed allele-one dosage divided by `2`. |
+| `INFO` | Observed dosage variance divided by expected Hardy-Weinberg dosage variance, clamped to `[0, 1]`. Missing calls are not counted in the expected denominator. |
 
-The INFO calculation is:
+## Multi-phenotype behavior
 
-$$
-\mathrm{observedAlleleOneFrequency}
-=
-\frac{\mathrm{observedMeanDosage}}{2}
-$$
+Multiple phenotypes can be requested with repeated `--phenoCol` or with `--phenoColList`.
 
-$$
-\mathrm{hardyWeinbergExpectedVariance}
-=
-2\,
-\mathrm{observedAlleleOneFrequency}
-\left(
-1 - \mathrm{observedAlleleOneFrequency}
-\right)
-$$
+`--multi_phenotype_sample_mode per-phenotype` is the default. Each phenotype keeps its own complete-case sample set. This matches separate single-phenotype runs, aside from execution optimizations.
 
-$$
-\mathrm{infoScore}
-=
-\operatorname{clamp}
-\left(
-\frac{
-\mathrm{observedDosageVariance}
-}{
-\mathrm{hardyWeinbergExpectedVariance}
-},
-0,
-1
-\right)
-$$
+`--multi_phenotype_sample_mode complete-case` builds one shared sample-set intersection across all requested phenotypes. This can reuse more work, but it is a different statistical analysis when missingness differs across phenotypes. It changes the sample count, covariate projection, LOCO alignment, and statistics.
 
-The trusted fast path controlled by `--trusted_no_missing_diploid` assumes the
-BGEN records are diploid, unphased, no-missing records that match the optimized
-decoder's constraints. `--trusted_bgen_validation_mode` controls whether that
-assumption is validated on cache miss, always validated, or assumed by the user.
+## Parameters that can change results
 
-## Multi-Phenotype Behavior
-
-Multiple phenotypes can be requested with repeated `--phenoCol` flags or
-`--phenoColList`.
-
-`--multi_phenotype_sample_mode per-phenotype` is the default. Each phenotype
-keeps its own complete-case sample set. `g` may group phenotypes that happen to
-share compatible aligned samples, but the statistical semantics match separate
-single-phenotype runs. Grouped or union BGEN delivery is an execution
-optimization only; each phenotype manifest still records that phenotype's own
-sample count and sample-set fingerprint.
-
-`--multi_phenotype_sample_mode complete-case` builds one shared complete-case
-intersection across all requested phenotypes. This can reuse genotype decode and
-device transfer work across traits, but it is not equivalent to per-phenotype
-analysis when missingness differs across phenotypes. It changes `sampleCount`,
-the covariate projection, LOCO alignment, and all downstream statistics.
-Complete-case manifests record the shared sample-set fingerprint for every
-phenotype output in the run.
-
-## Parameter Effects
-
-Statistical parameters:
-
-| Option | Changes statistics? | Effect |
-| --- | --- | --- |
-| `--qt` / `--bt` | Yes | Selects linear quantitative or logistic binary model. |
-| `--phenoCol`, `--phenoColList` | Yes | Selects the trait vector or trait matrix. |
-| `--covarCol`, `--covarColList` | Yes | Changes `covariateDesignMatrix`, residualization, degrees of freedom, and null model fits. |
-| `--pred` | Yes | Supplies chromosome-specific LOCO predictions or offsets. Different Step 1 models produce different Step 2 adjustments. |
-| `--sample`, `--sample_key_mode` | Yes | Changes sample identity resolution and row alignment. |
-| `--multi_phenotype_sample_mode` | Yes | Controls whether phenotypes keep independent complete-case samples or share one intersection. |
-| `--firth --approx` | Yes, for binary | Replaces selected score-test rows with approximate Firth-corrected rows. |
-| `--pThresh` | Yes, for binary Firth | Sets the score-test p-value threshold for Firth candidates. |
-| `--firth-se` | Yes, for reported `SE` only | Recomputes successful Firth `SE` as `abs(BETA) / sqrt(CHISQ)`. |
-| `--score_dtype` | Can | Changes score-test compute precision. Persisted public statistic precision is controlled separately by `--output_statistic_dtype`. |
-
-Numerical policy parameters:
-
-| Option | Effect |
+| Option | Why it can change statistics |
 | --- | --- |
-| `--linear_minimum_variance`, `--linear_relative_variance_tolerance` | Decide when a residualized quantitative genotype is too close to zero variance to test safely. |
-| `--binary_minimum_probability` | Clips binary fitted probabilities away from exact `0` and `1`. |
-| `--binary_minimum_variance`, `--binary_relative_variance_tolerance` | Stabilize binary score variances and information matrices. |
-| `--binary_null_maximum_iterations`, `--binary_null_coefficient_tolerance` | Control binary null logistic IRLS termination. |
-| `--null_logistic_nonconvergence_policy` | Chooses whether nonconverged binary null fits abort the run or warn and continue with invalid statistic rows. |
-| `--firth_*`, `--null_firth_*` | Control approximate-Firth iteration limits, tolerances, line search, step halving, and sparse-carrier behavior. |
+| `--qt` / `--bt` | Selects the quantitative linear or binary logistic model. |
+| `--phenoCol`, `--phenoColList` | Selects the analyzed trait or traits. |
+| `--covarCol`, `--covarColList` | Changes covariate adjustment and degrees of freedom. |
+| `--pred` | Supplies chromosome-specific Step 1 predictions or offsets. |
+| `--sample`, `--sample_key_mode` | Changes sample identity resolution and alignment. |
+| `--multi_phenotype_sample_mode` | Changes whether phenotypes use independent or shared complete-case samples. |
+| `--firth --approx` | Replaces selected binary score rows with approximate Firth rows. |
+| `--pThresh` | Changes which score-test rows become Firth candidates. |
+| `--firth-se` | Changes reported `SE` for successful Firth rows only. |
+| `--score_dtype` | Can change compute precision. Persisted output precision is controlled separately by `--output_statistic_dtype`. |
 
-Runtime and output parameters:
+Runtime options such as `--bsize`, `--threads`, `--device`, `--format`, `--resume`, and telemetry/logging settings should not intentionally change scientific conclusions. If they change results beyond normal floating-point tolerance, treat that as a reproducibility bug.
 
-| Option | Changes statistics? | Effect |
-| --- | --- | --- |
-| `--bsize` | No intended change | Number of variants decoded and dispatched per chunk. It affects memory, compile shape, and throughput. |
-| `--threads` | No intended change | Requested native CPU thread count for Rust-owned work. |
-| `--device` | No intended change | Selects JAX CPU or GPU execution. |
-| `--staging_depth` | No intended change | Controls how far native chunk delivery can stage callback work. |
-| `--bgen_decode_tile_variant_count` | No intended change | Native BGEN decode tile size. |
-| `--gpu_genotype_format` | No intended change | Selects dosage transfer, packed8 transfer/decode, or `auto`; `auto` uses packed8 only for eligible single-trait binary GPU runs after trusted BGEN validation. |
-| `--format` | No | Chooses Arrow, Parquet, or REGENIE-text materialization. |
-| `--resume`, `--resume_mode` | No | Reuses previously committed chunks when the manifest accepts the execution plan. |
-| `--telemetry`, `--log_*`, `--trace_*` | No | Controls diagnostics and logging. Profile and trace modes can add synchronization overhead. |
-
-Runtime parameters should not be used to change scientific conclusions. If a
-runtime-only parameter changes results beyond normal floating-point tolerance,
-treat it as a bug or a reproducibility finding.
-
-## Reading Output Rows
-
-`g` writes REGENIE Step 2-style additive test rows:
+## Reading output rows
 
 | Field | Interpretation |
 | --- | --- |
 | `CHROM`, `GENPOS`, `ID` | Variant identity from BGEN metadata. |
 | `ALLELE0`, `ALLELE1` | Reported alleles. Effects are for `ALLELE1` dosage. |
 | `A1FREQ` | Observed allele-one frequency after sample alignment. |
-| `INFO` | Observed dosage INFO score as described above. |
+| `INFO` | Observed dosage INFO score. |
 | `N` | Observed genotype count after sample alignment. |
 | `TEST` | Currently `ADD` for the additive dosage test. |
 | `BETA` | Additive allele-one effect estimate for the selected mode. |
-| `SE` | Standard error for the reported effect estimate. |
+| `SE` | Standard error for `BETA`. |
 | `CHISQ` | One-degree-of-freedom chi-squared statistic. |
-| `LOG10P` | Negative base-ten logarithm of the chi-squared tail probability. Larger means stronger evidence. |
+| `LOG10P` | Negative base-ten logarithm of the chi-squared tail probability. |
 | `EXTRA` | Null/`NA` for ordinary successful rows; `TEST_FAIL` when the statistic or correction failed. |
 | `CORRECTION_METHOD` | Diagnostic method label: `score`, `firth_approximate`, or `spa`. |
 | `CORRECTION_STATUS` | Diagnostic status label: `success` or `failed`. |
 
-`EXTRA` stays sparse for REGENIE-compatible parsing. Use
-`CORRECTION_METHOD` and `CORRECTION_STATUS` to distinguish score-only rows,
-successful approximate-Firth rows, SPA-corrected rows when present, and failed
-approximate-Firth candidates.
+`EXTRA` stays sparse for REGENIE-style parsing. Prefer `CORRECTION_METHOD` and `CORRECTION_STATUS` when deciding which statistical path produced a row.
 
-## What to Expect Operationally
+## Operational expectations
 
-- The first chunk shape for a mode may trigger JAX compilation. CPU and GPU
-  runs can therefore have a warmup cost before steady-state throughput.
-- GPU acceleration depends on enough work per transfer. Single-trait scans can
-  be limited by BGEN decode, host-device transfer, or output writing.
-- Increasing `--bsize` usually reduces per-chunk overhead but raises memory use
-  and can change JAX compile shapes.
-- Approximate Firth is intentionally slower than score-only binary testing
-  because candidate variants require iterative correction.
-- Resume checks compare the manifest against execution-plan-affecting inputs
-  and settings. Use `--resume_mode strict` when restart correctness matters
-  more than startup speed.
-- Result p-values are not multiple-testing corrected. Genome-wide significance
-  thresholds and downstream quality control remain the user's responsibility.
+- The first chunk shape for a mode may trigger JAX compilation.
+- Increasing `--bsize` usually reduces per-chunk overhead but increases memory use and changes JAX compile shapes.
+- GPU acceleration depends on enough work per transfer; small scans may be limited by decode, transfer, or output.
+- Approximate Firth is slower than score-only testing because candidate variants require iterative correction.
+- Resume accepts only manifests whose execution-plan-affecting inputs and settings match the current run.
+- Result p-values are not multiple-testing corrected.
+
+## Algorithm appendix: what `Residualize` means
+
+The main text uses `Residualize(value)` for readability. Concretely, if `Covariates` is the complete-case covariate matrix, including the intercept, then:
+
+```text
+CovariateProjection =
+    Covariates × inverse(transpose(Covariates) × Covariates) × transpose(Covariates)
+
+Residualize(value) =
+    value - CovariateProjection × value
+```
+
+The implementation uses Cholesky-whitened covariate matrices rather than materializing the full projection matrix for every chunk, but the statistical effect is the same.[^implementation-linear]
+
+For the binary score test, `WeightedResidualize(value, weights)` means the analogous covariate removal after multiplying each sample by the square root of its Bernoulli variance under the null model.[^implementation-binary]
 
 ## References
 
-[^source-regenie-step2]: Exact source places: the official REGENIE docs,
-    [Overview](https://rgcgithub.github.io/regenie/overview/), section
-    "Step 2 : Single-variant association testing" and subsections
-    "Quantitative traits" and "Binary traits"; Mbatchou et al.,
-    [Nature Genetics 2021](https://www.nature.com/articles/s41588-021-00870-7),
-    Extended Data Fig. 1 caption text beginning "REGENIE consists of two
-    steps". Implementation entry points: `src/g/execution_plan.py`,
-    `src/g/io/source.py`, and the `compute_regenie2_*` functions under
-    `src/g/compute/`.
+[^regenie-step2]: REGENIE documentation, [Overview](https://rgcgithub.github.io/regenie/overview/), “Step 2: Single-variant association testing”; Mbatchou et al., [Nature Genetics 2021](https://www.nature.com/articles/s41588-021-00870-7), Extended Data Fig. 1.
 
-[^source-quantitative]: Exact source places: REGENIE docs
-    [Overview](https://rgcgithub.github.io/regenie/overview/), section
-    "Step 2 : Single-variant association testing" -> "Quantitative traits",
-    especially the bullets saying covariates are regressed out, LOCO
-    predictions are removed, and linear regression tests the residualized
-    phenotype and marker. Implementation place:
-    `src/g/compute/regenie2_linear/api.py::compute_regenie2_linear_chunk` and
-    `src/g/compute/regenie2_linear/score.py`.
+[^quantitative]: REGENIE documentation, [Overview](https://rgcgithub.github.io/regenie/overview/), “Step 2: Single-variant association testing → Quantitative traits”. Implementation: `src/g/compute/regenie2_linear/api.py`, `src/g/compute/regenie2_linear/state.py`, and `src/g/compute/regenie2_linear/score.py`.
 
-[^source-score-test]: Exact source places: Rao (1948),
-    [Large sample tests of statistical hypotheses concerning several parameters
-    with applications to problems of estimation](https://doi.org/10.1017/s0305004100023987),
-    section 3, "Derivation of statistics for simple and composite hypotheses",
-    formula (3.4), for the efficient-score chi-squared statistic; the
-    one-degree-of-freedom tail probability is also the statistic form reported
-    in Mbatchou et al.,
-    [Nature Genetics 2021](https://www.nature.com/articles/s41588-021-00870-7),
-    Extended Data Fig. 2 and 3 captions.
+[^score-test]: Rao (1948), [Large sample tests of statistical hypotheses concerning several parameters with applications to problems of estimation](https://doi.org/10.1017/s0305004100023987), section 3; Mbatchou et al., [Nature Genetics 2021](https://www.nature.com/articles/s41588-021-00870-7), Extended Data Fig. 2 and 3.
 
-[^source-binary]: Exact source places: REGENIE docs
-    [Overview](https://rgcgithub.github.io/regenie/overview/), section
-    "Step 2 : Single-variant association testing" -> "Binary traits", where the
-    logistic score test, LOCO offset, and covariate linear predictor are
-    described. Implementation places:
-    `src/g/compute/regenie2_binary/state.py`,
-    `src/g/compute/regenie2_binary/score.py`, and
-    `src/g/compute/regenie2_binary/api.py`.
+[^binary]: REGENIE documentation, [Overview](https://rgcgithub.github.io/regenie/overview/), “Step 2: Single-variant association testing → Binary traits”. Implementation: `src/g/compute/regenie2_binary/state.py`, `src/g/compute/regenie2_binary/score.py`, and `src/g/compute/regenie2_binary/api.py`.
 
-[^source-firth]: Exact source places: REGENIE docs
-    [Overview](https://rgcgithub.github.io/regenie/overview/), section
-    "Step 2 : Single-variant association testing" -> "Firth logistic
-    regression", for the penalty term, score-test threshold, approximate Firth
-    correction, and LRT p-value behavior; REGENIE docs
-    [Options](https://rgcgithub.github.io/regenie/options/), rows `--firth`,
-    `--approx`, and `--pThresh`; Firth (1993),
-    [Bias reduction of maximum likelihood estimates](https://doi.org/10.1093/biomet/80.1.27),
-    abstract sentences describing modified score functions and Jeffreys
-    invariant prior penalization. Implementation places:
-    `src/g/compute/regenie2_binary/correction.py`,
-    `src/g/compute/regenie2_binary/firth/null.py`, and
-    `src/g/compute/regenie2_binary/firth/scalar_approx.py`.
+[^firth]: REGENIE documentation, [Overview](https://rgcgithub.github.io/regenie/overview/), “Firth logistic regression”; REGENIE documentation, [Options](https://rgcgithub.github.io/regenie/options/), `--firth`, `--approx`, and `--pThresh`; Firth (1993), [Bias reduction of maximum likelihood estimates](https://doi.org/10.1093/biomet/80.1.27).
 
-[^source-firth-se]: Exact source places: REGENIE docs
-    [Overview](https://rgcgithub.github.io/regenie/overview/), section
-    "Firth logistic regression", sentence describing the `--firth-se` option;
-    REGENIE docs [Options](https://rgcgithub.github.io/regenie/options/), row
-    `--firth-se`. The likelihood-ratio chi-squared calibration follows Wilks
-    (1938),
-    [The large-sample distribution of the likelihood ratio for testing
-    composite hypotheses](https://doi.org/10.1214/aoms/1177732360).
-    Implementation place: `src/g/compute/regenie2_binary/correction.py`.
+[^firth-se]: REGENIE documentation, [Overview](https://rgcgithub.github.io/regenie/overview/), “Firth logistic regression”; REGENIE documentation, [Options](https://rgcgithub.github.io/regenie/options/), `--firth-se`; Wilks (1938), [The large-sample distribution of the likelihood ratio for testing composite hypotheses](https://doi.org/10.1214/aoms/1177732360).
 
-[^source-bgen]: Exact source places: the BGEN Working Group
-    [BGEN v1.2 specification](https://www.chg.ox.ac.uk/~gav/bgen_format/spec/v1.2.html),
-    sections "Genotype data block (Layout 2)", "Probability data storage",
-    "Per-sample order of stored probabilities", and "Representation of
-    probabilities". Implementation places: `crates/genotype/src/bgen/decode/mod.rs` for
-    decoding and `crates/genotype/src/preprocess.rs` for missing-value imputation,
-    observed genotype counts, allele frequency, and INFO.
+[^bgen]: BGEN Working Group, [BGEN v1.2 specification](https://www.chg.ox.ac.uk/~gav/bgen_format/spec/v1.2.html), “Genotype data block (Layout 2)”, “Probability data storage”, and “Representation of probabilities”. Implementation: `crates/genotype/src/bgen/decode/mod.rs` and `crates/genotype/src/preprocess.rs`.
+
+[^implementation-linear]: Implementation: `src/g/compute/regenie2_linear/state.py` builds the Cholesky-whitened covariate projection state; `src/g/compute/regenie2_linear/score.py` applies it to variant chunks.
+
+[^implementation-binary]: Implementation: `src/g/compute/regenie2_binary/state.py` builds the weighted null-model score state; `src/g/compute/regenie2_binary/score.py` computes score, information, `BETA`, `SE`, `CHISQ`, and `LOG10P`.
