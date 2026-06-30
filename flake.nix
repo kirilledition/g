@@ -4,12 +4,26 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+          overlays = [ (import rust-overlay) ];
+        };
+        rustToolchain = pkgs.rust-bin.stable."1.96.0".default.override {
+          extensions = [
+            "clippy"
+            "rustfmt"
+          ];
+        };
         plink1Package = pkgs.stdenvNoCC.mkDerivation {
           pname = "plink";
           version = "1.90b7.11";
@@ -83,13 +97,11 @@
           packages = with pkgs; [
             uv
             just
+            time
             zstd
             zlib
-            cargo
+            rustToolchain
             cargo-llvm-cov
-            clippy
-            rustc
-            rustfmt
             pkg-config
             cacert
             openssl

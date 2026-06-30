@@ -230,7 +230,8 @@ doctor-baselines:
 
 # Probe JAX runtime on the current host
 doctor-jax:
-    {{ server_env }} && uv run --no-install-project python -m tooling.cli.performance --config-name performance_jax_runtime
+    {{ server_env }} && uv sync --group dev --group gpu --frozen --no-install-project --inexact
+    {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.performance --config-name performance_jax_runtime
 
 # Check local Symphony prerequisites without starting the daemon
 symphony-doctor:
@@ -612,7 +613,8 @@ perf-compare baseline_json new_json:
 
 # Run CPU/GPU JAX runtime probe
 perf-jax-runtime:
-    {{ server_env }} && uv run --no-install-project python -m tooling.cli.performance --config-name performance_jax_runtime
+    {{ server_env }} && uv sync --group dev --group gpu --frozen --no-install-project --inexact
+    {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.performance --config-name performance_jax_runtime
 
 # Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
 perf-tune-regenie2-gpu *overrides: dev-install-perf
