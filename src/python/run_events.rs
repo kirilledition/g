@@ -364,6 +364,23 @@ pub fn build_callback_null_logistic_nonconvergence_warning_diagnostic_payload<'p
 }
 
 #[pyfunction]
+pub fn build_pipeline_multi_phenotype_sample_summary_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_count: i64,
+    phenotype_group_count: i64,
+    sample_counts_differ: bool,
+    sample_mode: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
+        phenotype_count,
+        phenotype_group_count,
+        sample_counts_differ,
+        sample_mode,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn build_native_dispatch_bgen_engine_constructing_diagnostic_payload<'py>(
     py: Python<'py>,
     chunk_size: i64,

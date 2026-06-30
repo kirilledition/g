@@ -5,19 +5,20 @@ from __future__ import annotations
 import typing
 
 from g import _core, types
+from g.engine import run_events
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
 
 
-def emit_pipeline_telemetry_diagnostic_event(
-    level: str,
-    event: str,
-    message: str,
-    fields: typing.Mapping[str, object],
-) -> None:
-    """Emit one structured pipeline telemetry diagnostic through native tracing."""
-    _core.emit_diagnostic_event_fields(level, event, message, fields)
+def emit_pipeline_telemetry_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
+    """Emit one pipeline telemetry diagnostic payload through native tracing."""
+    _core.emit_diagnostic_event_fields(
+        str(payload["level"]),
+        str(payload["event_name"]),
+        str(payload["message"]),
+        typing.cast("typing.Mapping[str, object]", payload["fields"]),
+    )
 
 
 def log_sample_alignment_completed(
@@ -52,27 +53,13 @@ def log_multi_phenotype_sample_summary(
 ) -> None:
     """Emit a user-visible summary of multi-phenotype sample semantics."""
     sample_counts_differ = len(set(sample_counts)) > 1
-    if sample_mode == types.MultiPhenotypeSampleMode.COMPLETE_CASE:
-        message = (
-            f"Analyzed {len(sample_counts)} phenotypes in complete-case sample mode; one shared sample set was used."
+    emit_pipeline_telemetry_diagnostic_event_payload(
+        run_events.build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
+            phenotype_count=len(sample_counts),
+            phenotype_group_count=phenotype_group_count,
+            sample_counts_differ=sample_counts_differ,
+            sample_mode=sample_mode,
         )
-    else:
-        sample_count_summary = (
-            "sample counts differ across phenotypes"
-            if sample_counts_differ
-            else "sample counts do not differ across phenotypes"
-        )
-        message = f"Analyzed {len(sample_counts)} phenotypes in per-phenotype sample mode; {sample_count_summary}."
-    emit_pipeline_telemetry_diagnostic_event(
-        "info",
-        "pipeline_multi_phenotype_sample_summary",
-        message,
-        {
-            "phenotype_count": len(sample_counts),
-            "phenotype_group_count": phenotype_group_count,
-            "sample_counts_differ": sample_counts_differ,
-            "sample_mode": sample_mode.value,
-        },
     )
     if context.telemetry_session is None:
         return

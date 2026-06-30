@@ -515,6 +515,34 @@ def test_callback_null_logistic_warning_diagnostic_payload_uses_native_builder()
     }
 
 
+def test_pipeline_multi_phenotype_sample_summary_diagnostic_payload_uses_native_builder() -> None:
+    assert run_events.build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
+        phenotype_count=2,
+        phenotype_group_count=1,
+        sample_counts_differ=False,
+        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+    ) == {
+        "level": "info",
+        "event_name": "pipeline_multi_phenotype_sample_summary",
+        "message": "Analyzed 2 phenotypes in complete-case sample mode; one shared sample set was used.",
+        "fields": {
+            "phenotype_count": 2,
+            "phenotype_group_count": 1,
+            "sample_counts_differ": False,
+            "sample_mode": "complete-case",
+        },
+    }
+    assert (
+        run_events.build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
+            phenotype_count=2,
+            phenotype_group_count=2,
+            sample_counts_differ=True,
+            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        )["message"]
+        == "Analyzed 2 phenotypes in per-phenotype sample mode; sample counts differ across phenotypes."
+    )
+
+
 def test_native_dispatch_engine_diagnostic_payloads_use_native_builders() -> None:
     assert run_events.build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
         chunk_size=1024,

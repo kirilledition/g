@@ -2856,6 +2856,12 @@ def build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
     scalar_convergence: bool,
     total_fit_count: int,
 ) -> dict[str, object]: ...
+def build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
+    phenotype_count: int,
+    phenotype_group_count: int,
+    sample_counts_differ: bool,
+    sample_mode: str,
+) -> dict[str, object]: ...
 def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
     chunk_size: int,
     source_path: str,

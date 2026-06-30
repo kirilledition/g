@@ -40,6 +40,8 @@ pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dis
 pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
 pub const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_output_resume_committed_chunks";
 pub const PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_gpu_genotype_format_resolved";
+pub const PIPELINE_MULTI_PHENOTYPE_SAMPLE_SUMMARY_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_multi_phenotype_sample_summary";
 pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_bgen_engine_constructing";
 pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_MESSAGE: &str = "Constructing native BGEN run engine.";
@@ -746,6 +748,36 @@ pub fn build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
             text_diagnostic_field("policy", policy),
             boolean_diagnostic_field("scalar_convergence", scalar_convergence),
             integer_diagnostic_field("total_fit_count", total_fit_count),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
+    phenotype_count: i64,
+    phenotype_group_count: i64,
+    sample_counts_differ: bool,
+    sample_mode: &str,
+) -> RunDiagnosticEventPayload {
+    let message = if sample_mode == "complete-case" {
+        format!("Analyzed {phenotype_count} phenotypes in complete-case sample mode; one shared sample set was used.")
+    } else {
+        let sample_count_summary = if sample_counts_differ {
+            "sample counts differ across phenotypes"
+        } else {
+            "sample counts do not differ across phenotypes"
+        };
+        format!("Analyzed {phenotype_count} phenotypes in per-phenotype sample mode; {sample_count_summary}.")
+    };
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: PIPELINE_MULTI_PHENOTYPE_SAMPLE_SUMMARY_DIAGNOSTIC_EVENT_NAME,
+        message,
+        fields: vec![
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            integer_diagnostic_field("phenotype_group_count", phenotype_group_count),
+            boolean_diagnostic_field("sample_counts_differ", sample_counts_differ),
+            text_diagnostic_field("sample_mode", sample_mode),
         ],
     }
 }
@@ -1607,6 +1639,25 @@ mod tests {
         assert_eq!(payload.message, "Null logistic failed.");
         assert_eq!(payload.fields[0].value, RunDiagnosticFieldValue::Text("1".to_string()));
         assert_eq!(payload.fields[5].value, RunDiagnosticFieldValue::Integer(4));
+    }
+
+    #[test]
+    fn builds_pipeline_multi_phenotype_sample_summary_diagnostic_payload() {
+        let complete_case_payload =
+            build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(2, 1, false, "complete-case");
+        let per_phenotype_payload =
+            build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(2, 2, true, "per-phenotype");
+
+        assert_eq!(complete_case_payload.event_name, "pipeline_multi_phenotype_sample_summary");
+        assert_eq!(
+            complete_case_payload.message,
+            "Analyzed 2 phenotypes in complete-case sample mode; one shared sample set was used."
+        );
+        assert_eq!(
+            per_phenotype_payload.message,
+            "Analyzed 2 phenotypes in per-phenotype sample mode; sample counts differ across phenotypes."
+        );
+        assert_eq!(per_phenotype_payload.fields[1].value, RunDiagnosticFieldValue::Integer(2));
     }
 
     #[test]
