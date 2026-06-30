@@ -2473,13 +2473,13 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Return a processed host dosage buffer to the reusable pool."""
-        dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
         if self.uses_native_callback_runtime_resources():
-            operation_result = self.callback_runtime_resources.return_dosage_buffer_object_with_optional_observation(
-                dosage_buffer_owner,
+            operation_result = self.callback_runtime_resources.return_dosage_buffer_owner_with_optional_observation(
+                dosage_buffer,
             )
             self.record_dosage_buffer_pool_operation_result(operation_result)
             return
+        dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
         return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
         if not return_plan.should_return:
             return

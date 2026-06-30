@@ -992,6 +992,19 @@ impl NativeCallbackRuntimeResources {
         self.return_dosage_buffer_with_optional_observation(py, py_object_identifier(dosage_buffer), dosage_buffer)
     }
 
+    fn return_dosage_buffer_owner_with_optional_observation(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        let dosage_buffer_owner = dosage_buffer_owner(py, dosage_buffer)?;
+        self.return_dosage_buffer_with_optional_observation(
+            py,
+            py_object_identifier(dosage_buffer_owner.bind(py)),
+            dosage_buffer_owner.bind(py),
+        )
+    }
+
     fn discard_dosage_buffer(&self, py: Python<'_>, buffer_identifier: usize) -> PyResult<Option<usize>> {
         let discard_plan = {
             let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();

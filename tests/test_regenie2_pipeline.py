@@ -3136,8 +3136,8 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
         unobserved_dosage_buffer
     )
     assert unobserved_return_attempt_plan.should_return is True
-    unobserved_return_result = runtime_resources.return_dosage_buffer_object_with_optional_observation(
-        unobserved_dosage_buffer,
+    unobserved_return_result = runtime_resources.return_dosage_buffer_owner_with_optional_observation(
+        unobserved_dosage_buffer_view,
     )
     assert unobserved_return_result.has_free_buffer_count is True
     assert unobserved_return_result.free_buffer_count == 1
@@ -3238,6 +3238,10 @@ def test_native_callback_runner_uses_native_releasable_dosage_buffer_owner_resol
         ):
             assert callback.get_releasable_dosage_buffer(sliced_buffer) is oversized_buffer
             assert callback.get_releasable_dosage_buffer(jnp.ones((2, 3), dtype=jnp.float32)) is None
+            callback.release_dosage_buffer(sliced_buffer)
+            free_buffer_result = callback.callback_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+            assert free_buffer_result.has_item is True
+            assert free_buffer_result.item is oversized_buffer
     finally:
         callback.finish()
 

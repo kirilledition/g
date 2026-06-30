@@ -1294,6 +1294,10 @@ class NativeCallbackRuntimeResources:
         self,
         dosage_buffer: object,
     ) -> NativeDosageBufferPoolOperationResult: ...
+    def return_dosage_buffer_owner_with_optional_observation(
+        self,
+        dosage_buffer: object,
+    ) -> NativeDosageBufferPoolOperationResult: ...
     def discard_dosage_buffer(self, buffer_identifier: int) -> int | None: ...
     def discard_dosage_buffer_with_observation(
         self,
