@@ -30,6 +30,15 @@ use super::schedule::{
     NativeVariantMajorDosageBatchHandoffPlan,
 };
 
+const RESULT_WRITE_ITEM_KIND_SINGLE_RESULT: &str = "single_result";
+const RESULT_WRITE_ITEM_KIND_MULTI_RESULT: &str = "multi_result";
+const RESULT_WRITE_ITEM_KIND_STOP_SIGNAL: &str = "stop_signal";
+const DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE: &str = "sample_major_dosage";
+const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE: &str = "variant_major_dosage";
+const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH: &str = "variant_major_dosage_batch";
+const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR: &str = "variant_major_packed8_probability_pair";
+const DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL: &str = "stop_signal";
+
 #[pyclass]
 pub(crate) struct NativeCallbackRuntimeResources {
     callback_scheduler_state: Py<NativeCallbackSchedulerState>,
@@ -1240,17 +1249,16 @@ impl NativeCallbackRuntimeResources {
         py: Python<'_>,
         dosage_work_item_kind: &str,
     ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
-        let dispatch_plan = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            scheduler_state.plan_dosage_work_item_dispatch_value(dosage_work_item_kind)?
-        };
-        if !dispatch_plan.has_dispatch_error_value() {
-            return Ok(dispatch_plan);
-        }
-        let error_message = dispatch_plan
-            .error_message_value()
-            .unwrap_or("Native dosage work dispatch plan omitted the error message.");
-        Err(PyRuntimeError::new_err(error_message.to_owned()))
+        self.dosage_work_dispatch_plan_for_kind(py, dosage_work_item_kind)
+    }
+
+    fn plan_validated_dosage_work_item_dispatch_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
+        let dosage_work_item_kind = classify_dosage_work_item_kind(work_item)?;
+        self.plan_validated_dosage_work_item_dispatch(py, dosage_work_item_kind)
     }
 
     fn plan_dosage_work_item_stage_duration(
@@ -1610,18 +1618,16 @@ impl NativeCallbackRuntimeResources {
         py: Python<'_>,
         result_work_item_kind: &str,
     ) -> PyResult<NativeResultWriteItemDispatchPlan> {
-        let dispatch_plan = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            scheduler_state
-                .plan_result_write_item_dispatch_value(result_work_item_kind, &self.expected_result_work_item_kind)?
-        };
-        if !dispatch_plan.has_dispatch_error_value() {
-            return Ok(dispatch_plan);
-        }
-        let error_message = dispatch_plan
-            .error_message_value()
-            .unwrap_or("Native result write dispatch plan omitted the error message.");
-        Err(PyRuntimeError::new_err(error_message.to_owned()))
+        self.result_write_dispatch_plan_for_kind(py, result_work_item_kind)
+    }
+
+    fn plan_validated_result_write_item_dispatch_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeResultWriteItemDispatchPlan> {
+        let result_work_item_kind = classify_result_write_item_kind(work_item)?;
+        self.plan_validated_result_write_item_dispatch(py, result_work_item_kind)
     }
 }
 
@@ -2064,6 +2070,43 @@ impl NativeDosageBufferAcquireResult {
 }
 
 impl NativeCallbackRuntimeResources {
+    fn result_write_dispatch_plan_for_kind(
+        &self,
+        py: Python<'_>,
+        result_work_item_kind: &str,
+    ) -> PyResult<NativeResultWriteItemDispatchPlan> {
+        let dispatch_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state
+                .plan_result_write_item_dispatch_value(result_work_item_kind, &self.expected_result_work_item_kind)?
+        };
+        if !dispatch_plan.has_dispatch_error_value() {
+            return Ok(dispatch_plan);
+        }
+        let error_message = dispatch_plan
+            .error_message_value()
+            .unwrap_or("Native result write dispatch plan omitted the error message.");
+        Err(PyRuntimeError::new_err(error_message.to_owned()))
+    }
+
+    fn dosage_work_dispatch_plan_for_kind(
+        &self,
+        py: Python<'_>,
+        dosage_work_item_kind: &str,
+    ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
+        let dispatch_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_work_item_dispatch_value(dosage_work_item_kind)?
+        };
+        if !dispatch_plan.has_dispatch_error_value() {
+            return Ok(dispatch_plan);
+        }
+        let error_message = dispatch_plan
+            .error_message_value()
+            .unwrap_or("Native dosage work dispatch plan omitted the error message.");
+        Err(PyRuntimeError::new_err(error_message.to_owned()))
+    }
+
     fn release_result_in_flight_slot_without_observation(&self, py: Python<'_>) -> PyResult<()> {
         let release_plan = {
             let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
@@ -2186,6 +2229,38 @@ impl NativeCallbackRuntimeResources {
 
 fn py_object_identifier(object: &Bound<'_, PyAny>) -> usize {
     object.as_ptr() as usize
+}
+
+fn classify_dosage_work_item_kind(work_item: &Bound<'_, PyAny>) -> PyResult<&'static str> {
+    if work_item.is_none() {
+        return Ok(DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL);
+    }
+    match python_type_name(work_item)?.as_str() {
+        "PreprocessedDosageChunkWorkItem" => Ok(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE),
+        "PreprocessedVariantMajorDosageChunkWorkItem" => Ok(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE),
+        "PreprocessedVariantMajorDosageChunkBatchWorkItem" => Ok(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH),
+        "PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem" => {
+            Ok(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR)
+        }
+        type_name => {
+            Err(PyRuntimeError::new_err(format!("Unsupported preprocessed dosage work item type: {type_name}")))
+        }
+    }
+}
+
+fn classify_result_write_item_kind(work_item: &Bound<'_, PyAny>) -> PyResult<&'static str> {
+    if work_item.is_none() {
+        return Ok(RESULT_WRITE_ITEM_KIND_STOP_SIGNAL);
+    }
+    match python_type_name(work_item)?.as_str() {
+        "Regenie2ResultWriteWorkItem" => Ok(RESULT_WRITE_ITEM_KIND_SINGLE_RESULT),
+        "Regenie2MultiResultWriteWorkItem" => Ok(RESULT_WRITE_ITEM_KIND_MULTI_RESULT),
+        type_name => Err(PyRuntimeError::new_err(format!("Unsupported result write work item type: {type_name}"))),
+    }
+}
+
+fn python_type_name(object: &Bound<'_, PyAny>) -> PyResult<String> {
+    Ok(object.get_type().name()?.to_string_lossy().into_owned())
 }
 
 fn normalize_timeout_duration(timeout_seconds: f64) -> Duration {

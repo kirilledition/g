@@ -2833,10 +2833,42 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         callback_runtime.DosageWorkItemKind.SAMPLE_MAJOR_DOSAGE.value
     )
     assert dosage_dispatch_plan.should_process_sample_major_dosage is True
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("_core.ChunkStats", SimpleNamespace())
+    sample_major_work_item = callback_shared.PreprocessedDosageChunkWorkItem(
+        metadata=metadata,
+        genotype_matrix=np.ones((2, 2), dtype=np.float32),
+        chunk_stats=chunk_stats,
+    )
+    object_dosage_dispatch_plan = runtime_resources.plan_validated_dosage_work_item_dispatch_for_object(
+        sample_major_work_item
+    )
+    assert object_dosage_dispatch_plan.should_process_sample_major_dosage is True
+    variant_major_work_item = callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
+        metadata=metadata,
+        genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+        chunk_stats=chunk_stats,
+    )
+    batch_dosage_dispatch_plan = runtime_resources.plan_validated_dosage_work_item_dispatch_for_object(
+        callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem(work_items=(variant_major_work_item,))
+    )
+    assert batch_dosage_dispatch_plan.should_process_variant_major_dosage_batch is True
+    packed8_dosage_dispatch_plan = runtime_resources.plan_validated_dosage_work_item_dispatch_for_object(
+        callback_shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
+            metadata=metadata,
+            packed_probability_pairs_by_variant=np.ones((2, 2, 2), dtype=np.uint8),
+            chunk_stats=chunk_stats,
+        )
+    )
+    assert packed8_dosage_dispatch_plan.should_process_variant_major_packed8_probability_pair is True
+    with pytest.raises(RuntimeError, match="Unsupported preprocessed dosage work item type"):
+        runtime_resources.plan_validated_dosage_work_item_dispatch_for_object(SimpleNamespace())
     with pytest.raises(RuntimeError, match="continued without a work item"):
         runtime_resources.plan_validated_dosage_work_item_dispatch(
             callback_runtime.DosageWorkItemKind.STOP_SIGNAL.value
         )
+    with pytest.raises(RuntimeError, match="continued without a work item"):
+        runtime_resources.plan_validated_dosage_work_item_dispatch_for_object(None)
 
     result_drain_plan = runtime_resources.plan_result_write_drain_completion(
         has_result_work_item=False,
@@ -2852,10 +2884,42 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
     )
     assert result_dispatch_plan.should_process_result_write_item is True
+    result_write_work_item = callback_shared.Regenie2ResultWriteWorkItem(
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=jnp.ones(2),
+        standard_error=jnp.ones(2),
+        chi_squared=jnp.ones(2),
+        log10_p_value=jnp.ones(2),
+        extra_code=None,
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=None,
+    )
+    object_result_dispatch_plan = runtime_resources.plan_validated_result_write_item_dispatch_for_object(
+        result_write_work_item
+    )
+    assert object_result_dispatch_plan.should_process_result_write_item is True
+    multi_result_write_work_item = callback_shared.Regenie2MultiResultWriteWorkItem(
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=jnp.ones((1, 2)),
+        standard_error=jnp.ones((1, 2)),
+        chi_squared=jnp.ones((1, 2)),
+        log10_p_value=jnp.ones((1, 2)),
+        extra_code=None,
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=None,
+    )
     with pytest.raises(RuntimeError, match="expected single_result but received multi_result"):
         runtime_resources.plan_validated_result_write_item_dispatch(
             callback_runtime.ResultWriteItemKind.MULTI_RESULT.value,
         )
+    with pytest.raises(RuntimeError, match="expected single_result but received multi_result"):
+        runtime_resources.plan_validated_result_write_item_dispatch_for_object(multi_result_write_work_item)
+    with pytest.raises(RuntimeError, match="Unsupported result write work item type"):
+        runtime_resources.plan_validated_result_write_item_dispatch_for_object(SimpleNamespace())
 
     stage_duration_plan = runtime_resources.plan_dosage_work_item_stage_duration(
         callback_runtime.DosageWorkItemKind.VARIANT_MAJOR_DOSAGE_BATCH.value,
@@ -6000,6 +6064,76 @@ def test_native_callback_runner_uses_scheduler_result_write_item_dispatch_plan()
     )
     with pytest.raises(RuntimeError, match="planned dispatch failure"):
         callback.apply_result_write_item_dispatch_plan(typing.cast("typing.Any", error_plan))
+
+
+def test_native_callback_runner_uses_runtime_resource_object_dispatch() -> None:
+    class ResourceDispatchCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
+        def __init__(self) -> None:
+            super().__init__(
+                worker_name="native-resource-object-dispatch-runner-test",
+                staging_depth=1,
+                native_callback_batch_size=1,
+                expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+                flush_binary_correction_diagnostics_on_result_stop=True,
+                result_in_flight_limit=1,
+                dosage_buffer_limit=1,
+                stage_timing_recorder=None,
+                telemetry_session=None,
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+            )
+
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    callback = ResourceDispatchCallbackRunner()
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("_core.ChunkStats", SimpleNamespace())
+    dosage_work_item = callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
+        metadata=metadata,
+        genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+        chunk_stats=chunk_stats,
+    )
+    dosage_dispatch_plan = callback.plan_dosage_work_item_dispatch(dosage_work_item)
+    assert dosage_dispatch_plan.should_process_variant_major_dosage is True
+
+    result_work_item = callback_shared.Regenie2ResultWriteWorkItem(
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=None,
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=None,
+    )
+    result_dispatch_plan = callback.plan_result_write_item_dispatch(result_work_item)
+    assert result_dispatch_plan.should_process_result_write_item is True
 
 
 def test_native_callback_runner_uses_scheduler_dosage_work_drain_completion_plan() -> None:

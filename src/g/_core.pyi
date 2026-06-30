@@ -1333,6 +1333,10 @@ class NativeCallbackRuntimeResources:
         self,
         dosage_work_item_kind: str,
     ) -> NativeDosageWorkItemDispatchPlan: ...
+    def plan_validated_dosage_work_item_dispatch_for_object(
+        self,
+        work_item: object,
+    ) -> NativeDosageWorkItemDispatchPlan: ...
     def plan_dosage_work_item_stage_duration(
         self,
         dosage_work_item_kind: str,
@@ -1407,6 +1411,10 @@ class NativeCallbackRuntimeResources:
     def plan_validated_result_write_item_dispatch(
         self,
         result_work_item_kind: str,
+    ) -> NativeResultWriteItemDispatchPlan: ...
+    def plan_validated_result_write_item_dispatch_for_object(
+        self,
+        work_item: object,
     ) -> NativeResultWriteItemDispatchPlan: ...
 
 class NativeCallbackQueueOperationObservationPlan:

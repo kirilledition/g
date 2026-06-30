@@ -1309,6 +1309,9 @@ Remove Python as the chunk-level scheduler.
   variant-metadata reads, trusted missingness validation, and prepared
   sample-selection setup/cleanup while keeping Python callback invocations
   under the GIL.
+- Callback runtime resources now classify production dosage and result work
+  item objects for dispatch in Rust, leaving Python dataclass classification
+  only on manual fallback scheduler paths.
 
 ### Tests
 

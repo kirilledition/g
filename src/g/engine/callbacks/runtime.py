@@ -1333,9 +1333,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         ),
     ) -> _core.NativeDosageWorkItemDispatchPlan:
         """Plan which dosage processing path should consume one item."""
-        dosage_work_item_kind = classify_dosage_work_item(work_item)
         if self.uses_native_callback_runtime_resources():
-            return self.callback_runtime_resources.plan_validated_dosage_work_item_dispatch(dosage_work_item_kind.value)
+            return self.callback_runtime_resources.plan_validated_dosage_work_item_dispatch_for_object(work_item)
+        dosage_work_item_kind = classify_dosage_work_item(work_item)
         return self.callback_scheduler_state.plan_dosage_work_item_dispatch(
             dosage_work_item_kind=dosage_work_item_kind.value
         )
@@ -2630,11 +2630,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         work_item: QueuedResultWriteWorkItem,
     ) -> _core.NativeResultWriteItemDispatchPlan:
         """Plan which result write processing path should consume one item."""
-        result_work_item_kind = classify_result_write_item(work_item)
         if self.uses_native_callback_runtime_resources():
-            return self.callback_runtime_resources.plan_validated_result_write_item_dispatch(
-                result_work_item_kind.value,
-            )
+            return self.callback_runtime_resources.plan_validated_result_write_item_dispatch_for_object(work_item)
+        result_work_item_kind = classify_result_write_item(work_item)
         return self.callback_scheduler_state.plan_result_write_item_dispatch(
             result_work_item_kind=result_work_item_kind.value,
             expected_result_work_item_kind=self.expected_result_work_item_kind.value,
