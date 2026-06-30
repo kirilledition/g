@@ -133,11 +133,17 @@ class NativeResultQueueGetDrainProbe:
     def __getattr__(self, attribute_name: str) -> object:
         return getattr(self.runtime_resources, attribute_name)
 
-    def get_result_write_item_with_optional_observation_and_drain_completion(
+    def get_validated_result_write_item_with_optional_observation_and_drain_completion(
         self,
     ) -> _core.NativeResultWriteItemGetResult:
         self.optional_result_get_count += 1
-        return self.runtime_resources.get_result_write_item_with_optional_observation_and_drain_completion()
+        return self.runtime_resources.get_validated_result_write_item_with_optional_observation_and_drain_completion()
+
+    def get_result_write_item_with_optional_observation_and_drain_completion(
+        self,
+    ) -> _core.NativeResultWriteItemGetResult:
+        message = "multi callback should use native validated optional result get/drain/dispatch"
+        raise AssertionError(message)
 
     def get_result_write_item_with_observation_and_drain_completion(
         self,
@@ -3059,6 +3065,21 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         sample_major_work_item
     )
     assert object_dosage_dispatch_plan.should_process_sample_major_dosage is True
+    assert runtime_resources.try_put_dosage_work_item(sample_major_work_item, timeout_seconds=0.0) is True
+    validated_dosage_drain_result = runtime_resources.get_validated_dosage_work_item_with_drain_completion()
+    assert validated_dosage_drain_result.has_dosage_work_item is True
+    assert validated_dosage_drain_result.item is sample_major_work_item
+    assert validated_dosage_drain_result.observation_plan is None
+    assert validated_dosage_drain_result.drain_completion_plan.should_stop is False
+    validated_dosage_dispatch_plan = validated_dosage_drain_result.dispatch_plan
+    assert validated_dosage_dispatch_plan is not None
+    assert validated_dosage_dispatch_plan.should_process_sample_major_dosage is True
+    assert runtime_resources.try_put_dosage_work_item(None, timeout_seconds=0.0) is True
+    validated_dosage_stop_result = runtime_resources.get_validated_dosage_work_item_with_drain_completion()
+    assert validated_dosage_stop_result.has_dosage_work_item is False
+    assert validated_dosage_stop_result.item is None
+    assert validated_dosage_stop_result.drain_completion_plan.should_stop is True
+    assert validated_dosage_stop_result.dispatch_plan is None
     variant_major_work_item = callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
         metadata=metadata,
         genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
@@ -3123,6 +3144,52 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         result_write_work_item
     )
     assert object_result_dispatch_plan.should_process_result_write_item is True
+    assert runtime_resources.try_put_result_write_item(result_write_work_item, timeout_seconds=0.0) is True
+    validated_result_drain_result = runtime_resources.get_validated_result_write_item_with_drain_completion()
+    assert validated_result_drain_result.has_result_work_item is True
+    assert validated_result_drain_result.item is result_write_work_item
+    assert validated_result_drain_result.observation_plan is None
+    assert validated_result_drain_result.drain_completion_plan.should_stop is False
+    validated_result_dispatch_plan = validated_result_drain_result.dispatch_plan
+    assert validated_result_dispatch_plan is not None
+    assert validated_result_dispatch_plan.should_process_result_write_item is True
+    assert runtime_resources.try_put_result_write_item(None, timeout_seconds=0.0) is True
+    validated_result_stop_result = runtime_resources.get_validated_result_write_item_with_drain_completion()
+    assert validated_result_stop_result.has_result_work_item is False
+    assert validated_result_stop_result.item is None
+    assert validated_result_stop_result.drain_completion_plan.should_stop is True
+    assert validated_result_stop_result.dispatch_plan is None
+    observed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-observed-dispatch-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        has_stage_timing_recorder=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    assert observed_runtime_resources.try_put_dosage_work_item(sample_major_work_item, timeout_seconds=0.0) is True
+    observed_dosage_get_result = (
+        observed_runtime_resources.get_validated_dosage_work_item_with_optional_observation_and_drain_completion()
+    )
+    assert observed_dosage_get_result.item is sample_major_work_item
+    assert observed_dosage_get_result.observation_plan is not None
+    observed_dosage_dispatch_plan = observed_dosage_get_result.dispatch_plan
+    assert observed_dosage_dispatch_plan is not None
+    assert observed_dosage_dispatch_plan.should_process_sample_major_dosage is True
+    assert observed_runtime_resources.try_put_result_write_item(result_write_work_item, timeout_seconds=0.0) is True
+    observed_result_get_result = (
+        observed_runtime_resources.get_validated_result_write_item_with_optional_observation_and_drain_completion()
+    )
+    assert observed_result_get_result.item is result_write_work_item
+    assert observed_result_get_result.observation_plan is not None
+    observed_result_dispatch_plan = observed_result_get_result.dispatch_plan
+    assert observed_result_dispatch_plan is not None
+    assert observed_result_dispatch_plan.should_process_result_write_item is True
     multi_result_write_work_item = callback_shared.Regenie2MultiResultWriteWorkItem(
         metadata=metadata,
         chunk_stats=chunk_stats,
@@ -8814,6 +8881,11 @@ def test_multi_linear_callback_uses_native_result_get_drain_resources(
         message = "multi callback should use native resource-owned result drain completion"
         raise AssertionError(message)
 
+    def forbidden_plan_result_write_item_dispatch(work_item: object) -> object:
+        del work_item
+        message = "multi callback should use native resource-owned result dispatch"
+        raise AssertionError(message)
+
     def process_multi_result_write_item_probe(
         multi_work_item: callback_shared.Regenie2MultiResultWriteWorkItem,
     ) -> None:
@@ -8822,6 +8894,7 @@ def test_multi_linear_callback_uses_native_result_get_drain_resources(
     callback_for_probe = typing.cast("typing.Any", callback)
     callback_for_probe.get_result_write_item = forbidden_get_result_write_item
     callback_for_probe.plan_result_write_drain_completion = forbidden_plan_result_write_drain_completion
+    callback_for_probe.plan_result_write_item_dispatch = forbidden_plan_result_write_item_dispatch
     callback_for_probe.process_multi_result_write_item = process_multi_result_write_item_probe
 
     assert callback.try_put_result_write_item_with_backpressure_timeout(
@@ -8967,6 +9040,11 @@ def test_multi_binary_callback_uses_native_result_get_drain_resources(
         message = "multi callback should use native resource-owned result drain completion"
         raise AssertionError(message)
 
+    def forbidden_plan_result_write_item_dispatch(work_item: object) -> object:
+        del work_item
+        message = "multi callback should use native resource-owned result dispatch"
+        raise AssertionError(message)
+
     def process_multi_result_write_item_probe(
         multi_work_item: callback_shared.Regenie2MultiResultWriteWorkItem,
     ) -> None:
@@ -8975,6 +9053,7 @@ def test_multi_binary_callback_uses_native_result_get_drain_resources(
     callback_for_probe = typing.cast("typing.Any", callback)
     callback_for_probe.get_result_write_item = forbidden_get_result_write_item
     callback_for_probe.plan_result_write_drain_completion = forbidden_plan_result_write_drain_completion
+    callback_for_probe.plan_result_write_item_dispatch = forbidden_plan_result_write_item_dispatch
     callback_for_probe.process_multi_result_write_item = process_multi_result_write_item_probe
 
     assert callback.try_put_result_write_item_with_backpressure_timeout(

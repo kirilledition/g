@@ -157,6 +157,7 @@ pub(crate) struct NativeDosageWorkItemGetResult {
     has_dosage_work_item: bool,
     observation_plan: Option<Py<NativeCallbackQueueGetObservationPlan>>,
     drain_completion_plan: Py<NativeDosageWorkDrainCompletionPlan>,
+    dispatch_plan: Option<Py<NativeDosageWorkItemDispatchPlan>>,
 }
 
 #[pyclass]
@@ -172,6 +173,7 @@ pub(crate) struct NativeResultWriteItemGetResult {
     has_result_work_item: bool,
     observation_plan: Option<Py<NativeCallbackQueueGetObservationPlan>>,
     drain_completion_plan: Py<NativeResultWriteDrainCompletionPlan>,
+    dispatch_plan: Option<Py<NativeResultWriteItemDispatchPlan>>,
 }
 
 #[pyclass]
@@ -1446,6 +1448,7 @@ impl NativeCallbackRuntimeResources {
             has_dosage_work_item,
             Some(observation_plan),
             drain_completion_plan,
+            None,
         )
     }
 
@@ -1470,6 +1473,56 @@ impl NativeCallbackRuntimeResources {
             has_dosage_work_item,
             observation_plan,
             drain_completion_plan,
+            None,
+        )
+    }
+
+    fn get_validated_dosage_work_item_with_drain_completion(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeDosageWorkItemGetResult> {
+        let get_result = self.get_dosage_work_item(py)?;
+        let item = get_result.into_item_value();
+        let has_dosage_work_item = item.as_ref().is_some_and(|queued_item| !queued_item.bind(py).is_none());
+        let drain_completion_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item)
+        };
+        let dispatch_plan = self.dosage_work_dispatch_plan_for_optional_item(py, item.as_ref())?;
+        NativeDosageWorkItemGetResult::from_item(
+            py,
+            item,
+            has_dosage_work_item,
+            None,
+            drain_completion_plan,
+            dispatch_plan,
+        )
+    }
+
+    fn get_validated_dosage_work_item_with_optional_observation_and_drain_completion(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeDosageWorkItemGetResult> {
+        let get_result = self.get_dosage_work_item(py)?;
+        let item = get_result.into_item_value();
+        let has_dosage_work_item = item.as_ref().is_some_and(|queued_item| !queued_item.bind(py).is_none());
+        let (observation_plan, drain_completion_plan) = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            let observation_plan = if self.has_stage_timing_recorder {
+                Some(scheduler_state.plan_dosage_queue_get_observation_value())
+            } else {
+                None
+            };
+            (observation_plan, scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item))
+        };
+        let dispatch_plan = self.dosage_work_dispatch_plan_for_optional_item(py, item.as_ref())?;
+        NativeDosageWorkItemGetResult::from_item(
+            py,
+            item,
+            has_dosage_work_item,
+            observation_plan,
+            drain_completion_plan,
+            dispatch_plan,
         )
     }
 
@@ -1869,6 +1922,7 @@ impl NativeCallbackRuntimeResources {
             has_result_work_item,
             Some(observation_plan),
             drain_completion_plan,
+            None,
         )
     }
 
@@ -1899,6 +1953,59 @@ impl NativeCallbackRuntimeResources {
             has_result_work_item,
             observation_plan,
             drain_completion_plan,
+            None,
+        )
+    }
+
+    fn get_validated_result_write_item_with_drain_completion(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeResultWriteItemGetResult> {
+        let get_result = self.get_result_write_item(py)?;
+        let item = get_result.into_item_value();
+        let has_result_work_item = item.as_ref().is_some_and(|queued_item| !queued_item.bind(py).is_none());
+        let drain_completion_plan = self.plan_result_write_drain_completion_value(py, has_result_work_item);
+        let dispatch_plan = self.result_write_dispatch_plan_for_optional_item(py, item.as_ref())?;
+        NativeResultWriteItemGetResult::from_item(
+            py,
+            item,
+            has_result_work_item,
+            None,
+            drain_completion_plan,
+            dispatch_plan,
+        )
+    }
+
+    fn get_validated_result_write_item_with_optional_observation_and_drain_completion(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeResultWriteItemGetResult> {
+        let get_result = self.get_result_write_item(py)?;
+        let item = get_result.into_item_value();
+        let has_result_work_item = item.as_ref().is_some_and(|queued_item| !queued_item.bind(py).is_none());
+        let (observation_plan, drain_completion_plan) = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            let observation_plan = if self.has_stage_timing_recorder {
+                Some(scheduler_state.plan_result_queue_get_observation_value())
+            } else {
+                None
+            };
+            (
+                observation_plan,
+                scheduler_state.plan_result_write_drain_completion_value(
+                    has_result_work_item,
+                    self.flush_binary_correction_diagnostics_on_result_stop,
+                ),
+            )
+        };
+        let dispatch_plan = self.result_write_dispatch_plan_for_optional_item(py, item.as_ref())?;
+        NativeResultWriteItemGetResult::from_item(
+            py,
+            item,
+            has_result_work_item,
+            observation_plan,
+            drain_completion_plan,
+            dispatch_plan,
         )
     }
 
@@ -2239,6 +2346,11 @@ impl NativeDosageWorkItemGetResult {
     fn drain_completion_plan(&self, py: Python<'_>) -> Py<NativeDosageWorkDrainCompletionPlan> {
         self.drain_completion_plan.clone_ref(py)
     }
+
+    #[getter]
+    fn dispatch_plan(&self, py: Python<'_>) -> Option<Py<NativeDosageWorkItemDispatchPlan>> {
+        self.dispatch_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
 }
 
 impl NativeDosageWorkItemGetResult {
@@ -2248,12 +2360,32 @@ impl NativeDosageWorkItemGetResult {
         has_dosage_work_item: bool,
         observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
         drain_completion_plan: NativeDosageWorkDrainCompletionPlan,
+        dispatch_plan: Option<NativeDosageWorkItemDispatchPlan>,
+    ) -> PyResult<Self> {
+        Self::from_item(
+            py,
+            get_result.into_item_value(),
+            has_dosage_work_item,
+            observation_plan,
+            drain_completion_plan,
+            dispatch_plan,
+        )
+    }
+
+    fn from_item(
+        py: Python<'_>,
+        item: Option<Py<PyAny>>,
+        has_dosage_work_item: bool,
+        observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
+        drain_completion_plan: NativeDosageWorkDrainCompletionPlan,
+        dispatch_plan: Option<NativeDosageWorkItemDispatchPlan>,
     ) -> PyResult<Self> {
         Ok(Self {
-            item: get_result.into_item_value(),
+            item,
             has_dosage_work_item,
             observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
             drain_completion_plan: Py::new(py, drain_completion_plan)?,
+            dispatch_plan: dispatch_plan.map(|plan| Py::new(py, plan)).transpose()?,
         })
     }
 }
@@ -2312,6 +2444,11 @@ impl NativeResultWriteItemGetResult {
     fn drain_completion_plan(&self, py: Python<'_>) -> Py<NativeResultWriteDrainCompletionPlan> {
         self.drain_completion_plan.clone_ref(py)
     }
+
+    #[getter]
+    fn dispatch_plan(&self, py: Python<'_>) -> Option<Py<NativeResultWriteItemDispatchPlan>> {
+        self.dispatch_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
 }
 
 impl NativeResultWriteItemGetResult {
@@ -2321,12 +2458,32 @@ impl NativeResultWriteItemGetResult {
         has_result_work_item: bool,
         observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
         drain_completion_plan: NativeResultWriteDrainCompletionPlan,
+        dispatch_plan: Option<NativeResultWriteItemDispatchPlan>,
+    ) -> PyResult<Self> {
+        Self::from_item(
+            py,
+            get_result.into_item_value(),
+            has_result_work_item,
+            observation_plan,
+            drain_completion_plan,
+            dispatch_plan,
+        )
+    }
+
+    fn from_item(
+        py: Python<'_>,
+        item: Option<Py<PyAny>>,
+        has_result_work_item: bool,
+        observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
+        drain_completion_plan: NativeResultWriteDrainCompletionPlan,
+        dispatch_plan: Option<NativeResultWriteItemDispatchPlan>,
     ) -> PyResult<Self> {
         Ok(Self {
-            item: get_result.into_item_value(),
+            item,
             has_result_work_item,
             observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
             drain_completion_plan: Py::new(py, drain_completion_plan)?,
+            dispatch_plan: dispatch_plan.map(|plan| Py::new(py, plan)).transpose()?,
         })
     }
 }
@@ -2457,6 +2614,22 @@ impl NativeCallbackRuntimeResources {
         Err(PyRuntimeError::new_err(error_message.to_owned()))
     }
 
+    fn result_write_dispatch_plan_for_optional_item(
+        &self,
+        py: Python<'_>,
+        work_item: Option<&Py<PyAny>>,
+    ) -> PyResult<Option<NativeResultWriteItemDispatchPlan>> {
+        let Some(work_item) = work_item else {
+            return Ok(None);
+        };
+        let work_item_bound = work_item.bind(py);
+        if work_item_bound.is_none() {
+            return Ok(None);
+        }
+        let result_work_item_kind = classify_result_write_item_kind(work_item_bound)?;
+        self.result_write_dispatch_plan_for_kind(py, result_work_item_kind).map(Some)
+    }
+
     fn dosage_work_dispatch_plan_for_kind(
         &self,
         py: Python<'_>,
@@ -2473,6 +2646,22 @@ impl NativeCallbackRuntimeResources {
             .error_message_value()
             .unwrap_or("Native dosage work dispatch plan omitted the error message.");
         Err(PyRuntimeError::new_err(error_message.to_owned()))
+    }
+
+    fn dosage_work_dispatch_plan_for_optional_item(
+        &self,
+        py: Python<'_>,
+        work_item: Option<&Py<PyAny>>,
+    ) -> PyResult<Option<NativeDosageWorkItemDispatchPlan>> {
+        let Some(work_item) = work_item else {
+            return Ok(None);
+        };
+        let work_item_bound = work_item.bind(py);
+        if work_item_bound.is_none() {
+            return Ok(None);
+        }
+        let dosage_work_item_kind = classify_dosage_work_item_kind(work_item_bound)?;
+        self.dosage_work_dispatch_plan_for_kind(py, dosage_work_item_kind).map(Some)
     }
 
     fn release_result_in_flight_slot_without_observation(&self, py: Python<'_>) -> PyResult<()> {

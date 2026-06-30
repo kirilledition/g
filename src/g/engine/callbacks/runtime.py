@@ -1208,17 +1208,18 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def consume_dosage_chunks_with_native_runtime_resources(self) -> None:
         """Consume queued native dosage chunks with optional timing observations."""
+        runtime_resources = self.callback_runtime_resources
         while True:
             get_start_time = time.perf_counter()
             work_item_get_result = (
-                self.callback_runtime_resources.get_dosage_work_item_with_optional_observation_and_drain_completion()
+                runtime_resources.get_validated_dosage_work_item_with_optional_observation_and_drain_completion()
             )
             work_item = typing.cast("QueuedPreprocessedDosageWorkItem", work_item_get_result.item)
             get_observation_plan = work_item_get_result.observation_plan
             drain_completion_plan = work_item_get_result.drain_completion_plan
             if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
                 return
-            dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
+            dispatch_plan = self.require_dosage_work_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
             self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
             dosage_work_item = typing.cast(
                 "PreprocessedDosageWorkItem",
@@ -1244,7 +1245,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume queued dosage chunks without diagnostic timing overhead."""
         while True:
             if self.uses_native_callback_runtime_resources():
-                work_item_get_result = self.callback_runtime_resources.get_dosage_work_item_with_drain_completion()
+                work_item_get_result = (
+                    self.callback_runtime_resources.get_validated_dosage_work_item_with_drain_completion()
+                )
                 work_item = typing.cast("QueuedPreprocessedDosageWorkItem", work_item_get_result.item)
                 drain_completion_plan = work_item_get_result.drain_completion_plan
             else:
@@ -1252,7 +1255,10 @@ class NativeBgenCallbackRunner(abc.ABC):
                 drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
             if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
                 return
-            dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
+            if self.uses_native_callback_runtime_resources():
+                dispatch_plan = self.require_dosage_work_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
+            else:
+                dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
             self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
             dosage_work_item = typing.cast(
                 "PreprocessedDosageWorkItem",
@@ -1390,6 +1396,16 @@ class NativeBgenCallbackRunner(abc.ABC):
             message = "Native dosage work dispatch plan omitted the error message."
             raise RuntimeError(message)
         raise RuntimeError(error_message)
+
+    @staticmethod
+    def require_dosage_work_item_get_dispatch_plan(
+        dispatch_plan: _core.NativeDosageWorkItemDispatchPlan | None,
+    ) -> _core.NativeDosageWorkItemDispatchPlan:
+        """Return the native dispatch plan selected by a validated dosage queue get."""
+        if dispatch_plan is not None:
+            return dispatch_plan
+        message = "Native dosage work item get result omitted a dispatch plan."
+        raise RuntimeError(message)
 
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""
@@ -1597,10 +1613,11 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def consume_result_write_items_with_native_runtime_resources(self) -> None:
         """Consume queued native result write items with optional timing observations."""
+        runtime_resources = self.callback_runtime_resources
         while True:
             get_start_time = time.perf_counter()
             work_item_get_result = (
-                self.callback_runtime_resources.get_result_write_item_with_optional_observation_and_drain_completion()
+                runtime_resources.get_validated_result_write_item_with_optional_observation_and_drain_completion()
             )
             work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
             get_observation_plan = work_item_get_result.observation_plan
@@ -1614,9 +1631,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                     start_time=get_start_time,
                     blocked=get_observation_plan.blocked,
                 )
-            dispatch_plan = self.plan_result_write_item_dispatch(
-                work_item,
-            )
+            dispatch_plan = self.require_result_write_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
             self.apply_result_write_item_dispatch_plan(dispatch_plan)
             if dispatch_plan.should_process_result_write_item:
                 result_work_item = typing.cast("Regenie2ResultWriteWorkItem", work_item)
@@ -1627,10 +1642,11 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def consume_multi_result_write_items_with_native_runtime_resources(self) -> None:
         """Consume queued native multi-result write items with optional timing observations."""
+        runtime_resources = self.callback_runtime_resources
         while True:
             get_start_time = time.perf_counter()
             work_item_get_result = (
-                self.callback_runtime_resources.get_result_write_item_with_optional_observation_and_drain_completion()
+                runtime_resources.get_validated_result_write_item_with_optional_observation_and_drain_completion()
             )
             work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
             get_observation_plan = work_item_get_result.observation_plan
@@ -1644,9 +1660,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                     start_time=get_start_time,
                     blocked=get_observation_plan.blocked,
                 )
-            dispatch_plan = self.plan_result_write_item_dispatch(
-                work_item,
-            )
+            dispatch_plan = self.require_result_write_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
             self.apply_result_write_item_dispatch_plan(dispatch_plan)
             if dispatch_plan.should_process_multi_result_write_item:
                 multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
@@ -1659,7 +1673,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume result write items without diagnostic queue timing overhead."""
         while True:
             if self.uses_native_callback_runtime_resources():
-                work_item_get_result = self.callback_runtime_resources.get_result_write_item_with_drain_completion()
+                work_item_get_result = (
+                    self.callback_runtime_resources.get_validated_result_write_item_with_drain_completion()
+                )
                 work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
                 drain_completion_plan = work_item_get_result.drain_completion_plan
             else:
@@ -1669,9 +1685,12 @@ class NativeBgenCallbackRunner(abc.ABC):
                 )
             if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
-            dispatch_plan = self.plan_result_write_item_dispatch(
-                work_item,
-            )
+            if self.uses_native_callback_runtime_resources():
+                dispatch_plan = self.require_result_write_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
+            else:
+                dispatch_plan = self.plan_result_write_item_dispatch(
+                    work_item,
+                )
             self.apply_result_write_item_dispatch_plan(dispatch_plan)
             if dispatch_plan.should_process_result_write_item:
                 result_work_item = typing.cast("Regenie2ResultWriteWorkItem", work_item)
@@ -2713,6 +2732,16 @@ class NativeBgenCallbackRunner(abc.ABC):
             message = "Native result write dispatch plan omitted the error message."
             raise RuntimeError(message)
         raise RuntimeError(error_message)
+
+    @staticmethod
+    def require_result_write_item_get_dispatch_plan(
+        dispatch_plan: _core.NativeResultWriteItemDispatchPlan | None,
+    ) -> _core.NativeResultWriteItemDispatchPlan:
+        """Return the native dispatch plan selected by a validated result queue get."""
+        if dispatch_plan is not None:
+            return dispatch_plan
+        message = "Native result write item get result omitted a dispatch plan."
+        raise RuntimeError(message)
 
     def release_result_work_item_resources(
         self,
