@@ -36,6 +36,8 @@ pub const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
 pub const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE: &str = "Building REGENIE execution plan.";
 pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching REGENIE execution plan.";
 pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
+pub const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME: &str = "native_runtime_knobs_configured";
+pub const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_MESSAGE: &str = "Configuring native runtime knobs.";
 pub const RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "runner_multi_phenotype_dispatch_started";
 pub const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
@@ -52,6 +54,7 @@ pub const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Dispatching single-phenotype native engine pipeline.";
 pub const RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching binary native engine pipeline.";
 pub const RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching linear native engine pipeline.";
+pub const RUNNER_METADATA_ARTIFACTS_FINALIZED_DIAGNOSTIC_EVENT_NAME: &str = "runner_metadata_artifacts_finalized";
 pub const RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Dispatching multi-phenotype binary native engine pipeline.";
 pub const RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
@@ -592,6 +595,38 @@ pub fn build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_pa
 }
 
 #[must_use]
+pub fn build_native_runtime_knobs_configured_diagnostic_payload(
+    bgen_decode_tile_variant_count: i64,
+    threads: Option<i64>,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME,
+        message: NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            integer_diagnostic_field("bgen_decode_tile_variant_count", bgen_decode_tile_variant_count),
+            optional_integer_diagnostic_field("threads", threads),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_runner_metadata_artifacts_finalized_diagnostic_payload(
+    association_mode: &str,
+    phenotype_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: RUNNER_METADATA_ARTIFACTS_FINALIZED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Finalized REGENIE run artifacts for {phenotype_count} phenotype(s)."),
+        fields: vec![
+            text_diagnostic_field("association_mode", association_mode),
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+        ],
+    }
+}
+
+#[must_use]
 pub fn build_run_started_telemetry_fields(
     association_mode: &str,
     trait_type: &str,
@@ -1106,6 +1141,27 @@ mod tests {
             build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(3).message,
             "Dispatching multi-phenotype linear native engine pipeline.",
         );
+    }
+
+    #[test]
+    fn builds_native_runtime_knobs_diagnostic_payload() {
+        let payload = build_native_runtime_knobs_configured_diagnostic_payload(32, Some(4));
+
+        assert_eq!(payload.event_name, "native_runtime_knobs_configured");
+        assert_eq!(payload.message, "Configuring native runtime knobs.");
+        assert_eq!(payload.fields[0].value, RunDiagnosticFieldValue::Integer(32));
+        assert_eq!(payload.fields[1].value, RunDiagnosticFieldValue::OptionalInteger(Some(4)));
+    }
+
+    #[test]
+    fn builds_runner_metadata_artifacts_finalized_diagnostic_payload() {
+        let payload = build_runner_metadata_artifacts_finalized_diagnostic_payload("regenie2_binary", 3);
+
+        assert_eq!(payload.event_name, "runner_metadata_artifacts_finalized");
+        assert_eq!(payload.level, "info");
+        assert_eq!(payload.message, "Finalized REGENIE run artifacts for 3 phenotype(s).");
+        assert_eq!(payload.fields[0].value, RunDiagnosticFieldValue::Text("regenie2_binary".to_string()));
+        assert_eq!(payload.fields[1].value, RunDiagnosticFieldValue::Integer(3));
     }
 
     #[test]

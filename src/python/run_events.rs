@@ -258,6 +258,32 @@ pub fn build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_pa
 }
 
 #[pyfunction]
+pub fn build_native_runtime_knobs_configured_diagnostic_payload<'py>(
+    py: Python<'py>,
+    bgen_decode_tile_variant_count: i64,
+    threads: Option<i64>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_runtime_knobs_configured_diagnostic_payload(
+        bgen_decode_tile_variant_count,
+        threads,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_runner_metadata_artifacts_finalized_diagnostic_payload<'py>(
+    py: Python<'py>,
+    association_mode: &str,
+    phenotype_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_runner_metadata_artifacts_finalized_diagnostic_payload(
+        association_mode,
+        phenotype_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn render_run_completed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_completed_event_from_py(event)?;
     PyTuple::new(py, native_run_events::render_run_completed_lines(&event_payload))

@@ -423,16 +423,23 @@ def effective_rayon_thread_count(requested_thread_count: int | None) -> int | No
     return PROCESS_RUNTIME_STATE.effective_rayon_thread_count(requested_thread_count)
 
 
+def emit_runtime_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
+    """Emit one native runtime diagnostic payload through native tracing."""
+    _core.emit_diagnostic_event_fields(
+        str(payload["level"]),
+        str(payload["event_name"]),
+        str(payload["message"]),
+        typing.cast("typing.Mapping[str, object]", payload["fields"]),
+    )
+
+
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
     """Apply native runtime knobs before engine execution."""
-    _core.emit_diagnostic_event_fields(
-        "debug",
-        "native_runtime_knobs_configured",
-        "Configuring native runtime knobs.",
-        {
-            "bgen_decode_tile_variant_count": compute_config.bgen_decode_tile_variant_count,
-            "threads": trait_config.threads,
-        },
+    emit_runtime_diagnostic_event_payload(
+        _core.build_native_runtime_knobs_configured_diagnostic_payload(
+            compute_config.bgen_decode_tile_variant_count,
+            trait_config.threads,
+        )
     )
     _core.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
     if trait_config.threads is not None:

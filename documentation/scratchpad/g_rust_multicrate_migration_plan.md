@@ -1489,6 +1489,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   diagnostics now use the same native run-event diagnostic payload boundary.
 - Runner single/multi and linear/binary engine dispatch diagnostics now use
   native run-event diagnostic payload builders.
+- Native runtime knob configuration diagnostics now use native run-event
+  diagnostic payload builders.
+- Runner metadata artifact-finalization diagnostics now use native run-event
+  diagnostic payload builders.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

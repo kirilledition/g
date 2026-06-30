@@ -398,6 +398,39 @@ def test_runner_dispatch_diagnostic_payloads_use_native_builders() -> None:
     }
 
 
+def test_native_runtime_knobs_diagnostic_payload_uses_native_builder() -> None:
+    assert run_events.build_native_runtime_knobs_configured_diagnostic_payload(
+        bgen_decode_tile_variant_count=32,
+        threads=None,
+    ) == {
+        "level": "debug",
+        "event_name": "native_runtime_knobs_configured",
+        "message": "Configuring native runtime knobs.",
+        "fields": {"bgen_decode_tile_variant_count": 32, "threads": None},
+    }
+    assert run_events.build_native_runtime_knobs_configured_diagnostic_payload(
+        bgen_decode_tile_variant_count=32,
+        threads=4,
+    ) == {
+        "level": "debug",
+        "event_name": "native_runtime_knobs_configured",
+        "message": "Configuring native runtime knobs.",
+        "fields": {"bgen_decode_tile_variant_count": 32, "threads": 4},
+    }
+
+
+def test_runner_metadata_artifacts_finalized_diagnostic_payload_uses_native_builder() -> None:
+    assert run_events.build_runner_metadata_artifacts_finalized_diagnostic_payload(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        phenotype_count=3,
+    ) == {
+        "level": "info",
+        "event_name": "runner_metadata_artifacts_finalized",
+        "message": "Finalized REGENIE run artifacts for 3 phenotype(s).",
+        "fields": {"association_mode": "regenie2_binary", "phenotype_count": 3},
+    }
+
+
 def test_run_completed_rendering_uses_native_renderer() -> None:
     event = run_events.RunCompletedEvent(
         run_id=None,

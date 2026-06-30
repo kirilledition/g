@@ -15,14 +15,14 @@ if typing.TYPE_CHECKING:
 RunArtifacts = run_events.RunArtifacts
 
 
-def emit_metadata_diagnostic_event(
-    level: str,
-    event: str,
-    message: str,
-    fields: typing.Mapping[str, object],
-) -> None:
-    """Emit one structured metadata diagnostic through native tracing."""
-    _core.emit_diagnostic_event_fields(level, event, message, fields)
+def emit_metadata_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
+    """Emit one native metadata diagnostic payload through native tracing."""
+    _core.emit_diagnostic_event_fields(
+        str(payload["level"]),
+        str(payload["event_name"]),
+        str(payload["message"]),
+        typing.cast("typing.Mapping[str, object]", payload["fields"]),
+    )
 
 
 def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
@@ -126,14 +126,11 @@ def finalize_execution_plan(
             ),
         )
     )
-    emit_metadata_diagnostic_event(
-        "info",
-        "runner_metadata_artifacts_finalized",
-        f"Finalized REGENIE run artifacts for {len(plan.phenotype_run_plans)} phenotype(s).",
-        {
-            "association_mode": plan.association_mode.value,
-            "phenotype_count": len(plan.phenotype_run_plans),
-        },
+    emit_metadata_diagnostic_event_payload(
+        run_events.build_runner_metadata_artifacts_finalized_diagnostic_payload(
+            association_mode=plan.association_mode,
+            phenotype_count=len(plan.phenotype_run_plans),
+        )
     )
     return artifacts
 

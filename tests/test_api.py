@@ -50,6 +50,22 @@ class NativeDiagnosticCore:
         """Accept one native diagnostic event with structured fields."""
         del level, event, message, fields
 
+    def build_native_runtime_knobs_configured_diagnostic_payload(
+        self,
+        bgen_decode_tile_variant_count: int,
+        threads: int | None,
+    ) -> dict[str, object]:
+        """Return a native-shaped runtime knob diagnostic payload."""
+        return {
+            "level": "debug",
+            "event_name": "native_runtime_knobs_configured",
+            "message": "Configuring native runtime knobs.",
+            "fields": {
+                "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
+                "threads": threads,
+            },
+        }
+
 
 def complete_mock_output_initialization(
     keyword_arguments: dict[str, object],

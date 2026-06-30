@@ -406,6 +406,34 @@ def build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_paylo
     )
 
 
+def build_native_runtime_knobs_configured_diagnostic_payload(
+    *,
+    bgen_decode_tile_variant_count: int,
+    threads: int | None,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for runtime knob configuration."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_runtime_knobs_configured_diagnostic_payload(
+            bgen_decode_tile_variant_count,
+            threads,
+        )
+    )
+
+
+def build_runner_metadata_artifacts_finalized_diagnostic_payload(
+    *,
+    association_mode: types.AssociationMode,
+    phenotype_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for finalized run artifacts."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_metadata_artifacts_finalized_diagnostic_payload(
+            association_mode.value,
+            phenotype_count,
+        )
+    )
+
+
 def diagnostic_event_payload_from_native(payload: object) -> dict[str, typing.Any]:
     """Adapt a native diagnostic event payload to a mutable Python dictionary."""
     event_payload = native_mapping_payload(payload)
