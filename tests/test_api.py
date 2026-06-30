@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import subprocess
 import sys
 import textwrap
@@ -90,6 +91,26 @@ def test_shutdown_controller_uses_native_default_signals() -> None:
     handled_signals = typing.cast("tuple[dict[str, object], ...]", install_plan["handled_signals"])
 
     assert [signal_payload["name"] for signal_payload in handled_signals] == ["SIGINT", "SIGTERM"]
+
+
+def test_shutdown_controller_first_and_second_signal_behavior() -> None:
+    interrupt_controller = shutdown_module.GracefulShutdownController(handled_signals=None)
+    termination_controller = shutdown_module.GracefulShutdownController(handled_signals=None)
+
+    with pytest.raises(shutdown_module.GracefulShutdownRequested) as first_interrupt:
+        interrupt_controller.handle_signal(int(signal.SIGINT), frame=None)
+    with pytest.raises(KeyboardInterrupt):
+        interrupt_controller.handle_signal(int(signal.SIGINT), frame=None)
+    with pytest.raises(shutdown_module.GracefulShutdownRequested) as first_termination:
+        termination_controller.handle_signal(int(signal.SIGTERM), frame=None)
+    with pytest.raises(SystemExit) as second_termination:
+        termination_controller.handle_signal(int(signal.SIGTERM), frame=None)
+
+    assert first_interrupt.value.signal_name == "SIGINT"
+    assert first_interrupt.value.exit_code == 130
+    assert first_termination.value.signal_name == "SIGTERM"
+    assert first_termination.value.exit_code == 143
+    assert second_termination.value.code == 143
 
 
 def build_compute_config(**overrides: object) -> config.GComputeConfig:
@@ -370,6 +391,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=complete_pipeline) as mock_pipeline,
         patch("g.runner.metadata.extend_run_manifest") as mock_extend_run_manifest,
         patch("g.interface.config.write_toml") as mock_write_toml,
+        patch("g.engine.shutdown.install_graceful_shutdown_handlers") as mock_install_shutdown_handlers,
     ):
         artifacts = api.regenie(build_minimal_config())
 
@@ -391,6 +413,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert writer_settings.parquet_compression == types.ParquetCompression.NONE
     assert writer_settings.output_statistic_dtype == types.FloatingPointDtype.FLOAT32
     assert writer_settings.finalize_parquet is False
+    mock_install_shutdown_handlers.assert_not_called()
     mock_extend_run_manifest.assert_called_once()
     mock_write_toml.assert_called_once()
 
