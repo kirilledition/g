@@ -162,16 +162,9 @@ def record_jax_runtime_diagnostic_event(
         telemetry_session: Optional run telemetry session.
 
     """
-    event_fields = {diagnostic_field.name: diagnostic_field.value for diagnostic_field in diagnostic_event.fields}
-    record_plan = _core.plan_jax_runtime_diagnostic_record(
-        diagnostic_level=diagnostic_event.level.value,
+    record_plan = _core.record_jax_runtime_diagnostic_log_event(
+        diagnostic_event,
         has_telemetry_session=telemetry_session is not None,
-    )
-    _core.emit_diagnostic_event_fields(
-        record_plan.logging_level_name.lower(),
-        diagnostic_event.event_name,
-        diagnostic_event.message,
-        event_fields,
     )
     if not record_plan.should_emit_telemetry:
         return

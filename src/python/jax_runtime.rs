@@ -9,6 +9,8 @@ use pyo3::types::{PyAny, PyDict, PyTuple};
 
 use g_runtime::jax_runtime as native_jax_runtime;
 
+use super::logging;
+
 #[pyclass]
 pub(crate) struct NativeJaxRuntimeDiagnosticRecordPlan {
     plan: native_jax_runtime::JaxRuntimeDiagnosticRecordPlan,
@@ -170,6 +172,26 @@ pub(crate) fn plan_jax_runtime_diagnostic_record(
         &diagnostic_level,
         has_telemetry_session,
     ))
+}
+
+#[pyfunction]
+pub(crate) fn record_jax_runtime_diagnostic_log_event(
+    py: Python<'_>,
+    event: &Bound<'_, PyAny>,
+    has_telemetry_session: bool,
+) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
+    let diagnostic_level = jax_runtime_diagnostic_event_level(event)?;
+    let plan = native_jax_runtime::plan_jax_runtime_diagnostic_record(&diagnostic_level, has_telemetry_session);
+    let (event_name, fields) = jax_runtime_diagnostic_event_fields_to_py_dict(py, event)?;
+    let message = event.getattr("message")?.extract::<String>()?;
+    logging::emit_diagnostic_event_fields(
+        py,
+        &plan.logging_level_name.to_lowercase(),
+        &event_name,
+        &message,
+        fields.as_any(),
+    )?;
+    Ok(NativeJaxRuntimeDiagnosticRecordPlan::from_plan(plan))
 }
 
 #[pyfunction]
@@ -441,6 +463,14 @@ pub(crate) fn jax_runtime_diagnostic_event_fields_to_py_dict<'py>(
         fields.set_item(field_name, field_value)?;
     }
     Ok((event_name, fields))
+}
+
+fn jax_runtime_diagnostic_event_level(event: &Bound<'_, PyAny>) -> PyResult<String> {
+    let level = event.getattr("level")?;
+    if let Ok(level_value) = level.getattr("value") {
+        return level_value.extract::<String>();
+    }
+    level.extract::<String>()
 }
 
 fn jax_runtime_diagnostic_field_payload_to_dict<'py>(

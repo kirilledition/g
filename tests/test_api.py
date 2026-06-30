@@ -1164,13 +1164,21 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
             self.should_emit_telemetry = should_emit_telemetry
             self.telemetry_level = telemetry_level
 
-    def plan_jax_runtime_diagnostic_record(
+    def record_jax_runtime_diagnostic_log_event(
+        event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
         *,
-        diagnostic_level: str,
         has_telemetry_session: bool,
     ) -> NativeDiagnosticRecordPlan:
-        assert diagnostic_level == "info"
+        assert event is diagnostic_event
         assert has_telemetry_session is True
+        logged_records.append(
+            (
+                "error",
+                event.event_name,
+                event.message,
+                {diagnostic_field.name: diagnostic_field.value for diagnostic_field in event.fields},
+            )
+        )
         return NativeDiagnosticRecordPlan(
             logging_level_name="ERROR",
             should_emit_telemetry=True,
@@ -1185,24 +1193,11 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
     )
     telemetry_session = typing.cast("telemetry_module.TelemetrySession", RecordingTelemetrySession())
 
-    with (
-        patch(
-            "g.runner.runtime._core.plan_jax_runtime_diagnostic_record",
-            side_effect=plan_jax_runtime_diagnostic_record,
-        ),
-        patch("g.runner.runtime._core.emit_diagnostic_event_fields") as emit_diagnostic_event_mock,
+    with patch(
+        "g.runner.runtime._core.record_jax_runtime_diagnostic_log_event",
+        side_effect=record_jax_runtime_diagnostic_log_event,
     ):
         runner_runtime.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session=telemetry_session)
-
-    for call in emit_diagnostic_event_mock.call_args_list:
-        logged_records.append(
-            (
-                typing.cast("str", call.args[0]),
-                typing.cast("str", call.args[1]),
-                typing.cast("str", call.args[2]),
-                dict(typing.cast("typing.Mapping[str, object]", call.args[3])),
-            )
-        )
 
     assert logged_records == [("error", "jax_native_plan_test", "planned diagnostic", {"field": "value"})]
     assert recorded_events == [("jax_native_plan_test", "trace", {"field": "value"})]

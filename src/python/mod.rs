@@ -90,7 +90,7 @@ use jax_runtime::{
     complete_jax_runtime_setup_validation_payload, nvidia_driver_files_are_visible_value,
     plan_jax_gpu_validation_payload, plan_jax_runtime_config_update_payloads, plan_jax_runtime_diagnostic_record,
     plan_jax_runtime_diagnostic_record_payload, plan_jax_runtime_setup_side_effects_payload,
-    resolve_jax_runtime_setup_payload,
+    record_jax_runtime_diagnostic_log_event, resolve_jax_runtime_setup_payload,
 };
 use logging::{
     NativeTelemetryClosePlan, NativeTelemetryEventEmissionPlan, NativeTelemetryProgressEmissionPlan,
@@ -2180,6 +2180,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_jax_runtime_config_update_payloads, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_log_event, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_setup_side_effects_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;

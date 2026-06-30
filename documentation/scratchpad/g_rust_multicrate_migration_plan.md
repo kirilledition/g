@@ -1460,6 +1460,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - JAX runtime diagnostic record planning now returns a typed native PyO3 plan
   on the production runner path, while the legacy dict payload helper remains
   for compatibility tests and older adapters.
+- JAX runtime diagnostic logging now routes through one native PyO3 boundary
+  that builds the diagnostic fields and returns the native record plan for
+  telemetry emission.
 - CLI lifecycle diagnostics now hand structured fields to the native diagnostic
   emitter instead of serializing diagnostic JSON in Python.
 - Runner, output, preflight, callback, native-dispatch, and pipeline diagnostic

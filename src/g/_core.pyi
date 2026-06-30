@@ -3236,6 +3236,10 @@ def plan_jax_runtime_diagnostic_record(
     diagnostic_level: str,
     has_telemetry_session: bool,
 ) -> NativeJaxRuntimeDiagnosticRecordPlan: ...
+def record_jax_runtime_diagnostic_log_event(
+    event: object,
+    has_telemetry_session: bool,
+) -> NativeJaxRuntimeDiagnosticRecordPlan: ...
 def nvidia_driver_files_are_visible_value(
     control_device_path: str,
     uvm_device_path: str,
