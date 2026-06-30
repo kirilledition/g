@@ -17,7 +17,8 @@ use g_runtime::run_events as native_run_events;
 use g_runtime::telemetry_session as native_telemetry_session;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyModule};
+use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyModule, PyString, PyTuple};
+use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -825,8 +826,8 @@ impl NativeTelemetrySession {
         Ok(())
     }
 
-    pub fn emit_payload(&self, py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<()> {
-        let json_line = serialize_telemetry_payload_json_line(py, payload)?;
+    pub fn emit_payload(&self, _py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<()> {
+        let json_line = serialize_telemetry_payload_json_line(payload)?;
         self.emit_json_line(&json_line)
     }
 
@@ -1195,24 +1196,104 @@ fn telemetry_close_metadata_to_py_dict<'py>(
     Ok(payload)
 }
 
-fn serialize_py_payload_json_text(py: Python<'_>, payload: &Bound<'_, PyAny>) -> PyResult<String> {
-    let json_module = PyModule::import(py, "json")?;
-    let builtins_module = PyModule::import(py, "builtins")?;
-    let keyword_arguments = PyDict::new(py);
-    keyword_arguments.set_item("sort_keys", true)?;
-    keyword_arguments.set_item("default", builtins_module.getattr("str")?)?;
-    json_module.call_method("dumps", (payload,), Some(&keyword_arguments))?.extract::<String>()
+fn serialize_py_field_mapping_json_text(_py: Python<'_>, fields: &Bound<'_, PyAny>) -> PyResult<String> {
+    let mapping = fields.cast::<PyMapping>()?;
+    let json_value = JsonValue::Object(telemetry_json_object_from_py_mapping(mapping)?);
+    native_telemetry_session::serialize_telemetry_payload_json_text(&json_value)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
-fn serialize_py_field_mapping_json_text(py: Python<'_>, fields: &Bound<'_, PyAny>) -> PyResult<String> {
-    let builtins_module = PyModule::import(py, "builtins")?;
-    let field_mapping = builtins_module.getattr("dict")?.call1((fields,))?;
-    serialize_py_payload_json_text(py, &field_mapping)
+fn serialize_telemetry_payload_json_line(payload: &Bound<'_, PyDict>) -> PyResult<String> {
+    let json_value = telemetry_json_value_from_py_any(payload.as_any())?;
+    native_telemetry_session::serialize_telemetry_payload_json_line(&json_value)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
-fn serialize_telemetry_payload_json_line(py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<String> {
-    let json_text = serialize_py_payload_json_text(py, payload.as_any())?;
-    Ok(format!("{json_text}\n"))
+fn telemetry_json_value_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<JsonValue> {
+    if value.is_none() {
+        return Ok(JsonValue::Null);
+    }
+    if value.is_instance_of::<PyBool>() {
+        return Ok(JsonValue::Bool(value.extract::<bool>()?));
+    }
+    if let Ok(mapping) = value.cast::<PyMapping>() {
+        return telemetry_json_object_from_py_mapping(mapping).map(JsonValue::Object);
+    }
+    if let Ok(list) = value.cast::<PyList>() {
+        return telemetry_json_array_from_py_iter(list.as_any()).map(JsonValue::Array);
+    }
+    if let Ok(tuple) = value.cast::<PyTuple>() {
+        return telemetry_json_array_from_py_iter(tuple.as_any()).map(JsonValue::Array);
+    }
+    if value.is_instance_of::<PyInt>() {
+        if let Ok(signed_integer) = value.extract::<i64>() {
+            return Ok(JsonValue::Number(JsonNumber::from(signed_integer)));
+        }
+        if let Ok(unsigned_integer) = value.extract::<u64>() {
+            return Ok(JsonValue::Number(JsonNumber::from(unsigned_integer)));
+        }
+        return Ok(JsonValue::String(value.str()?.to_string_lossy().into_owned()));
+    }
+    if value.is_instance_of::<PyFloat>() {
+        let float_value = value.extract::<f64>()?;
+        let Some(number) = JsonNumber::from_f64(float_value) else {
+            return Ok(JsonValue::String(value.str()?.to_string_lossy().into_owned()));
+        };
+        return Ok(JsonValue::Number(number));
+    }
+    if value.is_instance_of::<PyString>() {
+        return Ok(JsonValue::String(value.extract::<String>()?));
+    }
+    if let Some(path_text) = telemetry_path_string(value)? {
+        return Ok(JsonValue::String(path_text));
+    }
+    Ok(JsonValue::String(value.str()?.to_string_lossy().into_owned()))
+}
+
+fn telemetry_json_object_from_py_mapping(mapping: &Bound<'_, PyMapping>) -> PyResult<JsonMap<String, JsonValue>> {
+    let items = mapping.call_method0("items")?;
+    let mut json_object = JsonMap::new();
+    for item in items.try_iter()? {
+        let item = item?;
+        let tuple = item.cast::<PyTuple>()?;
+        let key = tuple.get_item(0)?;
+        let value = tuple.get_item(1)?;
+        json_object.insert(telemetry_json_key_from_py_any(&key)?, telemetry_json_value_from_py_any(&value)?);
+    }
+    Ok(json_object)
+}
+
+fn telemetry_json_array_from_py_iter(value: &Bound<'_, PyAny>) -> PyResult<Vec<JsonValue>> {
+    let mut values = Vec::new();
+    for item in value.try_iter()? {
+        values.push(telemetry_json_value_from_py_any(&item?)?);
+    }
+    Ok(values)
+}
+
+fn telemetry_json_key_from_py_any(key: &Bound<'_, PyAny>) -> PyResult<String> {
+    if key.is_none() {
+        return Ok("null".to_string());
+    }
+    if key.is_instance_of::<PyBool>() {
+        return Ok(if key.extract::<bool>()? { "true" } else { "false" }.to_string());
+    }
+    if key.is_instance_of::<PyString>() {
+        return key.extract::<String>();
+    }
+    Ok(key.str()?.to_string_lossy().into_owned())
+}
+
+fn telemetry_path_string(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    let Ok(file_system_path_method) = value.getattr("__fspath__") else {
+        return Ok(None);
+    };
+    let path_value = file_system_path_method.call0()?;
+    if let Ok(path_text) = path_value.extract::<String>() {
+        return Ok(Some(path_text));
+    }
+    let type_name = path_value.get_type().name()?.to_string_lossy().into_owned();
+    Err(PyValueError::new_err(format!("__fspath__ returned unsupported type '{type_name}'; expected str.")))
 }
 
 #[pyfunction]

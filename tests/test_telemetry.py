@@ -322,6 +322,45 @@ def test_telemetry_session_builds_current_event_payload_natively(tmp_path: Path)
     assert "omitted_field" not in event_payload
 
 
+def test_telemetry_session_serializes_payloads_without_python_json_dumps(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+    artifact_path = tmp_path / "artifact.txt"
+
+    with unittest.mock.patch("json.dumps", side_effect=AssertionError("Python JSON must not serialize telemetry")):
+        telemetry_session.log_event(
+            "native_serialization",
+            level="info",
+            artifact_path=artifact_path,
+            device=types.Device.GPU,
+            nested={"values": [1, 2.5, True, None]},
+            omitted_field=None,
+        )
+        telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payload = json.loads(telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()[0])
+    assert event_payload["event"] == "native_serialization"
+    assert event_payload["artifact_path"] == str(artifact_path)
+    assert event_payload["device"] == "gpu"
+    assert event_payload["nested"] == {"values": [1, 2.5, True, None]}
+    assert "omitted_field" not in event_payload
+
+
 def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     telemetry_paths = telemetry.TelemetryPaths(
         log_dir=tmp_path,

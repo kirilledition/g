@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::telemetry_policy;
+use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
 const PROGRESS_TICK_EVENT_NAME: &str = "progress_tick";
@@ -381,6 +382,24 @@ pub fn build_current_telemetry_event_envelope(
     )
 }
 
+/// Serialize one telemetry payload as stable JSON text.
+///
+/// # Errors
+///
+/// Returns a serialization error when the payload cannot be rendered as JSON.
+pub fn serialize_telemetry_payload_json_text(payload: &JsonValue) -> Result<String, serde_json::Error> {
+    serde_json::to_string(payload)
+}
+
+/// Serialize one telemetry payload as a JSONL record.
+///
+/// # Errors
+///
+/// Returns a serialization error when the payload cannot be rendered as JSON.
+pub fn serialize_telemetry_payload_json_line(payload: &JsonValue) -> Result<String, serde_json::Error> {
+    serialize_telemetry_payload_json_text(payload).map(|json_text| format!("{json_text}\n"))
+}
+
 #[must_use]
 pub const fn plan_telemetry_event_emission(
     telemetry_enabled: bool,
@@ -477,6 +496,20 @@ mod tests {
         assert_eq!(envelope.thread_name, "main");
         assert!(envelope.timestamp.contains('T'));
         assert!(envelope.timestamp.ends_with('Z'));
+    }
+
+    #[test]
+    fn serializes_telemetry_payload_as_json_line() {
+        let payload = serde_json::json!({
+            "event": "started",
+            "run_id": "run-1",
+            "nested": {"values": [1, 2, true, null]},
+        });
+
+        let json_line = serialize_telemetry_payload_json_line(&payload).unwrap();
+
+        assert_eq!(json_line, "{\"event\":\"started\",\"nested\":{\"values\":[1,2,true,null]},\"run_id\":\"run-1\"}\n");
+        assert!(json_line.ends_with('\n'));
     }
 
     #[test]
