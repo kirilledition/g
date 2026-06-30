@@ -2389,6 +2389,90 @@ def test_native_callback_runner_records_chromosome_progress_transitions() -> Non
     assert telemetry_session.progress_events[1]["chunk_identifier"] == 7
 
 
+def test_native_callback_runner_records_progress_from_metadata_with_runtime_resources() -> None:
+    class ProgressRecordingProbe:
+        def __init__(self, inner: callback_runtime._core.NativeCallbackRuntimeResources) -> None:
+            self.inner = inner
+            self.metadata_items: list[object] = []
+
+        def __getattr__(self, name: str) -> typing.Any:
+            return getattr(self.inner, name)
+
+        def record_processed_chunk(
+            self,
+            chunk_identity: callback_runtime._core.NativeCallbackChunkIdentity,
+        ) -> callback_runtime._core.NativeCallbackProgressUpdate:
+            del chunk_identity
+            message = "Production native resources should record progress directly from metadata."
+            raise AssertionError(message)
+
+        def record_processed_chunk_for_metadata(
+            self,
+            metadata: object,
+        ) -> callback_runtime._core.NativeCallbackProgressUpdate:
+            self.metadata_items.append(metadata)
+            return self.inner.record_processed_chunk_for_metadata(metadata)
+
+    class ResourceBackedCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
+        def __init__(self) -> None:
+            super().__init__(
+                worker_name="native-resource-progress-runner-test",
+                staging_depth=1,
+                native_callback_batch_size=1,
+                expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+                flush_binary_correction_diagnostics_on_result_stop=False,
+                result_in_flight_limit=1,
+                dosage_buffer_limit=1,
+                stage_timing_recorder=None,
+                telemetry_session=typing.cast("typing.Any", RecordingTelemetrySession()),
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+            )
+
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    callback = ResourceBackedCallbackRunner()
+    progress_probe = ProgressRecordingProbe(callback.callback_runtime_resources)
+    callback.callback_runtime_resources = typing.cast("typing.Any", progress_probe)
+    metadata = build_native_metadata()
+
+    callback.record_progress(metadata)
+
+    assert progress_probe.metadata_items == [metadata]
+    telemetry_session = typing.cast("RecordingTelemetrySession", callback.telemetry_session)
+    assert telemetry_session.events == [
+        (
+            "chromosome_started",
+            {"chromosome": "22", "processed_chunk_count": 1},
+        )
+    ]
+    assert telemetry_session.progress_events[0]["variant_count"] == 2
+
+
 def test_native_callback_runner_defers_worker_start_until_explicit_start() -> None:
     class ThreadedManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def __init__(self) -> None:
@@ -2763,14 +2847,13 @@ def test_native_callback_runtime_resources_own_progress_state() -> None:
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
-    first_chunk_identity = callback_runtime.build_native_callback_chunk_identity(build_native_metadata())
     second_chunk_identity = callback_runtime.build_native_callback_chunk_identity(
         build_native_metadata_for_chunk(chunk_identifier=2)
     )
 
     assert runtime_resources.processed_chunk_count == 0
     assert runtime_resources.current_progress_chromosome is None
-    first_update = runtime_resources.record_processed_chunk(first_chunk_identity)
+    first_update = runtime_resources.record_processed_chunk_for_metadata(build_native_metadata())
     assert first_update.processed_chunk_count == 1
     assert runtime_resources.processed_chunk_count == 1
     assert runtime_resources.current_progress_chromosome == "22"

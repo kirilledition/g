@@ -1097,6 +1097,9 @@ Remove Python as the chunk-level scheduler.
   accessors.
 - Callback runtime resources now own production progress state reads, per-chunk
   records, and completion while Python keeps telemetry emission.
+- Callback runtime resources now derive production progress chunk identities
+  directly from chunk metadata before progress-state updates, leaving explicit
+  identity construction only on lower-level helper and test paths.
 - Callback runtime resources now own production binary correction summary
   counters, retention/emit plans, and payload reads while Python keeps pending
   diagnostics materialization and telemetry emission.

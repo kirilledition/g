@@ -9,7 +9,7 @@ use pyo3::types::{PyAny, PyDict, PySlice, PyTuple};
 
 use super::callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
-    NativeCallbackProgressTelemetryEvent, NativeCallbackProgressUpdate,
+    NativeCallbackProgressTelemetryEvent, NativeCallbackProgressUpdate, build_callback_chunk_identity,
 };
 use super::callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
@@ -44,6 +44,24 @@ fn pending_diagnostics_count_from_object(pending_diagnostics: &Bound<'_, PyAny>)
     i64::try_from(pending_diagnostics_count).map_err(|_| {
         PyRuntimeError::new_err("Pending binary correction diagnostics count exceeds native summary capacity.")
     })
+}
+
+fn metadata_chromosome_value(metadata: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(chromosome_label) = metadata.getattr("chromosome_label")
+        && !chromosome_label.is_none()
+    {
+        return Ok(chromosome_label.str()?.to_string_lossy().into_owned());
+    }
+    let chromosome_values = metadata.getattr("chromosome")?;
+    let chromosome_value = chromosome_values.get_item(0)?;
+    Ok(chromosome_value.str()?.to_string_lossy().into_owned())
+}
+
+fn callback_chunk_identity_from_metadata(metadata: &Bound<'_, PyAny>) -> PyResult<NativeCallbackChunkIdentity> {
+    let chromosome = metadata_chromosome_value(metadata)?;
+    let variant_start_index = metadata.getattr("variant_start_index")?.extract::<i64>()?;
+    let variant_stop_index = metadata.getattr("variant_stop_index")?.extract::<i64>()?;
+    Ok(build_callback_chunk_identity(chromosome, variant_start_index, variant_stop_index))
 }
 
 #[pyclass]
@@ -378,6 +396,15 @@ impl NativeCallbackRuntimeResources {
         chunk_identity: &NativeCallbackChunkIdentity,
     ) -> NativeCallbackProgressUpdate {
         self.progress_state.bind(py).borrow_mut().record_processed_chunk_value(chunk_identity)
+    }
+
+    fn record_processed_chunk_for_metadata(
+        &self,
+        py: Python<'_>,
+        metadata: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackProgressUpdate> {
+        let chunk_identity = callback_chunk_identity_from_metadata(metadata)?;
+        Ok(self.record_processed_chunk(py, &chunk_identity))
     }
 
     fn record_processed_chunk_without_progress(&self, py: Python<'_>) {

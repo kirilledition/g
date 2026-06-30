@@ -1364,7 +1364,10 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.telemetry_session is None:
             self.record_processed_chunk_without_progress()
             return
-        progress_update = self.record_processed_chunk(build_native_callback_chunk_identity(metadata))
+        if self.uses_native_callback_runtime_resources():
+            progress_update = self.callback_runtime_resources.record_processed_chunk_for_metadata(metadata)
+        else:
+            progress_update = self.record_processed_chunk(build_native_callback_chunk_identity(metadata))
         telemetry_plan = progress_update.telemetry_plan
         for progress_event in telemetry_plan.events:
             self.telemetry_session.log_callback_progress_event(progress_event)
