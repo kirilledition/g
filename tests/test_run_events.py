@@ -543,6 +543,41 @@ def test_pipeline_multi_phenotype_sample_summary_diagnostic_payload_uses_native_
     )
 
 
+def test_pipeline_multi_group_preflight_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_pipeline_multi_group_preflight_started_diagnostic_payload(
+        phenotype_count=2,
+        sample_count=3,
+        trusted_no_missing_diploid=True,
+        variant_limit=100,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_multi_group_preflight_started",
+        "message": "Running preflight validation for multi-phenotype pipeline.",
+        "fields": {
+            "phenotype_count": 2,
+            "sample_count": 3,
+            "trusted_no_missing_diploid": True,
+            "variant_limit": 100,
+        },
+    }
+    assert run_events.build_pipeline_multi_group_preflight_completed_diagnostic_payload(
+        phenotype_count=2,
+        sample_count=3,
+        trusted_no_missing_diploid=False,
+        variant_limit=None,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_multi_group_preflight_completed",
+        "message": "Preflight validation passed for multi-phenotype pipeline.",
+        "fields": {
+            "phenotype_count": 2,
+            "sample_count": 3,
+            "trusted_no_missing_diploid": False,
+            "variant_limit": None,
+        },
+    }
+
+
 def test_native_dispatch_engine_diagnostic_payloads_use_native_builders() -> None:
     assert run_events.build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
         chunk_size=1024,

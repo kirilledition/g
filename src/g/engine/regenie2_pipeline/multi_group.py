@@ -8,7 +8,7 @@ import typing
 import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 from g import _core, execution_plan, types
-from g.engine import preflight, timing
+from g.engine import preflight, run_events, timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
@@ -20,14 +20,14 @@ if typing.TYPE_CHECKING:
     from g.io import output
 
 
-def emit_multi_group_diagnostic_event(
-    level: str,
-    event: str,
-    message: str,
-    fields: typing.Mapping[str, object],
-) -> None:
-    """Emit one structured multi-group pipeline diagnostic through native tracing."""
-    _core.emit_diagnostic_event_fields(level, event, message, fields)
+def emit_multi_group_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
+    """Emit one multi-group pipeline diagnostic payload through native tracing."""
+    _core.emit_diagnostic_event_fields(
+        str(payload["level"]),
+        str(payload["event_name"]),
+        str(payload["message"]),
+        typing.cast("typing.Mapping[str, object]", payload["fields"]),
+    )
 
 
 def intersect_committed_chunk_identifier_sets(
@@ -65,16 +65,13 @@ def prepare_multi_phenotype_bgen_group_delivery(
         phenotype_count=len(run_input.phenotype_names),
     )
     preflight_start_time = time.perf_counter()
-    emit_multi_group_diagnostic_event(
-        "debug",
-        "pipeline_multi_group_preflight_started",
-        "Running preflight validation for multi-phenotype pipeline.",
-        {
-            "phenotype_count": len(run_input.phenotype_names),
-            "sample_count": int(run_input.sample_indices.shape[0]),
-            "trusted_no_missing_diploid": context.effective_trusted_no_missing_diploid,
-            "variant_limit": context.variant_limit,
-        },
+    emit_multi_group_diagnostic_event_payload(
+        run_events.build_pipeline_multi_group_preflight_started_diagnostic_payload(
+            phenotype_count=len(run_input.phenotype_names),
+            sample_count=int(run_input.sample_indices.shape[0]),
+            trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
+            variant_limit=context.variant_limit,
+        )
     )
     run_multi_preflight(
         run_input=run_input,
@@ -84,16 +81,13 @@ def prepare_multi_phenotype_bgen_group_delivery(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
     )
     timing.record_stage_duration(context.stage_timing_recorder, "preflight_validation", preflight_start_time)
-    emit_multi_group_diagnostic_event(
-        "debug",
-        "pipeline_multi_group_preflight_completed",
-        "Preflight validation passed for multi-phenotype pipeline.",
-        {
-            "phenotype_count": len(run_input.phenotype_names),
-            "sample_count": int(run_input.sample_indices.shape[0]),
-            "trusted_no_missing_diploid": context.effective_trusted_no_missing_diploid,
-            "variant_limit": context.variant_limit,
-        },
+    emit_multi_group_diagnostic_event_payload(
+        run_events.build_pipeline_multi_group_preflight_completed_diagnostic_payload(
+            phenotype_count=len(run_input.phenotype_names),
+            sample_count=int(run_input.sample_indices.shape[0]),
+            trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
+            variant_limit=context.variant_limit,
+        )
     )
     if context.telemetry_session is not None:
         context.telemetry_session.log_multi_phenotype_preflight_completed(

@@ -381,6 +381,40 @@ pub fn build_pipeline_multi_phenotype_sample_summary_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn build_pipeline_multi_group_preflight_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_count: i64,
+    sample_count: i64,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_multi_group_preflight_started_diagnostic_payload(
+        phenotype_count,
+        sample_count,
+        trusted_no_missing_diploid,
+        variant_limit,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_multi_group_preflight_completed_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_count: i64,
+    sample_count: i64,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_multi_group_preflight_completed_diagnostic_payload(
+        phenotype_count,
+        sample_count,
+        trusted_no_missing_diploid,
+        variant_limit,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn build_native_dispatch_bgen_engine_constructing_diagnostic_payload<'py>(
     py: Python<'py>,
     chunk_size: i64,

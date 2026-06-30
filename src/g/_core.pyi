@@ -2862,6 +2862,18 @@ def build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
     sample_counts_differ: bool,
     sample_mode: str,
 ) -> dict[str, object]: ...
+def build_pipeline_multi_group_preflight_started_diagnostic_payload(
+    phenotype_count: int,
+    sample_count: int,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> dict[str, object]: ...
+def build_pipeline_multi_group_preflight_completed_diagnostic_payload(
+    phenotype_count: int,
+    sample_count: int,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> dict[str, object]: ...
 def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
     chunk_size: int,
     source_path: str,

@@ -42,6 +42,13 @@ pub const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_ou
 pub const PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_gpu_genotype_format_resolved";
 pub const PIPELINE_MULTI_PHENOTYPE_SAMPLE_SUMMARY_DIAGNOSTIC_EVENT_NAME: &str =
     "pipeline_multi_phenotype_sample_summary";
+pub const PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_group_preflight_started";
+pub const PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_MESSAGE: &str =
+    "Running preflight validation for multi-phenotype pipeline.";
+pub const PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_multi_group_preflight_completed";
+pub const PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_MESSAGE: &str =
+    "Preflight validation passed for multi-phenotype pipeline.";
 pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_bgen_engine_constructing";
 pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_MESSAGE: &str = "Constructing native BGEN run engine.";
@@ -783,6 +790,40 @@ pub fn build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
 }
 
 #[must_use]
+pub fn build_pipeline_multi_group_preflight_started_diagnostic_payload(
+    phenotype_count: i64,
+    sample_count: i64,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> RunDiagnosticEventPayload {
+    build_pipeline_multi_group_preflight_diagnostic_payload(
+        PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME,
+        PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_MESSAGE,
+        phenotype_count,
+        sample_count,
+        trusted_no_missing_diploid,
+        variant_limit,
+    )
+}
+
+#[must_use]
+pub fn build_pipeline_multi_group_preflight_completed_diagnostic_payload(
+    phenotype_count: i64,
+    sample_count: i64,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> RunDiagnosticEventPayload {
+    build_pipeline_multi_group_preflight_diagnostic_payload(
+        PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME,
+        PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_MESSAGE,
+        phenotype_count,
+        sample_count,
+        trusted_no_missing_diploid,
+        variant_limit,
+    )
+}
+
+#[must_use]
 pub fn build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
     chunk_size: i64,
     source_path: &str,
@@ -1268,6 +1309,27 @@ fn text_diagnostic_field(name: &'static str, value: &str) -> RunDiagnosticFieldP
     RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::Text(value.to_string()) }
 }
 
+fn build_pipeline_multi_group_preflight_diagnostic_payload(
+    event_name: &'static str,
+    message: &str,
+    phenotype_count: i64,
+    sample_count: i64,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name,
+        message: message.to_string(),
+        fields: vec![
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            integer_diagnostic_field("sample_count", sample_count),
+            boolean_diagnostic_field("trusted_no_missing_diploid", trusted_no_missing_diploid),
+            optional_integer_diagnostic_field("variant_limit", variant_limit),
+        ],
+    }
+}
+
 #[must_use]
 pub fn render_artifact_lines(artifact: &RunArtifactPayload) -> Vec<String> {
     let mut lines = Vec::new();
@@ -1658,6 +1720,17 @@ mod tests {
             "Analyzed 2 phenotypes in per-phenotype sample mode; sample counts differ across phenotypes."
         );
         assert_eq!(per_phenotype_payload.fields[1].value, RunDiagnosticFieldValue::Integer(2));
+    }
+
+    #[test]
+    fn builds_pipeline_multi_group_preflight_diagnostic_payloads() {
+        let started_payload = build_pipeline_multi_group_preflight_started_diagnostic_payload(2, 3, true, Some(100));
+        let completed_payload = build_pipeline_multi_group_preflight_completed_diagnostic_payload(2, 3, true, None);
+
+        assert_eq!(started_payload.event_name, "pipeline_multi_group_preflight_started");
+        assert_eq!(started_payload.fields[3].value, RunDiagnosticFieldValue::OptionalInteger(Some(100)));
+        assert_eq!(completed_payload.event_name, "pipeline_multi_group_preflight_completed");
+        assert_eq!(completed_payload.fields[3].value, RunDiagnosticFieldValue::OptionalInteger(None));
     }
 
     #[test]
