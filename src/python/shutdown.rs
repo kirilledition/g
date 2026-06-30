@@ -66,7 +66,7 @@ impl NativeShutdownController {
         shutdown_request_decision_payload_to_dict(py, &decision)
     }
 
-    fn request_shutdown_or_raise_second_signal_payload<'py>(
+    fn request_shutdown_signal_or_raise_second_signal_payload<'py>(
         &self,
         py: Python<'py>,
         signal_number: i32,
@@ -76,7 +76,7 @@ impl NativeShutdownController {
             self.restore_python_signal_handlers(py)?;
             return raise_second_signal_exception_from_plan(signal_number);
         }
-        shutdown_request_decision_payload_to_dict(py, &decision)
+        shutdown_signal_payload_to_dict(py, &decision.signal)
     }
 
     fn handler_install_plan_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {

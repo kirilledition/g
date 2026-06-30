@@ -128,12 +128,13 @@ def test_native_shutdown_controller_aborts_repeated_signal() -> None:
         unittest.mock.patch("g.engine.shutdown.signal.signal") as signal_mock,
     ):
         native_controller.install_python_signal_handlers(installed_handler)
-        first_decision = dict(native_controller.request_shutdown_or_raise_second_signal_payload(int(signal.SIGINT)))
+        first_signal_payload = dict(
+            native_controller.request_shutdown_signal_or_raise_second_signal_payload(int(signal.SIGINT))
+        )
         with pytest.raises(KeyboardInterrupt):
-            native_controller.request_shutdown_or_raise_second_signal_payload(int(signal.SIGINT))
+            native_controller.request_shutdown_signal_or_raise_second_signal_payload(int(signal.SIGINT))
 
-    assert first_decision["action"] == "graceful"
-    assert typing.cast("typing.Mapping[str, object]", first_decision["signal"])["name"] == "SIGINT"
+    assert first_signal_payload["name"] == "SIGINT"
     assert native_controller.handlers_installed is False
     signal_mock.assert_any_call(signal.SIGINT, installed_handler)
     signal_mock.assert_any_call(signal.SIGINT, previous_handler)

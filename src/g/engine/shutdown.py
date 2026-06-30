@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import enum
 import signal
 import typing
 from dataclasses import dataclass
@@ -11,13 +10,6 @@ import g._core
 
 if typing.TYPE_CHECKING:
     import types as python_types
-
-
-class ShutdownRequestAction(enum.StrEnum):
-    """Native shutdown decision action."""
-
-    GRACEFUL = "graceful"
-    FORCE = "force"
 
 
 @dataclass(frozen=True)
@@ -96,10 +88,9 @@ class GracefulShutdownController:
     def handle_signal(self, signal_number: int, frame: python_types.FrameType | None) -> None:
         """Request graceful shutdown on first signal and fast abort on the second."""
         del frame
-        decision_payload = native_mapping_payload(
-            self.native_controller.request_shutdown_or_raise_second_signal_payload(signal_number)
+        shutdown_signal = shutdown_signal_from_native_payload(
+            self.native_controller.request_shutdown_signal_or_raise_second_signal_payload(signal_number)
         )
-        shutdown_signal = shutdown_signal_from_native_payload(decision_payload["signal"])
         raise GracefulShutdownRequested(shutdown_signal)
 
     def restore_previous_handlers(self) -> None:

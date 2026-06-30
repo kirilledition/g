@@ -1217,6 +1217,9 @@ Remove Python as the chunk-level scheduler.
   requested-signal state reset as one native lifecycle transition.
 - Native shutdown controllers now own repeated-signal handler restoration and
   hard-abort exception raising from the PyO3 boundary.
+- Native shutdown controllers now return first-signal metadata directly for
+  Python public exception adaptation; Python no longer carries the native
+  shutdown action enum on the handler path.
 
 ### Tests
 
