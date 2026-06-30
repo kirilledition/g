@@ -71,6 +71,37 @@ impl<'view> EngineChromosomeRunInput<'view> {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineGroupChromosomeInput<'view> {
+    pub chromosome: &'view str,
+    pub predictions: PredictionView<'view>,
+    pub batches: Vec<GenotypeBatchView<'view>>,
+}
+
+impl<'view> EngineGroupChromosomeInput<'view> {
+    #[must_use]
+    pub fn new(
+        chromosome: &'view str,
+        predictions: PredictionView<'view>,
+        batches: Vec<GenotypeBatchView<'view>>,
+    ) -> Self {
+        Self { chromosome, predictions, batches }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineGroupRunInput<'view> {
+    pub group: PreparedGroupInput,
+    pub chromosomes: Vec<EngineGroupChromosomeInput<'view>>,
+}
+
+impl<'view> EngineGroupRunInput<'view> {
+    #[must_use]
+    pub fn new(group: PreparedGroupInput, chromosomes: Vec<EngineGroupChromosomeInput<'view>>) -> Self {
+        Self { group, chromosomes }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct EngineRunReport {
     pub phase_history: Vec<RunPhase>,
@@ -91,6 +122,19 @@ pub struct EngineChromosomeRunReport {
 }
 
 impl EngineChromosomeRunReport {
+    #[must_use]
+    pub fn new(phase_history: Vec<RunPhase>, results: Vec<AssociationBatchResult>) -> Self {
+        Self { phase_history, results }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EngineGroupRunReport {
+    pub phase_history: Vec<RunPhase>,
+    pub results: Vec<AssociationBatchResult>,
+}
+
+impl EngineGroupRunReport {
     #[must_use]
     pub fn new(phase_history: Vec<RunPhase>, results: Vec<AssociationBatchResult>) -> Self {
         Self { phase_history, results }
@@ -273,6 +317,42 @@ where
     where
         Effects: EngineRunEffects,
     {
+        let group_input = EngineGroupRunInput::new(
+            input.group.clone(),
+            vec![EngineGroupChromosomeInput::new(input.chromosome, input.predictions, input.batches.clone())],
+        );
+        let group_report = self.run_group_chromosomes_with_effects(&group_input, effects)?;
+        Ok(EngineChromosomeRunReport::new(group_report.phase_history, group_report.results))
+    }
+
+    /// Execute one group through a sequence of chromosomes and genotype batches.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a coordinator phase is interrupted, a phase-level
+    /// fault is injected, or the backend fails while preparing or computing.
+    pub fn run_group_chromosomes(
+        &mut self,
+        input: &EngineGroupRunInput<'_>,
+    ) -> Result<EngineGroupRunReport, EngineError> {
+        self.run_group_chromosomes_with_effects(input, &mut NoopEngineRunEffects)
+    }
+
+    /// Execute one group through a sequence of chromosomes and genotype batches
+    /// with explicit native side-effect hooks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a phase transition, side-effect hook, or backend
+    /// operation fails.
+    pub fn run_group_chromosomes_with_effects<Effects>(
+        &mut self,
+        input: &EngineGroupRunInput<'_>,
+        effects: &mut Effects,
+    ) -> Result<EngineGroupRunReport, EngineError>
+    where
+        Effects: EngineRunEffects,
+    {
         self.enter_phase(RunPhase::InputsOpened, effects)?;
         effects.open_inputs().map_err(|source| {
             self.record_effect_error(RunPhase::InputsOpened, EngineEffectOperation::InputOpen, source, effects)
@@ -316,27 +396,33 @@ where
                 return Err(self.record_backend_error(RunPhase::Running, source));
             }
         };
-        let chromosome_state = match self.backend.prepare_chromosome(&group_state, input.chromosome, input.predictions)
-        {
-            Ok(chromosome_state) => chromosome_state,
-            Err(source) => {
-                Self::abort_outputs_after_failure(RunPhase::Running, effects);
-                return Err(self.record_backend_error(RunPhase::Running, source));
-            }
-        };
-        let mut results = Vec::with_capacity(input.batches.len());
-        for batch in &input.batches {
-            let result = match self.backend.compute_batch(&chromosome_state, *batch) {
-                Ok(result) => result,
+        let result_count = input.chromosomes.iter().map(|chromosome| chromosome.batches.len()).sum();
+        let mut results = Vec::with_capacity(result_count);
+        for chromosome_input in &input.chromosomes {
+            let chromosome_state = match self.backend.prepare_chromosome(
+                &group_state,
+                chromosome_input.chromosome,
+                chromosome_input.predictions,
+            ) {
+                Ok(chromosome_state) => chromosome_state,
                 Err(source) => {
                     Self::abort_outputs_after_failure(RunPhase::Running, effects);
                     return Err(self.record_backend_error(RunPhase::Running, source));
                 }
             };
-            effects.write_batch_result(&result).map_err(|source| {
-                self.record_effect_error(RunPhase::Running, EngineEffectOperation::OutputWrite, source, effects)
-            })?;
-            results.push(result);
+            for batch in &chromosome_input.batches {
+                let result = match self.backend.compute_batch(&chromosome_state, *batch) {
+                    Ok(result) => result,
+                    Err(source) => {
+                        Self::abort_outputs_after_failure(RunPhase::Running, effects);
+                        return Err(self.record_backend_error(RunPhase::Running, source));
+                    }
+                };
+                effects.write_batch_result(&result).map_err(|source| {
+                    self.record_effect_error(RunPhase::Running, EngineEffectOperation::OutputWrite, source, effects)
+                })?;
+                results.push(result);
+            }
         }
 
         self.enter_phase(RunPhase::Draining, effects)?;
@@ -349,7 +435,7 @@ where
         })?;
         self.enter_phase(RunPhase::Completed, effects)?;
 
-        Ok(EngineChromosomeRunReport::new(self.phase_history.clone(), results))
+        Ok(EngineGroupRunReport::new(self.phase_history.clone(), results))
     }
 }
 
@@ -381,6 +467,24 @@ mod tests {
         )
     }
 
+    fn build_group_input() -> EngineGroupRunInput<'static> {
+        EngineGroupRunInput::new(
+            PreparedGroupInput::new("binary".to_string(), 2),
+            vec![
+                EngineGroupChromosomeInput::new(
+                    "chr2",
+                    PredictionView::new("chr2", 5),
+                    vec![GenotypeBatchView::new("chr2", 4, 3), GenotypeBatchView::new("chr2", 2, 7)],
+                ),
+                EngineGroupChromosomeInput::new(
+                    "chr3",
+                    PredictionView::new("chr3", 8),
+                    vec![GenotypeBatchView::new("chr3", 3, 1)],
+                ),
+            ],
+        )
+    }
+
     #[test]
     fn coordinator_executes_tiny_run_with_fake_backend() {
         let mut coordinator = EngineCoordinator::new(FakeBackend::succeed());
@@ -404,6 +508,25 @@ mod tests {
         assert_eq!(report.result.chromosome, "chr2");
         assert_eq!(report.result.variant_count, 4);
         assert_eq!(report.result.statistic_sum.to_bits(), 20.0_f64.to_bits());
+        assert_eq!(coordinator.phase(), RunPhase::Completed);
+    }
+
+    #[test]
+    fn coordinator_executes_group_chromosomes_with_fake_backend() {
+        let mut coordinator = EngineCoordinator::new(FakeBackend::succeed());
+        let mut effects = FakeEngineRunEffects::succeed();
+
+        let report = coordinator.run_group_chromosomes_with_effects(&build_group_input(), &mut effects).unwrap();
+
+        assert_eq!(report.results.len(), 3);
+        assert_eq!(report.results[0].chromosome, "chr2");
+        assert_eq!(report.results[0].statistic_sum.to_bits(), 20.0_f64.to_bits());
+        assert_eq!(report.results[1].chromosome, "chr2");
+        assert_eq!(report.results[1].statistic_sum.to_bits(), 20.0_f64.to_bits());
+        assert_eq!(report.results[2].chromosome, "chr3");
+        assert_eq!(report.results[2].statistic_sum.to_bits(), 19.0_f64.to_bits());
+        assert_eq!(effects.state().output.written_results, report.results);
+        assert_eq!(effects.state().output.lifecycle_state, FakeOutputLifecycleState::Finalized);
         assert_eq!(coordinator.phase(), RunPhase::Completed);
     }
 

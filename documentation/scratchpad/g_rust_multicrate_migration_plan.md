@@ -1265,6 +1265,9 @@ Remove Python as the chunk-level scheduler.
 - The native coordinator scaffold now supports one chromosome with multiple
   genotype batches, preparing Python-backed group/chromosome state once and
   calling the Python association backend only at the typed per-batch boundary.
+- The native coordinator scaffold now supports one phenotype group spanning
+  multiple chromosomes, preparing Python-backed group state once and keeping
+  Python calls at typed chromosome-prepare and batch-compute boundaries.
 - Dosage callback batch partitioning now uses an explicit `g-engine` chunk
   batch plan; the PyO3 BGEN delivery loop consumes native-planned batches
   instead of deciding flush boundaries itself.
