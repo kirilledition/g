@@ -3000,16 +3000,27 @@ def build_native_dispatch_pipeline_finished_diagnostic_payload(
     final_parquet_path_count: int,
     pipeline_label: str,
 ) -> dict[str, object]: ...
+def record_native_dispatch_callback_drain_started_diagnostic_event() -> None: ...
 def build_native_dispatch_writer_session_finish_started_diagnostic_payload() -> dict[str, object]: ...
+def record_native_dispatch_writer_session_finish_started_diagnostic_event() -> None: ...
 def build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
     requested_thread_count: int,
     writer_session_count: int,
 ) -> dict[str, object]: ...
+def record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
+    requested_thread_count: int,
+    writer_session_count: int,
+) -> None: ...
 def build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(
     signal_exit_code: int,
     signal_name: str,
     signal_number: int,
 ) -> dict[str, object]: ...
+def record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
+    signal_exit_code: int,
+    signal_name: str,
+    signal_number: int,
+) -> None: ...
 def build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
     requested_thread_count: int,
     signal_exit_code: int,
@@ -3017,6 +3028,13 @@ def build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_p
     signal_number: int,
     writer_session_count: int,
 ) -> dict[str, object]: ...
+def record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
+    requested_thread_count: int,
+    signal_exit_code: int,
+    signal_name: str,
+    signal_number: int,
+    writer_session_count: int,
+) -> None: ...
 def build_runner_run_started_diagnostic_payload(
     association_mode: str,
     trait_type: str,

@@ -1028,6 +1028,41 @@ def test_finish_writer_sessions_uses_bounded_concurrent_pool() -> None:
     assert maximum_active_finish_count == 2
 
 
+def test_finish_writer_sessions_records_native_lifecycle_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
+    diagnostic_calls: list[dict[str, int]] = []
+
+    def record_writer_sessions_finish_started(
+        *,
+        requested_thread_count: int,
+        writer_session_count: int,
+    ) -> None:
+        diagnostic_calls.append(
+            {
+                "requested_thread_count": requested_thread_count,
+                "writer_session_count": writer_session_count,
+            }
+        )
+
+    class FinishedWriterSession:
+        def finish(self) -> str:
+            return "results/trait-a.parquet"
+
+    monkeypatch.setattr(
+        native_dispatch_writers._core,
+        "record_native_dispatch_writer_sessions_finish_started_diagnostic_event",
+        record_writer_sessions_finish_started,
+    )
+
+    final_parquet_paths = native_dispatch_writers.finish_writer_sessions(
+        writer_sessions=(FinishedWriterSession(),),
+        writer_finish_thread_count=4,
+        stage_timing_recorder=None,
+    )
+
+    assert final_parquet_paths == (Path("results/trait-a.parquet"),)
+    assert diagnostic_calls == [{"requested_thread_count": 4, "writer_session_count": 1}]
+
+
 def test_resolve_writer_finish_thread_count_uses_native_cleanup_policy() -> None:
     assert native_dispatch_writers.resolve_writer_finish_thread_count(0, 0) == 0
     assert native_dispatch_writers.resolve_writer_finish_thread_count(3, 2) == 2

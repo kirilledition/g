@@ -1,9 +1,13 @@
 //! PyO3 adapters for runtime-owned run lifecycle events.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
+use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 
 use g_runtime::run_events as native_run_events;
+
+use super::logging;
 
 #[pyfunction]
 pub fn build_run_completed_event_payload<'py>(
@@ -766,6 +770,12 @@ pub fn build_native_dispatch_callback_drain_started_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_native_dispatch_callback_drain_started_diagnostic_event() -> PyResult<()> {
+    let payload = native_run_events::build_native_dispatch_callback_drain_started_diagnostic_payload();
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_native_dispatch_delivery_started_diagnostic_payload<'py>(
     py: Python<'py>,
     committed_chunk_count: i64,
@@ -847,6 +857,12 @@ pub fn build_native_dispatch_writer_session_finish_started_diagnostic_payload<'p
 }
 
 #[pyfunction]
+pub fn record_native_dispatch_writer_session_finish_started_diagnostic_event() -> PyResult<()> {
+    let payload = native_run_events::build_native_dispatch_writer_session_finish_started_diagnostic_payload();
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_native_dispatch_writer_sessions_finish_started_diagnostic_payload<'py>(
     py: Python<'py>,
     requested_thread_count: i64,
@@ -857,6 +873,18 @@ pub fn build_native_dispatch_writer_sessions_finish_started_diagnostic_payload<'
         writer_session_count,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
+    requested_thread_count: i64,
+    writer_session_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
+        requested_thread_count,
+        writer_session_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
@@ -872,6 +900,20 @@ pub fn build_native_dispatch_writer_session_interrupted_flush_started_diagnostic
         signal_number,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
+    signal_exit_code: i64,
+    signal_name: &str,
+    signal_number: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(
+        signal_exit_code,
+        signal_name,
+        signal_number,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
@@ -891,6 +933,24 @@ pub fn build_native_dispatch_writer_sessions_interrupted_flush_started_diagnosti
         writer_session_count,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
+    requested_thread_count: i64,
+    signal_exit_code: i64,
+    signal_name: &str,
+    signal_number: i64,
+    writer_session_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
+        requested_thread_count,
+        signal_exit_code,
+        signal_name,
+        signal_number,
+        writer_session_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
@@ -1085,6 +1145,38 @@ fn run_diagnostic_fields_to_py_dict<'py>(
         }
     }
     Ok(payload)
+}
+
+fn emit_run_diagnostic_event_payload(event: &native_run_events::RunDiagnosticEventPayload) -> PyResult<()> {
+    logging::emit_diagnostic_event(
+        event.level,
+        event.event_name,
+        &event.message,
+        Some(run_diagnostic_fields_to_json_text(&event.fields)?),
+    )
+}
+
+fn run_diagnostic_fields_to_json_text(fields: &[native_run_events::RunDiagnosticFieldPayload]) -> PyResult<String> {
+    let mut payload = JsonMap::new();
+    for field in fields {
+        payload.insert(field.name.to_string(), run_diagnostic_field_value_to_json_value(&field.value));
+    }
+    serde_json::to_string(&JsonValue::Object(payload))
+        .map_err(|error| PyValueError::new_err(format!("Failed to serialize diagnostic event fields: {error}")))
+}
+
+fn run_diagnostic_field_value_to_json_value(value: &native_run_events::RunDiagnosticFieldValue) -> JsonValue {
+    match value {
+        native_run_events::RunDiagnosticFieldValue::Boolean(value) => JsonValue::Bool(*value),
+        native_run_events::RunDiagnosticFieldValue::Integer(value) => JsonValue::Number(JsonNumber::from(*value)),
+        native_run_events::RunDiagnosticFieldValue::OptionalInteger(value) => {
+            value.map(JsonNumber::from).map_or(JsonValue::Null, JsonValue::Number)
+        }
+        native_run_events::RunDiagnosticFieldValue::OptionalText(value) => {
+            value.as_ref().map_or(JsonValue::Null, |value| JsonValue::String(value.clone()))
+        }
+        native_run_events::RunDiagnosticFieldValue::Text(value) => JsonValue::String(value.clone()),
+    }
 }
 
 pub(crate) fn run_completed_telemetry_fields_to_py_dict<'py>(

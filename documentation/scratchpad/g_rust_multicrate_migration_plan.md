@@ -1512,6 +1512,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   now use native run-event diagnostic payload builders.
 - Native-dispatch callback drain and writer finalization diagnostics now use
   native run-event diagnostic payload builders.
+- Native-dispatch callback drain and writer finalization production paths now
+  call native diagnostic recorders directly, leaving Python payload dict
+  materialization only for compatibility helpers and tests.
 - Native-dispatch delivery lifecycle diagnostics now use native run-event
   diagnostic payload builders.
 - GPU genotype-format auto-resolution diagnostics now use native run-event
