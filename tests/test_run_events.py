@@ -543,6 +543,102 @@ def test_pipeline_multi_phenotype_sample_summary_diagnostic_payload_uses_native_
     )
 
 
+def test_pipeline_multi_trait_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_pipeline_multi_trait_started_diagnostic_payload(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype_count=2,
+        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+    ) == {
+        "level": "info",
+        "event_name": "pipeline_multi_trait_started",
+        "message": "Starting multi-phenotype REGENIE step 2 BGEN pipeline.",
+        "fields": {
+            "association_mode": "regenie2_linear",
+            "phenotype_count": 2,
+            "sample_mode": "complete-case",
+        },
+    }
+    assert run_events.build_pipeline_multi_trait_input_load_started_diagnostic_payload(
+        phenotype_count=2,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_multi_trait_input_load_started",
+        "message": "Loading aligned native sample, phenotype, and covariate inputs for multi-phenotype pipeline.",
+        "fields": {
+            "phenotype_count": 2,
+        },
+    }
+    assert run_events.build_pipeline_multi_trait_input_aligned_diagnostic_payload(
+        covariate_count=3,
+        phenotype_count=2,
+        sample_count=4,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_multi_trait_input_aligned",
+        "message": "Aligned multi-phenotype pipeline inputs: sample_count=4 phenotype_count=2 covariate_count=3.",
+        "fields": {
+            "covariate_count": 3,
+            "phenotype_count": 2,
+            "sample_count": 4,
+        },
+    }
+    assert run_events.build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
+        phenotype_count=2,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_multi_trait_prediction_source_load_started",
+        "message": "Loading REGENIE prediction source for multi-phenotype pipeline.",
+        "fields": {
+            "phenotype_count": 2,
+        },
+    }
+
+
+def test_pipeline_grouped_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        phenotype_count=2,
+        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+    ) == {
+        "level": "info",
+        "event_name": "pipeline_grouped_per_phenotype_started",
+        "message": "Starting grouped per-phenotype REGENIE step 2 BGEN pipeline.",
+        "fields": {
+            "association_mode": "regenie2_binary",
+            "phenotype_count": 2,
+            "sample_mode": "per-phenotype",
+        },
+    }
+    assert run_events.build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
+        phenotype_count=2,
+        phenotype_group_count=1,
+    ) == {
+        "level": "info",
+        "event_name": "pipeline_grouped_per_phenotype_groups_prepared",
+        "message": "Prepared 1 compatible per-phenotype group(s) for 2 phenotype(s).",
+        "fields": {
+            "phenotype_count": 2,
+            "phenotype_group_count": 1,
+        },
+    }
+    assert run_events.build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
+        grouped_sample_count=6,
+        phenotype_group_count=2,
+        union_sample_count=4,
+    ) == {
+        "level": "info",
+        "event_name": "pipeline_grouped_union_delivery_selected",
+        "message": (
+            "Using union per-phenotype BGEN delivery: group_count=2 union_sample_count=4 grouped_sample_count=6."
+        ),
+        "fields": {
+            "grouped_sample_count": 6,
+            "phenotype_group_count": 2,
+            "union_sample_count": 4,
+        },
+    }
+
+
 def test_pipeline_multi_group_preflight_diagnostic_payloads_use_native_builders() -> None:
     assert run_events.build_pipeline_multi_group_preflight_started_diagnostic_payload(
         phenotype_count=2,

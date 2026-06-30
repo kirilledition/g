@@ -381,6 +381,99 @@ pub fn build_pipeline_multi_phenotype_sample_summary_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn build_pipeline_multi_trait_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    association_mode: &str,
+    phenotype_count: i64,
+    sample_mode: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_multi_trait_started_diagnostic_payload(
+        association_mode,
+        phenotype_count,
+        sample_mode,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_multi_trait_input_load_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_multi_trait_input_load_started_diagnostic_payload(phenotype_count);
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_multi_trait_input_aligned_diagnostic_payload<'py>(
+    py: Python<'py>,
+    covariate_count: i64,
+    phenotype_count: i64,
+    sample_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_multi_trait_input_aligned_diagnostic_payload(
+        covariate_count,
+        phenotype_count,
+        sample_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
+        phenotype_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_grouped_per_phenotype_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    association_mode: &str,
+    phenotype_count: i64,
+    sample_mode: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
+        association_mode,
+        phenotype_count,
+        sample_mode,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_count: i64,
+    phenotype_group_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
+        phenotype_count,
+        phenotype_group_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_grouped_union_delivery_selected_diagnostic_payload<'py>(
+    py: Python<'py>,
+    grouped_sample_count: i64,
+    phenotype_group_count: i64,
+    union_sample_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
+        grouped_sample_count,
+        phenotype_group_count,
+        union_sample_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_multi_group_preflight_started_diagnostic_payload<'py>(
     py: Python<'py>,
     phenotype_count: i64,

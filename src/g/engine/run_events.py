@@ -534,6 +534,108 @@ def build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
     )
 
 
+def build_pipeline_multi_trait_started_diagnostic_payload(
+    *,
+    association_mode: types.AssociationMode,
+    phenotype_count: int,
+    sample_mode: types.MultiPhenotypeSampleMode,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for multi-trait pipeline start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_multi_trait_started_diagnostic_payload(
+            association_mode.value,
+            phenotype_count,
+            sample_mode.value,
+        )
+    )
+
+
+def build_pipeline_multi_trait_input_load_started_diagnostic_payload(
+    *,
+    phenotype_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for multi-trait input loading start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_multi_trait_input_load_started_diagnostic_payload(
+            phenotype_count,
+        )
+    )
+
+
+def build_pipeline_multi_trait_input_aligned_diagnostic_payload(
+    *,
+    covariate_count: int,
+    phenotype_count: int,
+    sample_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for multi-trait input alignment."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_multi_trait_input_aligned_diagnostic_payload(
+            covariate_count,
+            phenotype_count,
+            sample_count,
+        )
+    )
+
+
+def build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
+    *,
+    phenotype_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for multi-trait prediction-source loading start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
+            phenotype_count,
+        )
+    )
+
+
+def build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
+    *,
+    association_mode: types.AssociationMode,
+    phenotype_count: int,
+    sample_mode: types.MultiPhenotypeSampleMode,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for grouped per-phenotype pipeline start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
+            association_mode.value,
+            phenotype_count,
+            sample_mode.value,
+        )
+    )
+
+
+def build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
+    *,
+    phenotype_count: int,
+    phenotype_group_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for grouped per-phenotype group preparation."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
+            phenotype_count,
+            phenotype_group_count,
+        )
+    )
+
+
+def build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
+    *,
+    grouped_sample_count: int,
+    phenotype_group_count: int,
+    union_sample_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for grouped union delivery selection."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
+            grouped_sample_count,
+            phenotype_group_count,
+            union_sample_count,
+        )
+    )
+
+
 def build_pipeline_multi_group_preflight_started_diagnostic_payload(
     *,
     phenotype_count: int,

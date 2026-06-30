@@ -6,7 +6,7 @@ import time
 import typing
 
 from g import _core, execution_plan, types
-from g.engine import telemetry, timing
+from g.engine import run_events, telemetry, timing
 from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
@@ -22,14 +22,14 @@ if typing.TYPE_CHECKING:
     from g.io import source
 
 
-def emit_multi_trait_diagnostic_event(
-    level: str,
-    event: str,
-    message: str,
-    fields: typing.Mapping[str, object],
-) -> None:
-    """Emit one structured multi-trait pipeline diagnostic through native tracing."""
-    _core.emit_diagnostic_event_fields(level, event, message, fields)
+def emit_multi_trait_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
+    """Emit one multi-trait pipeline diagnostic payload through native tracing."""
+    _core.emit_diagnostic_event_fields(
+        str(payload["level"]),
+        str(payload["event_name"]),
+        str(payload["message"]),
+        typing.cast("typing.Mapping[str, object]", payload["fields"]),
+    )
 
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(
@@ -297,15 +297,12 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     if sample_mode != types.MultiPhenotypeSampleMode.COMPLETE_CASE:
         message = "Multi-phenotype sample mode must be per-phenotype or complete-case."
         raise ValueError(message)
-    emit_multi_trait_diagnostic_event(
-        "info",
-        "pipeline_multi_trait_started",
-        "Starting multi-phenotype REGENIE step 2 BGEN pipeline.",
-        {
-            "association_mode": context.association_mode.value,
-            "phenotype_count": len(phenotype_names),
-            "sample_mode": sample_mode.value,
-        },
+    emit_multi_trait_diagnostic_event_payload(
+        run_events.build_pipeline_multi_trait_started_diagnostic_payload(
+            association_mode=context.association_mode,
+            phenotype_count=len(phenotype_names),
+            sample_mode=sample_mode,
+        )
     )
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     planned_compute_group = pipeline_context.require_complete_case_compute_group(context.phenotype_compute_groups)
@@ -316,13 +313,10 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_count=len(planned_compute_group.phenotype_names),
     )
     alignment_start_time = time.perf_counter()
-    emit_multi_trait_diagnostic_event(
-        "debug",
-        "pipeline_multi_trait_input_load_started",
-        "Loading aligned native sample, phenotype, and covariate inputs for multi-phenotype pipeline.",
-        {
-            "phenotype_count": len(planned_compute_group.phenotype_names),
-        },
+    emit_multi_trait_diagnostic_event_payload(
+        run_events.build_pipeline_multi_trait_input_load_started_diagnostic_payload(
+            phenotype_count=len(planned_compute_group.phenotype_names),
+        )
     )
     run_input = native_dispatch_loaders.load_native_bgen_multi_run_input(
         genotype_source_config=context.genotype_source_config,
@@ -346,16 +340,12 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     sample_count = int(run_input.sample_indices.shape[0])
     phenotype_count = len(run_input.phenotype_names)
     covariate_count = len(run_input.native_multi_aligned_sample_data.covariate_names)
-    emit_multi_trait_diagnostic_event(
-        "debug",
-        "pipeline_multi_trait_input_aligned",
-        f"Aligned multi-phenotype pipeline inputs: sample_count={sample_count} "
-        f"phenotype_count={phenotype_count} covariate_count={covariate_count}.",
-        {
-            "covariate_count": covariate_count,
-            "phenotype_count": phenotype_count,
-            "sample_count": sample_count,
-        },
+    emit_multi_trait_diagnostic_event_payload(
+        run_events.build_pipeline_multi_trait_input_aligned_diagnostic_payload(
+            covariate_count=covariate_count,
+            phenotype_count=phenotype_count,
+            sample_count=sample_count,
+        )
     )
     telemetry_events.log_sample_alignment_completed(
         context=context,
@@ -375,13 +365,10 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_group_count=1,
     )
     prediction_start_time = time.perf_counter()
-    emit_multi_trait_diagnostic_event(
-        "debug",
-        "pipeline_multi_trait_prediction_source_load_started",
-        "Loading REGENIE prediction source for multi-phenotype pipeline.",
-        {
-            "phenotype_count": phenotype_count,
-        },
+    emit_multi_trait_diagnostic_event_payload(
+        run_events.build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
+            phenotype_count=phenotype_count,
+        )
     )
     prediction_source = native_dispatch_loaders.build_multi_regenie_prediction_source(
         prediction_list_path=context.prediction_list_path,

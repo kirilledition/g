@@ -42,6 +42,17 @@ pub const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_ou
 pub const PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_gpu_genotype_format_resolved";
 pub const PIPELINE_MULTI_PHENOTYPE_SAMPLE_SUMMARY_DIAGNOSTIC_EVENT_NAME: &str =
     "pipeline_multi_phenotype_sample_summary";
+pub const PIPELINE_MULTI_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_started";
+pub const PIPELINE_MULTI_TRAIT_INPUT_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_multi_trait_input_load_started";
+pub const PIPELINE_MULTI_TRAIT_INPUT_ALIGNED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_input_aligned";
+pub const PIPELINE_MULTI_TRAIT_PREDICTION_SOURCE_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_multi_trait_prediction_source_load_started";
+pub const PIPELINE_GROUPED_PER_PHENOTYPE_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_grouped_per_phenotype_started";
+pub const PIPELINE_GROUPED_PER_PHENOTYPE_GROUPS_PREPARED_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_grouped_per_phenotype_groups_prepared";
+pub const PIPELINE_GROUPED_UNION_DELIVERY_SELECTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_grouped_union_delivery_selected";
 pub const PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_group_preflight_started";
 pub const PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Running preflight validation for multi-phenotype pipeline.";
@@ -795,6 +806,127 @@ pub fn build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
             integer_diagnostic_field("phenotype_group_count", phenotype_group_count),
             boolean_diagnostic_field("sample_counts_differ", sample_counts_differ),
             text_diagnostic_field("sample_mode", sample_mode),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_multi_trait_started_diagnostic_payload(
+    association_mode: &str,
+    phenotype_count: i64,
+    sample_mode: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: PIPELINE_MULTI_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: "Starting multi-phenotype REGENIE step 2 BGEN pipeline.".to_string(),
+        fields: vec![
+            text_diagnostic_field("association_mode", association_mode),
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            text_diagnostic_field("sample_mode", sample_mode),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_multi_trait_input_load_started_diagnostic_payload(
+    phenotype_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_MULTI_TRAIT_INPUT_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: "Loading aligned native sample, phenotype, and covariate inputs for multi-phenotype pipeline."
+            .to_string(),
+        fields: vec![integer_diagnostic_field("phenotype_count", phenotype_count)],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_multi_trait_input_aligned_diagnostic_payload(
+    covariate_count: i64,
+    phenotype_count: i64,
+    sample_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_MULTI_TRAIT_INPUT_ALIGNED_DIAGNOSTIC_EVENT_NAME,
+        message: format!(
+            "Aligned multi-phenotype pipeline inputs: sample_count={sample_count} \
+             phenotype_count={phenotype_count} covariate_count={covariate_count}."
+        ),
+        fields: vec![
+            integer_diagnostic_field("covariate_count", covariate_count),
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            integer_diagnostic_field("sample_count", sample_count),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
+    phenotype_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_MULTI_TRAIT_PREDICTION_SOURCE_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: "Loading REGENIE prediction source for multi-phenotype pipeline.".to_string(),
+        fields: vec![integer_diagnostic_field("phenotype_count", phenotype_count)],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
+    association_mode: &str,
+    phenotype_count: i64,
+    sample_mode: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: PIPELINE_GROUPED_PER_PHENOTYPE_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: "Starting grouped per-phenotype REGENIE step 2 BGEN pipeline.".to_string(),
+        fields: vec![
+            text_diagnostic_field("association_mode", association_mode),
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            text_diagnostic_field("sample_mode", sample_mode),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
+    phenotype_count: i64,
+    phenotype_group_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: PIPELINE_GROUPED_PER_PHENOTYPE_GROUPS_PREPARED_DIAGNOSTIC_EVENT_NAME,
+        message: format!(
+            "Prepared {phenotype_group_count} compatible per-phenotype group(s) for {phenotype_count} phenotype(s)."
+        ),
+        fields: vec![
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            integer_diagnostic_field("phenotype_group_count", phenotype_group_count),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
+    grouped_sample_count: i64,
+    phenotype_group_count: i64,
+    union_sample_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: PIPELINE_GROUPED_UNION_DELIVERY_SELECTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!(
+            "Using union per-phenotype BGEN delivery: group_count={phenotype_group_count} \
+             union_sample_count={union_sample_count} grouped_sample_count={grouped_sample_count}."
+        ),
+        fields: vec![
+            integer_diagnostic_field("grouped_sample_count", grouped_sample_count),
+            integer_diagnostic_field("phenotype_group_count", phenotype_group_count),
+            integer_diagnostic_field("union_sample_count", union_sample_count),
         ],
     }
 }
@@ -1850,6 +1982,44 @@ mod tests {
             "Analyzed 2 phenotypes in per-phenotype sample mode; sample counts differ across phenotypes."
         );
         assert_eq!(per_phenotype_payload.fields[1].value, RunDiagnosticFieldValue::Integer(2));
+    }
+
+    #[test]
+    fn builds_pipeline_multi_trait_diagnostic_payloads() {
+        let started_payload =
+            build_pipeline_multi_trait_started_diagnostic_payload("regenie2_linear", 2, "complete-case");
+        let input_payload = build_pipeline_multi_trait_input_load_started_diagnostic_payload(2);
+        let aligned_payload = build_pipeline_multi_trait_input_aligned_diagnostic_payload(3, 2, 4);
+        let prediction_payload = build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(2);
+
+        assert_eq!(started_payload.event_name, "pipeline_multi_trait_started");
+        assert_eq!(started_payload.message, "Starting multi-phenotype REGENIE step 2 BGEN pipeline.");
+        assert_eq!(input_payload.event_name, "pipeline_multi_trait_input_load_started");
+        assert_eq!(aligned_payload.fields[0].value, RunDiagnosticFieldValue::Integer(3));
+        assert_eq!(
+            aligned_payload.message,
+            "Aligned multi-phenotype pipeline inputs: sample_count=4 phenotype_count=2 covariate_count=3."
+        );
+        assert_eq!(prediction_payload.event_name, "pipeline_multi_trait_prediction_source_load_started");
+    }
+
+    #[test]
+    fn builds_pipeline_grouped_diagnostic_payloads() {
+        let started_payload =
+            build_pipeline_grouped_per_phenotype_started_diagnostic_payload("regenie2_binary", 2, "per-phenotype");
+        let prepared_payload = build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(2, 1);
+        let union_payload = build_pipeline_grouped_union_delivery_selected_diagnostic_payload(6, 2, 4);
+
+        assert_eq!(started_payload.event_name, "pipeline_grouped_per_phenotype_started");
+        assert_eq!(started_payload.message, "Starting grouped per-phenotype REGENIE step 2 BGEN pipeline.");
+        assert_eq!(prepared_payload.event_name, "pipeline_grouped_per_phenotype_groups_prepared");
+        assert_eq!(prepared_payload.message, "Prepared 1 compatible per-phenotype group(s) for 2 phenotype(s).");
+        assert_eq!(union_payload.event_name, "pipeline_grouped_union_delivery_selected");
+        assert_eq!(union_payload.fields[0].value, RunDiagnosticFieldValue::Integer(6));
+        assert_eq!(
+            union_payload.message,
+            "Using union per-phenotype BGEN delivery: group_count=2 union_sample_count=4 grouped_sample_count=6."
+        );
     }
 
     #[test]

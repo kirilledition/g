@@ -2862,6 +2862,36 @@ def build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
     sample_counts_differ: bool,
     sample_mode: str,
 ) -> dict[str, object]: ...
+def build_pipeline_multi_trait_started_diagnostic_payload(
+    association_mode: str,
+    phenotype_count: int,
+    sample_mode: str,
+) -> dict[str, object]: ...
+def build_pipeline_multi_trait_input_load_started_diagnostic_payload(
+    phenotype_count: int,
+) -> dict[str, object]: ...
+def build_pipeline_multi_trait_input_aligned_diagnostic_payload(
+    covariate_count: int,
+    phenotype_count: int,
+    sample_count: int,
+) -> dict[str, object]: ...
+def build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
+    phenotype_count: int,
+) -> dict[str, object]: ...
+def build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
+    association_mode: str,
+    phenotype_count: int,
+    sample_mode: str,
+) -> dict[str, object]: ...
+def build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
+    phenotype_count: int,
+    phenotype_group_count: int,
+) -> dict[str, object]: ...
+def build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
+    grouped_sample_count: int,
+    phenotype_group_count: int,
+    union_sample_count: int,
+) -> dict[str, object]: ...
 def build_pipeline_multi_group_preflight_started_diagnostic_payload(
     phenotype_count: int,
     sample_count: int,
