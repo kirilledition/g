@@ -526,6 +526,11 @@ def test_native_runtime_state_plans_rayon_thread_pool_configuration() -> None:
     assert configure_plan.thread_count == 4
     assert skip_plan.should_configure is False
     assert skip_plan.thread_count is None
+    configured_skip_plan = runtime_state.configure_rayon_thread_pool(4)
+    assert configured_skip_plan.should_configure is False
+    assert configured_skip_plan.thread_count is None
+    with pytest.raises(ValueError, match="Rayon thread count must be positive"):
+        _core.NativeRuntimeState().configure_rayon_thread_pool(0)
     with pytest.raises(RuntimeError, match="Rayon --threads is process-global"):
         runtime_state.plan_rayon_thread_pool_configuration(8)
 

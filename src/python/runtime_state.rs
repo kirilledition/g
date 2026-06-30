@@ -6,6 +6,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 
+use g_runtime::rayon_runtime as native_rayon_runtime;
 use g_runtime::runtime_policy as native_runtime_policy;
 use g_runtime::runtime_state as native_runtime_state;
 
@@ -231,6 +232,14 @@ impl NativeRuntimeState {
         Ok(NativeRayonThreadPoolConfigurationPlan { inner: plan })
     }
 
+    fn configure_rayon_thread_pool(&self, thread_count: i64) -> PyResult<NativeRayonThreadPoolConfigurationPlan> {
+        let plan = self
+            .lock_state()?
+            .configure_rayon_thread_pool(thread_count)
+            .map_err(|error| rayon_thread_pool_configuration_error_to_py(&error))?;
+        Ok(NativeRayonThreadPoolConfigurationPlan { inner: plan })
+    }
+
     fn effective_rayon_thread_count(&self, requested_thread_count: Option<i64>) -> PyResult<Option<i64>> {
         Ok(self.lock_state()?.effective_rayon_thread_count(requested_thread_count))
     }
@@ -302,6 +311,22 @@ fn parse_logging_runtime_policy_payload(
         trace_filter: payload.get_item("trace_filter")?.extract::<String>()?,
         trace_event_cap: extract_optional_i64(&payload.get_item("trace_event_cap")?)?,
     })
+}
+
+fn rayon_thread_pool_configuration_error_to_py(
+    error: &native_runtime_state::RayonThreadPoolConfigurationError,
+) -> PyErr {
+    let message = error.to_string();
+    match error {
+        native_runtime_state::RayonThreadPoolConfigurationError::RuntimeConfiguration {
+            source: native_rayon_runtime::RayonRuntimeError::InvalidThreadCount,
+            ..
+        } => PyValueError::new_err(message),
+        native_runtime_state::RayonThreadPoolConfigurationError::RuntimeCompatibility(_)
+        | native_runtime_state::RayonThreadPoolConfigurationError::RuntimeConfiguration { .. } => {
+            PyRuntimeError::new_err(message)
+        }
+    }
 }
 
 fn extract_optional_string(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {

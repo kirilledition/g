@@ -1207,6 +1207,8 @@ Remove Python as the chunk-level scheduler.
   of Python logging.
 - Legacy output-run resume diagnostics now route through the native diagnostic
   emitter instead of Python logging.
+- Native process runtime state now owns Rayon global thread-pool configuration,
+  compatibility checks, error formatting, and configured-count recording.
 
 ### Tests
 

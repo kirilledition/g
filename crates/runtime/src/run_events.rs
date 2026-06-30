@@ -863,7 +863,7 @@ mod tests {
                 shared_sample_set: false,
             }
         );
-        assert_eq!(
+        assert!(
             build_multi_phenotype_sample_summary_telemetry_fields(
                 "regenie2_binary",
                 "complete-case",
@@ -871,8 +871,7 @@ mod tests {
                 &[Some("shared".to_string()), Some("shared".to_string())],
                 1,
             )
-            .shared_sample_set,
-            true,
+            .shared_sample_set
         );
     }
 

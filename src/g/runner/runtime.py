@@ -418,23 +418,9 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> t
     return multi_trait_pipeline_module.run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs)
 
 
-def configure_rayon_thread_pool(core_module: typing.Any, thread_count: int) -> None:
-    """Configure Rayon global thread count once and reject incompatible repeats."""
-    configuration_plan = PROCESS_RUNTIME_STATE.plan_rayon_thread_pool_configuration(thread_count)
-    if not configuration_plan.should_configure:
-        return
-    planned_thread_count = configuration_plan.thread_count
-    if planned_thread_count is None:
-        raise RuntimeError("Native Rayon configuration plan requested configuration without a thread count.")
-    try:
-        core_module.configure_rayon_global_thread_pool(planned_thread_count)
-    except RuntimeError as error:
-        message = core_module.format_rayon_thread_pool_configuration_error_value(
-            planned_thread_count,
-            str(error),
-        )
-        raise RuntimeError(message) from error
-    PROCESS_RUNTIME_STATE.record_rayon_thread_count(planned_thread_count)
+def configure_rayon_thread_pool(thread_count: int) -> None:
+    """Configure Rayon global thread count through the native process state."""
+    PROCESS_RUNTIME_STATE.configure_rayon_thread_pool(thread_count)
 
 
 def effective_rayon_thread_count(requested_thread_count: int | None) -> int | None:
@@ -459,7 +445,7 @@ def configure_runtime(compute_config: config.GComputeConfig, trait_config: confi
     )
     _core.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
     if trait_config.threads is not None:
-        configure_rayon_thread_pool(_core, trait_config.threads)
+        configure_rayon_thread_pool(trait_config.threads)
 
 
 def initialize_logging(

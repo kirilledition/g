@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::jax_runtime;
+use crate::rayon_runtime;
 use crate::runtime_policy::{LoggingRuntimePolicyPayload, describe_logging_runtime_policy};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,6 +84,12 @@ pub struct RuntimeCompatibilityError {
     message: String,
 }
 
+#[derive(Debug)]
+pub enum RayonThreadPoolConfigurationError {
+    RuntimeCompatibility(RuntimeCompatibilityError),
+    RuntimeConfiguration { thread_count: i64, source: rayon_runtime::RayonRuntimeError },
+}
+
 impl RuntimeCompatibilityError {
     #[must_use]
     pub fn new(message: String) -> Self {
@@ -97,6 +104,33 @@ impl fmt::Display for RuntimeCompatibilityError {
 }
 
 impl Error for RuntimeCompatibilityError {}
+
+impl fmt::Display for RayonThreadPoolConfigurationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RuntimeCompatibility(error) => error.fmt(formatter),
+            Self::RuntimeConfiguration { thread_count, source } => {
+                if matches!(source, rayon_runtime::RayonRuntimeError::InvalidThreadCount) {
+                    source.fmt(formatter)
+                } else {
+                    formatter.write_str(&rayon_runtime::format_global_rayon_thread_pool_configuration_error(
+                        *thread_count,
+                        &source.to_string(),
+                    ))
+                }
+            }
+        }
+    }
+}
+
+impl Error for RayonThreadPoolConfigurationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::RuntimeCompatibility(error) => Some(error),
+            Self::RuntimeConfiguration { source, .. } => Some(source),
+        }
+    }
+}
 
 impl ProcessRuntimeState {
     /// Require all process-global runtime settings to be compatible.
@@ -222,6 +256,33 @@ impl ProcessRuntimeState {
             return Ok(RayonThreadPoolConfigurationPlan { should_configure: false, thread_count: None });
         }
         Ok(RayonThreadPoolConfigurationPlan { should_configure: true, thread_count: Some(requested_thread_count) })
+    }
+
+    /// Configure the process-global Rayon thread pool and record the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request is incompatible with previous state or
+    /// Rayon rejects global thread-pool initialization for this process.
+    pub fn configure_rayon_thread_pool(
+        &mut self,
+        requested_thread_count: i64,
+    ) -> Result<RayonThreadPoolConfigurationPlan, RayonThreadPoolConfigurationError> {
+        let plan = self
+            .plan_rayon_thread_pool_configuration(requested_thread_count)
+            .map_err(RayonThreadPoolConfigurationError::RuntimeCompatibility)?;
+        let Some(thread_count) = plan.thread_count else {
+            return Ok(plan);
+        };
+        let runtime_thread_count =
+            usize::try_from(thread_count).map_err(|_| RayonThreadPoolConfigurationError::RuntimeConfiguration {
+                thread_count,
+                source: rayon_runtime::RayonRuntimeError::InvalidThreadCount,
+            })?;
+        rayon_runtime::configure_global_rayon_thread_pool(runtime_thread_count)
+            .map_err(|source| RayonThreadPoolConfigurationError::RuntimeConfiguration { thread_count, source })?;
+        self.record_rayon_thread_count(thread_count);
+        Ok(plan)
     }
 
     #[must_use]
@@ -399,6 +460,30 @@ mod tests {
             RayonThreadPoolConfigurationPlan { should_configure: false, thread_count: None },
         );
         assert!(state.plan_rayon_thread_pool_configuration(8).unwrap_err().to_string().contains("Rayon --threads"));
+    }
+
+    #[test]
+    fn configures_rayon_thread_pool_from_process_state() {
+        let mut state = ProcessRuntimeState::default();
+
+        let error = state.configure_rayon_thread_pool(0).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RayonThreadPoolConfigurationError::RuntimeConfiguration {
+                source: rayon_runtime::RayonRuntimeError::InvalidThreadCount,
+                ..
+            },
+        ));
+        assert_eq!(error.to_string(), "Rayon thread count must be positive.");
+
+        state.record_rayon_thread_count(4);
+        let skip_plan = state.configure_rayon_thread_pool(4).expect("matching configured count should skip setup");
+
+        assert_eq!(skip_plan, RayonThreadPoolConfigurationPlan { should_configure: false, thread_count: None });
+        assert!(
+            state.configure_rayon_thread_pool(8).unwrap_err().to_string().contains("Rayon --threads is process-global")
+        );
     }
 
     #[test]

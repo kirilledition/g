@@ -848,11 +848,13 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
 
-        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
+    class FakeProcessRuntimeState:
+        def configure_rayon_thread_pool(self, thread_count: int) -> object:
             calls.append(("threads", thread_count))
+            return object()
 
     with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()),
         patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.configure_runtime(
@@ -878,9 +880,6 @@ def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
 
-        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
-            calls.append(("threads", thread_count))
-
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
         patch("g.runner.runtime._core", FakeCoreModule()),
@@ -893,29 +892,18 @@ def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None
     assert calls == [("tile", 32)]
 
 
-def test_configure_runtime_uses_native_rayon_configuration_plan() -> None:
+def test_configure_runtime_delegates_rayon_configuration_to_native_state() -> None:
     calls: list[tuple[str, int | str]] = []
-    plan_calls: list[int] = []
-
-    class FakeRayonConfigurationPlan:
-        def __init__(self, *, should_configure: bool, thread_count: int | None) -> None:
-            self.should_configure = should_configure
-            self.thread_count = thread_count
+    configuration_calls: list[int] = []
 
     class FakeProcessRuntimeState:
-        def plan_rayon_thread_pool_configuration(self, thread_count: int) -> FakeRayonConfigurationPlan:
-            plan_calls.append(thread_count)
-            return FakeRayonConfigurationPlan(should_configure=False, thread_count=None)
-
-        def record_rayon_thread_count(self, thread_count: int) -> None:
-            raise AssertionError(f"unexpected Rayon thread-count recording: {thread_count}")
+        def configure_rayon_thread_pool(self, thread_count: int) -> object:
+            configuration_calls.append(thread_count)
+            return object()
 
     class FakeCoreModule(NativeDiagnosticCore):
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
-
-        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
-            calls.append(("threads", thread_count))
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()),
@@ -926,7 +914,7 @@ def test_configure_runtime_uses_native_rayon_configuration_plan() -> None:
             build_trait_config(threads=4),
         )
 
-    assert plan_calls == [4]
+    assert configuration_calls == [4]
     assert calls == [("tile", 32)]
 
 
@@ -936,9 +924,6 @@ def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -
     class FakeCoreModule(NativeDiagnosticCore):
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
-
-        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
-            calls.append(("threads", thread_count))
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
@@ -960,18 +945,16 @@ def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
 
-        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
+    class FakeProcessRuntimeState:
+        def configure_rayon_thread_pool(self, thread_count: int) -> object:
             calls.append(("threads", thread_count))
-            raise RuntimeError("global pool already initialized")
-
-        def format_rayon_thread_pool_configuration_error_value(self, thread_count: int, source_error: str) -> str:
-            return (
+            raise RuntimeError(
                 f"Unable to configure Rayon global thread pool for --threads={thread_count}; "
-                f"existing Rayon settings are unknown: {source_error}"
+                "existing Rayon settings are unknown: global pool already initialized"
             )
 
     with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()),
         patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Unable to configure Rayon global thread pool"),
     ):
