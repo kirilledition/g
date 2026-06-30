@@ -1469,6 +1469,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
   run-session close-with-event path when a native telemetry handle is present,
   keeping legacy `close_with_event` only for adapters and tests without native
   handles.
+- The default graceful-shutdown signal set now comes from `g-runtime`, so the
+  Python shutdown adapter no longer owns the CLI default signal policy.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

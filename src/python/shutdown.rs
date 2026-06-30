@@ -170,6 +170,11 @@ pub(crate) fn build_shutdown_signal_payload<'py>(py: Python<'py>, signal_number:
 }
 
 #[pyfunction]
+pub(crate) fn default_shutdown_signal_numbers() -> Vec<i32> {
+    native_shutdown::default_shutdown_signal_numbers()
+}
+
+#[pyfunction]
 pub(crate) fn plan_second_signal_exception(signal_number: i32) -> PyResult<NativeSecondSignalExceptionPlan> {
     let plan = native_shutdown::plan_second_signal_exception(signal_number).map_err(PyValueError::new_err)?;
     Ok(NativeSecondSignalExceptionPlan { inner: plan })

@@ -6,6 +6,7 @@ const SIGSTKFLT_NUMBER: i32 = 16;
 const SIGPWR_NUMBER: i32 = 30;
 const SIGRTMIN_NUMBER: i32 = 34;
 const SIGRTMAX_NUMBER: i32 = 64;
+const DEFAULT_SHUTDOWN_SIGNAL_NUMBERS: [i32; 2] = [signal::SIGINT, signal::SIGTERM];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShutdownSignalPayload {
@@ -151,6 +152,11 @@ impl ShutdownController {
     }
 }
 
+#[must_use]
+pub fn default_shutdown_signal_numbers() -> Vec<i32> {
+    DEFAULT_SHUTDOWN_SIGNAL_NUMBERS.to_vec()
+}
+
 /// Build deterministic shutdown metadata for a Unix signal number.
 ///
 /// # Errors
@@ -224,6 +230,7 @@ mod tests {
     fn builds_shutdown_signal_metadata() {
         let payload = build_shutdown_signal(signal::SIGTERM).unwrap();
 
+        assert_eq!(default_shutdown_signal_numbers(), vec![signal::SIGINT, signal::SIGTERM]);
         assert_eq!(payload.number, signal::SIGTERM);
         assert_eq!(payload.name, "SIGTERM");
         assert_eq!(payload.exit_code, 128 + signal::SIGTERM);

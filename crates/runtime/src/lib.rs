@@ -61,7 +61,7 @@ pub use runtime_state::{
 };
 pub use shutdown::{
     SecondSignalExceptionPlan, ShutdownControllerState, ShutdownRequestAction, ShutdownRequestDecisionPayload,
-    ShutdownSignalPayload, build_shutdown_signal, plan_second_signal_exception,
+    ShutdownSignalPayload, build_shutdown_signal, default_shutdown_signal_numbers, plan_second_signal_exception,
 };
 pub use telemetry_policy::{
     TelemetryPathsPayload, TelemetryWriterCountersPayload, build_empty_writer_counters, format_timestamp,

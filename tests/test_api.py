@@ -83,6 +83,15 @@ def build_minimal_config() -> config.RegenieConfig:
     return config.RegenieConfig.from_options(build_minimal_options())
 
 
+def test_shutdown_controller_uses_native_default_signals() -> None:
+    shutdown_controller = shutdown_module.GracefulShutdownController(handled_signals=None)
+
+    install_plan = shutdown_controller.native_controller.handler_install_plan_payload()
+    handled_signals = typing.cast("tuple[dict[str, object], ...]", install_plan["handled_signals"])
+
+    assert [signal_payload["name"] for signal_payload in handled_signals] == ["SIGINT", "SIGTERM"]
+
+
 def build_compute_config(**overrides: object) -> config.GComputeConfig:
     """Build packaged compute config with test overrides."""
     return config.RegenieConfig.from_options(build_minimal_options(**overrides)).g_compute

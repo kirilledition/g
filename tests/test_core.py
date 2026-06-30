@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import subprocess
 import sys
 import typing
@@ -135,6 +136,10 @@ def test_emit_diagnostic_event_fields_serializes_mapping(tmp_path: Path) -> None
     diagnostic_fields = json.loads(typing.cast("str", diagnostic_record["g_fields"]))
 
     assert diagnostic_fields == {"path_value": "cache", "z_value": 3}
+
+
+def test_native_default_shutdown_signal_numbers() -> None:
+    assert _core.default_shutdown_signal_numbers() == [int(signal.SIGINT), int(signal.SIGTERM)]
 
 
 def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:

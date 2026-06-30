@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import signal
 import typing
 from dataclasses import dataclass
 
 import g._core
 
 if typing.TYPE_CHECKING:
+    import signal
     import types as python_types
 
 
@@ -52,9 +52,13 @@ class GracefulShutdownController:
 
     def __init__(self, handled_signals: tuple[signal.Signals, ...] | None) -> None:
         """Initialize the controller."""
-        resolved_handled_signals = handled_signals or (signal.SIGINT, signal.SIGTERM)
+        resolved_signal_numbers = (
+            g._core.default_shutdown_signal_numbers()
+            if handled_signals is None
+            else [int(handled_signal) for handled_signal in handled_signals]
+        )
         self.native_controller = g._core.NativeShutdownController(
-            [int(handled_signal) for handled_signal in resolved_handled_signals]
+            resolved_signal_numbers,
         )
 
     @property

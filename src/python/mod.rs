@@ -180,7 +180,7 @@ use schedule::{
 };
 use shutdown::{
     NativeSecondSignalExceptionPlan, NativeShutdownController, build_shutdown_signal_payload,
-    plan_second_signal_exception, raise_second_signal_exception,
+    default_shutdown_signal_numbers, plan_second_signal_exception, raise_second_signal_exception,
 };
 use telemetry_policy::{
     NativeTelemetrySessionPolicy, build_empty_telemetry_writer_counters_payload, format_telemetry_timestamp_value,
@@ -1986,6 +1986,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(default_shutdown_signal_numbers, module)?)?;
     module.add_function(wrap_pyfunction!(plan_second_signal_exception, module)?)?;
     module.add_function(wrap_pyfunction!(raise_second_signal_exception, module)?)?;
     module.add_function(wrap_pyfunction!(build_execution_run_artifacts_payload, module)?)?;
