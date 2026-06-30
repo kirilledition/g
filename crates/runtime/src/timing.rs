@@ -7,6 +7,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Serialize, Serializer};
 
+pub const FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_LEVEL: &str = "debug";
+pub const FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_NAME: &str = "runner_final_timing_outputs_write_started";
+pub const FINAL_TIMING_OUTPUTS_WRITE_STARTED_MESSAGE: &str = "Writing final timing outputs.";
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 pub struct QueueBackpressureKey {
     pub queue_name: String,
@@ -194,6 +198,22 @@ pub struct TimingFileWritePlan {
     pub should_write: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalTimingOutputsWriteStartedDiagnosticPayload {
+    pub level: &'static str,
+    pub event_name: &'static str,
+    pub message: &'static str,
+    pub stage_timing_path: Option<String>,
+    pub profile_summary_path: Option<String>,
+    pub run_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalTimingOutputsWriteResultPayload {
+    pub wrote_stage_timing_snapshot: bool,
+    pub wrote_profile_summary: bool,
+}
+
 #[derive(Debug)]
 pub enum TimingFileError {
     CreateParentDirectory { path: PathBuf, source: std::io::Error },
@@ -269,6 +289,22 @@ pub const fn plan_stage_timing_recorder(stage_timing_path_configured: bool, forc
 #[must_use]
 pub const fn plan_timing_file_write(has_stage_timing_recorder: bool, path_configured: bool) -> TimingFileWritePlan {
     TimingFileWritePlan { should_write: has_stage_timing_recorder && path_configured }
+}
+
+#[must_use]
+pub fn build_final_timing_outputs_write_started_diagnostic_payload(
+    stage_timing_path: Option<&str>,
+    profile_summary_path: Option<&str>,
+    run_id: Option<&str>,
+) -> FinalTimingOutputsWriteStartedDiagnosticPayload {
+    FinalTimingOutputsWriteStartedDiagnosticPayload {
+        level: FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_LEVEL,
+        event_name: FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_NAME,
+        message: FINAL_TIMING_OUTPUTS_WRITE_STARTED_MESSAGE,
+        stage_timing_path: stage_timing_path.map(str::to_string),
+        profile_summary_path: profile_summary_path.map(str::to_string),
+        run_id: run_id.map(str::to_string),
+    }
 }
 
 /// Build one transfer metadata observation from array adapter fields.
@@ -441,6 +477,22 @@ impl StageTimingRecorder {
         write_stage_timing_snapshot_payload(path, &self.build_stage_timing_snapshot_payload())
     }
 
+    /// Write a stage timing snapshot when a path is configured.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the timing payload cannot be written.
+    pub fn write_stage_timing_snapshot_if_configured(&self, path: Option<&Path>) -> Result<bool, TimingFileError> {
+        let Some(active_path) = path else {
+            return Ok(false);
+        };
+        if !self.should_write_timing_file(true) {
+            return Ok(false);
+        }
+        self.write_stage_timing_snapshot(active_path)?;
+        Ok(true)
+    }
+
     /// Write a profile summary as pretty JSON.
     ///
     /// # Errors
@@ -448,6 +500,43 @@ impl StageTimingRecorder {
     /// Returns an error when the profile summary payload cannot be written.
     pub fn write_profile_summary(&self, path: &Path, run_id: Option<String>) -> Result<(), TimingFileError> {
         write_profile_summary_payload(path, &self.build_profile_summary(run_id))
+    }
+
+    /// Write a profile summary when a path is configured.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the profile summary payload cannot be written.
+    pub fn write_profile_summary_if_configured(
+        &self,
+        path: Option<&Path>,
+        run_id: Option<String>,
+    ) -> Result<bool, TimingFileError> {
+        let Some(active_path) = path else {
+            return Ok(false);
+        };
+        if !self.should_write_timing_file(true) {
+            return Ok(false);
+        }
+        self.write_profile_summary(active_path, run_id)?;
+        Ok(true)
+    }
+
+    /// Write all configured final timing outputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any configured timing payload cannot be written.
+    pub fn write_final_timing_outputs(
+        &self,
+        stage_timing_path: Option<&Path>,
+        profile_summary_path: Option<&Path>,
+        run_id: Option<String>,
+    ) -> Result<FinalTimingOutputsWriteResultPayload, TimingFileError> {
+        Ok(FinalTimingOutputsWriteResultPayload {
+            wrote_stage_timing_snapshot: self.write_stage_timing_snapshot_if_configured(stage_timing_path)?,
+            wrote_profile_summary: self.write_profile_summary_if_configured(profile_summary_path, run_id)?,
+        })
     }
 }
 
@@ -967,6 +1056,41 @@ mod tests {
     }
 
     #[test]
+    fn stage_timing_recorder_writes_final_timing_outputs() {
+        let mut recorder = StageTimingRecorder::new(false);
+        recorder.add_stage_duration("native_engine_delivery".to_string(), 2.0);
+        recorder.set_native_bgen_profile(BTreeMap::from([("variant_decode_count".to_string(), 8)]));
+        let directory_path = create_test_directory("stage_timing_recorder_writes_final_timing_outputs");
+        let stage_timing_path = directory_path.join("nested").join("stage-timings.json");
+        let profile_summary_path = directory_path.join("profile.summary.json");
+
+        let result = recorder
+            .write_final_timing_outputs(
+                Some(stage_timing_path.as_path()),
+                Some(profile_summary_path.as_path()),
+                Some("run-1".to_string()),
+            )
+            .expect("final timing outputs should be written");
+
+        assert_eq!(
+            result,
+            FinalTimingOutputsWriteResultPayload { wrote_stage_timing_snapshot: true, wrote_profile_summary: true },
+        );
+        assert_eq!(
+            recorder.write_final_timing_outputs(None, None, Some("run-1".to_string())).unwrap(),
+            FinalTimingOutputsWriteResultPayload { wrote_stage_timing_snapshot: false, wrote_profile_summary: false },
+        );
+        let profile_summary_text =
+            std::fs::read_to_string(&profile_summary_path).expect("profile summary should be readable");
+        let profile_summary_payload: serde_json::Value =
+            serde_json::from_str(&profile_summary_text).expect("profile summary should be JSON");
+        assert_eq!(profile_summary_payload["run_id"], serde_json::json!("run-1"));
+        assert!(stage_timing_path.exists());
+
+        std::fs::remove_dir_all(directory_path).expect("test timing directory should be removed");
+    }
+
+    #[test]
     fn resolves_exact_stage_timing_collection_policy() {
         assert!(should_collect_exact_stage_timings(true));
         assert!(!should_collect_exact_stage_timings(false));
@@ -993,6 +1117,25 @@ mod tests {
         assert_eq!(plan_timing_file_write(true, true), TimingFileWritePlan { should_write: true },);
         assert_eq!(plan_timing_file_write(false, true), TimingFileWritePlan { should_write: false },);
         assert_eq!(plan_timing_file_write(true, false), TimingFileWritePlan { should_write: false },);
+    }
+
+    #[test]
+    fn builds_final_timing_outputs_write_started_diagnostic_payload() {
+        assert_eq!(
+            build_final_timing_outputs_write_started_diagnostic_payload(
+                Some("timings.json"),
+                Some("profile.summary.json"),
+                Some("run-1"),
+            ),
+            FinalTimingOutputsWriteStartedDiagnosticPayload {
+                level: "debug",
+                event_name: "runner_final_timing_outputs_write_started",
+                message: "Writing final timing outputs.",
+                stage_timing_path: Some("timings.json".to_string()),
+                profile_summary_path: Some("profile.summary.json".to_string()),
+                run_id: Some("run-1".to_string()),
+            },
+        );
     }
 
     fn create_test_directory(test_name: &str) -> PathBuf {

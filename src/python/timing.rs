@@ -186,15 +186,11 @@ impl NativeStageTimingRecorder {
             .map_err(|error| timing_file_error_to_py(&error))
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn write_stage_timing_snapshot_if_configured(&self, path: Option<String>) -> PyResult<bool> {
-        let Some(active_path) = path else {
-            return Ok(false);
-        };
-        if !self.lock_recorder()?.should_write_timing_file(true) {
-            return Ok(false);
-        }
-        self.write_stage_timing_snapshot(active_path)?;
-        Ok(true)
+        self.lock_recorder()?
+            .write_stage_timing_snapshot_if_configured(path.as_deref().map(Path::new))
+            .map_err(|error| timing_file_error_to_py(&error))
     }
 
     fn derived_metrics_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -214,17 +210,14 @@ impl NativeStageTimingRecorder {
             .map_err(|error| timing_file_error_to_py(&error))
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn write_profile_summary_if_configured(&self, path: Option<String>, run_id: Option<String>) -> PyResult<bool> {
-        let Some(active_path) = path else {
-            return Ok(false);
-        };
-        if !self.lock_recorder()?.should_write_timing_file(true) {
-            return Ok(false);
-        }
-        self.write_profile_summary(active_path, run_id)?;
-        Ok(true)
+        self.lock_recorder()?
+            .write_profile_summary_if_configured(path.as_deref().map(Path::new), run_id)
+            .map_err(|error| timing_file_error_to_py(&error))
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn write_final_timing_outputs<'py>(
         &self,
         py: Python<'py>,
@@ -232,12 +225,15 @@ impl NativeStageTimingRecorder {
         profile_summary_path: Option<String>,
         run_id: Option<String>,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let wrote_stage_timing_snapshot = self.write_stage_timing_snapshot_if_configured(stage_timing_path)?;
-        let wrote_profile_summary = self.write_profile_summary_if_configured(profile_summary_path, run_id)?;
-        let payload = PyDict::new(py);
-        payload.set_item("wrote_stage_timing_snapshot", wrote_stage_timing_snapshot)?;
-        payload.set_item("wrote_profile_summary", wrote_profile_summary)?;
-        Ok(payload)
+        let result = self
+            .lock_recorder()?
+            .write_final_timing_outputs(
+                stage_timing_path.as_deref().map(Path::new),
+                profile_summary_path.as_deref().map(Path::new),
+                run_id,
+            )
+            .map_err(|error| timing_file_error_to_py(&error))?;
+        final_timing_outputs_write_result_payload_to_dict(py, &result)
     }
 }
 
@@ -269,6 +265,22 @@ pub(crate) fn plan_timing_file_write(
     NativeTimingFileWritePlan {
         inner: native_timing::plan_timing_file_write(has_stage_timing_recorder, path_configured),
     }
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_final_timing_outputs_write_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    stage_timing_path: Option<String>,
+    profile_summary_path: Option<String>,
+    run_id: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_timing::build_final_timing_outputs_write_started_diagnostic_payload(
+        stage_timing_path.as_deref(),
+        profile_summary_path.as_deref(),
+        run_id.as_deref(),
+    );
+    final_timing_outputs_write_started_diagnostic_payload_to_dict(py, &payload)
 }
 
 fn parse_numeric_diagnostics_mapping(
@@ -334,6 +346,32 @@ fn build_float_mapping<'py>(py: Python<'py>, values: &BTreeMap<String, f64>) -> 
         mapping.set_item(key, value)?;
     }
     Ok(mapping)
+}
+
+fn final_timing_outputs_write_started_diagnostic_payload_to_dict<'py>(
+    py: Python<'py>,
+    payload: &native_timing::FinalTimingOutputsWriteStartedDiagnosticPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let diagnostic_payload = PyDict::new(py);
+    let fields = PyDict::new(py);
+    fields.set_item("stage_timing_path", &payload.stage_timing_path)?;
+    fields.set_item("profile_summary_path", &payload.profile_summary_path)?;
+    fields.set_item("run_id", &payload.run_id)?;
+    diagnostic_payload.set_item("level", payload.level)?;
+    diagnostic_payload.set_item("event_name", payload.event_name)?;
+    diagnostic_payload.set_item("message", payload.message)?;
+    diagnostic_payload.set_item("fields", fields)?;
+    Ok(diagnostic_payload)
+}
+
+fn final_timing_outputs_write_result_payload_to_dict<'py>(
+    py: Python<'py>,
+    payload: &native_timing::FinalTimingOutputsWriteResultPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let result_payload = PyDict::new(py);
+    result_payload.set_item("wrote_stage_timing_snapshot", payload.wrote_stage_timing_snapshot)?;
+    result_payload.set_item("wrote_profile_summary", payload.wrote_profile_summary)?;
+    Ok(result_payload)
 }
 
 fn build_integer_mapping<'py>(py: Python<'py>, values: &BTreeMap<String, i64>) -> PyResult<Bound<'py, PyDict>> {

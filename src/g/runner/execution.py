@@ -29,6 +29,16 @@ def emit_runner_diagnostic_event(
     _core.emit_diagnostic_event_fields(level, event, message, fields)
 
 
+def emit_runner_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
+    """Emit one native diagnostic payload through native tracing."""
+    _core.emit_diagnostic_event_fields(
+        str(payload["level"]),
+        str(payload["event_name"]),
+        str(payload["message"]),
+        typing.cast("typing.Mapping[str, object]", payload["fields"]),
+    )
+
+
 @dataclass(frozen=True)
 class CommonEngineDispatchRequest:
     """Arguments shared by single- and multi-phenotype engine dispatch.
@@ -273,15 +283,12 @@ def run_validated_regenie_config(
     finally:
         if stage_timing_recorder is not None:
             timing.record_stage_duration(stage_timing_recorder, "python_api_entry", api_entry_start_time)
-            emit_runner_diagnostic_event(
-                "debug",
-                "runner_final_timing_outputs_write_started",
-                "Writing final timing outputs.",
-                {
-                    "stage_timing_path": stage_timing_path,
-                    "profile_summary_path": profile_summary_path,
-                    "run_id": None if telemetry_session is None else telemetry_session.run_id,
-                },
+            emit_runner_diagnostic_event_payload(
+                timing.build_final_timing_outputs_write_started_diagnostic_payload(
+                    stage_timing_path=stage_timing_path,
+                    profile_summary_path=profile_summary_path,
+                    run_id=None if telemetry_session is None else telemetry_session.run_id,
+                )
             )
             timing.write_final_timing_outputs(
                 stage_timing_recorder,

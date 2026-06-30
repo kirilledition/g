@@ -3216,6 +3216,11 @@ def plan_timing_file_write(
     has_stage_timing_recorder: bool,
     path_configured: bool,
 ) -> NativeTimingFileWritePlan: ...
+def build_final_timing_outputs_write_started_diagnostic_payload(
+    stage_timing_path: str | None,
+    profile_summary_path: str | None,
+    run_id: str | None,
+) -> dict[str, object]: ...
 def plan_bgen_delivery_invocation(
     callback_batch_size: int | None,
     variant_major_packed8_probability_pairs: bool,

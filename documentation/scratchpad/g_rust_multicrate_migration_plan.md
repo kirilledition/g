@@ -1479,6 +1479,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Process runtime state now returns a single native snapshot payload for the
   public Python API adapter, so Python no longer assembles runtime state through
   separate process-global logging/Rayon/JAX lookups.
+- Final timing output writes now return their native result payload directly
+  from `g-runtime`, and their write-started diagnostics get the event name,
+  level, message, and fields from the same native timing boundary.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

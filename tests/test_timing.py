@@ -302,6 +302,28 @@ def test_native_stage_timing_recorder_writes_final_timing_outputs(tmp_path: Path
     ) == {"wrote_stage_timing_snapshot": False, "wrote_profile_summary": False}
 
 
+def test_final_timing_outputs_write_started_diagnostic_payload(tmp_path: Path) -> None:
+    output_path = tmp_path / "diagnostics" / "timings.json"
+    profile_summary_path = tmp_path / "diagnostics" / "profile.summary.json"
+
+    payload = timing.build_final_timing_outputs_write_started_diagnostic_payload(
+        stage_timing_path=output_path,
+        profile_summary_path=profile_summary_path,
+        run_id="run-1",
+    )
+
+    assert payload == {
+        "level": "debug",
+        "event_name": "runner_final_timing_outputs_write_started",
+        "message": "Writing final timing outputs.",
+        "fields": {
+            "stage_timing_path": str(output_path),
+            "profile_summary_path": str(profile_summary_path),
+            "run_id": "run-1",
+        },
+    }
+
+
 def test_write_stage_timing_snapshot_persists_payload_and_derived_metrics(tmp_path: Path) -> None:
     output_path = tmp_path / "diagnostics" / "timings.json"
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)

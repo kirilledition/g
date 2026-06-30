@@ -715,6 +715,27 @@ def write_final_timing_outputs(
     )
 
 
+def build_final_timing_outputs_write_started_diagnostic_payload(
+    *,
+    stage_timing_path: pathlib.Path | None,
+    profile_summary_path: pathlib.Path | None,
+    run_id: str | None,
+) -> dict[str, typing.Any]:
+    """Build the native diagnostic payload for final timing output writes."""
+    payload = dict(
+        typing.cast(
+            "typing.Mapping[str, typing.Any]",
+            _core.build_final_timing_outputs_write_started_diagnostic_payload(
+                None if stage_timing_path is None else str(stage_timing_path),
+                None if profile_summary_path is None else str(profile_summary_path),
+                run_id,
+            ),
+        )
+    )
+    payload["fields"] = dict(typing.cast("typing.Mapping[str, typing.Any]", payload["fields"]))
+    return payload
+
+
 def serialize_chunk_stage_timings(
     chunk_stage_timings: tuple[ChunkStageTimingSnapshot, ...],
 ) -> tuple[dict[str, int | float | str], ...]:

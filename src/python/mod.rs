@@ -188,8 +188,8 @@ use telemetry_policy::{
     resolve_telemetry_session_policy_payload, resolve_telemetry_stream_file_value,
 };
 use timing::{
-    NativeStageTimingRecorder, NativeStageTimingRecorderPlan, NativeTimingFileWritePlan, plan_stage_timing_recorder,
-    plan_timing_file_write,
+    NativeStageTimingRecorder, NativeStageTimingRecorderPlan, NativeTimingFileWritePlan,
+    build_final_timing_outputs_write_started_diagnostic_payload, plan_stage_timing_recorder, plan_timing_file_write,
 };
 use trusted_validation::{
     build_trusted_bgen_validation_cache_path_value, build_trusted_bgen_validation_cache_payload,
@@ -1956,6 +1956,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeStageTimingRecorder>()?;
     module.add_class::<NativeStageTimingRecorderPlan>()?;
     module.add_class::<NativeTimingFileWritePlan>()?;
+    module.add_function(wrap_pyfunction!(build_final_timing_outputs_write_started_diagnostic_payload, module)?)?;
     module.add_class::<OutputWriterSession>()?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
