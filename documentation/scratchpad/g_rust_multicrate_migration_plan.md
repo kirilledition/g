@@ -1301,6 +1301,9 @@ Remove Python as the chunk-level scheduler.
   identities for buffer-pool eligibility, mutation, and result-cleanup paths,
   leaving explicit identifier plumbing only on lower-level scheduler/testing
   APIs.
+- Callback runtime resources now read production result work-item cleanup fields
+  and resolve NumPy view buffers to their owning base arrays before native
+  buffer-pool returns.
 - Native output writer PyO3 entry points now release the GIL around Rust
   chunk enqueue/write dispatch after copying Python array inputs into owned
   Arrow arrays.

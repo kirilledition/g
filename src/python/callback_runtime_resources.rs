@@ -769,6 +769,15 @@ impl NativeCallbackRuntimeResources {
         self.release_result_work_item_resources_with_plan(py, &resource_release_plan, host_dosage_buffer)
     }
 
+    fn release_result_work_item_pre_write_resources_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeResultWorkItemResourceReleaseResult> {
+        let host_dosage_buffer = result_work_item_host_dosage_buffer_owner(py, work_item)?;
+        self.release_result_work_item_pre_write_resources(py, host_dosage_buffer.bind(py))
+    }
+
     fn release_result_work_item_final_resources(
         &self,
         py: Python<'_>,
@@ -786,6 +795,22 @@ impl NativeCallbackRuntimeResources {
             )
         };
         self.release_result_work_item_resources_with_plan(py, &resource_release_plan, host_dosage_buffer)
+    }
+
+    fn release_result_work_item_final_resources_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        has_released_host_dosage_buffer: bool,
+    ) -> PyResult<NativeResultWorkItemResourceReleaseResult> {
+        let host_dosage_buffer = result_work_item_host_dosage_buffer_owner(py, work_item)?;
+        let release_in_flight_slot = result_work_item_release_in_flight_slot(work_item)?;
+        self.release_result_work_item_final_resources(
+            py,
+            host_dosage_buffer.bind(py),
+            has_released_host_dosage_buffer,
+            release_in_flight_slot,
+        )
     }
 
     fn acquire_dosage_buffer_with_backpressure_timeout(
@@ -2244,6 +2269,48 @@ impl NativeCallbackRuntimeResources {
 
 fn py_object_identifier(object: &Bound<'_, PyAny>) -> usize {
     object.as_ptr() as usize
+}
+
+fn result_work_item_host_dosage_buffer_owner(py: Python<'_>, work_item: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let host_dosage_buffer = work_item.getattr("host_dosage_buffer")?;
+    if host_dosage_buffer.is_none() {
+        return Ok(host_dosage_buffer.unbind());
+    }
+    dosage_buffer_owner(py, &host_dosage_buffer)
+}
+
+fn result_work_item_release_in_flight_slot(work_item: &Bound<'_, PyAny>) -> PyResult<bool> {
+    work_item.getattr("release_in_flight_slot")?.extract::<bool>()
+}
+
+fn dosage_buffer_owner(py: Python<'_>, dosage_buffer: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let mut dosage_buffer_owner = dosage_buffer.clone().unbind();
+    loop {
+        let next_owner = {
+            let dosage_buffer_owner_bound = dosage_buffer_owner.bind(py);
+            let Ok(dosage_buffer_base) = dosage_buffer_owner_bound.getattr("base") else {
+                return Ok(dosage_buffer_owner);
+            };
+            if dosage_buffer_base.is_none() || !is_numpy_ndarray(&dosage_buffer_base)? {
+                None
+            } else {
+                Some(dosage_buffer_base.unbind())
+            }
+        };
+        let Some(next_owner) = next_owner else {
+            return Ok(dosage_buffer_owner);
+        };
+        dosage_buffer_owner = next_owner;
+    }
+}
+
+fn is_numpy_ndarray(object: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let object_type = object.get_type();
+    if object_type.name()?.to_string_lossy() != "ndarray" {
+        return Ok(false);
+    }
+    let module_name = object_type.getattr("__module__")?.extract::<String>()?;
+    Ok(module_name == "numpy")
 }
 
 struct DosageWorkItemDescriptor {

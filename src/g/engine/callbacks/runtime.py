@@ -2677,9 +2677,8 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> bool:
         """Release the host genotype buffer associated with one result."""
         if self.uses_native_callback_runtime_resources():
-            host_dosage_buffer_owner = self.result_work_item_host_buffer_owner(work_item)
-            release_result = self.callback_runtime_resources.release_result_work_item_pre_write_resources(
-                host_dosage_buffer_owner,
+            release_result = self.callback_runtime_resources.release_result_work_item_pre_write_resources_for_object(
+                work_item,
             )
             self.record_result_work_item_resource_release_result(release_result)
             return release_result.released_host_buffer
@@ -2697,11 +2696,9 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Release final resources associated with one result work item."""
         if self.uses_native_callback_runtime_resources():
-            host_dosage_buffer_owner = self.result_work_item_host_buffer_owner(work_item)
-            release_result = self.callback_runtime_resources.release_result_work_item_final_resources(
-                host_dosage_buffer_owner,
+            release_result = self.callback_runtime_resources.release_result_work_item_final_resources_for_object(
+                work_item,
                 host_dosage_buffer_released,
-                work_item.release_in_flight_slot,
             )
             self.record_result_work_item_resource_release_result(release_result)
             return

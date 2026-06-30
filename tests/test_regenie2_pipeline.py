@@ -3304,6 +3304,124 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert unobserved_final_result.result_in_flight_blocked is None
     assert unobserved_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
+    object_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-object-result-cleanup-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        has_stage_timing_recorder=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    object_dosage_buffer_owner = np.empty((4, 5), dtype=np.float32)
+    object_dosage_buffer_view = object_dosage_buffer_owner[:2, :3]
+    assert object_runtime_resources.register_dosage_buffer(id(object_dosage_buffer_owner)) == 0
+    object_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+    object_work_item = callback_shared.Regenie2ResultWriteWorkItem(
+        metadata=build_native_metadata(),
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        beta=jnp.ones(2),
+        standard_error=jnp.ones(2),
+        chi_squared=jnp.ones(2),
+        log10_p_value=jnp.ones(2),
+        extra_code=None,
+        host_dosage_buffer=object_dosage_buffer_view,
+        release_in_flight_slot=True,
+        binary_chunk_diagnostics=None,
+    )
+    object_pre_write_result = object_runtime_resources.release_result_work_item_pre_write_resources_for_object(
+        object_work_item,
+    )
+    assert object_pre_write_result.released_host_buffer is True
+    object_free_buffer_result = object_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert object_free_buffer_result.has_item is True
+    assert object_free_buffer_result.item is object_dosage_buffer_owner
+    object_final_result = object_runtime_resources.release_result_work_item_final_resources_for_object(
+        object_work_item,
+        has_released_host_dosage_buffer=True,
+    )
+    assert object_final_result.released_host_buffer is False
+    assert object_final_result.released_result_in_flight_slot is True
+    assert object_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+
+def test_native_callback_runner_routes_result_cleanup_through_native_work_item_objects() -> None:
+    class ResultCleanupRuntimeResourcesProbe:
+        def __init__(self, runtime_resources: callback_runtime._core.NativeCallbackRuntimeResources) -> None:
+            self.runtime_resources = runtime_resources
+            self.pre_write_work_item: object | None = None
+            self.final_work_item: object | None = None
+            self.final_has_released_host_dosage_buffer: bool | None = None
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.runtime_resources, name)
+
+        def release_result_work_item_pre_write_resources_for_object(
+            self,
+            work_item: object,
+        ) -> callback_runtime._core.NativeResultWorkItemResourceReleaseResult:
+            self.pre_write_work_item = work_item
+            return self.runtime_resources.release_result_work_item_pre_write_resources_for_object(work_item)
+
+        def release_result_work_item_final_resources_for_object(
+            self,
+            work_item: object,
+            has_released_host_dosage_buffer: object,
+        ) -> callback_runtime._core.NativeResultWorkItemResourceReleaseResult:
+            has_released_host_dosage_buffer_value = typing.cast("bool", has_released_host_dosage_buffer)
+            self.final_work_item = work_item
+            self.final_has_released_host_dosage_buffer = has_released_host_dosage_buffer_value
+            return self.runtime_resources.release_result_work_item_final_resources_for_object(
+                work_item,
+                has_released_host_dosage_buffer_value,
+            )
+
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    runtime_resources = callback.callback_runtime_resources
+    dosage_buffer_owner = np.empty((4, 5), dtype=np.float32)
+    dosage_buffer_view = dosage_buffer_owner[:2, :3]
+    assert runtime_resources.register_dosage_buffer(id(dosage_buffer_owner)) == 0
+    runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    work_item = callback_shared.Regenie2ResultWriteWorkItem(
+        metadata=build_native_metadata(),
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        beta=jnp.ones(2),
+        standard_error=jnp.ones(2),
+        chi_squared=jnp.ones(2),
+        log10_p_value=jnp.ones(2),
+        extra_code=None,
+        host_dosage_buffer=dosage_buffer_view,
+        release_in_flight_slot=True,
+        binary_chunk_diagnostics=None,
+    )
+    runtime_resources_probe = ResultCleanupRuntimeResourcesProbe(runtime_resources)
+    callback_for_probe = typing.cast("typing.Any", callback)
+    original_runtime_resources = callback.callback_runtime_resources
+    try:
+        callback_for_probe.callback_runtime_resources = runtime_resources_probe
+        callback.release_result_work_item_buffer(work_item)
+    finally:
+        callback_for_probe.callback_runtime_resources = original_runtime_resources
+        callback.finish()
+
+    assert runtime_resources_probe.pre_write_work_item is work_item
+    assert runtime_resources_probe.final_work_item is work_item
+    assert runtime_resources_probe.final_has_released_host_dosage_buffer is True
+    free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is dosage_buffer_owner
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
 
 def test_native_callback_runner_honors_optional_result_cleanup_observations() -> None:
     def worker_target() -> None:
