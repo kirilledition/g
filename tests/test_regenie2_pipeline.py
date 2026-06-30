@@ -7280,6 +7280,72 @@ def test_multi_linear_packed8_callback_uses_multi_packed_compute() -> None:
     assert writer_sessions[0].native_chunks[0]["chunk_stats"] is chunk_stats
 
 
+@pytest.mark.parametrize(
+    "stage_timing_recorder",
+    [None, timing.StageTimingRecorder(exact_stage_timings=False)],
+)
+def test_multi_linear_callback_uses_native_result_get_drain_resources(
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+) -> None:
+    callback = build_test_multi_linear_pipeline_callback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=build_multi_trait_prediction_source(),
+        writer_sessions=(FakeWriterSession(), FakeWriterSession()),
+        committed_chunk_identifier_sets=(set(), set()),
+        stage_timing_recorder=stage_timing_recorder,
+    )
+    metadata = build_native_metadata()
+    processed_metadata: list[object] = []
+
+    def forbidden_get_result_write_item() -> object:
+        message = "multi callback should use native resource-owned result get"
+        raise AssertionError(message)
+
+    def forbidden_plan_result_write_drain_completion(work_item: object) -> object:
+        del work_item
+        message = "multi callback should use native resource-owned result drain completion"
+        raise AssertionError(message)
+
+    def process_multi_result_write_item_probe(
+        multi_work_item: callback_shared.Regenie2MultiResultWriteWorkItem,
+    ) -> None:
+        processed_metadata.append(multi_work_item.metadata)
+
+    callback_for_probe = typing.cast("typing.Any", callback)
+    callback_for_probe.get_result_write_item = forbidden_get_result_write_item
+    callback_for_probe.plan_result_write_drain_completion = forbidden_plan_result_write_drain_completion
+    callback_for_probe.process_multi_result_write_item = process_multi_result_write_item_probe
+
+    assert callback.try_put_result_write_item_with_backpressure_timeout(
+        callback_shared.Regenie2MultiResultWriteWorkItem(
+            metadata=metadata,
+            chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+            beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+            standard_error=jnp.asarray([[0.5, 0.6], [0.7, 0.8]], dtype=jnp.float32),
+            chi_squared=jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32),
+            log10_p_value=jnp.asarray([[5.0, 6.0], [7.0, 8.0]], dtype=jnp.float32),
+            extra_code=None,
+            host_dosage_buffer=None,
+            release_in_flight_slot=False,
+            binary_chunk_diagnostics=None,
+        )
+    )
+    assert callback.try_put_result_write_item_with_backpressure_timeout(None)
+
+    try:
+        if stage_timing_recorder is not None:
+            callback.consume_result_write_items()
+        else:
+            callback.consume_result_write_items_without_timing()
+    finally:
+        callback.finish()
+
+    assert callback.result_worker_error_cause is None
+    assert processed_metadata == [metadata]
+    if stage_timing_recorder is not None:
+        assert stage_timing_recorder.snapshot().stage_counts["result_queue_consumer_wait"] == 1
+
+
 def test_binary_callback_fails_when_null_logistic_does_not_converge() -> None:
     callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
@@ -7362,6 +7428,80 @@ def test_multi_binary_callback_fails_when_any_null_logistic_trait_does_not_conve
             callback.prepare_chromosome_state(build_native_metadata())
     finally:
         callback.finish()
+
+
+@pytest.mark.parametrize(
+    "stage_timing_recorder",
+    [None, timing.StageTimingRecorder(exact_stage_timings=False)],
+)
+def test_multi_binary_callback_uses_native_result_get_drain_resources(
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+) -> None:
+    callback = build_test_multi_binary_pipeline_callback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_sessions=(FakeWriterSession(), FakeWriterSession()),
+        committed_chunk_identifier_sets=(set(), set()),
+        correction_plan=SCORE_ONLY_PLAN,
+        kernel_config=build_default_binary_kernel_config(),
+        stage_timing_recorder=stage_timing_recorder,
+    )
+    metadata = build_native_metadata()
+    processed_metadata: list[object] = []
+
+    def forbidden_get_result_write_item() -> object:
+        message = "multi callback should use native resource-owned result get"
+        raise AssertionError(message)
+
+    def forbidden_plan_result_write_drain_completion(work_item: object) -> object:
+        del work_item
+        message = "multi callback should use native resource-owned result drain completion"
+        raise AssertionError(message)
+
+    def process_multi_result_write_item_probe(
+        multi_work_item: callback_shared.Regenie2MultiResultWriteWorkItem,
+    ) -> None:
+        processed_metadata.append(multi_work_item.metadata)
+
+    callback_for_probe = typing.cast("typing.Any", callback)
+    callback_for_probe.get_result_write_item = forbidden_get_result_write_item
+    callback_for_probe.plan_result_write_drain_completion = forbidden_plan_result_write_drain_completion
+    callback_for_probe.process_multi_result_write_item = process_multi_result_write_item_probe
+
+    assert callback.try_put_result_write_item_with_backpressure_timeout(
+        callback_shared.Regenie2MultiResultWriteWorkItem(
+            metadata=metadata,
+            chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+            beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+            standard_error=jnp.asarray([[0.5, 0.6], [0.7, 0.8]], dtype=jnp.float32),
+            chi_squared=jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32),
+            log10_p_value=jnp.asarray([[5.0, 6.0], [7.0, 8.0]], dtype=jnp.float32),
+            extra_code=jnp.asarray(
+                [
+                    [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+                    [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+                ],
+                dtype=jnp.int32,
+            ),
+            host_dosage_buffer=None,
+            release_in_flight_slot=False,
+            binary_chunk_diagnostics=None,
+        )
+    )
+    assert callback.try_put_result_write_item_with_backpressure_timeout(None)
+
+    try:
+        if stage_timing_recorder is not None:
+            callback.consume_result_write_items()
+        else:
+            callback.consume_result_write_items_without_timing()
+    finally:
+        callback.finish()
+
+    assert callback.result_worker_error_cause is None
+    assert processed_metadata == [metadata]
+    if stage_timing_recorder is not None:
+        assert stage_timing_recorder.snapshot().stage_counts["result_queue_consumer_wait"] == 1
 
 
 def test_multi_binary_score_only_sample_major_callback_skips_sparse_mask_transfer() -> None:

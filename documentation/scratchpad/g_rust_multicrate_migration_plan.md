@@ -1235,6 +1235,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own the production expected result-write
   consumer kind, so Python runner loops no longer pass single-result versus
   multi-result dispatch policy on every result work item.
+- Multi-result callback consumers now use native runtime resource combined
+  result-queue get/drain-completion paths, matching the single-result consumer
+  ownership boundary for timed and untimed result drains.
 
 ### Tests
 
