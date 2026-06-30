@@ -1289,6 +1289,9 @@ class NativeCallbackRuntimeResources:
     def release_result_in_flight_slot_with_optional_observation(
         self,
     ) -> NativeResultInFlightReleaseObservationPlan | None: ...
+    def release_result_in_flight_slot_with_optional_backpressure_observation(
+        self,
+    ) -> NativeResultInFlightSlotReleaseResult: ...
     def release_result_work_item_pre_write_resources(
         self,
         host_dosage_buffer: object | None,
@@ -1666,6 +1669,12 @@ class NativeResultInFlightAcquireResult:
     def should_retry_acquisition(self) -> bool: ...
     @property
     def observation_plan(self) -> NativeResultInFlightAcquireObservationPlan | None: ...
+
+class NativeResultInFlightSlotReleaseResult:
+    @property
+    def observation_plan(self) -> NativeResultInFlightReleaseObservationPlan | None: ...
+    @property
+    def backpressure_observation(self) -> NativeCallbackQueueBackpressureObservation | None: ...
 
 class NativeResultInFlightReleaseAttemptPlan:
     @property

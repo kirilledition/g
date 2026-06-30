@@ -112,6 +112,12 @@ pub(crate) struct NativeResultInFlightAcquireResult {
 }
 
 #[pyclass]
+pub(crate) struct NativeResultInFlightSlotReleaseResult {
+    observation_plan: Option<Py<NativeResultInFlightReleaseObservationPlan>>,
+    backpressure_observation: Option<Py<NativeCallbackQueueBackpressureObservation>>,
+}
+
+#[pyclass]
 pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
     finish_plan: NativeCallbackWorkerFinishPlan,
     shutdown_worker_name: Option<String>,
@@ -851,6 +857,19 @@ impl NativeCallbackRuntimeResources {
         }
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         Ok(Some(scheduler_state.plan_result_in_flight_slot_release_observation_value()))
+    }
+
+    fn release_result_in_flight_slot_with_optional_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeResultInFlightSlotReleaseResult> {
+        if !self.has_stage_timing_recorder {
+            self.release_result_in_flight_slot_without_observation(py)?;
+            return NativeResultInFlightSlotReleaseResult::from_release(py, None, None);
+        }
+        let observation_plan = self.release_result_in_flight_slot(py)?;
+        let backpressure_observation = self.result_in_flight_release_backpressure_observation(py, &observation_plan)?;
+        NativeResultInFlightSlotReleaseResult::from_release(py, Some(observation_plan), Some(backpressure_observation))
     }
 
     fn release_result_work_item_pre_write_resources(
@@ -2261,6 +2280,34 @@ impl NativeResultInFlightAcquireResult {
     #[getter]
     fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeResultInFlightAcquireObservationPlan>> {
         self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+}
+
+impl NativeResultInFlightSlotReleaseResult {
+    fn from_release(
+        py: Python<'_>,
+        observation_plan: Option<NativeResultInFlightReleaseObservationPlan>,
+        backpressure_observation: Option<NativeCallbackQueueBackpressureObservation>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
+            backpressure_observation: backpressure_observation
+                .map(|observation| Py::new(py, observation))
+                .transpose()?,
+        })
+    }
+}
+
+#[pymethods]
+impl NativeResultInFlightSlotReleaseResult {
+    #[getter]
+    fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeResultInFlightReleaseObservationPlan>> {
+        self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+
+    #[getter]
+    fn backpressure_observation(&self, py: Python<'_>) -> Option<Py<NativeCallbackQueueBackpressureObservation>> {
+        self.backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
     }
 }
 

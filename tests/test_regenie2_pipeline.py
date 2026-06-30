@@ -3424,6 +3424,11 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
     unobserved_release_plan = runtime_resources.release_result_in_flight_slot_with_optional_observation()
     assert unobserved_release_plan is None
     assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+    runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    unobserved_release_result = runtime_resources.release_result_in_flight_slot_with_optional_backpressure_observation()
+    assert unobserved_release_result.observation_plan is None
+    assert unobserved_release_result.backpressure_observation is None
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
     observed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
         worker_name="native-resource-observed-result-slot-test",
@@ -3450,6 +3455,24 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
     assert observed_release_plan.resource_name == "result_in_flight_slots"
     assert observed_release_plan.operation_name == "release"
     assert observed_release_plan.blocked is False
+    assert observed_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+    observed_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+    observed_release_result = (
+        observed_runtime_resources.release_result_in_flight_slot_with_optional_backpressure_observation()
+    )
+    observed_release_result_plan = observed_release_result.observation_plan
+    assert observed_release_result_plan is not None
+    assert observed_release_result_plan.resource_name == "result_in_flight_slots"
+    assert observed_release_result_plan.operation_name == "release"
+    assert observed_release_result_plan.blocked is False
+    observed_release_backpressure_observation = observed_release_result.backpressure_observation
+    assert observed_release_backpressure_observation is not None
+    assert observed_release_backpressure_observation.queue_name == "result_in_flight_slots"
+    assert observed_release_backpressure_observation.operation_name == "release"
+    assert observed_release_backpressure_observation.queue_depth == 0
+    assert observed_release_backpressure_observation.queue_capacity == 1
+    assert observed_release_backpressure_observation.elapsed_seconds == 0.0
+    assert observed_release_backpressure_observation.blocked_seconds == 0.0
     assert observed_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
     acquire_result = runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
@@ -4277,7 +4300,12 @@ def test_native_callback_runner_honors_optional_result_cleanup_observations() ->
         )
         unobserved_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
         callback_for_probe.callback_runtime_resources = unobserved_runtime_resources
-        callback.release_result_in_flight_slot()
+        with patch.object(
+            callback_runtime.NativeBgenCallbackRunner,
+            "record_bounded_resource_operation",
+            side_effect=AssertionError("result slot release should emit native observations"),
+        ):
+            callback.release_result_in_flight_slot()
 
         unobserved_dosage_buffer = np.empty((2, 2), dtype=np.float32)
         assert unobserved_runtime_resources.register_dosage_buffer(id(unobserved_dosage_buffer)) == 0
@@ -4312,7 +4340,12 @@ def test_native_callback_runner_honors_optional_result_cleanup_observations() ->
         )
         observed_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
         callback_for_probe.callback_runtime_resources = observed_runtime_resources
-        callback.release_result_in_flight_slot()
+        with patch.object(
+            callback_runtime.NativeBgenCallbackRunner,
+            "record_bounded_resource_operation",
+            side_effect=AssertionError("result slot release should emit native observations"),
+        ):
+            callback.release_result_in_flight_slot()
 
         observed_dosage_buffer = np.empty((2, 2), dtype=np.float32)
         assert observed_runtime_resources.register_dosage_buffer(id(observed_dosage_buffer)) == 0

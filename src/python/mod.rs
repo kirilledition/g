@@ -72,7 +72,8 @@ use callback_runtime_resources::{
     NativeCallbackWorkerFinishLifecycleResult, NativeDosageBufferAcquireResult, NativeDosageBufferPoolOperationResult,
     NativeDosageBufferReuseSelectionResult, NativeDosageWorkItemDrainResult, NativeDosageWorkItemGetResult,
     NativeDosageWorkItemStageDurationAttribution, NativeResultInFlightAcquireResult,
-    NativeResultWorkItemResourceReleaseResult, NativeResultWriteItemDrainResult, NativeResultWriteItemGetResult,
+    NativeResultInFlightSlotReleaseResult, NativeResultWorkItemResourceReleaseResult, NativeResultWriteItemDrainResult,
+    NativeResultWriteItemGetResult,
 };
 use callback_summary::{
     NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
@@ -1903,6 +1904,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeDosageWorkItemGetResult>()?;
     module.add_class::<NativeDosageWorkItemStageDurationAttribution>()?;
     module.add_class::<NativeResultInFlightAcquireResult>()?;
+    module.add_class::<NativeResultInFlightSlotReleaseResult>()?;
     module.add_class::<NativeResultWorkItemResourceReleaseResult>()?;
     module.add_class::<NativeResultWriteItemDrainResult>()?;
     module.add_class::<NativeResultWriteItemGetResult>()?;

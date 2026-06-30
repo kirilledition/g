@@ -2136,17 +2136,10 @@ class NativeBgenCallbackRunner(abc.ABC):
     def release_result_in_flight_slot(self) -> None:
         """Release capacity for one completed chunk of GPU result work."""
         if self.uses_native_callback_runtime_resources():
-            release_observation_plan = (
-                self.callback_runtime_resources.release_result_in_flight_slot_with_optional_observation()
+            release_result = (
+                self.callback_runtime_resources.release_result_in_flight_slot_with_optional_backpressure_observation()
             )
-            if release_observation_plan is None:
-                return
-            self.record_bounded_resource_operation(
-                resource_name=release_observation_plan.resource_name,
-                operation_name=release_observation_plan.operation_name,
-                elapsed_seconds=0.0,
-                blocked=release_observation_plan.blocked,
-            )
+            self.record_queue_backpressure_observation(release_result.backpressure_observation)
             return
         release_plan = self.callback_scheduler_state.plan_result_in_flight_slot_release_attempt()
         if release_plan.has_release_error:
