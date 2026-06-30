@@ -96,12 +96,11 @@ class GracefulShutdownController:
     def handle_signal(self, signal_number: int, frame: python_types.FrameType | None) -> None:
         """Request graceful shutdown on first signal and fast abort on the second."""
         del frame
-        decision_payload = native_mapping_payload(self.native_controller.request_shutdown_payload(signal_number))
+        decision_payload = native_mapping_payload(
+            self.native_controller.request_shutdown_or_raise_second_signal_payload(signal_number)
+        )
         shutdown_signal = shutdown_signal_from_native_payload(decision_payload["signal"])
-        if ShutdownRequestAction(str(decision_payload["action"])) == ShutdownRequestAction.GRACEFUL:
-            raise GracefulShutdownRequested(shutdown_signal)
-        self.restore_previous_handlers()
-        raise_second_signal_exception(shutdown_signal)
+        raise GracefulShutdownRequested(shutdown_signal)
 
     def restore_previous_handlers(self) -> None:
         """Restore signal handlers captured when the controller was installed."""

@@ -63,10 +63,20 @@ impl NativeShutdownController {
 
     fn request_shutdown_payload<'py>(&self, py: Python<'py>, signal_number: i32) -> PyResult<Bound<'py, PyDict>> {
         let decision = self.lock_controller()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
-        let python_payload = PyDict::new(py);
-        python_payload.set_item("action", decision.action.as_str())?;
-        python_payload.set_item("signal", shutdown_signal_payload_to_dict(py, &decision.signal)?)?;
-        Ok(python_payload)
+        shutdown_request_decision_payload_to_dict(py, &decision)
+    }
+
+    fn request_shutdown_or_raise_second_signal_payload<'py>(
+        &self,
+        py: Python<'py>,
+        signal_number: i32,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let decision = self.lock_controller()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
+        if decision.action == native_shutdown::ShutdownRequestAction::Force {
+            self.restore_python_signal_handlers(py)?;
+            return raise_second_signal_exception_from_plan(signal_number);
+        }
+        shutdown_request_decision_payload_to_dict(py, &decision)
     }
 
     fn handler_install_plan_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -167,11 +177,25 @@ pub(crate) fn plan_second_signal_exception(signal_number: i32) -> PyResult<Nativ
 
 #[pyfunction]
 pub(crate) fn raise_second_signal_exception(signal_number: i32) -> PyResult<()> {
+    raise_second_signal_exception_from_plan(signal_number)
+}
+
+fn raise_second_signal_exception_from_plan<T>(signal_number: i32) -> PyResult<T> {
     let plan = native_shutdown::plan_second_signal_exception(signal_number).map_err(PyValueError::new_err)?;
     if plan.raise_keyboard_interrupt {
         return Err(PyKeyboardInterrupt::new_err(()));
     }
     Err(PySystemExit::new_err(plan.exit_code))
+}
+
+fn shutdown_request_decision_payload_to_dict<'py>(
+    py: Python<'py>,
+    decision: &native_shutdown::ShutdownRequestDecisionPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let python_payload = PyDict::new(py);
+    python_payload.set_item("action", decision.action.as_str())?;
+    python_payload.set_item("signal", shutdown_signal_payload_to_dict(py, &decision.signal)?)?;
+    Ok(python_payload)
 }
 
 fn shutdown_signal_payload_to_dict<'py>(

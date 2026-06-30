@@ -1215,6 +1215,8 @@ Remove Python as the chunk-level scheduler.
   recording after Python/JAX side effects finish.
 - Native shutdown controllers now own context-exit handler restoration plus
   requested-signal state reset as one native lifecycle transition.
+- Native shutdown controllers now own repeated-signal handler restoration and
+  hard-abort exception raising from the PyO3 boundary.
 
 ### Tests
 

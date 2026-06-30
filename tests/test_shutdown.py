@@ -118,6 +118,27 @@ def test_native_shutdown_controller_restores_and_resets_handler_session() -> Non
     signal_mock.assert_any_call(signal.SIGINT, previous_handler)
 
 
+def test_native_shutdown_controller_aborts_repeated_signal() -> None:
+    native_controller = _core.NativeShutdownController([int(signal.SIGINT)])
+    previous_handler = object()
+    installed_handler = object()
+
+    with (
+        unittest.mock.patch("g.engine.shutdown.signal.getsignal", return_value=previous_handler),
+        unittest.mock.patch("g.engine.shutdown.signal.signal") as signal_mock,
+    ):
+        native_controller.install_python_signal_handlers(installed_handler)
+        first_decision = dict(native_controller.request_shutdown_or_raise_second_signal_payload(int(signal.SIGINT)))
+        with pytest.raises(KeyboardInterrupt):
+            native_controller.request_shutdown_or_raise_second_signal_payload(int(signal.SIGINT))
+
+    assert first_decision["action"] == "graceful"
+    assert typing.cast("typing.Mapping[str, object]", first_decision["signal"])["name"] == "SIGINT"
+    assert native_controller.handlers_installed is False
+    signal_mock.assert_any_call(signal.SIGINT, installed_handler)
+    signal_mock.assert_any_call(signal.SIGINT, previous_handler)
+
+
 def test_shutdown_controller_records_first_signal_in_native_handle() -> None:
     controller = shutdown.GracefulShutdownController(handled_signals=(signal.SIGINT,))
 
