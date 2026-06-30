@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import collections.abc
-import json
 import time
 import typing
 from dataclasses import dataclass
@@ -60,7 +59,7 @@ def emit_gpu_format_diagnostic_event(
     fields: typing.Mapping[str, object],
 ) -> None:
     """Emit one structured GPU genotype-format diagnostic through native tracing."""
-    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
+    _core.emit_diagnostic_event_fields(level, event, message, fields)
 
 
 def log_auto_resolution(

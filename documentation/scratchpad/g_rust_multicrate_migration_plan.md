@@ -1462,6 +1462,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   for compatibility tests and older adapters.
 - CLI lifecycle diagnostics now hand structured fields to the native diagnostic
   emitter instead of serializing diagnostic JSON in Python.
+- Runner, output, preflight, callback, native-dispatch, and pipeline diagnostic
+  helpers now use the same native field-mapping emitter, leaving legacy
+  JSON-string diagnostic emission only for compatibility adapters.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

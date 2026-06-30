@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 import typing
 
@@ -28,7 +27,7 @@ def emit_multi_group_diagnostic_event(
     fields: typing.Mapping[str, object],
 ) -> None:
     """Emit one structured multi-group pipeline diagnostic through native tracing."""
-    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
+    _core.emit_diagnostic_event_fields(level, event, message, fields)
 
 
 def intersect_committed_chunk_identifier_sets(

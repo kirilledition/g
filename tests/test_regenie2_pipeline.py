@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import dataclasses
-import json
 import queue
 import threading
 import time
@@ -9274,7 +9273,7 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> No
     try:
         with (
             patch(
-                "g.engine.callbacks.diagnostics._core.emit_diagnostic_event",
+                "g.engine.callbacks.diagnostics._core.emit_diagnostic_event_fields",
             ) as emit_diagnostic_event_mock,
             patch(
                 "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
@@ -9290,7 +9289,7 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> No
     assert emit_diagnostic_event_mock.call_args.args[0] == "warning"
     assert emit_diagnostic_event_mock.call_args.args[1] == "callback_null_logistic_nonconvergence_warning"
     assert "--null_logistic_nonconvergence_policy=warn" in emit_diagnostic_event_mock.call_args.args[2]
-    assert json.loads(emit_diagnostic_event_mock.call_args.args[3]) == {
+    assert dict(emit_diagnostic_event_mock.call_args.args[3]) == {
         "chromosome": "22",
         "nonconverged_count": 1,
         "phenotype_count": 0,

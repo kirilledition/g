@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import typing
 
 from g import _core, types
@@ -18,7 +17,7 @@ def emit_pipeline_telemetry_diagnostic_event(
     fields: typing.Mapping[str, object],
 ) -> None:
     """Emit one structured pipeline telemetry diagnostic through native tracing."""
-    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
+    _core.emit_diagnostic_event_fields(level, event, message, fields)
 
 
 def log_sample_alignment_completed(

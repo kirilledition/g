@@ -1204,6 +1204,12 @@ fn serialize_py_payload_json_text(py: Python<'_>, payload: &Bound<'_, PyAny>) ->
     json_module.call_method("dumps", (payload,), Some(&keyword_arguments))?.extract::<String>()
 }
 
+fn serialize_py_field_mapping_json_text(py: Python<'_>, fields: &Bound<'_, PyAny>) -> PyResult<String> {
+    let builtins_module = PyModule::import(py, "builtins")?;
+    let field_mapping = builtins_module.getattr("dict")?.call1((fields,))?;
+    serialize_py_payload_json_text(py, &field_mapping)
+}
+
 fn serialize_telemetry_payload_json_line(py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<String> {
     let json_text = serialize_py_payload_json_text(py, payload.as_any())?;
     Ok(format!("{json_text}\n"))
@@ -1243,7 +1249,7 @@ pub fn emit_diagnostic_event_fields(
     message: &str,
     fields: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
-    let fields_json = serialize_py_payload_json_text(py, fields)?;
+    let fields_json = serialize_py_field_mapping_json_text(py, fields)?;
     emit_diagnostic_event(level, event, message, Some(fields_json))
 }
 

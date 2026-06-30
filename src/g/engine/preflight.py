@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import typing
 from dataclasses import dataclass
 
@@ -48,12 +47,7 @@ def emit_preflight_warning_diagnostic_event(
     fields: typing.Mapping[str, object],
 ) -> None:
     """Emit one structured preflight warning diagnostic through native tracing."""
-    g._core.emit_diagnostic_event(
-        "warning",
-        "preflight_warning",
-        message,
-        json.dumps(dict(fields), sort_keys=True, default=str),
-    )
+    g._core.emit_diagnostic_event_fields("warning", "preflight_warning", message, fields)
 
 
 def emit_preflight_warnings(

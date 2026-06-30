@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -168,11 +167,11 @@ def record_jax_runtime_diagnostic_event(
         diagnostic_level=diagnostic_event.level.value,
         has_telemetry_session=telemetry_session is not None,
     )
-    _core.emit_diagnostic_event(
+    _core.emit_diagnostic_event_fields(
         record_plan.logging_level_name.lower(),
         diagnostic_event.event_name,
         diagnostic_event.message,
-        json.dumps(event_fields, sort_keys=True, default=str),
+        event_fields,
     )
     if not record_plan.should_emit_telemetry:
         return
@@ -430,18 +429,14 @@ def effective_rayon_thread_count(requested_thread_count: int | None) -> int | No
 
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
     """Apply native runtime knobs before engine execution."""
-    _core.emit_diagnostic_event(
+    _core.emit_diagnostic_event_fields(
         "debug",
         "native_runtime_knobs_configured",
         "Configuring native runtime knobs.",
-        json.dumps(
-            {
-                "bgen_decode_tile_variant_count": compute_config.bgen_decode_tile_variant_count,
-                "threads": trait_config.threads,
-            },
-            sort_keys=True,
-            default=str,
-        ),
+        {
+            "bgen_decode_tile_variant_count": compute_config.bgen_decode_tile_variant_count,
+            "threads": trait_config.threads,
+        },
     )
     _core.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
     if trait_config.threads is not None:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import unittest.mock
 from types import SimpleNamespace
 
@@ -343,7 +342,7 @@ def test_preflight_rejects_empty_variant_scans(
 
 
 def test_preflight_records_low_degrees_of_freedom_and_trusted_path_warnings() -> None:
-    with unittest.mock.patch("g.engine.preflight.g._core.emit_diagnostic_event") as emit_diagnostic_event_mock:
+    with unittest.mock.patch("g.engine.preflight.g._core.emit_diagnostic_event_fields") as emit_diagnostic_event_mock:
         report = preflight.run_regenie2_preflight(
             run_input=build_run_input(),
             prediction_source=FakePredictionSource({"1": np.zeros(3, dtype=np.float32)}),
@@ -364,7 +363,7 @@ def test_preflight_records_low_degrees_of_freedom_and_trusted_path_warnings() ->
         "preflight_warning",
     ]
     assert [call.args[2] for call in emit_diagnostic_event_mock.call_args_list] == list(report.warning_messages)
-    assert [json.loads(call.args[3]) for call in emit_diagnostic_event_mock.call_args_list] == [
+    assert [dict(call.args[3]) for call in emit_diagnostic_event_mock.call_args_list] == [
         {
             "chromosome_count": 1,
             "covariate_count": 2,

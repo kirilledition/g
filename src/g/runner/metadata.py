@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import typing
 
 from g import _core, execution_plan, types
@@ -23,7 +22,7 @@ def emit_metadata_diagnostic_event(
     fields: typing.Mapping[str, object],
 ) -> None:
     """Emit one structured metadata diagnostic through native tracing."""
-    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
+    _core.emit_diagnostic_event_fields(level, event, message, fields)
 
 
 def native_mapping_payload(payload: object) -> dict[str, typing.Any]:

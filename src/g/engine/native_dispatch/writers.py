@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
-import json
 import time
 import typing
 from pathlib import Path
@@ -20,7 +19,7 @@ def emit_native_dispatch_writer_diagnostic_event(
     fields: typing.Mapping[str, object],
 ) -> None:
     """Emit one structured native-dispatch writer diagnostic through native tracing."""
-    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
+    _core.emit_diagnostic_event_fields(level, event, message, fields)
 
 
 def finish_callback_drain(

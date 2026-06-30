@@ -39,6 +39,16 @@ class NativeDiagnosticCore:
         """Accept one structured native diagnostic event."""
         del level, event, message, fields_json
 
+    def emit_diagnostic_event_fields(
+        self,
+        level: str,
+        event: str,
+        message: str,
+        fields: object,
+    ) -> None:
+        """Accept one native diagnostic event with structured fields."""
+        del level, event, message, fields
+
 
 def complete_mock_output_initialization(
     keyword_arguments: dict[str, object],
@@ -806,19 +816,19 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
     diagnostic_calls: list[tuple[str, str, str, dict[str, object]]] = []
 
     class FakeCoreModule(NativeDiagnosticCore):
-        def emit_diagnostic_event(
+        def emit_diagnostic_event_fields(
             self,
             level: str,
             event: str,
             message: str,
-            fields_json: str | None = None,
+            fields: object,
         ) -> None:
             diagnostic_calls.append(
                 (
                     level,
                     event,
                     message,
-                    {} if fields_json is None else typing.cast("dict[str, object]", json.loads(fields_json)),
+                    dict(typing.cast("typing.Mapping[str, object]", fields)),
                 )
             )
 
@@ -1075,7 +1085,7 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
 
 def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
     recorded_events: list[tuple[str, str, dict[str, object]]] = []
-    logged_records: list[tuple[str, str, str, str]] = []
+    logged_records: list[tuple[str, str, str, dict[str, object]]] = []
 
     class RecordingTelemetrySession:
         def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
@@ -1132,7 +1142,7 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
             "g.runner.runtime._core.plan_jax_runtime_diagnostic_record",
             side_effect=plan_jax_runtime_diagnostic_record,
         ),
-        patch("g.runner.runtime._core.emit_diagnostic_event") as emit_diagnostic_event_mock,
+        patch("g.runner.runtime._core.emit_diagnostic_event_fields") as emit_diagnostic_event_mock,
     ):
         runner_runtime.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session=telemetry_session)
 
@@ -1142,13 +1152,11 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
                 typing.cast("str", call.args[0]),
                 typing.cast("str", call.args[1]),
                 typing.cast("str", call.args[2]),
-                typing.cast("str", call.args[3]),
+                dict(typing.cast("typing.Mapping[str, object]", call.args[3])),
             )
         )
 
-    assert logged_records == [
-        ("error", "jax_native_plan_test", "planned diagnostic", json.dumps({"field": "value"}, sort_keys=True))
-    ]
+    assert logged_records == [("error", "jax_native_plan_test", "planned diagnostic", {"field": "value"})]
     assert recorded_events == [("jax_native_plan_test", "trace", {"field": "value"})]
 
 

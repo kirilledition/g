@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 import typing
 
@@ -31,7 +30,7 @@ def emit_grouped_diagnostic_event(
     fields: typing.Mapping[str, object],
 ) -> None:
     """Emit one structured grouped pipeline diagnostic through native tracing."""
-    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
+    _core.emit_diagnostic_event_fields(level, event, message, fields)
 
 
 def run_regenie2_grouped_per_phenotype_bgen_pipeline(
