@@ -1249,6 +1249,10 @@ Remove Python as the chunk-level scheduler.
 - Multi-result callback consumers now use native runtime resource combined
   result-queue get/drain-completion paths, matching the single-result consumer
   ownership boundary for timed and untimed result drains.
+- Multi-result callback consumers now use the native optional-observation
+  result-queue get/drain path, so Rust owns timing-enabled versus untimed
+  observation selection for both single-result and multi-result production
+  consumers.
 - Callback runtime resources now own callback telemetry availability for
   production binary-correction diagnostics and worker-finish summary planning,
   so Python no longer computes or passes that fixed run property on native

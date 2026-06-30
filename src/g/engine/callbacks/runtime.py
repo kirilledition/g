@@ -1518,23 +1518,13 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             while True:
                 get_start_time = time.perf_counter()
-                if self.uses_native_callback_runtime_resources():
-                    work_item_get_result = (
-                        self.callback_runtime_resources.get_result_write_item_with_observation_and_drain_completion()
-                    )
-                    work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
-                    get_observation_plan = work_item_get_result.observation_plan
-                    drain_completion_plan = work_item_get_result.drain_completion_plan
-                else:
-                    work_item = self.get_result_write_item()
-                    get_observation_plan = None
-                    drain_completion_plan = self.plan_result_write_drain_completion(
-                        work_item,
-                    )
+                work_item = self.get_result_write_item()
+                drain_completion_plan = self.plan_result_write_drain_completion(
+                    work_item,
+                )
                 if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
-                if get_observation_plan is None:
-                    get_observation_plan = self.plan_result_queue_get_observation()
+                get_observation_plan = self.plan_result_queue_get_observation()
                 self.record_bounded_resource_stage_duration(
                     resource_name=get_observation_plan.queue_name,
                     operation_name=get_observation_plan.operation_name,
@@ -1582,6 +1572,36 @@ class NativeBgenCallbackRunner(abc.ABC):
                 self.process_result_write_item(result_work_item)
                 continue
             message = "Native result write dispatch plan did not select a single-result processing path."
+            raise RuntimeError(message)
+
+    def consume_multi_result_write_items_with_native_runtime_resources(self) -> None:
+        """Consume queued native multi-result write items with optional timing observations."""
+        while True:
+            get_start_time = time.perf_counter()
+            work_item_get_result = (
+                self.callback_runtime_resources.get_result_write_item_with_optional_observation_and_drain_completion()
+            )
+            work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
+            get_observation_plan = work_item_get_result.observation_plan
+            drain_completion_plan = work_item_get_result.drain_completion_plan
+            if self.apply_result_write_drain_completion_plan(drain_completion_plan):
+                return
+            if get_observation_plan is not None:
+                self.record_bounded_resource_stage_duration(
+                    resource_name=get_observation_plan.queue_name,
+                    operation_name=get_observation_plan.operation_name,
+                    start_time=get_start_time,
+                    blocked=get_observation_plan.blocked,
+                )
+            dispatch_plan = self.plan_result_write_item_dispatch(
+                work_item,
+            )
+            self.apply_result_write_item_dispatch_plan(dispatch_plan)
+            if dispatch_plan.should_process_multi_result_write_item:
+                multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
+                self.process_multi_result_write_item(multi_work_item)
+                continue
+            message = "Native result write dispatch plan did not select a multi-result processing path."
             raise RuntimeError(message)
 
     def consume_result_write_items_without_timing(self) -> None:
@@ -1645,6 +1665,11 @@ class NativeBgenCallbackRunner(abc.ABC):
                 work_item,
                 host_dosage_buffer_released=host_dosage_buffer_released,
             )
+
+    def process_multi_result_write_item(self, multi_work_item: Regenie2MultiResultWriteWorkItem) -> None:
+        """Materialize and write one multi-result work item."""
+        del multi_work_item
+        raise NotImplementedError
 
     def put_dosage_work_item(
         self,

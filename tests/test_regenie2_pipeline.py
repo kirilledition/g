@@ -125,6 +125,31 @@ class FakePipelineOutputPreparationBatch:
         return self.initialization
 
 
+class NativeResultQueueGetDrainProbe:
+    def __init__(self, runtime_resources: _core.NativeCallbackRuntimeResources) -> None:
+        self.runtime_resources = runtime_resources
+        self.optional_result_get_count = 0
+
+    def __getattr__(self, attribute_name: str) -> object:
+        return getattr(self.runtime_resources, attribute_name)
+
+    def get_result_write_item_with_optional_observation_and_drain_completion(
+        self,
+    ) -> _core.NativeResultWriteItemGetResult:
+        self.optional_result_get_count += 1
+        return self.runtime_resources.get_result_write_item_with_optional_observation_and_drain_completion()
+
+    def get_result_write_item_with_observation_and_drain_completion(
+        self,
+    ) -> _core.NativeResultWriteItemGetResult:
+        message = "multi callback should use native optional result get/drain"
+        raise AssertionError(message)
+
+    def get_result_write_item_with_drain_completion(self) -> _core.NativeResultWriteItemGetResult:
+        message = "multi callback should use native optional result get/drain"
+        raise AssertionError(message)
+
+
 def build_fake_pipeline_output_preparation_batch(
     *committed_chunk_identifier_sequences: typing.Iterable[int],
     initialize_callback: typing.Callable[[], None] | None = None,
@@ -7610,16 +7635,17 @@ def test_multi_linear_callback_uses_native_result_get_drain_resources(
     )
     assert callback.try_put_result_write_item_with_backpressure_timeout(None)
 
+    runtime_resources_probe = NativeResultQueueGetDrainProbe(callback.callback_runtime_resources)
+    callback_for_probe.callback_runtime_resources = runtime_resources_probe
+
     try:
-        if stage_timing_recorder is not None:
-            callback.consume_result_write_items()
-        else:
-            callback.consume_result_write_items_without_timing()
+        callback.consume_result_write_items()
     finally:
         callback.finish()
 
     assert callback.result_worker_error_cause is None
     assert processed_metadata == [metadata]
+    assert runtime_resources_probe.optional_result_get_count == 2
     if stage_timing_recorder is not None:
         assert stage_timing_recorder.snapshot().stage_counts["result_queue_consumer_wait"] == 1
 
@@ -7768,16 +7794,17 @@ def test_multi_binary_callback_uses_native_result_get_drain_resources(
     )
     assert callback.try_put_result_write_item_with_backpressure_timeout(None)
 
+    runtime_resources_probe = NativeResultQueueGetDrainProbe(callback.callback_runtime_resources)
+    callback_for_probe.callback_runtime_resources = runtime_resources_probe
+
     try:
-        if stage_timing_recorder is not None:
-            callback.consume_result_write_items()
-        else:
-            callback.consume_result_write_items_without_timing()
+        callback.consume_result_write_items()
     finally:
         callback.finish()
 
     assert callback.result_worker_error_cause is None
     assert processed_metadata == [metadata]
+    assert runtime_resources_probe.optional_result_get_count == 2
     if stage_timing_recorder is not None:
         assert stage_timing_recorder.snapshot().stage_counts["result_queue_consumer_wait"] == 1
 
