@@ -91,8 +91,7 @@ class GracefulShutdownController:
     ) -> None:
         """Restore previous signal handlers."""
         del exception_type, exception_value, traceback
-        self.restore_previous_handlers()
-        self.native_controller.reset()
+        self.native_controller.restore_python_signal_handlers_and_reset()
 
     def handle_signal(self, signal_number: int, frame: python_types.FrameType | None) -> None:
         """Request graceful shutdown on first signal and fast abort on the second."""

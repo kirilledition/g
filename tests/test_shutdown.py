@@ -97,6 +97,27 @@ def test_native_shutdown_controller_installs_and_restores_python_handlers() -> N
     assert native_controller.handlers_installed is False
 
 
+def test_native_shutdown_controller_restores_and_resets_handler_session() -> None:
+    native_controller = _core.NativeShutdownController([int(signal.SIGINT)])
+    previous_handler = object()
+    installed_handler = object()
+
+    with (
+        unittest.mock.patch("g.engine.shutdown.signal.getsignal", return_value=previous_handler),
+        unittest.mock.patch("g.engine.shutdown.signal.signal") as signal_mock,
+    ):
+        native_controller.install_python_signal_handlers(installed_handler)
+        native_controller.request_shutdown_payload(int(signal.SIGINT))
+        assert native_controller.requested_signal_payload() is not None
+        restored_handlers = native_controller.restore_python_signal_handlers_and_reset()
+
+    assert restored_handlers is True
+    assert native_controller.requested_signal_payload() is None
+    assert native_controller.handlers_installed is False
+    signal_mock.assert_any_call(signal.SIGINT, installed_handler)
+    signal_mock.assert_any_call(signal.SIGINT, previous_handler)
+
+
 def test_shutdown_controller_records_first_signal_in_native_handle() -> None:
     controller = shutdown.GracefulShutdownController(handled_signals=(signal.SIGINT,))
 

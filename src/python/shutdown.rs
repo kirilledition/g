@@ -133,6 +133,12 @@ impl NativeShutdownController {
         self.lock_controller()?.mark_handlers_restored();
         Ok(true)
     }
+
+    fn restore_python_signal_handlers_and_reset(&self, py: Python<'_>) -> PyResult<bool> {
+        let restored_handlers = self.restore_python_signal_handlers(py)?;
+        self.lock_controller()?.finish_handler_session();
+        Ok(restored_handlers)
+    }
 }
 
 impl NativeShutdownController {
