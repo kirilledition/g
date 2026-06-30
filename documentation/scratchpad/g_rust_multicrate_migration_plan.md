@@ -1123,6 +1123,8 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production dosage work handoff planning,
   including variant-major batch handoff validation, while Python keeps the
   temporary callback work-item dataclasses.
+- Callback runtime resources now derive production dosage work handoff counts
+  from prepared work-item objects and variant-major batch input sequences.
 - Callback runtime resources now own production dosage work stage-duration
   attribution planning while Python keeps timing emission.
 - Callback runtime resources now own production worker-error scheduler state

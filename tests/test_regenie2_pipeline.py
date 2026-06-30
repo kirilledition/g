@@ -3172,8 +3172,18 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
 
     dosage_handoff_plan = runtime_resources.plan_dosage_work_handoff(2)
     assert dosage_handoff_plan.chunk_count == 2
+    object_dosage_handoff_plan = runtime_resources.plan_dosage_work_handoff_for_object(sample_major_work_item)
+    assert object_dosage_handoff_plan.chunk_count == 1
+    object_batch_handoff_plan = runtime_resources.plan_dosage_work_handoff_for_object(
+        callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem(
+            work_items=(variant_major_work_item, variant_major_work_item)
+        )
+    )
+    assert object_batch_handoff_plan.chunk_count == 2
     with pytest.raises(ValueError, match="at least one chunk"):
         runtime_resources.plan_dosage_work_handoff(0)
+    with pytest.raises(ValueError, match="at least one chunk"):
+        runtime_resources.plan_dosage_work_handoff_for_object(None)
 
     variant_major_batch_handoff_plan = runtime_resources.plan_variant_major_dosage_batch_handoff(
         metadata_count=2,
@@ -3181,11 +3191,26 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         chunk_stats_count=2,
     )
     assert variant_major_batch_handoff_plan.chunk_count == 2
+    variant_major_sequence_handoff_plan = runtime_resources.plan_variant_major_dosage_batch_handoff_for_sequences(
+        (metadata, metadata),
+        (
+            np.ones((2, 2), dtype=np.float32),
+            np.full((2, 2), 2.0, dtype=np.float32),
+        ),
+        (chunk_stats, chunk_stats),
+    )
+    assert variant_major_sequence_handoff_plan.chunk_count == 2
     with pytest.raises(ValueError, match="identical lengths"):
         runtime_resources.plan_variant_major_dosage_batch_handoff(
             metadata_count=2,
             genotype_matrix_by_variant_count=1,
             chunk_stats_count=2,
+        )
+    with pytest.raises(ValueError, match="identical lengths"):
+        runtime_resources.plan_variant_major_dosage_batch_handoff_for_sequences(
+            (metadata, metadata),
+            (np.ones((2, 2), dtype=np.float32),),
+            (chunk_stats, chunk_stats),
         )
 
 
@@ -4620,6 +4645,117 @@ def test_native_callback_runner_uses_scheduler_variant_major_batch_handoff_plan(
     assert queued_work_item is not None
     assert isinstance(queued_work_item, callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem)
     assert len(queued_work_item.work_items) == 1
+
+
+def test_native_callback_runner_derives_dosage_handoffs_natively() -> None:
+    class DosageHandoffRuntimeResourcesProbe:
+        def __init__(self, runtime_resources: callback_runtime._core.NativeCallbackRuntimeResources) -> None:
+            self.runtime_resources = runtime_resources
+            self.handoff_work_items: list[object] = []
+            self.batch_sequences: list[tuple[object, object, object]] = []
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.runtime_resources, name)
+
+        def plan_dosage_work_handoff_for_object(
+            self,
+            work_item: object,
+        ) -> callback_runtime._core.NativeDosageWorkHandoffPlan:
+            self.handoff_work_items.append(work_item)
+            return self.runtime_resources.plan_dosage_work_handoff_for_object(work_item)
+
+        def plan_variant_major_dosage_batch_handoff_for_sequences(
+            self,
+            metadata_batch: object,
+            genotype_matrix_by_variant_batch: object,
+            chunk_stats_batch: object,
+        ) -> callback_runtime._core.NativeVariantMajorDosageBatchHandoffPlan:
+            self.batch_sequences.append((metadata_batch, genotype_matrix_by_variant_batch, chunk_stats_batch))
+            return self.runtime_resources.plan_variant_major_dosage_batch_handoff_for_sequences(
+                metadata_batch,
+                genotype_matrix_by_variant_batch,
+                chunk_stats_batch,
+            )
+
+        def plan_dosage_work_handoff(
+            self,
+            chunk_count: int,
+        ) -> callback_runtime._core.NativeDosageWorkHandoffPlan:
+            del chunk_count
+            raise AssertionError("production runner should derive dosage handoff counts from work item objects")
+
+        def plan_variant_major_dosage_batch_handoff(
+            self,
+            *,
+            metadata_count: int,
+            genotype_matrix_by_variant_count: int,
+            chunk_stats_count: int,
+        ) -> callback_runtime._core.NativeVariantMajorDosageBatchHandoffPlan:
+            del metadata_count, genotype_matrix_by_variant_count, chunk_stats_count
+            raise AssertionError("production runner should derive variant-major batch handoff counts from sequences")
+
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+    )
+    callback_for_probe = typing.cast("typing.Any", callback)
+    original_runtime_resources = callback.callback_runtime_resources
+    queued_work_items: list[object] = []
+
+    def put_dosage_work_item_probe(work_item: object) -> None:
+        queued_work_items.append(work_item)
+
+    first_metadata = build_native_metadata_for_chunk(chunk_identifier=0)
+    second_metadata = build_native_metadata_for_chunk(chunk_identifier=2)
+    chunk_stats = typing.cast("_core.ChunkStats", SimpleNamespace())
+    runtime_resources_probe = DosageHandoffRuntimeResourcesProbe(callback.callback_runtime_resources)
+    metadata_batch = (first_metadata, second_metadata)
+    genotype_matrix_by_variant_batch = (
+        np.ones((2, 2), dtype=np.float32),
+        np.full((2, 2), 2.0, dtype=np.float32),
+    )
+    chunk_stats_batch = (chunk_stats, chunk_stats)
+
+    try:
+        callback_for_probe.callback_runtime_resources = runtime_resources_probe
+        callback_for_probe.put_dosage_work_item = put_dosage_work_item_probe
+        callback.compute_preprocessed_dosage_chunk(
+            metadata=first_metadata,
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+        callback.compute_preprocessed_variant_major_dosage_chunk(
+            metadata=first_metadata,
+            genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+        callback.compute_preprocessed_variant_major_packed8_probability_pair_chunk(
+            metadata=first_metadata,
+            packed_probability_pairs_by_variant=np.ones((2, 2, 2), dtype=np.uint8),
+            chunk_stats=chunk_stats,
+        )
+        callback.compute_preprocessed_variant_major_dosage_chunk_batch(
+            metadata_batch=metadata_batch,
+            genotype_matrix_by_variant_batch=genotype_matrix_by_variant_batch,
+            chunk_stats_batch=chunk_stats_batch,
+        )
+    finally:
+        callback_for_probe.callback_runtime_resources = original_runtime_resources
+        callback.finish()
+
+    assert len(queued_work_items) == 4
+    assert runtime_resources_probe.handoff_work_items == queued_work_items
+    assert runtime_resources_probe.batch_sequences == [
+        (metadata_batch, genotype_matrix_by_variant_batch, chunk_stats_batch)
+    ]
+    assert isinstance(queued_work_items[0], callback_shared.PreprocessedDosageChunkWorkItem)
+    assert isinstance(queued_work_items[1], callback_shared.PreprocessedVariantMajorDosageChunkWorkItem)
+    assert isinstance(
+        queued_work_items[2],
+        callback_shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem,
+    )
+    assert isinstance(queued_work_items[3], callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem)
 
 
 def test_native_callback_runner_uses_scheduler_dosage_work_handoff_plans() -> None:

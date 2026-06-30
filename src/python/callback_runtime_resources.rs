@@ -1658,9 +1658,33 @@ impl NativeCallbackRuntimeResources {
         )
     }
 
+    fn plan_variant_major_dosage_batch_handoff_for_sequences(
+        &self,
+        py: Python<'_>,
+        metadata_batch: &Bound<'_, PyAny>,
+        genotype_matrix_by_variant_batch: &Bound<'_, PyAny>,
+        chunk_stats_batch: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
+        self.plan_variant_major_dosage_batch_handoff(
+            py,
+            metadata_batch.len()?,
+            genotype_matrix_by_variant_batch.len()?,
+            chunk_stats_batch.len()?,
+        )
+    }
+
     fn plan_dosage_work_handoff(&self, py: Python<'_>, chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         scheduler_state.plan_dosage_work_handoff_value(chunk_count)
+    }
+
+    fn plan_dosage_work_handoff_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeDosageWorkHandoffPlan> {
+        let descriptor = classify_dosage_work_item(work_item)?;
+        self.plan_dosage_work_handoff(py, descriptor.chunk_count)
     }
 
     fn try_put_result_write_item(
