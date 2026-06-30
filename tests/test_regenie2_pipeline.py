@@ -3208,6 +3208,13 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert isinstance(reusable_sliced_buffer, np.ndarray)
     assert reusable_sliced_buffer.shape == (2, 3)
     assert reusable_sliced_buffer.base is oversized_dosage_buffer
+    reusable_selection_result = runtime_resources.select_reusable_dosage_buffer_or_discard(
+        oversized_dosage_buffer,
+        (2, 3),
+        np.float32,
+    )
+    assert reusable_selection_result.dosage_buffer is not None
+    assert reusable_selection_result.discard_operation_result is None
     assert runtime_resources.plan_dosage_buffer_reuse((2, 2), (3, 2)) is None
     pool_observation = runtime_resources.plan_dosage_buffer_pool_backpressure_observation(
         operation_name="return",
@@ -3234,6 +3241,36 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert runtime_resources.dosage_buffer_allocated_count == 0
     assert runtime_resources.callback_scheduler_state.dosage_buffer_allocated_count == 0
     assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) is None
+
+    selection_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-dosage-buffer-selection-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    unusable_dosage_buffer = np.empty((1, 1), dtype=np.uint8)
+    assert selection_runtime_resources.register_dosage_buffer(id(unusable_dosage_buffer)) == 0
+    assert selection_runtime_resources.return_dosage_buffer(id(unusable_dosage_buffer), unusable_dosage_buffer) == 1
+    popped_buffer_result = selection_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert popped_buffer_result.has_item is True
+    assert popped_buffer_result.item is unusable_dosage_buffer
+    discard_selection_result = selection_runtime_resources.select_reusable_dosage_buffer_or_discard(
+        unusable_dosage_buffer,
+        (2, 2),
+        np.float32,
+    )
+    assert discard_selection_result.dosage_buffer is None
+    discard_operation_result = discard_selection_result.discard_operation_result
+    assert discard_operation_result is not None
+    assert discard_operation_result.has_free_buffer_count is True
+    assert discard_operation_result.free_buffer_count == 0
+    assert selection_runtime_resources.dosage_buffer_allocated_count == 0
 
 
 def test_native_callback_runner_uses_native_releasable_dosage_buffer_owner_resolution() -> None:
@@ -3288,6 +3325,34 @@ def test_native_callback_runner_uses_native_dosage_buffer_reuse_selection() -> N
             assert sliced_buffer.base is oversized_buffer
             callback.discard_dosage_buffer_slot(sliced_buffer)
             assert callback.callback_runtime_resources.dosage_buffer_allocated_count == 0
+    finally:
+        callback.finish()
+
+
+def test_native_callback_runner_discards_unusable_dosage_buffer_candidates_natively() -> None:
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        dosage_buffer_limit=1,
+    )
+    unusable_buffer = np.empty((1, 1), dtype=np.uint8)
+    assert callback.callback_runtime_resources.register_dosage_buffer(id(unusable_buffer)) == 0
+    assert callback.callback_runtime_resources.return_dosage_buffer(id(unusable_buffer), unusable_buffer) == 1
+
+    try:
+        with patch.object(
+            callback_runtime.NativeBgenCallbackRunner,
+            "discard_dosage_buffer_slot",
+            side_effect=AssertionError("production runner should discard unusable candidates natively"),
+        ):
+            acquired_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+        assert acquired_buffer.shape == (2, 3)
+        assert acquired_buffer.dtype == np.float32
+        assert acquired_buffer is not unusable_buffer
+        assert callback.callback_runtime_resources.dosage_buffer_allocated_count == 1
+        callback.discard_dosage_buffer_slot(acquired_buffer)
+        assert callback.callback_runtime_resources.dosage_buffer_allocated_count == 0
     finally:
         callback.finish()
 

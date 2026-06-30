@@ -2364,17 +2364,22 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
             if acquire_result.dosage_buffer is not None:
                 dosage_buffer = typing.cast("HostGenotypeBuffer", acquire_result.dosage_buffer)
-                reused_dosage_buffer = self.callback_runtime_resources.get_reusable_dosage_buffer(
+                reuse_selection_result = self.callback_runtime_resources.select_reusable_dosage_buffer_or_discard(
                     dosage_buffer,
                     expected_shape,
                     dtype,
                 )
+                reused_dosage_buffer = reuse_selection_result.dosage_buffer
                 if reused_dosage_buffer is not None:
                     self.record_dosage_buffer_pool_reuse_operation(
                         free_buffer_count=acquire_result.free_buffer_count,
                     )
                     return typing.cast("HostGenotypeBuffer", reused_dosage_buffer)
-                self.discard_dosage_buffer_slot(dosage_buffer)
+                discard_operation_result = reuse_selection_result.discard_operation_result
+                if discard_operation_result is None:
+                    message = "Native dosage-buffer reuse selection omitted the discard result."
+                    raise RuntimeError(message)
+                self.record_dosage_buffer_pool_operation_result(discard_operation_result)
                 continue
             acquire_observation_plan = acquire_result.observation_plan
             if acquire_observation_plan is None:
