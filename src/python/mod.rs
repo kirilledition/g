@@ -134,7 +134,8 @@ use run_events::{
     build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload,
     build_native_dispatch_writer_sessions_finish_started_diagnostic_payload,
     build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload,
-    build_native_runtime_knobs_configured_diagnostic_payload, build_preflight_warning_diagnostic_payload,
+    build_native_runtime_knobs_configured_diagnostic_payload,
+    build_pipeline_gpu_genotype_format_resolved_diagnostic_payload, build_preflight_warning_diagnostic_payload,
     build_run_completed_event_payload, build_run_completed_telemetry_fields, build_run_failed_event_payload,
     build_run_failed_telemetry_fields, build_run_interrupted_event_payload, build_run_interrupted_telemetry_fields,
     build_runner_binary_engine_dispatch_started_diagnostic_payload,
@@ -2046,6 +2047,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
         build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_gpu_genotype_format_resolved_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_native_dispatch_callback_drain_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_finished_diagnostic_payload, module)?)?;

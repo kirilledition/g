@@ -323,6 +323,23 @@ pub fn build_io_output_resume_committed_chunks_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn build_pipeline_gpu_genotype_format_resolved_diagnostic_payload<'py>(
+    py: Python<'py>,
+    requested_gpu_genotype_format: &str,
+    resolved_gpu_genotype_format: &str,
+    resolution_reason: &str,
+    fallback_error: Option<&str>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
+        requested_gpu_genotype_format,
+        resolved_gpu_genotype_format,
+        resolution_reason,
+        fallback_error,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn build_native_dispatch_bgen_engine_constructing_diagnostic_payload<'py>(
     py: Python<'py>,
     chunk_size: i64,

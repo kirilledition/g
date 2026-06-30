@@ -474,6 +474,24 @@ def build_io_output_resume_committed_chunks_diagnostic_payload(
     )
 
 
+def build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
+    *,
+    requested_gpu_genotype_format: types.GpuGenotypeFormat,
+    resolved_gpu_genotype_format: types.GpuGenotypeFormat,
+    resolution_reason: str,
+    fallback_error: str | None,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for GPU genotype-format resolution."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
+            requested_gpu_genotype_format.value,
+            resolved_gpu_genotype_format.value,
+            resolution_reason,
+            fallback_error,
+        )
+    )
+
+
 def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
     *,
     chunk_size: int,

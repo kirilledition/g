@@ -37,6 +37,7 @@ pub const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE: &str = "Buildi
 pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching REGENIE execution plan.";
 pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
 pub const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_output_resume_committed_chunks";
+pub const PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_gpu_genotype_format_resolved";
 pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_bgen_engine_constructing";
 pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_MESSAGE: &str = "Constructing native BGEN run engine.";
@@ -694,6 +695,29 @@ pub fn build_io_output_resume_committed_chunks_diagnostic_payload(
             text_diagnostic_field("chunks_directory", chunks_directory),
             integer_diagnostic_field("committed_chunk_count", committed_chunk_count),
             text_diagnostic_field("run_directory", run_directory),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
+    requested_gpu_genotype_format: &str,
+    resolved_gpu_genotype_format: &str,
+    resolution_reason: &str,
+    fallback_error: Option<&str>,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME,
+        message: format!(
+            "Resolved gpu_genotype_format={requested_gpu_genotype_format} to {resolved_gpu_genotype_format}: \
+             {resolution_reason}."
+        ),
+        fields: vec![
+            optional_text_diagnostic_field("fallback_error", fallback_error.map(str::to_string)),
+            text_diagnostic_field("requested_gpu_genotype_format", requested_gpu_genotype_format),
+            text_diagnostic_field("resolution_reason", resolution_reason),
+            text_diagnostic_field("resolved_gpu_genotype_format", resolved_gpu_genotype_format),
         ],
     }
 }
@@ -1517,6 +1541,25 @@ mod tests {
         assert_eq!(interrupted_payload.event_name, "native_dispatch_delivery_interrupted");
         assert_eq!(failed_payload.fields[1].value, RunDiagnosticFieldValue::Text("RuntimeError".to_string()));
         assert_eq!(pipeline_finished_payload.message, "Native BGEN pipeline finished.");
+    }
+
+    #[test]
+    fn builds_pipeline_gpu_genotype_format_resolved_diagnostic_payload() {
+        let payload = build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
+            "auto",
+            "dosage",
+            "trusted_validation_failed",
+            Some("packed8 incompatible"),
+        );
+
+        assert_eq!(payload.level, "info");
+        assert_eq!(payload.event_name, "pipeline_gpu_genotype_format_resolved");
+        assert_eq!(payload.message, "Resolved gpu_genotype_format=auto to dosage: trusted_validation_failed.");
+        assert_eq!(
+            payload.fields[0].value,
+            RunDiagnosticFieldValue::OptionalText(Some("packed8 incompatible".to_string()))
+        );
+        assert_eq!(payload.fields[3].value, RunDiagnosticFieldValue::Text("dosage".to_string()));
     }
 
     #[test]

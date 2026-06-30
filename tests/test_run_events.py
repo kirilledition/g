@@ -472,6 +472,25 @@ def test_io_output_resume_committed_chunks_diagnostic_payload_uses_native_builde
     }
 
 
+def test_pipeline_gpu_genotype_format_resolved_diagnostic_payload_uses_native_builder() -> None:
+    assert run_events.build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
+        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+        resolved_gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
+        resolution_reason="trusted_validation_failed",
+        fallback_error="packed8 incompatible",
+    ) == {
+        "level": "info",
+        "event_name": "pipeline_gpu_genotype_format_resolved",
+        "message": "Resolved gpu_genotype_format=auto to dosage: trusted_validation_failed.",
+        "fields": {
+            "fallback_error": "packed8 incompatible",
+            "requested_gpu_genotype_format": "auto",
+            "resolution_reason": "trusted_validation_failed",
+            "resolved_gpu_genotype_format": "dosage",
+        },
+    }
+
+
 def test_native_dispatch_engine_diagnostic_payloads_use_native_builders() -> None:
     assert run_events.build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
         chunk_size=1024,
