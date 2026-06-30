@@ -1140,17 +1140,8 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             while True:
                 get_start_time = time.perf_counter()
-                if self.uses_native_callback_runtime_resources():
-                    work_item_get_result = (
-                        self.callback_runtime_resources.get_dosage_work_item_with_observation_and_drain_completion()
-                    )
-                    work_item = typing.cast("QueuedPreprocessedDosageWorkItem", work_item_get_result.item)
-                    get_observation_plan = work_item_get_result.observation_plan
-                    drain_completion_plan = work_item_get_result.drain_completion_plan
-                else:
-                    work_item = self.get_dosage_work_item()
-                    get_observation_plan = None
-                    drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
+                work_item = self.get_dosage_work_item()
+                drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
                 if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
                     return
                 dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
@@ -1159,8 +1150,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                     "PreprocessedDosageWorkItem",
                     work_item,
                 )
-                if get_observation_plan is None:
-                    get_observation_plan = self.plan_dosage_queue_get_observation()
+                get_observation_plan = self.plan_dosage_queue_get_observation()
                 self.record_bounded_resource_stage_duration(
                     resource_name=get_observation_plan.queue_name,
                     operation_name=get_observation_plan.operation_name,
