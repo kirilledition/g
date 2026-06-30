@@ -40,6 +40,13 @@ pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dis
 pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
 pub const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_output_resume_committed_chunks";
 pub const PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_gpu_genotype_format_resolved";
+pub const PIPELINE_BGEN_ENGINE_OPEN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_bgen_engine_open_started";
+pub const PIPELINE_BGEN_ENGINE_OPENED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_bgen_engine_opened";
+pub const PIPELINE_PREVALIDATED_BGEN_ENGINE_USED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_prevalidated_bgen_engine_used";
+pub const PIPELINE_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_output_resume_committed_chunks";
+pub const PIPELINE_OUTPUT_WRITER_SESSIONS_CREATE_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_output_writer_sessions_create_started";
 pub const PIPELINE_MULTI_PHENOTYPE_SAMPLE_SUMMARY_DIAGNOSTIC_EVENT_NAME: &str =
     "pipeline_multi_phenotype_sample_summary";
 pub const PIPELINE_MULTI_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_started";
@@ -727,6 +734,103 @@ pub fn build_io_output_resume_committed_chunks_diagnostic_payload(
             text_diagnostic_field("chunks_directory", chunks_directory),
             integer_diagnostic_field("committed_chunk_count", committed_chunk_count),
             text_diagnostic_field("run_directory", run_directory),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_bgen_engine_open_started_diagnostic_payload(
+    phenotype_count: Option<i64>,
+    phenotype_name: Option<&str>,
+    pipeline_label: &str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_BGEN_ENGINE_OPEN_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Opening native BGEN engine for {pipeline_label} pipeline."),
+        fields: vec![
+            optional_integer_diagnostic_field("phenotype_count", phenotype_count),
+            optional_text_diagnostic_field("phenotype_name", phenotype_name.map(str::to_string)),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+            boolean_diagnostic_field("trusted_no_missing_diploid", trusted_no_missing_diploid),
+            optional_integer_diagnostic_field("variant_limit", variant_limit),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_bgen_engine_opened_diagnostic_payload(
+    phenotype_count: Option<i64>,
+    phenotype_name: Option<&str>,
+    pipeline_label: &str,
+    sample_count: i64,
+    variant_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_BGEN_ENGINE_OPENED_DIAGNOSTIC_EVENT_NAME,
+        message: format!(
+            "Native BGEN engine opened for {pipeline_label} pipeline: sample_count={sample_count} \
+             variant_count={variant_count}."
+        ),
+        fields: vec![
+            optional_integer_diagnostic_field("phenotype_count", phenotype_count),
+            optional_text_diagnostic_field("phenotype_name", phenotype_name.map(str::to_string)),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+            integer_diagnostic_field("sample_count", sample_count),
+            integer_diagnostic_field("variant_count", variant_count),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
+    phenotype_count: Option<i64>,
+    phenotype_name: Option<&str>,
+    pipeline_label: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_PREVALIDATED_BGEN_ENGINE_USED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Using prevalidated native BGEN engine for {pipeline_label} pipeline."),
+        fields: vec![
+            optional_integer_diagnostic_field("phenotype_count", phenotype_count),
+            optional_text_diagnostic_field("phenotype_name", phenotype_name.map(str::to_string)),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_output_resume_committed_chunks_diagnostic_payload(
+    committed_chunk_count: i64,
+    output_index: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: PIPELINE_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Resuming run with {committed_chunk_count} previously committed chunks."),
+        fields: vec![
+            integer_diagnostic_field("committed_chunk_count", committed_chunk_count),
+            integer_diagnostic_field("output_index", output_index),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
+    association_mode: &str,
+    output_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_OUTPUT_WRITER_SESSIONS_CREATE_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Creating output writer(s) for {association_mode} pipeline."),
+        fields: vec![
+            text_diagnostic_field("association_mode", association_mode),
+            integer_diagnostic_field("output_count", output_count),
         ],
     }
 }
@@ -1870,6 +1974,37 @@ mod tests {
         assert_eq!(payload.fields[0].value, RunDiagnosticFieldValue::Text("out/chunks".to_string()));
         assert_eq!(payload.fields[1].value, RunDiagnosticFieldValue::Integer(2));
         assert_eq!(payload.fields[2].value, RunDiagnosticFieldValue::Text("out/run".to_string()));
+    }
+
+    #[test]
+    fn builds_pipeline_output_diagnostic_payloads() {
+        let open_started_payload = build_pipeline_bgen_engine_open_started_diagnostic_payload(
+            Some(2),
+            None,
+            "multi-phenotype",
+            true,
+            Some(100),
+        );
+        let opened_payload =
+            build_pipeline_bgen_engine_opened_diagnostic_payload(Some(2), Some("trait"), "binary", 3, 4);
+        let prevalidated_payload =
+            build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(None, Some("trait"), "binary");
+        let resume_payload = build_pipeline_output_resume_committed_chunks_diagnostic_payload(5, 1);
+        let writer_payload =
+            build_pipeline_output_writer_sessions_create_started_diagnostic_payload("regenie2_linear", 2);
+
+        assert_eq!(open_started_payload.event_name, "pipeline_bgen_engine_open_started");
+        assert_eq!(open_started_payload.fields[0].value, RunDiagnosticFieldValue::OptionalInteger(Some(2)));
+        assert_eq!(open_started_payload.fields[1].value, RunDiagnosticFieldValue::OptionalText(None));
+        assert_eq!(opened_payload.event_name, "pipeline_bgen_engine_opened");
+        assert_eq!(
+            opened_payload.message,
+            "Native BGEN engine opened for binary pipeline: sample_count=3 variant_count=4."
+        );
+        assert_eq!(prevalidated_payload.event_name, "pipeline_prevalidated_bgen_engine_used");
+        assert_eq!(resume_payload.event_name, "pipeline_output_resume_committed_chunks");
+        assert_eq!(resume_payload.fields[1].value, RunDiagnosticFieldValue::Integer(1));
+        assert_eq!(writer_payload.event_name, "pipeline_output_writer_sessions_create_started");
     }
 
     #[test]

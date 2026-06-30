@@ -136,6 +136,7 @@ use run_events::{
     build_native_dispatch_writer_sessions_finish_started_diagnostic_payload,
     build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload,
     build_native_runtime_knobs_configured_diagnostic_payload,
+    build_pipeline_bgen_engine_open_started_diagnostic_payload, build_pipeline_bgen_engine_opened_diagnostic_payload,
     build_pipeline_gpu_genotype_format_resolved_diagnostic_payload,
     build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload,
     build_pipeline_grouped_per_phenotype_started_diagnostic_payload,
@@ -147,6 +148,9 @@ use run_events::{
     build_pipeline_multi_trait_input_load_started_diagnostic_payload,
     build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload,
     build_pipeline_multi_trait_started_diagnostic_payload,
+    build_pipeline_output_resume_committed_chunks_diagnostic_payload,
+    build_pipeline_output_writer_sessions_create_started_diagnostic_payload,
+    build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload,
     build_pipeline_single_trait_input_aligned_diagnostic_payload,
     build_pipeline_single_trait_input_load_started_diagnostic_payload,
     build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload,
@@ -2058,6 +2062,14 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_runner_metadata_artifacts_finalized_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_preflight_warning_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_io_output_resume_committed_chunks_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_bgen_engine_open_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_bgen_engine_opened_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_output_resume_committed_chunks_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        build_pipeline_output_writer_sessions_create_started_diagnostic_payload,
+        module
+    )?)?;
     module
         .add_function(wrap_pyfunction!(build_native_dispatch_bgen_engine_constructing_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(

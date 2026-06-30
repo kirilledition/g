@@ -472,6 +472,83 @@ def test_io_output_resume_committed_chunks_diagnostic_payload_uses_native_builde
     }
 
 
+def test_pipeline_output_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_pipeline_bgen_engine_open_started_diagnostic_payload(
+        phenotype_count=None,
+        phenotype_name="trait",
+        pipeline_label="binary",
+        trusted_no_missing_diploid=True,
+        variant_limit=100,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_bgen_engine_open_started",
+        "message": "Opening native BGEN engine for binary pipeline.",
+        "fields": {
+            "phenotype_count": None,
+            "phenotype_name": "trait",
+            "pipeline_label": "binary",
+            "trusted_no_missing_diploid": True,
+            "variant_limit": 100,
+        },
+    }
+    assert run_events.build_pipeline_bgen_engine_opened_diagnostic_payload(
+        phenotype_count=2,
+        phenotype_name=None,
+        pipeline_label="multi-phenotype",
+        sample_count=3,
+        variant_count=4,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_bgen_engine_opened",
+        "message": "Native BGEN engine opened for multi-phenotype pipeline: sample_count=3 variant_count=4.",
+        "fields": {
+            "phenotype_count": 2,
+            "phenotype_name": None,
+            "pipeline_label": "multi-phenotype",
+            "sample_count": 3,
+            "variant_count": 4,
+        },
+    }
+    assert run_events.build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
+        phenotype_count=None,
+        phenotype_name="trait",
+        pipeline_label="binary",
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_prevalidated_bgen_engine_used",
+        "message": "Using prevalidated native BGEN engine for binary pipeline.",
+        "fields": {
+            "phenotype_count": None,
+            "phenotype_name": "trait",
+            "pipeline_label": "binary",
+        },
+    }
+    assert run_events.build_pipeline_output_resume_committed_chunks_diagnostic_payload(
+        committed_chunk_count=5,
+        output_index=1,
+    ) == {
+        "level": "info",
+        "event_name": "pipeline_output_resume_committed_chunks",
+        "message": "Resuming run with 5 previously committed chunks.",
+        "fields": {
+            "committed_chunk_count": 5,
+            "output_index": 1,
+        },
+    }
+    assert run_events.build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        output_count=2,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_output_writer_sessions_create_started",
+        "message": "Creating output writer(s) for regenie2_linear pipeline.",
+        "fields": {
+            "association_mode": "regenie2_linear",
+            "output_count": 2,
+        },
+    }
+
+
 def test_pipeline_gpu_genotype_format_resolved_diagnostic_payload_uses_native_builder() -> None:
     assert run_events.build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
         requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,

@@ -323,6 +323,85 @@ pub fn build_io_output_resume_committed_chunks_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn build_pipeline_bgen_engine_open_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_count: Option<i64>,
+    phenotype_name: Option<&str>,
+    pipeline_label: &str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_bgen_engine_open_started_diagnostic_payload(
+        phenotype_count,
+        phenotype_name,
+        pipeline_label,
+        trusted_no_missing_diploid,
+        variant_limit,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_bgen_engine_opened_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_count: Option<i64>,
+    phenotype_name: Option<&str>,
+    pipeline_label: &str,
+    sample_count: i64,
+    variant_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_bgen_engine_opened_diagnostic_payload(
+        phenotype_count,
+        phenotype_name,
+        pipeline_label,
+        sample_count,
+        variant_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_count: Option<i64>,
+    phenotype_name: Option<&str>,
+    pipeline_label: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
+        phenotype_count,
+        phenotype_name,
+        pipeline_label,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_output_resume_committed_chunks_diagnostic_payload<'py>(
+    py: Python<'py>,
+    committed_chunk_count: i64,
+    output_index: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_output_resume_committed_chunks_diagnostic_payload(
+        committed_chunk_count,
+        output_index,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_output_writer_sessions_create_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    association_mode: &str,
+    output_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
+        association_mode,
+        output_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_gpu_genotype_format_resolved_diagnostic_payload<'py>(
     py: Python<'py>,
     requested_gpu_genotype_format: &str,

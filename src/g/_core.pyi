@@ -2841,6 +2841,33 @@ def build_io_output_resume_committed_chunks_diagnostic_payload(
     committed_chunk_count: int,
     run_directory: str,
 ) -> dict[str, object]: ...
+def build_pipeline_bgen_engine_open_started_diagnostic_payload(
+    phenotype_count: int | None,
+    phenotype_name: str | None,
+    pipeline_label: str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> dict[str, object]: ...
+def build_pipeline_bgen_engine_opened_diagnostic_payload(
+    phenotype_count: int | None,
+    phenotype_name: str | None,
+    pipeline_label: str,
+    sample_count: int,
+    variant_count: int,
+) -> dict[str, object]: ...
+def build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
+    phenotype_count: int | None,
+    phenotype_name: str | None,
+    pipeline_label: str,
+) -> dict[str, object]: ...
+def build_pipeline_output_resume_committed_chunks_diagnostic_payload(
+    committed_chunk_count: int,
+    output_index: int,
+) -> dict[str, object]: ...
+def build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
+    association_mode: str,
+    output_count: int,
+) -> dict[str, object]: ...
 def build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
     requested_gpu_genotype_format: str,
     resolved_gpu_genotype_format: str,

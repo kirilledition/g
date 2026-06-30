@@ -474,6 +474,90 @@ def build_io_output_resume_committed_chunks_diagnostic_payload(
     )
 
 
+def build_pipeline_bgen_engine_open_started_diagnostic_payload(
+    *,
+    phenotype_count: int | None,
+    phenotype_name: str | None,
+    pipeline_label: str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for pipeline BGEN engine open start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_bgen_engine_open_started_diagnostic_payload(
+            phenotype_count,
+            phenotype_name,
+            pipeline_label,
+            trusted_no_missing_diploid,
+            variant_limit,
+        )
+    )
+
+
+def build_pipeline_bgen_engine_opened_diagnostic_payload(
+    *,
+    phenotype_count: int | None,
+    phenotype_name: str | None,
+    pipeline_label: str,
+    sample_count: int,
+    variant_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for opened pipeline BGEN engines."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_bgen_engine_opened_diagnostic_payload(
+            phenotype_count,
+            phenotype_name,
+            pipeline_label,
+            sample_count,
+            variant_count,
+        )
+    )
+
+
+def build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
+    *,
+    phenotype_count: int | None,
+    phenotype_name: str | None,
+    pipeline_label: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for prepared pipeline BGEN engine reuse."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
+            phenotype_count,
+            phenotype_name,
+            pipeline_label,
+        )
+    )
+
+
+def build_pipeline_output_resume_committed_chunks_diagnostic_payload(
+    *,
+    committed_chunk_count: int,
+    output_index: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for resumed pipeline output chunks."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_output_resume_committed_chunks_diagnostic_payload(
+            committed_chunk_count,
+            output_index,
+        )
+    )
+
+
+def build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
+    *,
+    association_mode: types.AssociationMode,
+    output_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for pipeline output writer session creation."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
+            association_mode.value,
+            output_count,
+        )
+    )
+
+
 def build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
     *,
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
