@@ -123,7 +123,9 @@ use profile::build_profile_snapshot_dict;
 use run_events::{
     attach_run_metadata_payload, build_run_completed_event_payload, build_run_completed_telemetry_fields,
     build_run_failed_event_payload, build_run_failed_telemetry_fields, build_run_interrupted_event_payload,
-    build_run_interrupted_telemetry_fields, render_run_completed_lines, render_run_failed_lines,
+    build_run_interrupted_telemetry_fields, build_runner_run_completed_diagnostic_payload,
+    build_runner_run_failed_diagnostic_payload, build_runner_run_interrupted_diagnostic_payload,
+    build_runner_run_started_diagnostic_payload, render_run_completed_lines, render_run_failed_lines,
     render_run_interrupted_lines,
 };
 use run_metadata::{
@@ -1985,6 +1987,10 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_run_completed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_failed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_run_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_run_interrupted_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_run_failed_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_run_completed_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;
     module.add_function(wrap_pyfunction!(default_shutdown_signal_numbers, module)?)?;

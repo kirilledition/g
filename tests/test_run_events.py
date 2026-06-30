@@ -232,6 +232,68 @@ def test_run_completed_telemetry_fields_use_native_payload_builder() -> None:
     }
 
 
+def test_runner_lifecycle_diagnostic_payloads_use_native_builders() -> None:
+    started_payload = run_events.build_runner_run_started_diagnostic_payload(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        trait_type=types.RegenieTraitType.QUANTITATIVE,
+        phenotype_count=2,
+    )
+    interrupted_event = run_events.RunInterruptedEvent(
+        signal_number=2,
+        signal_name="SIGINT",
+        exit_code=130,
+        flushed_for_resume=True,
+    )
+    failed_event = run_events.RunFailedEvent(error_type="RuntimeError", error_message="boom")
+    completed_event = run_events.RunCompletedEvent(
+        run_id="run-1",
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype_count=2,
+        artifacts=(),
+    )
+
+    assert started_payload == {
+        "level": "info",
+        "event_name": "runner_regenie_run_started",
+        "message": "Starting REGENIE run.",
+        "fields": {
+            "association_mode": "regenie2_linear",
+            "trait_type": "quantitative",
+            "phenotype_count": 2,
+        },
+    }
+    assert run_events.build_runner_run_interrupted_diagnostic_payload(interrupted_event) == {
+        "level": "warn",
+        "event_name": "runner_regenie_run_interrupted",
+        "message": "REGENIE run interrupted by SIGINT.",
+        "fields": {
+            "signal_number": 2,
+            "signal_name": "SIGINT",
+            "exit_code": 130,
+            "flushed_for_resume": True,
+        },
+    }
+    assert run_events.build_runner_run_failed_diagnostic_payload(failed_event) == {
+        "level": "error",
+        "event_name": "runner_regenie_run_failed",
+        "message": "REGENIE run failed.",
+        "fields": {
+            "error_type": "RuntimeError",
+            "error_message": "boom",
+        },
+    }
+    assert run_events.build_runner_run_completed_diagnostic_payload(completed_event) == {
+        "level": "info",
+        "event_name": "runner_regenie_run_completed",
+        "message": "Finished REGENIE run.",
+        "fields": {
+            "run_id": "run-1",
+            "association_mode": "regenie2_linear",
+            "phenotype_count": 2,
+        },
+    }
+
+
 def test_run_completed_rendering_uses_native_renderer() -> None:
     event = run_events.RunCompletedEvent(
         run_id=None,

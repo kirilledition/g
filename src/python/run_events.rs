@@ -89,6 +89,48 @@ pub fn build_run_failed_telemetry_fields<'py>(
 }
 
 #[pyfunction]
+pub fn build_runner_run_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    association_mode: &str,
+    trait_type: &str,
+    phenotype_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload =
+        native_run_events::build_runner_run_started_diagnostic_payload(association_mode, trait_type, phenotype_count);
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_runner_run_interrupted_diagnostic_payload<'py>(
+    py: Python<'py>,
+    event: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let event_payload = run_interrupted_event_from_py(event)?;
+    let payload = native_run_events::build_runner_run_interrupted_diagnostic_payload(&event_payload);
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_runner_run_failed_diagnostic_payload<'py>(
+    py: Python<'py>,
+    event: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let event_payload = run_failed_event_from_py(event)?;
+    let payload = native_run_events::build_runner_run_failed_diagnostic_payload(&event_payload);
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_runner_run_completed_diagnostic_payload<'py>(
+    py: Python<'py>,
+    event: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let event_payload = run_completed_event_from_py(event)?;
+    let payload = native_run_events::build_runner_run_completed_diagnostic_payload(&event_payload);
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn render_run_completed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_completed_event_from_py(event)?;
     PyTuple::new(py, native_run_events::render_run_completed_lines(&event_payload))
@@ -248,6 +290,37 @@ fn run_failed_event_payload_to_py_dict<'py>(
     let payload = PyDict::new(py);
     payload.set_item("error_type", &event.error_type)?;
     payload.set_item("error_message", &event.error_message)?;
+    Ok(payload)
+}
+
+fn run_diagnostic_event_payload_to_py_dict<'py>(
+    py: Python<'py>,
+    event: &native_run_events::RunDiagnosticEventPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("level", event.level)?;
+    payload.set_item("event_name", event.event_name)?;
+    payload.set_item("message", &event.message)?;
+    payload.set_item("fields", run_diagnostic_fields_to_py_dict(py, &event.fields)?)?;
+    Ok(payload)
+}
+
+fn run_diagnostic_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &[native_run_events::RunDiagnosticFieldPayload],
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    for field in fields {
+        match &field.value {
+            native_run_events::RunDiagnosticFieldValue::Boolean(value) => payload.set_item(field.name, *value)?,
+            native_run_events::RunDiagnosticFieldValue::Integer(value) => payload.set_item(field.name, *value)?,
+            native_run_events::RunDiagnosticFieldValue::OptionalInteger(value) => {
+                payload.set_item(field.name, value)?;
+            }
+            native_run_events::RunDiagnosticFieldValue::OptionalText(value) => payload.set_item(field.name, value)?,
+            native_run_events::RunDiagnosticFieldValue::Text(value) => payload.set_item(field.name, value)?,
+        }
+    }
     Ok(payload)
 }
 

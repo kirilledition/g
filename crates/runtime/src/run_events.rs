@@ -17,6 +17,13 @@ pub const BINARY_CORRECTION_SUMMARY_EVENT_NAME: &str = "binary_correction_summar
 pub const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
 pub const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
 pub const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
+pub const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_started";
+pub const RUNNER_REGENIE_RUN_INTERRUPTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_interrupted";
+pub const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_failed";
+pub const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_completed";
+pub const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Starting REGENIE run.";
+pub const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_MESSAGE: &str = "REGENIE run failed.";
+pub const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_MESSAGE: &str = "Finished REGENIE run.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunArtifactPayload {
@@ -62,6 +69,29 @@ pub struct RunInterruptedEventPayload {
 pub struct RunFailedEventPayload {
     pub error_type: String,
     pub error_message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RunDiagnosticFieldValue {
+    Boolean(bool),
+    Integer(i64),
+    OptionalInteger(Option<i64>),
+    OptionalText(Option<String>),
+    Text(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunDiagnosticFieldPayload {
+    pub name: &'static str,
+    pub value: RunDiagnosticFieldValue,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunDiagnosticEventPayload {
+    pub level: &'static str,
+    pub event_name: &'static str,
+    pub message: String,
+    pub fields: Vec<RunDiagnosticFieldPayload>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -314,6 +344,68 @@ pub fn build_run_failed_telemetry_fields(event: &RunFailedEventPayload) -> RunFa
         failure_kind: "exception",
         error_type: event.error_type.clone(),
         error_message: event.error_message.clone(),
+    }
+}
+
+#[must_use]
+pub fn build_runner_run_started_diagnostic_payload(
+    association_mode: &str,
+    trait_type: &str,
+    phenotype_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: RUN_LIFECYCLE_INFO_LEVEL,
+        event_name: RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            text_diagnostic_field("association_mode", association_mode),
+            text_diagnostic_field("trait_type", trait_type),
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_runner_run_interrupted_diagnostic_payload(
+    event: &RunInterruptedEventPayload,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: RUN_LIFECYCLE_WARN_LEVEL,
+        event_name: RUNNER_REGENIE_RUN_INTERRUPTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("REGENIE run interrupted by {}.", event.signal_name),
+        fields: vec![
+            integer_diagnostic_field("signal_number", event.signal_number),
+            text_diagnostic_field("signal_name", &event.signal_name),
+            integer_diagnostic_field("exit_code", event.exit_code),
+            boolean_diagnostic_field("flushed_for_resume", event.flushed_for_resume),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_runner_run_failed_diagnostic_payload(event: &RunFailedEventPayload) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: RUN_LIFECYCLE_ERROR_LEVEL,
+        event_name: RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            text_diagnostic_field("error_type", &event.error_type),
+            text_diagnostic_field("error_message", &event.error_message),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_runner_run_completed_diagnostic_payload(event: &RunCompletedEventPayload) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: RUN_LIFECYCLE_INFO_LEVEL,
+        event_name: RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            optional_text_diagnostic_field("run_id", event.run_id.clone()),
+            optional_text_diagnostic_field("association_mode", event.association_mode.clone()),
+            optional_integer_diagnostic_field("phenotype_count", event.phenotype_count),
+        ],
     }
 }
 
@@ -577,6 +669,26 @@ pub fn build_artifact_telemetry_fields(artifact: &RunArtifactPayload) -> RunArti
     RunArtifactTelemetryFields { fields }
 }
 
+fn boolean_diagnostic_field(name: &'static str, value: bool) -> RunDiagnosticFieldPayload {
+    RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::Boolean(value) }
+}
+
+fn integer_diagnostic_field(name: &'static str, value: i64) -> RunDiagnosticFieldPayload {
+    RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::Integer(value) }
+}
+
+fn optional_integer_diagnostic_field(name: &'static str, value: Option<i64>) -> RunDiagnosticFieldPayload {
+    RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::OptionalInteger(value) }
+}
+
+fn optional_text_diagnostic_field(name: &'static str, value: Option<String>) -> RunDiagnosticFieldPayload {
+    RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::OptionalText(value) }
+}
+
+fn text_diagnostic_field(name: &'static str, value: &str) -> RunDiagnosticFieldPayload {
+    RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::Text(value.to_string()) }
+}
+
 #[must_use]
 pub fn render_artifact_lines(artifact: &RunArtifactPayload) -> Vec<String> {
     let mut lines = Vec::new();
@@ -699,6 +811,55 @@ mod tests {
         assert_eq!(
             build_run_failed_event_payload("RuntimeError", "boom"),
             RunFailedEventPayload { error_type: "RuntimeError".to_string(), error_message: "boom".to_string() },
+        );
+    }
+
+    #[test]
+    fn builds_runner_lifecycle_diagnostic_payloads() {
+        assert_eq!(
+            build_runner_run_started_diagnostic_payload("regenie2_linear", "quantitative", 2),
+            RunDiagnosticEventPayload {
+                level: "info",
+                event_name: "runner_regenie_run_started",
+                message: "Starting REGENIE run.".to_string(),
+                fields: vec![
+                    RunDiagnosticFieldPayload {
+                        name: "association_mode",
+                        value: RunDiagnosticFieldValue::Text("regenie2_linear".to_string()),
+                    },
+                    RunDiagnosticFieldPayload {
+                        name: "trait_type",
+                        value: RunDiagnosticFieldValue::Text("quantitative".to_string()),
+                    },
+                    RunDiagnosticFieldPayload { name: "phenotype_count", value: RunDiagnosticFieldValue::Integer(2) },
+                ],
+            },
+        );
+
+        let interrupted_event = build_run_interrupted_event_payload(2, "SIGINT", 130, true);
+        let failed_event = build_run_failed_event_payload("RuntimeError", "boom");
+        let completed_event = RunCompletedEventPayload {
+            run_id: Some("run-1".to_string()),
+            association_mode: Some("regenie2_linear".to_string()),
+            phenotype_count: Some(2),
+            artifacts: Vec::new(),
+        };
+
+        assert_eq!(
+            build_runner_run_interrupted_diagnostic_payload(&interrupted_event).event_name,
+            "runner_regenie_run_interrupted"
+        );
+        assert_eq!(
+            build_runner_run_interrupted_diagnostic_payload(&interrupted_event).fields[3].value,
+            RunDiagnosticFieldValue::Boolean(true),
+        );
+        assert_eq!(
+            build_runner_run_failed_diagnostic_payload(&failed_event).fields[1].value,
+            RunDiagnosticFieldValue::Text("boom".to_string()),
+        );
+        assert_eq!(
+            build_runner_run_completed_diagnostic_payload(&completed_event).fields[2].value,
+            RunDiagnosticFieldValue::OptionalInteger(Some(2)),
         );
     }
 

@@ -124,15 +124,12 @@ def regenie(
             phenotype_count=phenotype_count,
             output_run_root=telemetry.resolve_output_run_root(regenie_config),
         )
-        emit_runner_diagnostic_event(
-            "info",
-            "runner_regenie_run_started",
-            "Starting REGENIE run.",
-            {
-                "association_mode": association_mode.value,
-                "trait_type": regenie_config.trait.trait_type.value,
-                "phenotype_count": phenotype_count,
-            },
+        emit_runner_diagnostic_event_payload(
+            run_events.build_runner_run_started_diagnostic_payload(
+                association_mode=association_mode,
+                trait_type=regenie_config.trait.trait_type,
+                phenotype_count=phenotype_count,
+            )
         )
         runtime.configure_runtime(regenie_config.g_compute, regenie_config.trait)
         artifacts = run_validated_regenie_config(
@@ -143,30 +140,14 @@ def regenie(
     except shutdown.GracefulShutdownRequested as shutdown_request:
         interrupted_event = run_events.build_run_interrupted_event(shutdown_request)
         active_telemetry_session.log_run_interrupted(interrupted_event)
-        emit_runner_diagnostic_event(
-            "warning",
-            "runner_regenie_run_interrupted",
-            f"REGENIE run interrupted by {interrupted_event.signal_name}.",
-            {
-                "signal_number": interrupted_event.signal_number,
-                "signal_name": interrupted_event.signal_name,
-                "exit_code": interrupted_event.exit_code,
-                "flushed_for_resume": interrupted_event.flushed_for_resume,
-            },
+        emit_runner_diagnostic_event_payload(
+            run_events.build_runner_run_interrupted_diagnostic_payload(interrupted_event)
         )
         raise
     except Exception as error:
         failed_event = run_events.build_run_failed_event(error)
         active_telemetry_session.log_run_failed(failed_event)
-        emit_runner_diagnostic_event(
-            "error",
-            "runner_regenie_run_failed",
-            "REGENIE run failed.",
-            {
-                "error_type": failed_event.error_type,
-                "error_message": failed_event.error_message,
-            },
-        )
+        emit_runner_diagnostic_event_payload(run_events.build_runner_run_failed_diagnostic_payload(failed_event))
         raise
     else:
         artifacts = run_events.attach_run_metadata(
@@ -177,18 +158,7 @@ def regenie(
         )
         completed_event = run_events.build_run_completed_event(artifacts)
         active_telemetry_session.log_run_completed(completed_event)
-        emit_runner_diagnostic_event(
-            "info",
-            "runner_regenie_run_completed",
-            "Finished REGENIE run.",
-            {
-                "run_id": completed_event.run_id,
-                "association_mode": None
-                if completed_event.association_mode is None
-                else completed_event.association_mode.value,
-                "phenotype_count": completed_event.phenotype_count,
-            },
-        )
+        emit_runner_diagnostic_event_payload(run_events.build_runner_run_completed_diagnostic_payload(completed_event))
         return artifacts
     finally:
         if close_telemetry_session_on_exit:

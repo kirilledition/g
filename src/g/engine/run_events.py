@@ -247,6 +247,44 @@ def run_failed_telemetry_fields(event: RunFailedEvent) -> dict[str, object]:
     return dict(g._core.build_run_failed_telemetry_fields(event))
 
 
+def build_runner_run_started_diagnostic_payload(
+    *,
+    association_mode: types.AssociationMode,
+    trait_type: types.RegenieTraitType,
+    phenotype_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for runner run start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_run_started_diagnostic_payload(
+            association_mode.value,
+            trait_type.value,
+            phenotype_count,
+        )
+    )
+
+
+def build_runner_run_interrupted_diagnostic_payload(event: RunInterruptedEvent) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for graceful run interruption."""
+    return diagnostic_event_payload_from_native(g._core.build_runner_run_interrupted_diagnostic_payload(event))
+
+
+def build_runner_run_failed_diagnostic_payload(event: RunFailedEvent) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for run failure."""
+    return diagnostic_event_payload_from_native(g._core.build_runner_run_failed_diagnostic_payload(event))
+
+
+def build_runner_run_completed_diagnostic_payload(event: RunCompletedEvent) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for run completion."""
+    return diagnostic_event_payload_from_native(g._core.build_runner_run_completed_diagnostic_payload(event))
+
+
+def diagnostic_event_payload_from_native(payload: object) -> dict[str, typing.Any]:
+    """Adapt a native diagnostic event payload to a mutable Python dictionary."""
+    event_payload = native_mapping_payload(payload)
+    event_payload["fields"] = native_mapping_payload(event_payload["fields"])
+    return event_payload
+
+
 def render_run_completed_lines(event: RunCompletedEvent) -> tuple[str, ...]:
     """Render concise terminal lines for a completed run."""
     return tuple(g._core.render_run_completed_lines(event))

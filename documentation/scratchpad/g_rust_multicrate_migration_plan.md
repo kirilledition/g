@@ -1482,6 +1482,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Final timing output writes now return their native result payload directly
   from `g-runtime`, and their write-started diagnostics get the event name,
   level, message, and fields from the same native timing boundary.
+- Top-level runner run started/interrupted/failed/completed diagnostics now get
+  their event names, levels, messages, and fields from native run-event
+  payload builders.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 
