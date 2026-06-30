@@ -55,6 +55,7 @@ pub(crate) struct NativeDosageBufferAcquireResult {
     should_allocate: bool,
     free_buffer_count: usize,
     waited: bool,
+    observation_plan: Option<Py<NativeDosageBufferPoolObservationPlan>>,
 }
 
 #[pyclass]
@@ -801,6 +802,7 @@ impl NativeCallbackRuntimeResources {
                 should_allocate: false,
                 free_buffer_count,
                 waited: false,
+                observation_plan: None,
             });
         }
         if acquire_plan.should_allocate_value() {
@@ -810,6 +812,7 @@ impl NativeCallbackRuntimeResources {
                 should_allocate: true,
                 free_buffer_count,
                 waited: false,
+                observation_plan: None,
             });
         }
         if acquire_plan.should_wait_value() {
@@ -819,11 +822,18 @@ impl NativeCallbackRuntimeResources {
                 acquire_plan.wait_timeout_seconds_value(),
             )?;
             let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+            let observation_plan = if self.has_stage_timing_recorder {
+                let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+                Some(Py::new(py, scheduler_state.plan_dosage_buffer_pool_consumer_wait_observation_value())?)
+            } else {
+                None
+            };
             return Ok(NativeDosageBufferAcquireResult {
                 dosage_buffer: None,
                 should_allocate: false,
                 free_buffer_count,
                 waited: true,
+                observation_plan,
             });
         }
         let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
@@ -832,6 +842,7 @@ impl NativeCallbackRuntimeResources {
             should_allocate: false,
             free_buffer_count,
             waited: false,
+            observation_plan: None,
         })
     }
 
@@ -2044,6 +2055,11 @@ impl NativeDosageBufferAcquireResult {
     #[getter]
     fn waited(&self) -> bool {
         self.waited
+    }
+
+    #[getter]
+    fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolObservationPlan>> {
+        self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
     }
 }
 

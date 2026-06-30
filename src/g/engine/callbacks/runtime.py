@@ -2341,11 +2341,14 @@ class NativeBgenCallbackRunner(abc.ABC):
                     return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
                 continue
-            if self.stage_timing_recorder is None or not acquire_result.waited:
+            acquire_observation_plan = acquire_result.observation_plan
+            if acquire_observation_plan is None:
                 continue
-            self.record_dosage_buffer_pool_consumer_wait_stage_duration(
+            self.record_dosage_buffer_pool_stage_duration(
+                operation_name=acquire_observation_plan.operation_name,
                 free_buffer_count=acquire_result.free_buffer_count,
                 start_time=acquire_start_time,
+                blocked=acquire_observation_plan.blocked,
             )
 
     def acquire_dosage_buffer_with_shape(
