@@ -1631,6 +1631,29 @@ def test_native_callback_runner_uses_native_binary_summary_plans() -> None:
 
 
 def test_native_callback_runner_uses_runtime_resource_binary_summary() -> None:
+    class BinaryDiagnosticsRecordPlanningProbe:
+        def __init__(self, inner: callback_runtime._core.NativeCallbackRuntimeResources) -> None:
+            self.inner = inner
+            self.planned_payloads: list[object] = []
+
+        def __getattr__(self, name: str) -> typing.Any:
+            return getattr(self.inner, name)
+
+        def plan_binary_correction_diagnostics_record(
+            self,
+            has_diagnostics: object,
+        ) -> callback_runtime._core.NativeBinaryCorrectionDiagnosticsRecordPlan:
+            del has_diagnostics
+            message = "Production native resources should plan diagnostics records from the payload object."
+            raise AssertionError(message)
+
+        def plan_binary_correction_diagnostics_record_for_object(
+            self,
+            binary_chunk_diagnostics: object | None,
+        ) -> callback_runtime._core.NativeBinaryCorrectionDiagnosticsRecordPlan:
+            self.planned_payloads.append(binary_chunk_diagnostics)
+            return self.inner.plan_binary_correction_diagnostics_record_for_object(binary_chunk_diagnostics)
+
     class ResourceBackedCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def __init__(self) -> None:
             super().__init__(
@@ -1674,6 +1697,8 @@ def test_native_callback_runner_uses_runtime_resource_binary_summary() -> None:
             del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
 
     callback = ResourceBackedCallbackRunner()
+    planning_probe = BinaryDiagnosticsRecordPlanningProbe(callback.callback_runtime_resources)
+    callback.callback_runtime_resources = typing.cast("typing.Any", planning_probe)
     diagnostics = typing.cast(
         "regenie2_binary.BinaryChunkDiagnostics",
         SimpleNamespace(score_test_candidate_count=2),
@@ -1681,7 +1706,9 @@ def test_native_callback_runner_uses_runtime_resource_binary_summary() -> None:
 
     callback.record_binary_null_model_failure_count(2)
     callback.record_binary_correction_diagnostics(diagnostics)
+    callback.record_binary_correction_diagnostics(None)
 
+    assert planning_probe.planned_payloads == [diagnostics, None]
     assert callback.binary_correction_summary.null_model_failure_count == 2
     assert callback.binary_correction_summary_chunk_count == 1
     assert callback.binary_correction_pending_diagnostics == [diagnostics]
@@ -2751,6 +2778,16 @@ def test_native_callback_runtime_resources_own_binary_correction_summary() -> No
         has_diagnostics,
     )
     assert enabled_record_plan.should_record is True
+    missing_object_record_plan = runtime_resources.plan_binary_correction_diagnostics_record_for_object(None)
+    assert missing_object_record_plan.should_record is False
+    disabled_object_record_plan = disabled_runtime_resources.plan_binary_correction_diagnostics_record_for_object(
+        SimpleNamespace(),
+    )
+    assert disabled_object_record_plan.should_record is False
+    enabled_object_record_plan = runtime_resources.plan_binary_correction_diagnostics_record_for_object(
+        SimpleNamespace(),
+    )
+    assert enabled_object_record_plan.should_record is True
 
     runtime_resources.add_binary_null_model_failure_count(2)
     runtime_resources.add_binary_correction_diagnostics_totals(
@@ -3128,8 +3165,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert unobserved_register_result.observation_plan is None
     unobserved_dosage_buffer_view = unobserved_dosage_buffer[:1, :1]
     assert (
-        runtime_resources.get_releasable_dosage_buffer_owner(unobserved_dosage_buffer_view)
-        is unobserved_dosage_buffer
+        runtime_resources.get_releasable_dosage_buffer_owner(unobserved_dosage_buffer_view) is unobserved_dosage_buffer
     )
     assert runtime_resources.get_releasable_dosage_buffer_owner(SimpleNamespace()) is None
     unobserved_return_attempt_plan = runtime_resources.plan_dosage_buffer_object_return_attempt(
@@ -3322,14 +3358,17 @@ def test_native_callback_runner_uses_native_dosage_buffer_reuse_selection() -> N
     assert callback.callback_runtime_resources.return_dosage_buffer(id(oversized_buffer), oversized_buffer) == 1
 
     try:
-        with patch.object(
-            callback_runtime.NativeBgenCallbackRunner,
-            "_acquire_reused_dosage_buffer",
-            side_effect=AssertionError("production runner should use native reuse selection"),
-        ), patch.object(
-            callback_runtime.NativeBgenCallbackRunner,
-            "record_dosage_buffer_pool_reuse_operation",
-            side_effect=AssertionError("production runner should record native reuse operation results"),
+        with (
+            patch.object(
+                callback_runtime.NativeBgenCallbackRunner,
+                "_acquire_reused_dosage_buffer",
+                side_effect=AssertionError("production runner should use native reuse selection"),
+            ),
+            patch.object(
+                callback_runtime.NativeBgenCallbackRunner,
+                "record_dosage_buffer_pool_reuse_operation",
+                side_effect=AssertionError("production runner should record native reuse operation results"),
+            ),
         ):
             sliced_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
             assert sliced_buffer.shape == (2, 3)

@@ -404,6 +404,15 @@ impl NativeCallbackRuntimeResources {
             .plan_diagnostics_record_value(self.has_telemetry_session, has_diagnostics)
     }
 
+    fn plan_binary_correction_diagnostics_record_for_object(
+        &self,
+        py: Python<'_>,
+        binary_chunk_diagnostics: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeBinaryCorrectionDiagnosticsRecordPlan> {
+        let has_diagnostics = !binary_chunk_diagnostics.is_none();
+        self.plan_binary_correction_diagnostics_record(py, has_diagnostics)
+    }
+
     fn plan_binary_correction_summary_emit(
         &self,
         py: Python<'_>,

@@ -1100,6 +1100,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production binary correction summary
   counters, retention/emit plans, and payload reads while Python keeps pending
   diagnostics materialization and telemetry emission.
+- Callback runtime resources now classify production binary-correction
+  diagnostic payload presence from the object before retention planning, while
+  Python only retains payloads selected by the native plan.
 - Callback runtime resources now own production dosage/result drain planning
   and validated work-item dispatch planning for object-based production callers,
   leaving Python to perform JAX/write side effects.

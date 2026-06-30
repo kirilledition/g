@@ -1397,12 +1397,14 @@ class NativeBgenCallbackRunner(abc.ABC):
         binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None,
     ) -> None:
         """Accumulate binary correction diagnostics for run-level telemetry."""
-        has_diagnostics = binary_chunk_diagnostics is not None
         if self.uses_native_callback_runtime_resources():
-            diagnostics_record_plan = self.callback_runtime_resources.plan_binary_correction_diagnostics_record(
-                has_diagnostics,
+            diagnostics_record_plan = (
+                self.callback_runtime_resources.plan_binary_correction_diagnostics_record_for_object(
+                    binary_chunk_diagnostics,
+                )
             )
         else:
+            has_diagnostics = binary_chunk_diagnostics is not None
             diagnostics_record_plan = self.binary_correction_summary.plan_diagnostics_record(
                 has_telemetry_session=self.telemetry_session is not None,
                 has_diagnostics=has_diagnostics,

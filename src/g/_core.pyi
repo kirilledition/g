@@ -1202,6 +1202,10 @@ class NativeCallbackRuntimeResources:
         self,
         has_diagnostics: bool,
     ) -> NativeBinaryCorrectionDiagnosticsRecordPlan: ...
+    def plan_binary_correction_diagnostics_record_for_object(
+        self,
+        binary_chunk_diagnostics: object | None,
+    ) -> NativeBinaryCorrectionDiagnosticsRecordPlan: ...
     def plan_binary_correction_summary_emit(
         self,
         pending_diagnostics_count: int,
