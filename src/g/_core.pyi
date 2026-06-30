@@ -2833,6 +2833,10 @@ def build_runner_metadata_artifacts_finalized_diagnostic_payload(
     association_mode: str,
     phenotype_count: int,
 ) -> dict[str, object]: ...
+def record_runner_metadata_artifacts_finalized_diagnostic_event(
+    association_mode: str,
+    phenotype_count: int,
+) -> None: ...
 def build_preflight_warning_diagnostic_payload(
     message: str,
     chromosome_count: int,

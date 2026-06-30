@@ -993,6 +993,70 @@ def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
     assert calls == [("tile", 32), ("threads", 4)]
 
 
+def test_finalize_execution_plan_records_native_metadata_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
+    diagnostic_calls: list[tuple[str, int]] = []
+
+    def record_metadata_artifacts_finalized(
+        *,
+        association_mode: str,
+        phenotype_count: int,
+    ) -> None:
+        diagnostic_calls.append((association_mode, phenotype_count))
+
+    monkeypatch.setattr(
+        runner_metadata._core,
+        "record_runner_metadata_artifacts_finalized_diagnostic_event",
+        record_metadata_artifacts_finalized,
+    )
+
+    output_run_paths = output.OutputRunPaths(Path("run/trait"), Path("run/trait/chunks"))
+    phenotype_run_plan = execution_plan.PhenotypeRunPlan(
+        phenotype_name="trait",
+        output_run_paths=output_run_paths,
+        existing_manifest=None,
+        effective_config_path=Path("run/trait/effective.toml"),
+    )
+    writer_settings = output.OutputWriterSettings(
+        finalize_parquet=True,
+        writer_thread_count=1,
+        writer_queue_depth=8,
+        chunks_per_arrow_file=16,
+        arrow_compression=types.ArrowCompression.ZSTD,
+        parquet_compression=types.ParquetCompression.ZSTD,
+        output_format=types.OutputFormat.PARQUET,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+    )
+    plan = execution_plan.RegenieExecutionPlan(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        genotype_source_config=typing.cast("typing.Any", object()),
+        phenotype_path=Path("phenotypes.tsv"),
+        prediction_list_path=Path("predictions.list"),
+        covariate_path=None,
+        covariate_names=None,
+        phenotype_run_plans=(phenotype_run_plan,),
+        phenotype_compute_groups=(),
+        binary_correction_plan=typing.cast("typing.Any", object()),
+        kernel_config=typing.cast("typing.Any", object()),
+        output_plan=execution_plan.OutputPlan(
+            output_prefix=Path("results"),
+            output_run_root=Path("run"),
+            resume=False,
+            resume_mode=types.ResumeMode.FAST,
+            writer_settings=writer_settings,
+        ),
+        stage_timings_json=None,
+    )
+
+    artifacts = runner_metadata.finalize_execution_plan(
+        regenie_config=typing.cast("typing.Any", object()),
+        plan=plan,
+        final_output_paths=(Path("run/trait/final.parquet"),),
+    )
+
+    assert diagnostic_calls == [("regenie2_binary", 1)]
+    assert artifacts.final_parquet == Path("run/trait/final.parquet")
+
+
 def test_effective_rayon_thread_count_prefers_configured_thread_count() -> None:
     with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)):
         assert runner_runtime.effective_rayon_thread_count(8) == 4

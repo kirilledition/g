@@ -15,16 +15,6 @@ if typing.TYPE_CHECKING:
 RunArtifacts = run_events.RunArtifacts
 
 
-def emit_metadata_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
-    """Emit one native metadata diagnostic payload through native tracing."""
-    _core.emit_diagnostic_event_fields(
-        str(payload["level"]),
-        str(payload["event_name"]),
-        str(payload["message"]),
-        typing.cast("typing.Mapping[str, object]", payload["fields"]),
-    )
-
-
 def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
     """Adapt a native mapping payload to a mutable Python dictionary."""
     return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
@@ -126,11 +116,9 @@ def finalize_execution_plan(
             ),
         )
     )
-    emit_metadata_diagnostic_event_payload(
-        run_events.build_runner_metadata_artifacts_finalized_diagnostic_payload(
-            association_mode=plan.association_mode,
-            phenotype_count=len(plan.phenotype_run_plans),
-        )
+    _core.record_runner_metadata_artifacts_finalized_diagnostic_event(
+        association_mode=plan.association_mode.value,
+        phenotype_count=len(plan.phenotype_run_plans),
     )
     return artifacts
 

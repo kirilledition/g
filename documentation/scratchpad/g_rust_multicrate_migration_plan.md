@@ -1507,6 +1507,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   only for compatibility helpers and tests.
 - Runner metadata artifact-finalization diagnostics now use native run-event
   diagnostic payload builders.
+- Runner metadata artifact-finalization production paths now call the native
+  diagnostic recorder directly, leaving Python payload dict materialization
+  only for compatibility helpers and tests.
 - Preflight warning diagnostics now use native run-event diagnostic payload
   builders.
 - Output resume committed-chunk diagnostics now use native run-event

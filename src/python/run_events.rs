@@ -347,6 +347,18 @@ pub fn build_runner_metadata_artifacts_finalized_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_runner_metadata_artifacts_finalized_diagnostic_event(
+    association_mode: &str,
+    phenotype_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_runner_metadata_artifacts_finalized_diagnostic_payload(
+        association_mode,
+        phenotype_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 pub fn build_preflight_warning_diagnostic_payload<'py>(
     py: Python<'py>,

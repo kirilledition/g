@@ -186,7 +186,8 @@ use run_events::{
     record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event,
     record_native_dispatch_writer_sessions_finish_started_diagnostic_event,
     record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event,
-    record_native_runtime_knobs_configured_diagnostic_event, render_run_completed_lines, render_run_failed_lines,
+    record_native_runtime_knobs_configured_diagnostic_event,
+    record_runner_metadata_artifacts_finalized_diagnostic_event, render_run_completed_lines, render_run_failed_lines,
     render_run_interrupted_lines,
 };
 use run_metadata::{
@@ -2081,6 +2082,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_native_runtime_knobs_configured_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_runtime_knobs_configured_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_runner_metadata_artifacts_finalized_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_metadata_artifacts_finalized_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_preflight_warning_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_io_output_resume_committed_chunks_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_pipeline_bgen_engine_open_started_diagnostic_payload, module)?)?;
