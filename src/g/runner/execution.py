@@ -181,11 +181,8 @@ def run_validated_regenie_config(
     profile_summary_path = None if telemetry_session is None else telemetry_session.paths.profile_summary_json
     try:
         device_start_time = time.perf_counter()
-        emit_runner_diagnostic_event(
-            "debug",
-            "runner_jax_runtime_configuration_started",
-            "Configuring JAX runtime before backend initialization.",
-            {},
+        emit_runner_diagnostic_event_payload(
+            run_events.build_runner_jax_runtime_configuration_started_diagnostic_payload()
         )
         runtime.configure_runtime_before_jax_import(regenie_config.g_compute, telemetry_session=telemetry_session)
         stage_timing_recorder = timing.build_stage_timing_recorder(
@@ -194,12 +191,7 @@ def run_validated_regenie_config(
         )
         timing.record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
         output_start_time = time.perf_counter()
-        emit_runner_diagnostic_event(
-            "debug",
-            "runner_execution_plan_build_started",
-            "Building REGENIE execution plan.",
-            {},
-        )
+        emit_runner_diagnostic_event_payload(run_events.build_runner_execution_plan_build_started_diagnostic_payload())
         plan = execution_plan.build_regenie_execution_plan(
             regenie_config,
             runtime_compatibility_token=runtime_compatibility_token,
@@ -213,24 +205,21 @@ def run_validated_regenie_config(
                 variant_limit=plan.kernel_config.variant_limit,
                 device=plan.kernel_config.device,
             )
-        emit_runner_diagnostic_event(
-            "info",
-            "runner_execution_plan_prepared",
-            f"Prepared REGENIE execution plan for {len(plan.phenotype_run_plans)} phenotype(s).",
-            {
-                "association_mode": plan.association_mode.value,
-                "phenotype_count": len(plan.phenotype_run_plans),
-                "chunk_size": plan.kernel_config.chunk_size,
-                "variant_limit": plan.kernel_config.variant_limit,
-                "device": plan.kernel_config.device.value,
-            },
+        emit_runner_diagnostic_event_payload(
+            run_events.build_runner_execution_plan_prepared_diagnostic_payload(
+                association_mode=plan.association_mode,
+                phenotype_count=len(plan.phenotype_run_plans),
+                chunk_size=plan.kernel_config.chunk_size,
+                variant_limit=plan.kernel_config.variant_limit,
+                device=plan.kernel_config.device,
+            )
         )
         timing.record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
-        emit_runner_diagnostic_event(
-            "debug",
-            "runner_execution_plan_dispatch_started",
-            "Dispatching REGENIE execution plan.",
-            {"phenotype_count": len(plan.phenotype_run_plans), "association_mode": plan.association_mode.value},
+        emit_runner_diagnostic_event_payload(
+            run_events.build_runner_execution_plan_dispatch_started_diagnostic_payload(
+                phenotype_count=len(plan.phenotype_run_plans),
+                association_mode=plan.association_mode,
+            )
         )
         final_output_paths = dispatch_execution_plan(
             regenie_config=regenie_config,
@@ -239,11 +228,11 @@ def run_validated_regenie_config(
             telemetry_session=telemetry_session,
             runtime_compatibility_token=runtime_compatibility_token,
         )
-        emit_runner_diagnostic_event(
-            "debug",
-            "runner_execution_plan_finalization_started",
-            "Finalizing REGENIE execution plan.",
-            {"phenotype_count": len(plan.phenotype_run_plans), "association_mode": plan.association_mode.value},
+        emit_runner_diagnostic_event_payload(
+            run_events.build_runner_execution_plan_finalization_started_diagnostic_payload(
+                phenotype_count=len(plan.phenotype_run_plans),
+                association_mode=plan.association_mode,
+            )
         )
         return metadata.finalize_execution_plan(
             regenie_config=regenie_config,

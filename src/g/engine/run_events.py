@@ -278,6 +278,66 @@ def build_runner_run_completed_diagnostic_payload(event: RunCompletedEvent) -> d
     return diagnostic_event_payload_from_native(g._core.build_runner_run_completed_diagnostic_payload(event))
 
 
+def build_runner_jax_runtime_configuration_started_diagnostic_payload() -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for JAX runtime configuration start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_jax_runtime_configuration_started_diagnostic_payload()
+    )
+
+
+def build_runner_execution_plan_build_started_diagnostic_payload() -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for execution-plan build start."""
+    return diagnostic_event_payload_from_native(g._core.build_runner_execution_plan_build_started_diagnostic_payload())
+
+
+def build_runner_execution_plan_prepared_diagnostic_payload(
+    *,
+    association_mode: types.AssociationMode,
+    phenotype_count: int,
+    chunk_size: int,
+    variant_limit: int | None,
+    device: types.Device,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for prepared execution plans."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_execution_plan_prepared_diagnostic_payload(
+            association_mode.value,
+            phenotype_count,
+            chunk_size,
+            variant_limit,
+            device.value,
+        )
+    )
+
+
+def build_runner_execution_plan_dispatch_started_diagnostic_payload(
+    *,
+    phenotype_count: int,
+    association_mode: types.AssociationMode,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for execution-plan dispatch start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_execution_plan_dispatch_started_diagnostic_payload(
+            phenotype_count,
+            association_mode.value,
+        )
+    )
+
+
+def build_runner_execution_plan_finalization_started_diagnostic_payload(
+    *,
+    phenotype_count: int,
+    association_mode: types.AssociationMode,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for execution-plan finalization start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_execution_plan_finalization_started_diagnostic_payload(
+            phenotype_count,
+            association_mode.value,
+        )
+    )
+
+
 def diagnostic_event_payload_from_native(payload: object) -> dict[str, typing.Any]:
     """Adapt a native diagnostic event payload to a mutable Python dictionary."""
     event_payload = native_mapping_payload(payload)

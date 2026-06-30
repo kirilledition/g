@@ -294,6 +294,57 @@ def test_runner_lifecycle_diagnostic_payloads_use_native_builders() -> None:
     }
 
 
+def test_runner_execution_plan_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_runner_jax_runtime_configuration_started_diagnostic_payload() == {
+        "level": "debug",
+        "event_name": "runner_jax_runtime_configuration_started",
+        "message": "Configuring JAX runtime before backend initialization.",
+        "fields": {},
+    }
+    assert run_events.build_runner_execution_plan_build_started_diagnostic_payload() == {
+        "level": "debug",
+        "event_name": "runner_execution_plan_build_started",
+        "message": "Building REGENIE execution plan.",
+        "fields": {},
+    }
+    assert run_events.build_runner_execution_plan_prepared_diagnostic_payload(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        phenotype_count=3,
+        chunk_size=1024,
+        variant_limit=4096,
+        device=types.Device.GPU,
+    ) == {
+        "level": "info",
+        "event_name": "runner_execution_plan_prepared",
+        "message": "Prepared REGENIE execution plan for 3 phenotype(s).",
+        "fields": {
+            "association_mode": "regenie2_binary",
+            "phenotype_count": 3,
+            "chunk_size": 1024,
+            "variant_limit": 4096,
+            "device": "gpu",
+        },
+    }
+    assert run_events.build_runner_execution_plan_dispatch_started_diagnostic_payload(
+        phenotype_count=3,
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+    ) == {
+        "level": "debug",
+        "event_name": "runner_execution_plan_dispatch_started",
+        "message": "Dispatching REGENIE execution plan.",
+        "fields": {"phenotype_count": 3, "association_mode": "regenie2_binary"},
+    }
+    assert run_events.build_runner_execution_plan_finalization_started_diagnostic_payload(
+        phenotype_count=3,
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+    ) == {
+        "level": "debug",
+        "event_name": "runner_execution_plan_finalization_started",
+        "message": "Finalizing REGENIE execution plan.",
+        "fields": {"phenotype_count": 3, "association_mode": "regenie2_binary"},
+    }
+
+
 def test_run_completed_rendering_uses_native_renderer() -> None:
     event = run_events.RunCompletedEvent(
         run_id=None,

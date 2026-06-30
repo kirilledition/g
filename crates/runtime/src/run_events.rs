@@ -24,6 +24,18 @@ pub const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str = "runner_reg
 pub const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Starting REGENIE run.";
 pub const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_MESSAGE: &str = "REGENIE run failed.";
 pub const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_MESSAGE: &str = "Finished REGENIE run.";
+pub const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "runner_jax_runtime_configuration_started";
+pub const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_build_started";
+pub const RUNNER_EXECUTION_PLAN_PREPARED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_prepared";
+pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_dispatch_started";
+pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "runner_execution_plan_finalization_started";
+pub const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
+    "Configuring JAX runtime before backend initialization.";
+pub const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE: &str = "Building REGENIE execution plan.";
+pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching REGENIE execution plan.";
+pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunArtifactPayload {
@@ -405,6 +417,80 @@ pub fn build_runner_run_completed_diagnostic_payload(event: &RunCompletedEventPa
             optional_text_diagnostic_field("run_id", event.run_id.clone()),
             optional_text_diagnostic_field("association_mode", event.association_mode.clone()),
             optional_integer_diagnostic_field("phenotype_count", event.phenotype_count),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_runner_jax_runtime_configuration_started_diagnostic_payload() -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: Vec::new(),
+    }
+}
+
+#[must_use]
+pub fn build_runner_execution_plan_build_started_diagnostic_payload() -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: Vec::new(),
+    }
+}
+
+#[must_use]
+pub fn build_runner_execution_plan_prepared_diagnostic_payload(
+    association_mode: &str,
+    phenotype_count: i64,
+    chunk_size: i64,
+    variant_limit: Option<i64>,
+    device: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: RUN_LIFECYCLE_INFO_LEVEL,
+        event_name: RUNNER_EXECUTION_PLAN_PREPARED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Prepared REGENIE execution plan for {phenotype_count} phenotype(s)."),
+        fields: vec![
+            text_diagnostic_field("association_mode", association_mode),
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            integer_diagnostic_field("chunk_size", chunk_size),
+            optional_integer_diagnostic_field("variant_limit", variant_limit),
+            text_diagnostic_field("device", device),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_runner_execution_plan_dispatch_started_diagnostic_payload(
+    phenotype_count: i64,
+    association_mode: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            text_diagnostic_field("association_mode", association_mode),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_runner_execution_plan_finalization_started_diagnostic_payload(
+    phenotype_count: i64,
+    association_mode: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            text_diagnostic_field("association_mode", association_mode),
         ],
     }
 }
@@ -860,6 +946,40 @@ mod tests {
         assert_eq!(
             build_runner_run_completed_diagnostic_payload(&completed_event).fields[2].value,
             RunDiagnosticFieldValue::OptionalInteger(Some(2)),
+        );
+    }
+
+    #[test]
+    fn builds_runner_execution_plan_diagnostic_payloads() {
+        assert_eq!(
+            build_runner_jax_runtime_configuration_started_diagnostic_payload().event_name,
+            "runner_jax_runtime_configuration_started",
+        );
+        assert_eq!(
+            build_runner_execution_plan_build_started_diagnostic_payload().message,
+            "Building REGENIE execution plan.",
+        );
+
+        let prepared_payload =
+            build_runner_execution_plan_prepared_diagnostic_payload("regenie2_binary", 3, 1024, Some(4096), "gpu");
+
+        assert_eq!(prepared_payload.level, "info");
+        assert_eq!(prepared_payload.event_name, "runner_execution_plan_prepared");
+        assert_eq!(prepared_payload.message, "Prepared REGENIE execution plan for 3 phenotype(s).");
+        assert_eq!(
+            prepared_payload.fields[3],
+            RunDiagnosticFieldPayload {
+                name: "variant_limit",
+                value: RunDiagnosticFieldValue::OptionalInteger(Some(4096)),
+            },
+        );
+        assert_eq!(
+            build_runner_execution_plan_dispatch_started_diagnostic_payload(3, "regenie2_binary").fields[1].value,
+            RunDiagnosticFieldValue::Text("regenie2_binary".to_string()),
+        );
+        assert_eq!(
+            build_runner_execution_plan_finalization_started_diagnostic_payload(3, "regenie2_binary").event_name,
+            "runner_execution_plan_finalization_started",
         );
     }
 

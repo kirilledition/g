@@ -1485,6 +1485,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Top-level runner run started/interrupted/failed/completed diagnostics now get
   their event names, levels, messages, and fields from native run-event
   payload builders.
+- Runner JAX setup, execution-plan build/prepared/dispatch/finalization
+  diagnostics now use the same native run-event diagnostic payload boundary.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 
