@@ -455,6 +455,192 @@ def test_native_python_association_backend_runs_native_coordinator_group_chromos
     ]
 
 
+def test_native_python_association_backend_runs_group_chromosomes_with_effects() -> None:
+    class CoordinatorPythonAssociationBackend:
+        def __init__(self) -> None:
+            self.call_names: list[str] = []
+
+        def prepare_group(self, group_input: _core.NativePreparedGroupInput) -> dict[str, object]:
+            self.call_names.append("prepare_group")
+            return {"phenotype_count": group_input.phenotype_count}
+
+        def prepare_chromosome(
+            self,
+            group_state: object,
+            chromosome: str,
+            predictions: _core.NativePredictionView,
+        ) -> dict[str, object]:
+            self.call_names.append(f"prepare_chromosome:{chromosome}")
+            group_state_mapping = typing.cast("dict[str, object]", group_state)
+            return {
+                "phenotype_count": group_state_mapping["phenotype_count"],
+                "prediction_row_count": predictions.row_count,
+            }
+
+        def compute_batch(
+            self,
+            chromosome_state: object,
+            batch: _core.NativeGenotypeBatchView,
+        ) -> _core.NativeAssociationBatchResult:
+            self.call_names.append(f"compute_batch:{batch.chromosome}:{batch.variant_offset}")
+            chromosome_state_mapping = typing.cast("dict[str, object]", chromosome_state)
+            statistic_sum = typing.cast("int", chromosome_state_mapping["phenotype_count"])
+            statistic_sum *= batch.variant_count
+            statistic_sum += typing.cast("int", chromosome_state_mapping["prediction_row_count"])
+            statistic_sum += batch.variant_offset
+            return _core.NativeAssociationBatchResult(batch.chromosome, batch.variant_count, float(statistic_sum))
+
+    class RecordingEngineRunEffects:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.written_results: list[tuple[str, int, float]] = []
+
+        def emit_phase_event(self, phase: str) -> None:
+            self.calls.append(f"phase:{phase}")
+
+        def open_inputs(self) -> None:
+            self.calls.append("open_inputs")
+
+        def align_inputs(self) -> None:
+            self.calls.append("align_inputs")
+
+        def validate_preflight(self) -> None:
+            self.calls.append("validate_preflight")
+
+        def validate_output_compatibility(self) -> None:
+            self.calls.append("validate_output_compatibility")
+
+        def construct_writers(self) -> None:
+            self.calls.append("construct_writers")
+
+        def write_batch_result(self, result: _core.NativeAssociationBatchResult) -> None:
+            self.calls.append("write_batch_result")
+            self.written_results.append((result.chromosome, result.variant_count, result.statistic_sum))
+
+        def drain_writers(self) -> None:
+            self.calls.append("drain_writers")
+
+        def finalize_outputs(self) -> None:
+            self.calls.append("finalize_outputs")
+
+    python_backend = CoordinatorPythonAssociationBackend()
+    python_effects = RecordingEngineRunEffects()
+    native_backend = _core.NativePythonAssociationBackend(python_backend)
+    native_effects = _core.NativePythonEngineRunEffects(python_effects)
+    chromosome_inputs = [
+        _core.NativeAssociationChromosomeRunInput(
+            "chr2",
+            "chr2",
+            5,
+            [_core.NativeGenotypeBatchView("chr2", 4, 3), _core.NativeGenotypeBatchView("chr2", 2, 7)],
+        ),
+        _core.NativeAssociationChromosomeRunInput(
+            "chr3",
+            "chr3",
+            8,
+            [_core.NativeGenotypeBatchView("chr3", 3, 1)],
+        ),
+    ]
+
+    report = native_backend.run_group_chromosomes_with_effects("binary", 2, chromosome_inputs, native_effects)
+
+    assert python_backend.call_names == [
+        "prepare_group",
+        "prepare_chromosome:chr2",
+        "compute_batch:chr2:3",
+        "compute_batch:chr2:7",
+        "prepare_chromosome:chr3",
+        "compute_batch:chr3:1",
+    ]
+    assert python_effects.calls == [
+        "phase:inputs_opened",
+        "open_inputs",
+        "phase:inputs_aligned",
+        "align_inputs",
+        "phase:preflight_validated",
+        "validate_preflight",
+        "phase:outputs_initialized",
+        "validate_output_compatibility",
+        "construct_writers",
+        "phase:running",
+        "write_batch_result",
+        "write_batch_result",
+        "write_batch_result",
+        "phase:draining",
+        "drain_writers",
+        "phase:finalizing",
+        "finalize_outputs",
+        "phase:completed",
+    ]
+    assert python_effects.written_results == [
+        ("chr2", 4, 16.0),
+        ("chr2", 2, 16.0),
+        ("chr3", 3, 15.0),
+    ]
+    assert [(result.chromosome, result.variant_count, result.statistic_sum) for result in report.results] == [
+        ("chr2", 4, 16.0),
+        ("chr2", 2, 16.0),
+        ("chr3", 3, 15.0),
+    ]
+
+
+def test_native_python_association_backend_maps_python_effect_errors() -> None:
+    class CoordinatorPythonAssociationBackend:
+        def prepare_group(self, group_input: _core.NativePreparedGroupInput) -> dict[str, object]:
+            return {"phenotype_count": group_input.phenotype_count}
+
+        def prepare_chromosome(
+            self,
+            group_state: object,
+            chromosome: str,
+            predictions: _core.NativePredictionView,
+        ) -> dict[str, object]:
+            group_state_mapping = typing.cast("dict[str, object]", group_state)
+            return {
+                "phenotype_count": group_state_mapping["phenotype_count"],
+                "prediction_row_count": predictions.row_count,
+            }
+
+        def compute_batch(
+            self,
+            chromosome_state: object,
+            batch: _core.NativeGenotypeBatchView,
+        ) -> _core.NativeAssociationBatchResult:
+            chromosome_state_mapping = typing.cast("dict[str, object]", chromosome_state)
+            statistic_sum = typing.cast("int", chromosome_state_mapping["phenotype_count"])
+            statistic_sum *= batch.variant_count
+            statistic_sum += typing.cast("int", chromosome_state_mapping["prediction_row_count"])
+            statistic_sum += batch.variant_offset
+            return _core.NativeAssociationBatchResult(batch.chromosome, batch.variant_count, float(statistic_sum))
+
+    class FailingEngineRunEffects:
+        def __init__(self) -> None:
+            self.aborted_phases: list[str] = []
+
+        def write_batch_result(self, result: _core.NativeAssociationBatchResult) -> None:
+            raise ValueError(f"writer exploded for {result.chromosome}")
+
+        def abort_outputs(self, phase: str) -> None:
+            self.aborted_phases.append(phase)
+
+    python_effects = FailingEngineRunEffects()
+    native_backend = _core.NativePythonAssociationBackend(CoordinatorPythonAssociationBackend())
+    native_effects = _core.NativePythonEngineRunEffects(python_effects)
+    chromosome_inputs = [
+        _core.NativeAssociationChromosomeRunInput(
+            "chr2",
+            "chr2",
+            5,
+            [_core.NativeGenotypeBatchView("chr2", 4, 3)],
+        )
+    ]
+
+    with pytest.raises(RuntimeError, match="writer exploded for chr2"):
+        native_backend.run_group_chromosomes_with_effects("binary", 2, chromosome_inputs, native_effects)
+
+    assert python_effects.aborted_phases == ["running"]
+
+
 def test_native_python_association_backend_maps_python_errors() -> None:
     class FailingPythonAssociationBackend:
         def prepare_group(self, group_input: _core.NativePreparedGroupInput) -> object:

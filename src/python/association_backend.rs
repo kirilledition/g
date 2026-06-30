@@ -6,8 +6,9 @@ use pyo3::types::PyAny;
 
 use g_engine::{
     AssociationBackend, AssociationBatchResult, BackendError, EngineChromosomeRunInput, EngineChromosomeRunReport,
-    EngineCoordinator, EngineError, EngineGroupChromosomeInput, EngineGroupRunInput, EngineGroupRunReport,
-    EngineRunInput, EngineRunReport, GenotypeBatchView, PredictionView, PreparedGroupInput,
+    EngineCoordinator, EngineEffectError, EngineError, EngineGroupChromosomeInput, EngineGroupRunInput,
+    EngineGroupRunReport, EngineRunEffects, EngineRunInput, EngineRunReport, GenotypeBatchView, PredictionView,
+    PreparedGroupInput, RunPhase,
 };
 
 #[pyclass(skip_from_py_object)]
@@ -62,6 +63,11 @@ pub(crate) struct NativeAssociationChromosomeRunReport {
 #[derive(Clone)]
 pub(crate) struct NativeAssociationGroupRunReport {
     inner: EngineGroupRunReport,
+}
+
+#[pyclass]
+pub(crate) struct NativePythonEngineRunEffects {
+    effects: Py<PyAny>,
 }
 
 #[pyclass]
@@ -236,6 +242,14 @@ impl NativeAssociationGroupRunReport {
 }
 
 #[pymethods]
+impl NativePythonEngineRunEffects {
+    #[new]
+    fn new(effects: Py<PyAny>) -> Self {
+        Self { effects }
+    }
+}
+
+#[pymethods]
 impl NativePythonAssociationBackend {
     #[new]
     fn new(backend: Py<PyAny>) -> Self {
@@ -340,6 +354,39 @@ impl NativePythonAssociationBackend {
         phenotype_count: usize,
         chromosome_inputs: Vec<PyRef<'py, NativeAssociationChromosomeRunInput>>,
     ) -> PyResult<NativeAssociationGroupRunReport> {
+        self.run_group_chromosomes_impl(py, group_identifier, phenotype_count, chromosome_inputs, None)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn run_group_chromosomes_with_effects<'py>(
+        &self,
+        py: Python<'py>,
+        group_identifier: String,
+        phenotype_count: usize,
+        chromosome_inputs: Vec<PyRef<'py, NativeAssociationChromosomeRunInput>>,
+        effects: PyRef<'py, NativePythonEngineRunEffects>,
+    ) -> PyResult<NativeAssociationGroupRunReport> {
+        let mut native_effects = NativePythonEngineRunEffects { effects: effects.effects.clone_ref(py) };
+        self.run_group_chromosomes_impl(
+            py,
+            group_identifier,
+            phenotype_count,
+            chromosome_inputs,
+            Some(&mut native_effects),
+        )
+    }
+}
+
+impl NativePythonAssociationBackend {
+    #[allow(clippy::needless_pass_by_value)]
+    fn run_group_chromosomes_impl<'py>(
+        &self,
+        py: Python<'py>,
+        group_identifier: String,
+        phenotype_count: usize,
+        chromosome_inputs: Vec<PyRef<'py, NativeAssociationChromosomeRunInput>>,
+        effects: Option<&mut NativePythonEngineRunEffects>,
+    ) -> PyResult<NativeAssociationGroupRunReport> {
         let group = PreparedGroupInput::new(group_identifier, phenotype_count);
         let chromosome_names = chromosome_inputs.iter().map(|input| input.chromosome.clone()).collect::<Vec<_>>();
         let prediction_chromosome_names =
@@ -370,10 +417,87 @@ impl NativePythonAssociationBackend {
         let input = EngineGroupRunInput::new(group, chromosomes);
         let backend = Self { backend: self.backend.clone_ref(py) };
         let mut coordinator = EngineCoordinator::new(backend);
-        coordinator
-            .run_group_chromosomes(&input)
-            .map(|report| NativeAssociationGroupRunReport { inner: report })
+        let report = match effects {
+            Some(effects) => coordinator.run_group_chromosomes_with_effects(&input, effects),
+            None => coordinator.run_group_chromosomes(&input),
+        };
+        report
+            .map(|inner| NativeAssociationGroupRunReport { inner })
             .map_err(|error| engine_error_to_py_runtime_error(&error))
+    }
+}
+
+impl EngineRunEffects for NativePythonEngineRunEffects {
+    fn emit_phase_event(&mut self, phase: RunPhase) -> Result<(), EngineEffectError> {
+        self.call_optional_effect_method1("emit_phase_event", phase.to_string())
+    }
+
+    fn open_inputs(&mut self) -> Result<(), EngineEffectError> {
+        self.call_optional_effect_method0("open_inputs")
+    }
+
+    fn align_inputs(&mut self) -> Result<(), EngineEffectError> {
+        self.call_optional_effect_method0("align_inputs")
+    }
+
+    fn validate_preflight(&mut self) -> Result<(), EngineEffectError> {
+        self.call_optional_effect_method0("validate_preflight")
+    }
+
+    fn validate_output_compatibility(&mut self) -> Result<(), EngineEffectError> {
+        self.call_optional_effect_method0("validate_output_compatibility")
+    }
+
+    fn construct_writers(&mut self) -> Result<(), EngineEffectError> {
+        self.call_optional_effect_method0("construct_writers")
+    }
+
+    fn write_batch_result(&mut self, result: &AssociationBatchResult) -> Result<(), EngineEffectError> {
+        Python::attach(|py| -> PyResult<()> {
+            let effects = self.effects.bind(py);
+            if effects.hasattr("write_batch_result")? {
+                let native_result = Py::new(py, NativeAssociationBatchResult { inner: result.clone() })?;
+                effects.call_method1("write_batch_result", (native_result.bind(py),))?;
+            }
+            Ok(())
+        })
+        .map_err(|error| engine_effect_error_from_py_error(&error))
+    }
+
+    fn drain_writers(&mut self) -> Result<(), EngineEffectError> {
+        self.call_optional_effect_method0("drain_writers")
+    }
+
+    fn finalize_outputs(&mut self) -> Result<(), EngineEffectError> {
+        self.call_optional_effect_method0("finalize_outputs")
+    }
+
+    fn abort_outputs(&mut self, phase: RunPhase) {
+        let _ = self.call_optional_effect_method1("abort_outputs", phase.to_string());
+    }
+}
+
+impl NativePythonEngineRunEffects {
+    fn call_optional_effect_method0(&self, method_name: &str) -> Result<(), EngineEffectError> {
+        Python::attach(|py| -> PyResult<()> {
+            let effects = self.effects.bind(py);
+            if effects.hasattr(method_name)? {
+                effects.call_method0(method_name)?;
+            }
+            Ok(())
+        })
+        .map_err(|error| engine_effect_error_from_py_error(&error))
+    }
+
+    fn call_optional_effect_method1(&self, method_name: &str, argument: String) -> Result<(), EngineEffectError> {
+        Python::attach(|py| -> PyResult<()> {
+            let effects = self.effects.bind(py);
+            if effects.hasattr(method_name)? {
+                effects.call_method1(method_name, (argument,))?;
+            }
+            Ok(())
+        })
+        .map_err(|error| engine_effect_error_from_py_error(&error))
     }
 }
 
@@ -458,4 +582,8 @@ fn backend_error_to_py_runtime_error(error: &BackendError) -> PyErr {
 
 fn engine_error_to_py_runtime_error(error: &EngineError) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
+}
+
+fn engine_effect_error_from_py_error(error: &PyErr) -> EngineEffectError {
+    EngineEffectError::new(error.to_string())
 }

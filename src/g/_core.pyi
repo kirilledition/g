@@ -343,6 +343,9 @@ class NativeAssociationGroupRunReport:
     @property
     def results(self) -> list[NativeAssociationBatchResult]: ...
 
+class NativePythonEngineRunEffects:
+    def __init__(self, effects: object) -> None: ...
+
 class NativePythonAssociationBackend:
     def __init__(self, backend: object) -> None: ...
     def prepare_group(self, group_identifier: str, phenotype_count: int) -> object: ...
@@ -385,6 +388,13 @@ class NativePythonAssociationBackend:
         group_identifier: str,
         phenotype_count: int,
         chromosome_inputs: typing.Sequence[NativeAssociationChromosomeRunInput],
+    ) -> NativeAssociationGroupRunReport: ...
+    def run_group_chromosomes_with_effects(
+        self,
+        group_identifier: str,
+        phenotype_count: int,
+        chromosome_inputs: typing.Sequence[NativeAssociationChromosomeRunInput],
+        effects: NativePythonEngineRunEffects,
     ) -> NativeAssociationGroupRunReport: ...
 
 class VariantMetadata:

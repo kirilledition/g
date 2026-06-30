@@ -56,7 +56,7 @@ mod trusted_validation;
 use association_backend::{
     NativeAssociationBatchResult, NativeAssociationChromosomeRunInput, NativeAssociationChromosomeRunReport,
     NativeAssociationEngineRunReport, NativeAssociationGroupRunReport, NativeGenotypeBatchView, NativePredictionView,
-    NativePreparedGroupInput, NativePythonAssociationBackend,
+    NativePreparedGroupInput, NativePythonAssociationBackend, NativePythonEngineRunEffects,
 };
 use callback_diagnostics::{NativeNullLogisticNonconvergencePlan, plan_null_logistic_nonconvergence};
 use callback_progress::{
@@ -1874,6 +1874,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePredictionView>()?;
     module.add_class::<NativePreparedGroupInput>()?;
     module.add_class::<NativePythonAssociationBackend>()?;
+    module.add_class::<NativePythonEngineRunEffects>()?;
     module.add_class::<NativeAlignedPhenotypeGroup>()?;
     module.add_class::<NativeAlignedSampleData>()?;
     module.add_class::<NativeBinaryCorrectionDiagnosticsRecordPlan>()?;
