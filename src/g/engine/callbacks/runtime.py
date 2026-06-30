@@ -2519,7 +2519,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Remove one discarded host genotype buffer slot from pool accounting."""
         if self.uses_native_callback_runtime_resources():
-            operation_result = self.callback_runtime_resources.discard_dosage_buffer_object_with_optional_observation(
+            operation_result = self.callback_runtime_resources.discard_dosage_buffer_owner_with_optional_observation(
                 dosage_buffer
             )
             self.record_dosage_buffer_pool_operation_result(operation_result)

@@ -1058,6 +1058,15 @@ impl NativeCallbackRuntimeResources {
         self.discard_dosage_buffer_with_optional_observation(py, py_object_identifier(dosage_buffer))
     }
 
+    fn discard_dosage_buffer_owner_with_optional_observation(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        let dosage_buffer_owner = dosage_buffer_owner(py, dosage_buffer)?;
+        self.discard_dosage_buffer_with_optional_observation(py, py_object_identifier(dosage_buffer_owner.bind(py)))
+    }
+
     fn plan_dosage_buffer_return_attempt(
         &self,
         py: Python<'_>,

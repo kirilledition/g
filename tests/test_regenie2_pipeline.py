@@ -3145,8 +3145,8 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is unobserved_dosage_buffer
-    unobserved_discard_result = runtime_resources.discard_dosage_buffer_object_with_optional_observation(
-        unobserved_dosage_buffer
+    unobserved_discard_result = runtime_resources.discard_dosage_buffer_owner_with_optional_observation(
+        unobserved_dosage_buffer_view
     )
     assert unobserved_discard_result.has_free_buffer_count is True
     assert unobserved_discard_result.free_buffer_count == 0
@@ -3242,6 +3242,8 @@ def test_native_callback_runner_uses_native_releasable_dosage_buffer_owner_resol
             free_buffer_result = callback.callback_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
             assert free_buffer_result.has_item is True
             assert free_buffer_result.item is oversized_buffer
+            callback.discard_dosage_buffer_slot(sliced_buffer)
+            assert callback.callback_runtime_resources.dosage_buffer_allocated_count == 0
     finally:
         callback.finish()
 
