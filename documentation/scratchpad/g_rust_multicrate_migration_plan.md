@@ -1238,6 +1238,14 @@ Remove Python as the chunk-level scheduler.
 - Multi-result callback consumers now use native runtime resource combined
   result-queue get/drain-completion paths, matching the single-result consumer
   ownership boundary for timed and untimed result drains.
+- Callback runtime resources now own callback telemetry availability for
+  production binary-correction diagnostics and worker-finish summary planning,
+  so Python no longer computes or passes that fixed run property on native
+  summary decisions.
+- Callback runtime resources now own callback stage-timing availability for
+  production dosage-buffer pool register, return, discard, and result cleanup
+  observation selection, so Python no longer chooses separate observed versus
+  unobserved native buffer-pool mutation methods.
 
 ### Tests
 

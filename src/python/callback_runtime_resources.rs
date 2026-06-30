@@ -43,6 +43,8 @@ pub(crate) struct NativeCallbackRuntimeResources {
     worker_thread: Py<NativeCallbackWorkerThread>,
     result_worker_thread: Py<NativeCallbackWorkerThread>,
     expected_result_work_item_kind: String,
+    has_telemetry_session: bool,
+    has_stage_timing_recorder: bool,
     flush_binary_correction_diagnostics_on_result_stop: bool,
     worker_start_lock: Mutex<()>,
 }
@@ -134,7 +136,9 @@ impl NativeCallbackRuntimeResources {
         staging_depth,
         native_callback_batch_size,
         expected_result_work_item_kind,
+        has_telemetry_session,
         flush_binary_correction_diagnostics_on_result_stop,
+        has_stage_timing_recorder = false,
         result_in_flight_limit = None,
         dosage_buffer_limit = None
     ))]
@@ -147,7 +151,9 @@ impl NativeCallbackRuntimeResources {
         staging_depth: i64,
         native_callback_batch_size: i64,
         expected_result_work_item_kind: String,
+        has_telemetry_session: bool,
         flush_binary_correction_diagnostics_on_result_stop: bool,
+        has_stage_timing_recorder: bool,
         result_in_flight_limit: Option<i64>,
         dosage_buffer_limit: Option<i64>,
     ) -> PyResult<Self> {
@@ -188,6 +194,8 @@ impl NativeCallbackRuntimeResources {
                 NativeCallbackWorkerThread::from_target(py, result_worker_target, result_worker_name, true)?,
             )?,
             expected_result_work_item_kind,
+            has_telemetry_session,
+            has_stage_timing_recorder,
             flush_binary_correction_diagnostics_on_result_stop,
             worker_start_lock: Mutex::new(()),
         })
@@ -364,25 +372,23 @@ impl NativeCallbackRuntimeResources {
     fn plan_binary_correction_diagnostics_record(
         &self,
         py: Python<'_>,
-        has_telemetry_session: bool,
         has_diagnostics: bool,
     ) -> PyResult<NativeBinaryCorrectionDiagnosticsRecordPlan> {
         self.binary_correction_summary
             .bind(py)
             .borrow()
-            .plan_diagnostics_record_value(has_telemetry_session, has_diagnostics)
+            .plan_diagnostics_record_value(self.has_telemetry_session, has_diagnostics)
     }
 
     fn plan_binary_correction_summary_emit(
         &self,
         py: Python<'_>,
-        has_telemetry_session: bool,
         pending_diagnostics_count: i64,
     ) -> PyResult<NativeBinaryCorrectionSummaryEmitPlan> {
         self.binary_correction_summary
             .bind(py)
             .borrow()
-            .plan_summary_emit_value(has_telemetry_session, pending_diagnostics_count)
+            .plan_summary_emit_value(self.has_telemetry_session, pending_diagnostics_count)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -543,7 +549,6 @@ impl NativeCallbackRuntimeResources {
     fn finish_worker_lifecycle(
         &self,
         py: Python<'_>,
-        has_telemetry_session: bool,
         pending_diagnostics_count: i64,
     ) -> PyResult<NativeCallbackWorkerFinishLifecycleResult> {
         let finish_plan = {
@@ -600,7 +605,7 @@ impl NativeCallbackRuntimeResources {
                 .binary_correction_summary
                 .bind(py)
                 .borrow()
-                .plan_summary_emit_value(has_telemetry_session, pending_diagnostics_count)?;
+                .plan_summary_emit_value(self.has_telemetry_session, pending_diagnostics_count)?;
             finish_result.record_binary_correction_pending_diagnostics_flush(
                 summary_emit_plan.should_flush_pending_diagnostics_value(),
             );
@@ -692,14 +697,7 @@ impl NativeCallbackRuntimeResources {
     }
 
     fn release_result_in_flight_slot(&self, py: Python<'_>) -> PyResult<NativeResultInFlightReleaseObservationPlan> {
-        let release_plan = {
-            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
-            scheduler_state.plan_result_in_flight_slot_release_attempt_value()
-        };
-        if release_plan.has_release_error_value() {
-            return Err(PyRuntimeError::new_err("Native result in-flight slot state has no occupied slot to release."));
-        }
-        self.result_in_flight_slot_signal.bind(py).borrow().notify_waiters_value()?;
+        self.release_result_in_flight_slot_without_observation(py)?;
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         Ok(scheduler_state.plan_result_in_flight_slot_release_observation_value())
     }
@@ -829,6 +827,22 @@ impl NativeCallbackRuntimeResources {
         NativeDosageBufferPoolOperationResult::from_operation(py, Some(free_buffer_count), Some(observation_plan))
     }
 
+    fn register_dosage_buffer_with_optional_observation(
+        &self,
+        py: Python<'_>,
+        buffer_identifier: usize,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        let free_buffer_count = self.register_dosage_buffer(py, buffer_identifier)?;
+        if !self.has_stage_timing_recorder {
+            return NativeDosageBufferPoolOperationResult::from_operation(py, Some(free_buffer_count), None);
+        }
+        let observation_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_buffer_pool_allocate_observation_value()
+        };
+        NativeDosageBufferPoolOperationResult::from_operation(py, Some(free_buffer_count), Some(observation_plan))
+    }
+
     fn return_dosage_buffer(
         &self,
         py: Python<'_>,
@@ -868,6 +882,23 @@ impl NativeCallbackRuntimeResources {
         NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
     }
 
+    fn return_dosage_buffer_with_optional_observation(
+        &self,
+        py: Python<'_>,
+        buffer_identifier: usize,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        let free_buffer_count = self.return_dosage_buffer(py, buffer_identifier, dosage_buffer)?;
+        if free_buffer_count.is_none() || !self.has_stage_timing_recorder {
+            return NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, None);
+        }
+        let observation_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_buffer_pool_return_observation_value()
+        };
+        NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
+    }
+
     fn discard_dosage_buffer(&self, py: Python<'_>, buffer_identifier: usize) -> PyResult<Option<usize>> {
         let discard_plan = {
             let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
@@ -889,6 +920,22 @@ impl NativeCallbackRuntimeResources {
         let free_buffer_count = self.discard_dosage_buffer(py, buffer_identifier)?;
         if free_buffer_count.is_none() {
             return NativeDosageBufferPoolOperationResult::from_operation(py, None, None);
+        }
+        let observation_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_buffer_pool_discard_observation_value()
+        };
+        NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
+    }
+
+    fn discard_dosage_buffer_with_optional_observation(
+        &self,
+        py: Python<'_>,
+        buffer_identifier: usize,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        let free_buffer_count = self.discard_dosage_buffer(py, buffer_identifier)?;
+        if free_buffer_count.is_none() || !self.has_stage_timing_recorder {
+            return NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, None);
         }
         let observation_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
@@ -1471,23 +1518,28 @@ impl NativeResultWorkItemResourceReleaseResult {
 
     fn record_result_in_flight_release(
         &mut self,
-        release_observation_plan: &NativeResultInFlightReleaseObservationPlan,
+        release_observation_plan: Option<&NativeResultInFlightReleaseObservationPlan>,
     ) {
         self.released_result_in_flight_slot = true;
-        self.result_in_flight_resource_name = Some(release_observation_plan.resource_name_value().to_owned());
-        self.result_in_flight_operation_name = Some(release_observation_plan.operation_name_value().to_owned());
-        self.result_in_flight_blocked = Some(release_observation_plan.blocked_value());
+        if let Some(release_observation_plan) = release_observation_plan {
+            self.result_in_flight_resource_name = Some(release_observation_plan.resource_name_value().to_owned());
+            self.result_in_flight_operation_name = Some(release_observation_plan.operation_name_value().to_owned());
+            self.result_in_flight_blocked = Some(release_observation_plan.blocked_value());
+        }
     }
 
     fn record_host_buffer_return(
         &mut self,
         py: Python<'_>,
         free_buffer_count: Option<usize>,
-        observation_plan: NativeDosageBufferPoolObservationPlan,
+        observation_plan: Option<NativeDosageBufferPoolObservationPlan>,
     ) -> PyResult<()> {
         self.released_host_buffer = true;
         self.free_buffer_count = free_buffer_count;
         if free_buffer_count.is_some() {
+            let Some(observation_plan) = observation_plan else {
+                return Ok(());
+            };
             self.dosage_buffer_pool_observation_plan = Some(Py::new(py, observation_plan)?);
         }
         Ok(())
@@ -1806,6 +1858,18 @@ impl NativeDosageBufferAcquireResult {
 }
 
 impl NativeCallbackRuntimeResources {
+    fn release_result_in_flight_slot_without_observation(&self, py: Python<'_>) -> PyResult<()> {
+        let release_plan = {
+            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+            scheduler_state.plan_result_in_flight_slot_release_attempt_value()
+        };
+        if release_plan.has_release_error_value() {
+            return Err(PyRuntimeError::new_err("Native result in-flight slot state has no occupied slot to release."));
+        }
+        self.result_in_flight_slot_signal.bind(py).borrow().notify_waiters_value()?;
+        Ok(())
+    }
+
     fn plan_result_write_drain_completion_value(
         &self,
         py: Python<'_>,
@@ -1898,15 +1962,22 @@ impl NativeCallbackRuntimeResources {
                 ));
             };
             let free_buffer_count = self.return_dosage_buffer(py, buffer_identifier, host_dosage_buffer)?;
-            let return_observation_plan = {
+            let return_observation_plan = if self.has_stage_timing_recorder {
                 let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-                scheduler_state.plan_dosage_buffer_pool_return_observation_value()
+                Some(scheduler_state.plan_dosage_buffer_pool_return_observation_value())
+            } else {
+                None
             };
             release_result.record_host_buffer_return(py, free_buffer_count, return_observation_plan)?;
         }
         if resource_release_plan.should_release_result_in_flight_slot_value() {
-            let release_observation_plan = self.release_result_in_flight_slot(py)?;
-            release_result.record_result_in_flight_release(&release_observation_plan);
+            if self.has_stage_timing_recorder {
+                let release_observation_plan = self.release_result_in_flight_slot(py)?;
+                release_result.record_result_in_flight_release(Some(&release_observation_plan));
+            } else {
+                self.release_result_in_flight_slot_without_observation(py)?;
+                release_result.record_result_in_flight_release(None);
+            }
         }
         Ok(release_result)
     }

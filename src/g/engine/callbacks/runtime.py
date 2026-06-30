@@ -156,7 +156,9 @@ class NativeBgenCallbackRunner(abc.ABC):
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
             expected_result_work_item_kind=expected_result_work_item_kind.value,
+            has_telemetry_session=telemetry_session is not None,
             flush_binary_correction_diagnostics_on_result_stop=flush_binary_correction_diagnostics_on_result_stop,
+            has_stage_timing_recorder=stage_timing_recorder is not None,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
         )
@@ -957,9 +959,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.stage_timing_recorder is None:
             return
         free_buffer_count = operation_result.free_buffer_count
-        observation_plan = operation_result.observation_plan
-        if free_buffer_count is None or observation_plan is None:
+        if free_buffer_count is None:
             return
+        observation_plan = operation_result.observation_plan
+        if observation_plan is None:
+            message = "Native dosage-buffer pool operation result omitted timing observation details."
+            raise RuntimeError(message)
         self.record_dosage_buffer_pool_operation(
             operation_name=observation_plan.operation_name,
             free_buffer_count=free_buffer_count,
@@ -1364,16 +1369,14 @@ class NativeBgenCallbackRunner(abc.ABC):
         binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None,
     ) -> None:
         """Accumulate binary correction diagnostics for run-level telemetry."""
-        has_telemetry_session = self.telemetry_session is not None
         has_diagnostics = binary_chunk_diagnostics is not None
         if self.uses_native_callback_runtime_resources():
             diagnostics_record_plan = self.callback_runtime_resources.plan_binary_correction_diagnostics_record(
-                has_telemetry_session,
                 has_diagnostics,
             )
         else:
             diagnostics_record_plan = self.binary_correction_summary.plan_diagnostics_record(
-                has_telemetry_session=has_telemetry_session,
+                has_telemetry_session=self.telemetry_session is not None,
                 has_diagnostics=has_diagnostics,
             )
         if not diagnostics_record_plan.should_record:
@@ -1385,16 +1388,14 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def flush_binary_correction_diagnostics(self) -> None:
         """Materialize pending binary diagnostics and accumulate them into native summary counters."""
-        has_telemetry_session = True
         pending_diagnostics_count = len(self.binary_correction_pending_diagnostics)
         if self.uses_native_callback_runtime_resources():
             summary_emit_plan = self.callback_runtime_resources.plan_binary_correction_summary_emit(
-                has_telemetry_session,
                 pending_diagnostics_count,
             )
         else:
             summary_emit_plan = self.binary_correction_summary.plan_summary_emit(
-                has_telemetry_session=has_telemetry_session,
+                has_telemetry_session=True,
                 pending_diagnostics_count=pending_diagnostics_count,
             )
         if not summary_emit_plan.should_flush_pending_diagnostics:
@@ -1460,16 +1461,14 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def emit_binary_correction_summary(self) -> None:
         """Emit aggregate binary correction diagnostics when a binary run produced them."""
-        has_telemetry_session = self.telemetry_session is not None
         pending_diagnostics_count = len(self.binary_correction_pending_diagnostics)
         if self.uses_native_callback_runtime_resources():
             summary_emit_plan = self.callback_runtime_resources.plan_binary_correction_summary_emit(
-                has_telemetry_session,
                 pending_diagnostics_count,
             )
         else:
             summary_emit_plan = self.binary_correction_summary.plan_summary_emit(
-                has_telemetry_session=has_telemetry_session,
+                has_telemetry_session=self.telemetry_session is not None,
                 pending_diagnostics_count=pending_diagnostics_count,
             )
         if summary_emit_plan.should_flush_pending_diagnostics:
@@ -1962,7 +1961,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Wait until all queued JAX work has been written."""
         if self.uses_native_callback_runtime_resources():
             finish_result = self.callback_runtime_resources.finish_worker_lifecycle(
-                has_telemetry_session=self.telemetry_session is not None,
                 pending_diagnostics_count=len(self.binary_correction_pending_diagnostics),
             )
             if finish_result.has_shutdown_timeout:
@@ -2340,13 +2338,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Return a processed host dosage buffer to the reusable pool."""
         dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
         if self.uses_native_callback_runtime_resources():
-            if self.stage_timing_recorder is None:
-                self.callback_runtime_resources.return_dosage_buffer(
-                    id(dosage_buffer_owner),
-                    dosage_buffer_owner,
-                )
-                return
-            operation_result = self.callback_runtime_resources.return_dosage_buffer_with_observation(
+            operation_result = self.callback_runtime_resources.return_dosage_buffer_with_optional_observation(
                 id(dosage_buffer_owner),
                 dosage_buffer_owner,
             )
@@ -2373,10 +2365,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Allocate and register one host genotype buffer slot."""
         dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
         if self.uses_native_callback_runtime_resources():
-            if self.stage_timing_recorder is None:
-                self.callback_runtime_resources.register_dosage_buffer(id(dosage_buffer))
-                return dosage_buffer
-            operation_result = self.callback_runtime_resources.register_dosage_buffer_with_observation(
+            operation_result = self.callback_runtime_resources.register_dosage_buffer_with_optional_observation(
                 id(dosage_buffer)
             )
             self.record_dosage_buffer_pool_operation_result(operation_result)
@@ -2395,10 +2384,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Remove one discarded host genotype buffer slot from pool accounting."""
         dosage_buffer_identifier = id(dosage_buffer)
         if self.uses_native_callback_runtime_resources():
-            if self.stage_timing_recorder is None:
-                self.callback_runtime_resources.discard_dosage_buffer(dosage_buffer_identifier)
-                return
-            operation_result = self.callback_runtime_resources.discard_dosage_buffer_with_observation(
+            operation_result = self.callback_runtime_resources.discard_dosage_buffer_with_optional_observation(
                 dosage_buffer_identifier
             )
             self.record_dosage_buffer_pool_operation_result(operation_result)
@@ -2444,6 +2430,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         release_result: _core.NativeResultWorkItemResourceReleaseResult,
     ) -> None:
         """Record Python-side telemetry from native result work item resource cleanup."""
+        if self.stage_timing_recorder is None:
+            return
         if release_result.free_buffer_count is not None:
             dosage_buffer_pool_observation_plan = release_result.dosage_buffer_pool_observation_plan
             if dosage_buffer_pool_observation_plan is None:

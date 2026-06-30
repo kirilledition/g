@@ -2402,6 +2402,7 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=True,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -2565,6 +2566,7 @@ def test_native_callback_runtime_resources_own_progress_state() -> None:
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -2595,6 +2597,7 @@ def test_native_callback_runtime_resources_own_progress_state() -> None:
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -2608,6 +2611,18 @@ def test_native_callback_runtime_resources_own_binary_correction_summary() -> No
     def worker_target() -> None:
         return None
 
+    disabled_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-disabled-binary-summary-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
     runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
         worker_name="native-resource-binary-summary-test",
         dosage_worker_target=worker_target,
@@ -2615,22 +2630,19 @@ def test_native_callback_runtime_resources_own_binary_correction_summary() -> No
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=True,
         flush_binary_correction_diagnostics_on_result_stop=True,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
 
     assert runtime_resources.binary_correction_chunk_count_with_pending(0) == 0
-    has_telemetry_session = False
     has_diagnostics = True
-    disabled_record_plan = runtime_resources.plan_binary_correction_diagnostics_record(
-        has_telemetry_session,
+    disabled_record_plan = disabled_runtime_resources.plan_binary_correction_diagnostics_record(
         has_diagnostics,
     )
     assert disabled_record_plan.should_record is False
-    has_telemetry_session = True
     enabled_record_plan = runtime_resources.plan_binary_correction_diagnostics_record(
-        has_telemetry_session,
         has_diagnostics,
     )
     assert enabled_record_plan.should_record is True
@@ -2660,14 +2672,12 @@ def test_native_callback_runtime_resources_own_binary_correction_summary() -> No
     assert runtime_resources.binary_correction_chunk_count_with_pending(1) == 2
     pending_diagnostics_count = 0
     emit_plan = runtime_resources.plan_binary_correction_summary_emit(
-        has_telemetry_session,
         pending_diagnostics_count,
     )
     assert emit_plan.should_flush_pending_diagnostics is False
     assert emit_plan.should_emit_summary is True
     pending_diagnostics_count = 1
     flush_plan = runtime_resources.plan_binary_correction_summary_emit(
-        has_telemetry_session,
         pending_diagnostics_count,
     )
     assert flush_plan.should_flush_pending_diagnostics is True
@@ -2691,6 +2701,7 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=True,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -2703,6 +2714,7 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
             staging_depth=1,
             native_callback_batch_size=1,
             expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.STOP_SIGNAL.value,
+            has_telemetry_session=False,
             flush_binary_correction_diagnostics_on_result_stop=True,
             result_in_flight_limit=1,
             dosage_buffer_limit=1,
@@ -2778,6 +2790,7 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -2827,12 +2840,14 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=False,
+        has_stage_timing_recorder=True,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
     observed_dosage_buffer = np.empty((2, 2), dtype=np.float32)
-    register_operation_result = observed_runtime_resources.register_dosage_buffer_with_observation(
+    register_operation_result = observed_runtime_resources.register_dosage_buffer_with_optional_observation(
         id(observed_dosage_buffer)
     )
     assert register_operation_result.has_free_buffer_count is True
@@ -2841,7 +2856,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert register_observation_plan is not None
     assert register_observation_plan.operation_name == "allocate"
     assert register_observation_plan.blocked is False
-    return_operation_result = observed_runtime_resources.return_dosage_buffer_with_observation(
+    return_operation_result = observed_runtime_resources.return_dosage_buffer_with_optional_observation(
         id(observed_dosage_buffer),
         observed_dosage_buffer,
     )
@@ -2854,7 +2869,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     free_buffer_result = observed_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is observed_dosage_buffer
-    discard_operation_result = observed_runtime_resources.discard_dosage_buffer_with_observation(
+    discard_operation_result = observed_runtime_resources.discard_dosage_buffer_with_optional_observation(
         id(observed_dosage_buffer)
     )
     assert discard_operation_result.has_free_buffer_count is True
@@ -2863,7 +2878,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert discard_observation_plan is not None
     assert discard_observation_plan.operation_name == "discard"
     assert discard_observation_plan.blocked is False
-    missing_discard_operation_result = observed_runtime_resources.discard_dosage_buffer_with_observation(
+    missing_discard_operation_result = observed_runtime_resources.discard_dosage_buffer_with_optional_observation(
         id(observed_dosage_buffer)
     )
     assert missing_discard_operation_result.has_free_buffer_count is False
@@ -2877,11 +2892,36 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
     dosage_buffer = np.empty((2, 2), dtype=np.float32)
+
+    unobserved_dosage_buffer = np.empty((2, 2), dtype=np.float32)
+    unobserved_register_result = runtime_resources.register_dosage_buffer_with_optional_observation(
+        id(unobserved_dosage_buffer)
+    )
+    assert unobserved_register_result.has_free_buffer_count is True
+    assert unobserved_register_result.free_buffer_count == 0
+    assert unobserved_register_result.observation_plan is None
+    unobserved_return_result = runtime_resources.return_dosage_buffer_with_optional_observation(
+        id(unobserved_dosage_buffer),
+        unobserved_dosage_buffer,
+    )
+    assert unobserved_return_result.has_free_buffer_count is True
+    assert unobserved_return_result.free_buffer_count == 1
+    assert unobserved_return_result.observation_plan is None
+    free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is unobserved_dosage_buffer
+    unobserved_discard_result = runtime_resources.discard_dosage_buffer_with_optional_observation(
+        id(unobserved_dosage_buffer)
+    )
+    assert unobserved_discard_result.has_free_buffer_count is True
+    assert unobserved_discard_result.free_buffer_count == 0
+    assert unobserved_discard_result.observation_plan is None
 
     assert runtime_resources.free_dosage_buffer_count == 0
     assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
@@ -2957,7 +2997,9 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=False,
+        has_stage_timing_recorder=True,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -2996,6 +3038,49 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert final_result.result_in_flight_blocked is False
     assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
+    unobserved_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-unobserved-result-cleanup-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    unobserved_dosage_buffer = np.empty((2, 2), dtype=np.float32)
+    assert unobserved_runtime_resources.register_dosage_buffer(id(unobserved_dosage_buffer)) == 0
+    unobserved_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+
+    unobserved_pre_write_result = unobserved_runtime_resources.release_result_work_item_pre_write_resources(
+        id(unobserved_dosage_buffer),
+        unobserved_dosage_buffer,
+    )
+    assert unobserved_pre_write_result.released_host_buffer is True
+    assert unobserved_pre_write_result.free_buffer_count == 1
+    assert unobserved_pre_write_result.dosage_buffer_pool_observation_plan is None
+    assert unobserved_pre_write_result.released_result_in_flight_slot is False
+    free_buffer_result = unobserved_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is unobserved_dosage_buffer
+
+    unobserved_final_result = unobserved_runtime_resources.release_result_work_item_final_resources(
+        id(unobserved_dosage_buffer),
+        unobserved_dosage_buffer,
+        has_released_host_dosage_buffer=True,
+        release_in_flight_slot=True,
+    )
+    assert unobserved_final_result.released_host_buffer is False
+    assert unobserved_final_result.free_buffer_count is None
+    assert unobserved_final_result.dosage_buffer_pool_observation_plan is None
+    assert unobserved_final_result.released_result_in_flight_slot is True
+    assert unobserved_final_result.result_in_flight_resource_name is None
+    assert unobserved_final_result.result_in_flight_operation_name is None
+    assert unobserved_final_result.result_in_flight_blocked is None
+    assert unobserved_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
 
 def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> None:
     def worker_target() -> None:
@@ -3008,6 +3093,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> No
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -3069,6 +3155,7 @@ def test_native_callback_runtime_resources_own_worker_stop_and_join() -> None:
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -3107,6 +3194,7 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=True,
         flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -3117,7 +3205,6 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
     assert start_plan.has_start_error is False
     finish_runtime_resources.add_binary_null_model_failure_count(2)
     finish_result = finish_runtime_resources.finish_worker_lifecycle(
-        has_telemetry_session=True,
         pending_diagnostics_count=0,
     )
 
@@ -3168,6 +3255,7 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -3199,6 +3287,7 @@ def test_native_callback_runtime_resources_report_worker_shutdown_timeouts() -> 
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
         flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -6060,7 +6149,9 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
     assert runtime_resource_arguments["staging_depth"] == 3
     assert runtime_resource_arguments["native_callback_batch_size"] == 5
     assert runtime_resource_arguments["expected_result_work_item_kind"] == "single_result"
+    assert runtime_resource_arguments["has_telemetry_session"] is False
     assert runtime_resource_arguments["flush_binary_correction_diagnostics_on_result_stop"] is False
+    assert runtime_resource_arguments["has_stage_timing_recorder"] is False
     assert runtime_resource_arguments["result_in_flight_limit"] == 7
     assert runtime_resource_arguments["dosage_buffer_limit"] == 8
     assert callback.callback_runtime_resources is resolved_runtime_resources

@@ -978,7 +978,9 @@ class NativeCallbackRuntimeResources:
         staging_depth: int,
         native_callback_batch_size: int,
         expected_result_work_item_kind: str,
+        has_telemetry_session: bool,
         flush_binary_correction_diagnostics_on_result_stop: bool,
+        has_stage_timing_recorder: bool = False,
         result_in_flight_limit: int | None = None,
         dosage_buffer_limit: int | None = None,
     ) -> None: ...
@@ -1045,12 +1047,10 @@ class NativeCallbackRuntimeResources:
     def add_binary_null_model_failure_count(self, failure_count: int) -> None: ...
     def plan_binary_correction_diagnostics_record(
         self,
-        has_telemetry_session: bool,
         has_diagnostics: bool,
     ) -> NativeBinaryCorrectionDiagnosticsRecordPlan: ...
     def plan_binary_correction_summary_emit(
         self,
-        has_telemetry_session: bool,
         pending_diagnostics_count: int,
     ) -> NativeBinaryCorrectionSummaryEmitPlan: ...
     def add_binary_correction_diagnostics_totals(
@@ -1082,7 +1082,6 @@ class NativeCallbackRuntimeResources:
     def join_result_worker(self, timeout_seconds: float | None) -> float | None: ...
     def finish_worker_lifecycle(
         self,
-        has_telemetry_session: bool,
         pending_diagnostics_count: int,
     ) -> NativeCallbackWorkerFinishLifecycleResult: ...
     def abort_worker_lifecycle(self) -> NativeCallbackWorkerAbortPlan: ...
@@ -1114,14 +1113,27 @@ class NativeCallbackRuntimeResources:
         self,
         buffer_identifier: int,
     ) -> NativeDosageBufferPoolOperationResult: ...
+    def register_dosage_buffer_with_optional_observation(
+        self,
+        buffer_identifier: int,
+    ) -> NativeDosageBufferPoolOperationResult: ...
     def return_dosage_buffer(self, buffer_identifier: int, dosage_buffer: object) -> int | None: ...
     def return_dosage_buffer_with_observation(
         self,
         buffer_identifier: int,
         dosage_buffer: object,
     ) -> NativeDosageBufferPoolOperationResult: ...
+    def return_dosage_buffer_with_optional_observation(
+        self,
+        buffer_identifier: int,
+        dosage_buffer: object,
+    ) -> NativeDosageBufferPoolOperationResult: ...
     def discard_dosage_buffer(self, buffer_identifier: int) -> int | None: ...
     def discard_dosage_buffer_with_observation(
+        self,
+        buffer_identifier: int,
+    ) -> NativeDosageBufferPoolOperationResult: ...
+    def discard_dosage_buffer_with_optional_observation(
         self,
         buffer_identifier: int,
     ) -> NativeDosageBufferPoolOperationResult: ...
