@@ -49,6 +49,16 @@ pub const PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str =
     "pipeline_multi_group_preflight_completed";
 pub const PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_MESSAGE: &str =
     "Preflight validation passed for multi-phenotype pipeline.";
+pub const PIPELINE_SINGLE_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_started";
+pub const PIPELINE_SINGLE_TRAIT_INPUT_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_single_trait_input_load_started";
+pub const PIPELINE_SINGLE_TRAIT_INPUT_ALIGNED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_input_aligned";
+pub const PIPELINE_SINGLE_TRAIT_PREDICTION_SOURCE_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_single_trait_prediction_source_load_started";
+pub const PIPELINE_SINGLE_TRAIT_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_single_trait_preflight_started";
+pub const PIPELINE_SINGLE_TRAIT_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str =
+    "pipeline_single_trait_preflight_completed";
 pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_bgen_engine_constructing";
 pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_MESSAGE: &str = "Constructing native BGEN run engine.";
@@ -821,6 +831,126 @@ pub fn build_pipeline_multi_group_preflight_completed_diagnostic_payload(
         trusted_no_missing_diploid,
         variant_limit,
     )
+}
+
+#[must_use]
+pub fn build_pipeline_single_trait_started_diagnostic_payload(
+    association_mode: &str,
+    phenotype_name: &str,
+    pipeline_label: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: PIPELINE_SINGLE_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Starting {pipeline_label} REGENIE step 2 BGEN pipeline."),
+        fields: vec![
+            text_diagnostic_field("association_mode", association_mode),
+            text_diagnostic_field("phenotype_name", phenotype_name),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_single_trait_input_load_started_diagnostic_payload(
+    phenotype_name: &str,
+    pipeline_label: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_SINGLE_TRAIT_INPUT_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!(
+            "Loading aligned native sample, phenotype, and covariate inputs for {pipeline_label} pipeline."
+        ),
+        fields: vec![
+            text_diagnostic_field("phenotype_name", phenotype_name),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_single_trait_input_aligned_diagnostic_payload(
+    covariate_count: i64,
+    phenotype_name: &str,
+    pipeline_label: &str,
+    sample_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_SINGLE_TRAIT_INPUT_ALIGNED_DIAGNOSTIC_EVENT_NAME,
+        message: format!(
+            "Aligned {pipeline_label} pipeline inputs: sample_count={sample_count} \
+             covariate_count={covariate_count}."
+        ),
+        fields: vec![
+            integer_diagnostic_field("covariate_count", covariate_count),
+            text_diagnostic_field("phenotype_name", phenotype_name),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+            integer_diagnostic_field("sample_count", sample_count),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload(
+    phenotype_name: &str,
+    pipeline_label: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_SINGLE_TRAIT_PREDICTION_SOURCE_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Loading REGENIE prediction source for {pipeline_label} pipeline."),
+        fields: vec![
+            text_diagnostic_field("phenotype_name", phenotype_name),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_single_trait_preflight_started_diagnostic_payload(
+    phenotype_name: &str,
+    pipeline_label: &str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_SINGLE_TRAIT_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Running preflight validation for {pipeline_label} pipeline."),
+        fields: vec![
+            text_diagnostic_field("phenotype_name", phenotype_name),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+            boolean_diagnostic_field("trusted_no_missing_diploid", trusted_no_missing_diploid),
+            optional_integer_diagnostic_field("variant_limit", variant_limit),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_pipeline_single_trait_preflight_completed_diagnostic_payload(
+    chromosome_count: i64,
+    covariate_count: i64,
+    phenotype_name: &str,
+    pipeline_label: &str,
+    sample_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: PIPELINE_SINGLE_TRAIT_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME,
+        message: format!(
+            "Preflight validation passed for {pipeline_label} pipeline: sample_count={sample_count} \
+             covariate_count={covariate_count} chromosome_count={chromosome_count}."
+        ),
+        fields: vec![
+            integer_diagnostic_field("chromosome_count", chromosome_count),
+            integer_diagnostic_field("covariate_count", covariate_count),
+            text_diagnostic_field("phenotype_name", phenotype_name),
+            text_diagnostic_field("pipeline_label", pipeline_label),
+            integer_diagnostic_field("sample_count", sample_count),
+        ],
+    }
 }
 
 #[must_use]
@@ -1731,6 +1861,31 @@ mod tests {
         assert_eq!(started_payload.fields[3].value, RunDiagnosticFieldValue::OptionalInteger(Some(100)));
         assert_eq!(completed_payload.event_name, "pipeline_multi_group_preflight_completed");
         assert_eq!(completed_payload.fields[3].value, RunDiagnosticFieldValue::OptionalInteger(None));
+    }
+
+    #[test]
+    fn builds_pipeline_single_trait_diagnostic_payloads() {
+        let started_payload =
+            build_pipeline_single_trait_started_diagnostic_payload("regenie2_binary", "trait", "binary");
+        let input_payload = build_pipeline_single_trait_input_load_started_diagnostic_payload("trait", "binary");
+        let aligned_payload = build_pipeline_single_trait_input_aligned_diagnostic_payload(2, "trait", "binary", 3);
+        let prediction_payload =
+            build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload("trait", "binary");
+        let preflight_started_payload =
+            build_pipeline_single_trait_preflight_started_diagnostic_payload("trait", "binary", true, Some(100));
+        let preflight_completed_payload =
+            build_pipeline_single_trait_preflight_completed_diagnostic_payload(22, 2, "trait", "binary", 3);
+
+        assert_eq!(started_payload.event_name, "pipeline_single_trait_started");
+        assert_eq!(started_payload.message, "Starting binary REGENIE step 2 BGEN pipeline.");
+        assert_eq!(input_payload.event_name, "pipeline_single_trait_input_load_started");
+        assert_eq!(aligned_payload.fields[0].value, RunDiagnosticFieldValue::Integer(2));
+        assert_eq!(prediction_payload.event_name, "pipeline_single_trait_prediction_source_load_started");
+        assert_eq!(preflight_started_payload.fields[3].value, RunDiagnosticFieldValue::OptionalInteger(Some(100)));
+        assert_eq!(
+            preflight_completed_payload.message,
+            "Preflight validation passed for binary pipeline: sample_count=3 covariate_count=2 chromosome_count=22."
+        );
     }
 
     #[test]

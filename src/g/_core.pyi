@@ -2874,6 +2874,38 @@ def build_pipeline_multi_group_preflight_completed_diagnostic_payload(
     trusted_no_missing_diploid: bool,
     variant_limit: int | None,
 ) -> dict[str, object]: ...
+def build_pipeline_single_trait_started_diagnostic_payload(
+    association_mode: str,
+    phenotype_name: str,
+    pipeline_label: str,
+) -> dict[str, object]: ...
+def build_pipeline_single_trait_input_load_started_diagnostic_payload(
+    phenotype_name: str,
+    pipeline_label: str,
+) -> dict[str, object]: ...
+def build_pipeline_single_trait_input_aligned_diagnostic_payload(
+    covariate_count: int,
+    phenotype_name: str,
+    pipeline_label: str,
+    sample_count: int,
+) -> dict[str, object]: ...
+def build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload(
+    phenotype_name: str,
+    pipeline_label: str,
+) -> dict[str, object]: ...
+def build_pipeline_single_trait_preflight_started_diagnostic_payload(
+    phenotype_name: str,
+    pipeline_label: str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> dict[str, object]: ...
+def build_pipeline_single_trait_preflight_completed_diagnostic_payload(
+    chromosome_count: int,
+    covariate_count: int,
+    phenotype_name: str,
+    pipeline_label: str,
+    sample_count: int,
+) -> dict[str, object]: ...
 def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
     chunk_size: int,
     source_path: str,

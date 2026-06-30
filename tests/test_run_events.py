@@ -578,6 +578,99 @@ def test_pipeline_multi_group_preflight_diagnostic_payloads_use_native_builders(
     }
 
 
+def test_pipeline_single_trait_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_pipeline_single_trait_started_diagnostic_payload(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        phenotype_name="trait",
+        pipeline_label="binary",
+    ) == {
+        "level": "info",
+        "event_name": "pipeline_single_trait_started",
+        "message": "Starting binary REGENIE step 2 BGEN pipeline.",
+        "fields": {
+            "association_mode": "regenie2_binary",
+            "phenotype_name": "trait",
+            "pipeline_label": "binary",
+        },
+    }
+    assert run_events.build_pipeline_single_trait_input_load_started_diagnostic_payload(
+        phenotype_name="trait",
+        pipeline_label="binary",
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_single_trait_input_load_started",
+        "message": "Loading aligned native sample, phenotype, and covariate inputs for binary pipeline.",
+        "fields": {
+            "phenotype_name": "trait",
+            "pipeline_label": "binary",
+        },
+    }
+    assert run_events.build_pipeline_single_trait_input_aligned_diagnostic_payload(
+        covariate_count=2,
+        phenotype_name="trait",
+        pipeline_label="binary",
+        sample_count=3,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_single_trait_input_aligned",
+        "message": "Aligned binary pipeline inputs: sample_count=3 covariate_count=2.",
+        "fields": {
+            "covariate_count": 2,
+            "phenotype_name": "trait",
+            "pipeline_label": "binary",
+            "sample_count": 3,
+        },
+    }
+    assert run_events.build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload(
+        phenotype_name="trait",
+        pipeline_label="binary",
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_single_trait_prediction_source_load_started",
+        "message": "Loading REGENIE prediction source for binary pipeline.",
+        "fields": {
+            "phenotype_name": "trait",
+            "pipeline_label": "binary",
+        },
+    }
+    assert run_events.build_pipeline_single_trait_preflight_started_diagnostic_payload(
+        phenotype_name="trait",
+        pipeline_label="binary",
+        trusted_no_missing_diploid=True,
+        variant_limit=100,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_single_trait_preflight_started",
+        "message": "Running preflight validation for binary pipeline.",
+        "fields": {
+            "phenotype_name": "trait",
+            "pipeline_label": "binary",
+            "trusted_no_missing_diploid": True,
+            "variant_limit": 100,
+        },
+    }
+    assert run_events.build_pipeline_single_trait_preflight_completed_diagnostic_payload(
+        chromosome_count=22,
+        covariate_count=2,
+        phenotype_name="trait",
+        pipeline_label="binary",
+        sample_count=3,
+    ) == {
+        "level": "debug",
+        "event_name": "pipeline_single_trait_preflight_completed",
+        "message": (
+            "Preflight validation passed for binary pipeline: sample_count=3 covariate_count=2 chromosome_count=22."
+        ),
+        "fields": {
+            "chromosome_count": 22,
+            "covariate_count": 2,
+            "phenotype_name": "trait",
+            "pipeline_label": "binary",
+            "sample_count": 3,
+        },
+    }
+
+
 def test_native_dispatch_engine_diagnostic_payloads_use_native_builders() -> None:
     assert run_events.build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
         chunk_size=1024,

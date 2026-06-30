@@ -570,6 +570,106 @@ def build_pipeline_multi_group_preflight_completed_diagnostic_payload(
     )
 
 
+def build_pipeline_single_trait_started_diagnostic_payload(
+    *,
+    association_mode: types.AssociationMode,
+    phenotype_name: str,
+    pipeline_label: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for single-trait pipeline start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_single_trait_started_diagnostic_payload(
+            association_mode.value,
+            phenotype_name,
+            pipeline_label,
+        )
+    )
+
+
+def build_pipeline_single_trait_input_load_started_diagnostic_payload(
+    *,
+    phenotype_name: str,
+    pipeline_label: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for single-trait input loading start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_single_trait_input_load_started_diagnostic_payload(
+            phenotype_name,
+            pipeline_label,
+        )
+    )
+
+
+def build_pipeline_single_trait_input_aligned_diagnostic_payload(
+    *,
+    covariate_count: int,
+    phenotype_name: str,
+    pipeline_label: str,
+    sample_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for single-trait input alignment."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_single_trait_input_aligned_diagnostic_payload(
+            covariate_count,
+            phenotype_name,
+            pipeline_label,
+            sample_count,
+        )
+    )
+
+
+def build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload(
+    *,
+    phenotype_name: str,
+    pipeline_label: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for single-trait prediction-source loading start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload(
+            phenotype_name,
+            pipeline_label,
+        )
+    )
+
+
+def build_pipeline_single_trait_preflight_started_diagnostic_payload(
+    *,
+    phenotype_name: str,
+    pipeline_label: str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for single-trait preflight start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_single_trait_preflight_started_diagnostic_payload(
+            phenotype_name,
+            pipeline_label,
+            trusted_no_missing_diploid,
+            variant_limit,
+        )
+    )
+
+
+def build_pipeline_single_trait_preflight_completed_diagnostic_payload(
+    *,
+    chromosome_count: int,
+    covariate_count: int,
+    phenotype_name: str,
+    pipeline_label: str,
+    sample_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for single-trait preflight completion."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_pipeline_single_trait_preflight_completed_diagnostic_payload(
+            chromosome_count,
+            covariate_count,
+            phenotype_name,
+            pipeline_label,
+            sample_count,
+        )
+    )
+
+
 def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
     *,
     chunk_size: int,

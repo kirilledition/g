@@ -415,6 +415,100 @@ pub fn build_pipeline_multi_group_preflight_completed_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn build_pipeline_single_trait_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    association_mode: &str,
+    phenotype_name: &str,
+    pipeline_label: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_single_trait_started_diagnostic_payload(
+        association_mode,
+        phenotype_name,
+        pipeline_label,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_single_trait_input_load_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_name: &str,
+    pipeline_label: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_single_trait_input_load_started_diagnostic_payload(
+        phenotype_name,
+        pipeline_label,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_single_trait_input_aligned_diagnostic_payload<'py>(
+    py: Python<'py>,
+    covariate_count: i64,
+    phenotype_name: &str,
+    pipeline_label: &str,
+    sample_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_single_trait_input_aligned_diagnostic_payload(
+        covariate_count,
+        phenotype_name,
+        pipeline_label,
+        sample_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_name: &str,
+    pipeline_label: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload(
+        phenotype_name,
+        pipeline_label,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_single_trait_preflight_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    phenotype_name: &str,
+    pipeline_label: &str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_single_trait_preflight_started_diagnostic_payload(
+        phenotype_name,
+        pipeline_label,
+        trusted_no_missing_diploid,
+        variant_limit,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_pipeline_single_trait_preflight_completed_diagnostic_payload<'py>(
+    py: Python<'py>,
+    chromosome_count: i64,
+    covariate_count: i64,
+    phenotype_name: &str,
+    pipeline_label: &str,
+    sample_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_pipeline_single_trait_preflight_completed_diagnostic_payload(
+        chromosome_count,
+        covariate_count,
+        phenotype_name,
+        pipeline_label,
+        sample_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn build_native_dispatch_bgen_engine_constructing_diagnostic_payload<'py>(
     py: Python<'py>,
     chunk_size: i64,
