@@ -1,6 +1,6 @@
 //! PyO3 handle for native process runtime state.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -40,8 +40,10 @@ pub(crate) struct NativeRunRuntime {
 
 #[pyclass]
 pub(crate) struct NativeRuntimeState {
-    state: Mutex<native_runtime_state::ProcessRuntimeState>,
+    state: Arc<Mutex<native_runtime_state::ProcessRuntimeState>>,
 }
+
+static GLOBAL_PROCESS_RUNTIME_STATE: OnceLock<Arc<Mutex<native_runtime_state::ProcessRuntimeState>>> = OnceLock::new();
 
 #[pyfunction]
 pub(crate) fn build_runtime_policy_handle(
@@ -56,6 +58,16 @@ pub(crate) fn build_runtime_policy_handle(
             jax_policy: parse_jax_runtime_policy_payload(jax_policy_payload)?,
         },
     })
+}
+
+#[pyfunction]
+pub(crate) fn global_process_runtime_state() -> NativeRuntimeState {
+    NativeRuntimeState {
+        state: Arc::clone(
+            GLOBAL_PROCESS_RUNTIME_STATE
+                .get_or_init(|| Arc::new(Mutex::new(native_runtime_state::ProcessRuntimeState::default()))),
+        ),
+    }
 }
 
 #[pyfunction]
@@ -146,7 +158,7 @@ impl NativeRunRuntime {
 impl NativeRuntimeState {
     #[new]
     fn new() -> Self {
-        Self { state: Mutex::new(native_runtime_state::ProcessRuntimeState::default()) }
+        Self { state: Arc::new(Mutex::new(native_runtime_state::ProcessRuntimeState::default())) }
     }
 
     #[getter]

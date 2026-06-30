@@ -1250,6 +1250,22 @@ def test_native_runtime_state_returns_snapshot_payload() -> None:
     }
 
 
+def test_global_process_runtime_state_is_native_owned_singleton() -> None:
+    completed_process = run_logging_subprocess(
+        "\n".join(
+            [
+                "from g import _core",
+                "first_state = _core.global_process_runtime_state()",
+                "second_state = _core.global_process_runtime_state()",
+                "first_state.record_rayon_thread_count(6)",
+                "print(second_state.rayon_thread_count)",
+            ]
+        )
+    )
+
+    assert completed_process.stdout.strip() == "6"
+
+
 def test_native_runtime_state_plans_rayon_thread_pool_configuration() -> None:
     runtime_state = _core.NativeRuntimeState()
 

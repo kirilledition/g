@@ -2513,6 +2513,8 @@ class NativeRuntimeState:
         resolved_cache_directory: str,
     ) -> NativeJaxRuntimeSetupSession: ...
 
+def global_process_runtime_state() -> NativeRuntimeState: ...
+
 class NativeSecondSignalExceptionPlan:
     raise_keyboard_interrupt: bool
     exit_code: int

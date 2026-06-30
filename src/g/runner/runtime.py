@@ -147,7 +147,7 @@ def build_process_runtime_state(
     return process_runtime_state
 
 
-PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = build_process_runtime_state(None, None, None)
+PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.global_process_runtime_state()
 
 
 def record_jax_runtime_diagnostic_event(

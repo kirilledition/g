@@ -190,7 +190,7 @@ use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runt
 use runtime_state::{
     NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRunRuntime,
     NativeRuntimeCompatibilityToken, NativeRuntimePolicy, NativeRuntimeState, build_jax_runtime_policy_payload,
-    build_runtime_policy_handle,
+    build_runtime_policy_handle, global_process_runtime_state,
 };
 use schedule::{
     NativeBgenDeliveryCleanupPlan, NativeBgenDeliveryInvocationPlan, NativeCallbackQueueBackpressureObservation,
@@ -2002,6 +2002,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeRuntimeCompatibilityToken>()?;
     module.add_class::<NativeRuntimePolicy>()?;
     module.add_class::<NativeRuntimeState>()?;
+    module.add_function(wrap_pyfunction!(global_process_runtime_state, module)?)?;
     module.add_class::<NativeSecondSignalExceptionPlan>()?;
     module.add_class::<NativeShutdownController>()?;
     module.add_class::<NativeStageTimingRecorder>()?;

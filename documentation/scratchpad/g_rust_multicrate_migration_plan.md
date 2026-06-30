@@ -1275,6 +1275,8 @@ Remove Python as the chunk-level scheduler.
   compatibility checks, and configured-policy recording for run startup.
 - Native process runtime state now owns successful JAX runtime setup completion
   recording after Python/JAX side effects finish.
+- The production process-runtime singleton now comes from a native global handle,
+  while `NativeRuntimeState()` remains available for isolated tests.
 - Native shutdown controllers now own context-exit handler restoration plus
   requested-signal state reset as one native lifecycle transition.
 - Native shutdown controllers now own repeated-signal handler restoration and
