@@ -140,6 +140,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         worker_name: str,
         staging_depth: int,
         native_callback_batch_size: int,
+        flush_binary_correction_diagnostics_on_result_stop: bool,
         result_in_flight_limit: int | None,
         dosage_buffer_limit: int | None,
         stage_timing_recorder: timing.StageTimingRecorder | None,
@@ -153,9 +154,11 @@ class NativeBgenCallbackRunner(abc.ABC):
             result_worker_target=self.consume_result_write_items,
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
+            flush_binary_correction_diagnostics_on_result_stop=flush_binary_correction_diagnostics_on_result_stop,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
         )
+        self.flush_binary_correction_diagnostics_on_result_stop = flush_binary_correction_diagnostics_on_result_stop
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.output_statistic_dtype = output_statistic_dtype
@@ -1489,9 +1492,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 get_start_time = time.perf_counter()
                 if self.uses_native_callback_runtime_resources():
                     work_item_get_result = (
-                        self.callback_runtime_resources.get_result_write_item_with_observation_and_drain_completion(
-                            flush_binary_correction_diagnostics_on_stop=True,
-                        )
+                        self.callback_runtime_resources.get_result_write_item_with_observation_and_drain_completion()
                     )
                     work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
                     get_observation_plan = work_item_get_result.observation_plan
@@ -1501,7 +1502,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                     get_observation_plan = None
                     drain_completion_plan = self.plan_result_write_drain_completion(
                         work_item,
-                        flush_binary_correction_diagnostics_on_stop=True,
                     )
                 if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
@@ -1531,16 +1531,13 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume result write items without diagnostic queue timing overhead."""
         while True:
             if self.uses_native_callback_runtime_resources():
-                work_item_get_result = self.callback_runtime_resources.get_result_write_item_with_drain_completion(
-                    flush_binary_correction_diagnostics_on_stop=True,
-                )
+                work_item_get_result = self.callback_runtime_resources.get_result_write_item_with_drain_completion()
                 work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
                 drain_completion_plan = work_item_get_result.drain_completion_plan
             else:
                 work_item = self.get_result_write_item()
                 drain_completion_plan = self.plan_result_write_drain_completion(
                     work_item,
-                    flush_binary_correction_diagnostics_on_stop=True,
                 )
             if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
@@ -2486,18 +2483,15 @@ class NativeBgenCallbackRunner(abc.ABC):
     def plan_result_write_drain_completion(
         self,
         work_item: QueuedResultWriteWorkItem,
-        *,
-        flush_binary_correction_diagnostics_on_stop: bool,
     ) -> _core.NativeResultWriteDrainCompletionPlan:
         """Plan result write queue drain completion from native scheduler policy."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.plan_result_write_drain_completion(
                 has_result_work_item=work_item is not None,
-                flush_binary_correction_diagnostics_on_stop=flush_binary_correction_diagnostics_on_stop,
             )
         return self.callback_scheduler_state.plan_result_write_drain_completion(
             has_result_work_item=work_item is not None,
-            flush_binary_correction_diagnostics_on_stop=flush_binary_correction_diagnostics_on_stop,
+            flush_binary_correction_diagnostics_on_stop=self.flush_binary_correction_diagnostics_on_result_stop,
         )
 
     def apply_result_write_drain_completion_plan(

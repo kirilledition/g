@@ -1612,6 +1612,7 @@ def test_native_callback_runner_uses_runtime_resource_binary_summary() -> None:
                 worker_name="native-resource-binary-summary-runner-test",
                 staging_depth=1,
                 native_callback_batch_size=1,
+                flush_binary_correction_diagnostics_on_result_stop=True,
                 result_in_flight_limit=1,
                 dosage_buffer_limit=1,
                 stage_timing_recorder=None,
@@ -2167,6 +2168,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             result_in_flight_limit=2,
             dosage_buffer_limit=2,
         )
+        self.flush_binary_correction_diagnostics_on_result_stop = True
         self.dosage_queue = callback_runtime._core.NativeCallbackObjectQueue(
             self.callback_scheduler_state.dosage_queue_depth
         )
@@ -2280,6 +2282,7 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
                 worker_name="threaded-manual-callback",
                 staging_depth=2,
                 native_callback_batch_size=1,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=None,
                 stage_timing_recorder=None,
@@ -2395,6 +2398,7 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=True,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -2522,34 +2526,28 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert result_observed_get_result.observation_plan.operation_name == "consumer_wait"
     assert result_observed_get_result.observation_plan.blocked is True
     assert runtime_resources.put_result_write_item_with_backpressure_observation(result_item).should_retry_put is False
-    result_work_item_drain_result = runtime_resources.get_result_write_item_with_drain_completion(
-        flush_binary_correction_diagnostics_on_stop=True,
-    )
+    result_work_item_drain_result = runtime_resources.get_result_write_item_with_drain_completion()
     assert result_work_item_drain_result.has_result_work_item is True
     assert result_work_item_drain_result.item is result_item
     assert result_work_item_drain_result.drain_completion_plan.should_stop is False
     assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
-    result_stop_drain_result = runtime_resources.get_result_write_item_with_drain_completion(
-        flush_binary_correction_diagnostics_on_stop=True,
-    )
+    result_stop_drain_result = runtime_resources.get_result_write_item_with_drain_completion()
     assert result_stop_drain_result.has_result_work_item is False
     assert result_stop_drain_result.item is None
     assert result_stop_drain_result.drain_completion_plan.should_stop is True
+    assert result_stop_drain_result.drain_completion_plan.should_flush_binary_correction_diagnostics is True
     assert runtime_resources.put_result_write_item_with_backpressure_observation(result_item).should_retry_put is False
-    result_work_item_get_result = runtime_resources.get_result_write_item_with_observation_and_drain_completion(
-        flush_binary_correction_diagnostics_on_stop=True,
-    )
+    result_work_item_get_result = runtime_resources.get_result_write_item_with_observation_and_drain_completion()
     assert result_work_item_get_result.has_result_work_item is True
     assert result_work_item_get_result.item is result_item
     assert result_work_item_get_result.observation_plan.queue_name == "result_queue"
     assert result_work_item_get_result.drain_completion_plan.should_stop is False
     assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
-    result_stop_get_result = runtime_resources.get_result_write_item_with_observation_and_drain_completion(
-        flush_binary_correction_diagnostics_on_stop=True,
-    )
+    result_stop_get_result = runtime_resources.get_result_write_item_with_observation_and_drain_completion()
     assert result_stop_get_result.has_result_work_item is False
     assert result_stop_get_result.item is None
     assert result_stop_get_result.drain_completion_plan.should_stop is True
+    assert result_stop_get_result.drain_completion_plan.should_flush_binary_correction_diagnostics is True
 
 
 def test_native_callback_runtime_resources_own_progress_state() -> None:
@@ -2562,6 +2560,7 @@ def test_native_callback_runtime_resources_own_progress_state() -> None:
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -2590,6 +2589,7 @@ def test_native_callback_runtime_resources_own_progress_state() -> None:
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -2608,6 +2608,7 @@ def test_native_callback_runtime_resources_own_binary_correction_summary() -> No
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=True,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -2682,6 +2683,7 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=True,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -2701,13 +2703,11 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
 
     result_drain_plan = runtime_resources.plan_result_write_drain_completion(
         has_result_work_item=False,
-        flush_binary_correction_diagnostics_on_stop=True,
     )
     assert result_drain_plan.should_stop is True
     assert result_drain_plan.should_flush_binary_correction_diagnostics is True
     result_continue_plan = runtime_resources.plan_result_write_drain_completion(
         has_result_work_item=True,
-        flush_binary_correction_diagnostics_on_stop=True,
     )
     assert result_continue_plan.should_stop is False
     assert result_continue_plan.should_flush_binary_correction_diagnostics is False
@@ -2759,6 +2759,7 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -2806,6 +2807,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -2854,6 +2856,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -2932,6 +2935,7 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -2981,6 +2985,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> No
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -3040,6 +3045,7 @@ def test_native_callback_runtime_resources_own_worker_stop_and_join() -> None:
         result_worker_target=result_worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -3076,6 +3082,7 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
         result_worker_target=finish_result_worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -3135,6 +3142,7 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
         result_worker_target=abort_result_worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -3164,6 +3172,7 @@ def test_native_callback_runtime_resources_report_worker_shutdown_timeouts() -> 
         result_worker_target=worker_target,
         staging_depth=1,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
@@ -3224,6 +3233,7 @@ def test_native_callback_runner_records_native_delivery_timing_for_enqueued_chun
                 worker_name="timed-manual-callback",
                 staging_depth=2,
                 native_callback_batch_size=1,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=None,
                 stage_timing_recorder=stage_timing_recorder,
@@ -3291,6 +3301,7 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
                 worker_name="batched-manual-callback",
                 staging_depth=2,
                 native_callback_batch_size=2,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=2,
                 stage_timing_recorder=stage_timing_recorder,
@@ -3838,6 +3849,7 @@ def test_base_native_callback_runner_compute_methods_are_abstract() -> None:
             worker_name="incomplete-callback",
             staging_depth=2,
             native_callback_batch_size=1,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -5500,10 +5512,7 @@ def test_native_callback_runner_uses_scheduler_result_write_drain_completion_pla
 
     typing.cast("typing.Any", callback).flush_binary_correction_diagnostics = flush_binary_correction_diagnostics_probe
 
-    drain_completion_plan = callback.plan_result_write_drain_completion(
-        None,
-        flush_binary_correction_diagnostics_on_stop=True,
-    )
+    drain_completion_plan = callback.plan_result_write_drain_completion(None)
     should_stop = callback.apply_result_write_drain_completion_plan(drain_completion_plan)
 
     assert scheduler_state.has_result_work_item is False
@@ -5863,6 +5872,7 @@ def test_native_bgen_callback_runner_rejects_nonpositive_staging_depth() -> None
             worker_name="invalid-staging-depth",
             staging_depth=0,
             native_callback_batch_size=1,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -5904,6 +5914,7 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
         worker_name="default-capacity",
         staging_depth=3,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
         stage_timing_recorder=None,
@@ -5914,6 +5925,7 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
         worker_name="explicit-capacity",
         staging_depth=3,
         native_callback_batch_size=1,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=7,
         dosage_buffer_limit=8,
         stage_timing_recorder=None,
@@ -6003,6 +6015,7 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
             worker_name="native-policy",
             staging_depth=3,
             native_callback_batch_size=5,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=7,
             dosage_buffer_limit=8,
             stage_timing_recorder=None,
@@ -6017,6 +6030,7 @@ def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
     assert callable(runtime_resource_arguments["result_worker_target"])
     assert runtime_resource_arguments["staging_depth"] == 3
     assert runtime_resource_arguments["native_callback_batch_size"] == 5
+    assert runtime_resource_arguments["flush_binary_correction_diagnostics_on_result_stop"] is False
     assert runtime_resource_arguments["result_in_flight_limit"] == 7
     assert runtime_resource_arguments["dosage_buffer_limit"] == 8
     assert callback.callback_runtime_resources is resolved_runtime_resources
@@ -6056,6 +6070,7 @@ def test_native_bgen_callback_runner_uses_native_untimed_queue_get_drain_results
                 worker_name="native-untimed-drain",
                 staging_depth=2,
                 native_callback_batch_size=1,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=None,
                 stage_timing_recorder=None,
@@ -6171,6 +6186,7 @@ def test_native_bgen_callback_runner_rejects_batch_size_above_dosage_buffer_limi
             worker_name="oversized-batch",
             staging_depth=1,
             native_callback_batch_size=3,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=None,
             dosage_buffer_limit=2,
             stage_timing_recorder=None,
@@ -6224,6 +6240,7 @@ def test_native_bgen_callback_runner_rejects_nonpositive_capacity_limits(
                 worker_name="invalid-capacity",
                 staging_depth=1,
                 native_callback_batch_size=1,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=0,
                 dosage_buffer_limit=None,
                 stage_timing_recorder=None,
@@ -6235,6 +6252,7 @@ def test_native_bgen_callback_runner_rejects_nonpositive_capacity_limits(
                 worker_name="invalid-capacity",
                 staging_depth=1,
                 native_callback_batch_size=1,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=0,
                 stage_timing_recorder=None,

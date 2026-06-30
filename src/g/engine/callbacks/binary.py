@@ -90,6 +90,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             worker_name="regenie2-binary-callback",
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
+            flush_binary_correction_diagnostics_on_result_stop=True,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
@@ -490,6 +491,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             worker_name="regenie2-multi-binary-callback",
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
+            flush_binary_correction_diagnostics_on_result_stop=True,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
@@ -506,10 +508,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             while True:
                 get_start_time = time.perf_counter()
                 work_item = self.get_result_write_item()
-                drain_completion_plan = self.plan_result_write_drain_completion(
-                    work_item,
-                    flush_binary_correction_diagnostics_on_stop=True,
-                )
+                drain_completion_plan = self.plan_result_write_drain_completion(work_item)
                 if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
                 self.record_bounded_resource_stage_duration(
@@ -536,10 +535,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         """Consume multi-trait result write items without diagnostic queue timing."""
         while True:
             work_item = self.get_result_write_item()
-            drain_completion_plan = self.plan_result_write_drain_completion(
-                work_item,
-                flush_binary_correction_diagnostics_on_stop=True,
-            )
+            drain_completion_plan = self.plan_result_write_drain_completion(work_item)
             if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
             dispatch_plan = self.plan_result_write_item_dispatch(

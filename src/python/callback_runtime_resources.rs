@@ -42,6 +42,7 @@ pub(crate) struct NativeCallbackRuntimeResources {
     binary_correction_summary: Py<NativeBinaryCorrectionSummary>,
     worker_thread: Py<NativeCallbackWorkerThread>,
     result_worker_thread: Py<NativeCallbackWorkerThread>,
+    flush_binary_correction_diagnostics_on_result_stop: bool,
     worker_start_lock: Mutex<()>,
 }
 
@@ -131,6 +132,7 @@ impl NativeCallbackRuntimeResources {
         result_worker_target,
         staging_depth,
         native_callback_batch_size,
+        flush_binary_correction_diagnostics_on_result_stop,
         result_in_flight_limit = None,
         dosage_buffer_limit = None
     ))]
@@ -142,6 +144,7 @@ impl NativeCallbackRuntimeResources {
         result_worker_target: &Bound<'_, PyAny>,
         staging_depth: i64,
         native_callback_batch_size: i64,
+        flush_binary_correction_diagnostics_on_result_stop: bool,
         result_in_flight_limit: Option<i64>,
         dosage_buffer_limit: Option<i64>,
     ) -> PyResult<Self> {
@@ -173,6 +176,7 @@ impl NativeCallbackRuntimeResources {
                 py,
                 NativeCallbackWorkerThread::from_target(py, result_worker_target, result_worker_name, true)?,
             )?,
+            flush_binary_correction_diagnostics_on_result_stop,
             worker_start_lock: Mutex::new(()),
         })
     }
@@ -1342,24 +1346,16 @@ impl NativeCallbackRuntimeResources {
     fn get_result_write_item_with_drain_completion(
         &self,
         py: Python<'_>,
-        flush_binary_correction_diagnostics_on_stop: bool,
     ) -> PyResult<NativeResultWriteItemDrainResult> {
         let get_result = self.get_result_write_item(py)?;
         let has_result_work_item = get_result.has_non_none_item_value(py);
-        let drain_completion_plan = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            scheduler_state.plan_result_write_drain_completion_value(
-                has_result_work_item,
-                flush_binary_correction_diagnostics_on_stop,
-            )
-        };
+        let drain_completion_plan = self.plan_result_write_drain_completion_value(py, has_result_work_item);
         NativeResultWriteItemDrainResult::from_get_result(py, get_result, has_result_work_item, drain_completion_plan)
     }
 
     fn get_result_write_item_with_observation_and_drain_completion(
         &self,
         py: Python<'_>,
-        flush_binary_correction_diagnostics_on_stop: bool,
     ) -> PyResult<NativeResultWriteItemGetResult> {
         let get_result = self.get_result_write_item(py)?;
         let has_result_work_item = get_result.has_non_none_item_value(py);
@@ -1369,7 +1365,7 @@ impl NativeCallbackRuntimeResources {
                 scheduler_state.plan_result_queue_get_observation_value(),
                 scheduler_state.plan_result_write_drain_completion_value(
                     has_result_work_item,
-                    flush_binary_correction_diagnostics_on_stop,
+                    self.flush_binary_correction_diagnostics_on_result_stop,
                 ),
             )
         };
@@ -1386,11 +1382,8 @@ impl NativeCallbackRuntimeResources {
         &self,
         py: Python<'_>,
         has_result_work_item: bool,
-        flush_binary_correction_diagnostics_on_stop: bool,
     ) -> NativeResultWriteDrainCompletionPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state
-            .plan_result_write_drain_completion_value(has_result_work_item, flush_binary_correction_diagnostics_on_stop)
+        self.plan_result_write_drain_completion_value(py, has_result_work_item)
     }
 
     fn plan_validated_result_write_item_dispatch(
@@ -1802,6 +1795,18 @@ impl NativeDosageBufferAcquireResult {
 }
 
 impl NativeCallbackRuntimeResources {
+    fn plan_result_write_drain_completion_value(
+        &self,
+        py: Python<'_>,
+        has_result_work_item: bool,
+    ) -> NativeResultWriteDrainCompletionPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_result_write_drain_completion_value(
+            has_result_work_item,
+            self.flush_binary_correction_diagnostics_on_result_stop,
+        )
+    }
+
     fn put_dosage_work_item_after_slot_acquisition(
         &self,
         py: Python<'_>,

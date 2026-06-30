@@ -1229,6 +1229,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now return the production pending-diagnostics
   flush decision during worker finalization; Python only materializes pending
   JAX diagnostics before emitting the native summary payload.
+- Callback runtime resources now own the production result-drain binary
+  diagnostics flush policy, so Python runner loops no longer pass per-drain
+  flush policy flags to native queue/drain methods.
 
 ### Tests
 
