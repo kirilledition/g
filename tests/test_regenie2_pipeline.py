@@ -3365,6 +3365,25 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
         unobserved_dosage_buffer
     )
     assert missing_unobserved_return_attempt_plan.should_return is False
+    non_numpy_release_result = runtime_resources.release_numpy_dosage_buffer_with_optional_observation(
+        SimpleNamespace()
+    )
+    assert non_numpy_release_result.has_free_buffer_count is False
+    assert non_numpy_release_result.free_buffer_count is None
+    assert non_numpy_release_result.observation_plan is None
+    numpy_release_buffer = np.empty((2, 2), dtype=np.float32)
+    numpy_release_view = numpy_release_buffer[:1, :1]
+    assert runtime_resources.register_dosage_buffer(id(numpy_release_buffer)) == 0
+    numpy_release_result = runtime_resources.release_numpy_dosage_buffer_with_optional_observation(
+        numpy_release_view,
+    )
+    assert numpy_release_result.has_free_buffer_count is True
+    assert numpy_release_result.free_buffer_count == 1
+    assert numpy_release_result.observation_plan is None
+    free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is numpy_release_buffer
+    runtime_resources.discard_dosage_buffer_owner_with_optional_observation(numpy_release_view)
 
     assert runtime_resources.free_dosage_buffer_count == 0
     assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
@@ -3514,6 +3533,34 @@ def test_native_callback_runner_uses_native_releasable_dosage_buffer_owner_resol
             assert free_buffer_result.item is oversized_buffer
             callback.discard_dosage_buffer_slot(sliced_buffer)
             assert callback.callback_runtime_resources.dosage_buffer_allocated_count == 0
+    finally:
+        callback.finish()
+
+
+def test_native_callback_runner_releases_numpy_dosage_buffers_natively() -> None:
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        dosage_buffer_limit=1,
+    )
+    oversized_buffer = np.empty((4, 5), dtype=np.float32)
+    assert callback.callback_runtime_resources.register_dosage_buffer(id(oversized_buffer)) == 0
+    sliced_buffer = oversized_buffer[:2, :3]
+
+    try:
+        with patch.object(
+            callback_runtime.NativeBgenCallbackRunner,
+            "release_dosage_buffer",
+            side_effect=AssertionError("production runner should release NumPy buffers natively"),
+        ):
+            callback.release_numpy_dosage_buffer(sliced_buffer)
+            callback.release_numpy_dosage_buffer(jnp.ones((2, 3), dtype=jnp.float32))
+        free_buffer_result = callback.callback_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+        assert free_buffer_result.has_item is True
+        assert free_buffer_result.item is oversized_buffer
+        callback.discard_dosage_buffer_slot(sliced_buffer)
+        assert callback.callback_runtime_resources.dosage_buffer_allocated_count == 0
     finally:
         callback.finish()
 

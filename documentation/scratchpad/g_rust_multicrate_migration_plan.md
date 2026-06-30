@@ -1320,6 +1320,8 @@ Remove Python as the chunk-level scheduler.
   result work items are built.
 - Callback runtime resources now resolve production dosage-buffer return owners
   for NumPy views before native buffer-pool returns.
+- Callback runtime resources now own production NumPy host-buffer release
+  checks before native buffer-pool returns.
 - Callback runtime resources now resolve production dosage-buffer discard owners
   for NumPy views before native buffer-pool slot removal.
 - Callback runtime resources now own production dosage-buffer reuse candidate

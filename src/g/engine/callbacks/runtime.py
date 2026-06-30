@@ -2557,6 +2557,12 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | HostGenotypeBuffer) -> None:
         """Return a NumPy host dosage buffer to the pool after device transfer."""
+        if self.uses_native_callback_runtime_resources():
+            operation_result = self.callback_runtime_resources.release_numpy_dosage_buffer_with_optional_observation(
+                dosage_buffer,
+            )
+            self.record_dosage_buffer_pool_operation_result(operation_result)
+            return
         if isinstance(dosage_buffer, np.ndarray):
             self.release_dosage_buffer(typing.cast("HostGenotypeBuffer", dosage_buffer))
 
