@@ -1149,6 +1149,9 @@ class NativeBgenCallbackRunner(abc.ABC):
     def consume_dosage_chunks(self) -> None:
         """Consume queued dosage chunks and run JAX work in order."""
         try:
+            if self.uses_native_callback_runtime_resources():
+                self.consume_dosage_chunks_with_native_runtime_resources()
+                return
             if self.stage_timing_recorder is None:
                 self.consume_dosage_chunks_without_timing()
                 return
@@ -1189,6 +1192,40 @@ class NativeBgenCallbackRunner(abc.ABC):
                     self.record_work_item_stage_elapsed_duration(dosage_work_item, "python_callback", elapsed_seconds)
         except Exception as error:  # noqa: BLE001
             self.worker_error = error
+
+    def consume_dosage_chunks_with_native_runtime_resources(self) -> None:
+        """Consume queued native dosage chunks with optional timing observations."""
+        while True:
+            get_start_time = time.perf_counter()
+            work_item_get_result = (
+                self.callback_runtime_resources.get_dosage_work_item_with_optional_observation_and_drain_completion()
+            )
+            work_item = typing.cast("QueuedPreprocessedDosageWorkItem", work_item_get_result.item)
+            get_observation_plan = work_item_get_result.observation_plan
+            drain_completion_plan = work_item_get_result.drain_completion_plan
+            if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
+                return
+            dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
+            self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
+            dosage_work_item = typing.cast(
+                "PreprocessedDosageWorkItem",
+                work_item,
+            )
+            if get_observation_plan is None:
+                self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
+                continue
+            self.record_bounded_resource_stage_duration(
+                resource_name=get_observation_plan.queue_name,
+                operation_name=get_observation_plan.operation_name,
+                start_time=get_start_time,
+                blocked=get_observation_plan.blocked,
+            )
+            python_callback_start_time = time.perf_counter()
+            try:
+                self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
+            finally:
+                elapsed_seconds = time.perf_counter() - python_callback_start_time
+                self.record_work_item_stage_elapsed_duration(dosage_work_item, "python_callback", elapsed_seconds)
 
     def consume_dosage_chunks_without_timing(self) -> None:
         """Consume queued dosage chunks without diagnostic timing overhead."""
@@ -1487,6 +1524,9 @@ class NativeBgenCallbackRunner(abc.ABC):
     def consume_result_write_items(self) -> None:
         """Materialize computed JAX results and write them in order."""
         try:
+            if self.uses_native_callback_runtime_resources():
+                self.consume_result_write_items_with_native_runtime_resources()
+                return
             if self.stage_timing_recorder is None:
                 self.consume_result_write_items_without_timing()
                 return
@@ -1527,6 +1567,36 @@ class NativeBgenCallbackRunner(abc.ABC):
                 raise RuntimeError(message)
         except Exception as error:  # noqa: BLE001
             self.result_worker_error = error
+
+    def consume_result_write_items_with_native_runtime_resources(self) -> None:
+        """Consume queued native result write items with optional timing observations."""
+        while True:
+            get_start_time = time.perf_counter()
+            work_item_get_result = (
+                self.callback_runtime_resources.get_result_write_item_with_optional_observation_and_drain_completion()
+            )
+            work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
+            get_observation_plan = work_item_get_result.observation_plan
+            drain_completion_plan = work_item_get_result.drain_completion_plan
+            if self.apply_result_write_drain_completion_plan(drain_completion_plan):
+                return
+            if get_observation_plan is not None:
+                self.record_bounded_resource_stage_duration(
+                    resource_name=get_observation_plan.queue_name,
+                    operation_name=get_observation_plan.operation_name,
+                    start_time=get_start_time,
+                    blocked=get_observation_plan.blocked,
+                )
+            dispatch_plan = self.plan_result_write_item_dispatch(
+                work_item,
+            )
+            self.apply_result_write_item_dispatch_plan(dispatch_plan)
+            if dispatch_plan.should_process_result_write_item:
+                result_work_item = typing.cast("Regenie2ResultWriteWorkItem", work_item)
+                self.process_result_write_item(result_work_item)
+                continue
+            message = "Native result write dispatch plan did not select a single-result processing path."
+            raise RuntimeError(message)
 
     def consume_result_write_items_without_timing(self) -> None:
         """Consume result write items without diagnostic queue timing overhead."""

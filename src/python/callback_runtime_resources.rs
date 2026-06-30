@@ -113,7 +113,7 @@ pub(crate) struct NativeDosageWorkItemDrainResult {
 pub(crate) struct NativeDosageWorkItemGetResult {
     item: Option<Py<PyAny>>,
     has_dosage_work_item: bool,
-    observation_plan: Py<NativeCallbackQueueGetObservationPlan>,
+    observation_plan: Option<Py<NativeCallbackQueueGetObservationPlan>>,
     drain_completion_plan: Py<NativeDosageWorkDrainCompletionPlan>,
 }
 
@@ -128,7 +128,7 @@ pub(crate) struct NativeResultWriteItemDrainResult {
 pub(crate) struct NativeResultWriteItemGetResult {
     item: Option<Py<PyAny>>,
     has_result_work_item: bool,
-    observation_plan: Py<NativeCallbackQueueGetObservationPlan>,
+    observation_plan: Option<Py<NativeCallbackQueueGetObservationPlan>>,
     drain_completion_plan: Py<NativeResultWriteDrainCompletionPlan>,
 }
 
@@ -1186,6 +1186,30 @@ impl NativeCallbackRuntimeResources {
             py,
             get_result,
             has_dosage_work_item,
+            Some(observation_plan),
+            drain_completion_plan,
+        )
+    }
+
+    fn get_dosage_work_item_with_optional_observation_and_drain_completion(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeDosageWorkItemGetResult> {
+        let get_result = self.get_dosage_work_item(py)?;
+        let has_dosage_work_item = get_result.has_non_none_item_value(py);
+        let (observation_plan, drain_completion_plan) = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            let observation_plan = if self.has_stage_timing_recorder {
+                Some(scheduler_state.plan_dosage_queue_get_observation_value())
+            } else {
+                None
+            };
+            (observation_plan, scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item))
+        };
+        NativeDosageWorkItemGetResult::from_get_result(
+            py,
+            get_result,
+            has_dosage_work_item,
             observation_plan,
             drain_completion_plan,
         )
@@ -1527,6 +1551,36 @@ impl NativeCallbackRuntimeResources {
             py,
             get_result,
             has_result_work_item,
+            Some(observation_plan),
+            drain_completion_plan,
+        )
+    }
+
+    fn get_result_write_item_with_optional_observation_and_drain_completion(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeResultWriteItemGetResult> {
+        let get_result = self.get_result_write_item(py)?;
+        let has_result_work_item = get_result.has_non_none_item_value(py);
+        let (observation_plan, drain_completion_plan) = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            let observation_plan = if self.has_stage_timing_recorder {
+                Some(scheduler_state.plan_result_queue_get_observation_value())
+            } else {
+                None
+            };
+            (
+                observation_plan,
+                scheduler_state.plan_result_write_drain_completion_value(
+                    has_result_work_item,
+                    self.flush_binary_correction_diagnostics_on_result_stop,
+                ),
+            )
+        };
+        NativeResultWriteItemGetResult::from_get_result(
+            py,
+            get_result,
+            has_result_work_item,
             observation_plan,
             drain_completion_plan,
         )
@@ -1792,8 +1846,8 @@ impl NativeDosageWorkItemGetResult {
     }
 
     #[getter]
-    fn observation_plan(&self, py: Python<'_>) -> Py<NativeCallbackQueueGetObservationPlan> {
-        self.observation_plan.clone_ref(py)
+    fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeCallbackQueueGetObservationPlan>> {
+        self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
     }
 
     #[getter]
@@ -1807,13 +1861,13 @@ impl NativeDosageWorkItemGetResult {
         py: Python<'_>,
         get_result: NativeCallbackObjectQueueGetResult,
         has_dosage_work_item: bool,
-        observation_plan: NativeCallbackQueueGetObservationPlan,
+        observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
         drain_completion_plan: NativeDosageWorkDrainCompletionPlan,
     ) -> PyResult<Self> {
         Ok(Self {
             item: get_result.into_item_value(),
             has_dosage_work_item,
-            observation_plan: Py::new(py, observation_plan)?,
+            observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
             drain_completion_plan: Py::new(py, drain_completion_plan)?,
         })
     }
@@ -1865,8 +1919,8 @@ impl NativeResultWriteItemGetResult {
     }
 
     #[getter]
-    fn observation_plan(&self, py: Python<'_>) -> Py<NativeCallbackQueueGetObservationPlan> {
-        self.observation_plan.clone_ref(py)
+    fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeCallbackQueueGetObservationPlan>> {
+        self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
     }
 
     #[getter]
@@ -1880,13 +1934,13 @@ impl NativeResultWriteItemGetResult {
         py: Python<'_>,
         get_result: NativeCallbackObjectQueueGetResult,
         has_result_work_item: bool,
-        observation_plan: NativeCallbackQueueGetObservationPlan,
+        observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
         drain_completion_plan: NativeResultWriteDrainCompletionPlan,
     ) -> PyResult<Self> {
         Ok(Self {
             item: get_result.into_item_value(),
             has_result_work_item,
-            observation_plan: Py::new(py, observation_plan)?,
+            observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
             drain_completion_plan: Py::new(py, drain_completion_plan)?,
         })
     }
