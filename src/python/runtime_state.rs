@@ -283,6 +283,13 @@ impl NativeRuntimeState {
         Ok(())
     }
 
+    fn complete_jax_runtime_setup(&self, payload: &Bound<'_, PyAny>) -> PyResult<()> {
+        let jax_policy = parse_jax_runtime_policy_payload(payload)?;
+        self.lock_state()?
+            .complete_jax_runtime_setup(jax_policy)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+    }
+
     fn plan_jax_runtime_setup_lifecycle(
         &self,
         payload: &Bound<'_, PyAny>,

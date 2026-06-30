@@ -983,8 +983,10 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
             return FakeJaxSetupModule()
         raise AssertionError(f"Unexpected import: {module_name}")
 
+    process_runtime_state = build_test_process_runtime_state(None, None)
+
     with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", process_runtime_state),
         patch("g.runner.runtime.importlib.import_module", side_effect=import_module),
     ):
         runner_runtime.configure_runtime_before_jax_import(
@@ -993,6 +995,9 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
         )
 
     assert call_order == ["import:g.jax_runtime.setup", "setup:gpu"]
+    configured_jax_policy = typing.cast("_core.NativeRuntimeState", process_runtime_state).jax_runtime_policy_payload()
+    assert configured_jax_policy is not None
+    assert configured_jax_policy["device"] == "gpu"
 
 
 def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:

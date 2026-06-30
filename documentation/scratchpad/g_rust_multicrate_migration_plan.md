@@ -1211,6 +1211,8 @@ Remove Python as the chunk-level scheduler.
   compatibility checks, error formatting, and configured-count recording.
 - Native process runtime state now owns logging sink initialization, logging
   compatibility checks, and configured-policy recording for run startup.
+- Native process runtime state now owns successful JAX runtime setup completion
+  recording after Python/JAX side effects finish.
 
 ### Tests
 

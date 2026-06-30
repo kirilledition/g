@@ -578,7 +578,7 @@ def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
 
     configure_plan = runtime_state.plan_jax_runtime_setup_lifecycle(jax_policy_payload)
     configure_session = runtime_state.build_jax_runtime_setup_session(jax_policy_payload, "/tmp/g-jax-cache")
-    runtime_state.record_jax_runtime_policy(jax_policy_payload)
+    runtime_state.complete_jax_runtime_setup(jax_policy_payload)
     skip_plan = runtime_state.plan_jax_runtime_setup_lifecycle(jax_policy_payload)
     skip_session = runtime_state.build_jax_runtime_setup_session(jax_policy_payload, "/tmp/g-jax-cache")
 
@@ -602,6 +602,8 @@ def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
             {**jax_policy_payload, "cache_directory": "/tmp/other-cache"},
             "/tmp/other-cache",
         )
+    with pytest.raises(RuntimeError, match="JAX runtime is already configured"):
+        runtime_state.complete_jax_runtime_setup({**jax_policy_payload, "cache_directory": "/tmp/other-cache"})
 
 
 def test_native_jax_runtime_setup_session_completes_validation() -> None:

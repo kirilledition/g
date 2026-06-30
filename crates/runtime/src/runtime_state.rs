@@ -320,6 +320,21 @@ impl ProcessRuntimeState {
         self.jax_policy = Some(jax_policy);
     }
 
+    /// Record successful process-global JAX runtime setup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the completed setup conflicts with previously
+    /// configured process-global JAX runtime settings.
+    pub fn complete_jax_runtime_setup(
+        &mut self,
+        requested_policy: JaxRuntimePolicyPayload,
+    ) -> Result<(), RuntimeCompatibilityError> {
+        self.require_compatible_jax_policy(&requested_policy)?;
+        self.record_jax_policy(requested_policy);
+        Ok(())
+    }
+
     /// Plan whether JAX runtime setup should run for one request.
     ///
     /// # Errors
@@ -516,6 +531,28 @@ mod tests {
         assert!(
             state
                 .plan_jax_runtime_setup_lifecycle(&build_jax_policy(Some("/tmp/second-cache")))
+                .unwrap_err()
+                .to_string()
+                .contains("JAX runtime is already configured")
+        );
+    }
+
+    #[test]
+    fn completes_jax_runtime_setup_from_process_state() {
+        let mut state = ProcessRuntimeState::default();
+        let requested_policy = build_jax_policy(Some("/tmp/cache"));
+
+        state
+            .complete_jax_runtime_setup(requested_policy.clone())
+            .expect("first compatible JAX setup should be recorded");
+
+        assert_eq!(state.jax_policy, Some(requested_policy.clone()));
+        state
+            .complete_jax_runtime_setup(requested_policy)
+            .expect("matching repeated JAX setup completion should be accepted");
+        assert!(
+            state
+                .complete_jax_runtime_setup(build_jax_policy(Some("/tmp/second-cache")))
                 .unwrap_err()
                 .to_string()
                 .contains("JAX runtime is already configured")

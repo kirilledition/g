@@ -205,7 +205,7 @@ def configure_runtime_before_jax_import(
         native_setup_session=native_setup_session,
         diagnostic_sink=record_diagnostic_event,
     )
-    record_jax_runtime_policy(requested_policy)
+    PROCESS_RUNTIME_STATE.complete_jax_runtime_setup(jax_runtime_policy_to_native_payload(requested_policy))
     return setup_report
 
 
