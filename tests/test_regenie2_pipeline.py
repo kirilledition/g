@@ -3966,7 +3966,16 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert pre_write_buffer_observation_plan is not None
     assert pre_write_buffer_observation_plan.operation_name == "return"
     assert pre_write_buffer_observation_plan.blocked is False
+    pre_write_buffer_backpressure_observation = pre_write_result.dosage_buffer_pool_backpressure_observation
+    assert pre_write_buffer_backpressure_observation is not None
+    assert pre_write_buffer_backpressure_observation.queue_name == "dosage_buffer_pool"
+    assert pre_write_buffer_backpressure_observation.operation_name == "return"
+    assert pre_write_buffer_backpressure_observation.queue_depth == 1
+    assert pre_write_buffer_backpressure_observation.queue_capacity == 1
+    assert pre_write_buffer_backpressure_observation.elapsed_seconds == 0.0
+    assert pre_write_buffer_backpressure_observation.blocked_seconds == 0.0
     assert pre_write_result.released_result_in_flight_slot is False
+    assert pre_write_result.result_in_flight_backpressure_observation is None
     free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is dosage_buffer
@@ -3979,12 +3988,21 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert final_result.released_host_buffer is False
     assert final_result.free_buffer_count is None
     assert final_result.dosage_buffer_pool_observation_plan is None
+    assert final_result.dosage_buffer_pool_backpressure_observation is None
     assert final_result.released_result_in_flight_slot is True
     final_result_in_flight_observation_plan = final_result.result_in_flight_observation_plan
     assert final_result_in_flight_observation_plan is not None
     assert final_result_in_flight_observation_plan.resource_name == "result_in_flight_slots"
     assert final_result_in_flight_observation_plan.operation_name == "release"
     assert final_result_in_flight_observation_plan.blocked is False
+    final_result_in_flight_backpressure_observation = final_result.result_in_flight_backpressure_observation
+    assert final_result_in_flight_backpressure_observation is not None
+    assert final_result_in_flight_backpressure_observation.queue_name == "result_in_flight_slots"
+    assert final_result_in_flight_backpressure_observation.operation_name == "release"
+    assert final_result_in_flight_backpressure_observation.queue_depth == 0
+    assert final_result_in_flight_backpressure_observation.queue_capacity == 1
+    assert final_result_in_flight_backpressure_observation.elapsed_seconds == 0.0
+    assert final_result_in_flight_backpressure_observation.blocked_seconds == 0.0
     assert final_result.result_in_flight_resource_name == "result_in_flight_slots"
     assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
@@ -4010,7 +4028,9 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert unobserved_pre_write_result.released_host_buffer is True
     assert unobserved_pre_write_result.free_buffer_count == 1
     assert unobserved_pre_write_result.dosage_buffer_pool_observation_plan is None
+    assert unobserved_pre_write_result.dosage_buffer_pool_backpressure_observation is None
     assert unobserved_pre_write_result.released_result_in_flight_slot is False
+    assert unobserved_pre_write_result.result_in_flight_backpressure_observation is None
     free_buffer_result = unobserved_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is unobserved_dosage_buffer
@@ -4023,8 +4043,10 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert unobserved_final_result.released_host_buffer is False
     assert unobserved_final_result.free_buffer_count is None
     assert unobserved_final_result.dosage_buffer_pool_observation_plan is None
+    assert unobserved_final_result.dosage_buffer_pool_backpressure_observation is None
     assert unobserved_final_result.released_result_in_flight_slot is True
     assert unobserved_final_result.result_in_flight_observation_plan is None
+    assert unobserved_final_result.result_in_flight_backpressure_observation is None
     assert unobserved_final_result.result_in_flight_resource_name is None
     assert unobserved_final_result.result_in_flight_operation_name is None
     assert unobserved_final_result.result_in_flight_blocked is None
@@ -4063,6 +4085,7 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
         object_work_item,
     )
     assert object_pre_write_result.released_host_buffer is True
+    assert object_pre_write_result.dosage_buffer_pool_backpressure_observation is not None
     object_free_buffer_result = object_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert object_free_buffer_result.has_item is True
     assert object_free_buffer_result.item is object_dosage_buffer_owner
@@ -4072,6 +4095,7 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     )
     assert object_final_result.released_host_buffer is False
     assert object_final_result.released_result_in_flight_slot is True
+    assert object_final_result.result_in_flight_backpressure_observation is not None
     assert object_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
     non_releasing_work_item = dataclasses.replace(object_work_item, release_in_flight_slot=False)
     non_releasing_result = object_runtime_resources.release_result_work_item_in_flight_slot_for_object(
@@ -4080,6 +4104,7 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert non_releasing_result.released_host_buffer is False
     assert non_releasing_result.released_result_in_flight_slot is False
     assert non_releasing_result.result_in_flight_observation_plan is None
+    assert non_releasing_result.result_in_flight_backpressure_observation is None
     assert non_releasing_result.result_in_flight_resource_name is None
     assert object_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
     object_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
@@ -4095,6 +4120,7 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert in_flight_only_observation_plan.resource_name == "result_in_flight_slots"
     assert in_flight_only_observation_plan.operation_name == "release"
     assert in_flight_only_observation_plan.blocked is False
+    assert in_flight_only_result.result_in_flight_backpressure_observation is not None
     assert in_flight_only_result.result_in_flight_operation_name == "release"
     assert object_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
@@ -4259,13 +4285,25 @@ def test_native_callback_runner_honors_optional_result_cleanup_observations() ->
         unobserved_pre_write_result = unobserved_runtime_resources.release_result_work_item_pre_write_resources(
             unobserved_dosage_buffer,
         )
-        callback.record_result_work_item_resource_release_result(unobserved_pre_write_result)
         unobserved_final_result = unobserved_runtime_resources.release_result_work_item_final_resources(
             unobserved_dosage_buffer,
             has_released_host_dosage_buffer=True,
             release_in_flight_slot=True,
         )
-        callback.record_result_work_item_resource_release_result(unobserved_final_result)
+        with (
+            patch.object(
+                callback_runtime.NativeBgenCallbackRunner,
+                "record_dosage_buffer_pool_operation",
+                side_effect=AssertionError("result cleanup should emit native dosage-buffer observations"),
+            ),
+            patch.object(
+                callback_runtime.NativeBgenCallbackRunner,
+                "record_bounded_resource_operation",
+                side_effect=AssertionError("result cleanup should emit native result-slot observations"),
+            ),
+        ):
+            callback.record_result_work_item_resource_release_result(unobserved_pre_write_result)
+            callback.record_result_work_item_resource_release_result(unobserved_final_result)
         assert not stage_timing_recorder.snapshot().queue_backpressure
 
         observed_runtime_resources = build_runtime_resources(
@@ -4282,13 +4320,25 @@ def test_native_callback_runner_honors_optional_result_cleanup_observations() ->
         observed_pre_write_result = observed_runtime_resources.release_result_work_item_pre_write_resources(
             observed_dosage_buffer,
         )
-        callback.record_result_work_item_resource_release_result(observed_pre_write_result)
         observed_final_result = observed_runtime_resources.release_result_work_item_final_resources(
             observed_dosage_buffer,
             has_released_host_dosage_buffer=True,
             release_in_flight_slot=True,
         )
-        callback.record_result_work_item_resource_release_result(observed_final_result)
+        with (
+            patch.object(
+                callback_runtime.NativeBgenCallbackRunner,
+                "record_dosage_buffer_pool_operation",
+                side_effect=AssertionError("result cleanup should emit native dosage-buffer observations"),
+            ),
+            patch.object(
+                callback_runtime.NativeBgenCallbackRunner,
+                "record_bounded_resource_operation",
+                side_effect=AssertionError("result cleanup should emit native result-slot observations"),
+            ),
+        ):
+            callback.record_result_work_item_resource_release_result(observed_pre_write_result)
+            callback.record_result_work_item_resource_release_result(observed_final_result)
     finally:
         callback_for_probe.callback_runtime_resources = original_runtime_resources
         callback.finish()

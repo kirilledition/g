@@ -132,8 +132,10 @@ pub(crate) struct NativeResultWorkItemResourceReleaseResult {
     released_host_buffer: bool,
     free_buffer_count: Option<usize>,
     dosage_buffer_pool_observation_plan: Option<Py<NativeDosageBufferPoolObservationPlan>>,
+    dosage_buffer_pool_backpressure_observation: Option<Py<NativeCallbackQueueBackpressureObservation>>,
     released_result_in_flight_slot: bool,
     result_in_flight_observation_plan: Option<Py<NativeResultInFlightReleaseObservationPlan>>,
+    result_in_flight_backpressure_observation: Option<Py<NativeCallbackQueueBackpressureObservation>>,
 }
 
 #[pyclass]
@@ -2059,6 +2061,14 @@ impl NativeResultWorkItemResourceReleaseResult {
     }
 
     #[getter]
+    fn dosage_buffer_pool_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueBackpressureObservation>> {
+        self.dosage_buffer_pool_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
+    }
+
+    #[getter]
     fn released_result_in_flight_slot(&self) -> bool {
         self.released_result_in_flight_slot
     }
@@ -2069,6 +2079,14 @@ impl NativeResultWorkItemResourceReleaseResult {
         py: Python<'_>,
     ) -> Option<Py<NativeResultInFlightReleaseObservationPlan>> {
         self.result_in_flight_observation_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+
+    #[getter]
+    fn result_in_flight_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueBackpressureObservation>> {
+        self.result_in_flight_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
     }
 
     #[getter]
@@ -2102,8 +2120,10 @@ impl NativeResultWorkItemResourceReleaseResult {
             released_host_buffer: false,
             free_buffer_count: None,
             dosage_buffer_pool_observation_plan: None,
+            dosage_buffer_pool_backpressure_observation: None,
             released_result_in_flight_slot: false,
             result_in_flight_observation_plan: None,
+            result_in_flight_backpressure_observation: None,
         }
     }
 
@@ -2111,9 +2131,12 @@ impl NativeResultWorkItemResourceReleaseResult {
         &mut self,
         py: Python<'_>,
         release_observation_plan: Option<NativeResultInFlightReleaseObservationPlan>,
+        backpressure_observation: Option<NativeCallbackQueueBackpressureObservation>,
     ) -> PyResult<()> {
         self.released_result_in_flight_slot = true;
         self.result_in_flight_observation_plan = release_observation_plan.map(|plan| Py::new(py, plan)).transpose()?;
+        self.result_in_flight_backpressure_observation =
+            backpressure_observation.map(|observation| Py::new(py, observation)).transpose()?;
         Ok(())
     }
 
@@ -2122,9 +2145,12 @@ impl NativeResultWorkItemResourceReleaseResult {
         py: Python<'_>,
         free_buffer_count: Option<usize>,
         observation_plan: Option<NativeDosageBufferPoolObservationPlan>,
+        backpressure_observation: Option<NativeCallbackQueueBackpressureObservation>,
     ) -> PyResult<()> {
         self.released_host_buffer = true;
         self.free_buffer_count = free_buffer_count;
+        self.dosage_buffer_pool_backpressure_observation =
+            backpressure_observation.map(|observation| Py::new(py, observation)).transpose()?;
         if free_buffer_count.is_some() {
             let Some(observation_plan) = observation_plan else {
                 return Ok(());
@@ -2615,6 +2641,39 @@ impl NativeDosageBufferAcquireResult {
 }
 
 impl NativeCallbackRuntimeResources {
+    fn dosage_buffer_pool_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        free_buffer_count: Option<usize>,
+        observation_plan: Option<&NativeDosageBufferPoolObservationPlan>,
+    ) -> PyResult<Option<NativeCallbackQueueBackpressureObservation>> {
+        if let (Some(free_buffer_count), Some(observation_plan)) = (free_buffer_count, observation_plan) {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            Ok(Some(scheduler_state.plan_dosage_buffer_pool_backpressure_observation_value(
+                observation_plan.operation_name_value(),
+                free_buffer_count,
+                0.0,
+                observation_plan.blocked_value(),
+            )?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn result_in_flight_release_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        release_observation_plan: &NativeResultInFlightReleaseObservationPlan,
+    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_current_queue_backpressure_observation_value(
+            release_observation_plan.resource_name_value(),
+            release_observation_plan.operation_name_value(),
+            0.0,
+            release_observation_plan.blocked_value(),
+        )
+    }
+
     fn dosage_buffer_pool_operation_result(
         &self,
         py: Python<'_>,
@@ -2622,17 +2681,7 @@ impl NativeCallbackRuntimeResources {
         observation_plan: Option<NativeDosageBufferPoolObservationPlan>,
     ) -> PyResult<NativeDosageBufferPoolOperationResult> {
         let backpressure_observation =
-            if let (Some(free_buffer_count), Some(observation_plan)) = (free_buffer_count, observation_plan.as_ref()) {
-                let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-                Some(scheduler_state.plan_dosage_buffer_pool_backpressure_observation_value(
-                    observation_plan.operation_name_value(),
-                    free_buffer_count,
-                    0.0,
-                    observation_plan.blocked_value(),
-                )?)
-            } else {
-                None
-            };
+            self.dosage_buffer_pool_backpressure_observation(py, free_buffer_count, observation_plan.as_ref())?;
         NativeDosageBufferPoolOperationResult::from_operation(
             py,
             free_buffer_count,
@@ -2815,7 +2864,17 @@ impl NativeCallbackRuntimeResources {
             } else {
                 None
             };
-            release_result.record_host_buffer_return(py, free_buffer_count, return_observation_plan)?;
+            let backpressure_observation = self.dosage_buffer_pool_backpressure_observation(
+                py,
+                free_buffer_count,
+                return_observation_plan.as_ref(),
+            )?;
+            release_result.record_host_buffer_return(
+                py,
+                free_buffer_count,
+                return_observation_plan,
+                backpressure_observation,
+            )?;
         }
         if resource_release_plan.should_release_result_in_flight_slot_value() {
             self.record_result_work_item_in_flight_slot_release(py, &mut release_result)?;
@@ -2832,10 +2891,16 @@ impl NativeCallbackRuntimeResources {
     ) -> PyResult<()> {
         if self.has_stage_timing_recorder {
             let release_observation_plan = self.release_result_in_flight_slot(py)?;
-            release_result.record_result_in_flight_release(py, Some(release_observation_plan))?;
+            let backpressure_observation =
+                self.result_in_flight_release_backpressure_observation(py, &release_observation_plan)?;
+            release_result.record_result_in_flight_release(
+                py,
+                Some(release_observation_plan),
+                Some(backpressure_observation),
+            )?;
         } else {
             self.release_result_in_flight_slot_without_observation(py)?;
-            release_result.record_result_in_flight_release(py, None)?;
+            release_result.record_result_in_flight_release(py, None, None)?;
         }
         Ok(())
     }

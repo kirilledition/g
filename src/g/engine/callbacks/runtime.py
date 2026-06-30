@@ -666,6 +666,24 @@ class NativeBgenCallbackRunner(abc.ABC):
             blocked_seconds=observation.blocked_seconds,
         )
 
+    def record_queue_backpressure_observation(
+        self,
+        observation: _core.NativeCallbackQueueBackpressureObservation | None,
+    ) -> None:
+        """Record a native queue backpressure observation."""
+        if observation is None:
+            return
+        if self.stage_timing_recorder is None:
+            return
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=observation.queue_name,
+            operation_name=observation.operation_name,
+            queue_depth=observation.queue_depth,
+            queue_capacity=observation.queue_capacity,
+            elapsed_seconds=observation.elapsed_seconds,
+            blocked_seconds=observation.blocked_seconds,
+        )
+
     def record_dosage_buffer_pool_operation(
         self,
         *,
@@ -964,19 +982,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         operation_result: _core.NativeDosageBufferPoolOperationResult,
     ) -> None:
         """Record a native dosage-buffer pool operation result."""
-        observation = operation_result.backpressure_observation
-        if observation is None:
-            return
-        if self.stage_timing_recorder is None:
-            return
-        self.stage_timing_recorder.add_queue_backpressure_observation(
-            queue_name=observation.queue_name,
-            operation_name=observation.operation_name,
-            queue_depth=observation.queue_depth,
-            queue_capacity=observation.queue_capacity,
-            elapsed_seconds=observation.elapsed_seconds,
-            blocked_seconds=observation.blocked_seconds,
-        )
+        self.record_queue_backpressure_observation(operation_result.backpressure_observation)
 
     @abc.abstractmethod
     def compute_preprocessed_chunk(
@@ -2641,25 +2647,11 @@ class NativeBgenCallbackRunner(abc.ABC):
         release_result: _core.NativeResultWorkItemResourceReleaseResult,
     ) -> None:
         """Record Python-side telemetry from native result work item resource cleanup."""
-        if release_result.free_buffer_count is not None:
-            dosage_buffer_pool_observation_plan = release_result.dosage_buffer_pool_observation_plan
-            if dosage_buffer_pool_observation_plan is not None:
-                self.record_dosage_buffer_pool_operation(
-                    operation_name=dosage_buffer_pool_observation_plan.operation_name,
-                    free_buffer_count=release_result.free_buffer_count,
-                    elapsed_seconds=0.0,
-                    blocked=dosage_buffer_pool_observation_plan.blocked,
-                )
-        if not release_result.released_result_in_flight_slot:
-            return
-        result_in_flight_observation_plan = release_result.result_in_flight_observation_plan
-        if result_in_flight_observation_plan is None:
-            return
-        self.record_bounded_resource_operation(
-            resource_name=result_in_flight_observation_plan.resource_name,
-            operation_name=result_in_flight_observation_plan.operation_name,
-            elapsed_seconds=0.0,
-            blocked=result_in_flight_observation_plan.blocked,
+        self.record_queue_backpressure_observation(
+            release_result.dosage_buffer_pool_backpressure_observation,
+        )
+        self.record_queue_backpressure_observation(
+            release_result.result_in_flight_backpressure_observation,
         )
 
     def release_result_work_item_buffer(
