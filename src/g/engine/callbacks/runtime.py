@@ -1011,6 +1011,21 @@ class NativeBgenCallbackRunner(abc.ABC):
             return self.callback_runtime_resources.plan_dosage_work_handoff(chunk_count)
         return self.callback_scheduler_state.plan_dosage_work_handoff(chunk_count=chunk_count)
 
+    def put_dosage_work_item_with_native_delivery_timing(
+        self,
+        work_item: PreprocessedDosageWorkItem,
+    ) -> None:
+        """Put dosage work and attribute native-delivery timing through native policy."""
+        if self.stage_timing_recorder is None:
+            self.put_dosage_work_item(work_item)
+            return
+        native_delivery_start_time = time.perf_counter()
+        try:
+            self.put_dosage_work_item(work_item)
+        finally:
+            elapsed_seconds = time.perf_counter() - native_delivery_start_time
+            self.record_work_item_stage_elapsed_duration(work_item, "native_delivery", elapsed_seconds)
+
     def plan_variant_major_dosage_batch_handoff(
         self,
         *,
@@ -1047,14 +1062,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             genotype_matrix=genotype_matrix,
             chunk_stats=chunk_stats,
         )
-        if self.stage_timing_recorder is None:
-            self.put_dosage_work_item(work_item)
-            return
-        native_delivery_start_time = time.perf_counter()
-        try:
-            self.put_dosage_work_item(work_item)
-        finally:
-            self.record_chunk_stage_duration(metadata, "native_delivery", native_delivery_start_time)
+        self.put_dosage_work_item_with_native_delivery_timing(work_item)
 
     def compute_preprocessed_variant_major_dosage_chunk(
         self,
@@ -1072,14 +1080,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             genotype_matrix_by_variant=genotype_matrix_by_variant,
             chunk_stats=chunk_stats,
         )
-        if self.stage_timing_recorder is None:
-            self.put_dosage_work_item(work_item)
-            return
-        native_delivery_start_time = time.perf_counter()
-        try:
-            self.put_dosage_work_item(work_item)
-        finally:
-            self.record_chunk_stage_duration(metadata, "native_delivery", native_delivery_start_time)
+        self.put_dosage_work_item_with_native_delivery_timing(work_item)
 
     def compute_preprocessed_variant_major_dosage_chunk_batch(
         self,
@@ -1111,15 +1112,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             message = "Native dosage work handoff plan disagrees with prepared batch work items."
             raise RuntimeError(message)
         work_item = PreprocessedVariantMajorDosageChunkBatchWorkItem(work_items=work_items)
-        if self.stage_timing_recorder is None:
-            self.put_dosage_work_item(work_item)
-            return
-        native_delivery_start_time = time.perf_counter()
-        try:
-            self.put_dosage_work_item(work_item)
-        finally:
-            elapsed_seconds = time.perf_counter() - native_delivery_start_time
-            self.record_work_item_stage_elapsed_duration(work_item, "native_delivery", elapsed_seconds)
+        self.put_dosage_work_item_with_native_delivery_timing(work_item)
 
     def compute_preprocessed_variant_major_packed8_probability_pair_chunk(
         self,
@@ -1137,14 +1130,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
             chunk_stats=chunk_stats,
         )
-        if self.stage_timing_recorder is None:
-            self.put_dosage_work_item(work_item)
-            return
-        native_delivery_start_time = time.perf_counter()
-        try:
-            self.put_dosage_work_item(work_item)
-        finally:
-            self.record_chunk_stage_duration(metadata, "native_delivery", native_delivery_start_time)
+        self.put_dosage_work_item_with_native_delivery_timing(work_item)
 
     def consume_dosage_chunks(self) -> None:
         """Consume queued dosage chunks and run JAX work in order."""

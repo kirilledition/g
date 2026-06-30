@@ -3679,6 +3679,35 @@ def test_native_callback_runner_uses_scheduler_dosage_work_stage_duration_plan()
     assert tuple(chunk_timing.chunk_identifier for chunk_timing in snapshot.chunk_stage_timings) == (0, 2)
 
 
+def test_native_callback_runner_uses_scheduler_native_delivery_stage_duration_plan() -> None:
+    callback = ManualCallbackRunner()
+    scheduler_state = DosageWorkItemStageDurationSchedulerProbe()
+    queued_work_items: list[object] = []
+    typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
+    callback.stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+
+    def record_queued_work_item(work_item: object) -> None:
+        queued_work_items.append(work_item)
+
+    typing.cast("typing.Any", callback).put_dosage_work_item = record_queued_work_item
+    metadata = build_native_metadata()
+    work_item = callback_shared.PreprocessedDosageChunkWorkItem(
+        metadata=metadata,
+        genotype_matrix=np.ones((2, 2), dtype=np.float32),
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+    )
+
+    callback.put_dosage_work_item_with_native_delivery_timing(work_item)
+
+    assert queued_work_items == [work_item]
+    assert scheduler_state.dosage_work_item_kind == "sample_major_dosage"
+    assert scheduler_state.chunk_count == 1
+    assert scheduler_state.elapsed_seconds is not None
+    snapshot = callback.stage_timing_recorder.snapshot()
+    assert snapshot.stage_counts["native_delivery"] == 1
+    assert tuple(chunk_timing.stage_name for chunk_timing in snapshot.chunk_stage_timings) == ("native_delivery",)
+
+
 def test_native_callback_runner_uses_scheduler_variant_major_batch_handoff_plan() -> None:
     callback = ManualCallbackRunner()
     mark_callback_workers_started(callback)
