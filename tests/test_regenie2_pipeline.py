@@ -2451,6 +2451,12 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert dosage_get_observation.blocked is True
     assert runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(None) is True
     assert runtime_resources.get_dosage_work_item().item is None
+    dosage_optional_put_result = runtime_resources.put_dosage_work_item_with_optional_backpressure_observation(
+        dosage_item
+    )
+    assert dosage_optional_put_result.observation_plan is None
+    assert dosage_optional_put_result.should_retry_put is False
+    assert runtime_resources.get_dosage_work_item().item is dosage_item
     dosage_combined_observation = runtime_resources.put_dosage_work_item_with_backpressure_observation(dosage_item)
     assert dosage_combined_observation.queue_name == "dosage_queue"
     assert dosage_combined_observation.operation_name == "put"
@@ -2519,6 +2525,12 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert result_get_observation.blocked is True
     assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
     assert runtime_resources.get_result_write_item().item is None
+    result_optional_put_result = runtime_resources.put_result_write_item_with_optional_backpressure_observation(
+        result_item
+    )
+    assert result_optional_put_result.observation_plan is None
+    assert result_optional_put_result.should_retry_put is False
+    assert runtime_resources.get_result_write_item().item is result_item
     result_combined_observation = runtime_resources.put_result_write_item_with_backpressure_observation(result_item)
     assert result_combined_observation.queue_name == "result_queue"
     assert result_combined_observation.operation_name == "put"
@@ -2553,6 +2565,40 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert result_stop_get_result.item is None
     assert result_stop_get_result.drain_completion_plan.should_stop is True
     assert result_stop_get_result.drain_completion_plan.should_flush_binary_correction_diagnostics is True
+
+    observed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-observed-queue-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        has_stage_timing_recorder=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    observed_dosage_put_result = observed_runtime_resources.put_dosage_work_item_with_optional_backpressure_observation(
+        dosage_item
+    )
+    observed_dosage_put_plan = observed_dosage_put_result.observation_plan
+    assert observed_dosage_put_plan is not None
+    assert observed_dosage_put_plan.queue_name == "dosage_queue"
+    assert observed_dosage_put_plan.operation_name == "put"
+    assert observed_dosage_put_plan.blocked is False
+    assert observed_dosage_put_result.should_retry_put is False
+    assert observed_runtime_resources.get_dosage_work_item().item is dosage_item
+    observed_result_put_result = (
+        observed_runtime_resources.put_result_write_item_with_optional_backpressure_observation(result_item)
+    )
+    observed_result_put_plan = observed_result_put_result.observation_plan
+    assert observed_result_put_plan is not None
+    assert observed_result_put_plan.queue_name == "result_queue"
+    assert observed_result_put_plan.operation_name == "put"
+    assert observed_result_put_plan.blocked is False
+    assert observed_result_put_result.should_retry_put is False
+    assert observed_runtime_resources.get_result_write_item().item is result_item
 
 
 def test_native_callback_runtime_resources_own_progress_state() -> None:
@@ -2816,7 +2862,9 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
     assert release_observation_plan.blocked is False
     assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
-    runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    optional_acquire_result = runtime_resources.acquire_result_in_flight_slot_with_optional_observation()
+    assert optional_acquire_result.observation_plan is None
+    assert optional_acquire_result.should_retry_acquisition is False
     unobserved_release_plan = runtime_resources.release_result_in_flight_slot_with_optional_observation()
     assert unobserved_release_plan is None
     assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
@@ -2834,7 +2882,13 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
-    observed_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    observed_acquire_result = observed_runtime_resources.acquire_result_in_flight_slot_with_optional_observation()
+    observed_acquire_plan = observed_acquire_result.observation_plan
+    assert observed_acquire_plan is not None
+    assert observed_acquire_plan.resource_name == "result_in_flight_slots"
+    assert observed_acquire_plan.operation_name == "acquire"
+    assert observed_acquire_plan.blocked is False
+    assert observed_acquire_result.should_retry_acquisition is False
     observed_release_plan = observed_runtime_resources.release_result_in_flight_slot_with_optional_observation()
     assert observed_release_plan is not None
     assert observed_release_plan.resource_name == "result_in_flight_slots"

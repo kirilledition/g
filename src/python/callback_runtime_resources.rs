@@ -66,6 +66,7 @@ pub(crate) struct NativeDosageBufferPoolOperationResult {
 #[pyclass]
 pub(crate) struct NativeResultInFlightAcquireResult {
     should_retry_acquisition: bool,
+    observation_plan: Option<Py<NativeResultInFlightAcquireObservationPlan>>,
 }
 
 #[pyclass]
@@ -76,6 +77,12 @@ pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
     progress_completion_event: Option<NativeCallbackProgressTelemetryEvent>,
     flush_binary_correction_pending_diagnostics: bool,
     binary_correction_summary_payload: Option<Py<PyDict>>,
+}
+
+#[pyclass]
+pub(crate) struct NativeCallbackQueuePutResult {
+    should_retry_put: bool,
+    observation_plan: Option<Py<NativeCallbackQueuePutObservationPlan>>,
 }
 
 #[pyclass]
@@ -693,7 +700,32 @@ impl NativeCallbackRuntimeResources {
                 attempt_plan.wait_timeout_seconds_value(),
             )?;
         }
-        Ok(NativeResultInFlightAcquireResult { should_retry_acquisition: !attempt_plan.should_acquire_value() })
+        NativeResultInFlightAcquireResult::from_acquire(py, !attempt_plan.should_acquire_value(), None)
+    }
+
+    fn acquire_result_in_flight_slot_with_optional_observation(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeResultInFlightAcquireResult> {
+        let observed_generation = self.result_in_flight_slot_signal.bind(py).borrow().generation_value()?;
+        let (attempt_plan, observation_plan) = {
+            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
+            let attempt_plan = scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt_value();
+            let observation_plan = if self.has_stage_timing_recorder {
+                Some(scheduler_state.plan_result_in_flight_slot_acquire_observation_value(&attempt_plan))
+            } else {
+                None
+            };
+            (attempt_plan, observation_plan)
+        };
+        if !attempt_plan.should_acquire_value() && attempt_plan.should_wait_value() {
+            self.result_in_flight_slot_signal.bind(py).borrow().wait_for_change_value(
+                py,
+                observed_generation,
+                attempt_plan.wait_timeout_seconds_value(),
+            )?;
+        }
+        NativeResultInFlightAcquireResult::from_acquire(py, !attempt_plan.should_acquire_value(), observation_plan)
     }
 
     fn release_result_in_flight_slot(&self, py: Python<'_>) -> PyResult<NativeResultInFlightReleaseObservationPlan> {
@@ -1066,6 +1098,21 @@ impl NativeCallbackRuntimeResources {
         Ok(scheduler_state.plan_dosage_queue_put_observation_value(queued))
     }
 
+    fn put_dosage_work_item_with_optional_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackQueuePutResult> {
+        let queued = self.try_put_dosage_work_item_with_backpressure_timeout(py, work_item)?;
+        let observation_plan = if self.has_stage_timing_recorder {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            Some(scheduler_state.plan_dosage_queue_put_observation_value(queued))
+        } else {
+            None
+        };
+        NativeCallbackQueuePutResult::from_put(py, !queued, observation_plan)
+    }
+
     fn get_dosage_work_item(&self, py: Python<'_>) -> PyResult<NativeCallbackObjectQueueGetResult> {
         loop {
             let has_queued_item = self.dosage_queue.bind(py).borrow().has_queued_item_value()?;
@@ -1389,6 +1436,21 @@ impl NativeCallbackRuntimeResources {
         Ok(scheduler_state.plan_result_queue_put_observation_value(queued))
     }
 
+    fn put_result_write_item_with_optional_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackQueuePutResult> {
+        let queued = self.try_put_result_write_item_with_backpressure_timeout(py, work_item)?;
+        let observation_plan = if self.has_stage_timing_recorder {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            Some(scheduler_state.plan_result_queue_put_observation_value(queued))
+        } else {
+            None
+        };
+        NativeCallbackQueuePutResult::from_put(py, !queued, observation_plan)
+    }
+
     fn get_result_write_item(&self, py: Python<'_>) -> PyResult<NativeCallbackObjectQueueGetResult> {
         loop {
             let has_queued_item = self.result_queue.bind(py).borrow().has_queued_item_value()?;
@@ -1607,11 +1669,52 @@ impl NativeDosageBufferPoolOperationResult {
     }
 }
 
+impl NativeResultInFlightAcquireResult {
+    fn from_acquire(
+        py: Python<'_>,
+        should_retry_acquisition: bool,
+        observation_plan: Option<NativeResultInFlightAcquireObservationPlan>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            should_retry_acquisition,
+            observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
+        })
+    }
+}
+
 #[pymethods]
 impl NativeResultInFlightAcquireResult {
     #[getter]
     fn should_retry_acquisition(&self) -> bool {
         self.should_retry_acquisition
+    }
+
+    #[getter]
+    fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeResultInFlightAcquireObservationPlan>> {
+        self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+}
+
+impl NativeCallbackQueuePutResult {
+    fn from_put(
+        py: Python<'_>,
+        should_retry_put: bool,
+        observation_plan: Option<NativeCallbackQueuePutObservationPlan>,
+    ) -> PyResult<Self> {
+        Ok(Self { should_retry_put, observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()? })
+    }
+}
+
+#[pymethods]
+impl NativeCallbackQueuePutResult {
+    #[getter]
+    fn should_retry_put(&self) -> bool {
+        self.should_retry_put
+    }
+
+    #[getter]
+    fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeCallbackQueuePutObservationPlan>> {
+        self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
     }
 }
 

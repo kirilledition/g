@@ -1596,6 +1596,26 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Put work into the bounded worker queue while surfacing worker errors."""
         self.start()
+        if self.uses_native_callback_runtime_resources():
+            while True:
+                self.raise_worker_error_if_present()
+                put_start_time = time.perf_counter()
+                put_result = (
+                    self.callback_runtime_resources.put_dosage_work_item_with_optional_backpressure_observation(
+                        work_item
+                    )
+                )
+                put_observation_plan = put_result.observation_plan
+                if put_observation_plan is not None:
+                    self.record_bounded_resource_stage_duration(
+                        resource_name=put_observation_plan.queue_name,
+                        operation_name=put_observation_plan.operation_name,
+                        start_time=put_start_time,
+                        blocked=put_observation_plan.blocked,
+                    )
+                if put_result.should_retry_put:
+                    continue
+                return
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
@@ -1604,13 +1624,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         while True:
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
-            if self.uses_native_callback_runtime_resources():
-                put_observation_plan = (
-                    self.callback_runtime_resources.put_dosage_work_item_with_backpressure_observation(work_item)
-                )
-            else:
-                queued = self.try_put_dosage_work_item_with_backpressure_timeout(work_item)
-                put_observation_plan = self.plan_dosage_queue_put_observation(queued=queued)
+            queued = self.try_put_dosage_work_item_with_backpressure_timeout(work_item)
+            put_observation_plan = self.plan_dosage_queue_put_observation(queued=queued)
             if put_observation_plan.should_retry_put:
                 self.record_bounded_resource_stage_duration(
                     resource_name=put_observation_plan.queue_name,
@@ -1737,6 +1752,26 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Put a computed result into the bounded materialization/write queue."""
         self.start()
+        if self.uses_native_callback_runtime_resources():
+            while True:
+                self.raise_worker_error_if_present()
+                put_start_time = time.perf_counter()
+                put_result = (
+                    self.callback_runtime_resources.put_result_write_item_with_optional_backpressure_observation(
+                        work_item
+                    )
+                )
+                put_observation_plan = put_result.observation_plan
+                if put_observation_plan is not None:
+                    self.record_bounded_resource_stage_duration(
+                        resource_name=put_observation_plan.queue_name,
+                        operation_name=put_observation_plan.operation_name,
+                        start_time=put_start_time,
+                        blocked=put_observation_plan.blocked,
+                    )
+                if put_result.should_retry_put:
+                    continue
+                return
         if self.stage_timing_recorder is None:
             while True:
                 self.raise_worker_error_if_present()
@@ -1745,13 +1780,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         while True:
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
-            if self.uses_native_callback_runtime_resources():
-                put_observation_plan = (
-                    self.callback_runtime_resources.put_result_write_item_with_backpressure_observation(work_item)
-                )
-            else:
-                queued = self.try_put_result_write_item_with_backpressure_timeout(work_item)
-                put_observation_plan = self.plan_result_queue_put_observation(queued=queued)
+            queued = self.try_put_result_write_item_with_backpressure_timeout(work_item)
+            put_observation_plan = self.plan_result_queue_put_observation(queued=queued)
             if put_observation_plan.should_retry_put:
                 self.record_bounded_resource_stage_duration(
                     resource_name=put_observation_plan.queue_name,
@@ -1868,25 +1898,19 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.uses_native_callback_runtime_resources():
             while True:
                 self.raise_worker_error_if_present()
-                if self.stage_timing_recorder is None:
-                    runtime_resources = self.callback_runtime_resources
-                    acquire_result = (
-                        runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
-                    )
-                    if not acquire_result.should_retry_acquisition:
-                        return
-                    continue
                 acquire_start_time = time.perf_counter()
-                acquire_observation_plan = (
-                    self.callback_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+                acquire_result = (
+                    self.callback_runtime_resources.acquire_result_in_flight_slot_with_optional_observation()
                 )
-                self.record_bounded_resource_stage_duration(
-                    resource_name=acquire_observation_plan.resource_name,
-                    operation_name=acquire_observation_plan.operation_name,
-                    start_time=acquire_start_time,
-                    blocked=acquire_observation_plan.blocked,
-                )
-                if not acquire_observation_plan.should_retry_acquisition:
+                acquire_observation_plan = acquire_result.observation_plan
+                if acquire_observation_plan is not None:
+                    self.record_bounded_resource_stage_duration(
+                        resource_name=acquire_observation_plan.resource_name,
+                        operation_name=acquire_observation_plan.operation_name,
+                        start_time=acquire_start_time,
+                        blocked=acquire_observation_plan.blocked,
+                    )
+                if not acquire_result.should_retry_acquisition:
                     return
         if self.stage_timing_recorder is None:
             while True:

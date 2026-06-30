@@ -1079,6 +1079,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production timed dosage/result queue
   producer put attempts and observation selection in one native call while
   Python keeps timing measurement and emission.
+- Callback runtime resources now own production dosage/result queue producer
+  optional observation selection so timing-disabled puts skip observation-plan
+  construction.
 - Callback runtime resources now own production timed dosage/result queue
   consumer get attempts, drain decisions, and observation selection in one
   native call while Python keeps timing measurement and emission.
@@ -1111,6 +1114,8 @@ Remove Python as the chunk-level scheduler.
   Python keeps worker-error chaining and timing emission.
 - Callback runtime resources now own production untimed result in-flight slot
   acquire attempts without building timing observation plans.
+- Callback runtime resources now own production result in-flight slot acquire
+  observation selection in the same native call as the slot acquire/wait loop.
 - Callback runtime resources now own production dosage-buffer registration,
   return eligibility planning, free-buffer returns, free-queue storage
   failures, discard accounting, and buffer-pool wakeups while Python keeps
