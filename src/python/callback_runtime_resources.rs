@@ -407,6 +407,18 @@ impl NativeCallbackRuntimeResources {
         Ok(self.record_processed_chunk(py, &chunk_identity))
     }
 
+    fn record_progress_for_metadata(
+        &self,
+        py: Python<'_>,
+        metadata: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<NativeCallbackProgressUpdate>> {
+        if !self.has_telemetry_session {
+            self.record_processed_chunk_without_progress(py);
+            return Ok(None);
+        }
+        self.record_processed_chunk_for_metadata(py, metadata).map(Some)
+    }
+
     fn record_processed_chunk_without_progress(&self, py: Python<'_>) {
         self.progress_state.bind(py).borrow_mut().record_processed_chunk_without_progress_value();
     }

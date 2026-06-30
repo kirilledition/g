@@ -1361,13 +1361,18 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""
-        if self.telemetry_session is None:
-            self.record_processed_chunk_without_progress()
-            return
         if self.uses_native_callback_runtime_resources():
-            progress_update = self.callback_runtime_resources.record_processed_chunk_for_metadata(metadata)
+            progress_update = self.callback_runtime_resources.record_progress_for_metadata(metadata)
+            if progress_update is None:
+                return
         else:
+            if self.telemetry_session is None:
+                self.record_processed_chunk_without_progress()
+                return
             progress_update = self.record_processed_chunk(build_native_callback_chunk_identity(metadata))
+        if self.telemetry_session is None:
+            message = "Native callback progress plan selected a missing telemetry session."
+            raise RuntimeError(message)
         telemetry_plan = progress_update.telemetry_plan
         for progress_event in telemetry_plan.events:
             self.telemetry_session.log_callback_progress_event(progress_event)

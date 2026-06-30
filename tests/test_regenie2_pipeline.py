@@ -2410,11 +2410,22 @@ def test_native_callback_runner_records_progress_from_metadata_with_runtime_reso
             self,
             metadata: object,
         ) -> callback_runtime._core.NativeCallbackProgressUpdate:
+            del metadata
+            message = "Production native resources should choose progress telemetry availability natively."
+            raise AssertionError(message)
+
+        def record_progress_for_metadata(
+            self,
+            metadata: object,
+        ) -> callback_runtime._core.NativeCallbackProgressUpdate | None:
             self.metadata_items.append(metadata)
-            return self.inner.record_processed_chunk_for_metadata(metadata)
+            return self.inner.record_progress_for_metadata(metadata)
 
     class ResourceBackedCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
-        def __init__(self) -> None:
+        def __init__(
+            self,
+            telemetry_session: RecordingTelemetrySession | None,
+        ) -> None:
             super().__init__(
                 worker_name="native-resource-progress-runner-test",
                 staging_depth=1,
@@ -2424,7 +2435,7 @@ def test_native_callback_runner_records_progress_from_metadata_with_runtime_reso
                 result_in_flight_limit=1,
                 dosage_buffer_limit=1,
                 stage_timing_recorder=None,
-                telemetry_session=typing.cast("typing.Any", RecordingTelemetrySession()),
+                telemetry_session=typing.cast("typing.Any", telemetry_session),
                 output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
             )
 
@@ -2455,7 +2466,8 @@ def test_native_callback_runner_records_progress_from_metadata_with_runtime_reso
         ) -> None:
             del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
 
-    callback = ResourceBackedCallbackRunner()
+    telemetry_session = RecordingTelemetrySession()
+    callback = ResourceBackedCallbackRunner(telemetry_session)
     progress_probe = ProgressRecordingProbe(callback.callback_runtime_resources)
     callback.callback_runtime_resources = typing.cast("typing.Any", progress_probe)
     metadata = build_native_metadata()
@@ -2463,7 +2475,6 @@ def test_native_callback_runner_records_progress_from_metadata_with_runtime_reso
     callback.record_progress(metadata)
 
     assert progress_probe.metadata_items == [metadata]
-    telemetry_session = typing.cast("RecordingTelemetrySession", callback.telemetry_session)
     assert telemetry_session.events == [
         (
             "chromosome_started",
@@ -2471,6 +2482,16 @@ def test_native_callback_runner_records_progress_from_metadata_with_runtime_reso
         )
     ]
     assert telemetry_session.progress_events[0]["variant_count"] == 2
+
+    untimed_callback = ResourceBackedCallbackRunner(None)
+    untimed_progress_probe = ProgressRecordingProbe(untimed_callback.callback_runtime_resources)
+    untimed_callback.callback_runtime_resources = typing.cast("typing.Any", untimed_progress_probe)
+
+    untimed_callback.record_progress(metadata)
+
+    assert untimed_progress_probe.metadata_items == [metadata]
+    assert untimed_callback.processed_chunk_count == 1
+    assert untimed_callback.current_progress_chromosome is None
 
 
 def test_native_callback_runner_defers_worker_start_until_explicit_start() -> None:
@@ -2842,7 +2863,7 @@ def test_native_callback_runtime_resources_own_progress_state() -> None:
         staging_depth=1,
         native_callback_batch_size=1,
         expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
-        has_telemetry_session=False,
+        has_telemetry_session=True,
         flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
@@ -2853,7 +2874,8 @@ def test_native_callback_runtime_resources_own_progress_state() -> None:
 
     assert runtime_resources.processed_chunk_count == 0
     assert runtime_resources.current_progress_chromosome is None
-    first_update = runtime_resources.record_processed_chunk_for_metadata(build_native_metadata())
+    first_update = runtime_resources.record_progress_for_metadata(build_native_metadata())
+    assert first_update is not None
     assert first_update.processed_chunk_count == 1
     assert runtime_resources.processed_chunk_count == 1
     assert runtime_resources.current_progress_chromosome == "22"
@@ -2877,7 +2899,7 @@ def test_native_callback_runtime_resources_own_progress_state() -> None:
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
-    untimed_runtime_resources.record_processed_chunk_without_progress()
+    assert untimed_runtime_resources.record_progress_for_metadata(build_native_metadata()) is None
     assert untimed_runtime_resources.processed_chunk_count == 1
     assert untimed_runtime_resources.current_progress_chromosome is None
 
