@@ -1970,8 +1970,12 @@ class NativeBgenCallbackRunner(abc.ABC):
                 )
             if finish_result.raise_worker_error:
                 self.raise_worker_error_if_present()
-            if finish_result.complete_progress:
-                self.complete_progress()
+            progress_completion_event = finish_result.progress_completion_event
+            if progress_completion_event is not None:
+                if self.telemetry_session is None:
+                    message = "Native callback worker finish result selected a missing telemetry session."
+                    raise RuntimeError(message)
+                self.telemetry_session.log_callback_progress_event(progress_completion_event)
             if finish_result.emit_binary_correction_summary:
                 self.emit_binary_correction_summary()
             return

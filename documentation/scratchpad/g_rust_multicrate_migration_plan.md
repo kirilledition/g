@@ -1220,6 +1220,9 @@ Remove Python as the chunk-level scheduler.
 - Native shutdown controllers now return first-signal metadata directly for
   Python public exception adaptation; Python no longer carries the native
   shutdown action enum on the handler path.
+- Callback runtime resources now finish native progress state during production
+  worker lifecycle finalization and return the completion event for Python
+  telemetry emission.
 
 ### Tests
 

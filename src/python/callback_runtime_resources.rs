@@ -9,7 +9,7 @@ use pyo3::types::{PyAny, PyDict};
 
 use super::callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
-    NativeCallbackProgressUpdate,
+    NativeCallbackProgressTelemetryEvent, NativeCallbackProgressUpdate,
 };
 use super::callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
@@ -69,6 +69,7 @@ pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
     shutdown_timeout_seconds: Option<f64>,
     raise_worker_error: bool,
     complete_progress: bool,
+    progress_completion_event: Option<NativeCallbackProgressTelemetryEvent>,
     emit_binary_correction_summary: bool,
 }
 
@@ -567,6 +568,10 @@ impl NativeCallbackRuntimeResources {
                 );
                 return Ok(finish_result);
             }
+        }
+        if finish_plan.complete_progress_value() {
+            let progress_completion = self.progress_state.bind(py).borrow_mut().finish_progress_value();
+            finish_result.record_progress_completion(progress_completion);
         }
         Ok(finish_result)
     }
@@ -1701,6 +1706,11 @@ impl NativeCallbackWorkerFinishLifecycleResult {
     }
 
     #[getter]
+    fn progress_completion_event(&self) -> Option<NativeCallbackProgressTelemetryEvent> {
+        self.progress_completion_event.clone()
+    }
+
+    #[getter]
     fn emit_binary_correction_summary(&self) -> bool {
         self.emit_binary_correction_summary
     }
@@ -1713,6 +1723,7 @@ impl NativeCallbackWorkerFinishLifecycleResult {
             shutdown_timeout_seconds: None,
             raise_worker_error: finish_plan.raise_worker_error_value(),
             complete_progress: finish_plan.complete_progress_value(),
+            progress_completion_event: None,
             emit_binary_correction_summary: finish_plan.emit_binary_correction_summary_value(),
         }
     }
@@ -1720,6 +1731,10 @@ impl NativeCallbackWorkerFinishLifecycleResult {
     fn record_shutdown_timeout(&mut self, worker_name: String, timeout_seconds: f64) {
         self.shutdown_worker_name = Some(worker_name);
         self.shutdown_timeout_seconds = Some(timeout_seconds);
+    }
+
+    fn record_progress_completion(&mut self, progress_completion: Option<NativeCallbackProgressCompletion>) {
+        self.progress_completion_event = progress_completion.map(|completion| completion.telemetry_event_value());
     }
 }
 

@@ -15,7 +15,8 @@ pub(crate) struct NativeCallbackProgressUpdate {
     inner: native_callback_progress::CallbackProgressUpdate,
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
 pub(crate) struct NativeCallbackProgressTelemetryEvent {
     inner: native_callback_progress::CallbackProgressTelemetryEvent,
 }
@@ -188,6 +189,12 @@ impl NativeCallbackProgressTelemetryPlan {
     }
 }
 
+impl NativeCallbackProgressCompletion {
+    pub(crate) fn telemetry_event_value(&self) -> NativeCallbackProgressTelemetryEvent {
+        self.inner.telemetry_event().into()
+    }
+}
+
 #[pymethods]
 impl NativeCallbackProgressCompletion {
     #[getter]
@@ -202,7 +209,7 @@ impl NativeCallbackProgressCompletion {
 
     #[getter]
     fn telemetry_event(&self) -> NativeCallbackProgressTelemetryEvent {
-        self.inner.telemetry_event().into()
+        self.telemetry_event_value()
     }
 }
 

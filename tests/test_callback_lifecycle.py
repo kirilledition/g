@@ -461,6 +461,11 @@ def test_native_callback_runner_records_progress_and_chromosome_events() -> None
     """Record progression events for a full callback lifecycle."""
     telemetry_session = ProgressTrackingTelemetrySession()
     callback = ProgressTrackingCallbackRunner(telemetry_session=telemetry_session)
+
+    def fail_finish_progress_state() -> typing.NoReturn:
+        message = "native runtime resources should finish progress during worker lifecycle"
+        raise AssertionError(message)
+
     callback.compute_preprocessed_dosage_chunk(
         metadata=ChunkMetadata("chr1", 0, 1),
         genotype_matrix=np.asarray([[0.0]], dtype=np.float32),
@@ -471,6 +476,7 @@ def test_native_callback_runner_records_progress_and_chromosome_events() -> None
         genotype_matrix=np.asarray([[0.0]], dtype=np.float32),
         chunk_stats=typing.cast("typing.Any", np.asarray([0], dtype=np.float32)),
     )
+    typing.cast("typing.Any", callback).finish_progress_state = fail_finish_progress_state
     callback.finish()
 
     assert telemetry_session.logged_events == [
