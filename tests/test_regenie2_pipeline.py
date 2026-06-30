@@ -3223,6 +3223,100 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert unobserved_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
 
+def test_native_callback_runner_honors_optional_result_cleanup_observations() -> None:
+    def worker_target() -> None:
+        return None
+
+    def build_runtime_resources(
+        worker_name: str,
+        *,
+        has_stage_timing_recorder: bool,
+    ) -> callback_runtime._core.NativeCallbackRuntimeResources:
+        return callback_runtime._core.NativeCallbackRuntimeResources(
+            worker_name=worker_name,
+            dosage_worker_target=worker_target,
+            result_worker_target=worker_target,
+            staging_depth=1,
+            native_callback_batch_size=1,
+            expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+            has_telemetry_session=False,
+            flush_binary_correction_diagnostics_on_result_stop=False,
+            has_stage_timing_recorder=has_stage_timing_recorder,
+            result_in_flight_limit=1,
+            dosage_buffer_limit=1,
+        )
+
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        stage_timing_recorder=stage_timing_recorder,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    callback_for_probe = typing.cast("typing.Any", callback)
+    original_runtime_resources = callback.callback_runtime_resources
+    try:
+        unobserved_runtime_resources = build_runtime_resources(
+            "native-resource-unobserved-cleanup-payload-test",
+            has_stage_timing_recorder=False,
+        )
+        unobserved_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+        callback_for_probe.callback_runtime_resources = unobserved_runtime_resources
+        callback.release_result_in_flight_slot()
+
+        unobserved_dosage_buffer = np.empty((2, 2), dtype=np.float32)
+        assert unobserved_runtime_resources.register_dosage_buffer(id(unobserved_dosage_buffer)) == 0
+        unobserved_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+        unobserved_pre_write_result = unobserved_runtime_resources.release_result_work_item_pre_write_resources(
+            unobserved_dosage_buffer,
+        )
+        callback.record_result_work_item_resource_release_result(unobserved_pre_write_result)
+        unobserved_final_result = unobserved_runtime_resources.release_result_work_item_final_resources(
+            unobserved_dosage_buffer,
+            has_released_host_dosage_buffer=True,
+            release_in_flight_slot=True,
+        )
+        callback.record_result_work_item_resource_release_result(unobserved_final_result)
+        assert not stage_timing_recorder.snapshot().queue_backpressure
+
+        observed_runtime_resources = build_runtime_resources(
+            "native-resource-observed-cleanup-payload-test",
+            has_stage_timing_recorder=True,
+        )
+        observed_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+        callback_for_probe.callback_runtime_resources = observed_runtime_resources
+        callback.release_result_in_flight_slot()
+
+        observed_dosage_buffer = np.empty((2, 2), dtype=np.float32)
+        assert observed_runtime_resources.register_dosage_buffer(id(observed_dosage_buffer)) == 0
+        observed_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+        observed_pre_write_result = observed_runtime_resources.release_result_work_item_pre_write_resources(
+            observed_dosage_buffer,
+        )
+        callback.record_result_work_item_resource_release_result(observed_pre_write_result)
+        observed_final_result = observed_runtime_resources.release_result_work_item_final_resources(
+            observed_dosage_buffer,
+            has_released_host_dosage_buffer=True,
+            release_in_flight_slot=True,
+        )
+        callback.record_result_work_item_resource_release_result(observed_final_result)
+    finally:
+        callback_for_probe.callback_runtime_resources = original_runtime_resources
+        callback.finish()
+
+    queue_backpressure_by_operation = {
+        queue_backpressure.operation_name: queue_backpressure
+        for queue_backpressure in stage_timing_recorder.snapshot().queue_backpressure
+    }
+    assert set(queue_backpressure_by_operation) == {"release", "return"}
+    assert queue_backpressure_by_operation["release"].queue_name == "result_in_flight_slots"
+    assert queue_backpressure_by_operation["release"].observation_count == 2
+    assert queue_backpressure_by_operation["return"].queue_name == "dosage_buffer_pool"
+    assert queue_backpressure_by_operation["return"].observation_count == 1
+
+
 def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> None:
     def worker_target() -> None:
         return None

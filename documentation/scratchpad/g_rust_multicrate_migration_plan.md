@@ -1262,6 +1262,9 @@ Remove Python as the chunk-level scheduler.
   observation selection plus direct result in-flight release observation
   selection, so Python no longer chooses separate observed versus unobserved
   native mutation methods.
+- Python result cleanup recorders now honor optional native observation payloads
+  directly, so missing payloads skip timing emission instead of rechecking
+  Python recorder availability.
 - Callback runtime resources now derive production dosage-buffer object
   identities for buffer-pool eligibility, mutation, and result-cleanup paths,
   leaving explicit identifier plumbing only on lower-level scheduler/testing

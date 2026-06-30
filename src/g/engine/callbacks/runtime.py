@@ -956,15 +956,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         operation_result: _core.NativeDosageBufferPoolOperationResult,
     ) -> None:
         """Record a native dosage-buffer pool operation result."""
-        if self.stage_timing_recorder is None:
-            return
         free_buffer_count = operation_result.free_buffer_count
         if free_buffer_count is None:
             return
         observation_plan = operation_result.observation_plan
         if observation_plan is None:
-            message = "Native dosage-buffer pool operation result omitted timing observation details."
-            raise RuntimeError(message)
+            return
         self.record_dosage_buffer_pool_operation(
             operation_name=observation_plan.operation_name,
             free_buffer_count=free_buffer_count,
@@ -2040,11 +2037,8 @@ class NativeBgenCallbackRunner(abc.ABC):
             release_observation_plan = (
                 self.callback_runtime_resources.release_result_in_flight_slot_with_optional_observation()
             )
-            if self.stage_timing_recorder is None:
-                return
             if release_observation_plan is None:
-                message = "Native result in-flight release result omitted timing observation details."
-                raise RuntimeError(message)
+                return
             self.record_bounded_resource_operation(
                 resource_name=release_observation_plan.resource_name,
                 operation_name=release_observation_plan.operation_name,
@@ -2547,24 +2541,22 @@ class NativeBgenCallbackRunner(abc.ABC):
         release_result: _core.NativeResultWorkItemResourceReleaseResult,
     ) -> None:
         """Record Python-side telemetry from native result work item resource cleanup."""
-        if self.stage_timing_recorder is None:
-            return
         if release_result.free_buffer_count is not None:
             dosage_buffer_pool_observation_plan = release_result.dosage_buffer_pool_observation_plan
-            if dosage_buffer_pool_observation_plan is None:
-                message = "Native result work item resource release result omitted buffer-pool return details."
-                raise RuntimeError(message)
-            self.record_dosage_buffer_pool_operation(
-                operation_name=dosage_buffer_pool_observation_plan.operation_name,
-                free_buffer_count=release_result.free_buffer_count,
-                elapsed_seconds=0.0,
-                blocked=dosage_buffer_pool_observation_plan.blocked,
-            )
+            if dosage_buffer_pool_observation_plan is not None:
+                self.record_dosage_buffer_pool_operation(
+                    operation_name=dosage_buffer_pool_observation_plan.operation_name,
+                    free_buffer_count=release_result.free_buffer_count,
+                    elapsed_seconds=0.0,
+                    blocked=dosage_buffer_pool_observation_plan.blocked,
+                )
         if not release_result.released_result_in_flight_slot:
             return
         resource_name = release_result.result_in_flight_resource_name
         operation_name = release_result.result_in_flight_operation_name
         blocked = release_result.result_in_flight_blocked
+        if resource_name is None and operation_name is None and blocked is None:
+            return
         if resource_name is None or operation_name is None or blocked is None:
             message = "Native result work item resource release result omitted in-flight release details."
             raise RuntimeError(message)
