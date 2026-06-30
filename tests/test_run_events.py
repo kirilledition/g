@@ -472,6 +472,37 @@ def test_io_output_resume_committed_chunks_diagnostic_payload_uses_native_builde
     }
 
 
+def test_native_dispatch_engine_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
+        chunk_size=1024,
+        source_path="input.bgen",
+        trusted_no_missing_diploid=True,
+        variant_limit=None,
+    ) == {
+        "level": "debug",
+        "event_name": "native_dispatch_bgen_engine_constructing",
+        "message": "Constructing native BGEN run engine.",
+        "fields": {
+            "chunk_size": 1024,
+            "source_path": "input.bgen",
+            "trusted_no_missing_diploid": True,
+            "variant_limit": None,
+        },
+    }
+    assert run_events.build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
+        source_path="input.bgen",
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    ) == {
+        "level": "debug",
+        "event_name": "native_dispatch_trusted_bgen_validation_started",
+        "message": "Validating trusted no-missing diploid BGEN mode.",
+        "fields": {
+            "source_path": "input.bgen",
+            "trusted_bgen_validation_mode": "cache_on_miss",
+        },
+    }
+
+
 def test_run_completed_rendering_uses_native_renderer() -> None:
     event = run_events.RunCompletedEvent(
         run_id=None,

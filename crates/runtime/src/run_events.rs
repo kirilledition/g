@@ -37,6 +37,13 @@ pub const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE: &str = "Buildi
 pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching REGENIE execution plan.";
 pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
 pub const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_output_resume_committed_chunks";
+pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_EVENT_NAME: &str =
+    "native_dispatch_bgen_engine_constructing";
+pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_MESSAGE: &str = "Constructing native BGEN run engine.";
+pub const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "native_dispatch_trusted_bgen_validation_started";
+pub const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
+    "Validating trusted no-missing diploid BGEN mode.";
 pub const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME: &str = "native_runtime_knobs_configured";
 pub const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_MESSAGE: &str = "Configuring native runtime knobs.";
 pub const PREFLIGHT_WARNING_DIAGNOSTIC_EVENT_NAME: &str = "preflight_warning";
@@ -673,6 +680,42 @@ pub fn build_io_output_resume_committed_chunks_diagnostic_payload(
 }
 
 #[must_use]
+pub fn build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
+    chunk_size: i64,
+    source_path: &str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_EVENT_NAME,
+        message: NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            integer_diagnostic_field("chunk_size", chunk_size),
+            text_diagnostic_field("source_path", source_path),
+            boolean_diagnostic_field("trusted_no_missing_diploid", trusted_no_missing_diploid),
+            optional_integer_diagnostic_field("variant_limit", variant_limit),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
+    source_path: &str,
+    trusted_bgen_validation_mode: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            text_diagnostic_field("source_path", source_path),
+            text_diagnostic_field("trusted_bgen_validation_mode", trusted_bgen_validation_mode),
+        ],
+    }
+}
+
+#[must_use]
 pub fn build_run_started_telemetry_fields(
     association_mode: &str,
     trait_type: &str,
@@ -1230,6 +1273,19 @@ mod tests {
         assert_eq!(payload.fields[0].value, RunDiagnosticFieldValue::Text("out/chunks".to_string()));
         assert_eq!(payload.fields[1].value, RunDiagnosticFieldValue::Integer(2));
         assert_eq!(payload.fields[2].value, RunDiagnosticFieldValue::Text("out/run".to_string()));
+    }
+
+    #[test]
+    fn builds_native_dispatch_engine_diagnostic_payloads() {
+        let constructing_payload =
+            build_native_dispatch_bgen_engine_constructing_diagnostic_payload(1024, "input.bgen", true, Some(4096));
+        let validation_payload =
+            build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload("input.bgen", "cache");
+
+        assert_eq!(constructing_payload.event_name, "native_dispatch_bgen_engine_constructing");
+        assert_eq!(constructing_payload.fields[3].value, RunDiagnosticFieldValue::OptionalInteger(Some(4096)));
+        assert_eq!(validation_payload.event_name, "native_dispatch_trusted_bgen_validation_started");
+        assert_eq!(validation_payload.fields[1].value, RunDiagnosticFieldValue::Text("cache".to_string()));
     }
 
     #[test]

@@ -1497,6 +1497,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
   builders.
 - Output resume committed-chunk diagnostics now use native run-event
   diagnostic payload builders.
+- Native-dispatch BGEN engine construction and trusted-validation diagnostics
+  now use native run-event diagnostic payload builders.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

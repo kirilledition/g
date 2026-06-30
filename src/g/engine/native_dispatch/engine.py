@@ -5,20 +5,20 @@ from __future__ import annotations
 import typing
 
 from g import _core, types
-from g.engine import trusted_validation
+from g.engine import run_events, trusted_validation
 
 if typing.TYPE_CHECKING:
     from g.io import source
 
 
-def emit_native_dispatch_engine_diagnostic_event(
-    level: str,
-    event: str,
-    message: str,
-    fields: typing.Mapping[str, object],
-) -> None:
-    """Emit one structured native-dispatch engine diagnostic through native tracing."""
-    _core.emit_diagnostic_event_fields(level, event, message, fields)
+def emit_native_dispatch_engine_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
+    """Emit one native-dispatch engine diagnostic payload through native tracing."""
+    _core.emit_diagnostic_event_fields(
+        str(payload["level"]),
+        str(payload["event_name"]),
+        str(payload["message"]),
+        typing.cast("typing.Mapping[str, object]", payload["fields"]),
+    )
 
 
 def open_bgen_run_engine(
@@ -29,16 +29,13 @@ def open_bgen_run_engine(
     trusted_no_missing_diploid: bool,
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN run engine without running trusted validation."""
-    emit_native_dispatch_engine_diagnostic_event(
-        "debug",
-        "native_dispatch_bgen_engine_constructing",
-        "Constructing native BGEN run engine.",
-        {
-            "chunk_size": chunk_size,
-            "source_path": str(genotype_source_config.source_path),
-            "trusted_no_missing_diploid": trusted_no_missing_diploid,
-            "variant_limit": variant_limit,
-        },
+    emit_native_dispatch_engine_diagnostic_event_payload(
+        run_events.build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
+            chunk_size=chunk_size,
+            source_path=str(genotype_source_config.source_path),
+            trusted_no_missing_diploid=trusted_no_missing_diploid,
+            variant_limit=variant_limit,
+        )
     )
     return _core.Regenie2RunEngine(
         str(genotype_source_config.source_path),
@@ -56,14 +53,11 @@ def validate_trusted_bgen_run_engine(
     trusted_bgen_validator: typing.Callable[..., None] | None,
 ) -> None:
     """Validate trusted no-missing diploid BGEN mode for an open engine."""
-    emit_native_dispatch_engine_diagnostic_event(
-        "debug",
-        "native_dispatch_trusted_bgen_validation_started",
-        "Validating trusted no-missing diploid BGEN mode.",
-        {
-            "source_path": str(genotype_source_config.source_path),
-            "trusted_bgen_validation_mode": trusted_bgen_validation_mode.value,
-        },
+    emit_native_dispatch_engine_diagnostic_event_payload(
+        run_events.build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
+            source_path=str(genotype_source_config.source_path),
+            trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        )
     )
     resolved_trusted_bgen_validator = trusted_bgen_validator or trusted_validation.validate_trusted_bgen_with_cache
     resolved_trusted_bgen_validator(

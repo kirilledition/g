@@ -2841,6 +2841,16 @@ def build_io_output_resume_committed_chunks_diagnostic_payload(
     committed_chunk_count: int,
     run_directory: str,
 ) -> dict[str, object]: ...
+def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
+    chunk_size: int,
+    source_path: str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> dict[str, object]: ...
+def build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
+    source_path: str,
+    trusted_bgen_validation_mode: str,
+) -> dict[str, object]: ...
 def build_runner_run_started_diagnostic_payload(
     association_mode: str,
     trait_type: str,

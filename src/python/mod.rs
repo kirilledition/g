@@ -122,6 +122,8 @@ use preparation::{
 use profile::build_profile_snapshot_dict;
 use run_events::{
     attach_run_metadata_payload, build_io_output_resume_committed_chunks_diagnostic_payload,
+    build_native_dispatch_bgen_engine_constructing_diagnostic_payload,
+    build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
     build_native_runtime_knobs_configured_diagnostic_payload, build_preflight_warning_diagnostic_payload,
     build_run_completed_event_payload, build_run_completed_telemetry_fields, build_run_failed_event_payload,
     build_run_failed_telemetry_fields, build_run_interrupted_event_payload, build_run_interrupted_telemetry_fields,
@@ -2028,6 +2030,12 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_runner_metadata_artifacts_finalized_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_preflight_warning_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_io_output_resume_committed_chunks_diagnostic_payload, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(build_native_dispatch_bgen_engine_constructing_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;
     module.add_function(wrap_pyfunction!(default_shutdown_signal_numbers, module)?)?;

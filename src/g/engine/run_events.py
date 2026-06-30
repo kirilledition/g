@@ -474,6 +474,38 @@ def build_io_output_resume_committed_chunks_diagnostic_payload(
     )
 
 
+def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
+    *,
+    chunk_size: int,
+    source_path: str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for native BGEN engine construction."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
+            chunk_size,
+            source_path,
+            trusted_no_missing_diploid,
+            variant_limit,
+        )
+    )
+
+
+def build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
+    *,
+    source_path: str,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for trusted BGEN validation start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
+            source_path,
+            trusted_bgen_validation_mode.value,
+        )
+    )
+
+
 def diagnostic_event_payload_from_native(payload: object) -> dict[str, typing.Any]:
     """Adapt a native diagnostic event payload to a mutable Python dictionary."""
     event_payload = native_mapping_payload(payload)
