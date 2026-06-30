@@ -13,6 +13,7 @@ from g import _core
 
 TEST_DATA_DIRECTORY = Path(__file__).parent / "data" / "bgen"
 HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
+TRUSTED_PACKED8_BGEN_PATH = Path(__file__).parents[1] / "reference" / "regenie-patched" / "example" / "example.bgen"
 
 
 def run_logging_subprocess(script: str) -> subprocess.CompletedProcess[str]:
@@ -2762,6 +2763,62 @@ def test_regenie2_run_engine_buffered_chunks_deliver_preprocessed_variant_major_
 
     assert processed_chunk_count == 4
     assert callback.chunk_batches == [(0, 1), (2, 3)]
+
+
+def test_regenie2_run_engine_buffered_chunks_deliver_preprocessed_variant_major_packed8_chunks() -> None:
+    class RecordingPackedCallback:
+        def __init__(self) -> None:
+            self.chunk_shapes: list[tuple[int, int, int, int]] = []
+            self.free_buffers: list[np.ndarray] = []
+
+        def acquire_variant_major_packed8_probability_pair_buffer(
+            self,
+            variant_count: int,
+            sample_count: int,
+        ) -> np.ndarray:
+            if self.free_buffers:
+                return self.free_buffers.pop()
+            return np.empty((variant_count, sample_count, 2), dtype=np.uint8, order="C")
+
+        def compute_preprocessed_variant_major_packed8_probability_pair_chunk(
+            self,
+            metadata: _core.VariantMetadata,
+            packed_probability_pairs: np.ndarray,
+            chunk_stats: _core.ChunkStats,
+        ) -> None:
+            self.chunk_shapes.append(
+                (
+                    metadata.variant_start_index,
+                    packed_probability_pairs.shape[0],
+                    packed_probability_pairs.shape[1],
+                    packed_probability_pairs.shape[2],
+                )
+            )
+            assert metadata.chromosome_label == "1"
+            assert packed_probability_pairs.dtype == np.uint8
+            assert not chunk_stats.has_missing_values
+            np.testing.assert_array_equal(
+                chunk_stats.observation_count,
+                np.full(packed_probability_pairs.shape[0], 4),
+            )
+            self.free_buffers.append(packed_probability_pairs)
+
+    callback = RecordingPackedCallback()
+    engine = _core.Regenie2RunEngine(
+        str(TRUSTED_PACKED8_BGEN_PATH),
+        chunk_size=2,
+        variant_limit=4,
+        trusted_no_missing_diploid=True,
+    )
+    engine.validate_trusted_no_missing_diploid()
+
+    processed_chunk_count = engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+        np.arange(4, dtype=np.int64),
+        callback,
+    )
+
+    assert processed_chunk_count == 2
+    assert callback.chunk_shapes == [(0, 2, 4, 2), (2, 2, 4, 2)]
 
 
 def test_regenie2_run_engine_variant_major_chunks_support_untrusted_bgen() -> None:

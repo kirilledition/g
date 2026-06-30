@@ -6073,6 +6073,49 @@ def test_native_callback_runner_uses_scheduler_dosage_work_item_dispatch_plan() 
         callback.apply_dosage_work_item_dispatch_plan(typing.cast("typing.Any", error_plan))
 
 
+def test_native_callback_runner_applies_variant_major_batch_dispatch_without_replanning() -> None:
+    callback = ManualCallbackRunner()
+    first_metadata = build_native_metadata_for_chunk(chunk_identifier=0)
+    second_metadata = build_native_metadata_for_chunk(chunk_identifier=2)
+    chunk_stats = typing.cast("typing.Any", SimpleNamespace())
+    batch_work_item = callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem(
+        work_items=(
+            callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
+                metadata=first_metadata,
+                genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+                chunk_stats=chunk_stats,
+            ),
+            callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
+                metadata=second_metadata,
+                genotype_matrix_by_variant=np.full((2, 2), 2.0, dtype=np.float32),
+                chunk_stats=chunk_stats,
+            ),
+        )
+    )
+    dispatch_plan = DosageWorkItemDispatchPlanProbe(
+        dosage_work_item_kind="variant_major_dosage_batch",
+        should_process_sample_major_dosage=False,
+        should_process_variant_major_dosage=False,
+        should_process_variant_major_dosage_batch=True,
+        should_process_variant_major_packed8_probability_pair=False,
+        has_dispatch_error=False,
+        error_message=None,
+    )
+
+    def fail_dispatch_replan(
+        work_item: object,
+    ) -> DosageWorkItemDispatchPlanProbe:
+        del work_item
+        raise AssertionError("batch dispatch should not replan per chunk")
+
+    typing.cast("typing.Any", callback).plan_dosage_work_item_dispatch = fail_dispatch_replan
+
+    callback.process_dosage_work_item_with_dispatch_plan(batch_work_item, typing.cast("typing.Any", dispatch_plan))
+
+    assert callback.variant_major_metadata == [first_metadata, second_metadata]
+    assert callback.processed_chunk_count == 2
+
+
 def test_native_callback_runner_uses_scheduler_dosage_buffer_attempt_plans() -> None:
     callback = ManualCallbackRunner()
     scheduler_state = DosageBufferAttemptSchedulerProbe()

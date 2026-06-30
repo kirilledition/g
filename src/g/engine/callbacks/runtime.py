@@ -1249,8 +1249,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             if not isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
                 message = "Native dosage work dispatch plan selected a mismatched variant-major batch item."
                 raise RuntimeError(message)
-            for chunk_work_item in work_item.work_items:
-                self.process_dosage_work_item(chunk_work_item)
+            self.process_variant_major_dosage_batch_work_item(work_item)
             return
         if dispatch_plan.should_process_variant_major_packed8_probability_pair:
             if not isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
@@ -1283,6 +1282,19 @@ class NativeBgenCallbackRunner(abc.ABC):
             message = "Native dosage work dispatch plan did not select a processing path."
             raise RuntimeError(message)
         self.record_progress(work_item.metadata)
+
+    def process_variant_major_dosage_batch_work_item(
+        self,
+        work_item: PreprocessedVariantMajorDosageChunkBatchWorkItem,
+    ) -> None:
+        """Run one native-planned variant-major dosage batch work item."""
+        for chunk_work_item in work_item.work_items:
+            self.compute_preprocessed_variant_major_chunk(
+                variant_metadata=chunk_work_item.metadata,
+                genotype_matrix_by_variant=chunk_work_item.genotype_matrix_by_variant,
+                chunk_stats=chunk_work_item.chunk_stats,
+            )
+            self.record_progress(chunk_work_item.metadata)
 
     def plan_dosage_work_drain_completion(
         self,

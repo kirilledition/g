@@ -1265,6 +1265,12 @@ Remove Python as the chunk-level scheduler.
 - Dosage callback batch partitioning now uses an explicit `g-engine` chunk
   batch plan; the PyO3 BGEN delivery loop consumes native-planned batches
   instead of deciding flush boundaries itself.
+- Single-chunk dosage and packed8 PyO3 BGEN delivery now consume the same
+  native chunk-batch plan with an effective batch size of one, keeping callback
+  semantics unchanged while centralizing chunk partitioning in `g-engine`.
+- Native-planned variant-major dosage batch dispatch is now applied directly by
+  the callback consumer instead of re-entering per-chunk dispatch planning after
+  the batch path has already been selected.
 - Callback runtime resources now own callback telemetry availability for
   production binary-correction diagnostics and worker-finish summary planning,
   so Python no longer computes or passes that fixed run property on native
