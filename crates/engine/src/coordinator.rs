@@ -51,6 +51,26 @@ impl<'view> EngineRunInput<'view> {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineChromosomeRunInput<'view> {
+    pub group: PreparedGroupInput,
+    pub chromosome: &'view str,
+    pub predictions: PredictionView<'view>,
+    pub batches: Vec<GenotypeBatchView<'view>>,
+}
+
+impl<'view> EngineChromosomeRunInput<'view> {
+    #[must_use]
+    pub fn new(
+        group: PreparedGroupInput,
+        chromosome: &'view str,
+        predictions: PredictionView<'view>,
+        batches: Vec<GenotypeBatchView<'view>>,
+    ) -> Self {
+        Self { group, chromosome, predictions, batches }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct EngineRunReport {
     pub phase_history: Vec<RunPhase>,
@@ -61,6 +81,19 @@ impl EngineRunReport {
     #[must_use]
     pub fn new(phase_history: Vec<RunPhase>, result: AssociationBatchResult) -> Self {
         Self { phase_history, result }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EngineChromosomeRunReport {
+    pub phase_history: Vec<RunPhase>,
+    pub results: Vec<AssociationBatchResult>,
+}
+
+impl EngineChromosomeRunReport {
+    #[must_use]
+    pub fn new(phase_history: Vec<RunPhase>, results: Vec<AssociationBatchResult>) -> Self {
+        Self { phase_history, results }
     }
 }
 
@@ -199,6 +232,47 @@ where
     where
         Effects: EngineRunEffects,
     {
+        let chromosome_input =
+            EngineChromosomeRunInput::new(input.group.clone(), input.chromosome, input.predictions, vec![input.batch]);
+        let chromosome_report = self.run_chromosome_batches_with_effects(&chromosome_input, effects)?;
+        let mut results = chromosome_report.results.into_iter();
+        let Some(result) = results.next() else {
+            return Err(EngineError::Coordinator {
+                phase: RunPhase::Running,
+                message: "single-batch coordinator produced no batch result".to_string(),
+            });
+        };
+        Ok(EngineRunReport::new(chromosome_report.phase_history, result))
+    }
+
+    /// Execute one chromosome through a sequence of genotype batches.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a coordinator phase is interrupted, a phase-level
+    /// fault is injected, or the backend fails while preparing or computing.
+    pub fn run_chromosome_batches(
+        &mut self,
+        input: &EngineChromosomeRunInput<'_>,
+    ) -> Result<EngineChromosomeRunReport, EngineError> {
+        self.run_chromosome_batches_with_effects(input, &mut NoopEngineRunEffects)
+    }
+
+    /// Execute one chromosome through a sequence of genotype batches with
+    /// explicit native side-effect hooks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a phase transition, side-effect hook, or backend
+    /// operation fails.
+    pub fn run_chromosome_batches_with_effects<Effects>(
+        &mut self,
+        input: &EngineChromosomeRunInput<'_>,
+        effects: &mut Effects,
+    ) -> Result<EngineChromosomeRunReport, EngineError>
+    where
+        Effects: EngineRunEffects,
+    {
         self.enter_phase(RunPhase::InputsOpened, effects)?;
         effects.open_inputs().map_err(|source| {
             self.record_effect_error(RunPhase::InputsOpened, EngineEffectOperation::InputOpen, source, effects)
@@ -250,16 +324,20 @@ where
                 return Err(self.record_backend_error(RunPhase::Running, source));
             }
         };
-        let result = match self.backend.compute_batch(&chromosome_state, input.batch) {
-            Ok(result) => result,
-            Err(source) => {
-                Self::abort_outputs_after_failure(RunPhase::Running, effects);
-                return Err(self.record_backend_error(RunPhase::Running, source));
-            }
-        };
-        effects.write_batch_result(&result).map_err(|source| {
-            self.record_effect_error(RunPhase::Running, EngineEffectOperation::OutputWrite, source, effects)
-        })?;
+        let mut results = Vec::with_capacity(input.batches.len());
+        for batch in &input.batches {
+            let result = match self.backend.compute_batch(&chromosome_state, *batch) {
+                Ok(result) => result,
+                Err(source) => {
+                    Self::abort_outputs_after_failure(RunPhase::Running, effects);
+                    return Err(self.record_backend_error(RunPhase::Running, source));
+                }
+            };
+            effects.write_batch_result(&result).map_err(|source| {
+                self.record_effect_error(RunPhase::Running, EngineEffectOperation::OutputWrite, source, effects)
+            })?;
+            results.push(result);
+        }
 
         self.enter_phase(RunPhase::Draining, effects)?;
         effects.drain_writers().map_err(|source| {
@@ -271,7 +349,7 @@ where
         })?;
         self.enter_phase(RunPhase::Completed, effects)?;
 
-        Ok(EngineRunReport::new(self.phase_history.clone(), result))
+        Ok(EngineChromosomeRunReport::new(self.phase_history.clone(), results))
     }
 }
 
@@ -291,6 +369,15 @@ mod tests {
             "chr2",
             PredictionView::new("chr2", 5),
             GenotypeBatchView::new("chr2", 4, 3),
+        )
+    }
+
+    fn build_chromosome_input() -> EngineChromosomeRunInput<'static> {
+        EngineChromosomeRunInput::new(
+            PreparedGroupInput::new("binary".to_string(), 2),
+            "chr2",
+            PredictionView::new("chr2", 5),
+            vec![GenotypeBatchView::new("chr2", 4, 3), GenotypeBatchView::new("chr2", 2, 7)],
         )
     }
 
@@ -317,6 +404,23 @@ mod tests {
         assert_eq!(report.result.chromosome, "chr2");
         assert_eq!(report.result.variant_count, 4);
         assert_eq!(report.result.statistic_sum.to_bits(), 20.0_f64.to_bits());
+        assert_eq!(coordinator.phase(), RunPhase::Completed);
+    }
+
+    #[test]
+    fn coordinator_executes_chromosome_batches_with_fake_backend() {
+        let mut coordinator = EngineCoordinator::new(FakeBackend::succeed());
+        let mut effects = FakeEngineRunEffects::succeed();
+
+        let report = coordinator.run_chromosome_batches_with_effects(&build_chromosome_input(), &mut effects).unwrap();
+
+        assert_eq!(report.results.len(), 2);
+        assert_eq!(report.results[0].variant_count, 4);
+        assert_eq!(report.results[0].statistic_sum.to_bits(), 20.0_f64.to_bits());
+        assert_eq!(report.results[1].variant_count, 2);
+        assert_eq!(report.results[1].statistic_sum.to_bits(), 20.0_f64.to_bits());
+        assert_eq!(effects.state().output.written_results, report.results);
+        assert_eq!(effects.state().output.lifecycle_state, FakeOutputLifecycleState::Finalized);
         assert_eq!(coordinator.phase(), RunPhase::Completed);
     }
 

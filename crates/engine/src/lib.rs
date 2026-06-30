@@ -28,7 +28,10 @@ pub use callback_progress::{
 };
 pub use callback_queue::BoundedCallbackQueue;
 pub use callback_summary::{BinaryChunkDiagnosticsInput, BinaryCorrectionSummaryState};
-pub use coordinator::{EngineCoordinator, EngineError, EngineRunInput, EngineRunReport, InjectedCoordinatorFailure};
+pub use coordinator::{
+    EngineChromosomeRunInput, EngineChromosomeRunReport, EngineCoordinator, EngineError, EngineRunInput,
+    EngineRunReport, InjectedCoordinatorFailure,
+};
 pub use effects::{EngineEffectError, EngineEffectOperation, EngineRunEffects, NoopEngineRunEffects};
 pub use fake_backend::{FakeBackend, FakeBackendFailure, FakeChromosomeState, FakeGroupState};
 pub use fake_effects::{FakeEngineRunEffects, FakeOutputLifecycleState, FakeOutputState, FakeRunEffectState};

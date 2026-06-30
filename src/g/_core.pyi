@@ -314,6 +314,12 @@ class NativeAssociationEngineRunReport:
     @property
     def result(self) -> NativeAssociationBatchResult: ...
 
+class NativeAssociationChromosomeRunReport:
+    @property
+    def phase_history(self) -> list[str]: ...
+    @property
+    def results(self) -> list[NativeAssociationBatchResult]: ...
+
 class NativePythonAssociationBackend:
     def __init__(self, backend: object) -> None: ...
     def prepare_group(self, group_identifier: str, phenotype_count: int) -> object: ...
@@ -342,6 +348,15 @@ class NativePythonAssociationBackend:
         variant_count: int,
         variant_offset: int,
     ) -> NativeAssociationEngineRunReport: ...
+    def run_chromosome_batches(
+        self,
+        group_identifier: str,
+        phenotype_count: int,
+        chromosome: str,
+        prediction_chromosome: str,
+        prediction_row_count: int,
+        batches: typing.Sequence[NativeGenotypeBatchView],
+    ) -> NativeAssociationChromosomeRunReport: ...
 
 class VariantMetadata:
     variant_start_index: int
