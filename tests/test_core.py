@@ -535,6 +535,34 @@ def test_native_runtime_state_plans_rayon_thread_pool_configuration() -> None:
         runtime_state.plan_rayon_thread_pool_configuration(8)
 
 
+def test_native_runtime_state_initializes_logging_runtime_policy_preflight() -> None:
+    runtime_state = _core.NativeRuntimeState()
+    configured_payload = _core.build_logging_runtime_policy_payload(
+        log_filter="info",
+        log_file="/tmp/g-first.jsonl",
+        log_stderr=False,
+        log_queue_size=1024,
+        log_lossy=True,
+        include_source_location=False,
+        include_span_events=False,
+        trace_file=None,
+        trace_filter="info",
+        trace_event_cap=None,
+        telemetry_mode="off",
+        telemetry_stream_file=None,
+    )
+    requested_payload = {**configured_payload, "log_file": "/tmp/g-second.jsonl"}
+
+    runtime_state.record_logging_runtime_policy(configured_payload)
+
+    with pytest.raises(RuntimeError, match="Logging runtime policy is process-global"):
+        runtime_state.initialize_logging_runtime_policy(requested_payload)
+
+    invalid_payload = {**configured_payload, "log_queue_size": -1}
+    with pytest.raises(ValueError, match="log_queue_size must be non-negative"):
+        _core.NativeRuntimeState().initialize_logging_runtime_policy(invalid_payload)
+
+
 def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
     runtime_state = _core.NativeRuntimeState()
     jax_policy_payload: dict[str, object] = {

@@ -454,21 +454,4 @@ def initialize_logging(
 ) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""
     logging_policy = build_logging_runtime_policy(diagnostics_config, telemetry_paths)
-    require_compatible_logging_runtime_policy(logging_policy)
-    initialized_logging = _core.initialize_logging(
-        log_filter=logging_policy.log_filter,
-        log_file=None if logging_policy.log_file is None else str(logging_policy.log_file),
-        log_stderr=logging_policy.log_stderr,
-        log_queue_size=logging_policy.log_queue_size,
-        log_lossy=logging_policy.log_lossy,
-        include_source_location=logging_policy.include_source_location,
-        include_span_events=logging_policy.include_span_events,
-        trace_file=None if logging_policy.trace_file is None else str(logging_policy.trace_file),
-        trace_filter=logging_policy.trace_filter,
-        trace_event_cap=logging_policy.trace_event_cap,
-    )
-    if initialized_logging is False:
-        PROCESS_RUNTIME_STATE.record_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))
-        return
-    if initialized_logging is True:
-        PROCESS_RUNTIME_STATE.record_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))
+    PROCESS_RUNTIME_STATE.initialize_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))

@@ -1209,6 +1209,8 @@ Remove Python as the chunk-level scheduler.
   emitter instead of Python logging.
 - Native process runtime state now owns Rayon global thread-pool configuration,
   compatibility checks, error formatting, and configured-count recording.
+- Native process runtime state now owns logging sink initialization, logging
+  compatibility checks, and configured-policy recording for run startup.
 
 ### Tests
 

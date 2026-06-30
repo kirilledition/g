@@ -17,18 +17,6 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
 
-class NativeLoggingPolicyCore:
-    """Fake-core mixin that keeps logging policy resolution native."""
-
-    def build_logging_runtime_policy_payload(self, *arguments: object) -> dict[str, object]:
-        """Delegate logging policy payload construction to the native helper."""
-        native_build_logging_policy = typing.cast(
-            "typing.Callable[..., dict[str, object]]",
-            _core.build_logging_runtime_policy_payload,
-        )
-        return native_build_logging_policy(*arguments)
-
-
 def test_resolve_telemetry_paths_defaults_to_output_run_logs() -> None:
     regenie_config = config.RegenieConfig.from_options(
         {
@@ -131,9 +119,9 @@ def test_telemetry_stream_uses_log_file_or_trace_file_alias() -> None:
 def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **keyword_arguments: object) -> bool:
-            calls.append(keyword_arguments)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
             return True
 
     regenie_config = config.RegenieConfig.from_options(
@@ -156,9 +144,8 @@ def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path:
     with (
         unittest.mock.patch(
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
-            runner_runtime.build_process_runtime_state(None, None, None),
+            FakeProcessRuntimeState(),
         ),
-        unittest.mock.patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
 
@@ -170,9 +157,9 @@ def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path:
 def test_initialize_logging_uses_trace_filter_for_trace_unified_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **keyword_arguments: object) -> bool:
-            calls.append(keyword_arguments)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
             return True
 
     regenie_config = config.RegenieConfig.from_options(
@@ -196,9 +183,8 @@ def test_initialize_logging_uses_trace_filter_for_trace_unified_stream(tmp_path:
     with (
         unittest.mock.patch(
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
-            runner_runtime.build_process_runtime_state(None, None, None),
+            FakeProcessRuntimeState(),
         ),
-        unittest.mock.patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
 

@@ -26,18 +26,6 @@ from g.runner import metadata as runner_metadata
 from g.runner import runtime as runner_runtime
 
 
-class NativeLoggingPolicyCore:
-    """Fake-core mixin that keeps logging policy resolution native."""
-
-    def build_logging_runtime_policy_payload(self, *arguments: object) -> dict[str, object]:
-        """Delegate logging policy payload construction to the native helper."""
-        native_build_logging_policy = typing.cast(
-            "typing.Callable[..., dict[str, object]]",
-            _core.build_logging_runtime_policy_payload,
-        )
-        return native_build_logging_policy(*arguments)
-
-
 class NativeDiagnosticCore:
     """Fake-core mixin that accepts native diagnostic events."""
 
@@ -667,12 +655,13 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
     assert call_order == ["logging", "native", "jax", "plan", "pipeline"]
 
 
-def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
+def test_initialize_logging_passes_diagnostics_to_native_state(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **kwargs: object) -> None:
-            calls.append(kwargs)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
+            return True
 
     diagnostics_config = build_diagnostics_config(
         telemetry=types.TelemetryMode.TRACE,
@@ -688,10 +677,7 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
         trace_event_cap=2048,
     )
 
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths=None)
 
     assert calls == [
@@ -713,9 +699,9 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
 def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **kwargs: object) -> bool:
-            calls.append(kwargs)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
             return True
 
     stream_file = tmp_path / "logs" / "events.jsonl"
@@ -727,10 +713,7 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
         stage_timings_json=None,
     )
 
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["log_file"] is None
@@ -741,9 +724,9 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
 def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **kwargs: object) -> bool:
-            calls.append(kwargs)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
             return True
 
     stream_file = tmp_path / "logs" / "events.jsonl"
@@ -759,10 +742,7 @@ def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path)
         stage_timings_json=None,
     )
 
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["trace_event_cap"] == 17
@@ -771,9 +751,9 @@ def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path)
 def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **kwargs: object) -> bool:
-            calls.append(kwargs)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
             return True
 
     stream_file = tmp_path / "logs" / "events.jsonl"
@@ -785,10 +765,7 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
         stage_timings_json=None,
     )
 
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["log_file"] is None
@@ -797,11 +774,6 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
 
 
 def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path: Path) -> None:
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **kwargs: object) -> bool:
-            del kwargs
-            return False
-
     configured_policy = runner_runtime.LoggingRuntimePolicy(
         log_filter="info",
         log_file=tmp_path / "logs" / "first.jsonl",
@@ -818,7 +790,6 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(configured_policy, None)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Logging runtime policy is process-global"),
     ):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths=None)

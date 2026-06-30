@@ -11,6 +11,7 @@ use g_runtime::runtime_policy as native_runtime_policy;
 use g_runtime::runtime_state as native_runtime_state;
 
 use super::jax_runtime::NativeJaxRuntimeSetupSession;
+use super::logging;
 
 #[pyclass]
 pub(crate) struct NativeRuntimeCompatibilityToken {
@@ -210,6 +211,31 @@ impl NativeRuntimeState {
         Ok(())
     }
 
+    fn initialize_logging_runtime_policy(&self, py: Python<'_>, payload: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let logging_policy = parse_logging_runtime_policy_payload(payload)?;
+        let log_queue_size = non_negative_i64_to_usize(logging_policy.log_queue_size, "log_queue_size")?;
+        let trace_event_cap = optional_non_negative_i64_to_usize(logging_policy.trace_event_cap, "trace_event_cap")?;
+        let mut state = self.lock_state()?;
+        state
+            .require_compatible_logging_policy(&logging_policy)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let initialized_logging = logging::initialize_logging(
+            py,
+            Some(logging_policy.log_filter.clone()),
+            logging_policy.log_file.clone(),
+            logging_policy.log_stderr,
+            log_queue_size,
+            logging_policy.log_lossy,
+            logging_policy.include_source_location,
+            logging_policy.include_span_events,
+            logging_policy.trace_file.clone(),
+            Some(logging_policy.trace_filter.clone()),
+            trace_event_cap,
+        )?;
+        state.record_logging_policy(logging_policy);
+        Ok(initialized_logging)
+    }
+
     fn require_compatible_rayon_thread_count(&self, thread_count: Option<i64>) -> PyResult<()> {
         self.lock_state()?
             .require_compatible_rayon_thread_count(thread_count)
@@ -335,6 +361,14 @@ fn extract_optional_string(value: &Bound<'_, PyAny>) -> PyResult<Option<String>>
 
 fn extract_optional_i64(value: &Bound<'_, PyAny>) -> PyResult<Option<i64>> {
     if value.is_none() { Ok(None) } else { Ok(Some(value.extract::<i64>().map_err(PyValueError::new_err)?)) }
+}
+
+fn non_negative_i64_to_usize(value: i64, field_name: &str) -> PyResult<usize> {
+    usize::try_from(value).map_err(|_| PyValueError::new_err(format!("{field_name} must be non-negative.")))
+}
+
+fn optional_non_negative_i64_to_usize(value: Option<i64>, field_name: &str) -> PyResult<Option<usize>> {
+    value.map(|inner_value| non_negative_i64_to_usize(inner_value, field_name)).transpose()
 }
 
 fn parse_jax_runtime_policy_payload(
