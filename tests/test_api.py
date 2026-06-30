@@ -1090,18 +1090,34 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
             event_fields = {field.name: field.value for field in diagnostic_event.fields}
             recorded_events.append((diagnostic_event.event_name, telemetry_level, event_fields))
 
-    def plan_jax_runtime_diagnostic_record_payload(
+    class NativeDiagnosticRecordPlan:
+        logging_level_name: str
+        should_emit_telemetry: bool
+        telemetry_level: str
+
+        def __init__(
+            self,
+            *,
+            logging_level_name: str,
+            should_emit_telemetry: bool,
+            telemetry_level: str,
+        ) -> None:
+            self.logging_level_name = logging_level_name
+            self.should_emit_telemetry = should_emit_telemetry
+            self.telemetry_level = telemetry_level
+
+    def plan_jax_runtime_diagnostic_record(
         *,
         diagnostic_level: str,
         has_telemetry_session: bool,
-    ) -> dict[str, object]:
+    ) -> NativeDiagnosticRecordPlan:
         assert diagnostic_level == "info"
         assert has_telemetry_session is True
-        return {
-            "logging_level_name": "ERROR",
-            "should_emit_telemetry": True,
-            "telemetry_level": "trace",
-        }
+        return NativeDiagnosticRecordPlan(
+            logging_level_name="ERROR",
+            should_emit_telemetry=True,
+            telemetry_level="trace",
+        )
 
     diagnostic_event = jax_runtime_models.JaxRuntimeDiagnosticEvent(
         event_name="jax_native_plan_test",
@@ -1113,8 +1129,8 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
 
     with (
         patch(
-            "g.runner.runtime._core.plan_jax_runtime_diagnostic_record_payload",
-            side_effect=plan_jax_runtime_diagnostic_record_payload,
+            "g.runner.runtime._core.plan_jax_runtime_diagnostic_record",
+            side_effect=plan_jax_runtime_diagnostic_record,
         ),
         patch("g.runner.runtime._core.emit_diagnostic_event") as emit_diagnostic_event_mock,
     ):

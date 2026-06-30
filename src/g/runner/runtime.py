@@ -164,22 +164,22 @@ def record_jax_runtime_diagnostic_event(
 
     """
     event_fields = {diagnostic_field.name: diagnostic_field.value for diagnostic_field in diagnostic_event.fields}
-    record_plan = _core.plan_jax_runtime_diagnostic_record_payload(
+    record_plan = _core.plan_jax_runtime_diagnostic_record(
         diagnostic_level=diagnostic_event.level.value,
         has_telemetry_session=telemetry_session is not None,
     )
     _core.emit_diagnostic_event(
-        str(record_plan["logging_level_name"]).lower(),
+        record_plan.logging_level_name.lower(),
         diagnostic_event.event_name,
         diagnostic_event.message,
         json.dumps(event_fields, sort_keys=True, default=str),
     )
-    if not typing.cast("bool", record_plan["should_emit_telemetry"]):
+    if not record_plan.should_emit_telemetry:
         return
     active_telemetry_session = typing.cast("telemetry.TelemetrySession", telemetry_session)
     active_telemetry_session.log_jax_runtime_diagnostic_event(
         diagnostic_event,
-        telemetry_level=str(record_plan["telemetry_level"]),
+        telemetry_level=record_plan.telemetry_level,
     )
 
 

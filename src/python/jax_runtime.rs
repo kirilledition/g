@@ -10,6 +10,35 @@ use pyo3::types::{PyAny, PyDict, PyTuple};
 use g_runtime::jax_runtime as native_jax_runtime;
 
 #[pyclass]
+pub(crate) struct NativeJaxRuntimeDiagnosticRecordPlan {
+    plan: native_jax_runtime::JaxRuntimeDiagnosticRecordPlan,
+}
+
+#[pymethods]
+impl NativeJaxRuntimeDiagnosticRecordPlan {
+    #[getter]
+    fn logging_level_name(&self) -> &str {
+        &self.plan.logging_level_name
+    }
+
+    #[getter]
+    fn should_emit_telemetry(&self) -> bool {
+        self.plan.should_emit_telemetry
+    }
+
+    #[getter]
+    fn telemetry_level(&self) -> &str {
+        &self.plan.telemetry_level
+    }
+}
+
+impl NativeJaxRuntimeDiagnosticRecordPlan {
+    fn from_plan(plan: native_jax_runtime::JaxRuntimeDiagnosticRecordPlan) -> Self {
+        Self { plan }
+    }
+}
+
+#[pyclass]
 pub(crate) struct NativeJaxRuntimeSetupSession {
     session: Mutex<native_jax_runtime::JaxRuntimeSetupSession>,
 }
@@ -129,6 +158,18 @@ pub(crate) fn plan_jax_runtime_diagnostic_record_payload<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let plan = native_jax_runtime::plan_jax_runtime_diagnostic_record(&diagnostic_level, has_telemetry_session);
     jax_runtime_diagnostic_record_plan_to_dict(py, &plan)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_jax_runtime_diagnostic_record(
+    diagnostic_level: String,
+    has_telemetry_session: bool,
+) -> NativeJaxRuntimeDiagnosticRecordPlan {
+    NativeJaxRuntimeDiagnosticRecordPlan::from_plan(native_jax_runtime::plan_jax_runtime_diagnostic_record(
+        &diagnostic_level,
+        has_telemetry_session,
+    ))
 }
 
 #[pyfunction]

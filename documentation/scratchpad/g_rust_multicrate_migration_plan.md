@@ -1457,6 +1457,10 @@ Move to Rust:
 
 Python/JAX should emit typed diagnostic events through a native handle.
 
+- JAX runtime diagnostic record planning now returns a typed native PyO3 plan
+  on the production runner path, while the legacy dict payload helper remains
+  for compatibility tests and older adapters.
+
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 
 ### Tests

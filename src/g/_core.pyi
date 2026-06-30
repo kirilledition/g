@@ -2453,6 +2453,11 @@ class NativeRayonThreadPoolConfigurationPlan:
 class NativeJaxRuntimeSetupLifecyclePlan:
     should_configure: bool
 
+class NativeJaxRuntimeDiagnosticRecordPlan:
+    logging_level_name: str
+    should_emit_telemetry: bool
+    telemetry_level: str
+
 class NativeJaxRuntimeSetupSession:
     def __init__(self, setup_payload: dict[str, object], should_configure: bool) -> None: ...
     @property
@@ -2967,6 +2972,10 @@ def plan_jax_runtime_diagnostic_record_payload(
     diagnostic_level: str,
     has_telemetry_session: bool,
 ) -> dict[str, object]: ...
+def plan_jax_runtime_diagnostic_record(
+    diagnostic_level: str,
+    has_telemetry_session: bool,
+) -> NativeJaxRuntimeDiagnosticRecordPlan: ...
 def nvidia_driver_files_are_visible_value(
     control_device_path: str,
     uvm_device_path: str,

@@ -86,9 +86,9 @@ use host_policy::{
     resolve_association_mode_value,
 };
 use jax_runtime::{
-    NativeJaxRuntimeSetupSession, build_jax_runtime_setup_diagnostic_payloads,
+    NativeJaxRuntimeDiagnosticRecordPlan, NativeJaxRuntimeSetupSession, build_jax_runtime_setup_diagnostic_payloads,
     complete_jax_runtime_setup_validation_payload, nvidia_driver_files_are_visible_value,
-    plan_jax_gpu_validation_payload, plan_jax_runtime_config_update_payloads,
+    plan_jax_gpu_validation_payload, plan_jax_runtime_config_update_payloads, plan_jax_runtime_diagnostic_record,
     plan_jax_runtime_diagnostic_record_payload, plan_jax_runtime_setup_side_effects_payload,
     resolve_jax_runtime_setup_payload,
 };
@@ -1943,6 +1943,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePipelineOutputInitialization>()?;
     module.add_class::<NativePipelineOutputPreparationBatch>()?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
+    module.add_class::<NativeJaxRuntimeDiagnosticRecordPlan>()?;
     module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
     module.add_class::<NativeJaxRuntimeSetupSession>()?;
     module.add_class::<NativeRayonThreadPoolConfigurationPlan>()?;
@@ -2021,6 +2022,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_jax_runtime_setup_diagnostic_payloads, module)?)?;
     module.add_function(wrap_pyfunction!(build_jax_runtime_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_config_update_payloads, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_setup_side_effects_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;

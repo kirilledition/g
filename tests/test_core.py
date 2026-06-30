@@ -1451,6 +1451,14 @@ def test_native_jax_runtime_setup_validation_completion() -> None:
 
 
 def test_native_jax_runtime_diagnostic_record_plan() -> None:
+    typed_info_plan = _core.plan_jax_runtime_diagnostic_record(
+        diagnostic_level="info",
+        has_telemetry_session=True,
+    )
+    typed_error_plan = _core.plan_jax_runtime_diagnostic_record(
+        diagnostic_level="error",
+        has_telemetry_session=False,
+    )
     info_plan = _core.plan_jax_runtime_diagnostic_record_payload(
         diagnostic_level="info",
         has_telemetry_session=True,
@@ -1460,6 +1468,12 @@ def test_native_jax_runtime_diagnostic_record_plan() -> None:
         has_telemetry_session=False,
     )
 
+    assert typed_info_plan.logging_level_name == "INFO"
+    assert typed_info_plan.should_emit_telemetry is True
+    assert typed_info_plan.telemetry_level == "info"
+    assert typed_error_plan.logging_level_name == "ERROR"
+    assert typed_error_plan.should_emit_telemetry is False
+    assert typed_error_plan.telemetry_level == "error"
     assert info_plan == {
         "logging_level_name": "INFO",
         "should_emit_telemetry": True,
