@@ -2678,6 +2678,7 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
         dosage_item
     )
     assert dosage_optional_put_result.observation_plan is None
+    assert dosage_optional_put_result.stage_backpressure_observation is None
     assert dosage_optional_put_result.should_retry_put is False
     assert runtime_resources.get_dosage_work_item().item is dosage_item
     dosage_combined_observation = runtime_resources.put_dosage_work_item_with_backpressure_observation(dosage_item)
@@ -2760,6 +2761,7 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
         result_item
     )
     assert result_optional_put_result.observation_plan is None
+    assert result_optional_put_result.stage_backpressure_observation is None
     assert result_optional_put_result.should_retry_put is False
     assert runtime_resources.get_result_write_item().item is result_item
     result_combined_observation = runtime_resources.put_result_write_item_with_backpressure_observation(result_item)
@@ -2824,10 +2826,19 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
         dosage_item
     )
     observed_dosage_put_plan = observed_dosage_put_result.observation_plan
+    observed_dosage_put_stage_observation = observed_dosage_put_result.stage_backpressure_observation
     assert observed_dosage_put_plan is not None
     assert observed_dosage_put_plan.queue_name == "dosage_queue"
     assert observed_dosage_put_plan.operation_name == "put"
     assert observed_dosage_put_plan.blocked is False
+    assert observed_dosage_put_stage_observation is not None
+    assert observed_dosage_put_stage_observation.queue_name == "dosage_queue"
+    assert observed_dosage_put_stage_observation.operation_name == "put"
+    assert observed_dosage_put_stage_observation.stage_name == "callback_queue_put"
+    assert observed_dosage_put_stage_observation.queue_depth == 1
+    assert observed_dosage_put_stage_observation.queue_capacity == 1
+    assert observed_dosage_put_stage_observation.elapsed_seconds >= 0.0
+    assert observed_dosage_put_stage_observation.blocked_seconds == 0.0
     assert observed_dosage_put_result.should_retry_put is False
     observed_dosage_get_result = (
         observed_runtime_resources.get_dosage_work_item_with_optional_observation_and_drain_completion()
@@ -2842,10 +2853,19 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
         observed_runtime_resources.put_result_write_item_with_optional_backpressure_observation(result_item)
     )
     observed_result_put_plan = observed_result_put_result.observation_plan
+    observed_result_put_stage_observation = observed_result_put_result.stage_backpressure_observation
     assert observed_result_put_plan is not None
     assert observed_result_put_plan.queue_name == "result_queue"
     assert observed_result_put_plan.operation_name == "put"
     assert observed_result_put_plan.blocked is False
+    assert observed_result_put_stage_observation is not None
+    assert observed_result_put_stage_observation.queue_name == "result_queue"
+    assert observed_result_put_stage_observation.operation_name == "put"
+    assert observed_result_put_stage_observation.stage_name == "result_queue_put"
+    assert observed_result_put_stage_observation.queue_depth == 1
+    assert observed_result_put_stage_observation.queue_capacity == 1
+    assert observed_result_put_stage_observation.elapsed_seconds >= 0.0
+    assert observed_result_put_stage_observation.blocked_seconds == 0.0
     assert observed_result_put_result.should_retry_put is False
     observed_result_get_result = (
         observed_runtime_resources.get_result_write_item_with_optional_observation_and_drain_completion()
@@ -4866,9 +4886,16 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
     second_metadata = build_native_metadata_for_chunk(chunk_identifier=2)
     callback = BatchedCallbackRunner()
     try:
-        with patch(
-            "g.engine.callbacks.runtime._core.plan_callback_queue_stage_backpressure_observation",
-            side_effect=AssertionError("runner should use scheduler queue stage backpressure planner"),
+        with (
+            patch(
+                "g.engine.callbacks.runtime._core.plan_callback_queue_stage_backpressure_observation",
+                side_effect=AssertionError("runner should use scheduler queue stage backpressure planner"),
+            ),
+            patch.object(
+                callback_runtime.NativeBgenCallbackRunner,
+                "record_bounded_resource_stage_duration",
+                side_effect=AssertionError("production runner should emit native queue put stage observations"),
+            ),
         ):
             callback.compute_preprocessed_variant_major_dosage_chunk_batch(
                 metadata_batch=(first_metadata, second_metadata),
@@ -4881,7 +4908,7 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
                     typing.cast("typing.Any", SimpleNamespace()),
                 ),
             )
-            callback.finish()
+        callback.finish()
     finally:
         callback.abort()
 

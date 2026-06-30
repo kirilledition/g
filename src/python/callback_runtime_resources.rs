@@ -132,6 +132,7 @@ pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
 pub(crate) struct NativeCallbackQueuePutResult {
     should_retry_put: bool,
     observation_plan: Option<Py<NativeCallbackQueuePutObservationPlan>>,
+    stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
 }
 
 #[pyclass]
@@ -1397,14 +1398,24 @@ impl NativeCallbackRuntimeResources {
         py: Python<'_>,
         work_item: &Bound<'_, PyAny>,
     ) -> PyResult<NativeCallbackQueuePutResult> {
+        let put_start_time = Instant::now();
         let queued = self.try_put_dosage_work_item_with_backpressure_timeout(py, work_item)?;
-        let observation_plan = if self.has_stage_timing_recorder {
+        let elapsed_seconds = put_start_time.elapsed().as_secs_f64();
+        let (observation_plan, stage_backpressure_observation) = if self.has_stage_timing_recorder {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            Some(scheduler_state.plan_dosage_queue_put_observation_value(queued))
+            let observation_plan = scheduler_state.plan_dosage_queue_put_observation_value(queued);
+            let stage_backpressure_observation = scheduler_state
+                .plan_current_queue_stage_backpressure_observation_value(
+                    observation_plan.queue_name_value(),
+                    observation_plan.operation_name_value(),
+                    elapsed_seconds,
+                    observation_plan.blocked_value(),
+                )?;
+            (Some(observation_plan), Some(stage_backpressure_observation))
         } else {
-            None
+            (None, None)
         };
-        NativeCallbackQueuePutResult::from_put(py, !queued, observation_plan)
+        NativeCallbackQueuePutResult::from_put(py, !queued, observation_plan, stage_backpressure_observation)
     }
 
     fn get_dosage_work_item(&self, py: Python<'_>) -> PyResult<NativeCallbackObjectQueueGetResult> {
@@ -1868,14 +1879,24 @@ impl NativeCallbackRuntimeResources {
         py: Python<'_>,
         work_item: &Bound<'_, PyAny>,
     ) -> PyResult<NativeCallbackQueuePutResult> {
+        let put_start_time = Instant::now();
         let queued = self.try_put_result_write_item_with_backpressure_timeout(py, work_item)?;
-        let observation_plan = if self.has_stage_timing_recorder {
+        let elapsed_seconds = put_start_time.elapsed().as_secs_f64();
+        let (observation_plan, stage_backpressure_observation) = if self.has_stage_timing_recorder {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            Some(scheduler_state.plan_result_queue_put_observation_value(queued))
+            let observation_plan = scheduler_state.plan_result_queue_put_observation_value(queued);
+            let stage_backpressure_observation = scheduler_state
+                .plan_current_queue_stage_backpressure_observation_value(
+                    observation_plan.queue_name_value(),
+                    observation_plan.operation_name_value(),
+                    elapsed_seconds,
+                    observation_plan.blocked_value(),
+                )?;
+            (Some(observation_plan), Some(stage_backpressure_observation))
         } else {
-            None
+            (None, None)
         };
-        NativeCallbackQueuePutResult::from_put(py, !queued, observation_plan)
+        NativeCallbackQueuePutResult::from_put(py, !queued, observation_plan, stage_backpressure_observation)
     }
 
     fn get_result_write_item(&self, py: Python<'_>) -> PyResult<NativeCallbackObjectQueueGetResult> {
@@ -2331,8 +2352,15 @@ impl NativeCallbackQueuePutResult {
         py: Python<'_>,
         should_retry_put: bool,
         observation_plan: Option<NativeCallbackQueuePutObservationPlan>,
+        stage_backpressure_observation: Option<NativeCallbackQueueStageBackpressureObservation>,
     ) -> PyResult<Self> {
-        Ok(Self { should_retry_put, observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()? })
+        Ok(Self {
+            should_retry_put,
+            observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
+            stage_backpressure_observation: stage_backpressure_observation
+                .map(|observation| Py::new(py, observation))
+                .transpose()?,
+        })
     }
 }
 
@@ -2346,6 +2374,14 @@ impl NativeCallbackQueuePutResult {
     #[getter]
     fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeCallbackQueuePutObservationPlan>> {
         self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+
+    #[getter]
+    fn stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueStageBackpressureObservation>> {
+        self.stage_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
     }
 }
 

@@ -1081,6 +1081,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production timed dosage/result queue
   producer put attempts and observation selection in one native call while
   Python keeps timing measurement and emission.
+- Callback runtime resources now return typed dosage/result queue producer put
+  stage/backpressure observations from native put attempts, so production
+  Python no longer derives put telemetry from queue put plans.
 - Callback runtime resources now own production dosage/result queue producer
   optional observation selection so timing-disabled puts skip observation-plan
   construction.

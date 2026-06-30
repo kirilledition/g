@@ -1787,20 +1787,12 @@ class NativeBgenCallbackRunner(abc.ABC):
                     return
             while True:
                 self.raise_worker_error_if_present()
-                put_start_time = time.perf_counter()
                 put_result = (
                     self.callback_runtime_resources.put_dosage_work_item_with_optional_backpressure_observation(
                         work_item
                     )
                 )
-                put_observation_plan = put_result.observation_plan
-                if put_observation_plan is not None:
-                    self.record_bounded_resource_stage_duration(
-                        resource_name=put_observation_plan.queue_name,
-                        operation_name=put_observation_plan.operation_name,
-                        start_time=put_start_time,
-                        blocked=put_observation_plan.blocked,
-                    )
+                self.record_queue_stage_backpressure_observation(put_result.stage_backpressure_observation)
                 if put_result.should_retry_put:
                     continue
                 return
@@ -1954,20 +1946,12 @@ class NativeBgenCallbackRunner(abc.ABC):
                     return
             while True:
                 self.raise_worker_error_if_present()
-                put_start_time = time.perf_counter()
                 put_result = (
                     self.callback_runtime_resources.put_result_write_item_with_optional_backpressure_observation(
                         work_item
                     )
                 )
-                put_observation_plan = put_result.observation_plan
-                if put_observation_plan is not None:
-                    self.record_bounded_resource_stage_duration(
-                        resource_name=put_observation_plan.queue_name,
-                        operation_name=put_observation_plan.operation_name,
-                        start_time=put_start_time,
-                        blocked=put_observation_plan.blocked,
-                    )
+                self.record_queue_stage_backpressure_observation(put_result.stage_backpressure_observation)
                 if put_result.should_retry_put:
                     continue
                 return
