@@ -353,6 +353,69 @@ pub fn build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload<
 }
 
 #[pyfunction]
+pub fn build_native_dispatch_callback_drain_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_dispatch_callback_drain_started_diagnostic_payload();
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_dispatch_writer_session_finish_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_dispatch_writer_session_finish_started_diagnostic_payload();
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_dispatch_writer_sessions_finish_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    requested_thread_count: i64,
+    writer_session_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
+        requested_thread_count,
+        writer_session_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    signal_exit_code: i64,
+    signal_name: &str,
+    signal_number: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(
+        signal_exit_code,
+        signal_name,
+        signal_number,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload<'py>(
+    py: Python<'py>,
+    requested_thread_count: i64,
+    signal_exit_code: i64,
+    signal_name: &str,
+    signal_number: i64,
+    writer_session_count: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
+        requested_thread_count,
+        signal_exit_code,
+        signal_name,
+        signal_number,
+        writer_session_count,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn render_run_completed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_completed_event_from_py(event)?;
     PyTuple::new(py, native_run_events::render_run_completed_lines(&event_payload))

@@ -506,6 +506,70 @@ def build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
     )
 
 
+def build_native_dispatch_callback_drain_started_diagnostic_payload() -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for native callback drain start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_callback_drain_started_diagnostic_payload()
+    )
+
+
+def build_native_dispatch_writer_session_finish_started_diagnostic_payload() -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for single writer finish start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_writer_session_finish_started_diagnostic_payload()
+    )
+
+
+def build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
+    *,
+    requested_thread_count: int,
+    writer_session_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for writer-session finish start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
+            requested_thread_count,
+            writer_session_count,
+        )
+    )
+
+
+def build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(
+    *,
+    signal_exit_code: int,
+    signal_name: str,
+    signal_number: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for interrupted single-writer flush start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(
+            signal_exit_code,
+            signal_name,
+            signal_number,
+        )
+    )
+
+
+def build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
+    *,
+    requested_thread_count: int,
+    signal_exit_code: int,
+    signal_name: str,
+    signal_number: int,
+    writer_session_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for interrupted writer-session flush start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
+            requested_thread_count,
+            signal_exit_code,
+            signal_name,
+            signal_number,
+            writer_session_count,
+        )
+    )
+
+
 def diagnostic_event_payload_from_native(payload: object) -> dict[str, typing.Any]:
     """Adapt a native diagnostic event payload to a mutable Python dictionary."""
     event_payload = native_mapping_payload(payload)

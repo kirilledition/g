@@ -44,6 +44,20 @@ pub const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_EVENT_NAME:
     "native_dispatch_trusted_bgen_validation_started";
 pub const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Validating trusted no-missing diploid BGEN mode.";
+pub const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_callback_drain_started";
+pub const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Draining native callback worker queues.";
+pub const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "native_dispatch_writer_session_finish_started";
+pub const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+    "Finishing output writer and optional Parquet finalization.";
+pub const NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "native_dispatch_writer_sessions_finish_started";
+pub const NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+    "Finishing output writer(s) and optional Parquet finalization.";
+pub const NATIVE_DISPATCH_WRITER_SESSION_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "native_dispatch_writer_session_interrupted_flush_started";
+pub const NATIVE_DISPATCH_WRITER_SESSIONS_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "native_dispatch_writer_sessions_interrupted_flush_started";
 pub const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME: &str = "native_runtime_knobs_configured";
 pub const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_MESSAGE: &str = "Configuring native runtime knobs.";
 pub const PREFLIGHT_WARNING_DIAGNOSTIC_EVENT_NAME: &str = "preflight_warning";
@@ -716,6 +730,82 @@ pub fn build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
 }
 
 #[must_use]
+pub fn build_native_dispatch_callback_drain_started_diagnostic_payload() -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![],
+    }
+}
+
+#[must_use]
+pub fn build_native_dispatch_writer_session_finish_started_diagnostic_payload() -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![],
+    }
+}
+
+#[must_use]
+pub fn build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
+    requested_thread_count: i64,
+    writer_session_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            integer_diagnostic_field("requested_thread_count", requested_thread_count),
+            integer_diagnostic_field("writer_session_count", writer_session_count),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(
+    signal_exit_code: i64,
+    signal_name: &str,
+    signal_number: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: NATIVE_DISPATCH_WRITER_SESSION_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Flushing interrupted output writer after {signal_name}."),
+        fields: vec![
+            integer_diagnostic_field("signal_exit_code", signal_exit_code),
+            text_diagnostic_field("signal_name", signal_name),
+            integer_diagnostic_field("signal_number", signal_number),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
+    requested_thread_count: i64,
+    signal_exit_code: i64,
+    signal_name: &str,
+    signal_number: i64,
+    writer_session_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: NATIVE_DISPATCH_WRITER_SESSIONS_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Flushing interrupted output writer(s) after {signal_name}."),
+        fields: vec![
+            integer_diagnostic_field("requested_thread_count", requested_thread_count),
+            integer_diagnostic_field("signal_exit_code", signal_exit_code),
+            text_diagnostic_field("signal_name", signal_name),
+            integer_diagnostic_field("signal_number", signal_number),
+            integer_diagnostic_field("writer_session_count", writer_session_count),
+        ],
+    }
+}
+
+#[must_use]
 pub fn build_run_started_telemetry_fields(
     association_mode: &str,
     trait_type: &str,
@@ -1286,6 +1376,27 @@ mod tests {
         assert_eq!(constructing_payload.fields[3].value, RunDiagnosticFieldValue::OptionalInteger(Some(4096)));
         assert_eq!(validation_payload.event_name, "native_dispatch_trusted_bgen_validation_started");
         assert_eq!(validation_payload.fields[1].value, RunDiagnosticFieldValue::Text("cache".to_string()));
+    }
+
+    #[test]
+    fn builds_native_dispatch_writer_diagnostic_payloads() {
+        let callback_payload = build_native_dispatch_callback_drain_started_diagnostic_payload();
+        let writer_payload = build_native_dispatch_writer_session_finish_started_diagnostic_payload();
+        let writers_payload = build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(2, 3);
+        let interrupted_payload =
+            build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(130, "SIGINT", 2);
+        let interrupted_writers_payload =
+            build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
+                4, 143, "SIGTERM", 15, 5,
+            );
+
+        assert_eq!(callback_payload.event_name, "native_dispatch_callback_drain_started");
+        assert_eq!(callback_payload.fields, Vec::new());
+        assert_eq!(writer_payload.event_name, "native_dispatch_writer_session_finish_started");
+        assert_eq!(writers_payload.fields[1].value, RunDiagnosticFieldValue::Integer(3));
+        assert_eq!(interrupted_payload.message, "Flushing interrupted output writer after SIGINT.");
+        assert_eq!(interrupted_writers_payload.event_name, "native_dispatch_writer_sessions_interrupted_flush_started");
+        assert_eq!(interrupted_writers_payload.fields[4].value, RunDiagnosticFieldValue::Integer(5));
     }
 
     #[test]

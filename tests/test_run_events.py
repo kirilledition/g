@@ -503,6 +503,65 @@ def test_native_dispatch_engine_diagnostic_payloads_use_native_builders() -> Non
     }
 
 
+def test_native_dispatch_writer_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_native_dispatch_callback_drain_started_diagnostic_payload() == {
+        "level": "debug",
+        "event_name": "native_dispatch_callback_drain_started",
+        "message": "Draining native callback worker queues.",
+        "fields": {},
+    }
+    assert run_events.build_native_dispatch_writer_session_finish_started_diagnostic_payload() == {
+        "level": "debug",
+        "event_name": "native_dispatch_writer_session_finish_started",
+        "message": "Finishing output writer and optional Parquet finalization.",
+        "fields": {},
+    }
+    assert run_events.build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
+        requested_thread_count=2,
+        writer_session_count=3,
+    ) == {
+        "level": "debug",
+        "event_name": "native_dispatch_writer_sessions_finish_started",
+        "message": "Finishing output writer(s) and optional Parquet finalization.",
+        "fields": {
+            "requested_thread_count": 2,
+            "writer_session_count": 3,
+        },
+    }
+    assert run_events.build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(
+        signal_exit_code=130,
+        signal_name="SIGINT",
+        signal_number=2,
+    ) == {
+        "level": "info",
+        "event_name": "native_dispatch_writer_session_interrupted_flush_started",
+        "message": "Flushing interrupted output writer after SIGINT.",
+        "fields": {
+            "signal_exit_code": 130,
+            "signal_name": "SIGINT",
+            "signal_number": 2,
+        },
+    }
+    assert run_events.build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
+        requested_thread_count=4,
+        signal_exit_code=143,
+        signal_name="SIGTERM",
+        signal_number=15,
+        writer_session_count=5,
+    ) == {
+        "level": "info",
+        "event_name": "native_dispatch_writer_sessions_interrupted_flush_started",
+        "message": "Flushing interrupted output writer(s) after SIGTERM.",
+        "fields": {
+            "requested_thread_count": 4,
+            "signal_exit_code": 143,
+            "signal_name": "SIGTERM",
+            "signal_number": 15,
+            "writer_session_count": 5,
+        },
+    }
+
+
 def test_run_completed_rendering_uses_native_renderer() -> None:
     event = run_events.RunCompletedEvent(
         run_id=None,
