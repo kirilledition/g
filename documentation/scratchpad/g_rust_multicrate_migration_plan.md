@@ -1472,6 +1472,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Telemetry JSONL serialization now goes through `g-runtime`, so Python
   adapters no longer depend on Python's `json.dumps` for telemetry file writes
   or diagnostic field JSON.
+- Telemetry close-event names, levels, and writer-counter fields now come from
+  a native close-event payload instead of being assembled in the PyO3 logging
+  adapter.
 - The default graceful-shutdown signal set now comes from `g-runtime`, so the
   Python shutdown adapter no longer owns the CLI default signal policy.
 - Public Python API entrypoints now document and test that they do not install

@@ -185,11 +185,12 @@ pub use telemetry_policy::{
     paths_refer_to_same_file, resolve_output_run_root, resolve_telemetry_paths, resolve_telemetry_stream_file,
 };
 pub use telemetry_session::{
-    TelemetryCapAction, TelemetryCloseMetadataPayload, TelemetryClosePlan, TelemetryEventCapState,
-    TelemetryEventEmissionPlan, TelemetryEventEnvelope, TelemetryProgressEmissionPlan, TelemetryProgressThrottleState,
-    TelemetryWriterCounterSnapshot, build_telemetry_close_metadata, build_telemetry_event_envelope, generate_run_id,
-    plan_telemetry_close, plan_telemetry_event_emission, plan_telemetry_progress_emission,
-    serialize_telemetry_payload_json_line, serialize_telemetry_payload_json_text,
+    TelemetryCapAction, TelemetryCloseEventPayload, TelemetryCloseMetadataPayload, TelemetryClosePlan,
+    TelemetryEventCapState, TelemetryEventEmissionPlan, TelemetryEventEnvelope, TelemetryProgressEmissionPlan,
+    TelemetryProgressThrottleState, TelemetryWriterCounterSnapshot, build_telemetry_close_event_payload,
+    build_telemetry_close_metadata, build_telemetry_event_envelope, generate_run_id, plan_telemetry_close,
+    plan_telemetry_event_emission, plan_telemetry_progress_emission, serialize_telemetry_payload_json_line,
+    serialize_telemetry_payload_json_text,
 };
 pub use timing::{
     ChunkStageSummary, ChunkStageTiming, FinalTimingOutputsWriteResultPayload,

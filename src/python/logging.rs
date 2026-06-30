@@ -885,22 +885,7 @@ impl NativeTelemetrySession {
     }
 
     pub fn counters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let writer_guard =
-            self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
-        if let Some(writer) = writer_guard.as_ref() {
-            return telemetry_writer_counter_snapshot_to_py_dict(py, &writer.counter_snapshot(None));
-        }
-        let last_counter_snapshot = self
-            .last_counter_snapshot
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
-        let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
-            return telemetry_writer_counter_snapshot_to_py_dict(
-                py,
-                &native_telemetry_session::TelemetryWriterCounterSnapshot::empty(),
-            );
-        };
-        telemetry_writer_counter_snapshot_to_py_dict(py, counter_snapshot)
+        telemetry_writer_counter_snapshot_to_py_dict(py, &self.counter_snapshot()?)
     }
 
     pub fn close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
@@ -934,18 +919,7 @@ impl NativeTelemetrySession {
         process_identifier: u32,
         thread_name: &str,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let fields = PyDict::new(py);
-        fields.set_item("writer_counters", self.counters(py)?)?;
-        let _ = self.emit_event(
-            py,
-            run_id,
-            "telemetry_session_closed",
-            "debug",
-            timestamp,
-            process_identifier,
-            thread_name,
-            &fields,
-        );
+        let _ = self.emit_close_event(py, run_id, timestamp, process_identifier, thread_name);
         self.finish(py)
     }
 
@@ -957,25 +931,12 @@ impl NativeTelemetrySession {
         process_identifier: u32,
         thread_name: &str,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let fields = PyDict::new(py);
-        fields.set_item("writer_counters", self.counters(py)?)?;
-        let _ = self.emit_event(
-            py,
-            run_id,
-            "telemetry_session_closed",
-            "debug",
-            timestamp,
-            process_identifier,
-            thread_name,
-            &fields,
-        );
+        let _ = self.emit_close_event(py, run_id, timestamp, process_identifier, thread_name);
         self.finish_close_metadata(py)
     }
 
     pub fn finish_with_current_close_event<'py>(&self, py: Python<'py>, run_id: &str) -> PyResult<Bound<'py, PyDict>> {
-        let fields = PyDict::new(py);
-        fields.set_item("writer_counters", self.counters(py)?)?;
-        let _ = self.emit_current_event(py, run_id, "telemetry_session_closed", "debug", &fields);
+        let _ = self.emit_current_close_event(py, run_id);
         self.finish(py)
     }
 
@@ -984,14 +945,58 @@ impl NativeTelemetrySession {
         py: Python<'py>,
         run_id: &str,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let fields = PyDict::new(py);
-        fields.set_item("writer_counters", self.counters(py)?)?;
-        let _ = self.emit_current_event(py, run_id, "telemetry_session_closed", "debug", &fields);
+        let _ = self.emit_current_close_event(py, run_id);
         self.finish_close_metadata(py)
     }
 }
 
 impl NativeTelemetrySession {
+    fn counter_snapshot(&self) -> PyResult<native_telemetry_session::TelemetryWriterCounterSnapshot> {
+        let writer_guard =
+            self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
+        if let Some(writer) = writer_guard.as_ref() {
+            return Ok(writer.counter_snapshot(None));
+        }
+        let last_counter_snapshot = self
+            .last_counter_snapshot
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
+        let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
+            return Ok(native_telemetry_session::TelemetryWriterCounterSnapshot::empty());
+        };
+        Ok(counter_snapshot.clone())
+    }
+
+    fn emit_close_event<'py>(
+        &self,
+        py: Python<'py>,
+        run_id: &str,
+        timestamp: &str,
+        process_identifier: u32,
+        thread_name: &str,
+    ) -> PyResult<()> {
+        let close_event_payload =
+            native_telemetry_session::build_telemetry_close_event_payload(self.counter_snapshot()?);
+        let fields = telemetry_close_event_fields_to_py_dict(py, &close_event_payload)?;
+        self.emit_event(
+            py,
+            run_id,
+            &close_event_payload.event_name,
+            &close_event_payload.level,
+            timestamp,
+            process_identifier,
+            thread_name,
+            &fields,
+        )
+    }
+
+    fn emit_current_close_event<'py>(&self, py: Python<'py>, run_id: &str) -> PyResult<()> {
+        let close_event_payload =
+            native_telemetry_session::build_telemetry_close_event_payload(self.counter_snapshot()?);
+        let fields = telemetry_close_event_fields_to_py_dict(py, &close_event_payload)?;
+        self.emit_current_event(py, run_id, &close_event_payload.event_name, &close_event_payload.level, &fields)
+    }
+
     fn finish_counter_snapshot(&self) -> PyResult<native_telemetry_session::TelemetryWriterCounterSnapshot> {
         let finish_start_time = Instant::now();
         let mut writer_guard =
@@ -1194,6 +1199,15 @@ fn telemetry_close_metadata_to_py_dict<'py>(
     payload
         .set_item("writer_counters", telemetry_writer_counter_snapshot_to_py_dict(py, &metadata.writer_counters)?)?;
     Ok(payload)
+}
+
+fn telemetry_close_event_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    payload: &native_telemetry_session::TelemetryCloseEventPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let fields = PyDict::new(py);
+    fields.set_item("writer_counters", telemetry_writer_counter_snapshot_to_py_dict(py, &payload.writer_counters)?)?;
+    Ok(fields)
 }
 
 fn serialize_py_field_mapping_json_text(_py: Python<'_>, fields: &Bound<'_, PyAny>) -> PyResult<String> {

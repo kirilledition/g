@@ -48,6 +48,13 @@ pub struct TelemetryCloseMetadataPayload {
     pub writer_counters: TelemetryWriterCounterSnapshot,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TelemetryCloseEventPayload {
+    pub event_name: String,
+    pub level: String,
+    pub writer_counters: TelemetryWriterCounterSnapshot,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TelemetryEventEnvelope {
     pub schema_version: i64,
@@ -344,6 +351,17 @@ pub fn build_telemetry_close_metadata(
 }
 
 #[must_use]
+pub fn build_telemetry_close_event_payload(
+    writer_counters: TelemetryWriterCounterSnapshot,
+) -> TelemetryCloseEventPayload {
+    TelemetryCloseEventPayload {
+        event_name: TELEMETRY_SESSION_CLOSED_EVENT_NAME.to_string(),
+        level: TELEMETRY_SESSION_CLOSED_EVENT_LEVEL.to_string(),
+        writer_counters,
+    }
+}
+
+#[must_use]
 pub fn build_telemetry_event_envelope(
     run_id: &str,
     event: &str,
@@ -594,6 +612,17 @@ mod tests {
         let metadata = build_telemetry_close_metadata(writer_counters.clone());
 
         assert_eq!(metadata.writer_counters, writer_counters);
+    }
+
+    #[test]
+    fn builds_telemetry_close_event_payload() {
+        let writer_counters = TelemetryWriterCounterSnapshot::empty();
+
+        let payload = build_telemetry_close_event_payload(writer_counters.clone());
+
+        assert_eq!(payload.event_name, "telemetry_session_closed");
+        assert_eq!(payload.level, "debug");
+        assert_eq!(payload.writer_counters, writer_counters);
     }
 
     #[test]
