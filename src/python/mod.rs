@@ -29,6 +29,7 @@ use g_genotype::preprocess;
 mod callback_diagnostics;
 mod callback_progress;
 mod callback_queue;
+mod callback_runtime_resources;
 mod callback_summary;
 mod config;
 mod errors;
@@ -59,6 +60,12 @@ use callback_progress::{
 };
 use callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
+};
+use callback_runtime_resources::{
+    NativeCallbackQueueGetObservedResult, NativeCallbackQueuePutResult, NativeCallbackRuntimeResources,
+    NativeCallbackWorkerFinishLifecycleResult, NativeDosageBufferAcquireResult, NativeDosageBufferPoolOperationResult,
+    NativeDosageWorkItemDrainResult, NativeDosageWorkItemGetResult, NativeResultInFlightAcquireResult,
+    NativeResultWorkItemResourceReleaseResult, NativeResultWriteItemDrainResult, NativeResultWriteItemGetResult,
 };
 use callback_summary::{
     NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
@@ -165,7 +172,7 @@ use schedule::{
 };
 use shutdown::{
     NativeSecondSignalExceptionPlan, NativeShutdownController, build_shutdown_signal_payload,
-    plan_second_signal_exception,
+    plan_second_signal_exception, raise_second_signal_exception,
 };
 use telemetry_policy::{
     NativeTelemetrySessionPolicy, build_empty_telemetry_writer_counters_payload, format_telemetry_timestamp_value,
@@ -1835,6 +1842,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackChunkIdentity>()?;
     module.add_class::<NativeCallbackObjectQueue>()?;
     module.add_class::<NativeCallbackObjectQueueGetResult>()?;
+    module.add_class::<NativeCallbackQueueGetObservedResult>()?;
+    module.add_class::<NativeCallbackRuntimeResources>()?;
     module.add_class::<NativeCallbackWaitSignal>()?;
     module.add_class::<NativeCallbackWorkerThread>()?;
     module.add_class::<NativeCallbackProgressCompletion>()?;
@@ -1866,6 +1875,16 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackWorkerShutdownTimeouts>()?;
     module.add_class::<NativeCallbackWorkerStopPlan>()?;
     module.add_class::<NativeCallbackWorkerStopPollPlan>()?;
+    module.add_class::<NativeCallbackWorkerFinishLifecycleResult>()?;
+    module.add_class::<NativeCallbackQueuePutResult>()?;
+    module.add_class::<NativeDosageBufferAcquireResult>()?;
+    module.add_class::<NativeDosageBufferPoolOperationResult>()?;
+    module.add_class::<NativeDosageWorkItemDrainResult>()?;
+    module.add_class::<NativeDosageWorkItemGetResult>()?;
+    module.add_class::<NativeResultInFlightAcquireResult>()?;
+    module.add_class::<NativeResultWorkItemResourceReleaseResult>()?;
+    module.add_class::<NativeResultWriteItemDrainResult>()?;
+    module.add_class::<NativeResultWriteItemGetResult>()?;
     module.add_class::<NativeDosageBufferAcquireAttemptPlan>()?;
     module.add_class::<NativeDosageBufferDiscardAttemptPlan>()?;
     module.add_class::<NativeDosageBufferPoolObservationPlan>()?;
@@ -1944,6 +1963,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_second_signal_exception, module)?)?;
+    module.add_function(wrap_pyfunction!(raise_second_signal_exception, module)?)?;
     module.add_function(wrap_pyfunction!(build_execution_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_multi_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_compute_group_id_value, module)?)?;

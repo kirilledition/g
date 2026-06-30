@@ -10,10 +10,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use super::callback_progress::NativeCallbackProgressTelemetryEvent;
+use super::jax_runtime;
+use super::run_events;
+use g_runtime::run_events as native_run_events;
 use g_runtime::telemetry_session as native_telemetry_session;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyAny, PyDict, PyModule};
 use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -310,14 +314,397 @@ impl NativeTelemetryRunSession {
         level: &str,
         fields: &Bound<'py, PyDict>,
     ) -> PyResult<()> {
-        let emission_plan = self.state_guard()?.plan_event_emission(self.native_telemetry_session.is_some());
-        if !emission_plan.should_emit {
-            return Ok(());
-        }
-        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
-            return Ok(());
-        };
-        native_telemetry_session.emit_current_event(py, &self.run_id_value()?, event, level, fields)
+        self.emit_current_event_fields(py, event, level, fields)
+    }
+
+    pub fn emit_run_completed_event<'py>(&self, py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<()> {
+        let event_payload = run_events::run_completed_event_from_py(event)?;
+        let telemetry_fields = native_run_events::build_run_completed_telemetry_fields(&event_payload);
+        let fields = run_events::run_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::RUN_COMPLETED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    pub fn emit_run_interrupted_event<'py>(&self, py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<()> {
+        let event_payload = run_events::run_interrupted_event_from_py(event)?;
+        let telemetry_fields = native_run_events::build_run_interrupted_telemetry_fields(&event_payload);
+        let fields = run_events::run_interrupted_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::RUN_FAILED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_WARN_LEVEL,
+            &fields,
+        )
+    }
+
+    pub fn emit_run_failed_event<'py>(&self, py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<()> {
+        let event_payload = run_events::run_failed_event_from_py(event)?;
+        let telemetry_fields = native_run_events::build_run_failed_telemetry_fields(&event_payload);
+        let fields = run_events::run_failed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::RUN_FAILED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_ERROR_LEVEL,
+            &fields,
+        )
+    }
+
+    pub fn emit_run_started_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        trait_type: &str,
+        phenotype_count: i64,
+        output_run_root: &str,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_run_started_telemetry_fields(
+            association_mode,
+            trait_type,
+            phenotype_count,
+            output_run_root,
+        );
+        let fields = run_events::run_started_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::RUN_STARTED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    pub fn emit_execution_plan_prepared_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        trait_type: &str,
+        phenotype_count: i64,
+        chunk_size: i64,
+        variant_limit: Option<i64>,
+        device: &str,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_execution_plan_prepared_telemetry_fields(
+            association_mode,
+            trait_type,
+            phenotype_count,
+            chunk_size,
+            variant_limit,
+            device,
+        );
+        let fields = run_events::execution_plan_prepared_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::EXECUTION_PLAN_PREPARED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    pub fn emit_effective_config_written_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype: &str,
+        effective_config: &str,
+        output_run_directory: &str,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_effective_config_written_telemetry_fields(
+            association_mode,
+            phenotype,
+            effective_config,
+            output_run_directory,
+        );
+        let fields = run_events::effective_config_written_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_phenotype_writer_finished_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype: &str,
+        final_output_path: Option<String>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_phenotype_writer_finished_telemetry_fields(
+            association_mode,
+            phenotype,
+            final_output_path.as_deref(),
+        );
+        let fields = run_events::phenotype_writer_finished_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::WRITER_FINISHED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_multi_phenotype_writer_finished_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype_count: i64,
+        final_output_paths: Vec<Option<String>>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_multi_phenotype_writer_finished_telemetry_fields(
+            association_mode,
+            phenotype_count,
+            &final_output_paths,
+        );
+        let fields = run_events::multi_phenotype_writer_finished_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::WRITER_FINISHED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    pub fn emit_single_trait_preflight_completed_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype: &str,
+        sample_count: i64,
+        covariate_count: i64,
+        chromosome_count: i64,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_single_trait_preflight_completed_telemetry_fields(
+            association_mode,
+            phenotype,
+            sample_count,
+            covariate_count,
+            chromosome_count,
+        );
+        let fields = run_events::single_trait_preflight_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::PREFLIGHT_COMPLETED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    pub fn emit_multi_phenotype_preflight_completed_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype_count: i64,
+        sample_count: i64,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_multi_phenotype_preflight_completed_telemetry_fields(
+            association_mode,
+            phenotype_count,
+            sample_count,
+        );
+        let fields =
+            run_events::multi_phenotype_preflight_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::PREFLIGHT_COMPLETED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_sample_alignment_completed_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype: Option<String>,
+        phenotype_count: Option<i64>,
+        sample_count: Option<i64>,
+        covariate_count: Option<i64>,
+        phenotype_group_count: Option<i64>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_sample_alignment_completed_telemetry_fields(
+            association_mode,
+            phenotype.as_deref(),
+            phenotype_count,
+            sample_count,
+            covariate_count,
+            phenotype_group_count,
+        );
+        let fields = run_events::sample_alignment_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_prediction_source_loaded_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        phenotype: Option<String>,
+        phenotype_count: Option<i64>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_prediction_source_loaded_telemetry_fields(
+            association_mode,
+            phenotype.as_deref(),
+            phenotype_count,
+        );
+        let fields = run_events::prediction_source_loaded_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::PREDICTION_SOURCE_LOADED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_multi_phenotype_sample_summary_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        multi_phenotype_sample_mode: &str,
+        sample_counts: Vec<i64>,
+        sample_set_fingerprints: Vec<Option<String>>,
+        phenotype_group_count: i64,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_multi_phenotype_sample_summary_telemetry_fields(
+            association_mode,
+            multi_phenotype_sample_mode,
+            &sample_counts,
+            &sample_set_fingerprints,
+            phenotype_group_count,
+        );
+        let fields = run_events::multi_phenotype_sample_summary_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_gpu_genotype_format_resolved_event<'py>(
+        &self,
+        py: Python<'py>,
+        requested_gpu_genotype_format: &str,
+        resolved_gpu_genotype_format: &str,
+        resolution_reason: &str,
+        fallback_error: Option<String>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_gpu_genotype_format_resolved_telemetry_fields(
+            requested_gpu_genotype_format,
+            resolved_gpu_genotype_format,
+            resolution_reason,
+            fallback_error.as_deref(),
+        );
+        let fields = run_events::gpu_genotype_format_resolved_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_association_backend_selected_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        association_backend_kind: &str,
+        device: &str,
+        genotype_format: &str,
+        phenotype: Option<String>,
+        phenotype_count: Option<i64>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_association_backend_selected_telemetry_fields(
+            association_mode,
+            association_backend_kind,
+            device,
+            genotype_format,
+            phenotype.as_deref(),
+            phenotype_count,
+        );
+        let fields = run_events::association_backend_selected_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::ASSOCIATION_BACKEND_SELECTED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit_bgen_engine_opened_event<'py>(
+        &self,
+        py: Python<'py>,
+        association_mode: &str,
+        association_backend_kind: &str,
+        sample_count: i64,
+        variant_count: i64,
+        phenotype: Option<String>,
+        phenotype_count: Option<i64>,
+    ) -> PyResult<()> {
+        let telemetry_fields = native_run_events::build_bgen_engine_opened_telemetry_fields(
+            association_mode,
+            association_backend_kind,
+            sample_count,
+            variant_count,
+            phenotype.as_deref(),
+            phenotype_count,
+        );
+        let fields = run_events::bgen_engine_opened_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
+        self.emit_current_event_fields(
+            py,
+            native_run_events::BGEN_ENGINE_OPENED_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            &fields,
+        )
+    }
+
+    fn emit_callback_progress_event<'py>(
+        &self,
+        py: Python<'py>,
+        progress_event: &NativeCallbackProgressTelemetryEvent,
+    ) -> PyResult<()> {
+        let fields = PyDict::new(py);
+        fields.set_item("chromosome", progress_event.chromosome_value())?;
+        fields.set_item("processed_chunk_count", progress_event.processed_chunk_count_value())?;
+        self.emit_current_event_fields(py, progress_event.event_name_value(), progress_event.level_value(), &fields)
+    }
+
+    pub fn emit_binary_correction_summary_event<'py>(
+        &self,
+        py: Python<'py>,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        self.emit_current_event_fields(
+            py,
+            native_run_events::BINARY_CORRECTION_SUMMARY_EVENT_NAME,
+            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            fields,
+        )
+    }
+
+    pub fn emit_jax_runtime_diagnostic_event<'py>(
+        &self,
+        py: Python<'py>,
+        event: &Bound<'py, PyAny>,
+        telemetry_level: &str,
+    ) -> PyResult<()> {
+        let (event_name, fields) = jax_runtime::jax_runtime_diagnostic_event_fields_to_py_dict(py, event)?;
+        self.emit_current_event_fields(py, &event_name, telemetry_level, &fields)
     }
 
     pub fn emit_progress<'py>(
@@ -644,6 +1031,23 @@ impl NativeTelemetryRunSession {
 
     fn run_id_value(&self) -> PyResult<String> {
         Ok(self.state_guard()?.run_id().to_string())
+    }
+
+    fn emit_current_event_fields<'py>(
+        &self,
+        py: Python<'py>,
+        event: &str,
+        level: &str,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        let emission_plan = self.state_guard()?.plan_event_emission(self.native_telemetry_session.is_some());
+        if !emission_plan.should_emit {
+            return Ok(());
+        }
+        let Some(native_telemetry_session) = self.native_telemetry_session.as_ref() else {
+            return Ok(());
+        };
+        native_telemetry_session.emit_current_event(py, &self.run_id_value()?, event, level, fields)
     }
 }
 

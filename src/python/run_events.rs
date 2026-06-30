@@ -106,7 +106,9 @@ pub fn render_run_failed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) 
     PyTuple::new(py, native_run_events::render_run_failed_lines(&event_payload))
 }
 
-fn run_completed_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunCompletedEventPayload> {
+pub(crate) fn run_completed_event_from_py(
+    event: &Bound<'_, PyAny>,
+) -> PyResult<native_run_events::RunCompletedEventPayload> {
     Ok(native_run_events::RunCompletedEventPayload {
         run_id: optional_string_attribute(event, "run_id")?,
         association_mode: optional_enum_value(event, "association_mode")?,
@@ -115,7 +117,9 @@ fn run_completed_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_
     })
 }
 
-fn run_interrupted_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunInterruptedEventPayload> {
+pub(crate) fn run_interrupted_event_from_py(
+    event: &Bound<'_, PyAny>,
+) -> PyResult<native_run_events::RunInterruptedEventPayload> {
     Ok(native_run_events::RunInterruptedEventPayload {
         signal_number: event.getattr("signal_number")?.extract::<i64>()?,
         signal_name: event.getattr("signal_name")?.extract::<String>()?,
@@ -124,7 +128,7 @@ fn run_interrupted_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_ru
     })
 }
 
-fn run_failed_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunFailedEventPayload> {
+pub(crate) fn run_failed_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunFailedEventPayload> {
     Ok(native_run_events::RunFailedEventPayload {
         error_type: event.getattr("error_type")?.extract::<String>()?,
         error_message: event.getattr("error_message")?.extract::<String>()?,
@@ -247,7 +251,7 @@ fn run_failed_event_payload_to_py_dict<'py>(
     Ok(payload)
 }
 
-fn run_completed_telemetry_fields_to_py_dict<'py>(
+pub(crate) fn run_completed_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunCompletedTelemetryFields,
 ) -> PyResult<Bound<'py, PyDict>> {
@@ -268,7 +272,7 @@ fn run_completed_telemetry_fields_to_py_dict<'py>(
     Ok(payload)
 }
 
-fn run_interrupted_telemetry_fields_to_py_dict<'py>(
+pub(crate) fn run_interrupted_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunInterruptedTelemetryFields,
 ) -> PyResult<Bound<'py, PyDict>> {
@@ -281,7 +285,7 @@ fn run_interrupted_telemetry_fields_to_py_dict<'py>(
     Ok(payload)
 }
 
-fn run_failed_telemetry_fields_to_py_dict<'py>(
+pub(crate) fn run_failed_telemetry_fields_to_py_dict<'py>(
     py: Python<'py>,
     fields: &native_run_events::RunFailedTelemetryFields,
 ) -> PyResult<Bound<'py, PyDict>> {
@@ -289,6 +293,171 @@ fn run_failed_telemetry_fields_to_py_dict<'py>(
     payload.set_item("failure_kind", fields.failure_kind)?;
     payload.set_item("error_type", &fields.error_type)?;
     payload.set_item("error_message", &fields.error_message)?;
+    Ok(payload)
+}
+
+pub(crate) fn run_started_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::RunStartedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("trait_type", &fields.trait_type)?;
+    payload.set_item("phenotype_count", fields.phenotype_count)?;
+    payload.set_item("output_run_root", &fields.output_run_root)?;
+    Ok(payload)
+}
+
+pub(crate) fn execution_plan_prepared_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::ExecutionPlanPreparedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("trait_type", &fields.trait_type)?;
+    payload.set_item("phenotype_count", fields.phenotype_count)?;
+    payload.set_item("chunk_size", fields.chunk_size)?;
+    payload.set_item("variant_limit", fields.variant_limit)?;
+    payload.set_item("device", &fields.device)?;
+    Ok(payload)
+}
+
+pub(crate) fn effective_config_written_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::EffectiveConfigWrittenTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("phenotype", &fields.phenotype)?;
+    payload.set_item("effective_config", &fields.effective_config)?;
+    payload.set_item("output_run_directory", &fields.output_run_directory)?;
+    Ok(payload)
+}
+
+pub(crate) fn phenotype_writer_finished_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::PhenotypeWriterFinishedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("phenotype", &fields.phenotype)?;
+    payload.set_item("final_output_path", &fields.final_output_path)?;
+    Ok(payload)
+}
+
+pub(crate) fn multi_phenotype_writer_finished_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::MultiPhenotypeWriterFinishedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    let final_output_paths = fields.final_output_paths.iter().map(|path| path.as_deref()).collect::<Vec<_>>();
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("phenotype_count", fields.phenotype_count)?;
+    payload.set_item("final_output_paths", PyTuple::new(py, final_output_paths)?)?;
+    Ok(payload)
+}
+
+pub(crate) fn single_trait_preflight_completed_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::SingleTraitPreflightCompletedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("phenotype", &fields.phenotype)?;
+    payload.set_item("sample_count", fields.sample_count)?;
+    payload.set_item("covariate_count", fields.covariate_count)?;
+    payload.set_item("chromosome_count", fields.chromosome_count)?;
+    Ok(payload)
+}
+
+pub(crate) fn multi_phenotype_preflight_completed_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::MultiPhenotypePreflightCompletedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("phenotype_count", fields.phenotype_count)?;
+    payload.set_item("sample_count", fields.sample_count)?;
+    Ok(payload)
+}
+
+pub(crate) fn sample_alignment_completed_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::SampleAlignmentCompletedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    set_optional_string(&payload, "phenotype", fields.phenotype.as_deref())?;
+    set_optional_i64(&payload, "phenotype_count", fields.phenotype_count)?;
+    set_optional_i64(&payload, "sample_count", fields.sample_count)?;
+    set_optional_i64(&payload, "covariate_count", fields.covariate_count)?;
+    set_optional_i64(&payload, "phenotype_group_count", fields.phenotype_group_count)?;
+    Ok(payload)
+}
+
+pub(crate) fn prediction_source_loaded_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::PredictionSourceLoadedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    set_optional_string(&payload, "phenotype", fields.phenotype.as_deref())?;
+    set_optional_i64(&payload, "phenotype_count", fields.phenotype_count)?;
+    Ok(payload)
+}
+
+pub(crate) fn multi_phenotype_sample_summary_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::MultiPhenotypeSampleSummaryTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("multi_phenotype_sample_mode", &fields.multi_phenotype_sample_mode)?;
+    payload.set_item("phenotype_count", fields.phenotype_count)?;
+    payload.set_item("phenotype_group_count", fields.phenotype_group_count)?;
+    payload.set_item("sample_counts", PyTuple::new(py, &fields.sample_counts)?)?;
+    payload.set_item("sample_counts_differ", fields.sample_counts_differ)?;
+    payload.set_item("shared_sample_set", fields.shared_sample_set)?;
+    Ok(payload)
+}
+
+pub(crate) fn gpu_genotype_format_resolved_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::GpuGenotypeFormatResolvedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("requested_gpu_genotype_format", &fields.requested_gpu_genotype_format)?;
+    payload.set_item("resolved_gpu_genotype_format", &fields.resolved_gpu_genotype_format)?;
+    payload.set_item("resolution_reason", &fields.resolution_reason)?;
+    set_optional_string(&payload, "fallback_error", fields.fallback_error.as_deref())?;
+    Ok(payload)
+}
+
+pub(crate) fn association_backend_selected_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::AssociationBackendSelectedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("association_backend_kind", &fields.association_backend_kind)?;
+    payload.set_item("device", &fields.device)?;
+    payload.set_item("genotype_format", &fields.genotype_format)?;
+    set_optional_string(&payload, "phenotype", fields.phenotype.as_deref())?;
+    set_optional_i64(&payload, "phenotype_count", fields.phenotype_count)?;
+    Ok(payload)
+}
+
+pub(crate) fn bgen_engine_opened_telemetry_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    fields: &native_run_events::BgenEngineOpenedTelemetryFields,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("association_mode", &fields.association_mode)?;
+    payload.set_item("association_backend_kind", &fields.association_backend_kind)?;
+    payload.set_item("sample_count", fields.sample_count)?;
+    payload.set_item("variant_count", fields.variant_count)?;
+    set_optional_string(&payload, "phenotype", fields.phenotype.as_deref())?;
+    set_optional_i64(&payload, "phenotype_count", fields.phenotype_count)?;
     Ok(payload)
 }
 

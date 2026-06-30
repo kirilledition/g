@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import typing
 from dataclasses import dataclass
 
@@ -17,8 +16,6 @@ if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import config as regenie2_binary_config
     from g.engine.native_dispatch import models as native_dispatch_models
     from g.io import source
-
-logger = logging.getLogger(__name__)
 
 
 def require_binary_kernel_config(

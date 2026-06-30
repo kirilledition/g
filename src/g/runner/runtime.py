@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-import logging
+import json
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,8 +15,6 @@ from g.jax_runtime import resolution as jax_runtime_resolution
 if typing.TYPE_CHECKING:
     from g.engine import telemetry
     from g.interface import config
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -170,23 +168,18 @@ def record_jax_runtime_diagnostic_event(
         diagnostic_level=diagnostic_event.level.value,
         has_telemetry_session=telemetry_session is not None,
     )
-    logging_level = typing.cast("int", logging.getLevelName(str(record_plan["logging_level_name"])))
-    logger.log(
-        logging_level,
-        "%s",
+    _core.emit_diagnostic_event(
+        str(record_plan["logging_level_name"]).lower(),
+        diagnostic_event.event_name,
         diagnostic_event.message,
-        extra={
-            "g_event": diagnostic_event.event_name,
-            "g_fields": event_fields,
-        },
+        json.dumps(event_fields, sort_keys=True, default=str),
     )
     if not typing.cast("bool", record_plan["should_emit_telemetry"]):
         return
     active_telemetry_session = typing.cast("telemetry.TelemetrySession", telemetry_session)
-    active_telemetry_session.log_event(
-        diagnostic_event.event_name,
-        level=str(record_plan["telemetry_level"]),
-        **event_fields,
+    active_telemetry_session.log_jax_runtime_diagnostic_event(
+        diagnostic_event,
+        telemetry_level=str(record_plan["telemetry_level"]),
     )
 
 
@@ -212,7 +205,7 @@ def configure_runtime_before_jax_import(
         native_setup_session=native_setup_session,
         diagnostic_sink=record_diagnostic_event,
     )
-    record_jax_runtime_policy(requested_policy)
+    PROCESS_RUNTIME_STATE.complete_jax_runtime_setup(jax_runtime_policy_to_native_payload(requested_policy))
     return setup_report
 
 
@@ -425,23 +418,9 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> t
     return multi_trait_pipeline_module.run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs)
 
 
-def configure_rayon_thread_pool(core_module: typing.Any, thread_count: int) -> None:
-    """Configure Rayon global thread count once and reject incompatible repeats."""
-    configuration_plan = PROCESS_RUNTIME_STATE.plan_rayon_thread_pool_configuration(thread_count)
-    if not configuration_plan.should_configure:
-        return
-    planned_thread_count = configuration_plan.thread_count
-    if planned_thread_count is None:
-        raise RuntimeError("Native Rayon configuration plan requested configuration without a thread count.")
-    try:
-        core_module.configure_rayon_global_thread_pool(planned_thread_count)
-    except RuntimeError as error:
-        message = core_module.format_rayon_thread_pool_configuration_error_value(
-            planned_thread_count,
-            str(error),
-        )
-        raise RuntimeError(message) from error
-    PROCESS_RUNTIME_STATE.record_rayon_thread_count(planned_thread_count)
+def configure_rayon_thread_pool(thread_count: int) -> None:
+    """Configure Rayon global thread count through the native process state."""
+    PROCESS_RUNTIME_STATE.configure_rayon_thread_pool(thread_count)
 
 
 def effective_rayon_thread_count(requested_thread_count: int | None) -> int | None:
@@ -451,10 +430,22 @@ def effective_rayon_thread_count(requested_thread_count: int | None) -> int | No
 
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
     """Apply native runtime knobs before engine execution."""
-    logger.debug("Configuring native runtime knobs.")
+    _core.emit_diagnostic_event(
+        "debug",
+        "native_runtime_knobs_configured",
+        "Configuring native runtime knobs.",
+        json.dumps(
+            {
+                "bgen_decode_tile_variant_count": compute_config.bgen_decode_tile_variant_count,
+                "threads": trait_config.threads,
+            },
+            sort_keys=True,
+            default=str,
+        ),
+    )
     _core.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
     if trait_config.threads is not None:
-        configure_rayon_thread_pool(_core, trait_config.threads)
+        configure_rayon_thread_pool(trait_config.threads)
 
 
 def initialize_logging(
@@ -463,21 +454,4 @@ def initialize_logging(
 ) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""
     logging_policy = build_logging_runtime_policy(diagnostics_config, telemetry_paths)
-    require_compatible_logging_runtime_policy(logging_policy)
-    initialized_logging = _core.initialize_logging(
-        log_filter=logging_policy.log_filter,
-        log_file=None if logging_policy.log_file is None else str(logging_policy.log_file),
-        log_stderr=logging_policy.log_stderr,
-        log_queue_size=logging_policy.log_queue_size,
-        log_lossy=logging_policy.log_lossy,
-        include_source_location=logging_policy.include_source_location,
-        include_span_events=logging_policy.include_span_events,
-        trace_file=None if logging_policy.trace_file is None else str(logging_policy.trace_file),
-        trace_filter=logging_policy.trace_filter,
-        trace_event_cap=logging_policy.trace_event_cap,
-    )
-    if initialized_logging is False:
-        PROCESS_RUNTIME_STATE.record_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))
-        return
-    if initialized_logging is True:
-        PROCESS_RUNTIME_STATE.record_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))
+    PROCESS_RUNTIME_STATE.initialize_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))

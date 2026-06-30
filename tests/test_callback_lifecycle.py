@@ -26,6 +26,8 @@ class FailingLifecycleCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             worker_name="failing-lifecycle-callback",
             staging_depth=1,
             native_callback_batch_size=1,
+            expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -78,6 +80,22 @@ class ProgressTrackingTelemetrySession:
         """Record a telemetry event call."""
         self.logged_events.append((event_name, level, kwargs))
 
+    def log_callback_progress_event(
+        self,
+        progress_event: callback_runtime._core.NativeCallbackProgressTelemetryEvent,
+    ) -> None:
+        """Record a native callback progress event call."""
+        self.log_event(
+            progress_event.event_name,
+            progress_event.level,
+            chromosome=progress_event.chromosome,
+            processed_chunk_count=progress_event.processed_chunk_count,
+        )
+
+    def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
+        """Record a native binary correction summary event call."""
+        self.log_event("binary_correction_summary", "info", **summary_payload)
+
     def log_progress(self, **kwargs: typing.Any) -> None:
         """Record a progress callback call."""
         self.logged_progress.append(kwargs)
@@ -95,6 +113,8 @@ class ProgressTrackingCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             worker_name="progress-tracking-callback",
             staging_depth=1,
             native_callback_batch_size=1,
+            expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+            flush_binary_correction_diagnostics_on_result_stop=True,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -152,6 +172,8 @@ class LifecycleCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             worker_name="lifecycle-callback",
             staging_depth=1,
             native_callback_batch_size=1,
+            expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+            flush_binary_correction_diagnostics_on_result_stop=True,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -445,6 +467,11 @@ def test_native_callback_runner_records_progress_and_chromosome_events() -> None
     """Record progression events for a full callback lifecycle."""
     telemetry_session = ProgressTrackingTelemetrySession()
     callback = ProgressTrackingCallbackRunner(telemetry_session=telemetry_session)
+
+    def fail_finish_progress_state() -> typing.NoReturn:
+        message = "native runtime resources should finish progress during worker lifecycle"
+        raise AssertionError(message)
+
     callback.compute_preprocessed_dosage_chunk(
         metadata=ChunkMetadata("chr1", 0, 1),
         genotype_matrix=np.asarray([[0.0]], dtype=np.float32),
@@ -455,6 +482,7 @@ def test_native_callback_runner_records_progress_and_chromosome_events() -> None
         genotype_matrix=np.asarray([[0.0]], dtype=np.float32),
         chunk_stats=typing.cast("typing.Any", np.asarray([0], dtype=np.float32)),
     )
+    typing.cast("typing.Any", callback).finish_progress_state = fail_finish_progress_state
     callback.finish()
 
     assert telemetry_session.logged_events == [
@@ -510,6 +538,12 @@ def test_native_callback_runner_emits_binary_correction_summary() -> None:
 
     callback.record_binary_correction_diagnostics(diagnostics)
     callback.record_binary_null_model_failure_count(2)
+
+    def fail_emit_binary_correction_summary() -> typing.NoReturn:
+        message = "native runtime resources should return the pending diagnostics flush decision during worker finish"
+        raise AssertionError(message)
+
+    typing.cast("typing.Any", callback).emit_binary_correction_summary = fail_emit_binary_correction_summary
     callback.finish()
 
     assert telemetry_session.logged_events == [
@@ -535,6 +569,48 @@ def test_native_callback_runner_emits_binary_correction_summary() -> None:
                 "nr_warm_start_success_count": 0,
                 "sparse_correction_count": 1,
                 "dense_correction_count": 1,
+                "null_model_failure_count": 2,
+            },
+        )
+    ]
+
+
+def test_native_callback_runner_uses_finish_summary_payload_without_pending_diagnostics() -> None:
+    """Emit native finish summary payload without Python summary re-planning."""
+    telemetry_session = ProgressTrackingTelemetrySession()
+    callback = ProgressTrackingCallbackRunner(telemetry_session=telemetry_session)
+
+    def fail_emit_binary_correction_summary() -> typing.NoReturn:
+        message = "native runtime resources should return complete summary payloads during worker finish"
+        raise AssertionError(message)
+
+    callback.record_binary_null_model_failure_count(2)
+    typing.cast("typing.Any", callback).emit_binary_correction_summary = fail_emit_binary_correction_summary
+    callback.finish()
+
+    assert telemetry_session.logged_events == [
+        (
+            "binary_correction_summary",
+            "info",
+            {
+                "chunk_count": 0,
+                "score_only_count": 0,
+                "score_test_candidate_count": 0,
+                "firth_attempted_count": 0,
+                "firth_success_count": 0,
+                "firth_failed_count": 0,
+                "firth_numerical_failure_count": 0,
+                "firth_max_iteration_failure_count": 0,
+                "firth_invalid_statistic_failure_count": 0,
+                "firth_step_halving_failure_count": 0,
+                "pseudo_firth_attempt_count": 0,
+                "pseudo_firth_success_count": 0,
+                "nr_zero_start_attempt_count": 0,
+                "nr_zero_start_success_count": 0,
+                "nr_warm_start_attempt_count": 0,
+                "nr_warm_start_success_count": 0,
+                "sparse_correction_count": 0,
+                "dense_correction_count": 0,
                 "null_model_failure_count": 2,
             },
         )

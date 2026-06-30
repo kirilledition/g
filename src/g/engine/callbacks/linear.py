@@ -83,6 +83,8 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             worker_name="regenie2-linear-callback",
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
+            expected_result_work_item_kind=runtime.ResultWriteItemKind.SINGLE_RESULT,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
@@ -412,6 +414,8 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             worker_name="regenie2-multi-linear-callback",
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
+            expected_result_work_item_kind=runtime.ResultWriteItemKind.MULTI_RESULT,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
@@ -427,22 +431,27 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 return
             while True:
                 get_start_time = time.perf_counter()
-                work_item = self.get_result_write_item()
-                drain_completion_plan = self.plan_result_write_drain_completion(
-                    work_item,
-                    flush_binary_correction_diagnostics_on_stop=False,
-                )
+                if self.uses_native_callback_runtime_resources():
+                    work_item_get_result = (
+                        self.callback_runtime_resources.get_result_write_item_with_observation_and_drain_completion()
+                    )
+                    work_item = typing.cast("runtime.QueuedResultWriteWorkItem", work_item_get_result.item)
+                    get_observation_plan = work_item_get_result.observation_plan
+                    drain_completion_plan = work_item_get_result.drain_completion_plan
+                else:
+                    work_item = self.get_result_write_item()
+                    get_observation_plan = self.plan_result_queue_get_observation()
+                    drain_completion_plan = self.plan_result_write_drain_completion(work_item)
                 if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                     return
                 self.record_bounded_resource_stage_duration(
-                    resource_name="result_queue",
-                    operation_name="consumer_wait",
+                    resource_name=get_observation_plan.queue_name,
+                    operation_name=get_observation_plan.operation_name,
                     start_time=get_start_time,
-                    blocked=True,
+                    blocked=get_observation_plan.blocked,
                 )
                 dispatch_plan = self.plan_result_write_item_dispatch(
                     work_item,
-                    expected_result_work_item_kind=runtime.ResultWriteItemKind.MULTI_RESULT,
                 )
                 self.apply_result_write_item_dispatch_plan(dispatch_plan)
                 if dispatch_plan.should_process_multi_result_write_item:
@@ -457,16 +466,17 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def consume_result_write_items_without_timing(self) -> None:
         """Consume multi-trait result write items without diagnostic queue timing."""
         while True:
-            work_item = self.get_result_write_item()
-            drain_completion_plan = self.plan_result_write_drain_completion(
-                work_item,
-                flush_binary_correction_diagnostics_on_stop=False,
-            )
+            if self.uses_native_callback_runtime_resources():
+                work_item_get_result = self.callback_runtime_resources.get_result_write_item_with_drain_completion()
+                work_item = typing.cast("runtime.QueuedResultWriteWorkItem", work_item_get_result.item)
+                drain_completion_plan = work_item_get_result.drain_completion_plan
+            else:
+                work_item = self.get_result_write_item()
+                drain_completion_plan = self.plan_result_write_drain_completion(work_item)
             if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
             dispatch_plan = self.plan_result_write_item_dispatch(
                 work_item,
-                expected_result_work_item_kind=runtime.ResultWriteItemKind.MULTI_RESULT,
             )
             self.apply_result_write_item_dispatch_plan(dispatch_plan)
             if dispatch_plan.should_process_multi_result_write_item:
@@ -501,12 +511,10 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 output_statistic_dtype=self.output_statistic_dtype,
             )
         finally:
-            resource_release_plan = self.callback_scheduler_state.plan_result_write_item_final_resource_release(
-                has_host_dosage_buffer=multi_work_item.host_dosage_buffer is not None,
-                has_released_host_dosage_buffer=host_dosage_buffer_released,
-                release_in_flight_slot=multi_work_item.release_in_flight_slot,
+            self.release_result_work_item_final_resources(
+                multi_work_item,
+                host_dosage_buffer_released=host_dosage_buffer_released,
             )
-            self.release_result_work_item_resources(multi_work_item, resource_release_plan)
 
     def compute_preprocessed_chunk(
         self,

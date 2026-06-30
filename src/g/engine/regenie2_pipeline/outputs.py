@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import time
 import typing
 from dataclasses import dataclass
@@ -17,7 +16,15 @@ from g.io import output
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
 
-logger = logging.getLogger(__name__)
+
+def emit_pipeline_output_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured pipeline output diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 @dataclass(frozen=True)
@@ -64,20 +71,13 @@ def log_association_backend_selected(
     """Emit telemetry for the concrete association backend selection."""
     if context.telemetry_session is None:
         return
-    telemetry_fields: dict[str, typing.Any] = {
-        "association_mode": context.association_mode.value,
-        "association_backend_kind": context.backend_plan.backend_kind.value,
-        "device": context.backend_plan.jax_device.value,
-        "genotype_format": context.backend_plan.genotype_format.value,
-    }
-    if phenotype_name is not None:
-        telemetry_fields["phenotype"] = phenotype_name
-    if phenotype_count is not None:
-        telemetry_fields["phenotype_count"] = phenotype_count
-    context.telemetry_session.log_event(
-        "association_backend_selected",
-        level="info",
-        **telemetry_fields,
+    context.telemetry_session.log_association_backend_selected(
+        association_mode=context.association_mode,
+        association_backend_kind=context.backend_plan.backend_kind,
+        device=context.backend_plan.jax_device,
+        genotype_format=context.backend_plan.genotype_format,
+        phenotype=phenotype_name,
+        phenotype_count=phenotype_count,
     )
 
 
@@ -91,20 +91,13 @@ def log_bgen_engine_opened(
     """Emit telemetry for an opened BGEN engine."""
     if context.telemetry_session is None:
         return
-    telemetry_fields: dict[str, typing.Any] = {
-        "association_mode": context.association_mode.value,
-        "association_backend_kind": context.backend_plan.backend_kind.value,
-        "sample_count": int(engine.sample_count),
-        "variant_count": int(engine.variant_count),
-    }
-    if phenotype_name is not None:
-        telemetry_fields["phenotype"] = phenotype_name
-    if phenotype_count is not None:
-        telemetry_fields["phenotype_count"] = phenotype_count
-    context.telemetry_session.log_event(
-        "bgen_engine_opened",
-        level="info",
-        **telemetry_fields,
+    context.telemetry_session.log_bgen_engine_opened(
+        association_mode=context.association_mode,
+        association_backend_kind=context.backend_plan.backend_kind,
+        sample_count=int(engine.sample_count),
+        variant_count=int(engine.variant_count),
+        phenotype=phenotype_name,
+        phenotype_count=phenotype_count,
     )
 
 
@@ -117,7 +110,18 @@ def open_pipeline_bgen_engine(
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN engine and emit shared telemetry."""
     engine_start_time = time.perf_counter()
-    logger.debug("Opening native BGEN engine for %s pipeline.", pipeline_label)
+    emit_pipeline_output_diagnostic_event(
+        "debug",
+        "pipeline_bgen_engine_open_started",
+        f"Opening native BGEN engine for {pipeline_label} pipeline.",
+        {
+            "phenotype_count": phenotype_count,
+            "phenotype_name": phenotype_name,
+            "pipeline_label": pipeline_label,
+            "trusted_no_missing_diploid": context.effective_trusted_no_missing_diploid,
+            "variant_limit": context.variant_limit,
+        },
+    )
     log_association_backend_selected(context=context, phenotype_name=phenotype_name, phenotype_count=phenotype_count)
     engine = native_dispatch_engine.build_bgen_run_engine(
         genotype_source_config=context.genotype_source_config,
@@ -128,11 +132,18 @@ def open_pipeline_bgen_engine(
         trusted_bgen_validator=None,
     )
     timing.record_stage_duration(context.stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
-    logger.debug(
-        "Native BGEN engine opened for %s pipeline: sample_count=%s variant_count=%s.",
-        pipeline_label,
-        engine.sample_count,
-        engine.variant_count,
+    emit_pipeline_output_diagnostic_event(
+        "debug",
+        "pipeline_bgen_engine_opened",
+        f"Native BGEN engine opened for {pipeline_label} pipeline: "
+        f"sample_count={engine.sample_count} variant_count={engine.variant_count}.",
+        {
+            "phenotype_count": phenotype_count,
+            "phenotype_name": phenotype_name,
+            "pipeline_label": pipeline_label,
+            "sample_count": int(engine.sample_count),
+            "variant_count": int(engine.variant_count),
+        },
     )
     log_bgen_engine_opened(
         context=context,
@@ -152,13 +163,29 @@ def use_prepared_pipeline_bgen_engine(
     phenotype_count: int | None,
 ) -> _core.Regenie2RunEngine:
     """Reuse a prevalidated BGEN engine and emit shared telemetry."""
-    logger.debug("Using prevalidated native BGEN engine for %s pipeline.", pipeline_label)
+    emit_pipeline_output_diagnostic_event(
+        "debug",
+        "pipeline_prevalidated_bgen_engine_used",
+        f"Using prevalidated native BGEN engine for {pipeline_label} pipeline.",
+        {
+            "phenotype_count": phenotype_count,
+            "phenotype_name": phenotype_name,
+            "pipeline_label": pipeline_label,
+        },
+    )
     log_association_backend_selected(context=context, phenotype_name=phenotype_name, phenotype_count=phenotype_count)
-    logger.debug(
-        "Native BGEN engine opened for %s pipeline: sample_count=%s variant_count=%s.",
-        pipeline_label,
-        engine.sample_count,
-        engine.variant_count,
+    emit_pipeline_output_diagnostic_event(
+        "debug",
+        "pipeline_bgen_engine_opened",
+        f"Native BGEN engine opened for {pipeline_label} pipeline: "
+        f"sample_count={engine.sample_count} variant_count={engine.variant_count}.",
+        {
+            "phenotype_count": phenotype_count,
+            "phenotype_name": phenotype_name,
+            "pipeline_label": pipeline_label,
+            "sample_count": int(engine.sample_count),
+            "variant_count": int(engine.variant_count),
+        },
     )
     log_bgen_engine_opened(
         context=context,
@@ -256,8 +283,19 @@ def initialize_pipeline_output_runs(
     )
     native_initialization = native_preparation_batch.initialize(runtime_compatibility_token)
     if resume:
-        for committed_chunk_identifier_set in native_initialization.committed_chunk_identifier_sets():
-            logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifier_set))
+        for output_index, committed_chunk_identifier_set in enumerate(
+            native_initialization.committed_chunk_identifier_sets()
+        ):
+            committed_chunk_count = len(committed_chunk_identifier_set)
+            emit_pipeline_output_diagnostic_event(
+                "info",
+                "pipeline_output_resume_committed_chunks",
+                f"Resuming run with {committed_chunk_count} previously committed chunks.",
+                {
+                    "committed_chunk_count": committed_chunk_count,
+                    "output_index": output_index,
+                },
+            )
     return InitializedPipelineOutputRuns(native_initialization=native_initialization)
 
 
@@ -334,7 +372,15 @@ def create_pipeline_writer_sessions(
 ) -> tuple[typing.Any, ...]:
     """Create output writer sessions and record preparation timing."""
     writer_start_time = time.perf_counter()
-    logger.debug("Creating output writer(s) for %s pipeline.", context.association_mode.value)
+    emit_pipeline_output_diagnostic_event(
+        "debug",
+        "pipeline_output_writer_sessions_create_started",
+        f"Creating output writer(s) for {context.association_mode.value} pipeline.",
+        {
+            "association_mode": context.association_mode.value,
+            "output_count": len(output_run_paths_by_trait),
+        },
+    )
     writer_sessions = tuple(
         output.create_output_writer_session(
             output_run_paths,

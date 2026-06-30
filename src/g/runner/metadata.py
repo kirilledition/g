@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+import json
 import typing
 
 from g import _core, execution_plan, types
@@ -13,8 +13,17 @@ from g.io import output
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-logger = logging.getLogger(__name__)
 RunArtifacts = run_events.RunArtifacts
+
+
+def emit_metadata_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured metadata diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
@@ -60,12 +69,10 @@ def log_writer_finished(
     """Record output writer completion."""
     if telemetry_session is None:
         return
-    telemetry_session.log_event(
-        "writer_finished",
-        level="info",
-        association_mode=association_mode.value,
+    telemetry_session.log_writer_finished(
+        association_mode=association_mode,
         phenotype=phenotype,
-        final_output_path=None if final_output_path is None else str(final_output_path),
+        final_output_path=final_output_path,
     )
 
 
@@ -83,13 +90,11 @@ def write_run_start_metadata(
         phenotype_run_plan=phenotype_run_plan,
     )
     if telemetry_session is not None:
-        telemetry_session.log_event(
-            "effective_config_written",
-            level="info",
-            association_mode=plan.association_mode.value,
+        telemetry_session.log_effective_config_written(
+            association_mode=plan.association_mode,
             phenotype=phenotype_run_plan.phenotype_name,
-            effective_config=str(phenotype_run_plan.effective_config_path),
-            output_run_directory=str(phenotype_run_plan.output_run_paths.run_directory),
+            effective_config=phenotype_run_plan.effective_config_path,
+            output_run_directory=phenotype_run_plan.output_run_paths.run_directory,
         )
 
 
@@ -122,7 +127,15 @@ def finalize_execution_plan(
             ),
         )
     )
-    logger.info("Finalized REGENIE run artifacts for %s phenotype(s).", len(plan.phenotype_run_plans))
+    emit_metadata_diagnostic_event(
+        "info",
+        "runner_metadata_artifacts_finalized",
+        f"Finalized REGENIE run artifacts for {len(plan.phenotype_run_plans)} phenotype(s).",
+        {
+            "association_mode": plan.association_mode.value,
+            "phenotype_count": len(plan.phenotype_run_plans),
+        },
+    )
     return artifacts
 
 

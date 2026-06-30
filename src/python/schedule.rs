@@ -239,7 +239,8 @@ pub(crate) struct NativeCallbackWorkerStopPlan {
     inner: native_schedule::CallbackWorkerStopPlan,
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
 pub(crate) struct NativeCallbackWorkerFinishPlan {
     inner: native_schedule::CallbackWorkerFinishPlan,
 }
@@ -420,14 +421,7 @@ impl NativeCallbackSchedulerState {
         result_in_flight_limit: Option<i64>,
         dosage_buffer_limit: Option<i64>,
     ) -> PyResult<Self> {
-        native_schedule::CallbackSchedulerState::new(
-            staging_depth,
-            native_callback_batch_size,
-            result_in_flight_limit,
-            dosage_buffer_limit,
-        )
-        .map(|inner| Self { inner })
-        .map_err(|error| schedule_error_to_py(&error))
+        Self::from_limits(staging_depth, native_callback_batch_size, result_in_flight_limit, dosage_buffer_limit)
     }
 
     #[getter]
@@ -1945,6 +1939,703 @@ impl NativeGpuGenotypeFormatResolutionPlan {
     #[getter]
     fn should_log_auto_resolution(&self) -> bool {
         self.inner.should_log_auto_resolution()
+    }
+}
+
+impl NativeCallbackSchedulerState {
+    pub(crate) fn from_limits(
+        staging_depth: i64,
+        native_callback_batch_size: i64,
+        result_in_flight_limit: Option<i64>,
+        dosage_buffer_limit: Option<i64>,
+    ) -> PyResult<Self> {
+        native_schedule::CallbackSchedulerState::new(
+            staging_depth,
+            native_callback_batch_size,
+            result_in_flight_limit,
+            dosage_buffer_limit,
+        )
+        .map(|inner| Self { inner })
+        .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn has_started_value(&self) -> bool {
+        self.inner.has_started()
+    }
+
+    pub(crate) fn native_callback_batch_size_value(&self) -> usize {
+        self.inner.native_callback_batch_size()
+    }
+
+    pub(crate) fn dosage_queue_depth_value(&self) -> usize {
+        self.inner.dosage_queue_depth()
+    }
+
+    pub(crate) fn result_queue_depth_value(&self) -> usize {
+        self.inner.result_queue_depth()
+    }
+
+    pub(crate) fn result_in_flight_limit_value(&self) -> usize {
+        self.inner.result_in_flight_limit()
+    }
+
+    pub(crate) fn dosage_buffer_limit_value(&self) -> usize {
+        self.inner.dosage_buffer_limit()
+    }
+
+    pub(crate) fn dosage_queue_occupied_count_value(&self) -> usize {
+        self.inner.dosage_queue_occupied_count()
+    }
+
+    pub(crate) fn result_queue_occupied_count_value(&self) -> usize {
+        self.inner.result_queue_occupied_count()
+    }
+
+    pub(crate) fn result_in_flight_occupied_count_value(&self) -> usize {
+        self.inner.result_in_flight_occupied_count()
+    }
+
+    pub(crate) fn dosage_buffer_allocated_count_value(&self) -> usize {
+        self.inner.dosage_buffer_allocated_count()
+    }
+
+    pub(crate) fn dosage_buffer_identifiers_value(&self) -> Vec<usize> {
+        self.inner.dosage_buffer_identifiers()
+    }
+
+    pub(crate) fn plan_dosage_queue_put_observation_value(
+        &self,
+        queued: bool,
+    ) -> NativeCallbackQueuePutObservationPlan {
+        self.inner.plan_dosage_queue_put_observation(queued).into()
+    }
+
+    pub(crate) fn plan_dosage_queue_get_observation_value(&self) -> NativeCallbackQueueGetObservationPlan {
+        self.inner.plan_dosage_queue_get_observation().into()
+    }
+
+    pub(crate) fn plan_result_queue_put_observation_value(
+        &self,
+        queued: bool,
+    ) -> NativeCallbackQueuePutObservationPlan {
+        self.inner.plan_result_queue_put_observation(queued).into()
+    }
+
+    pub(crate) fn plan_result_queue_get_observation_value(&self) -> NativeCallbackQueueGetObservationPlan {
+        self.inner.plan_result_queue_get_observation().into()
+    }
+
+    pub(crate) fn plan_worker_start_attempt_value(&mut self) -> NativeCallbackWorkerStartAttemptPlan {
+        self.inner.plan_worker_start_attempt().into()
+    }
+
+    pub(crate) fn plan_dosage_worker_join_value(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
+        self.inner.plan_dosage_worker_join(timeout_seconds).into()
+    }
+
+    pub(crate) fn plan_result_worker_join_value(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
+        self.inner.plan_result_worker_join(timeout_seconds).into()
+    }
+
+    pub(crate) fn plan_dosage_worker_stop_value(
+        &self,
+        timeout_seconds: Option<f64>,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPlan {
+        self.inner.plan_dosage_worker_stop(timeout_seconds, is_worker_alive).into()
+    }
+
+    pub(crate) fn plan_result_worker_stop_value(
+        &self,
+        timeout_seconds: Option<f64>,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPlan {
+        self.inner.plan_result_worker_stop(timeout_seconds, is_worker_alive).into()
+    }
+
+    pub(crate) fn plan_dosage_worker_stop_poll_value(
+        &self,
+        remaining_timeout_seconds: f64,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPollPlan {
+        self.inner.plan_dosage_worker_stop_poll(remaining_timeout_seconds, is_worker_alive).into()
+    }
+
+    pub(crate) fn plan_result_worker_stop_poll_value(
+        &self,
+        remaining_timeout_seconds: f64,
+        is_worker_alive: bool,
+    ) -> NativeCallbackWorkerStopPollPlan {
+        self.inner.plan_result_worker_stop_poll(remaining_timeout_seconds, is_worker_alive).into()
+    }
+
+    pub(crate) fn plan_result_in_flight_slot_acquire_backpressure_attempt_value(
+        &mut self,
+    ) -> NativeResultInFlightAcquireAttemptPlan {
+        self.inner.plan_result_in_flight_slot_acquire_backpressure_attempt().into()
+    }
+
+    pub(crate) fn plan_result_in_flight_slot_acquire_observation_value(
+        &self,
+        acquire_attempt_plan: &NativeResultInFlightAcquireAttemptPlan,
+    ) -> NativeResultInFlightAcquireObservationPlan {
+        self.inner.plan_result_in_flight_slot_acquire_observation(&acquire_attempt_plan.inner).into()
+    }
+
+    pub(crate) fn plan_result_in_flight_slot_release_attempt_value(
+        &mut self,
+    ) -> NativeResultInFlightReleaseAttemptPlan {
+        self.inner.plan_result_in_flight_slot_release_attempt().into()
+    }
+
+    pub(crate) fn plan_result_in_flight_slot_release_observation_value(
+        &self,
+    ) -> NativeResultInFlightReleaseObservationPlan {
+        self.inner.plan_result_in_flight_slot_release_observation().into()
+    }
+
+    pub(crate) fn plan_worker_finish_value(&self) -> NativeCallbackWorkerFinishPlan {
+        self.inner.plan_worker_finish().into()
+    }
+
+    pub(crate) fn plan_worker_abort_value(&self) -> NativeCallbackWorkerAbortPlan {
+        self.inner.plan_worker_abort().into()
+    }
+
+    pub(crate) fn plan_worker_error_raise_value(&self) -> NativeCallbackWorkerErrorRaisePlan {
+        self.inner.plan_worker_error_raise().into()
+    }
+
+    pub(crate) fn update_dosage_worker_error_value(
+        &mut self,
+        error_message: Option<&str>,
+    ) -> NativeCallbackWorkerErrorUpdatePlan {
+        self.inner.update_dosage_worker_error(error_message).into()
+    }
+
+    pub(crate) fn update_result_worker_error_value(
+        &mut self,
+        error_message: Option<&str>,
+    ) -> NativeCallbackWorkerErrorUpdatePlan {
+        self.inner.update_result_worker_error(error_message).into()
+    }
+
+    pub(crate) fn plan_result_write_item_pre_write_resource_release_value(
+        &self,
+        has_host_dosage_buffer: bool,
+    ) -> NativeResultWriteItemResourceReleasePlan {
+        self.inner.plan_result_write_item_pre_write_resource_release(has_host_dosage_buffer).into()
+    }
+
+    pub(crate) fn plan_result_write_item_final_resource_release_value(
+        &self,
+        has_host_dosage_buffer: bool,
+        has_released_host_dosage_buffer: bool,
+        release_in_flight_slot: bool,
+    ) -> NativeResultWriteItemResourceReleasePlan {
+        self.inner
+            .plan_result_write_item_final_resource_release(
+                has_host_dosage_buffer,
+                has_released_host_dosage_buffer,
+                release_in_flight_slot,
+            )
+            .into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_acquire_backpressure_attempt_value(
+        &self,
+        free_buffer_count: usize,
+    ) -> NativeDosageBufferAcquireAttemptPlan {
+        self.inner.plan_dosage_buffer_acquire_backpressure_attempt(free_buffer_count).into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_register_attempt_value(
+        &mut self,
+        buffer_identifier: usize,
+    ) -> NativeDosageBufferRegisterAttemptPlan {
+        self.inner.plan_dosage_buffer_register_attempt(buffer_identifier).into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_return_attempt_value(
+        &self,
+        buffer_identifier: usize,
+    ) -> NativeDosageBufferReturnAttemptPlan {
+        self.inner.plan_dosage_buffer_return_attempt(buffer_identifier).into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_discard_attempt_value(
+        &mut self,
+        buffer_identifier: usize,
+    ) -> NativeDosageBufferDiscardAttemptPlan {
+        self.inner.plan_dosage_buffer_discard_attempt(buffer_identifier).into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_reuse_value(
+        &self,
+        buffered_shape: &[usize],
+        expected_shape: &[usize],
+    ) -> Option<NativeDosageBufferReusePlan> {
+        self.inner.plan_dosage_buffer_reuse(buffered_shape, expected_shape).map(Into::into)
+    }
+
+    pub(crate) fn plan_dosage_queue_put_attempt_value(
+        &mut self,
+        wait_timeout_seconds: f64,
+    ) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_dosage_queue_put_attempt(wait_timeout_seconds).into()
+    }
+
+    pub(crate) fn plan_dosage_queue_put_backpressure_attempt_value(&mut self) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_dosage_queue_put_backpressure_attempt().into()
+    }
+
+    pub(crate) fn release_dosage_queue_slot_value(&mut self) -> bool {
+        self.inner.release_dosage_queue_slot()
+    }
+
+    pub(crate) fn acquire_dosage_queue_slot_value(&mut self) -> bool {
+        self.inner.acquire_dosage_queue_slot()
+    }
+
+    pub(crate) fn plan_dosage_queue_get_attempt_value(
+        &mut self,
+        has_queued_item: bool,
+    ) -> NativeCallbackQueueGetAttemptPlan {
+        self.inner.plan_dosage_queue_get_attempt(has_queued_item).into()
+    }
+
+    pub(crate) fn plan_result_write_handoff_value(&self, has_result_work_item: bool) -> NativeResultWriteHandoffPlan {
+        self.inner.plan_result_write_handoff(has_result_work_item).into()
+    }
+
+    pub(crate) fn plan_result_write_drain_completion_value(
+        &self,
+        has_result_work_item: bool,
+        flush_binary_correction_diagnostics_on_stop: bool,
+    ) -> NativeResultWriteDrainCompletionPlan {
+        self.inner
+            .plan_result_write_drain_completion(has_result_work_item, flush_binary_correction_diagnostics_on_stop)
+            .into()
+    }
+
+    pub(crate) fn plan_result_write_item_dispatch_value(
+        &self,
+        result_work_item_kind: &str,
+        expected_result_work_item_kind: &str,
+    ) -> PyResult<NativeResultWriteItemDispatchPlan> {
+        self.inner
+            .plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_result_queue_put_attempt_value(
+        &mut self,
+        wait_timeout_seconds: f64,
+    ) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_result_queue_put_attempt(wait_timeout_seconds).into()
+    }
+
+    pub(crate) fn plan_result_queue_put_backpressure_attempt_value(&mut self) -> NativeCallbackQueuePutAttemptPlan {
+        self.inner.plan_result_queue_put_backpressure_attempt().into()
+    }
+
+    pub(crate) fn release_result_queue_slot_value(&mut self) -> bool {
+        self.inner.release_result_queue_slot()
+    }
+
+    pub(crate) fn acquire_result_queue_slot_value(&mut self) -> bool {
+        self.inner.acquire_result_queue_slot()
+    }
+
+    pub(crate) fn plan_result_queue_get_attempt_value(
+        &mut self,
+        has_queued_item: bool,
+    ) -> NativeCallbackQueueGetAttemptPlan {
+        self.inner.plan_result_queue_get_attempt(has_queued_item).into()
+    }
+
+    pub(crate) fn plan_variant_major_dosage_batch_handoff_value(
+        &self,
+        metadata_count: usize,
+        genotype_matrix_by_variant_count: usize,
+        chunk_stats_count: usize,
+    ) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
+        self.inner
+            .plan_variant_major_dosage_batch_handoff(
+                metadata_count,
+                genotype_matrix_by_variant_count,
+                chunk_stats_count,
+            )
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_dosage_work_handoff_value(&self, chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
+        self.inner.plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_dosage_work_drain_completion_value(
+        &self,
+        has_dosage_work_item: bool,
+    ) -> NativeDosageWorkDrainCompletionPlan {
+        self.inner.plan_dosage_work_drain_completion(has_dosage_work_item).into()
+    }
+
+    pub(crate) fn plan_dosage_work_item_dispatch_value(
+        &self,
+        dosage_work_item_kind: &str,
+    ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
+        self.inner
+            .plan_dosage_work_item_dispatch(dosage_work_item_kind)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_dosage_work_item_stage_duration_value(
+        &self,
+        dosage_work_item_kind: &str,
+        chunk_count: usize,
+        elapsed_seconds: f64,
+    ) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
+        self.inner
+            .plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_current_queue_backpressure_observation_value(
+        &self,
+        queue_name: &str,
+        operation_name: &str,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+        self.inner
+            .plan_current_queue_backpressure_observation(queue_name, operation_name, elapsed_seconds, blocked)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_current_queue_stage_backpressure_observation_value(
+        &self,
+        queue_name: &str,
+        operation_name: &str,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
+        self.inner
+            .plan_current_queue_stage_backpressure_observation(queue_name, operation_name, elapsed_seconds, blocked)
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_reuse_observation_value(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_reuse_observation().into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_return_observation_value(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_return_observation().into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_allocate_observation_value(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_allocate_observation().into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_discard_observation_value(&self) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_discard_observation().into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_consumer_wait_observation_value(
+        &self,
+    ) -> NativeDosageBufferPoolObservationPlan {
+        self.inner.plan_dosage_buffer_pool_consumer_wait_observation().into()
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_backpressure_observation_value(
+        &self,
+        operation_name: &str,
+        free_buffer_count: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+        self.inner
+            .plan_dosage_buffer_pool_backpressure_observation(
+                operation_name,
+                free_buffer_count,
+                elapsed_seconds,
+                blocked,
+            )
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+
+    pub(crate) fn plan_dosage_buffer_pool_stage_backpressure_observation_value(
+        &self,
+        operation_name: &str,
+        free_buffer_count: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
+        self.inner
+            .plan_dosage_buffer_pool_stage_backpressure_observation(
+                operation_name,
+                free_buffer_count,
+                elapsed_seconds,
+                blocked,
+            )
+            .map(Into::into)
+            .map_err(|error| schedule_error_to_py(&error))
+    }
+}
+
+impl NativeCallbackWorkerStartAttemptPlan {
+    pub(crate) fn has_start_error_value(&self) -> bool {
+        self.inner.has_start_error
+    }
+
+    pub(crate) fn should_start_result_worker(&self) -> bool {
+        self.inner.start_result_worker()
+    }
+
+    pub(crate) fn should_start_dosage_worker(&self) -> bool {
+        self.inner.start_dosage_worker()
+    }
+}
+
+impl NativeCallbackWorkerJoinPlan {
+    pub(crate) fn should_join_value(&self) -> bool {
+        self.inner.should_join
+    }
+
+    pub(crate) fn timeout_seconds_value(&self) -> f64 {
+        self.inner.timeout_seconds
+    }
+}
+
+impl NativeCallbackWorkerStopPlan {
+    pub(crate) fn should_stop_value(&self) -> bool {
+        self.inner.should_stop
+    }
+
+    pub(crate) fn timeout_seconds_value(&self) -> f64 {
+        self.inner.timeout_seconds
+    }
+}
+
+impl NativeCallbackWorkerStopPollPlan {
+    pub(crate) fn should_stop_value(&self) -> bool {
+        self.inner.should_stop
+    }
+
+    pub(crate) fn poll_timeout_seconds_value(&self) -> f64 {
+        self.inner.poll_timeout_seconds
+    }
+}
+
+impl NativeCallbackWorkerFinishPlan {
+    pub(crate) fn stop_dosage_worker_value(&self) -> bool {
+        self.inner.stop_dosage_worker()
+    }
+
+    pub(crate) fn join_dosage_worker_value(&self) -> bool {
+        self.inner.join_dosage_worker()
+    }
+
+    pub(crate) fn stop_result_worker_value(&self) -> bool {
+        self.inner.stop_result_worker()
+    }
+
+    pub(crate) fn join_result_worker_value(&self) -> bool {
+        self.inner.join_result_worker()
+    }
+
+    pub(crate) fn raise_worker_error_value(&self) -> bool {
+        self.inner.raise_worker_error()
+    }
+
+    pub(crate) fn complete_progress_value(&self) -> bool {
+        self.inner.complete_progress()
+    }
+
+    pub(crate) fn emit_binary_correction_summary_value(&self) -> bool {
+        self.inner.emit_binary_correction_summary()
+    }
+
+    pub(crate) fn dosage_stop_timeout_seconds_value(&self) -> f64 {
+        self.inner.dosage_stop_timeout_seconds
+    }
+
+    pub(crate) fn dosage_join_timeout_seconds_value(&self) -> f64 {
+        self.inner.dosage_join_timeout_seconds
+    }
+
+    pub(crate) fn result_stop_timeout_seconds_value(&self) -> f64 {
+        self.inner.result_stop_timeout_seconds
+    }
+
+    pub(crate) fn result_join_timeout_seconds_value(&self) -> f64 {
+        self.inner.result_join_timeout_seconds
+    }
+}
+
+impl NativeCallbackWorkerAbortPlan {
+    pub(crate) fn stop_dosage_worker_value(&self) -> bool {
+        self.inner.stop_dosage_worker()
+    }
+
+    pub(crate) fn stop_result_worker_value(&self) -> bool {
+        self.inner.stop_result_worker()
+    }
+
+    pub(crate) fn dosage_stop_timeout_seconds_value(&self) -> f64 {
+        self.inner.dosage_stop_timeout_seconds
+    }
+
+    pub(crate) fn result_stop_timeout_seconds_value(&self) -> f64 {
+        self.inner.result_stop_timeout_seconds
+    }
+}
+
+impl NativeResultInFlightAcquireAttemptPlan {
+    pub(crate) fn should_acquire_value(&self) -> bool {
+        self.inner.should_acquire
+    }
+
+    pub(crate) fn should_wait_value(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    pub(crate) fn wait_timeout_seconds_value(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+}
+
+impl NativeResultInFlightReleaseAttemptPlan {
+    pub(crate) fn has_release_error_value(&self) -> bool {
+        self.inner.has_release_error
+    }
+}
+
+impl NativeResultInFlightReleaseObservationPlan {
+    pub(crate) fn resource_name_value(&self) -> &str {
+        &self.inner.resource_name
+    }
+
+    pub(crate) fn operation_name_value(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    pub(crate) fn blocked_value(&self) -> bool {
+        self.inner.blocked
+    }
+}
+
+impl NativeResultWriteItemResourceReleasePlan {
+    pub(crate) fn should_release_host_buffer_value(&self) -> bool {
+        self.inner.should_release_host_buffer
+    }
+
+    pub(crate) fn should_release_result_in_flight_slot_value(&self) -> bool {
+        self.inner.should_release_result_in_flight_slot
+    }
+}
+
+impl NativeDosageBufferAcquireAttemptPlan {
+    pub(crate) fn should_take_free_buffer_value(&self) -> bool {
+        self.inner.should_take_free_buffer
+    }
+
+    pub(crate) fn should_allocate_value(&self) -> bool {
+        self.inner.should_allocate
+    }
+
+    pub(crate) fn should_wait_value(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    pub(crate) fn wait_timeout_seconds_value(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+}
+
+impl NativeDosageBufferRegisterAttemptPlan {
+    pub(crate) fn has_registration_error_value(&self) -> bool {
+        self.inner.has_registration_error
+    }
+}
+
+impl NativeDosageBufferReturnAttemptPlan {
+    pub(crate) fn should_return_value(&self) -> bool {
+        self.inner.should_return
+    }
+}
+
+impl NativeDosageBufferDiscardAttemptPlan {
+    pub(crate) fn should_discard_value(&self) -> bool {
+        self.inner.should_discard
+    }
+}
+
+impl NativeCallbackQueuePutAttemptPlan {
+    pub(crate) fn should_put_value(&self) -> bool {
+        self.inner.should_put
+    }
+
+    pub(crate) fn should_wait_value(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    pub(crate) fn wait_timeout_seconds_value(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+}
+
+impl NativeCallbackQueueGetAttemptPlan {
+    pub(crate) fn should_get_value(&self) -> bool {
+        self.inner.should_get
+    }
+
+    pub(crate) fn should_wait_value(&self) -> bool {
+        self.inner.should_wait
+    }
+
+    pub(crate) fn has_release_error_value(&self) -> bool {
+        self.inner.has_release_error
+    }
+
+    pub(crate) fn wait_timeout_seconds_value(&self) -> f64 {
+        self.inner.wait_timeout_seconds
+    }
+}
+
+impl NativeResultWriteHandoffPlan {
+    pub(crate) fn should_enqueue_value(&self) -> bool {
+        self.inner.should_enqueue
+    }
+
+    pub(crate) fn has_result_work_item_value(&self) -> bool {
+        self.inner.has_result_work_item
+    }
+}
+
+impl NativeResultWriteItemDispatchPlan {
+    pub(crate) fn has_dispatch_error_value(&self) -> bool {
+        self.inner.has_dispatch_error
+    }
+
+    pub(crate) fn error_message_value(&self) -> Option<&str> {
+        self.inner.error_message.as_deref()
+    }
+}
+
+impl NativeDosageWorkItemDispatchPlan {
+    pub(crate) fn has_dispatch_error_value(&self) -> bool {
+        self.inner.has_dispatch_error()
+    }
+
+    pub(crate) fn error_message_value(&self) -> Option<&str> {
+        self.inner.error_message.as_deref()
     }
 }
 

@@ -15,7 +15,8 @@ pub(crate) struct NativeCallbackProgressUpdate {
     inner: native_callback_progress::CallbackProgressUpdate,
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
 pub(crate) struct NativeCallbackProgressTelemetryEvent {
     inner: native_callback_progress::CallbackProgressTelemetryEvent,
 }
@@ -101,6 +102,24 @@ impl NativeCallbackProgressUpdate {
     }
 }
 
+impl NativeCallbackProgressTelemetryEvent {
+    pub(crate) fn event_name_value(&self) -> &str {
+        self.inner.event_name.as_str()
+    }
+
+    pub(crate) fn level_value(&self) -> &str {
+        self.inner.level.as_str()
+    }
+
+    pub(crate) fn chromosome_value(&self) -> &str {
+        self.inner.chromosome.as_str()
+    }
+
+    pub(crate) const fn processed_chunk_count_value(&self) -> i64 {
+        self.inner.processed_chunk_count
+    }
+}
+
 #[pymethods]
 impl NativeCallbackProgressTelemetryEvent {
     #[getter]
@@ -170,6 +189,12 @@ impl NativeCallbackProgressTelemetryPlan {
     }
 }
 
+impl NativeCallbackProgressCompletion {
+    pub(crate) fn telemetry_event_value(&self) -> NativeCallbackProgressTelemetryEvent {
+        self.inner.telemetry_event().into()
+    }
+}
+
 #[pymethods]
 impl NativeCallbackProgressCompletion {
     #[getter]
@@ -184,7 +209,7 @@ impl NativeCallbackProgressCompletion {
 
     #[getter]
     fn telemetry_event(&self) -> NativeCallbackProgressTelemetryEvent {
-        self.inner.telemetry_event().into()
+        self.telemetry_event_value()
     }
 }
 
@@ -192,7 +217,7 @@ impl NativeCallbackProgressCompletion {
 impl NativeCallbackProgressState {
     #[new]
     fn new() -> Self {
-        Self { inner: native_callback_progress::CallbackProgressState::new() }
+        Self::new_state()
     }
 
     #[getter]
@@ -214,6 +239,35 @@ impl NativeCallbackProgressState {
     }
 
     fn finish_progress(&mut self) -> Option<NativeCallbackProgressCompletion> {
+        self.inner.finish_progress().map(Into::into)
+    }
+}
+
+impl NativeCallbackProgressState {
+    pub(crate) fn new_state() -> Self {
+        Self { inner: native_callback_progress::CallbackProgressState::new() }
+    }
+
+    pub(crate) fn processed_chunk_count_value(&self) -> i64 {
+        self.inner.processed_chunk_count()
+    }
+
+    pub(crate) fn current_progress_chromosome_value(&self) -> Option<String> {
+        self.inner.current_progress_chromosome().map(str::to_owned)
+    }
+
+    pub(crate) fn record_processed_chunk_value(
+        &mut self,
+        chunk_identity: &NativeCallbackChunkIdentity,
+    ) -> NativeCallbackProgressUpdate {
+        self.inner.record_processed_chunk(chunk_identity.inner.clone()).into()
+    }
+
+    pub(crate) fn record_processed_chunk_without_progress_value(&mut self) {
+        self.inner.record_processed_chunk_without_progress();
+    }
+
+    pub(crate) fn finish_progress_value(&mut self) -> Option<NativeCallbackProgressCompletion> {
         self.inner.finish_progress().map(Into::into)
     }
 }

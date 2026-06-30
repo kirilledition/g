@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import typing
 from dataclasses import dataclass
 
@@ -15,7 +14,6 @@ if typing.TYPE_CHECKING:
     from g import _core
     from g.compute.regenie2_binary import api as regenie2_binary
 
-logger = logging.getLogger(__name__)
 type HostGenotypeBuffer = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
 type HostOrDeviceFloatArray = jax.Array | npt.NDArray[np.float32]
 
@@ -218,5 +216,4 @@ __all__ = [
     "get_metadata_chromosome",
     "jax",
     "jnp",
-    "logger",
 ]

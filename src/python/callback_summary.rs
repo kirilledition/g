@@ -27,7 +27,7 @@ pub(crate) struct NativeBinaryCorrectionSummaryEmitPlan {
 impl NativeBinaryCorrectionSummary {
     #[new]
     fn new() -> Self {
-        Self { state: Mutex::new(native_callback_summary::BinaryCorrectionSummaryState::default()) }
+        Self::new_summary()
     }
 
     #[getter]
@@ -126,8 +126,7 @@ impl NativeBinaryCorrectionSummary {
     }
 
     fn add_null_model_failure_count(&self, failure_count: i64) -> PyResult<()> {
-        self.lock_state()?.add_null_model_failure_count(failure_count);
-        Ok(())
+        self.add_null_model_failure_count_value(failure_count)
     }
 
     fn add_diagnostics_mapping(&self, diagnostics: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -201,6 +200,120 @@ impl NativeBinaryCorrectionSummary {
         sparse_correction_count: i64,
         dense_correction_count: i64,
     ) -> PyResult<()> {
+        self.add_diagnostics_totals_value(
+            chunk_count,
+            score_only_count,
+            score_test_candidate_count,
+            firth_candidate_count,
+            firth_converged_count,
+            firth_failed_count,
+            firth_numerical_failure_count,
+            firth_max_iteration_failure_count,
+            firth_invalid_statistic_failure_count,
+            firth_step_halving_failure_count,
+            pseudo_firth_attempt_count,
+            pseudo_firth_success_count,
+            nr_zero_start_attempt_count,
+            nr_zero_start_success_count,
+            nr_warm_start_attempt_count,
+            nr_warm_start_success_count,
+            sparse_correction_count,
+            dense_correction_count,
+        )
+    }
+
+    fn should_emit(&self) -> PyResult<bool> {
+        Ok(self.lock_state()?.should_emit())
+    }
+
+    fn chunk_count_with_pending(&self, pending_diagnostics_count: i64) -> PyResult<i64> {
+        self.chunk_count_with_pending_value(pending_diagnostics_count)
+    }
+
+    fn plan_diagnostics_record(
+        &self,
+        has_telemetry_session: bool,
+        has_diagnostics: bool,
+    ) -> PyResult<NativeBinaryCorrectionDiagnosticsRecordPlan> {
+        self.plan_diagnostics_record_value(has_telemetry_session, has_diagnostics)
+    }
+
+    fn plan_summary_emit(
+        &self,
+        has_telemetry_session: bool,
+        pending_diagnostics_count: i64,
+    ) -> PyResult<NativeBinaryCorrectionSummaryEmitPlan> {
+        self.plan_summary_emit_value(has_telemetry_session, pending_diagnostics_count)
+    }
+
+    fn summary_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        self.summary_payload_value(py)
+    }
+}
+
+#[pymethods]
+impl NativeBinaryCorrectionDiagnosticsRecordPlan {
+    #[getter]
+    fn should_record(&self) -> bool {
+        self.inner.should_record
+    }
+}
+
+impl NativeBinaryCorrectionSummaryEmitPlan {
+    pub(crate) const fn should_flush_pending_diagnostics_value(&self) -> bool {
+        self.inner.should_flush_pending_diagnostics
+    }
+
+    pub(crate) const fn should_emit_summary_value(&self) -> bool {
+        self.inner.should_emit_summary
+    }
+}
+
+#[pymethods]
+impl NativeBinaryCorrectionSummaryEmitPlan {
+    #[getter]
+    fn should_flush_pending_diagnostics(&self) -> bool {
+        self.should_flush_pending_diagnostics_value()
+    }
+
+    #[getter]
+    fn should_emit_summary(&self) -> bool {
+        self.should_emit_summary_value()
+    }
+}
+
+impl NativeBinaryCorrectionSummary {
+    pub(crate) fn new_summary() -> Self {
+        Self { state: Mutex::new(native_callback_summary::BinaryCorrectionSummaryState::default()) }
+    }
+
+    pub(crate) fn add_null_model_failure_count_value(&self, failure_count: i64) -> PyResult<()> {
+        self.lock_state()?.add_null_model_failure_count(failure_count);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn add_diagnostics_totals_value(
+        &self,
+        chunk_count: i64,
+        score_only_count: i64,
+        score_test_candidate_count: i64,
+        firth_candidate_count: i64,
+        firth_converged_count: i64,
+        firth_failed_count: i64,
+        firth_numerical_failure_count: i64,
+        firth_max_iteration_failure_count: i64,
+        firth_invalid_statistic_failure_count: i64,
+        firth_step_halving_failure_count: i64,
+        pseudo_firth_attempt_count: i64,
+        pseudo_firth_success_count: i64,
+        nr_zero_start_attempt_count: i64,
+        nr_zero_start_success_count: i64,
+        nr_warm_start_attempt_count: i64,
+        nr_warm_start_success_count: i64,
+        sparse_correction_count: i64,
+        dense_correction_count: i64,
+    ) -> PyResult<()> {
         if chunk_count < 0 {
             return Err(PyValueError::new_err("Binary correction diagnostics chunk_count must be non-negative."));
         }
@@ -229,15 +342,11 @@ impl NativeBinaryCorrectionSummary {
         Ok(())
     }
 
-    fn should_emit(&self) -> PyResult<bool> {
-        Ok(self.lock_state()?.should_emit())
-    }
-
-    fn chunk_count_with_pending(&self, pending_diagnostics_count: i64) -> PyResult<i64> {
+    pub(crate) fn chunk_count_with_pending_value(&self, pending_diagnostics_count: i64) -> PyResult<i64> {
         Ok(self.lock_state()?.chunk_count_with_pending(pending_diagnostics_count))
     }
 
-    fn plan_diagnostics_record(
+    pub(crate) fn plan_diagnostics_record_value(
         &self,
         has_telemetry_session: bool,
         has_diagnostics: bool,
@@ -250,7 +359,7 @@ impl NativeBinaryCorrectionSummary {
         .into())
     }
 
-    fn plan_summary_emit(
+    pub(crate) fn plan_summary_emit_value(
         &self,
         has_telemetry_session: bool,
         pending_diagnostics_count: i64,
@@ -258,7 +367,7 @@ impl NativeBinaryCorrectionSummary {
         Ok(self.lock_state()?.plan_summary_emit(has_telemetry_session, pending_diagnostics_count).into())
     }
 
-    fn summary_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    pub(crate) fn summary_payload_value<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let state = self.lock_state()?;
         let payload = PyDict::new(py);
         payload.set_item("chunk_count", state.chunk_count)?;
@@ -282,30 +391,7 @@ impl NativeBinaryCorrectionSummary {
         payload.set_item("null_model_failure_count", state.null_model_failure_count)?;
         Ok(payload)
     }
-}
 
-#[pymethods]
-impl NativeBinaryCorrectionDiagnosticsRecordPlan {
-    #[getter]
-    fn should_record(&self) -> bool {
-        self.inner.should_record
-    }
-}
-
-#[pymethods]
-impl NativeBinaryCorrectionSummaryEmitPlan {
-    #[getter]
-    fn should_flush_pending_diagnostics(&self) -> bool {
-        self.inner.should_flush_pending_diagnostics
-    }
-
-    #[getter]
-    fn should_emit_summary(&self) -> bool {
-        self.inner.should_emit_summary
-    }
-}
-
-impl NativeBinaryCorrectionSummary {
     fn lock_state(&self) -> PyResult<MutexGuard<'_, native_callback_summary::BinaryCorrectionSummaryState>> {
         self.state.lock().map_err(|_| PyRuntimeError::new_err("Binary correction summary lock was poisoned."))
     }

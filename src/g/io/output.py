@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import enum
 import json
-import logging
 import re
 import typing
 from dataclasses import dataclass
@@ -13,9 +12,6 @@ from pathlib import Path
 
 from g import _core, types
 from g.jax_runtime import models as jax_runtime_models
-
-logger = logging.getLogger(__name__)
-
 
 OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
@@ -35,6 +31,16 @@ class MultiPhenotypeSampleMode(enum.StrEnum):
     SINGLE_PHENOTYPE = "single-phenotype"
     PER_PHENOTYPE = "per-phenotype"
     COMPLETE_CASE = "complete-case"
+
+
+def emit_output_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured output diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 @dataclass(frozen=True)
@@ -949,7 +955,17 @@ def initialize_output_run(
         int(chunk_identifier) for chunk_identifier in native_initialized_output_run.committed_chunk_identifiers
     )
     if resume:
-        logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifiers))
+        committed_chunk_count = len(committed_chunk_identifiers)
+        emit_output_diagnostic_event(
+            "info",
+            "io_output_resume_committed_chunks",
+            f"Resuming run with {committed_chunk_count} previously committed chunks.",
+            {
+                "chunks_directory": str(output_run_paths.chunks_directory),
+                "committed_chunk_count": committed_chunk_count,
+                "run_directory": str(output_run_paths.run_directory),
+            },
+        )
     return InitializedOutputRun(committed_chunk_identifiers=committed_chunk_identifiers)
 
 

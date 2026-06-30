@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import enum
 import signal
 import typing
 from dataclasses import dataclass
@@ -11,15 +10,6 @@ import g._core
 
 if typing.TYPE_CHECKING:
     import types as python_types
-
-NATIVE_SHUTDOWN_SIGNAL_CACHE: dict[int, ShutdownSignal]
-
-
-class ShutdownRequestAction(enum.StrEnum):
-    """Native shutdown decision action."""
-
-    GRACEFUL = "graceful"
-    FORCE = "force"
 
 
 @dataclass(frozen=True)
@@ -36,17 +26,6 @@ class ShutdownSignal:
     number: int
     name: str
     exit_code: int
-
-
-def build_native_shutdown_signal_cache() -> dict[int, ShutdownSignal]:
-    """Build cached native metadata for the default handled signals."""
-    cached_signals: dict[int, ShutdownSignal] = {}
-    for handled_signal in (signal.SIGINT, signal.SIGTERM):
-        signal_number = int(handled_signal)
-        cached_signals[signal_number] = shutdown_signal_from_native_payload(
-            g._core.build_shutdown_signal_payload(signal_number)
-        )
-    return cached_signals
 
 
 class GracefulShutdownRequested(Exception):  # noqa: N818
@@ -74,7 +53,6 @@ class GracefulShutdownController:
     def __init__(self, handled_signals: tuple[signal.Signals, ...] | None) -> None:
         """Initialize the controller."""
         resolved_handled_signals = handled_signals or (signal.SIGINT, signal.SIGTERM)
-        self.previous_handlers: dict[signal.Signals, typing.Any] = {}
         self.native_controller = g._core.NativeShutdownController(
             [int(handled_signal) for handled_signal in resolved_handled_signals]
         )
@@ -94,13 +72,7 @@ class GracefulShutdownController:
 
     def __enter__(self) -> GracefulShutdownController:
         """Install signal handlers and return this controller."""
-        install_plan = native_mapping_payload(self.native_controller.handler_install_plan_payload())
-        self.previous_handlers = {}
-        for signal_payload in typing.cast("typing.Sequence[object]", install_plan["handled_signals"]):
-            handled_signal = signal.Signals(int(native_mapping_payload(signal_payload)["number"]))
-            self.previous_handlers[handled_signal] = signal.getsignal(handled_signal)
-            signal.signal(handled_signal, self.handle_signal)
-        self.native_controller.mark_handlers_installed()
+        self.native_controller.install_python_signal_handlers(self.handle_signal)
         return self
 
     def __exit__(
@@ -111,35 +83,23 @@ class GracefulShutdownController:
     ) -> None:
         """Restore previous signal handlers."""
         del exception_type, exception_value, traceback
-        self.restore_previous_handlers()
-        self.native_controller.reset()
+        self.native_controller.restore_python_signal_handlers_and_reset()
 
     def handle_signal(self, signal_number: int, frame: python_types.FrameType | None) -> None:
         """Request graceful shutdown on first signal and fast abort on the second."""
         del frame
-        decision_payload = native_mapping_payload(self.native_controller.request_shutdown_payload(signal_number))
-        shutdown_signal = shutdown_signal_from_native_payload(decision_payload["signal"])
-        if ShutdownRequestAction(str(decision_payload["action"])) == ShutdownRequestAction.GRACEFUL:
-            raise GracefulShutdownRequested(shutdown_signal)
-        self.restore_previous_handlers()
-        raise_second_signal_exception(shutdown_signal)
+        shutdown_signal = shutdown_signal_from_native_payload(
+            self.native_controller.request_shutdown_signal_or_raise_second_signal_payload(signal_number)
+        )
+        raise GracefulShutdownRequested(shutdown_signal)
 
     def restore_previous_handlers(self) -> None:
         """Restore signal handlers captured when the controller was installed."""
-        restore_plan = native_mapping_payload(self.native_controller.handler_restore_plan_payload())
-        if not bool(restore_plan["should_restore"]):
-            return
-        for signal_payload in typing.cast("typing.Sequence[object]", restore_plan["handled_signals"]):
-            handled_signal = signal.Signals(int(native_mapping_payload(signal_payload)["number"]))
-            signal.signal(handled_signal, self.previous_handlers[handled_signal])
-        self.native_controller.mark_handlers_restored()
+        self.native_controller.restore_python_signal_handlers()
 
 
 def build_shutdown_signal(signal_number: int) -> ShutdownSignal:
     """Build shutdown metadata for a POSIX signal."""
-    cached_signal = NATIVE_SHUTDOWN_SIGNAL_CACHE.get(signal_number)
-    if cached_signal is not None:
-        return cached_signal
     return shutdown_signal_from_native_payload(g._core.build_shutdown_signal_payload(signal_number))
 
 
@@ -158,15 +118,9 @@ def native_mapping_payload(payload: object) -> typing.Mapping[str, typing.Any]:
     return typing.cast("typing.Mapping[str, typing.Any]", payload)
 
 
-NATIVE_SHUTDOWN_SIGNAL_CACHE = build_native_shutdown_signal_cache()
-
-
 def raise_second_signal_exception(shutdown_signal: ShutdownSignal) -> typing.NoReturn:
     """Raise a hard-interrupt exception for a repeated shutdown signal."""
-    exception_plan = g._core.plan_second_signal_exception(shutdown_signal.number)
-    if exception_plan.raise_keyboard_interrupt:
-        raise KeyboardInterrupt
-    raise SystemExit(exception_plan.exit_code)
+    g._core.raise_second_signal_exception(shutdown_signal.number)
 
 
 def install_graceful_shutdown_handlers() -> GracefulShutdownController:

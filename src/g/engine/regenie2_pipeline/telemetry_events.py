@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
-import logging
+import json
 import typing
 
-from g import types
+from g import _core, types
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
 
-logger = logging.getLogger(__name__)
+
+def emit_pipeline_telemetry_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured pipeline telemetry diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 def log_sample_alignment_completed(
@@ -25,23 +33,13 @@ def log_sample_alignment_completed(
     """Emit sample-alignment telemetry with mode-specific fields."""
     if context.telemetry_session is None:
         return
-    telemetry_fields: dict[str, typing.Any] = {
-        "association_mode": context.association_mode.value,
-    }
-    if phenotype_name is not None:
-        telemetry_fields["phenotype"] = phenotype_name
-    if phenotype_count is not None:
-        telemetry_fields["phenotype_count"] = phenotype_count
-    if sample_count is not None:
-        telemetry_fields["sample_count"] = sample_count
-    if covariate_count is not None:
-        telemetry_fields["covariate_count"] = covariate_count
-    if phenotype_group_count is not None:
-        telemetry_fields["phenotype_group_count"] = phenotype_group_count
-    context.telemetry_session.log_event(
-        "sample_alignment_completed",
-        level="info",
-        **telemetry_fields,
+    context.telemetry_session.log_sample_alignment_completed(
+        association_mode=context.association_mode,
+        phenotype=phenotype_name,
+        phenotype_count=phenotype_count,
+        sample_count=sample_count,
+        covariate_count=covariate_count,
+        phenotype_group_count=phenotype_group_count,
     )
 
 
@@ -55,16 +53,9 @@ def log_multi_phenotype_sample_summary(
 ) -> None:
     """Emit a user-visible summary of multi-phenotype sample semantics."""
     sample_counts_differ = len(set(sample_counts)) > 1
-    observed_sample_set_fingerprints = {
-        sample_set_fingerprint
-        for sample_set_fingerprint in sample_set_fingerprints
-        if sample_set_fingerprint is not None
-    }
-    shared_sample_set = len(observed_sample_set_fingerprints) == 1 and len(sample_set_fingerprints) > 0
     if sample_mode == types.MultiPhenotypeSampleMode.COMPLETE_CASE:
-        logger.info(
-            "Analyzed %s phenotypes in complete-case sample mode; one shared sample set was used.",
-            len(sample_counts),
+        message = (
+            f"Analyzed {len(sample_counts)} phenotypes in complete-case sample mode; one shared sample set was used."
         )
     else:
         sample_count_summary = (
@@ -72,23 +63,26 @@ def log_multi_phenotype_sample_summary(
             if sample_counts_differ
             else "sample counts do not differ across phenotypes"
         )
-        logger.info(
-            "Analyzed %s phenotypes in per-phenotype sample mode; %s.",
-            len(sample_counts),
-            sample_count_summary,
-        )
+        message = f"Analyzed {len(sample_counts)} phenotypes in per-phenotype sample mode; {sample_count_summary}."
+    emit_pipeline_telemetry_diagnostic_event(
+        "info",
+        "pipeline_multi_phenotype_sample_summary",
+        message,
+        {
+            "phenotype_count": len(sample_counts),
+            "phenotype_group_count": phenotype_group_count,
+            "sample_counts_differ": sample_counts_differ,
+            "sample_mode": sample_mode.value,
+        },
+    )
     if context.telemetry_session is None:
         return
-    context.telemetry_session.log_event(
-        "multi_phenotype_sample_summary",
-        level="info",
-        association_mode=context.association_mode.value,
-        multi_phenotype_sample_mode=sample_mode.value,
-        phenotype_count=len(sample_counts),
+    context.telemetry_session.log_multi_phenotype_sample_summary(
+        association_mode=context.association_mode,
+        sample_mode=sample_mode,
+        sample_counts=sample_counts,
+        sample_set_fingerprints=sample_set_fingerprints,
         phenotype_group_count=phenotype_group_count,
-        sample_counts=list(sample_counts),
-        sample_counts_differ=sample_counts_differ,
-        shared_sample_set=shared_sample_set,
     )
 
 
@@ -101,15 +95,8 @@ def log_prediction_source_loaded(
     """Emit prediction-source telemetry with mode-specific fields."""
     if context.telemetry_session is None:
         return
-    telemetry_fields: dict[str, typing.Any] = {
-        "association_mode": context.association_mode.value,
-    }
-    if phenotype_name is not None:
-        telemetry_fields["phenotype"] = phenotype_name
-    if phenotype_count is not None:
-        telemetry_fields["phenotype_count"] = phenotype_count
-    context.telemetry_session.log_event(
-        "prediction_source_loaded",
-        level="info",
-        **telemetry_fields,
+    context.telemetry_session.log_prediction_source_loaded(
+        association_mode=context.association_mode,
+        phenotype=phenotype_name,
+        phenotype_count=phenotype_count,
     )

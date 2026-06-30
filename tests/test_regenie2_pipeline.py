@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import dataclasses
+import json
 import queue
 import threading
 import time
@@ -650,6 +651,192 @@ class RecordingTelemetrySession:
 
     def log_progress(self, **fields: object) -> None:
         self.progress_events.append(fields)
+
+    def log_callback_progress_event(
+        self,
+        progress_event: callback_runtime._core.NativeCallbackProgressTelemetryEvent,
+    ) -> None:
+        self.events.append(
+            (
+                progress_event.event_name,
+                {
+                    "chromosome": progress_event.chromosome,
+                    "processed_chunk_count": progress_event.processed_chunk_count,
+                },
+            )
+        )
+
+    def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
+        self.events.append(("binary_correction_summary", dict(summary_payload)))
+
+    def log_sample_alignment_completed(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str | None,
+        phenotype_count: int | None,
+        sample_count: int | None,
+        covariate_count: int | None,
+        phenotype_group_count: int | None,
+    ) -> None:
+        fields: dict[str, object] = {"association_mode": association_mode.value}
+        if phenotype is not None:
+            fields["phenotype"] = phenotype
+        if phenotype_count is not None:
+            fields["phenotype_count"] = phenotype_count
+        if sample_count is not None:
+            fields["sample_count"] = sample_count
+        if covariate_count is not None:
+            fields["covariate_count"] = covariate_count
+        if phenotype_group_count is not None:
+            fields["phenotype_group_count"] = phenotype_group_count
+        self.events.append(("sample_alignment_completed", fields))
+
+    def log_prediction_source_loaded(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
+        fields: dict[str, object] = {"association_mode": association_mode.value}
+        if phenotype is not None:
+            fields["phenotype"] = phenotype
+        if phenotype_count is not None:
+            fields["phenotype_count"] = phenotype_count
+        self.events.append(("prediction_source_loaded", fields))
+
+    def log_multi_phenotype_sample_summary(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        sample_mode: types.MultiPhenotypeSampleMode,
+        sample_counts: tuple[int, ...],
+        sample_set_fingerprints: tuple[str | None, ...],
+        phenotype_group_count: int,
+    ) -> None:
+        sample_counts_differ = len(set(sample_counts)) > 1
+        observed_sample_set_fingerprints = {
+            sample_set_fingerprint
+            for sample_set_fingerprint in sample_set_fingerprints
+            if sample_set_fingerprint is not None
+        }
+        shared_sample_set = len(observed_sample_set_fingerprints) == 1 and len(sample_set_fingerprints) > 0
+        self.events.append(
+            (
+                "multi_phenotype_sample_summary",
+                {
+                    "association_mode": association_mode.value,
+                    "multi_phenotype_sample_mode": sample_mode.value,
+                    "phenotype_count": len(sample_counts),
+                    "phenotype_group_count": phenotype_group_count,
+                    "sample_counts": list(sample_counts),
+                    "sample_counts_differ": sample_counts_differ,
+                    "shared_sample_set": shared_sample_set,
+                },
+            )
+        )
+
+    def log_gpu_genotype_format_resolved(
+        self,
+        *,
+        requested_gpu_genotype_format: types.GpuGenotypeFormat,
+        resolved_gpu_genotype_format: types.GpuGenotypeFormat,
+        resolution_reason: str,
+        fallback_error: str | None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "requested_gpu_genotype_format": requested_gpu_genotype_format.value,
+            "resolved_gpu_genotype_format": resolved_gpu_genotype_format.value,
+            "resolution_reason": resolution_reason,
+        }
+        if fallback_error is not None:
+            fields["fallback_error"] = fallback_error
+        self.events.append(("gpu_genotype_format_resolved", fields))
+
+    def log_association_backend_selected(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        association_backend_kind: types.AssociationBackendKind,
+        device: types.Device,
+        genotype_format: types.GpuGenotypeFormat,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "association_mode": association_mode.value,
+            "association_backend_kind": association_backend_kind.value,
+            "device": device.value,
+            "genotype_format": genotype_format.value,
+        }
+        if phenotype is not None:
+            fields["phenotype"] = phenotype
+        if phenotype_count is not None:
+            fields["phenotype_count"] = phenotype_count
+        self.events.append(("association_backend_selected", fields))
+
+    def log_bgen_engine_opened(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        association_backend_kind: types.AssociationBackendKind,
+        sample_count: int,
+        variant_count: int,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "association_mode": association_mode.value,
+            "association_backend_kind": association_backend_kind.value,
+            "sample_count": sample_count,
+            "variant_count": variant_count,
+        }
+        if phenotype is not None:
+            fields["phenotype"] = phenotype
+        if phenotype_count is not None:
+            fields["phenotype_count"] = phenotype_count
+        self.events.append(("bgen_engine_opened", fields))
+
+    def log_single_trait_preflight_completed(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str,
+        sample_count: int,
+        covariate_count: int,
+        chromosome_count: int,
+    ) -> None:
+        self.events.append(
+            (
+                "preflight_completed",
+                {
+                    "association_mode": association_mode.value,
+                    "phenotype": phenotype,
+                    "sample_count": sample_count,
+                    "covariate_count": covariate_count,
+                    "chromosome_count": chromosome_count,
+                },
+            )
+        )
+
+    def log_multi_phenotype_preflight_completed(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype_count: int,
+        sample_count: int,
+    ) -> None:
+        self.events.append(
+            (
+                "preflight_completed",
+                {
+                    "association_mode": association_mode.value,
+                    "phenotype_count": phenotype_count,
+                    "sample_count": sample_count,
+                },
+            )
+        )
 
 
 class NoFinalWriterSession:
@@ -1418,6 +1605,63 @@ def test_native_callback_runner_uses_native_binary_summary_plans() -> None:
     assert callback.binary_correction_pending_diagnostics == [diagnostics]
 
 
+def test_native_callback_runner_uses_runtime_resource_binary_summary() -> None:
+    class ResourceBackedCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
+        def __init__(self) -> None:
+            super().__init__(
+                worker_name="native-resource-binary-summary-runner-test",
+                staging_depth=1,
+                native_callback_batch_size=1,
+                expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+                flush_binary_correction_diagnostics_on_result_stop=True,
+                result_in_flight_limit=1,
+                dosage_buffer_limit=1,
+                stage_timing_recorder=None,
+                telemetry_session=typing.cast("typing.Any", RecordingTelemetrySession()),
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+            )
+
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    callback = ResourceBackedCallbackRunner()
+    diagnostics = typing.cast(
+        "regenie2_binary.BinaryChunkDiagnostics",
+        SimpleNamespace(score_test_candidate_count=2),
+    )
+
+    callback.record_binary_null_model_failure_count(2)
+    callback.record_binary_correction_diagnostics(diagnostics)
+
+    assert callback.binary_correction_summary.null_model_failure_count == 2
+    assert callback.binary_correction_summary_chunk_count == 1
+    assert callback.binary_correction_pending_diagnostics == [diagnostics]
+
+
 class FakeRunEngine:
     instances: typing.ClassVar[list[FakeRunEngine]] = []
 
@@ -1925,6 +2169,8 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             result_in_flight_limit=2,
             dosage_buffer_limit=2,
         )
+        self.expected_result_work_item_kind = callback_runtime.ResultWriteItemKind.SINGLE_RESULT
+        self.flush_binary_correction_diagnostics_on_result_stop = True
         self.dosage_queue = callback_runtime._core.NativeCallbackObjectQueue(
             self.callback_scheduler_state.dosage_queue_depth
         )
@@ -2038,6 +2284,8 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
                 worker_name="threaded-manual-callback",
                 staging_depth=2,
                 native_callback_batch_size=1,
+                expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=None,
                 stage_timing_recorder=None,
@@ -2074,22 +2322,46 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
 
     callback = ThreadedManualCallbackRunner()
 
+    assert isinstance(callback.callback_runtime_resources, callback_runtime._core.NativeCallbackRuntimeResources)
+    assert callback.callback_scheduler_state is callback.callback_runtime_resources.callback_scheduler_state
+    assert not hasattr(callback, "fallback_callback_scheduler_state")
+    assert callback.progress_state is callback.callback_runtime_resources.progress_state
+    assert not hasattr(callback, "fallback_progress_state")
+    assert callback.result_in_flight_slot_signal is callback.callback_runtime_resources.result_in_flight_slot_signal
+    assert not hasattr(callback, "fallback_result_in_flight_slot_signal")
+    assert callback.dosage_buffer_pool_signal is callback.callback_runtime_resources.dosage_buffer_pool_signal
+    assert not hasattr(callback, "fallback_dosage_buffer_pool_signal")
+    assert callback.dosage_queue is callback.callback_runtime_resources.dosage_queue
+    assert not hasattr(callback, "fallback_dosage_queue")
+    assert callback.result_queue is callback.callback_runtime_resources.result_queue
+    assert not hasattr(callback, "fallback_result_queue")
+    assert callback.free_dosage_buffers is callback.callback_runtime_resources.free_dosage_buffers
+    assert not hasattr(callback, "fallback_free_dosage_buffers")
+    assert callback.binary_correction_summary is callback.callback_runtime_resources.binary_correction_summary
+    assert not hasattr(callback, "fallback_binary_correction_summary")
     assert isinstance(callback.worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
     assert isinstance(callback.result_worker_thread, callback_runtime._core.NativeCallbackWorkerThread)
+    assert callback.worker_thread is callback.callback_runtime_resources.worker_thread
+    assert not hasattr(callback, "fallback_worker_thread")
+    assert callback.result_worker_thread is callback.callback_runtime_resources.result_worker_thread
+    assert not hasattr(callback, "fallback_result_worker_thread")
+    assert not hasattr(callback_runtime, "threading")
     assert callback.worker_threads_started is False
-    assert not callback.worker_thread.is_alive()
-    assert not callback.result_worker_thread.is_alive()
+    assert callback.dosage_worker_name == "threaded-manual-callback"
+    assert callback.result_worker_name == "threaded-manual-callback-writer"
+    assert callback.dosage_worker_is_alive is False
+    assert callback.result_worker_is_alive is False
 
     callback.start()
     try:
         assert callback.worker_threads_started is True
-        assert callback.worker_thread.is_alive()
-        assert callback.result_worker_thread.is_alive()
+        assert callback.dosage_worker_is_alive is True
+        assert callback.result_worker_is_alive is True
     finally:
         callback.finish()
 
-    assert not callback.worker_thread.is_alive()
-    assert not callback.result_worker_thread.is_alive()
+    assert callback.dosage_worker_is_alive is False
+    assert callback.result_worker_is_alive is False
 
 
 def test_native_callback_worker_thread_starts_and_joins_python_target() -> None:
@@ -2119,6 +2391,1003 @@ def test_native_callback_worker_thread_starts_and_joins_python_target() -> None:
     assert not worker_thread.is_alive()
 
 
+def test_native_callback_runtime_resources_own_queue_operations() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-queue-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    assert runtime_resources.native_callback_batch_size == 1
+    assert runtime_resources.dosage_queue_depth == 1
+    assert runtime_resources.result_queue_depth == 1
+    assert runtime_resources.result_in_flight_limit == 1
+    assert runtime_resources.dosage_buffer_limit == 1
+    dosage_item = object()
+    result_item = object()
+
+    assert runtime_resources.try_put_dosage_work_item(dosage_item, timeout_seconds=0.0) is True
+    assert runtime_resources.dosage_queue_occupied_count == 1
+    assert runtime_resources.callback_scheduler_state.dosage_queue_occupied_count == 1
+    queued = True
+    dosage_put_observation = runtime_resources.plan_dosage_queue_put_observation(queued)
+    assert dosage_put_observation.queue_name == "dosage_queue"
+    assert dosage_put_observation.operation_name == "put"
+    assert dosage_put_observation.blocked is False
+    assert dosage_put_observation.should_retry_put is False
+    queued = False
+    dosage_put_retry_observation = runtime_resources.plan_dosage_queue_put_observation(queued)
+    assert dosage_put_retry_observation.operation_name == "producer_blocking"
+    assert dosage_put_retry_observation.blocked is True
+    assert dosage_put_retry_observation.should_retry_put is True
+    dosage_stage_observation = runtime_resources.plan_current_queue_stage_backpressure_observation(
+        queue_name="dosage_queue",
+        operation_name="producer_blocking",
+        elapsed_seconds=0.5,
+        blocked=True,
+    )
+    assert dosage_stage_observation.stage_name == "callback_queue_producer_blocking"
+    assert dosage_stage_observation.queue_depth == 1
+    assert dosage_stage_observation.queue_capacity == 1
+    assert dosage_stage_observation.blocked_seconds == 0.5
+    assert runtime_resources.try_put_dosage_work_item(object(), timeout_seconds=0.0) is False
+    dosage_result = runtime_resources.get_dosage_work_item()
+    assert dosage_result.has_item is True
+    assert dosage_result.item is dosage_item
+    assert runtime_resources.dosage_queue_occupied_count == 0
+    assert runtime_resources.callback_scheduler_state.dosage_queue_occupied_count == 0
+    dosage_get_observation = runtime_resources.plan_dosage_queue_get_observation()
+    assert dosage_get_observation.queue_name == "dosage_queue"
+    assert dosage_get_observation.operation_name == "consumer_wait"
+    assert dosage_get_observation.blocked is True
+    assert runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(None) is True
+    assert runtime_resources.get_dosage_work_item().item is None
+    dosage_optional_put_result = runtime_resources.put_dosage_work_item_with_optional_backpressure_observation(
+        dosage_item
+    )
+    assert dosage_optional_put_result.observation_plan is None
+    assert dosage_optional_put_result.should_retry_put is False
+    assert runtime_resources.get_dosage_work_item().item is dosage_item
+    dosage_combined_observation = runtime_resources.put_dosage_work_item_with_backpressure_observation(dosage_item)
+    assert dosage_combined_observation.queue_name == "dosage_queue"
+    assert dosage_combined_observation.operation_name == "put"
+    assert dosage_combined_observation.blocked is False
+    assert dosage_combined_observation.should_retry_put is False
+    dosage_observed_get_result = runtime_resources.get_dosage_work_item_with_observation()
+    assert dosage_observed_get_result.has_item is True
+    assert dosage_observed_get_result.item is dosage_item
+    assert dosage_observed_get_result.observation_plan.queue_name == "dosage_queue"
+    assert dosage_observed_get_result.observation_plan.operation_name == "consumer_wait"
+    assert dosage_observed_get_result.observation_plan.blocked is True
+    assert runtime_resources.put_dosage_work_item_with_backpressure_observation(dosage_item).should_retry_put is False
+    dosage_work_item_drain_result = runtime_resources.get_dosage_work_item_with_drain_completion()
+    assert dosage_work_item_drain_result.has_dosage_work_item is True
+    assert dosage_work_item_drain_result.item is dosage_item
+    assert dosage_work_item_drain_result.drain_completion_plan.should_stop is False
+    assert runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(None) is True
+    dosage_stop_drain_result = runtime_resources.get_dosage_work_item_with_drain_completion()
+    assert dosage_stop_drain_result.has_dosage_work_item is False
+    assert dosage_stop_drain_result.item is None
+    assert dosage_stop_drain_result.drain_completion_plan.should_stop is True
+    assert runtime_resources.put_dosage_work_item_with_backpressure_observation(dosage_item).should_retry_put is False
+    dosage_work_item_get_result = runtime_resources.get_dosage_work_item_with_observation_and_drain_completion()
+    assert dosage_work_item_get_result.has_dosage_work_item is True
+    assert dosage_work_item_get_result.item is dosage_item
+    assert dosage_work_item_get_result.observation_plan.queue_name == "dosage_queue"
+    assert dosage_work_item_get_result.drain_completion_plan.should_stop is False
+    assert runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(None) is True
+    dosage_stop_get_result = runtime_resources.get_dosage_work_item_with_observation_and_drain_completion()
+    assert dosage_stop_get_result.has_dosage_work_item is False
+    assert dosage_stop_get_result.item is None
+    assert dosage_stop_get_result.drain_completion_plan.should_stop is True
+
+    assert runtime_resources.try_put_result_write_item(result_item, timeout_seconds=0.0) is True
+    assert runtime_resources.result_queue_occupied_count == 1
+    assert runtime_resources.callback_scheduler_state.result_queue_occupied_count == 1
+    queued = True
+    result_put_observation = runtime_resources.plan_result_queue_put_observation(queued)
+    assert result_put_observation.queue_name == "result_queue"
+    assert result_put_observation.operation_name == "put"
+    assert result_put_observation.blocked is False
+    assert result_put_observation.should_retry_put is False
+    queued = False
+    result_put_retry_observation = runtime_resources.plan_result_queue_put_observation(queued)
+    assert result_put_retry_observation.operation_name == "producer_blocking"
+    assert result_put_retry_observation.blocked is True
+    assert result_put_retry_observation.should_retry_put is True
+    result_observation = runtime_resources.plan_current_queue_backpressure_observation(
+        queue_name="result_queue",
+        operation_name="put",
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    assert result_observation.queue_depth == 1
+    assert result_observation.queue_capacity == 1
+    assert result_observation.blocked_seconds == 0.0
+    assert runtime_resources.try_put_result_write_item(object(), timeout_seconds=0.0) is False
+    result = runtime_resources.get_result_write_item()
+    assert result.has_item is True
+    assert result.item is result_item
+    assert runtime_resources.result_queue_occupied_count == 0
+    assert runtime_resources.callback_scheduler_state.result_queue_occupied_count == 0
+    result_get_observation = runtime_resources.plan_result_queue_get_observation()
+    assert result_get_observation.queue_name == "result_queue"
+    assert result_get_observation.operation_name == "consumer_wait"
+    assert result_get_observation.blocked is True
+    assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
+    assert runtime_resources.get_result_write_item().item is None
+    result_optional_put_result = runtime_resources.put_result_write_item_with_optional_backpressure_observation(
+        result_item
+    )
+    assert result_optional_put_result.observation_plan is None
+    assert result_optional_put_result.should_retry_put is False
+    assert runtime_resources.get_result_write_item().item is result_item
+    result_combined_observation = runtime_resources.put_result_write_item_with_backpressure_observation(result_item)
+    assert result_combined_observation.queue_name == "result_queue"
+    assert result_combined_observation.operation_name == "put"
+    assert result_combined_observation.blocked is False
+    assert result_combined_observation.should_retry_put is False
+    result_observed_get_result = runtime_resources.get_result_write_item_with_observation()
+    assert result_observed_get_result.has_item is True
+    assert result_observed_get_result.item is result_item
+    assert result_observed_get_result.observation_plan.queue_name == "result_queue"
+    assert result_observed_get_result.observation_plan.operation_name == "consumer_wait"
+    assert result_observed_get_result.observation_plan.blocked is True
+    assert runtime_resources.put_result_write_item_with_backpressure_observation(result_item).should_retry_put is False
+    result_work_item_drain_result = runtime_resources.get_result_write_item_with_drain_completion()
+    assert result_work_item_drain_result.has_result_work_item is True
+    assert result_work_item_drain_result.item is result_item
+    assert result_work_item_drain_result.drain_completion_plan.should_stop is False
+    assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
+    result_stop_drain_result = runtime_resources.get_result_write_item_with_drain_completion()
+    assert result_stop_drain_result.has_result_work_item is False
+    assert result_stop_drain_result.item is None
+    assert result_stop_drain_result.drain_completion_plan.should_stop is True
+    assert result_stop_drain_result.drain_completion_plan.should_flush_binary_correction_diagnostics is True
+    assert runtime_resources.put_result_write_item_with_backpressure_observation(result_item).should_retry_put is False
+    result_work_item_get_result = runtime_resources.get_result_write_item_with_observation_and_drain_completion()
+    assert result_work_item_get_result.has_result_work_item is True
+    assert result_work_item_get_result.item is result_item
+    assert result_work_item_get_result.observation_plan.queue_name == "result_queue"
+    assert result_work_item_get_result.drain_completion_plan.should_stop is False
+    assert runtime_resources.try_put_result_write_item_with_backpressure_timeout(None) is True
+    result_stop_get_result = runtime_resources.get_result_write_item_with_observation_and_drain_completion()
+    assert result_stop_get_result.has_result_work_item is False
+    assert result_stop_get_result.item is None
+    assert result_stop_get_result.drain_completion_plan.should_stop is True
+    assert result_stop_get_result.drain_completion_plan.should_flush_binary_correction_diagnostics is True
+
+    observed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-observed-queue-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        has_stage_timing_recorder=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    observed_dosage_put_result = observed_runtime_resources.put_dosage_work_item_with_optional_backpressure_observation(
+        dosage_item
+    )
+    observed_dosage_put_plan = observed_dosage_put_result.observation_plan
+    assert observed_dosage_put_plan is not None
+    assert observed_dosage_put_plan.queue_name == "dosage_queue"
+    assert observed_dosage_put_plan.operation_name == "put"
+    assert observed_dosage_put_plan.blocked is False
+    assert observed_dosage_put_result.should_retry_put is False
+    assert observed_runtime_resources.get_dosage_work_item().item is dosage_item
+    observed_result_put_result = (
+        observed_runtime_resources.put_result_write_item_with_optional_backpressure_observation(result_item)
+    )
+    observed_result_put_plan = observed_result_put_result.observation_plan
+    assert observed_result_put_plan is not None
+    assert observed_result_put_plan.queue_name == "result_queue"
+    assert observed_result_put_plan.operation_name == "put"
+    assert observed_result_put_plan.blocked is False
+    assert observed_result_put_result.should_retry_put is False
+    assert observed_runtime_resources.get_result_write_item().item is result_item
+
+
+def test_native_callback_runtime_resources_own_progress_state() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-progress-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    first_chunk_identity = callback_runtime.build_native_callback_chunk_identity(build_native_metadata())
+    second_chunk_identity = callback_runtime.build_native_callback_chunk_identity(
+        build_native_metadata_for_chunk(chunk_identifier=2)
+    )
+
+    assert runtime_resources.processed_chunk_count == 0
+    assert runtime_resources.current_progress_chromosome is None
+    first_update = runtime_resources.record_processed_chunk(first_chunk_identity)
+    assert first_update.processed_chunk_count == 1
+    assert runtime_resources.processed_chunk_count == 1
+    assert runtime_resources.current_progress_chromosome == "22"
+    runtime_resources.record_processed_chunk(second_chunk_identity)
+    assert runtime_resources.processed_chunk_count == 2
+    completion = runtime_resources.finish_progress()
+    assert completion is not None
+    assert completion.chromosome == "22"
+    assert completion.processed_chunk_count == 2
+    assert runtime_resources.finish_progress() is None
+
+    untimed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-progress-untimed-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    untimed_runtime_resources.record_processed_chunk_without_progress()
+    assert untimed_runtime_resources.processed_chunk_count == 1
+    assert untimed_runtime_resources.current_progress_chromosome is None
+
+
+def test_native_callback_runtime_resources_own_binary_correction_summary() -> None:
+    def worker_target() -> None:
+        return None
+
+    disabled_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-disabled-binary-summary-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-binary-summary-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=True,
+        flush_binary_correction_diagnostics_on_result_stop=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+
+    assert runtime_resources.binary_correction_chunk_count_with_pending(0) == 0
+    has_diagnostics = True
+    disabled_record_plan = disabled_runtime_resources.plan_binary_correction_diagnostics_record(
+        has_diagnostics,
+    )
+    assert disabled_record_plan.should_record is False
+    enabled_record_plan = runtime_resources.plan_binary_correction_diagnostics_record(
+        has_diagnostics,
+    )
+    assert enabled_record_plan.should_record is True
+
+    runtime_resources.add_binary_null_model_failure_count(2)
+    runtime_resources.add_binary_correction_diagnostics_totals(
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+    )
+
+    assert runtime_resources.binary_correction_chunk_count_with_pending(1) == 2
+    pending_diagnostics_count = 0
+    emit_plan = runtime_resources.plan_binary_correction_summary_emit(
+        pending_diagnostics_count,
+    )
+    assert emit_plan.should_flush_pending_diagnostics is False
+    assert emit_plan.should_emit_summary is True
+    pending_diagnostics_count = 1
+    flush_plan = runtime_resources.plan_binary_correction_summary_emit(
+        pending_diagnostics_count,
+    )
+    assert flush_plan.should_flush_pending_diagnostics is True
+    assert flush_plan.should_emit_summary is True
+    summary_payload = runtime_resources.binary_correction_summary_payload()
+    assert summary_payload["chunk_count"] == 1
+    assert summary_payload["score_only_count"] == 2
+    assert summary_payload["firth_attempted_count"] == 4
+    assert summary_payload["dense_correction_count"] == 18
+    assert summary_payload["null_model_failure_count"] == 2
+
+
+def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-dispatch-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    with pytest.raises(RuntimeError, match="continued without a work item"):
+        callback_runtime._core.NativeCallbackRuntimeResources(
+            worker_name="native-resource-invalid-dispatch-test",
+            dosage_worker_target=worker_target,
+            result_worker_target=worker_target,
+            staging_depth=1,
+            native_callback_batch_size=1,
+            expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.STOP_SIGNAL.value,
+            has_telemetry_session=False,
+            flush_binary_correction_diagnostics_on_result_stop=True,
+            result_in_flight_limit=1,
+            dosage_buffer_limit=1,
+        )
+
+    dosage_drain_plan = runtime_resources.plan_dosage_work_drain_completion(has_dosage_work_item=False)
+    assert dosage_drain_plan.should_stop is True
+    dosage_continue_plan = runtime_resources.plan_dosage_work_drain_completion(has_dosage_work_item=True)
+    assert dosage_continue_plan.should_stop is False
+    dosage_dispatch_plan = runtime_resources.plan_validated_dosage_work_item_dispatch(
+        callback_runtime.DosageWorkItemKind.SAMPLE_MAJOR_DOSAGE.value
+    )
+    assert dosage_dispatch_plan.should_process_sample_major_dosage is True
+    with pytest.raises(RuntimeError, match="continued without a work item"):
+        runtime_resources.plan_validated_dosage_work_item_dispatch(
+            callback_runtime.DosageWorkItemKind.STOP_SIGNAL.value
+        )
+
+    result_drain_plan = runtime_resources.plan_result_write_drain_completion(
+        has_result_work_item=False,
+    )
+    assert result_drain_plan.should_stop is True
+    assert result_drain_plan.should_flush_binary_correction_diagnostics is True
+    result_continue_plan = runtime_resources.plan_result_write_drain_completion(
+        has_result_work_item=True,
+    )
+    assert result_continue_plan.should_stop is False
+    assert result_continue_plan.should_flush_binary_correction_diagnostics is False
+    result_dispatch_plan = runtime_resources.plan_validated_result_write_item_dispatch(
+        callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+    )
+    assert result_dispatch_plan.should_process_result_write_item is True
+    with pytest.raises(RuntimeError, match="expected single_result but received multi_result"):
+        runtime_resources.plan_validated_result_write_item_dispatch(
+            callback_runtime.ResultWriteItemKind.MULTI_RESULT.value,
+        )
+
+    stage_duration_plan = runtime_resources.plan_dosage_work_item_stage_duration(
+        callback_runtime.DosageWorkItemKind.VARIANT_MAJOR_DOSAGE_BATCH.value,
+        2,
+        4.0,
+    )
+    assert stage_duration_plan.chunk_count == 2
+    assert stage_duration_plan.duration_per_chunk == 2.0
+
+    dosage_handoff_plan = runtime_resources.plan_dosage_work_handoff(2)
+    assert dosage_handoff_plan.chunk_count == 2
+    with pytest.raises(ValueError, match="at least one chunk"):
+        runtime_resources.plan_dosage_work_handoff(0)
+
+    variant_major_batch_handoff_plan = runtime_resources.plan_variant_major_dosage_batch_handoff(
+        metadata_count=2,
+        genotype_matrix_by_variant_count=2,
+        chunk_stats_count=2,
+    )
+    assert variant_major_batch_handoff_plan.chunk_count == 2
+    with pytest.raises(ValueError, match="identical lengths"):
+        runtime_resources.plan_variant_major_dosage_batch_handoff(
+            metadata_count=2,
+            genotype_matrix_by_variant_count=1,
+            chunk_stats_count=2,
+        )
+
+
+def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-result-slot-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+
+    acquire_observation_plan = runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+    assert acquire_observation_plan.resource_name == "result_in_flight_slots"
+    assert acquire_observation_plan.operation_name == "acquire"
+    assert acquire_observation_plan.blocked is False
+    assert acquire_observation_plan.should_retry_acquisition is False
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 1
+
+    retry_observation_plan = runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+    assert retry_observation_plan.resource_name == "result_in_flight_slots"
+    assert retry_observation_plan.operation_name == "producer_blocking"
+    assert retry_observation_plan.blocked is True
+    assert retry_observation_plan.should_retry_acquisition is True
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 1
+
+    release_observation_plan = runtime_resources.release_result_in_flight_slot()
+    assert release_observation_plan.resource_name == "result_in_flight_slots"
+    assert release_observation_plan.operation_name == "release"
+    assert release_observation_plan.blocked is False
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+    optional_acquire_result = runtime_resources.acquire_result_in_flight_slot_with_optional_observation()
+    assert optional_acquire_result.observation_plan is None
+    assert optional_acquire_result.should_retry_acquisition is False
+    unobserved_release_plan = runtime_resources.release_result_in_flight_slot_with_optional_observation()
+    assert unobserved_release_plan is None
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+    observed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-observed-result-slot-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        has_stage_timing_recorder=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    observed_acquire_result = observed_runtime_resources.acquire_result_in_flight_slot_with_optional_observation()
+    observed_acquire_plan = observed_acquire_result.observation_plan
+    assert observed_acquire_plan is not None
+    assert observed_acquire_plan.resource_name == "result_in_flight_slots"
+    assert observed_acquire_plan.operation_name == "acquire"
+    assert observed_acquire_plan.blocked is False
+    assert observed_acquire_result.should_retry_acquisition is False
+    observed_release_plan = observed_runtime_resources.release_result_in_flight_slot_with_optional_observation()
+    assert observed_release_plan is not None
+    assert observed_release_plan.resource_name == "result_in_flight_slots"
+    assert observed_release_plan.operation_name == "release"
+    assert observed_release_plan.blocked is False
+    assert observed_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+    acquire_result = runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    assert acquire_result.should_retry_acquisition is False
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 1
+
+    retry_result = runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    assert retry_result.should_retry_acquisition is True
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 1
+
+    runtime_resources.release_result_in_flight_slot()
+    with pytest.raises(RuntimeError, match="no occupied slot"):
+        runtime_resources.release_result_in_flight_slot()
+
+
+def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None:
+    def worker_target() -> None:
+        return None
+
+    observed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-observed-dosage-buffer-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        has_stage_timing_recorder=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    observed_dosage_buffer = np.empty((2, 2), dtype=np.float32)
+    register_operation_result = observed_runtime_resources.register_dosage_buffer_object_with_optional_observation(
+        observed_dosage_buffer
+    )
+    assert register_operation_result.has_free_buffer_count is True
+    assert register_operation_result.free_buffer_count == 0
+    register_observation_plan = register_operation_result.observation_plan
+    assert register_observation_plan is not None
+    assert register_observation_plan.operation_name == "allocate"
+    assert register_observation_plan.blocked is False
+    return_operation_result = observed_runtime_resources.return_dosage_buffer_object_with_optional_observation(
+        observed_dosage_buffer,
+    )
+    assert return_operation_result.has_free_buffer_count is True
+    assert return_operation_result.free_buffer_count == 1
+    return_observation_plan = return_operation_result.observation_plan
+    assert return_observation_plan is not None
+    assert return_observation_plan.operation_name == "return"
+    assert return_observation_plan.blocked is False
+    free_buffer_result = observed_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is observed_dosage_buffer
+    discard_operation_result = observed_runtime_resources.discard_dosage_buffer_object_with_optional_observation(
+        observed_dosage_buffer
+    )
+    assert discard_operation_result.has_free_buffer_count is True
+    assert discard_operation_result.free_buffer_count == 0
+    discard_observation_plan = discard_operation_result.observation_plan
+    assert discard_observation_plan is not None
+    assert discard_observation_plan.operation_name == "discard"
+    assert discard_observation_plan.blocked is False
+    missing_discard_operation_result = (
+        observed_runtime_resources.discard_dosage_buffer_object_with_optional_observation(observed_dosage_buffer)
+    )
+    assert missing_discard_operation_result.has_free_buffer_count is False
+    assert missing_discard_operation_result.free_buffer_count is None
+    assert missing_discard_operation_result.observation_plan is None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-dosage-buffer-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    dosage_buffer = np.empty((2, 2), dtype=np.float32)
+
+    unobserved_dosage_buffer = np.empty((2, 2), dtype=np.float32)
+    unobserved_register_result = runtime_resources.register_dosage_buffer_object_with_optional_observation(
+        unobserved_dosage_buffer
+    )
+    assert unobserved_register_result.has_free_buffer_count is True
+    assert unobserved_register_result.free_buffer_count == 0
+    assert unobserved_register_result.observation_plan is None
+    unobserved_return_attempt_plan = runtime_resources.plan_dosage_buffer_object_return_attempt(
+        unobserved_dosage_buffer
+    )
+    assert unobserved_return_attempt_plan.should_return is True
+    unobserved_return_result = runtime_resources.return_dosage_buffer_object_with_optional_observation(
+        unobserved_dosage_buffer,
+    )
+    assert unobserved_return_result.has_free_buffer_count is True
+    assert unobserved_return_result.free_buffer_count == 1
+    assert unobserved_return_result.observation_plan is None
+    free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is unobserved_dosage_buffer
+    unobserved_discard_result = runtime_resources.discard_dosage_buffer_object_with_optional_observation(
+        unobserved_dosage_buffer
+    )
+    assert unobserved_discard_result.has_free_buffer_count is True
+    assert unobserved_discard_result.free_buffer_count == 0
+    assert unobserved_discard_result.observation_plan is None
+    missing_unobserved_return_attempt_plan = runtime_resources.plan_dosage_buffer_object_return_attempt(
+        unobserved_dosage_buffer
+    )
+    assert missing_unobserved_return_attempt_plan.should_return is False
+
+    assert runtime_resources.free_dosage_buffer_count == 0
+    assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
+    assert runtime_resources.dosage_buffer_allocated_count == 1
+    assert id(dosage_buffer) in runtime_resources.dosage_buffer_identifiers
+    assert runtime_resources.callback_scheduler_state.dosage_buffer_allocated_count == 1
+    return_attempt_plan = runtime_resources.plan_dosage_buffer_return_attempt(id(dosage_buffer))
+    assert return_attempt_plan.should_return is True
+    assert runtime_resources.plan_dosage_buffer_return_attempt(id(object())).should_return is False
+    with pytest.raises(RuntimeError, match="no available slot"):
+        runtime_resources.register_dosage_buffer(id(np.empty((2, 2), dtype=np.float32)))
+
+    assert runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer) == 1
+    assert runtime_resources.free_dosage_buffers.occupied_count == 1
+    assert runtime_resources.free_dosage_buffer_count == 1
+    with pytest.raises(RuntimeError, match="no slot for returned buffer"):
+        runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer)
+    free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is dosage_buffer
+    assert runtime_resources.free_dosage_buffer_count == 0
+
+    reuse_observation_plan = runtime_resources.plan_dosage_buffer_pool_reuse_observation()
+    assert reuse_observation_plan.operation_name == "reuse"
+    assert reuse_observation_plan.blocked is False
+    wait_observation_plan = runtime_resources.plan_dosage_buffer_pool_consumer_wait_observation()
+    assert wait_observation_plan.operation_name == "consumer_wait"
+    assert wait_observation_plan.blocked is True
+    exact_reuse_plan = runtime_resources.plan_dosage_buffer_reuse((2, 2), (2, 2))
+    assert exact_reuse_plan is not None
+    assert exact_reuse_plan.requires_slice is False
+    assert exact_reuse_plan.slice_dimensions == [2, 2]
+    sliced_reuse_plan = runtime_resources.plan_dosage_buffer_reuse((4, 5), (2, 3))
+    assert sliced_reuse_plan is not None
+    assert sliced_reuse_plan.requires_slice is True
+    assert sliced_reuse_plan.slice_dimensions == [2, 3]
+    assert runtime_resources.plan_dosage_buffer_reuse((2, 2), (3, 2)) is None
+    pool_observation = runtime_resources.plan_dosage_buffer_pool_backpressure_observation(
+        operation_name="return",
+        free_buffer_count=1,
+        elapsed_seconds=0.25,
+        blocked=False,
+    )
+    assert pool_observation.queue_name == "dosage_buffer_pool"
+    assert pool_observation.queue_depth == 1
+    assert pool_observation.queue_capacity == 1
+    assert pool_observation.blocked_seconds == 0.0
+    pool_stage_observation = runtime_resources.plan_dosage_buffer_pool_stage_backpressure_observation(
+        operation_name="consumer_wait",
+        free_buffer_count=0,
+        elapsed_seconds=0.5,
+        blocked=True,
+    )
+    assert pool_stage_observation.stage_name == "dosage_buffer_pool_consumer_wait"
+    assert pool_stage_observation.queue_depth == 0
+    assert pool_stage_observation.queue_capacity == 1
+    assert pool_stage_observation.blocked_seconds == 0.5
+
+    assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) == 0
+    assert runtime_resources.dosage_buffer_allocated_count == 0
+    assert runtime_resources.callback_scheduler_state.dosage_buffer_allocated_count == 0
+    assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) is None
+
+
+def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-result-cleanup-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        has_stage_timing_recorder=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    dosage_buffer = np.empty((2, 2), dtype=np.float32)
+
+    assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
+    runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+
+    pre_write_result = runtime_resources.release_result_work_item_pre_write_resources(
+        dosage_buffer,
+    )
+    assert pre_write_result.released_host_buffer is True
+    assert pre_write_result.free_buffer_count == 1
+    pre_write_buffer_observation_plan = pre_write_result.dosage_buffer_pool_observation_plan
+    assert pre_write_buffer_observation_plan is not None
+    assert pre_write_buffer_observation_plan.operation_name == "return"
+    assert pre_write_buffer_observation_plan.blocked is False
+    assert pre_write_result.released_result_in_flight_slot is False
+    free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is dosage_buffer
+
+    final_result = runtime_resources.release_result_work_item_final_resources(
+        dosage_buffer,
+        has_released_host_dosage_buffer=True,
+        release_in_flight_slot=True,
+    )
+    assert final_result.released_host_buffer is False
+    assert final_result.free_buffer_count is None
+    assert final_result.dosage_buffer_pool_observation_plan is None
+    assert final_result.released_result_in_flight_slot is True
+    assert final_result.result_in_flight_resource_name == "result_in_flight_slots"
+    assert final_result.result_in_flight_operation_name == "release"
+    assert final_result.result_in_flight_blocked is False
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+    unobserved_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-unobserved-result-cleanup-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    unobserved_dosage_buffer = np.empty((2, 2), dtype=np.float32)
+    assert unobserved_runtime_resources.register_dosage_buffer(id(unobserved_dosage_buffer)) == 0
+    unobserved_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+
+    unobserved_pre_write_result = unobserved_runtime_resources.release_result_work_item_pre_write_resources(
+        unobserved_dosage_buffer,
+    )
+    assert unobserved_pre_write_result.released_host_buffer is True
+    assert unobserved_pre_write_result.free_buffer_count == 1
+    assert unobserved_pre_write_result.dosage_buffer_pool_observation_plan is None
+    assert unobserved_pre_write_result.released_result_in_flight_slot is False
+    free_buffer_result = unobserved_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
+    assert free_buffer_result.has_item is True
+    assert free_buffer_result.item is unobserved_dosage_buffer
+
+    unobserved_final_result = unobserved_runtime_resources.release_result_work_item_final_resources(
+        unobserved_dosage_buffer,
+        has_released_host_dosage_buffer=True,
+        release_in_flight_slot=True,
+    )
+    assert unobserved_final_result.released_host_buffer is False
+    assert unobserved_final_result.free_buffer_count is None
+    assert unobserved_final_result.dosage_buffer_pool_observation_plan is None
+    assert unobserved_final_result.released_result_in_flight_slot is True
+    assert unobserved_final_result.result_in_flight_resource_name is None
+    assert unobserved_final_result.result_in_flight_operation_name is None
+    assert unobserved_final_result.result_in_flight_blocked is None
+    assert unobserved_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+
+def test_native_callback_runtime_resources_own_dosage_buffer_acquisition() -> None:
+    def worker_target() -> None:
+        return None
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-dosage-buffer-acquire-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    dosage_buffer = np.empty((2, 2), dtype=np.float32)
+
+    allocate_result = runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
+    assert allocate_result.should_allocate is True
+    assert allocate_result.dosage_buffer is None
+    assert allocate_result.free_buffer_count == 0
+    assert allocate_result.waited is False
+
+    assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
+    assert runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer) == 1
+
+    reuse_result = runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
+    assert reuse_result.should_allocate is False
+    assert reuse_result.dosage_buffer is dosage_buffer
+    assert reuse_result.free_buffer_count == 0
+    assert reuse_result.waited is False
+
+    acquisition_started = threading.Event()
+
+    def acquire_after_pool_capacity_is_full() -> _core.NativeDosageBufferAcquireResult:
+        acquisition_started.set()
+        return runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(acquire_after_pool_capacity_is_full)
+        assert acquisition_started.wait(timeout=1.0)
+        time.sleep(0.02)
+        assert not future.done()
+
+        assert runtime_resources.return_dosage_buffer(id(dosage_buffer), dosage_buffer) == 1
+        wait_result = future.result(timeout=2.0)
+
+    assert wait_result.should_allocate is False
+    assert wait_result.dosage_buffer is None
+    assert wait_result.free_buffer_count == 1
+    assert wait_result.waited is True
+
+    reused_after_wait_result = runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
+    assert reused_after_wait_result.dosage_buffer is dosage_buffer
+
+
+def test_native_callback_runtime_resources_own_worker_stop_and_join() -> None:
+    runtime_resources_holder: list[typing.Any] = []
+
+    def dosage_worker_target() -> None:
+        runtime_resources_holder[0].get_dosage_work_item()
+
+    def result_worker_target() -> None:
+        runtime_resources_holder[0].get_result_write_item()
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-worker-shutdown-test",
+        dosage_worker_target=dosage_worker_target,
+        result_worker_target=result_worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    runtime_resources_holder.append(runtime_resources)
+
+    assert runtime_resources.dosage_worker_name == "native-resource-worker-shutdown-test"
+    assert runtime_resources.result_worker_name == "native-resource-worker-shutdown-test-writer"
+    assert runtime_resources.dosage_worker_is_alive is False
+    assert runtime_resources.result_worker_is_alive is False
+    start_plan = runtime_resources.start_workers()
+    assert start_plan.has_start_error is False
+    assert runtime_resources.dosage_worker_is_alive is True
+    assert runtime_resources.result_worker_is_alive is True
+    assert runtime_resources.stop_dosage_worker(1.0) is None
+    assert runtime_resources.stop_result_worker(1.0) is None
+    assert runtime_resources.join_dosage_worker(1.0) is None
+    assert runtime_resources.join_result_worker(1.0) is None
+    assert runtime_resources.dosage_worker_is_alive is False
+    assert runtime_resources.result_worker_is_alive is False
+
+
+def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle() -> None:
+    finish_runtime_resources_holder: list[typing.Any] = []
+
+    def finish_dosage_worker_target() -> None:
+        finish_runtime_resources_holder[0].get_dosage_work_item()
+
+    def finish_result_worker_target() -> None:
+        finish_runtime_resources_holder[0].get_result_write_item()
+
+    finish_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-worker-finish-test",
+        dosage_worker_target=finish_dosage_worker_target,
+        result_worker_target=finish_result_worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=True,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    finish_runtime_resources_holder.append(finish_runtime_resources)
+
+    start_plan = finish_runtime_resources.start_workers()
+    assert start_plan.has_start_error is False
+    finish_runtime_resources.add_binary_null_model_failure_count(2)
+    finish_result = finish_runtime_resources.finish_worker_lifecycle(
+        pending_diagnostics_count=0,
+    )
+
+    assert finish_result.has_shutdown_timeout is False
+    assert finish_result.shutdown_worker_name is None
+    assert finish_result.shutdown_timeout_seconds is None
+    assert finish_result.raise_worker_error is True
+    assert finish_result.complete_progress is True
+    assert finish_result.emit_binary_correction_summary is True
+    assert finish_result.flush_binary_correction_pending_diagnostics is False
+    summary_payload = finish_result.binary_correction_summary_payload
+    assert summary_payload is not None
+    assert summary_payload["null_model_failure_count"] == 2
+    assert finish_runtime_resources.plan_worker_error_raise().should_raise is False
+    dosage_error_update = finish_runtime_resources.update_dosage_worker_error("dosage failed")
+    assert dosage_error_update.had_error is False
+    assert dosage_error_update.has_error is True
+    assert dosage_error_update.error_message == "native pipeline callback worker failed: dosage failed"
+    dosage_error_raise_plan = finish_runtime_resources.plan_worker_error_raise()
+    assert dosage_error_raise_plan.should_raise is True
+    assert dosage_error_raise_plan.raise_dosage_worker_error is True
+    assert dosage_error_raise_plan.error_message == "native pipeline callback worker failed: dosage failed"
+    dosage_error_clear = finish_runtime_resources.update_dosage_worker_error(None)
+    assert dosage_error_clear.had_error is True
+    assert dosage_error_clear.has_error is False
+    result_error_update = finish_runtime_resources.update_result_worker_error("writer failed")
+    assert result_error_update.had_error is False
+    assert result_error_update.has_error is True
+    assert result_error_update.error_message == "native pipeline result writer worker failed: writer failed"
+    result_error_clear = finish_runtime_resources.update_result_worker_error(None)
+    assert result_error_clear.had_error is True
+    assert result_error_clear.has_error is False
+    assert not finish_runtime_resources.worker_thread.is_alive()
+    assert not finish_runtime_resources.result_worker_thread.is_alive()
+
+    abort_runtime_resources_holder: list[typing.Any] = []
+
+    def abort_dosage_worker_target() -> None:
+        abort_runtime_resources_holder[0].get_dosage_work_item()
+
+    def abort_result_worker_target() -> None:
+        abort_runtime_resources_holder[0].get_result_write_item()
+
+    abort_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-worker-abort-test",
+        dosage_worker_target=abort_dosage_worker_target,
+        result_worker_target=abort_result_worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    abort_runtime_resources_holder.append(abort_runtime_resources)
+
+    start_plan = abort_runtime_resources.start_workers()
+    assert start_plan.has_start_error is False
+    abort_plan = abort_runtime_resources.abort_worker_lifecycle()
+
+    assert abort_plan.stop_dosage_worker is True
+    assert abort_plan.stop_result_worker is True
+    assert abort_runtime_resources.join_dosage_worker(1.0) is None
+    assert abort_runtime_resources.join_result_worker(1.0) is None
+    assert not abort_runtime_resources.worker_thread.is_alive()
+    assert not abort_runtime_resources.result_worker_thread.is_alive()
+
+
+def test_native_callback_runtime_resources_report_worker_shutdown_timeouts() -> None:
+    release_event = threading.Event()
+
+    def worker_target() -> None:
+        release_event.wait(timeout=2.0)
+
+    runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-worker-timeout-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+
+    start_plan = runtime_resources.start_workers()
+    assert start_plan.has_start_error is False
+    try:
+        assert runtime_resources.stop_dosage_worker(0.0) == 0.0
+        assert runtime_resources.stop_result_worker(0.0) == 0.0
+        assert runtime_resources.join_dosage_worker(0.0) == 0.0
+        assert runtime_resources.join_result_worker(0.0) == 0.0
+    finally:
+        release_event.set()
+        runtime_resources.join_dosage_worker(1.0)
+        runtime_resources.join_result_worker(1.0)
+
+
 def test_native_callback_runner_uses_native_worker_start_plan() -> None:
     class RecordingWorkerThread:
         def __init__(self, *, worker_name: str, start_events: list[str]) -> None:
@@ -2133,7 +3402,6 @@ def test_native_callback_runner_uses_native_worker_start_plan() -> None:
     scheduler_state = CallbackStartAttemptSchedulerProbe()
     typing.cast("typing.Any", callback).callback_scheduler_state = scheduler_state
     callback_for_start = typing.cast("typing.Any", callback)
-    callback_for_start.worker_start_lock = threading.Lock()
     callback_for_start.result_worker_thread = RecordingWorkerThread(
         worker_name="result",
         start_events=start_events,
@@ -2163,6 +3431,8 @@ def test_native_callback_runner_records_native_delivery_timing_for_enqueued_chun
                 worker_name="timed-manual-callback",
                 staging_depth=2,
                 native_callback_batch_size=1,
+                expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=None,
                 stage_timing_recorder=stage_timing_recorder,
@@ -2230,6 +3500,8 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
                 worker_name="batched-manual-callback",
                 staging_depth=2,
                 native_callback_batch_size=2,
+                expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=2,
                 stage_timing_recorder=stage_timing_recorder,
@@ -2333,7 +3605,6 @@ def test_native_callback_runner_uses_scheduler_dosage_work_stage_duration_plan()
 
 def test_native_callback_runner_uses_scheduler_variant_major_batch_handoff_plan() -> None:
     callback = ManualCallbackRunner()
-    callback.worker_start_lock = threading.Lock()
     mark_callback_workers_started(callback)
     metadata = build_native_metadata()
 
@@ -2778,6 +4049,8 @@ def test_base_native_callback_runner_compute_methods_are_abstract() -> None:
             worker_name="incomplete-callback",
             staging_depth=2,
             native_callback_batch_size=1,
+            expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -4440,10 +5713,7 @@ def test_native_callback_runner_uses_scheduler_result_write_drain_completion_pla
 
     typing.cast("typing.Any", callback).flush_binary_correction_diagnostics = flush_binary_correction_diagnostics_probe
 
-    drain_completion_plan = callback.plan_result_write_drain_completion(
-        None,
-        flush_binary_correction_diagnostics_on_stop=True,
-    )
+    drain_completion_plan = callback.plan_result_write_drain_completion(None)
     should_stop = callback.apply_result_write_drain_completion_plan(drain_completion_plan)
 
     assert scheduler_state.has_result_work_item is False
@@ -4469,10 +5739,7 @@ def test_native_callback_runner_uses_scheduler_result_write_item_dispatch_plan()
         binary_chunk_diagnostics=None,
     )
 
-    dispatch_plan = callback.plan_result_write_item_dispatch(
-        result_work_item,
-        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
-    )
+    dispatch_plan = callback.plan_result_write_item_dispatch(result_work_item)
 
     assert scheduler_state.result_work_item_kind == "single_result"
     assert scheduler_state.expected_result_work_item_kind == "single_result"
@@ -4492,10 +5759,8 @@ def test_native_callback_runner_uses_scheduler_result_write_item_dispatch_plan()
         binary_chunk_diagnostics=None,
     )
 
-    dispatch_plan = callback.plan_result_write_item_dispatch(
-        multi_result_work_item,
-        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.MULTI_RESULT,
-    )
+    callback.expected_result_work_item_kind = callback_runtime.ResultWriteItemKind.MULTI_RESULT
+    dispatch_plan = callback.plan_result_write_item_dispatch(multi_result_work_item)
 
     assert scheduler_state.result_work_item_kind == "multi_result"
     assert scheduler_state.expected_result_work_item_kind == "multi_result"
@@ -4803,6 +6068,8 @@ def test_native_bgen_callback_runner_rejects_nonpositive_staging_depth() -> None
             worker_name="invalid-staging-depth",
             staging_depth=0,
             native_callback_batch_size=1,
+            expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=None,
@@ -4844,6 +6111,8 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
         worker_name="default-capacity",
         staging_depth=3,
         native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
         stage_timing_recorder=None,
@@ -4854,6 +6123,8 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
         worker_name="explicit-capacity",
         staging_depth=3,
         native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+        flush_binary_correction_diagnostics_on_result_stop=False,
         result_in_flight_limit=7,
         dosage_buffer_limit=8,
         stage_timing_recorder=None,
@@ -4867,7 +6138,7 @@ def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
     assert explicit_callback.dosage_buffer_limit == 8
 
 
-def test_native_bgen_callback_runner_uses_native_scheduler_state() -> None:
+def test_native_bgen_callback_runner_uses_native_runtime_resources() -> None:
     class ConcreteCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def compute_preprocessed_chunk(
             self,
@@ -4903,14 +6174,48 @@ def test_native_bgen_callback_runner_uses_native_scheduler_state() -> None:
         result_in_flight_limit=13,
         dosage_buffer_limit=14,
     )
+    resolved_dosage_queue = SimpleNamespace()
+    resolved_result_queue = SimpleNamespace()
+    resolved_free_dosage_buffers = SimpleNamespace()
+    resolved_result_in_flight_slot_signal = SimpleNamespace()
+    resolved_dosage_buffer_pool_signal = SimpleNamespace()
+    resolved_worker_thread = SimpleNamespace()
+    resolved_result_worker_thread = SimpleNamespace()
+    resolved_runtime_resources = SimpleNamespace(
+        callback_scheduler_state=resolved_scheduler_state,
+        progress_state=SimpleNamespace(),
+        result_in_flight_slot_signal=resolved_result_in_flight_slot_signal,
+        dosage_buffer_pool_signal=resolved_dosage_buffer_pool_signal,
+        dosage_queue=resolved_dosage_queue,
+        result_queue=resolved_result_queue,
+        free_dosage_buffers=resolved_free_dosage_buffers,
+        binary_correction_summary=SimpleNamespace(),
+        worker_thread=resolved_worker_thread,
+        result_worker_thread=resolved_result_worker_thread,
+        has_started=False,
+        native_callback_batch_size=5,
+        dosage_queue_depth=11,
+        result_queue_depth=12,
+        result_in_flight_limit=13,
+        dosage_buffer_limit=14,
+        dosage_queue_occupied_count=0,
+        result_queue_occupied_count=0,
+        result_in_flight_occupied_count=0,
+        dosage_buffer_allocated_count=0,
+        dosage_buffer_identifiers=[],
+        processed_chunk_count=0,
+        current_progress_chromosome=None,
+    )
     with patch(
-        "g.engine.callbacks.runtime._core.NativeCallbackSchedulerState",
-        return_value=resolved_scheduler_state,
-    ) as mock_scheduler_state:
+        "g.engine.callbacks.runtime._core.NativeCallbackRuntimeResources",
+        return_value=resolved_runtime_resources,
+    ) as mock_runtime_resources:
         callback = ConcreteCallbackRunner(
             worker_name="native-policy",
             staging_depth=3,
             native_callback_batch_size=5,
+            expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=7,
             dosage_buffer_limit=8,
             stage_timing_recorder=None,
@@ -4918,19 +6223,137 @@ def test_native_bgen_callback_runner_uses_native_scheduler_state() -> None:
             output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
         )
 
-    mock_scheduler_state.assert_called_once_with(
-        staging_depth=3,
-        native_callback_batch_size=5,
-        result_in_flight_limit=7,
-        dosage_buffer_limit=8,
-    )
+    mock_runtime_resources.assert_called_once()
+    runtime_resource_arguments = mock_runtime_resources.call_args.kwargs
+    assert runtime_resource_arguments["worker_name"] == "native-policy"
+    assert callable(runtime_resource_arguments["dosage_worker_target"])
+    assert callable(runtime_resource_arguments["result_worker_target"])
+    assert runtime_resource_arguments["staging_depth"] == 3
+    assert runtime_resource_arguments["native_callback_batch_size"] == 5
+    assert runtime_resource_arguments["expected_result_work_item_kind"] == "single_result"
+    assert runtime_resource_arguments["has_telemetry_session"] is False
+    assert runtime_resource_arguments["flush_binary_correction_diagnostics_on_result_stop"] is False
+    assert runtime_resource_arguments["has_stage_timing_recorder"] is False
+    assert runtime_resource_arguments["result_in_flight_limit"] == 7
+    assert runtime_resource_arguments["dosage_buffer_limit"] == 8
+    assert callback.callback_runtime_resources is resolved_runtime_resources
+    assert callback.callback_scheduler_state is resolved_scheduler_state
+    assert not hasattr(callback, "fallback_callback_scheduler_state")
+    assert callback.progress_state is resolved_runtime_resources.progress_state
+    assert not hasattr(callback, "fallback_progress_state")
+    assert callback.binary_correction_summary is resolved_runtime_resources.binary_correction_summary
+    assert not hasattr(callback, "fallback_binary_correction_summary")
     assert callback.dosage_queue_depth == 11
     assert callback.result_queue_depth == 12
     assert callback.result_in_flight_limit == 13
     assert callback.dosage_buffer_limit == 14
+    assert callback.result_in_flight_slot_signal is resolved_result_in_flight_slot_signal
+    assert not hasattr(callback, "fallback_result_in_flight_slot_signal")
+    assert callback.dosage_buffer_pool_signal is resolved_dosage_buffer_pool_signal
+    assert not hasattr(callback, "fallback_dosage_buffer_pool_signal")
+    assert callback.dosage_queue is resolved_dosage_queue
+    assert not hasattr(callback, "fallback_dosage_queue")
+    assert callback.result_queue is resolved_result_queue
+    assert not hasattr(callback, "fallback_result_queue")
+    assert callback.free_dosage_buffers is resolved_free_dosage_buffers
+    assert not hasattr(callback, "fallback_free_dosage_buffers")
+    assert callback.worker_thread is resolved_worker_thread
+    assert not hasattr(callback, "fallback_worker_thread")
+    assert callback.result_worker_thread is resolved_result_worker_thread
+    assert not hasattr(callback, "fallback_result_worker_thread")
     assert not hasattr(callback.dosage_queue, "maxsize")
     assert not hasattr(callback.result_queue, "maxsize")
     assert not hasattr(callback.free_dosage_buffers, "maxsize")
+
+
+def test_native_bgen_callback_runner_uses_native_untimed_queue_get_drain_results() -> None:
+    class RecordingCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
+        def __init__(self) -> None:
+            super().__init__(
+                worker_name="native-untimed-drain",
+                staging_depth=2,
+                native_callback_batch_size=1,
+                expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+                flush_binary_correction_diagnostics_on_result_stop=False,
+                result_in_flight_limit=None,
+                dosage_buffer_limit=None,
+                stage_timing_recorder=None,
+                telemetry_session=None,
+                output_statistic_dtype=types.FloatingPointDtype.FLOAT32,
+            )
+            self.sample_major_metadata: list[object] = []
+            self.variant_major_metadata: list[object] = []
+            self.packed_metadata: list[object] = []
+            self.result_metadata: list[object] = []
+
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del genotype_matrix, chunk_stats
+            self.sample_major_metadata.append(variant_metadata)
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del genotype_matrix_by_variant, chunk_stats
+            self.variant_major_metadata.append(variant_metadata)
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del packed_probability_pairs_by_variant, chunk_stats
+            self.packed_metadata.append(variant_metadata)
+
+        def process_result_write_item(self, work_item: callback_shared.Regenie2ResultWriteWorkItem) -> None:
+            self.result_metadata.append(work_item.metadata)
+
+    callback = RecordingCallbackRunner()
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("typing.Any", SimpleNamespace())
+    dosage_work_item = callback_shared.PreprocessedDosageChunkWorkItem(
+        metadata=metadata,
+        genotype_matrix=np.ones((2, 2), dtype=np.float32),
+        chunk_stats=chunk_stats,
+    )
+    result_work_item = callback_shared.Regenie2ResultWriteWorkItem(
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=None,
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=None,
+    )
+
+    assert callback.try_put_dosage_work_item_with_backpressure_timeout(dosage_work_item) is True
+    assert callback.try_put_dosage_work_item_with_backpressure_timeout(None) is True
+    callback.consume_dosage_chunks_without_timing()
+    assert callback.sample_major_metadata == [metadata]
+    assert callback.variant_major_metadata == []
+    assert callback.packed_metadata == []
+    assert callback.processed_chunk_count == 1
+    assert callback.worker_error_cause is None
+
+    assert callback.try_put_result_write_item_with_backpressure_timeout(result_work_item) is True
+    assert callback.try_put_result_write_item_with_backpressure_timeout(None) is True
+    callback.consume_result_write_items_without_timing()
+    assert callback.result_metadata == [metadata]
+    assert callback.result_worker_error_cause is None
 
 
 def test_native_bgen_callback_runner_rejects_batch_size_above_dosage_buffer_limit() -> None:
@@ -4967,6 +6390,8 @@ def test_native_bgen_callback_runner_rejects_batch_size_above_dosage_buffer_limi
             worker_name="oversized-batch",
             staging_depth=1,
             native_callback_batch_size=3,
+            expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=None,
             dosage_buffer_limit=2,
             stage_timing_recorder=None,
@@ -5020,6 +6445,8 @@ def test_native_bgen_callback_runner_rejects_nonpositive_capacity_limits(
                 worker_name="invalid-capacity",
                 staging_depth=1,
                 native_callback_batch_size=1,
+                expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=0,
                 dosage_buffer_limit=None,
                 stage_timing_recorder=None,
@@ -5031,6 +6458,8 @@ def test_native_bgen_callback_runner_rejects_nonpositive_capacity_limits(
                 worker_name="invalid-capacity",
                 staging_depth=1,
                 native_callback_batch_size=1,
+                expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+                flush_binary_correction_diagnostics_on_result_stop=False,
                 result_in_flight_limit=None,
                 dosage_buffer_limit=0,
                 stage_timing_recorder=None,
@@ -6024,6 +7453,72 @@ def test_multi_linear_packed8_callback_uses_multi_packed_compute() -> None:
     assert writer_sessions[0].native_chunks[0]["chunk_stats"] is chunk_stats
 
 
+@pytest.mark.parametrize(
+    "stage_timing_recorder",
+    [None, timing.StageTimingRecorder(exact_stage_timings=False)],
+)
+def test_multi_linear_callback_uses_native_result_get_drain_resources(
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+) -> None:
+    callback = build_test_multi_linear_pipeline_callback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=build_multi_trait_prediction_source(),
+        writer_sessions=(FakeWriterSession(), FakeWriterSession()),
+        committed_chunk_identifier_sets=(set(), set()),
+        stage_timing_recorder=stage_timing_recorder,
+    )
+    metadata = build_native_metadata()
+    processed_metadata: list[object] = []
+
+    def forbidden_get_result_write_item() -> object:
+        message = "multi callback should use native resource-owned result get"
+        raise AssertionError(message)
+
+    def forbidden_plan_result_write_drain_completion(work_item: object) -> object:
+        del work_item
+        message = "multi callback should use native resource-owned result drain completion"
+        raise AssertionError(message)
+
+    def process_multi_result_write_item_probe(
+        multi_work_item: callback_shared.Regenie2MultiResultWriteWorkItem,
+    ) -> None:
+        processed_metadata.append(multi_work_item.metadata)
+
+    callback_for_probe = typing.cast("typing.Any", callback)
+    callback_for_probe.get_result_write_item = forbidden_get_result_write_item
+    callback_for_probe.plan_result_write_drain_completion = forbidden_plan_result_write_drain_completion
+    callback_for_probe.process_multi_result_write_item = process_multi_result_write_item_probe
+
+    assert callback.try_put_result_write_item_with_backpressure_timeout(
+        callback_shared.Regenie2MultiResultWriteWorkItem(
+            metadata=metadata,
+            chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+            beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+            standard_error=jnp.asarray([[0.5, 0.6], [0.7, 0.8]], dtype=jnp.float32),
+            chi_squared=jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32),
+            log10_p_value=jnp.asarray([[5.0, 6.0], [7.0, 8.0]], dtype=jnp.float32),
+            extra_code=None,
+            host_dosage_buffer=None,
+            release_in_flight_slot=False,
+            binary_chunk_diagnostics=None,
+        )
+    )
+    assert callback.try_put_result_write_item_with_backpressure_timeout(None)
+
+    try:
+        if stage_timing_recorder is not None:
+            callback.consume_result_write_items()
+        else:
+            callback.consume_result_write_items_without_timing()
+    finally:
+        callback.finish()
+
+    assert callback.result_worker_error_cause is None
+    assert processed_metadata == [metadata]
+    if stage_timing_recorder is not None:
+        assert stage_timing_recorder.snapshot().stage_counts["result_queue_consumer_wait"] == 1
+
+
 def test_binary_callback_fails_when_null_logistic_does_not_converge() -> None:
     callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
@@ -6046,9 +7541,7 @@ def test_binary_callback_fails_when_null_logistic_does_not_converge() -> None:
         callback.finish()
 
 
-def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> None:
     callback = build_test_binary_pipeline_callback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
@@ -6060,7 +7553,9 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence(
 
     try:
         with (
-            caplog.at_level("WARNING", logger="g.engine.callbacks"),
+            patch(
+                "g.engine.callbacks.diagnostics._core.emit_diagnostic_event",
+            ) as emit_diagnostic_event_mock,
             patch(
                 "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
                 return_value=build_binary_chromosome_state(converged=False),
@@ -6071,7 +7566,18 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence(
         callback.finish()
 
     assert callback.current_chromosome == "22"
-    assert any("--null_logistic_nonconvergence_policy=warn" in record.message for record in caplog.records)
+    emit_diagnostic_event_mock.assert_called_once()
+    assert emit_diagnostic_event_mock.call_args.args[0] == "warning"
+    assert emit_diagnostic_event_mock.call_args.args[1] == "callback_null_logistic_nonconvergence_warning"
+    assert "--null_logistic_nonconvergence_policy=warn" in emit_diagnostic_event_mock.call_args.args[2]
+    assert json.loads(emit_diagnostic_event_mock.call_args.args[3]) == {
+        "chromosome": "22",
+        "nonconverged_count": 1,
+        "phenotype_count": 0,
+        "policy": "warn",
+        "scalar_convergence": True,
+        "total_fit_count": 1,
+    }
 
 
 def test_multi_binary_callback_fails_when_any_null_logistic_trait_does_not_converge() -> None:
@@ -6095,6 +7601,80 @@ def test_multi_binary_callback_fails_when_any_null_logistic_trait_does_not_conve
             callback.prepare_chromosome_state(build_native_metadata())
     finally:
         callback.finish()
+
+
+@pytest.mark.parametrize(
+    "stage_timing_recorder",
+    [None, timing.StageTimingRecorder(exact_stage_timings=False)],
+)
+def test_multi_binary_callback_uses_native_result_get_drain_resources(
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+) -> None:
+    callback = build_test_multi_binary_pipeline_callback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_sessions=(FakeWriterSession(), FakeWriterSession()),
+        committed_chunk_identifier_sets=(set(), set()),
+        correction_plan=SCORE_ONLY_PLAN,
+        kernel_config=build_default_binary_kernel_config(),
+        stage_timing_recorder=stage_timing_recorder,
+    )
+    metadata = build_native_metadata()
+    processed_metadata: list[object] = []
+
+    def forbidden_get_result_write_item() -> object:
+        message = "multi callback should use native resource-owned result get"
+        raise AssertionError(message)
+
+    def forbidden_plan_result_write_drain_completion(work_item: object) -> object:
+        del work_item
+        message = "multi callback should use native resource-owned result drain completion"
+        raise AssertionError(message)
+
+    def process_multi_result_write_item_probe(
+        multi_work_item: callback_shared.Regenie2MultiResultWriteWorkItem,
+    ) -> None:
+        processed_metadata.append(multi_work_item.metadata)
+
+    callback_for_probe = typing.cast("typing.Any", callback)
+    callback_for_probe.get_result_write_item = forbidden_get_result_write_item
+    callback_for_probe.plan_result_write_drain_completion = forbidden_plan_result_write_drain_completion
+    callback_for_probe.process_multi_result_write_item = process_multi_result_write_item_probe
+
+    assert callback.try_put_result_write_item_with_backpressure_timeout(
+        callback_shared.Regenie2MultiResultWriteWorkItem(
+            metadata=metadata,
+            chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+            beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+            standard_error=jnp.asarray([[0.5, 0.6], [0.7, 0.8]], dtype=jnp.float32),
+            chi_squared=jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32),
+            log10_p_value=jnp.asarray([[5.0, 6.0], [7.0, 8.0]], dtype=jnp.float32),
+            extra_code=jnp.asarray(
+                [
+                    [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+                    [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+                ],
+                dtype=jnp.int32,
+            ),
+            host_dosage_buffer=None,
+            release_in_flight_slot=False,
+            binary_chunk_diagnostics=None,
+        )
+    )
+    assert callback.try_put_result_write_item_with_backpressure_timeout(None)
+
+    try:
+        if stage_timing_recorder is not None:
+            callback.consume_result_write_items()
+        else:
+            callback.consume_result_write_items_without_timing()
+    finally:
+        callback.finish()
+
+    assert callback.result_worker_error_cause is None
+    assert processed_metadata == [metadata]
+    if stage_timing_recorder is not None:
+        assert stage_timing_recorder.snapshot().stage_counts["result_queue_consumer_wait"] == 1
 
 
 def test_multi_binary_score_only_sample_major_callback_skips_sparse_mask_transfer() -> None:

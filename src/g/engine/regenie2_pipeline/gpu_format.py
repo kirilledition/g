@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import collections.abc
-import logging
+import json
 import time
 import typing
 from dataclasses import dataclass
@@ -15,8 +15,6 @@ from g.engine.native_dispatch import engine as native_dispatch_engine
 if typing.TYPE_CHECKING:
     from g.engine import telemetry
     from g.io import source
-
-logger = logging.getLogger(__name__)
 
 MANIFEST_GPU_GENOTYPE_FORMAT_FIELD = "gpu_genotype_format"
 MANIFEST_ASSOCIATION_BACKEND_FIELD = "association_backend"
@@ -55,6 +53,16 @@ class ManifestGpuGenotypeFormatFields:
     association_backend_genotype_format: str | None
 
 
+def emit_gpu_format_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured GPU genotype-format diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
+
+
 def log_auto_resolution(
     *,
     telemetry_session: telemetry.TelemetrySession | None,
@@ -64,22 +72,28 @@ def log_auto_resolution(
     fallback_error: str | None,
 ) -> None:
     """Emit logging and telemetry for an auto GPU genotype format decision."""
-    logger.info(
-        "Resolved gpu_genotype_format=%s to %s: %s.",
-        requested_gpu_genotype_format.value,
-        resolved_gpu_genotype_format.value,
-        resolution_reason,
+    emit_gpu_format_diagnostic_event(
+        "info",
+        "pipeline_gpu_genotype_format_resolved",
+        (
+            f"Resolved gpu_genotype_format={requested_gpu_genotype_format.value} "
+            f"to {resolved_gpu_genotype_format.value}: {resolution_reason}."
+        ),
+        {
+            "fallback_error": fallback_error,
+            "requested_gpu_genotype_format": requested_gpu_genotype_format.value,
+            "resolution_reason": resolution_reason,
+            "resolved_gpu_genotype_format": resolved_gpu_genotype_format.value,
+        },
     )
     if telemetry_session is None:
         return
-    event_fields: dict[str, typing.Any] = {
-        "requested_gpu_genotype_format": requested_gpu_genotype_format.value,
-        "resolved_gpu_genotype_format": resolved_gpu_genotype_format.value,
-        "resolution_reason": resolution_reason,
-    }
-    if fallback_error is not None:
-        event_fields["fallback_error"] = fallback_error
-    telemetry_session.log_event("gpu_genotype_format_resolved", level="info", **event_fields)
+    telemetry_session.log_gpu_genotype_format_resolved(
+        requested_gpu_genotype_format=requested_gpu_genotype_format,
+        resolved_gpu_genotype_format=resolved_gpu_genotype_format,
+        resolution_reason=resolution_reason,
+        fallback_error=fallback_error,
+    )
 
 
 def resolve_auto_to_dosage(

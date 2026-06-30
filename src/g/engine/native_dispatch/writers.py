@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
-import logging
+import json
 import time
 import typing
 from pathlib import Path
@@ -12,7 +12,15 @@ from pathlib import Path
 from g import _core
 from g.engine import shutdown, timing
 
-logger = logging.getLogger(__name__)
+
+def emit_native_dispatch_writer_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured native-dispatch writer diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 def finish_callback_drain(
@@ -22,7 +30,12 @@ def finish_callback_drain(
 ) -> None:
     """Wait for queued callback work to drain."""
     callback_finish_start_time = time.perf_counter()
-    logger.debug("Draining native callback worker queues.")
+    emit_native_dispatch_writer_diagnostic_event(
+        "debug",
+        "native_dispatch_callback_drain_started",
+        "Draining native callback worker queues.",
+        {},
+    )
     typing.cast("typing.Any", callback).finish()
     timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
 
@@ -41,7 +54,12 @@ def finish_writer_session(
 ) -> str | None:
     """Finish the writer session and optionally finalize Parquet output."""
     writer_finish_start_time = time.perf_counter()
-    logger.debug("Finishing output writer and optional Parquet finalization.")
+    emit_native_dispatch_writer_diagnostic_event(
+        "debug",
+        "native_dispatch_writer_session_finish_started",
+        "Finishing output writer and optional Parquet finalization.",
+        {},
+    )
     final_parquet_path = writer_session.finish()
     timing.record_stage_duration(
         stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
@@ -76,7 +94,15 @@ def finish_writer_sessions(
 ) -> tuple[Path | None, ...]:
     """Finish writer sessions and optionally finalize Parquet output."""
     writer_finish_start_time = time.perf_counter()
-    logger.debug("Finishing output writer(s) and optional Parquet finalization.")
+    emit_native_dispatch_writer_diagnostic_event(
+        "debug",
+        "native_dispatch_writer_sessions_finish_started",
+        "Finishing output writer(s) and optional Parquet finalization.",
+        {
+            "requested_thread_count": writer_finish_thread_count,
+            "writer_session_count": len(writer_sessions),
+        },
+    )
     finish_plan = plan_writer_finish_execution(len(writer_sessions), writer_finish_thread_count)
     if not finish_plan.uses_parallel_finish:
         final_parquet_paths = tuple(finish_writer_session_to_path(writer_session) for writer_session in writer_sessions)
@@ -103,7 +129,16 @@ def finish_writer_session_interrupted(
 ) -> None:
     """Flush writer output for an interrupted run without final Parquet."""
     writer_finish_start_time = time.perf_counter()
-    logger.info("Flushing interrupted output writer after %s.", shutdown_request.signal_name)
+    emit_native_dispatch_writer_diagnostic_event(
+        "info",
+        "native_dispatch_writer_session_interrupted_flush_started",
+        f"Flushing interrupted output writer after {shutdown_request.signal_name}.",
+        {
+            "signal_exit_code": shutdown_request.exit_code,
+            "signal_name": shutdown_request.signal_name,
+            "signal_number": shutdown_request.shutdown_signal.number,
+        },
+    )
     writer_session.finish_interrupted(shutdown_request.signal_name)
     timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
 
@@ -117,7 +152,18 @@ def finish_writer_sessions_interrupted(
 ) -> None:
     """Flush interrupted writer sessions without final Parquet output."""
     writer_finish_start_time = time.perf_counter()
-    logger.info("Flushing interrupted output writer(s) after %s.", shutdown_request.signal_name)
+    emit_native_dispatch_writer_diagnostic_event(
+        "info",
+        "native_dispatch_writer_sessions_interrupted_flush_started",
+        f"Flushing interrupted output writer(s) after {shutdown_request.signal_name}.",
+        {
+            "requested_thread_count": writer_finish_thread_count,
+            "signal_exit_code": shutdown_request.exit_code,
+            "signal_name": shutdown_request.signal_name,
+            "signal_number": shutdown_request.shutdown_signal.number,
+            "writer_session_count": len(writer_sessions),
+        },
+    )
     finish_plan = plan_writer_finish_execution(len(writer_sessions), writer_finish_thread_count)
     if not finish_plan.uses_parallel_finish:
         for writer_session in writer_sessions:

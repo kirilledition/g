@@ -26,16 +26,18 @@ from g.runner import metadata as runner_metadata
 from g.runner import runtime as runner_runtime
 
 
-class NativeLoggingPolicyCore:
-    """Fake-core mixin that keeps logging policy resolution native."""
+class NativeDiagnosticCore:
+    """Fake-core mixin that accepts native diagnostic events."""
 
-    def build_logging_runtime_policy_payload(self, *arguments: object) -> dict[str, object]:
-        """Delegate logging policy payload construction to the native helper."""
-        native_build_logging_policy = typing.cast(
-            "typing.Callable[..., dict[str, object]]",
-            _core.build_logging_runtime_policy_payload,
-        )
-        return native_build_logging_policy(*arguments)
+    def emit_diagnostic_event(
+        self,
+        level: str,
+        event: str,
+        message: str,
+        fields_json: str | None = None,
+    ) -> None:
+        """Accept one structured native diagnostic event."""
+        del level, event, message, fields_json
 
 
 def complete_mock_output_initialization(
@@ -653,12 +655,13 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
     assert call_order == ["logging", "native", "jax", "plan", "pipeline"]
 
 
-def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
+def test_initialize_logging_passes_diagnostics_to_native_state(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **kwargs: object) -> None:
-            calls.append(kwargs)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
+            return True
 
     diagnostics_config = build_diagnostics_config(
         telemetry=types.TelemetryMode.TRACE,
@@ -674,10 +677,7 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
         trace_event_cap=2048,
     )
 
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths=None)
 
     assert calls == [
@@ -699,9 +699,9 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
 def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **kwargs: object) -> bool:
-            calls.append(kwargs)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
             return True
 
     stream_file = tmp_path / "logs" / "events.jsonl"
@@ -713,10 +713,7 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
         stage_timings_json=None,
     )
 
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["log_file"] is None
@@ -727,9 +724,9 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
 def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **kwargs: object) -> bool:
-            calls.append(kwargs)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
             return True
 
     stream_file = tmp_path / "logs" / "events.jsonl"
@@ -745,10 +742,7 @@ def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path)
         stage_timings_json=None,
     )
 
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["trace_event_cap"] == 17
@@ -757,9 +751,9 @@ def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path)
 def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **kwargs: object) -> bool:
-            calls.append(kwargs)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
             return True
 
     stream_file = tmp_path / "logs" / "events.jsonl"
@@ -771,10 +765,7 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
         stage_timings_json=None,
     )
 
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["log_file"] is None
@@ -783,11 +774,6 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
 
 
 def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path: Path) -> None:
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **kwargs: object) -> bool:
-            del kwargs
-            return False
-
     configured_policy = runner_runtime.LoggingRuntimePolicy(
         log_filter="info",
         log_file=tmp_path / "logs" / "first.jsonl",
@@ -804,7 +790,6 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(configured_policy, None)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Logging runtime policy is process-global"),
     ):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths=None)
@@ -812,16 +797,35 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
 
 def test_configure_runtime_sets_native_knobs_and_threads() -> None:
     calls: list[tuple[str, int | str]] = []
+    diagnostic_calls: list[tuple[str, str, str, dict[str, object]]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeDiagnosticCore):
+        def emit_diagnostic_event(
+            self,
+            level: str,
+            event: str,
+            message: str,
+            fields_json: str | None = None,
+        ) -> None:
+            diagnostic_calls.append(
+                (
+                    level,
+                    event,
+                    message,
+                    {} if fields_json is None else typing.cast("dict[str, object]", json.loads(fields_json)),
+                )
+            )
+
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
 
-        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
+    class FakeProcessRuntimeState:
+        def configure_rayon_thread_pool(self, thread_count: int) -> object:
             calls.append(("threads", thread_count))
+            return object()
 
     with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()),
         patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.configure_runtime(
@@ -829,18 +833,23 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
             build_trait_config(threads=4),
         )
 
+    assert diagnostic_calls == [
+        (
+            "debug",
+            "native_runtime_knobs_configured",
+            "Configuring native runtime knobs.",
+            {"bgen_decode_tile_variant_count": 32, "threads": 4},
+        )
+    ]
     assert calls == [("tile", 32), ("threads", 4)]
 
 
 def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None:
     calls: list[tuple[str, int | str]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeDiagnosticCore):
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
-
-        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
-            calls.append(("threads", thread_count))
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
@@ -854,29 +863,18 @@ def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None
     assert calls == [("tile", 32)]
 
 
-def test_configure_runtime_uses_native_rayon_configuration_plan() -> None:
+def test_configure_runtime_delegates_rayon_configuration_to_native_state() -> None:
     calls: list[tuple[str, int | str]] = []
-    plan_calls: list[int] = []
-
-    class FakeRayonConfigurationPlan:
-        def __init__(self, *, should_configure: bool, thread_count: int | None) -> None:
-            self.should_configure = should_configure
-            self.thread_count = thread_count
+    configuration_calls: list[int] = []
 
     class FakeProcessRuntimeState:
-        def plan_rayon_thread_pool_configuration(self, thread_count: int) -> FakeRayonConfigurationPlan:
-            plan_calls.append(thread_count)
-            return FakeRayonConfigurationPlan(should_configure=False, thread_count=None)
+        def configure_rayon_thread_pool(self, thread_count: int) -> object:
+            configuration_calls.append(thread_count)
+            return object()
 
-        def record_rayon_thread_count(self, thread_count: int) -> None:
-            raise AssertionError(f"unexpected Rayon thread-count recording: {thread_count}")
-
-    class FakeCoreModule:
+    class FakeCoreModule(NativeDiagnosticCore):
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
-
-        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
-            calls.append(("threads", thread_count))
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()),
@@ -887,19 +885,16 @@ def test_configure_runtime_uses_native_rayon_configuration_plan() -> None:
             build_trait_config(threads=4),
         )
 
-    assert plan_calls == [4]
+    assert configuration_calls == [4]
     assert calls == [("tile", 32)]
 
 
 def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -> None:
     calls: list[tuple[str, int | str]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeDiagnosticCore):
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
-
-        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
-            calls.append(("threads", thread_count))
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
@@ -917,22 +912,20 @@ def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -
 def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
     calls: list[tuple[str, int | str]] = []
 
-    class FakeCoreModule:
+    class FakeCoreModule(NativeDiagnosticCore):
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
 
-        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
+    class FakeProcessRuntimeState:
+        def configure_rayon_thread_pool(self, thread_count: int) -> object:
             calls.append(("threads", thread_count))
-            raise RuntimeError("global pool already initialized")
-
-        def format_rayon_thread_pool_configuration_error_value(self, thread_count: int, source_error: str) -> str:
-            return (
+            raise RuntimeError(
                 f"Unable to configure Rayon global thread pool for --threads={thread_count}; "
-                f"existing Rayon settings are unknown: {source_error}"
+                "existing Rayon settings are unknown: global pool already initialized"
             )
 
     with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()),
         patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Unable to configure Rayon global thread pool"),
     ):
@@ -990,8 +983,10 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
             return FakeJaxSetupModule()
         raise AssertionError(f"Unexpected import: {module_name}")
 
+    process_runtime_state = build_test_process_runtime_state(None, None)
+
     with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", process_runtime_state),
         patch("g.runner.runtime.importlib.import_module", side_effect=import_module),
     ):
         runner_runtime.configure_runtime_before_jax_import(
@@ -1000,6 +995,9 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
         )
 
     assert call_order == ["import:g.jax_runtime.setup", "setup:gpu"]
+    configured_jax_policy = typing.cast("_core.NativeRuntimeState", process_runtime_state).jax_runtime_policy_payload()
+    assert configured_jax_policy is not None
+    assert configured_jax_policy["device"] == "gpu"
 
 
 def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
@@ -1008,6 +1006,15 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
     class RecordingTelemetrySession:
         def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
             recorded_events.append((event_name, level, fields))
+
+        def log_jax_runtime_diagnostic_event(
+            self,
+            diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
+            *,
+            telemetry_level: str,
+        ) -> None:
+            event_fields = {field.name: field.value for field in diagnostic_event.fields}
+            recorded_events.append((diagnostic_event.event_name, telemetry_level, event_fields))
 
     class FakeJaxSetupModule:
         def configure_before_backend_init(
@@ -1062,11 +1069,20 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
 
 def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
     recorded_events: list[tuple[str, str, dict[str, object]]] = []
-    logged_records: list[tuple[int, str, dict[str, object]]] = []
+    logged_records: list[tuple[str, str, str, str]] = []
 
     class RecordingTelemetrySession:
         def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
             recorded_events.append((event_name, level, fields))
+
+        def log_jax_runtime_diagnostic_event(
+            self,
+            diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
+            *,
+            telemetry_level: str,
+        ) -> None:
+            event_fields = {field.name: field.value for field in diagnostic_event.fields}
+            recorded_events.append((diagnostic_event.event_name, telemetry_level, event_fields))
 
     def plan_jax_runtime_diagnostic_record_payload(
         *,
@@ -1094,25 +1110,23 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
             "g.runner.runtime._core.plan_jax_runtime_diagnostic_record_payload",
             side_effect=plan_jax_runtime_diagnostic_record_payload,
         ),
-        patch("g.runner.runtime.logger.log") as logger_log_mock,
+        patch("g.runner.runtime._core.emit_diagnostic_event") as emit_diagnostic_event_mock,
     ):
         runner_runtime.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session=telemetry_session)
 
-    for call in logger_log_mock.call_args_list:
+    for call in emit_diagnostic_event_mock.call_args_list:
         logged_records.append(
             (
-                typing.cast("int", call.args[0]),
+                typing.cast("str", call.args[0]),
                 typing.cast("str", call.args[1]),
-                typing.cast("dict[str, object]", call.kwargs),
+                typing.cast("str", call.args[2]),
+                typing.cast("str", call.args[3]),
             )
         )
 
-    assert logged_records[0][0] == runner_runtime.logging.ERROR
-    assert logged_records[0][1] == "%s"
-    assert logged_records[0][2]["extra"] == {
-        "g_event": "jax_native_plan_test",
-        "g_fields": {"field": "value"},
-    }
+    assert logged_records == [
+        ("error", "jax_native_plan_test", "planned diagnostic", json.dumps({"field": "value"}, sort_keys=True))
+    ]
     assert recorded_events == [("jax_native_plan_test", "trace", {"field": "value"})]
 
 

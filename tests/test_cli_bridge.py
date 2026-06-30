@@ -35,6 +35,19 @@ class FakeTelemetrySession:
         self.logged_events.append(event)
         self.logged_payloads.append({"event": event, "level": level, **fields})
 
+    def log_run_failed(self, event: typing.Any) -> None:
+        """Record a native run-failed telemetry event."""
+        self.logged_events.append("run_failed")
+        self.logged_payloads.append(
+            {
+                "event": "run_failed",
+                "level": "error",
+                "failure_kind": "exception",
+                "error_type": event.error_type,
+                "error_message": event.error_message,
+            }
+        )
+
     def writer_counters(self) -> dict[str, object]:
         """Return empty writer counters."""
         return {}
@@ -44,6 +57,11 @@ class FakeTelemetrySession:
         if self.close_error is not None:
             raise self.close_error
         self.closed = True
+
+    def close_with_event(self) -> None:
+        """Record native-style session closure."""
+        self.log_event("telemetry_session_closed", level="debug", writer_counters=self.writer_counters())
+        self.close()
 
 
 def test_run_args_configless_paths_print_without_runtime_imports() -> None:

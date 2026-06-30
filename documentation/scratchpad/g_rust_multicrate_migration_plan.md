@@ -1047,6 +1047,215 @@ Remove Python as the chunk-level scheduler.
 - Callback worker thread handles now use a native PyO3 wrapper for thread
   construction, start, liveness checks, and joins while Python still supplies
   coarse dosage/result worker targets.
+- Callback runtime resources now expose production worker names and liveness
+  reads for public status and shutdown-timeout reporting.
+- Callback runtime resources now use one native PyO3 owner to construct and
+  retain scheduler state, progress state, queues, wait signals, binary summary
+  state, worker handles, and the worker-start lock for production runners.
+- Production callback runners now resolve scheduler state from the native
+  runtime-resource owner, leaving direct scheduler assignment only for manual
+  fallback runners.
+- Production callback runners now resolve progress state from the native
+  runtime-resource owner, leaving direct progress-state assignment only for
+  manual fallback runners.
+- Production callback runners now resolve binary correction summary state from
+  the native runtime-resource owner, leaving direct summary assignment only for
+  manual fallback runners.
+- Production callback runners now resolve callback queues, free-buffer storage,
+  and wait signals from the native runtime-resource owner, leaving direct handle
+  assignment only for manual fallback runners.
+- Production callback runners now resolve callback worker thread handles from
+  the native runtime-resource owner, leaving direct handle assignment only for
+  manual fallback runners.
+- Callback runtime resources now own production dosage/result queue put,
+  backpressure, and get loops, including scheduler slot rollback on native
+  storage inconsistencies.
+- Callback runtime resources now own production current-queue/resource
+  backpressure observation planning while Python keeps timing emission.
+- Callback runtime resources now own production dosage-buffer pool observation
+  planning while Python keeps free-buffer count calculation and timing emission.
+- Callback runtime resources now own production dosage/result queue put/get
+  observation planning while Python keeps queue timing emission.
+- Callback runtime resources now own production timed dosage/result queue
+  producer put attempts and observation selection in one native call while
+  Python keeps timing measurement and emission.
+- Callback runtime resources now own production dosage/result queue producer
+  optional observation selection so timing-disabled puts skip observation-plan
+  construction.
+- Callback runtime resources now own production timed dosage/result queue
+  consumer get attempts, drain decisions, and observation selection in one
+  native call while Python keeps timing measurement and emission.
+- Callback runtime resources now own production untimed dosage/result queue
+  consumer get attempts and drain decisions in one native call without building
+  timing observation plans.
+- Callback runtime resources now own production callback limit, queue/resource
+  occupancy, and free-buffer reads while Python keeps public runner property
+  accessors.
+- Callback runtime resources now own production progress state reads, per-chunk
+  records, and completion while Python keeps telemetry emission.
+- Callback runtime resources now own production binary correction summary
+  counters, retention/emit plans, and payload reads while Python keeps pending
+  diagnostics materialization and telemetry emission.
+- Callback runtime resources now own production dosage/result drain planning
+  and validated work-item dispatch planning, leaving Python to classify work
+  item dataclasses and perform JAX/write side effects.
+- Callback runtime resources now own production dosage work handoff planning,
+  including variant-major batch handoff validation, while Python keeps the
+  temporary callback work-item dataclasses.
+- Callback runtime resources now own production dosage work stage-duration
+  attribution planning while Python keeps timing emission.
+- Callback runtime resources now own production worker-error scheduler state
+  updates while Python keeps the original exception objects for chaining.
+- Callback runtime resources now own production worker stop and join loops,
+  including sentinel enqueue retries and native thread joins, while Python keeps
+  the public shutdown exception type.
+- Callback runtime resources now own production result in-flight slot acquire
+  attempts, native wait-signal waits, releases, and release notifications while
+  Python keeps worker-error chaining and timing emission.
+- Callback runtime resources now own production untimed result in-flight slot
+  acquire attempts without building timing observation plans.
+- Callback runtime resources now own production result in-flight slot acquire
+  observation selection in the same native call as the slot acquire/wait loop.
+- Callback runtime resources now own production dosage-buffer registration,
+  return eligibility planning, free-buffer returns, free-queue storage
+  failures, discard accounting, and buffer-pool wakeups while Python keeps
+  NumPy allocation and shape/dtype reuse checks.
+- Callback runtime resources now own production timing-enabled dosage-buffer
+  register, return, and discard observation selection in the same native call
+  as the buffer-pool state mutation.
+- Callback runtime resources now own production dosage-buffer acquisition
+  attempts, free-buffer pops, wait-signal waits, and wait result accounting
+  while Python keeps NumPy allocation and shape/dtype reuse checks.
+- Callback runtime resources now own production dosage-buffer reuse shape
+  planning while Python keeps dtype checks and NumPy view slicing.
+- Callback runtime resources now own production worker finish and abort
+  lifecycle execution, including stop/join sequencing and worker-error raise
+  planning, while Python keeps public shutdown exceptions, pending-diagnostics
+  summary materialization, telemetry emission, and exception chaining.
+- Callback runtime resources now own production result work-item resource
+  cleanup, including host-buffer returns and result in-flight slot releases,
+  while Python keeps materialization, writes, and timing emission.
+- Callback runtime resources now own production result cleanup buffer-pool
+  return observation selection in the same native call as host-buffer cleanup.
+- Native telemetry run sessions now own production run completed, interrupted,
+  and failed lifecycle event emission names, levels, and field construction.
+- CLI runtime-initialization failures now route run-failed telemetry through
+  the native run session instead of manually emitting the event payload.
+- Native telemetry run sessions now own production run-started and
+  execution-plan-prepared lifecycle event names, levels, and field construction.
+- Native telemetry run sessions now own production effective-config-written and
+  writer-finished lifecycle event names, levels, and field construction.
+- Native telemetry run sessions now own production preflight-completed event
+  names, levels, and single-/multi-phenotype field construction.
+- Native telemetry run sessions now own production sample-alignment-completed
+  and prediction-source-loaded event names, levels, and optional fields.
+- Native telemetry run sessions now own production multi-phenotype sample
+  summary event names, levels, and derived sample-set fields.
+- Native telemetry run sessions now own production GPU genotype-format
+  resolution event names, levels, and optional fallback fields.
+- Native telemetry run sessions now own production association-backend-selected
+  and BGEN-engine-opened event names, levels, and optional phenotype fields.
+- Native telemetry run sessions now emit native callback progress event objects
+  directly for chromosome start/completion telemetry.
+- Native telemetry run sessions now own the binary-correction-summary event name
+  and level while reusing native callback summary payloads.
+- Native telemetry run sessions now emit JAX runtime diagnostic model objects
+  directly while preserving the native record-plan policy.
+- Native stage timing recorders now own combined final timing-output writes for
+  stage-timing snapshots and profile summaries.
+- Native shutdown controllers now own Python signal handler install/restore
+  side effects while preserving Python public graceful-shutdown exception
+  handling.
+- Native shutdown adapters now raise repeated-signal `KeyboardInterrupt` and
+  `SystemExit` aborts from the PyO3 boundary.
+- Shutdown signal metadata is now resolved directly from native payloads instead
+  of a Python module-level cache.
+- Telemetry close helpers now require the native close-with-event contract
+  instead of emitting legacy close events from Python.
+- JAX runtime diagnostic log records now route through the native diagnostic
+  emitter while telemetry emission stays on the native run session.
+- Native runtime knob configuration debug diagnostics now route through the
+  native diagnostic emitter instead of Python logging.
+- Runner execution lifecycle and dispatch diagnostics now route through the
+  native diagnostic emitter instead of Python logging.
+- Runner metadata finalization diagnostics now route through the native
+  diagnostic emitter instead of Python logging.
+- Native BGEN run-engine construction and trusted-mode validation diagnostics
+  now route through the native diagnostic emitter instead of Python logging.
+- Native callback drain and writer finalization diagnostics now route through
+  the native diagnostic emitter instead of Python logging.
+- Native BGEN delivery lifecycle, interruption, failure, and completion
+  diagnostics now route through the native diagnostic emitter instead of Python
+  logging.
+- GPU genotype-format auto-resolution diagnostics now route through the native
+  diagnostic emitter while preserving native telemetry session events.
+- Preflight non-fatal warnings now route through the native diagnostic emitter
+  with explicit shape and trusted-path context instead of Python logging.
+- Binary callback null-logistic nonconvergence warnings now route through the
+  native diagnostic emitter with policy and convergence-count context instead
+  of Python logging.
+- Multi-phenotype sample-summary diagnostics now route through the native
+  diagnostic emitter while preserving native telemetry session events.
+- Multi-phenotype group preflight start and completion diagnostics now route
+  through the native diagnostic emitter instead of Python logging.
+- Single-trait pipeline start, input alignment, prediction-source loading, and
+  preflight diagnostics now route through the native diagnostic emitter instead
+  of Python logging.
+- Pipeline output lifecycle diagnostics for BGEN engine opening, prepared-engine
+  reuse, resume committed chunks, and writer session creation now route through
+  the native diagnostic emitter instead of Python logging.
+- Complete-case multi-trait pipeline start, input alignment, and
+  prediction-source loading diagnostics now route through the native diagnostic
+  emitter instead of Python logging.
+- Grouped per-phenotype pipeline start, group preparation, and union-delivery
+  selection diagnostics now route through the native diagnostic emitter instead
+  of Python logging.
+- Legacy output-run resume diagnostics now route through the native diagnostic
+  emitter instead of Python logging.
+- Native process runtime state now owns Rayon global thread-pool configuration,
+  compatibility checks, error formatting, and configured-count recording.
+- Native process runtime state now owns logging sink initialization, logging
+  compatibility checks, and configured-policy recording for run startup.
+- Native process runtime state now owns successful JAX runtime setup completion
+  recording after Python/JAX side effects finish.
+- Native shutdown controllers now own context-exit handler restoration plus
+  requested-signal state reset as one native lifecycle transition.
+- Native shutdown controllers now own repeated-signal handler restoration and
+  hard-abort exception raising from the PyO3 boundary.
+- Native shutdown controllers now return first-signal metadata directly for
+  Python public exception adaptation; Python no longer carries the native
+  shutdown action enum on the handler path.
+- Callback runtime resources now finish native progress state during production
+  worker lifecycle finalization and return the completion event for Python
+  telemetry emission.
+- Callback runtime resources now return complete binary-correction summary
+  payloads during production worker finalization when no pending JAX
+  diagnostics require Python materialization.
+- Callback runtime resources now return the production pending-diagnostics
+  flush decision during worker finalization; Python only materializes pending
+  JAX diagnostics before emitting the native summary payload.
+- Callback runtime resources now own the production result-drain binary
+  diagnostics flush policy, so Python runner loops no longer pass per-drain
+  flush policy flags to native queue/drain methods.
+- Callback runtime resources now own the production expected result-write
+  consumer kind, so Python runner loops no longer pass single-result versus
+  multi-result dispatch policy on every result work item.
+- Multi-result callback consumers now use native runtime resource combined
+  result-queue get/drain-completion paths, matching the single-result consumer
+  ownership boundary for timed and untimed result drains.
+- Callback runtime resources now own callback telemetry availability for
+  production binary-correction diagnostics and worker-finish summary planning,
+  so Python no longer computes or passes that fixed run property on native
+  summary decisions.
+- Callback runtime resources now own callback stage-timing availability for
+  production dosage-buffer pool register, return, discard, and result cleanup
+  observation selection plus direct result in-flight release observation
+  selection, so Python no longer chooses separate observed versus unobserved
+  native mutation methods.
+- Callback runtime resources now derive production dosage-buffer object
+  identities for buffer-pool eligibility, mutation, and result-cleanup paths,
+  leaving explicit identifier plumbing only on lower-level scheduler/testing
+  APIs.
 
 ### Tests
 

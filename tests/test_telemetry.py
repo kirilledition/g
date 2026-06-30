@@ -8,24 +8,13 @@ import unittest.mock
 import pytest
 
 from g import _core, types
-from g.engine import telemetry
+from g.engine import run_events, telemetry
 from g.interface import config
+from g.jax_runtime import models as jax_runtime_models
 from g.runner import runtime as runner_runtime
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
-
-
-class NativeLoggingPolicyCore:
-    """Fake-core mixin that keeps logging policy resolution native."""
-
-    def build_logging_runtime_policy_payload(self, *arguments: object) -> dict[str, object]:
-        """Delegate logging policy payload construction to the native helper."""
-        native_build_logging_policy = typing.cast(
-            "typing.Callable[..., dict[str, object]]",
-            _core.build_logging_runtime_policy_payload,
-        )
-        return native_build_logging_policy(*arguments)
 
 
 def test_resolve_telemetry_paths_defaults_to_output_run_logs() -> None:
@@ -130,9 +119,9 @@ def test_telemetry_stream_uses_log_file_or_trace_file_alias() -> None:
 def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **keyword_arguments: object) -> bool:
-            calls.append(keyword_arguments)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
             return True
 
     regenie_config = config.RegenieConfig.from_options(
@@ -155,9 +144,8 @@ def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path:
     with (
         unittest.mock.patch(
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
-            runner_runtime.build_process_runtime_state(None, None, None),
+            FakeProcessRuntimeState(),
         ),
-        unittest.mock.patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
 
@@ -169,9 +157,9 @@ def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path:
 def test_initialize_logging_uses_trace_filter_for_trace_unified_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeCoreModule(NativeLoggingPolicyCore):
-        def initialize_logging(self, **keyword_arguments: object) -> bool:
-            calls.append(keyword_arguments)
+    class FakeProcessRuntimeState:
+        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+            calls.append(payload)
             return True
 
     regenie_config = config.RegenieConfig.from_options(
@@ -195,9 +183,8 @@ def test_initialize_logging_uses_trace_filter_for_trace_unified_stream(tmp_path:
     with (
         unittest.mock.patch(
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
-            runner_runtime.build_process_runtime_state(None, None, None),
+            FakeProcessRuntimeState(),
         ),
-        unittest.mock.patch("g.runner.runtime._core", FakeCoreModule()),
     ):
         runner_runtime.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
 
@@ -464,52 +451,573 @@ def test_native_telemetry_run_session_owns_progress_emission(tmp_path: Path) -> 
     assert event_payload["chromosome"] == "22"
 
 
-def test_close_telemetry_session_uses_native_close_plan_for_legacy_session(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_native_telemetry_run_session_owns_run_lifecycle_event_emission(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+    completed_event = run_events.RunCompletedEvent(
+        run_id="run-1",
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype_count=1,
+        artifacts=(
+            run_events.RunArtifactPayload(
+                phenotype_name="trait",
+                output_run_directory=tmp_path / "run",
+                final_dataset=None,
+                final_parquet=None,
+                final_regenie=tmp_path / "results.regenie",
+                effective_config=tmp_path / "config.toml",
+            ),
+        ),
+    )
+    interrupted_event = run_events.RunInterruptedEvent(
+        signal_number=2,
+        signal_name="SIGINT",
+        exit_code=130,
+        flushed_for_resume=True,
+    )
+    failed_event = run_events.RunFailedEvent(error_type="RuntimeError", error_message="boom")
+
+    telemetry_session.log_run_started(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        trait_type=types.RegenieTraitType.QUANTITATIVE,
+        phenotype_count=1,
+        output_run_root=tmp_path / "output.g",
+    )
+    telemetry_session.log_execution_plan_prepared(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        trait_type=types.RegenieTraitType.QUANTITATIVE,
+        phenotype_count=1,
+        chunk_size=128,
+        variant_limit=None,
+        device=types.Device.GPU,
+    )
+    telemetry_session.log_run_completed(completed_event)
+    telemetry_session.log_run_interrupted(interrupted_event)
+    telemetry_session.log_run_failed(failed_event)
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "run_started",
+        "execution_plan_prepared",
+        "run_completed",
+        "run_failed",
+        "run_failed",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO", "INFO", "WARN", "ERROR"]
+    assert event_payloads[0]["output_run_root"] == str(tmp_path / "output.g")
+    assert event_payloads[1]["chunk_size"] == 128
+    assert event_payloads[1]["device"] == "gpu"
+    assert "variant_limit" not in event_payloads[1]
+    assert event_payloads[2]["association_mode"] == "regenie2_linear"
+    assert event_payloads[2]["phenotype_count"] == 1
+    assert event_payloads[3]["failure_kind"] == "graceful_shutdown"
+    assert event_payloads[3]["signal_name"] == "SIGINT"
+    assert event_payloads[4]["failure_kind"] == "exception"
+    assert event_payloads[4]["error_message"] == "boom"
+
+
+def test_native_telemetry_run_session_owns_writer_lifecycle_event_emission(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_effective_config_written(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype="height",
+        effective_config=tmp_path / "height" / "effective_config.toml",
+        output_run_directory=tmp_path / "height",
+    )
+    telemetry_session.log_writer_finished(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype="height",
+        final_output_path=tmp_path / "height.parquet",
+    )
+    telemetry_session.log_multi_writer_finished(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        phenotype_count=2,
+        final_output_paths=(tmp_path / "case_status.parquet", None),
+    )
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "effective_config_written",
+        "writer_finished",
+        "writer_finished",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO", "INFO"]
+    assert event_payloads[0]["association_mode"] == "regenie2_linear"
+    assert event_payloads[0]["phenotype"] == "height"
+    assert event_payloads[0]["effective_config"] == str(tmp_path / "height" / "effective_config.toml")
+    assert event_payloads[0]["output_run_directory"] == str(tmp_path / "height")
+    assert event_payloads[1]["phenotype"] == "height"
+    assert event_payloads[1]["final_output_path"] == str(tmp_path / "height.parquet")
+    assert event_payloads[2]["association_mode"] == "regenie2_binary"
+    assert event_payloads[2]["phenotype_count"] == 2
+    assert event_payloads[2]["final_output_paths"] == [str(tmp_path / "case_status.parquet"), None]
+
+
+def test_native_telemetry_run_session_owns_preflight_event_emission(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_single_trait_preflight_completed(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype="height",
+        sample_count=2504,
+        covariate_count=3,
+        chromosome_count=22,
+    )
+    telemetry_session.log_multi_phenotype_preflight_completed(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        phenotype_count=4,
+        sample_count=2504,
+    )
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "preflight_completed",
+        "preflight_completed",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO"]
+    assert event_payloads[0]["association_mode"] == "regenie2_linear"
+    assert event_payloads[0]["phenotype"] == "height"
+    assert event_payloads[0]["sample_count"] == 2504
+    assert event_payloads[0]["covariate_count"] == 3
+    assert event_payloads[0]["chromosome_count"] == 22
+    assert event_payloads[1]["association_mode"] == "regenie2_binary"
+    assert event_payloads[1]["phenotype_count"] == 4
+    assert event_payloads[1]["sample_count"] == 2504
+
+
+def test_native_telemetry_run_session_owns_pipeline_setup_event_emission(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_sample_alignment_completed(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype="height",
+        phenotype_count=None,
+        sample_count=2504,
+        covariate_count=3,
+        phenotype_group_count=None,
+    )
+    telemetry_session.log_sample_alignment_completed(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        phenotype=None,
+        phenotype_count=4,
+        sample_count=None,
+        covariate_count=None,
+        phenotype_group_count=2,
+    )
+    telemetry_session.log_prediction_source_loaded(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype="height",
+        phenotype_count=None,
+    )
+    telemetry_session.log_prediction_source_loaded(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        phenotype=None,
+        phenotype_count=4,
+    )
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "sample_alignment_completed",
+        "sample_alignment_completed",
+        "prediction_source_loaded",
+        "prediction_source_loaded",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO", "INFO", "INFO"]
+    assert event_payloads[0]["phenotype"] == "height"
+    assert event_payloads[0]["sample_count"] == 2504
+    assert event_payloads[0]["covariate_count"] == 3
+    assert "phenotype_count" not in event_payloads[0]
+    assert event_payloads[1]["phenotype_count"] == 4
+    assert event_payloads[1]["phenotype_group_count"] == 2
+    assert "phenotype" not in event_payloads[1]
+    assert "sample_count" not in event_payloads[1]
+    assert event_payloads[2]["phenotype"] == "height"
+    assert "phenotype_count" not in event_payloads[2]
+    assert event_payloads[3]["phenotype_count"] == 4
+    assert "phenotype" not in event_payloads[3]
+
+
+def test_native_telemetry_run_session_owns_multi_phenotype_sample_summary(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_multi_phenotype_sample_summary(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        sample_counts=(3, 2),
+        sample_set_fingerprints=("sample-a", "sample-b"),
+        phenotype_group_count=2,
+    )
+    telemetry_session.log_multi_phenotype_sample_summary(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        sample_counts=(2504, 2504),
+        sample_set_fingerprints=("shared", "shared"),
+        phenotype_group_count=1,
+    )
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "multi_phenotype_sample_summary",
+        "multi_phenotype_sample_summary",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO"]
+    assert event_payloads[0]["association_mode"] == "regenie2_linear"
+    assert event_payloads[0]["multi_phenotype_sample_mode"] == "per-phenotype"
+    assert event_payloads[0]["phenotype_count"] == 2
+    assert event_payloads[0]["phenotype_group_count"] == 2
+    assert event_payloads[0]["sample_counts"] == [3, 2]
+    assert event_payloads[0]["sample_counts_differ"] is True
+    assert event_payloads[0]["shared_sample_set"] is False
+    assert event_payloads[1]["association_mode"] == "regenie2_binary"
+    assert event_payloads[1]["multi_phenotype_sample_mode"] == "complete-case"
+    assert event_payloads[1]["sample_counts"] == [2504, 2504]
+    assert event_payloads[1]["sample_counts_differ"] is False
+    assert event_payloads[1]["shared_sample_set"] is True
+
+
+def test_native_telemetry_run_session_owns_gpu_genotype_format_resolution(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_gpu_genotype_format_resolved(
+        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+        resolved_gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+        resolution_reason="trusted_validation_passed",
+        fallback_error=None,
+    )
+    telemetry_session.log_gpu_genotype_format_resolved(
+        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+        resolved_gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
+        resolution_reason="trusted_validation_failed",
+        fallback_error="packed8 incompatible",
+    )
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "gpu_genotype_format_resolved",
+        "gpu_genotype_format_resolved",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO"]
+    assert event_payloads[0]["requested_gpu_genotype_format"] == "auto"
+    assert event_payloads[0]["resolved_gpu_genotype_format"] == "packed8"
+    assert event_payloads[0]["resolution_reason"] == "trusted_validation_passed"
+    assert "fallback_error" not in event_payloads[0]
+    assert event_payloads[1]["requested_gpu_genotype_format"] == "auto"
+    assert event_payloads[1]["resolved_gpu_genotype_format"] == "dosage"
+    assert event_payloads[1]["resolution_reason"] == "trusted_validation_failed"
+    assert event_payloads[1]["fallback_error"] == "packed8 incompatible"
+
+
+def test_native_telemetry_run_session_owns_engine_opening_events(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_association_backend_selected(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        association_backend_kind=types.AssociationBackendKind.JAX_PACKED8,
+        device=types.Device.GPU,
+        genotype_format=types.GpuGenotypeFormat.PACKED8,
+        phenotype="height",
+        phenotype_count=None,
+    )
+    telemetry_session.log_bgen_engine_opened(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        association_backend_kind=types.AssociationBackendKind.JAX_DOSAGE,
+        sample_count=2504,
+        variant_count=12345,
+        phenotype=None,
+        phenotype_count=3,
+    )
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "association_backend_selected",
+        "bgen_engine_opened",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO"]
+    assert event_payloads[0]["association_mode"] == "regenie2_linear"
+    assert event_payloads[0]["association_backend_kind"] == "jax_packed8"
+    assert event_payloads[0]["device"] == "gpu"
+    assert event_payloads[0]["genotype_format"] == "packed8"
+    assert event_payloads[0]["phenotype"] == "height"
+    assert "phenotype_count" not in event_payloads[0]
+    assert event_payloads[1]["association_mode"] == "regenie2_binary"
+    assert event_payloads[1]["association_backend_kind"] == "jax_dosage"
+    assert event_payloads[1]["sample_count"] == 2504
+    assert event_payloads[1]["variant_count"] == 12345
+    assert event_payloads[1]["phenotype_count"] == 3
+    assert "phenotype" not in event_payloads[1]
+
+
+def test_native_telemetry_run_session_owns_callback_progress_events(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+    progress_state = _core.NativeCallbackProgressState()
+
+    progress_update = progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr1", 0, 8))
+    telemetry_session.log_callback_progress_event(progress_update.telemetry_plan.events[0])
+    progress_completion = progress_state.finish_progress()
+    assert progress_completion is not None
+    telemetry_session.log_callback_progress_event(progress_completion.telemetry_event)
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "chromosome_started",
+        "chromosome_completed",
+    ]
+    assert [event_payload["level"] for event_payload in event_payloads] == ["INFO", "INFO"]
+    assert event_payloads[0]["chromosome"] == "chr1"
+    assert event_payloads[0]["processed_chunk_count"] == 1
+    assert event_payloads[1]["chromosome"] == "chr1"
+    assert event_payloads[1]["processed_chunk_count"] == 1
+
+
+def test_native_telemetry_run_session_owns_binary_correction_summary(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+    summary = _core.NativeBinaryCorrectionSummary()
+    summary.add_diagnostics_totals(
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+    )
+    summary.add_null_model_failure_count(20)
+
+    telemetry_session.log_binary_correction_summary(summary.summary_payload())
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payload = json.loads(telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()[0])
+    assert event_payload["event"] == "binary_correction_summary"
+    assert event_payload["level"] == "INFO"
+    assert event_payload["chunk_count"] == 2
+    assert event_payload["score_only_count"] == 3
+    assert event_payload["score_test_candidate_count"] == 4
+    assert event_payload["firth_attempted_count"] == 5
+    assert event_payload["firth_success_count"] == 6
+    assert event_payload["firth_failed_count"] == 7
+    assert event_payload["null_model_failure_count"] == 20
+
+
+def test_native_telemetry_run_session_owns_jax_runtime_diagnostic_event(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+    diagnostic_event = jax_runtime_models.JaxRuntimeDiagnosticEvent(
+        event_name="jax_native_diagnostic",
+        level=jax_runtime_models.JaxRuntimeDiagnosticLevel.INFO,
+        message="JAX diagnostic",
+        fields=(
+            jax_runtime_models.JaxRuntimeDiagnosticField(name="platform", value="cuda"),
+            jax_runtime_models.JaxRuntimeDiagnosticField(name="persistent_cache_enabled", value=True),
+            jax_runtime_models.JaxRuntimeDiagnosticField(name="cache_entries", value=7),
+        ),
+    )
+
+    telemetry_session.log_jax_runtime_diagnostic_event(diagnostic_event, telemetry_level="trace")
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payload = json.loads(telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()[0])
+    assert event_payload["event"] == "jax_native_diagnostic"
+    assert event_payload["level"] == "TRACE"
+    assert event_payload["platform"] == "cuda"
+    assert event_payload["persistent_cache_enabled"] is True
+    assert event_payload["cache_entries"] == 7
+
+
+def test_close_telemetry_session_uses_close_with_event_contract() -> None:
     class FakeCloseableSession:
         def __init__(self) -> None:
-            self.events: list[dict[str, object]] = []
             self.closed = False
+            self.close_metadata: dict[str, object] | None = None
 
-        def log_event(self, event: str, level: str, **fields: object) -> None:
-            self.events.append({"event": event, "level": level, "fields": fields})
-
-        def writer_counters(self) -> object:
-            return {"written_event_count": 3}
-
-        def close(self) -> object:
+        def close_with_event(self) -> object:
             self.closed = True
-            return None
-
-    def plan_telemetry_close(
-        *,
-        has_telemetry_session: bool,
-        is_native_telemetry_session: bool,
-    ) -> object:
-        assert has_telemetry_session is True
-        assert is_native_telemetry_session is False
-        return unittest.mock.Mock(
-            should_close=True,
-            use_native_close_with_event=False,
-            should_emit_legacy_close_event=True,
-            legacy_close_event_name="native_close",
-            legacy_close_event_level="trace",
-        )
+            self.close_metadata = {"writer_counters": {"written_event_count": 3}}
+            return self.close_metadata
 
     fake_session = FakeCloseableSession()
-    monkeypatch.setattr(telemetry._core, "plan_telemetry_close", plan_telemetry_close)
 
     telemetry.close_telemetry_session(fake_session)
 
-    assert fake_session.events == [
-        {
-            "event": "native_close",
-            "level": "trace",
-            "fields": {"writer_counters": {"written_event_count": 3}},
-        }
-    ]
     assert fake_session.closed is True
+    assert fake_session.close_metadata == {"writer_counters": {"written_event_count": 3}}
 
 
 def test_telemetry_progress_throttle_emits_after_chunk_interval(tmp_path: Path) -> None:

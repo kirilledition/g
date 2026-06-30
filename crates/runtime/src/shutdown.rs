@@ -136,6 +136,11 @@ impl ShutdownController {
         self.handlers_installed = false;
     }
 
+    pub fn finish_handler_session(&mut self) {
+        self.mark_handlers_restored();
+        self.reset();
+    }
+
     /// Record a handled shutdown signal and return the resulting action.
     ///
     /// # Errors
@@ -266,8 +271,9 @@ mod tests {
         assert_eq!(first_decision.action, ShutdownRequestAction::Graceful);
         assert_eq!(second_decision.action, ShutdownRequestAction::Force);
         assert_eq!(controller.requested_signal().unwrap().name, "SIGINT");
-        controller.reset();
+        controller.finish_handler_session();
         assert_eq!(controller.requested_signal(), None);
+        assert!(!controller.handlers_installed());
     }
 
     #[test]

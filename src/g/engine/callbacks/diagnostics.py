@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import typing
 
 import jax
 import numpy as np
 
-import g.engine.callbacks.shared as shared
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.engine import timing
-
-logger = shared.logger
 
 
 def block_until_ready(value: typing.Any) -> None:
@@ -20,6 +18,16 @@ def block_until_ready(value: typing.Any) -> None:
     block_until_ready_method = getattr(value, "block_until_ready", None)
     if callable(block_until_ready_method):
         block_until_ready_method()
+
+
+def emit_callback_diagnostic_event(
+    level: str,
+    event: str,
+    message: str,
+    fields: typing.Mapping[str, object],
+) -> None:
+    """Emit one structured callback diagnostic through native tracing."""
+    _core.emit_diagnostic_event(level, event, message, json.dumps(dict(fields), sort_keys=True, default=str))
 
 
 def enforce_null_logistic_nonconvergence_policy(
@@ -48,7 +56,19 @@ def enforce_null_logistic_nonconvergence_policy(
     warning_message = native_policy_plan.warning_message
     if warning_message is None:
         raise RuntimeError("Native null-logistic nonconvergence warning plan did not include a warning message.")
-    logger.warning("%s", warning_message)
+    emit_callback_diagnostic_event(
+        "warning",
+        "callback_null_logistic_nonconvergence_warning",
+        warning_message,
+        {
+            "chromosome": chromosome,
+            "nonconverged_count": int(np.count_nonzero(~convergence_flags)),
+            "phenotype_count": 0 if phenotype_names is None else len(phenotype_names),
+            "policy": policy.value,
+            "scalar_convergence": convergence_flags.ndim == 0,
+            "total_fit_count": int(convergence_flags.size),
+        },
+    )
 
 
 def record_binary_chunk_diagnostics(

@@ -34,10 +34,7 @@ pub(crate) struct NativeCallbackWorkerThread {
 impl NativeCallbackObjectQueue {
     #[new]
     fn new(capacity: usize) -> PyResult<Self> {
-        let Some(queue) = g_engine::BoundedCallbackQueue::new(capacity) else {
-            return Err(PyValueError::new_err("native callback object queue capacity must be positive"));
-        };
-        Ok(Self { queue: Mutex::new(queue), condition: Condvar::new() })
+        Self::with_capacity(capacity)
     }
 
     #[getter]
@@ -90,6 +87,53 @@ impl NativeCallbackObjectQueue {
 }
 
 impl NativeCallbackObjectQueue {
+    pub(crate) fn with_capacity(capacity: usize) -> PyResult<Self> {
+        let Some(queue) = g_engine::BoundedCallbackQueue::new(capacity) else {
+            return Err(PyValueError::new_err("native callback object queue capacity must be positive"));
+        };
+        Ok(Self { queue: Mutex::new(queue), condition: Condvar::new() })
+    }
+
+    pub(crate) fn put_item(&self, py: Python<'_>, item: Py<PyAny>, timeout_seconds: f64) -> PyResult<bool> {
+        py.detach(|| self.put_without_gil(item, timeout_seconds))
+    }
+
+    pub(crate) fn get_item(
+        &self,
+        py: Python<'_>,
+        timeout_seconds: f64,
+    ) -> PyResult<NativeCallbackObjectQueueGetResult> {
+        py.detach(|| self.get_without_gil(timeout_seconds))
+    }
+
+    pub(crate) fn wait_for_available_slot_value(&self, py: Python<'_>, timeout_seconds: f64) -> PyResult<bool> {
+        py.detach(|| {
+            self.wait_until_without_gil(
+                timeout_seconds,
+                g_engine::BoundedCallbackQueue::has_available_slot,
+                "native callback object queue lock was poisoned during available-slot wait",
+            )
+        })
+    }
+
+    pub(crate) fn wait_for_queued_item_value(&self, py: Python<'_>, timeout_seconds: f64) -> PyResult<bool> {
+        py.detach(|| {
+            self.wait_until_without_gil(
+                timeout_seconds,
+                g_engine::BoundedCallbackQueue::has_queued_item,
+                "native callback object queue lock was poisoned during queued-item wait",
+            )
+        })
+    }
+
+    pub(crate) fn has_queued_item_value(&self) -> PyResult<bool> {
+        Ok(self.lock_queue()?.has_queued_item())
+    }
+
+    pub(crate) fn occupied_count_value(&self) -> PyResult<usize> {
+        Ok(self.lock_queue()?.occupied_count())
+    }
+
     fn lock_queue(&self) -> PyResult<MutexGuard<'_, g_engine::BoundedCallbackQueue<Py<PyAny>>>> {
         self.queue.lock().map_err(|_| PyRuntimeError::new_err("native callback object queue lock was poisoned"))
     }
@@ -202,7 +246,7 @@ impl NativeCallbackObjectQueue {
 impl NativeCallbackWaitSignal {
     #[new]
     fn new() -> Self {
-        Self { generation: Mutex::new(0), condition: Condvar::new() }
+        Self::new_signal()
     }
 
     #[getter]
@@ -211,6 +255,24 @@ impl NativeCallbackWaitSignal {
     }
 
     fn notify_waiters(&self) -> PyResult<u64> {
+        self.notify_waiters_value()
+    }
+
+    fn wait_for_change(&self, py: Python<'_>, observed_generation: u64, timeout_seconds: f64) -> PyResult<bool> {
+        self.wait_for_change_value(py, observed_generation, timeout_seconds)
+    }
+}
+
+impl NativeCallbackWaitSignal {
+    pub(crate) fn new_signal() -> Self {
+        Self { generation: Mutex::new(0), condition: Condvar::new() }
+    }
+
+    pub(crate) fn generation_value(&self) -> PyResult<u64> {
+        Ok(*self.lock_generation()?)
+    }
+
+    pub(crate) fn notify_waiters_value(&self) -> PyResult<u64> {
         let mut generation = self.lock_generation()?;
         *generation = generation.wrapping_add(1);
         let next_generation = *generation;
@@ -218,12 +280,15 @@ impl NativeCallbackWaitSignal {
         Ok(next_generation)
     }
 
-    fn wait_for_change(&self, py: Python<'_>, observed_generation: u64, timeout_seconds: f64) -> PyResult<bool> {
+    pub(crate) fn wait_for_change_value(
+        &self,
+        py: Python<'_>,
+        observed_generation: u64,
+        timeout_seconds: f64,
+    ) -> PyResult<bool> {
         py.detach(|| self.wait_for_change_without_gil(observed_generation, timeout_seconds))
     }
-}
 
-impl NativeCallbackWaitSignal {
     fn lock_generation(&self) -> PyResult<MutexGuard<'_, u64>> {
         self.generation.lock().map_err(|_| PyRuntimeError::new_err("native callback wait signal lock was poisoned"))
     }
@@ -264,6 +329,30 @@ impl NativeCallbackWorkerThread {
     #[new]
     #[pyo3(signature = (*, target, name, daemon = true))]
     fn new(py: Python<'_>, target: &Bound<'_, PyAny>, name: String, daemon: bool) -> PyResult<Self> {
+        Self::from_target(py, target, name, daemon)
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn start(&self, py: Python<'_>) -> PyResult<()> {
+        self.start_thread(py)
+    }
+
+    #[pyo3(signature = (timeout = None))]
+    fn join(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<()> {
+        self.join_thread(py, timeout)
+    }
+
+    fn is_alive(&self, py: Python<'_>) -> PyResult<bool> {
+        self.is_thread_alive(py)
+    }
+}
+
+impl NativeCallbackWorkerThread {
+    pub(crate) fn from_target(py: Python<'_>, target: &Bound<'_, PyAny>, name: String, daemon: bool) -> PyResult<Self> {
         let threading_module = PyModule::import(py, "threading")?;
         let keyword_arguments = PyDict::new(py);
         keyword_arguments.set_item("target", target)?;
@@ -273,18 +362,16 @@ impl NativeCallbackWorkerThread {
         Ok(Self { thread, name })
     }
 
-    #[getter]
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn start(&self, py: Python<'_>) -> PyResult<()> {
+    pub(crate) fn start_thread(&self, py: Python<'_>) -> PyResult<()> {
         self.thread.bind(py).call_method0("start")?;
         Ok(())
     }
 
-    #[pyo3(signature = (timeout = None))]
-    fn join(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<()> {
+    pub(crate) fn name_value(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn join_thread(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<()> {
         match timeout {
             Some(timeout_seconds) => {
                 let keyword_arguments = PyDict::new(py);
@@ -298,7 +385,7 @@ impl NativeCallbackWorkerThread {
         Ok(())
     }
 
-    fn is_alive(&self, py: Python<'_>) -> PyResult<bool> {
+    pub(crate) fn is_thread_alive(&self, py: Python<'_>) -> PyResult<bool> {
         self.thread.bind(py).call_method0("is_alive")?.extract()
     }
 }
@@ -313,6 +400,20 @@ impl NativeCallbackObjectQueueGetResult {
     #[getter]
     fn item(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.item.as_ref().map(|item| item.clone_ref(py))
+    }
+}
+
+impl NativeCallbackObjectQueueGetResult {
+    pub(crate) fn has_item_value(&self) -> bool {
+        self.item.is_some()
+    }
+
+    pub(crate) fn has_non_none_item_value(&self, py: Python<'_>) -> bool {
+        self.item.as_ref().is_some_and(|item| !item.bind(py).is_none())
+    }
+
+    pub(crate) fn into_item_value(self) -> Option<Py<PyAny>> {
+        self.item
     }
 }
 

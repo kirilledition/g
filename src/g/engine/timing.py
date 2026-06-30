@@ -551,6 +551,25 @@ class StageTimingRecorder:
             run_id,
         )
 
+    def write_final_timing_outputs(
+        self,
+        *,
+        stage_timing_path: pathlib.Path | None,
+        profile_summary_path: pathlib.Path | None,
+        run_id: str | None,
+    ) -> dict[str, bool]:
+        """Persist all configured final timing outputs through the native recorder."""
+        return dict(
+            typing.cast(
+                "typing.Mapping[str, bool]",
+                self.native_recorder.write_final_timing_outputs(
+                    None if stage_timing_path is None else str(stage_timing_path),
+                    None if profile_summary_path is None else str(profile_summary_path),
+                    run_id,
+                ),
+            )
+        )
+
 
 def adapt_stage_timing_snapshot_payload(snapshot_payload: dict[str, object]) -> StageTimingSnapshot:
     """Adapt a native timing snapshot payload to the public Python shape."""
@@ -677,6 +696,23 @@ def write_profile_summary(
     if stage_timing_recorder is None:
         return
     stage_timing_recorder.write_profile_summary_if_configured(profile_summary_path, run_id=run_id)
+
+
+def write_final_timing_outputs(
+    stage_timing_recorder: StageTimingRecorder | None,
+    *,
+    stage_timing_path: pathlib.Path | None,
+    profile_summary_path: pathlib.Path | None,
+    run_id: str | None,
+) -> dict[str, bool]:
+    """Persist all configured final timing outputs."""
+    if stage_timing_recorder is None:
+        return {"wrote_stage_timing_snapshot": False, "wrote_profile_summary": False}
+    return stage_timing_recorder.write_final_timing_outputs(
+        stage_timing_path=stage_timing_path,
+        profile_summary_path=profile_summary_path,
+        run_id=run_id,
+    )
 
 
 def serialize_chunk_stage_timings(
