@@ -902,6 +902,19 @@ impl NativeCallbackRuntimeResources {
         )
     }
 
+    fn release_result_work_item_in_flight_slot_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeResultWorkItemResourceReleaseResult> {
+        let mut release_result = NativeResultWorkItemResourceReleaseResult::empty();
+        if !result_work_item_release_in_flight_slot(work_item)? {
+            return Ok(release_result);
+        }
+        self.record_result_work_item_in_flight_slot_release(py, &mut release_result)?;
+        Ok(release_result)
+    }
+
     fn acquire_dosage_buffer_with_backpressure_timeout(
         &self,
         py: Python<'_>,
@@ -2489,15 +2502,26 @@ impl NativeCallbackRuntimeResources {
             release_result.record_host_buffer_return(py, free_buffer_count, return_observation_plan)?;
         }
         if resource_release_plan.should_release_result_in_flight_slot_value() {
-            if self.has_stage_timing_recorder {
-                let release_observation_plan = self.release_result_in_flight_slot(py)?;
-                release_result.record_result_in_flight_release(Some(&release_observation_plan));
-            } else {
-                self.release_result_in_flight_slot_without_observation(py)?;
-                release_result.record_result_in_flight_release(None);
-            }
+            self.record_result_work_item_in_flight_slot_release(py, &mut release_result)?;
         }
         Ok(release_result)
+    }
+}
+
+impl NativeCallbackRuntimeResources {
+    fn record_result_work_item_in_flight_slot_release(
+        &self,
+        py: Python<'_>,
+        release_result: &mut NativeResultWorkItemResourceReleaseResult,
+    ) -> PyResult<()> {
+        if self.has_stage_timing_recorder {
+            let release_observation_plan = self.release_result_in_flight_slot(py)?;
+            release_result.record_result_in_flight_release(Some(&release_observation_plan));
+        } else {
+            self.release_result_in_flight_slot_without_observation(py)?;
+            release_result.record_result_in_flight_release(None);
+        }
+        Ok(())
     }
 }
 

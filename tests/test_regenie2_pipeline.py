@@ -3769,6 +3769,26 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert object_final_result.released_host_buffer is False
     assert object_final_result.released_result_in_flight_slot is True
     assert object_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+    non_releasing_work_item = dataclasses.replace(object_work_item, release_in_flight_slot=False)
+    non_releasing_result = object_runtime_resources.release_result_work_item_in_flight_slot_for_object(
+        non_releasing_work_item,
+    )
+    assert non_releasing_result.released_host_buffer is False
+    assert non_releasing_result.released_result_in_flight_slot is False
+    assert non_releasing_result.result_in_flight_resource_name is None
+    assert object_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+    object_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
+    in_flight_only_result = object_runtime_resources.release_result_work_item_in_flight_slot_for_object(
+        object_work_item,
+    )
+    assert in_flight_only_result.released_host_buffer is False
+    assert in_flight_only_result.free_buffer_count is None
+    assert in_flight_only_result.dosage_buffer_pool_observation_plan is None
+    assert in_flight_only_result.released_result_in_flight_slot is True
+    assert in_flight_only_result.result_in_flight_resource_name == "result_in_flight_slots"
+    assert in_flight_only_result.result_in_flight_operation_name == "release"
+    assert in_flight_only_result.result_in_flight_blocked is False
+    assert object_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
 
 def test_native_callback_runner_routes_result_cleanup_through_native_work_item_objects() -> None:
@@ -3843,6 +3863,43 @@ def test_native_callback_runner_routes_result_cleanup_through_native_work_item_o
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is dosage_buffer_owner
     assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+
+def test_native_callback_runner_releases_result_work_item_in_flight_slots_natively() -> None:
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        result_in_flight_limit=1,
+    )
+    runtime_resources = callback.callback_runtime_resources
+    runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    work_item = callback_shared.Regenie2ResultWriteWorkItem(
+        metadata=build_native_metadata(),
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        beta=jnp.ones(2),
+        standard_error=jnp.ones(2),
+        chi_squared=jnp.ones(2),
+        log10_p_value=jnp.ones(2),
+        extra_code=None,
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=None,
+    )
+    releasing_work_item = dataclasses.replace(work_item, release_in_flight_slot=True)
+
+    try:
+        with patch.object(
+            callback_runtime.NativeBgenCallbackRunner,
+            "release_result_in_flight_slot",
+            side_effect=AssertionError("production runner should release result work-item slots natively"),
+        ):
+            callback.release_result_work_item_in_flight_slot(work_item)
+            assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 1
+            callback.release_result_work_item_in_flight_slot(releasing_work_item)
+            assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+    finally:
+        callback.finish()
 
 
 def test_native_callback_runner_honors_optional_result_cleanup_observations() -> None:

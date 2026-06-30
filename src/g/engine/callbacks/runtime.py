@@ -2741,6 +2741,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
     ) -> None:
         """Release the in-flight result slot associated with one result."""
+        if self.uses_native_callback_runtime_resources():
+            release_result = self.callback_runtime_resources.release_result_work_item_in_flight_slot_for_object(
+                work_item,
+            )
+            self.record_result_work_item_resource_release_result(release_result)
+            return
         if work_item.release_in_flight_slot:
             self.release_result_in_flight_slot()
 
