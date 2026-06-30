@@ -1236,12 +1236,11 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume queued native dosage chunks with optional timing observations."""
         runtime_resources = self.callback_runtime_resources
         while True:
-            get_start_time = time.perf_counter()
             work_item_get_result = (
                 runtime_resources.get_validated_dosage_work_item_with_optional_observation_and_drain_completion()
             )
             work_item = typing.cast("QueuedPreprocessedDosageWorkItem", work_item_get_result.item)
-            get_observation_plan = work_item_get_result.observation_plan
+            stage_backpressure_observation = work_item_get_result.stage_backpressure_observation
             drain_completion_plan = work_item_get_result.drain_completion_plan
             if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
                 return
@@ -1251,15 +1250,10 @@ class NativeBgenCallbackRunner(abc.ABC):
                 "PreprocessedDosageWorkItem",
                 work_item,
             )
-            if get_observation_plan is None:
+            if stage_backpressure_observation is None:
                 self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
                 continue
-            self.record_bounded_resource_stage_duration(
-                resource_name=get_observation_plan.queue_name,
-                operation_name=get_observation_plan.operation_name,
-                start_time=get_start_time,
-                blocked=get_observation_plan.blocked,
-            )
+            self.record_queue_stage_backpressure_observation(stage_backpressure_observation)
             python_callback_start_time = time.perf_counter()
             try:
                 self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
@@ -1641,22 +1635,14 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume queued native result write items with optional timing observations."""
         runtime_resources = self.callback_runtime_resources
         while True:
-            get_start_time = time.perf_counter()
             work_item_get_result = (
                 runtime_resources.get_validated_result_write_item_with_optional_observation_and_drain_completion()
             )
             work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
-            get_observation_plan = work_item_get_result.observation_plan
             drain_completion_plan = work_item_get_result.drain_completion_plan
             if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
-            if get_observation_plan is not None:
-                self.record_bounded_resource_stage_duration(
-                    resource_name=get_observation_plan.queue_name,
-                    operation_name=get_observation_plan.operation_name,
-                    start_time=get_start_time,
-                    blocked=get_observation_plan.blocked,
-                )
+            self.record_queue_stage_backpressure_observation(work_item_get_result.stage_backpressure_observation)
             dispatch_plan = self.require_result_write_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
             self.apply_result_write_item_dispatch_plan(dispatch_plan)
             if dispatch_plan.should_process_result_write_item:
@@ -1670,22 +1656,14 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume queued native multi-result write items with optional timing observations."""
         runtime_resources = self.callback_runtime_resources
         while True:
-            get_start_time = time.perf_counter()
             work_item_get_result = (
                 runtime_resources.get_validated_result_write_item_with_optional_observation_and_drain_completion()
             )
             work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
-            get_observation_plan = work_item_get_result.observation_plan
             drain_completion_plan = work_item_get_result.drain_completion_plan
             if self.apply_result_write_drain_completion_plan(drain_completion_plan):
                 return
-            if get_observation_plan is not None:
-                self.record_bounded_resource_stage_duration(
-                    resource_name=get_observation_plan.queue_name,
-                    operation_name=get_observation_plan.operation_name,
-                    start_time=get_start_time,
-                    blocked=get_observation_plan.blocked,
-                )
+            self.record_queue_stage_backpressure_observation(work_item_get_result.stage_backpressure_observation)
             dispatch_plan = self.require_result_write_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
             self.apply_result_write_item_dispatch_plan(dispatch_plan)
             if dispatch_plan.should_process_multi_result_write_item:

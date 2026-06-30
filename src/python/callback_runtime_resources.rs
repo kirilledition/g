@@ -164,6 +164,7 @@ pub(crate) struct NativeDosageWorkItemGetResult {
     item: Option<Py<PyAny>>,
     has_dosage_work_item: bool,
     observation_plan: Option<Py<NativeCallbackQueueGetObservationPlan>>,
+    stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
     drain_completion_plan: Py<NativeDosageWorkDrainCompletionPlan>,
     dispatch_plan: Option<Py<NativeDosageWorkItemDispatchPlan>>,
 }
@@ -180,6 +181,7 @@ pub(crate) struct NativeResultWriteItemGetResult {
     item: Option<Py<PyAny>>,
     has_result_work_item: bool,
     observation_plan: Option<Py<NativeCallbackQueueGetObservationPlan>>,
+    stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
     drain_completion_plan: Py<NativeResultWriteDrainCompletionPlan>,
     dispatch_plan: Option<Py<NativeResultWriteItemDispatchPlan>>,
 }
@@ -1478,20 +1480,29 @@ impl NativeCallbackRuntimeResources {
         &self,
         py: Python<'_>,
     ) -> PyResult<NativeDosageWorkItemGetResult> {
+        let get_start_time = Instant::now();
         let get_result = self.get_dosage_work_item(py)?;
+        let elapsed_seconds = get_start_time.elapsed().as_secs_f64();
         let has_dosage_work_item = get_result.has_non_none_item_value(py);
-        let (observation_plan, drain_completion_plan) = {
+        let (observation_plan, stage_backpressure_observation, drain_completion_plan) = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            (
-                scheduler_state.plan_dosage_queue_get_observation_value(),
-                scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item),
-            )
+            let observation_plan = scheduler_state.plan_dosage_queue_get_observation_value();
+            let stage_backpressure_observation = scheduler_state
+                .plan_current_queue_stage_backpressure_observation_value(
+                    observation_plan.queue_name_value(),
+                    observation_plan.operation_name_value(),
+                    elapsed_seconds,
+                    observation_plan.blocked_value(),
+                )?;
+            let drain_completion_plan = scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item);
+            (observation_plan, stage_backpressure_observation, drain_completion_plan)
         };
         NativeDosageWorkItemGetResult::from_get_result(
             py,
             get_result,
             has_dosage_work_item,
             Some(observation_plan),
+            Some(stage_backpressure_observation),
             drain_completion_plan,
             None,
         )
@@ -1501,22 +1512,37 @@ impl NativeCallbackRuntimeResources {
         &self,
         py: Python<'_>,
     ) -> PyResult<NativeDosageWorkItemGetResult> {
+        let get_start_time = Instant::now();
         let get_result = self.get_dosage_work_item(py)?;
+        let elapsed_seconds = get_start_time.elapsed().as_secs_f64();
         let has_dosage_work_item = get_result.has_non_none_item_value(py);
-        let (observation_plan, drain_completion_plan) = {
+        let (observation_plan, stage_backpressure_observation, drain_completion_plan) = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            let observation_plan = if self.has_stage_timing_recorder {
-                Some(scheduler_state.plan_dosage_queue_get_observation_value())
+            let (observation_plan, stage_backpressure_observation) = if self.has_stage_timing_recorder {
+                let observation_plan = scheduler_state.plan_dosage_queue_get_observation_value();
+                let stage_backpressure_observation = scheduler_state
+                    .plan_current_queue_stage_backpressure_observation_value(
+                        observation_plan.queue_name_value(),
+                        observation_plan.operation_name_value(),
+                        elapsed_seconds,
+                        observation_plan.blocked_value(),
+                    )?;
+                (Some(observation_plan), Some(stage_backpressure_observation))
             } else {
-                None
+                (None, None)
             };
-            (observation_plan, scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item))
+            (
+                observation_plan,
+                stage_backpressure_observation,
+                scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item),
+            )
         };
         NativeDosageWorkItemGetResult::from_get_result(
             py,
             get_result,
             has_dosage_work_item,
             observation_plan,
+            stage_backpressure_observation,
             drain_completion_plan,
             None,
         )
@@ -1539,6 +1565,7 @@ impl NativeCallbackRuntimeResources {
             item,
             has_dosage_work_item,
             None,
+            None,
             drain_completion_plan,
             dispatch_plan,
         )
@@ -1548,17 +1575,31 @@ impl NativeCallbackRuntimeResources {
         &self,
         py: Python<'_>,
     ) -> PyResult<NativeDosageWorkItemGetResult> {
+        let get_start_time = Instant::now();
         let get_result = self.get_dosage_work_item(py)?;
+        let elapsed_seconds = get_start_time.elapsed().as_secs_f64();
         let item = get_result.into_item_value();
         let has_dosage_work_item = item.as_ref().is_some_and(|queued_item| !queued_item.bind(py).is_none());
-        let (observation_plan, drain_completion_plan) = {
+        let (observation_plan, stage_backpressure_observation, drain_completion_plan) = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            let observation_plan = if self.has_stage_timing_recorder {
-                Some(scheduler_state.plan_dosage_queue_get_observation_value())
+            let (observation_plan, stage_backpressure_observation) = if self.has_stage_timing_recorder {
+                let observation_plan = scheduler_state.plan_dosage_queue_get_observation_value();
+                let stage_backpressure_observation = scheduler_state
+                    .plan_current_queue_stage_backpressure_observation_value(
+                        observation_plan.queue_name_value(),
+                        observation_plan.operation_name_value(),
+                        elapsed_seconds,
+                        observation_plan.blocked_value(),
+                    )?;
+                (Some(observation_plan), Some(stage_backpressure_observation))
             } else {
-                None
+                (None, None)
             };
-            (observation_plan, scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item))
+            (
+                observation_plan,
+                stage_backpressure_observation,
+                scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item),
+            )
         };
         let dispatch_plan = self.dosage_work_dispatch_plan_for_optional_item(py, item.as_ref())?;
         NativeDosageWorkItemGetResult::from_item(
@@ -1566,6 +1607,7 @@ impl NativeCallbackRuntimeResources {
             item,
             has_dosage_work_item,
             observation_plan,
+            stage_backpressure_observation,
             drain_completion_plan,
             dispatch_plan,
         )
@@ -1959,23 +2001,32 @@ impl NativeCallbackRuntimeResources {
         &self,
         py: Python<'_>,
     ) -> PyResult<NativeResultWriteItemGetResult> {
+        let get_start_time = Instant::now();
         let get_result = self.get_result_write_item(py)?;
+        let elapsed_seconds = get_start_time.elapsed().as_secs_f64();
         let has_result_work_item = get_result.has_non_none_item_value(py);
-        let (observation_plan, drain_completion_plan) = {
+        let (observation_plan, stage_backpressure_observation, drain_completion_plan) = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            (
-                scheduler_state.plan_result_queue_get_observation_value(),
-                scheduler_state.plan_result_write_drain_completion_value(
-                    has_result_work_item,
-                    self.flush_binary_correction_diagnostics_on_result_stop,
-                ),
-            )
+            let observation_plan = scheduler_state.plan_result_queue_get_observation_value();
+            let stage_backpressure_observation = scheduler_state
+                .plan_current_queue_stage_backpressure_observation_value(
+                    observation_plan.queue_name_value(),
+                    observation_plan.operation_name_value(),
+                    elapsed_seconds,
+                    observation_plan.blocked_value(),
+                )?;
+            let drain_completion_plan = scheduler_state.plan_result_write_drain_completion_value(
+                has_result_work_item,
+                self.flush_binary_correction_diagnostics_on_result_stop,
+            );
+            (observation_plan, stage_backpressure_observation, drain_completion_plan)
         };
         NativeResultWriteItemGetResult::from_get_result(
             py,
             get_result,
             has_result_work_item,
             Some(observation_plan),
+            Some(stage_backpressure_observation),
             drain_completion_plan,
             None,
         )
@@ -1985,17 +2036,28 @@ impl NativeCallbackRuntimeResources {
         &self,
         py: Python<'_>,
     ) -> PyResult<NativeResultWriteItemGetResult> {
+        let get_start_time = Instant::now();
         let get_result = self.get_result_write_item(py)?;
+        let elapsed_seconds = get_start_time.elapsed().as_secs_f64();
         let has_result_work_item = get_result.has_non_none_item_value(py);
-        let (observation_plan, drain_completion_plan) = {
+        let (observation_plan, stage_backpressure_observation, drain_completion_plan) = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            let observation_plan = if self.has_stage_timing_recorder {
-                Some(scheduler_state.plan_result_queue_get_observation_value())
+            let (observation_plan, stage_backpressure_observation) = if self.has_stage_timing_recorder {
+                let observation_plan = scheduler_state.plan_result_queue_get_observation_value();
+                let stage_backpressure_observation = scheduler_state
+                    .plan_current_queue_stage_backpressure_observation_value(
+                        observation_plan.queue_name_value(),
+                        observation_plan.operation_name_value(),
+                        elapsed_seconds,
+                        observation_plan.blocked_value(),
+                    )?;
+                (Some(observation_plan), Some(stage_backpressure_observation))
             } else {
-                None
+                (None, None)
             };
             (
                 observation_plan,
+                stage_backpressure_observation,
                 scheduler_state.plan_result_write_drain_completion_value(
                     has_result_work_item,
                     self.flush_binary_correction_diagnostics_on_result_stop,
@@ -2007,6 +2069,7 @@ impl NativeCallbackRuntimeResources {
             get_result,
             has_result_work_item,
             observation_plan,
+            stage_backpressure_observation,
             drain_completion_plan,
             None,
         )
@@ -2026,6 +2089,7 @@ impl NativeCallbackRuntimeResources {
             item,
             has_result_work_item,
             None,
+            None,
             drain_completion_plan,
             dispatch_plan,
         )
@@ -2035,18 +2099,29 @@ impl NativeCallbackRuntimeResources {
         &self,
         py: Python<'_>,
     ) -> PyResult<NativeResultWriteItemGetResult> {
+        let get_start_time = Instant::now();
         let get_result = self.get_result_write_item(py)?;
+        let elapsed_seconds = get_start_time.elapsed().as_secs_f64();
         let item = get_result.into_item_value();
         let has_result_work_item = item.as_ref().is_some_and(|queued_item| !queued_item.bind(py).is_none());
-        let (observation_plan, drain_completion_plan) = {
+        let (observation_plan, stage_backpressure_observation, drain_completion_plan) = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            let observation_plan = if self.has_stage_timing_recorder {
-                Some(scheduler_state.plan_result_queue_get_observation_value())
+            let (observation_plan, stage_backpressure_observation) = if self.has_stage_timing_recorder {
+                let observation_plan = scheduler_state.plan_result_queue_get_observation_value();
+                let stage_backpressure_observation = scheduler_state
+                    .plan_current_queue_stage_backpressure_observation_value(
+                        observation_plan.queue_name_value(),
+                        observation_plan.operation_name_value(),
+                        elapsed_seconds,
+                        observation_plan.blocked_value(),
+                    )?;
+                (Some(observation_plan), Some(stage_backpressure_observation))
             } else {
-                None
+                (None, None)
             };
             (
                 observation_plan,
+                stage_backpressure_observation,
                 scheduler_state.plan_result_write_drain_completion_value(
                     has_result_work_item,
                     self.flush_binary_correction_diagnostics_on_result_stop,
@@ -2059,6 +2134,7 @@ impl NativeCallbackRuntimeResources {
             item,
             has_result_work_item,
             observation_plan,
+            stage_backpressure_observation,
             drain_completion_plan,
             dispatch_plan,
         )
@@ -2487,6 +2563,14 @@ impl NativeDosageWorkItemGetResult {
     }
 
     #[getter]
+    fn stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueStageBackpressureObservation>> {
+        self.stage_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
+    }
+
+    #[getter]
     fn drain_completion_plan(&self, py: Python<'_>) -> Py<NativeDosageWorkDrainCompletionPlan> {
         self.drain_completion_plan.clone_ref(py)
     }
@@ -2503,6 +2587,7 @@ impl NativeDosageWorkItemGetResult {
         get_result: NativeCallbackObjectQueueGetResult,
         has_dosage_work_item: bool,
         observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
+        stage_backpressure_observation: Option<NativeCallbackQueueStageBackpressureObservation>,
         drain_completion_plan: NativeDosageWorkDrainCompletionPlan,
         dispatch_plan: Option<NativeDosageWorkItemDispatchPlan>,
     ) -> PyResult<Self> {
@@ -2511,6 +2596,7 @@ impl NativeDosageWorkItemGetResult {
             get_result.into_item_value(),
             has_dosage_work_item,
             observation_plan,
+            stage_backpressure_observation,
             drain_completion_plan,
             dispatch_plan,
         )
@@ -2521,6 +2607,7 @@ impl NativeDosageWorkItemGetResult {
         item: Option<Py<PyAny>>,
         has_dosage_work_item: bool,
         observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
+        stage_backpressure_observation: Option<NativeCallbackQueueStageBackpressureObservation>,
         drain_completion_plan: NativeDosageWorkDrainCompletionPlan,
         dispatch_plan: Option<NativeDosageWorkItemDispatchPlan>,
     ) -> PyResult<Self> {
@@ -2528,6 +2615,9 @@ impl NativeDosageWorkItemGetResult {
             item,
             has_dosage_work_item,
             observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
+            stage_backpressure_observation: stage_backpressure_observation
+                .map(|observation| Py::new(py, observation))
+                .transpose()?,
             drain_completion_plan: Py::new(py, drain_completion_plan)?,
             dispatch_plan: dispatch_plan.map(|plan| Py::new(py, plan)).transpose()?,
         })
@@ -2585,6 +2675,14 @@ impl NativeResultWriteItemGetResult {
     }
 
     #[getter]
+    fn stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueStageBackpressureObservation>> {
+        self.stage_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
+    }
+
+    #[getter]
     fn drain_completion_plan(&self, py: Python<'_>) -> Py<NativeResultWriteDrainCompletionPlan> {
         self.drain_completion_plan.clone_ref(py)
     }
@@ -2601,6 +2699,7 @@ impl NativeResultWriteItemGetResult {
         get_result: NativeCallbackObjectQueueGetResult,
         has_result_work_item: bool,
         observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
+        stage_backpressure_observation: Option<NativeCallbackQueueStageBackpressureObservation>,
         drain_completion_plan: NativeResultWriteDrainCompletionPlan,
         dispatch_plan: Option<NativeResultWriteItemDispatchPlan>,
     ) -> PyResult<Self> {
@@ -2609,6 +2708,7 @@ impl NativeResultWriteItemGetResult {
             get_result.into_item_value(),
             has_result_work_item,
             observation_plan,
+            stage_backpressure_observation,
             drain_completion_plan,
             dispatch_plan,
         )
@@ -2619,6 +2719,7 @@ impl NativeResultWriteItemGetResult {
         item: Option<Py<PyAny>>,
         has_result_work_item: bool,
         observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
+        stage_backpressure_observation: Option<NativeCallbackQueueStageBackpressureObservation>,
         drain_completion_plan: NativeResultWriteDrainCompletionPlan,
         dispatch_plan: Option<NativeResultWriteItemDispatchPlan>,
     ) -> PyResult<Self> {
@@ -2626,6 +2727,9 @@ impl NativeResultWriteItemGetResult {
             item,
             has_result_work_item,
             observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
+            stage_backpressure_observation: stage_backpressure_observation
+                .map(|observation| Py::new(py, observation))
+                .transpose()?,
             drain_completion_plan: Py::new(py, drain_completion_plan)?,
             dispatch_plan: dispatch_plan.map(|plan| Py::new(py, plan)).transpose()?,
         })

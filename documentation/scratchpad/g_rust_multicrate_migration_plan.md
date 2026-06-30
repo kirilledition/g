@@ -1088,10 +1088,13 @@ Remove Python as the chunk-level scheduler.
   optional observation selection so timing-disabled puts skip observation-plan
   construction.
 - Callback runtime resources now own production timed dosage/result queue
-  consumer get attempts, drain decisions, and observation selection in one
-  native call while Python keeps timing measurement and emission.
+  consumer get attempts, drain decisions, timing measurement, and observation
+  selection in one native call while Python keeps timing emission.
 - Callback runtime resources now own production dosage/result queue consumer
   optional observation selection in the same native call as get/drain planning.
+- Callback runtime resources now return typed dosage/result queue consumer get
+  stage/backpressure observations from native get attempts, so production
+  Python no longer derives get telemetry from queue get plans.
 - Callback runtime resources now own production untimed dosage/result queue
   consumer get attempts and drain decisions in one native call without building
   timing observation plans.

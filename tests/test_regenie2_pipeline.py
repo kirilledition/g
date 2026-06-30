@@ -2720,6 +2720,7 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert dosage_optional_get_result.has_dosage_work_item is True
     assert dosage_optional_get_result.item is dosage_item
     assert dosage_optional_get_result.observation_plan is None
+    assert dosage_optional_get_result.stage_backpressure_observation is None
     assert dosage_optional_get_result.drain_completion_plan.should_stop is False
 
     assert runtime_resources.try_put_result_write_item(result_item, timeout_seconds=0.0) is True
@@ -2807,6 +2808,7 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
     assert result_optional_get_result.has_result_work_item is True
     assert result_optional_get_result.item is result_item
     assert result_optional_get_result.observation_plan is None
+    assert result_optional_get_result.stage_backpressure_observation is None
     assert result_optional_get_result.drain_completion_plan.should_stop is False
 
     observed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
@@ -2844,9 +2846,20 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
         observed_runtime_resources.get_dosage_work_item_with_optional_observation_and_drain_completion()
     )
     observed_dosage_get_plan = observed_dosage_get_result.observation_plan
+    observed_dosage_get_stage_observation = observed_dosage_get_result.stage_backpressure_observation
     assert observed_dosage_get_plan is not None
     assert observed_dosage_get_plan.queue_name == "dosage_queue"
     assert observed_dosage_get_plan.operation_name == "consumer_wait"
+    assert observed_dosage_get_stage_observation is not None
+    assert observed_dosage_get_stage_observation.queue_name == "dosage_queue"
+    assert observed_dosage_get_stage_observation.operation_name == "consumer_wait"
+    assert observed_dosage_get_stage_observation.stage_name == "callback_queue_consumer_wait"
+    assert observed_dosage_get_stage_observation.queue_depth == 0
+    assert observed_dosage_get_stage_observation.queue_capacity == 1
+    assert observed_dosage_get_stage_observation.elapsed_seconds >= 0.0
+    assert (
+        observed_dosage_get_stage_observation.blocked_seconds == observed_dosage_get_stage_observation.elapsed_seconds
+    )
     assert observed_dosage_get_result.item is dosage_item
     assert observed_dosage_get_result.drain_completion_plan.should_stop is False
     observed_result_put_result = (
@@ -2871,9 +2884,20 @@ def test_native_callback_runtime_resources_own_queue_operations() -> None:
         observed_runtime_resources.get_result_write_item_with_optional_observation_and_drain_completion()
     )
     observed_result_get_plan = observed_result_get_result.observation_plan
+    observed_result_get_stage_observation = observed_result_get_result.stage_backpressure_observation
     assert observed_result_get_plan is not None
     assert observed_result_get_plan.queue_name == "result_queue"
     assert observed_result_get_plan.operation_name == "consumer_wait"
+    assert observed_result_get_stage_observation is not None
+    assert observed_result_get_stage_observation.queue_name == "result_queue"
+    assert observed_result_get_stage_observation.operation_name == "consumer_wait"
+    assert observed_result_get_stage_observation.stage_name == "result_queue_consumer_wait"
+    assert observed_result_get_stage_observation.queue_depth == 0
+    assert observed_result_get_stage_observation.queue_capacity == 1
+    assert observed_result_get_stage_observation.elapsed_seconds >= 0.0
+    assert (
+        observed_result_get_stage_observation.blocked_seconds == observed_result_get_stage_observation.elapsed_seconds
+    )
     assert observed_result_get_result.item is result_item
     assert observed_result_get_result.drain_completion_plan.should_stop is False
 
@@ -3198,6 +3222,7 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
     )
     assert observed_dosage_get_result.item is sample_major_work_item
     assert observed_dosage_get_result.observation_plan is not None
+    assert observed_dosage_get_result.stage_backpressure_observation is not None
     observed_dosage_dispatch_plan = observed_dosage_get_result.dispatch_plan
     assert observed_dosage_dispatch_plan is not None
     assert observed_dosage_dispatch_plan.should_process_sample_major_dosage is True
@@ -3207,6 +3232,7 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
     )
     assert observed_result_get_result.item is result_write_work_item
     assert observed_result_get_result.observation_plan is not None
+    assert observed_result_get_result.stage_backpressure_observation is not None
     observed_result_dispatch_plan = observed_result_get_result.dispatch_plan
     assert observed_result_dispatch_plan is not None
     assert observed_result_dispatch_plan.should_process_result_write_item is True
