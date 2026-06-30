@@ -160,6 +160,107 @@ def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> No
         )
 
 
+def test_native_python_association_backend_uses_coarse_typed_calls() -> None:
+    class RecordingPythonAssociationBackend:
+        def __init__(self) -> None:
+            self.group_identifier: str | None = None
+            self.phenotype_count: int | None = None
+            self.chromosome: str | None = None
+            self.prediction_chromosome: str | None = None
+            self.prediction_row_count: int | None = None
+            self.batch_chromosome: str | None = None
+            self.batch_variant_count: int | None = None
+            self.batch_variant_offset: int | None = None
+
+        def prepare_group(self, group_input: _core.NativePreparedGroupInput) -> dict[str, object]:
+            self.group_identifier = group_input.group_identifier
+            self.phenotype_count = group_input.phenotype_count
+            return {"group_identifier": group_input.group_identifier, "phenotype_count": group_input.phenotype_count}
+
+        def prepare_chromosome(
+            self,
+            group_state: object,
+            chromosome: str,
+            predictions: _core.NativePredictionView,
+        ) -> dict[str, object]:
+            group_state_mapping = typing.cast("dict[str, object]", group_state)
+            self.chromosome = chromosome
+            self.prediction_chromosome = predictions.chromosome
+            self.prediction_row_count = predictions.row_count
+            return {
+                "group_identifier": group_state_mapping["group_identifier"],
+                "chromosome": chromosome,
+                "prediction_row_count": predictions.row_count,
+            }
+
+        def compute_batch(
+            self,
+            chromosome_state: object,
+            batch: _core.NativeGenotypeBatchView,
+        ) -> _core.NativeAssociationBatchResult:
+            chromosome_state_mapping = typing.cast("dict[str, object]", chromosome_state)
+            self.batch_chromosome = batch.chromosome
+            self.batch_variant_count = batch.variant_count
+            self.batch_variant_offset = batch.variant_offset
+            statistic_sum = typing.cast("int", chromosome_state_mapping["prediction_row_count"])
+            statistic_sum += batch.variant_count + batch.variant_offset
+            return _core.NativeAssociationBatchResult(batch.chromosome, batch.variant_count, float(statistic_sum))
+
+    python_backend = RecordingPythonAssociationBackend()
+    native_backend = _core.NativePythonAssociationBackend(python_backend)
+
+    group_state = native_backend.prepare_group("binary", 2)
+    chromosome_state = native_backend.prepare_chromosome(group_state, "chr2", "chr2", 5)
+    result = native_backend.compute_batch(chromosome_state, "chr2", 4, 3)
+
+    assert python_backend.group_identifier == "binary"
+    assert python_backend.phenotype_count == 2
+    assert python_backend.chromosome == "chr2"
+    assert python_backend.prediction_chromosome == "chr2"
+    assert python_backend.prediction_row_count == 5
+    assert python_backend.batch_chromosome == "chr2"
+    assert python_backend.batch_variant_count == 4
+    assert python_backend.batch_variant_offset == 3
+    assert result.chromosome == "chr2"
+    assert result.variant_count == 4
+    assert result.statistic_sum == 12.0
+
+
+def test_native_python_association_backend_maps_python_errors() -> None:
+    class FailingPythonAssociationBackend:
+        def prepare_group(self, group_input: _core.NativePreparedGroupInput) -> object:
+            raise ValueError(f"planned backend failure for {group_input.group_identifier}")
+
+    native_backend = _core.NativePythonAssociationBackend(FailingPythonAssociationBackend())
+
+    with pytest.raises(RuntimeError, match="planned backend failure for binary"):
+        native_backend.prepare_group("binary", 2)
+
+
+def test_native_python_association_backend_requires_native_batch_result() -> None:
+    class InvalidResultPythonAssociationBackend:
+        def prepare_group(self, group_input: _core.NativePreparedGroupInput) -> object:
+            return {"group_identifier": group_input.group_identifier}
+
+        def prepare_chromosome(
+            self,
+            group_state: object,
+            chromosome: str,
+            predictions: _core.NativePredictionView,
+        ) -> object:
+            return {"group_state": group_state, "chromosome": chromosome, "predictions": predictions}
+
+        def compute_batch(self, chromosome_state: object, batch: _core.NativeGenotypeBatchView) -> object:
+            return {"chromosome_state": chromosome_state, "batch": batch}
+
+    native_backend = _core.NativePythonAssociationBackend(InvalidResultPythonAssociationBackend())
+    group_state = native_backend.prepare_group("linear", 1)
+    chromosome_state = native_backend.prepare_chromosome(group_state, "chr1", "chr1", 3)
+
+    with pytest.raises(RuntimeError, match="NativeAssociationBatchResult"):
+        native_backend.compute_batch(chromosome_state, "chr1", 2, 0)
+
+
 def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None:
     single_payload = _core.validate_single_trait_preflight_shape_payload(
         phenotype_sample_count=3,

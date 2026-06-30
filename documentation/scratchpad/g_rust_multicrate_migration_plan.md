@@ -1256,6 +1256,9 @@ Remove Python as the chunk-level scheduler.
 - The timed dosage consumer fallback loop now contains only the manual scheduler
   path; production native dosage consumers enter the optional-observation native
   get/drain helper before timing-mode dispatch.
+- The first PyO3-backed `AssociationBackend` adapter now exposes typed group,
+  prediction, genotype-batch, and batch-result wrappers and calls Python backend
+  objects only at the coarse group/chromosome/batch boundary.
 - Callback runtime resources now own callback telemetry availability for
   production binary-correction diagnostics and worker-finish summary planning,
   so Python no longer computes or passes that fixed run property on native

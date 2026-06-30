@@ -26,6 +26,7 @@ use g_genotype::common::{ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunk
 use g_genotype::planner;
 use g_genotype::preprocess;
 
+mod association_backend;
 mod callback_diagnostics;
 mod callback_progress;
 mod callback_queue;
@@ -52,6 +53,10 @@ mod telemetry_policy;
 mod timing;
 mod trusted_validation;
 
+use association_backend::{
+    NativeAssociationBatchResult, NativeGenotypeBatchView, NativePredictionView, NativePreparedGroupInput,
+    NativePythonAssociationBackend,
+};
 use callback_diagnostics::{NativeNullLogisticNonconvergencePlan, plan_null_logistic_nonconvergence};
 use callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
@@ -1834,6 +1839,11 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     config::register_module(module)?;
     module.add_class::<ChunkSpec>()?;
     module.add_class::<ChunkStats>()?;
+    module.add_class::<NativeAssociationBatchResult>()?;
+    module.add_class::<NativeGenotypeBatchView>()?;
+    module.add_class::<NativePredictionView>()?;
+    module.add_class::<NativePreparedGroupInput>()?;
+    module.add_class::<NativePythonAssociationBackend>()?;
     module.add_class::<NativeAlignedPhenotypeGroup>()?;
     module.add_class::<NativeAlignedSampleData>()?;
     module.add_class::<NativeBinaryCorrectionDiagnosticsRecordPlan>()?;
