@@ -363,14 +363,6 @@ def record_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -
     PROCESS_RUNTIME_STATE.record_jax_runtime_policy(jax_runtime_policy_to_native_payload(jax_policy))
 
 
-def configured_jax_runtime_policy() -> jax_runtime_models.JaxRuntimePolicy | None:
-    """Return the process-global JAX runtime policy known to the native state handle."""
-    policy_payload = PROCESS_RUNTIME_STATE.jax_runtime_policy_payload()
-    if policy_payload is None:
-        return None
-    return jax_runtime_policy_from_native_payload(policy_payload)
-
-
 def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> _core.NativeRuntimeCompatibilityToken:
     """Return a native token after process-global runtime checks pass."""
     return build_run_runtime(runtime_policy).runtime_compatibility_token
@@ -383,13 +375,17 @@ def build_run_runtime(runtime_policy: RuntimePolicy) -> RunRuntime:
 
 def describe_runtime_state() -> RuntimeState:
     """Return the process-global runtime state known to this Python process."""
-    logging_policy_payload = PROCESS_RUNTIME_STATE.logging_runtime_policy_payload()
+    runtime_state_payload = native_mapping_payload(PROCESS_RUNTIME_STATE.runtime_state_payload())
+    logging_policy_payload = runtime_state_payload["logging_policy"]
+    jax_policy_payload = runtime_state_payload["jax_policy"]
     return RuntimeState(
         logging_policy=None
         if logging_policy_payload is None
         else logging_runtime_policy_from_native_payload(logging_policy_payload),
-        rayon_thread_count=PROCESS_RUNTIME_STATE.rayon_thread_count,
-        jax_policy=configured_jax_runtime_policy(),
+        rayon_thread_count=None
+        if runtime_state_payload["rayon_thread_count"] is None
+        else int(runtime_state_payload["rayon_thread_count"]),
+        jax_policy=None if jax_policy_payload is None else jax_runtime_policy_from_native_payload(jax_policy_payload),
     )
 
 

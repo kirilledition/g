@@ -1476,6 +1476,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Shutdown controller tests now cover first-signal graceful interruption and
   repeated-signal hard-interrupt behavior for `SIGINT` and `SIGTERM` through
   the native controller adapter.
+- Process runtime state now returns a single native snapshot payload for the
+  public Python API adapter, so Python no longer assembles runtime state through
+  separate process-global logging/Rayon/JAX lookups.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

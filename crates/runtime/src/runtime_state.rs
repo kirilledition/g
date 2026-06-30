@@ -26,6 +26,13 @@ pub struct ProcessRuntimeState {
     pub jax_policy: Option<JaxRuntimePolicyPayload>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeStateSnapshotPayload {
+    pub logging_policy: Option<LoggingRuntimePolicyPayload>,
+    pub rayon_thread_count: Option<i64>,
+    pub jax_policy: Option<JaxRuntimePolicyPayload>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimePolicyPayload {
     pub logging_policy: LoggingRuntimePolicyPayload,
@@ -133,6 +140,15 @@ impl Error for RayonThreadPoolConfigurationError {
 }
 
 impl ProcessRuntimeState {
+    #[must_use]
+    pub fn snapshot(&self) -> RuntimeStateSnapshotPayload {
+        RuntimeStateSnapshotPayload {
+            logging_policy: self.logging_policy.clone(),
+            rayon_thread_count: self.rayon_thread_count,
+            jax_policy: self.jax_policy.clone(),
+        }
+    }
+
     /// Require all process-global runtime settings to be compatible.
     ///
     /// # Errors
@@ -498,6 +514,26 @@ mod tests {
         assert_eq!(skip_plan, RayonThreadPoolConfigurationPlan { should_configure: false, thread_count: None });
         assert!(
             state.configure_rayon_thread_pool(8).unwrap_err().to_string().contains("Rayon --threads is process-global")
+        );
+    }
+
+    #[test]
+    fn snapshots_process_runtime_state() {
+        let mut state = ProcessRuntimeState::default();
+        let logging_policy = build_policy("info");
+        let jax_policy = build_jax_policy(Some("/tmp/cache"));
+
+        state.record_logging_policy(logging_policy.clone());
+        state.record_rayon_thread_count(4);
+        state.record_jax_policy(jax_policy.clone());
+
+        assert_eq!(
+            state.snapshot(),
+            RuntimeStateSnapshotPayload {
+                logging_policy: Some(logging_policy),
+                rayon_thread_count: Some(4),
+                jax_policy: Some(jax_policy),
+            },
         );
     }
 

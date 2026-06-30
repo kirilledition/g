@@ -164,6 +164,11 @@ impl NativeRuntimeState {
         state.jax_policy.as_ref().map(|policy| jax_runtime_policy_payload_to_dict(py, policy)).transpose()
     }
 
+    fn runtime_state_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let state = self.lock_state()?;
+        runtime_state_snapshot_payload_to_dict(py, &state.snapshot())
+    }
+
     fn require_compatible_runtime_policy(
         &self,
         logging_policy_payload: &Bound<'_, PyAny>,
@@ -429,5 +434,30 @@ fn jax_runtime_policy_payload_to_dict<'py>(
         .set_item("persistent_cache_min_compile_time_seconds", payload.persistent_cache_min_compile_time_seconds)?;
     python_payload.set_item("xla_autotune_cache", payload.xla_autotune_cache)?;
     python_payload.set_item("transfer_guard", payload.transfer_guard)?;
+    Ok(python_payload)
+}
+
+fn runtime_state_snapshot_payload_to_dict<'py>(
+    py: Python<'py>,
+    payload: &native_runtime_state::RuntimeStateSnapshotPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let python_payload = PyDict::new(py);
+    match &payload.logging_policy {
+        Some(logging_policy) => {
+            python_payload.set_item("logging_policy", logging_runtime_policy_payload_to_dict(py, logging_policy)?)?;
+        }
+        None => {
+            python_payload.set_item("logging_policy", py.None())?;
+        }
+    }
+    python_payload.set_item("rayon_thread_count", payload.rayon_thread_count)?;
+    match &payload.jax_policy {
+        Some(jax_policy) => {
+            python_payload.set_item("jax_policy", jax_runtime_policy_payload_to_dict(py, jax_policy)?)?;
+        }
+        None => {
+            python_payload.set_item("jax_policy", py.None())?;
+        }
+    }
     Ok(python_payload)
 }

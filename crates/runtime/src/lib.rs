@@ -57,7 +57,7 @@ pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_poli
 pub use runtime_state::{
     JaxRuntimePolicyPayload, JaxRuntimeSetupLifecyclePlan, ProcessRuntimeState, RayonThreadPoolConfigurationError,
     RayonThreadPoolConfigurationPlan, RunRuntime, RuntimeCompatibilityError, RuntimeCompatibilityToken,
-    RuntimePolicyPayload, build_jax_runtime_policy_payload, describe_jax_runtime_policy,
+    RuntimePolicyPayload, RuntimeStateSnapshotPayload, build_jax_runtime_policy_payload, describe_jax_runtime_policy,
 };
 pub use shutdown::{
     SecondSignalExceptionPlan, ShutdownControllerState, ShutdownRequestAction, ShutdownRequestDecisionPayload,
