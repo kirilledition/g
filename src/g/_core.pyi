@@ -977,6 +977,7 @@ class NativeCallbackRuntimeResources:
         result_worker_target: typing.Callable[[], object],
         staging_depth: int,
         native_callback_batch_size: int,
+        expected_result_work_item_kind: str,
         flush_binary_correction_diagnostics_on_result_stop: bool,
         result_in_flight_limit: int | None = None,
         dosage_buffer_limit: int | None = None,
@@ -1215,7 +1216,6 @@ class NativeCallbackRuntimeResources:
     def plan_validated_result_write_item_dispatch(
         self,
         result_work_item_kind: str,
-        expected_result_work_item_kind: str,
     ) -> NativeResultWriteItemDispatchPlan: ...
 
 class NativeCallbackQueueOperationObservationPlan:

@@ -90,6 +90,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             worker_name="regenie2-binary-callback",
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
+            expected_result_work_item_kind=runtime.ResultWriteItemKind.SINGLE_RESULT,
             flush_binary_correction_diagnostics_on_result_stop=True,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
@@ -491,6 +492,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             worker_name="regenie2-multi-binary-callback",
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
+            expected_result_work_item_kind=runtime.ResultWriteItemKind.MULTI_RESULT,
             flush_binary_correction_diagnostics_on_result_stop=True,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
@@ -519,7 +521,6 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 )
                 dispatch_plan = self.plan_result_write_item_dispatch(
                     work_item,
-                    expected_result_work_item_kind=runtime.ResultWriteItemKind.MULTI_RESULT,
                 )
                 self.apply_result_write_item_dispatch_plan(dispatch_plan)
                 if dispatch_plan.should_process_multi_result_write_item:
@@ -540,7 +541,6 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 return
             dispatch_plan = self.plan_result_write_item_dispatch(
                 work_item,
-                expected_result_work_item_kind=runtime.ResultWriteItemKind.MULTI_RESULT,
             )
             self.apply_result_write_item_dispatch_plan(dispatch_plan)
             if dispatch_plan.should_process_multi_result_write_item:

@@ -1232,6 +1232,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own the production result-drain binary
   diagnostics flush policy, so Python runner loops no longer pass per-drain
   flush policy flags to native queue/drain methods.
+- Callback runtime resources now own the production expected result-write
+  consumer kind, so Python runner loops no longer pass single-result versus
+  multi-result dispatch policy on every result work item.
 
 ### Tests
 

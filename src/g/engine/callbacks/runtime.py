@@ -140,6 +140,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         worker_name: str,
         staging_depth: int,
         native_callback_batch_size: int,
+        expected_result_work_item_kind: ResultWriteItemKind,
         flush_binary_correction_diagnostics_on_result_stop: bool,
         result_in_flight_limit: int | None,
         dosage_buffer_limit: int | None,
@@ -154,10 +155,12 @@ class NativeBgenCallbackRunner(abc.ABC):
             result_worker_target=self.consume_result_write_items,
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
+            expected_result_work_item_kind=expected_result_work_item_kind.value,
             flush_binary_correction_diagnostics_on_result_stop=flush_binary_correction_diagnostics_on_result_stop,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
         )
+        self.expected_result_work_item_kind = expected_result_work_item_kind
         self.flush_binary_correction_diagnostics_on_result_stop = flush_binary_correction_diagnostics_on_result_stop
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
@@ -1515,7 +1518,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 )
                 dispatch_plan = self.plan_result_write_item_dispatch(
                     work_item,
-                    expected_result_work_item_kind=ResultWriteItemKind.SINGLE_RESULT,
                 )
                 self.apply_result_write_item_dispatch_plan(dispatch_plan)
                 if dispatch_plan.should_process_result_write_item:
@@ -1543,7 +1545,6 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return
             dispatch_plan = self.plan_result_write_item_dispatch(
                 work_item,
-                expected_result_work_item_kind=ResultWriteItemKind.SINGLE_RESULT,
             )
             self.apply_result_write_item_dispatch_plan(dispatch_plan)
             if dispatch_plan.should_process_result_write_item:
@@ -2506,19 +2507,16 @@ class NativeBgenCallbackRunner(abc.ABC):
     def plan_result_write_item_dispatch(
         self,
         work_item: QueuedResultWriteWorkItem,
-        *,
-        expected_result_work_item_kind: ResultWriteItemKind,
     ) -> _core.NativeResultWriteItemDispatchPlan:
         """Plan which result write processing path should consume one item."""
         result_work_item_kind = classify_result_write_item(work_item)
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.plan_validated_result_write_item_dispatch(
                 result_work_item_kind.value,
-                expected_result_work_item_kind.value,
             )
         return self.callback_scheduler_state.plan_result_write_item_dispatch(
             result_work_item_kind=result_work_item_kind.value,
-            expected_result_work_item_kind=expected_result_work_item_kind.value,
+            expected_result_work_item_kind=self.expected_result_work_item_kind.value,
         )
 
     def apply_result_write_item_dispatch_plan(

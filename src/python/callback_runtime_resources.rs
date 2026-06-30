@@ -42,6 +42,7 @@ pub(crate) struct NativeCallbackRuntimeResources {
     binary_correction_summary: Py<NativeBinaryCorrectionSummary>,
     worker_thread: Py<NativeCallbackWorkerThread>,
     result_worker_thread: Py<NativeCallbackWorkerThread>,
+    expected_result_work_item_kind: String,
     flush_binary_correction_diagnostics_on_result_stop: bool,
     worker_start_lock: Mutex<()>,
 }
@@ -132,6 +133,7 @@ impl NativeCallbackRuntimeResources {
         result_worker_target,
         staging_depth,
         native_callback_batch_size,
+        expected_result_work_item_kind,
         flush_binary_correction_diagnostics_on_result_stop,
         result_in_flight_limit = None,
         dosage_buffer_limit = None
@@ -144,6 +146,7 @@ impl NativeCallbackRuntimeResources {
         result_worker_target: &Bound<'_, PyAny>,
         staging_depth: i64,
         native_callback_batch_size: i64,
+        expected_result_work_item_kind: String,
         flush_binary_correction_diagnostics_on_result_stop: bool,
         result_in_flight_limit: Option<i64>,
         dosage_buffer_limit: Option<i64>,
@@ -154,6 +157,14 @@ impl NativeCallbackRuntimeResources {
             result_in_flight_limit,
             dosage_buffer_limit,
         )?;
+        let expected_result_dispatch_plan = callback_scheduler_state
+            .plan_result_write_item_dispatch_value(&expected_result_work_item_kind, &expected_result_work_item_kind)?;
+        if expected_result_dispatch_plan.has_dispatch_error_value() {
+            let error_message = expected_result_dispatch_plan
+                .error_message_value()
+                .unwrap_or("Native result write dispatch plan omitted the error message.");
+            return Err(PyRuntimeError::new_err(error_message.to_owned()));
+        }
         let dosage_queue_depth = callback_scheduler_state.dosage_queue_depth_value();
         let result_queue_depth = callback_scheduler_state.result_queue_depth_value();
         let dosage_buffer_limit = callback_scheduler_state.dosage_buffer_limit_value();
@@ -176,6 +187,7 @@ impl NativeCallbackRuntimeResources {
                 py,
                 NativeCallbackWorkerThread::from_target(py, result_worker_target, result_worker_name, true)?,
             )?,
+            expected_result_work_item_kind,
             flush_binary_correction_diagnostics_on_result_stop,
             worker_start_lock: Mutex::new(()),
         })
@@ -1390,12 +1402,11 @@ impl NativeCallbackRuntimeResources {
         &self,
         py: Python<'_>,
         result_work_item_kind: &str,
-        expected_result_work_item_kind: &str,
     ) -> PyResult<NativeResultWriteItemDispatchPlan> {
         let dispatch_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state
-                .plan_result_write_item_dispatch_value(result_work_item_kind, expected_result_work_item_kind)?
+                .plan_result_write_item_dispatch_value(result_work_item_kind, &self.expected_result_work_item_kind)?
         };
         if !dispatch_plan.has_dispatch_error_value() {
             return Ok(dispatch_plan);
