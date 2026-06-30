@@ -258,6 +258,53 @@ pub fn build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_pa
 }
 
 #[pyfunction]
+pub fn build_native_cli_stdout_diagnostic_payload<'py>(
+    py: Python<'py>,
+    output_text: &str,
+    max_payload_chars: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_cli_stdout_diagnostic_payload(output_text, max_payload_chars);
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_cli_stderr_diagnostic_payload<'py>(
+    py: Python<'py>,
+    output_text: &str,
+    max_payload_chars: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_cli_stderr_diagnostic_payload(output_text, max_payload_chars);
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_cli_interrupted_line_diagnostic_payload<'py>(
+    py: Python<'py>,
+    line: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_cli_interrupted_line_diagnostic_payload(line);
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_cli_failed_line_diagnostic_payload<'py>(
+    py: Python<'py>,
+    line: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_cli_failed_line_diagnostic_payload(line);
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_native_cli_completed_line_diagnostic_payload<'py>(
+    py: Python<'py>,
+    line: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_native_cli_completed_line_diagnostic_payload(line);
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn build_native_runtime_knobs_configured_diagnostic_payload<'py>(
     py: Python<'py>,
     bgen_decode_tile_variant_count: i64,

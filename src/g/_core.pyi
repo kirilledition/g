@@ -3060,6 +3060,23 @@ def build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_paylo
 def build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(
     phenotype_count: int,
 ) -> dict[str, object]: ...
+def build_native_cli_stdout_diagnostic_payload(
+    output_text: str,
+    max_payload_chars: int,
+) -> dict[str, object]: ...
+def build_native_cli_stderr_diagnostic_payload(
+    output_text: str,
+    max_payload_chars: int,
+) -> dict[str, object]: ...
+def build_native_cli_interrupted_line_diagnostic_payload(
+    line: str,
+) -> dict[str, object]: ...
+def build_native_cli_failed_line_diagnostic_payload(
+    line: str,
+) -> dict[str, object]: ...
+def build_native_cli_completed_line_diagnostic_payload(
+    line: str,
+) -> dict[str, object]: ...
 def build_execution_run_artifacts_payload(
     association_mode: str,
     phenotype_count: int,

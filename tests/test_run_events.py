@@ -398,6 +398,56 @@ def test_runner_dispatch_diagnostic_payloads_use_native_builders() -> None:
     }
 
 
+def test_native_cli_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_native_cli_stdout_diagnostic_payload(
+        output_text="abcdef",
+        max_payload_chars=3,
+    ) == {
+        "level": "info",
+        "event_name": "native_cli_stdout",
+        "message": "Native CLI emitted stdout output.",
+        "fields": {
+            "stdout_character_count": 6,
+            "stdout_byte_count": 6,
+            "stdout_preview": "abc",
+            "stdout_truncated": True,
+            "stdout_omitted_character_count": 3,
+        },
+    }
+    assert run_events.build_native_cli_stderr_diagnostic_payload(
+        output_text="éx",
+        max_payload_chars=5,
+    ) == {
+        "level": "warn",
+        "event_name": "native_cli_stderr",
+        "message": "Native CLI emitted stderr output.",
+        "fields": {
+            "stderr_character_count": 2,
+            "stderr_byte_count": 3,
+            "stderr_preview": "éx",
+            "stderr_truncated": False,
+        },
+    }
+    assert run_events.build_native_cli_interrupted_line_diagnostic_payload(line="Interrupted.") == {
+        "level": "warn",
+        "event_name": "native_cli_interrupted_line",
+        "message": "Native CLI interruption detail.",
+        "fields": {"line": "Interrupted."},
+    }
+    assert run_events.build_native_cli_failed_line_diagnostic_payload(line="Error: failed.") == {
+        "level": "error",
+        "event_name": "native_cli_failed_line",
+        "message": "Native CLI failure detail.",
+        "fields": {"line": "Error: failed."},
+    }
+    assert run_events.build_native_cli_completed_line_diagnostic_payload(line="Success.") == {
+        "level": "info",
+        "event_name": "native_cli_completed_line",
+        "message": "Native CLI completion detail.",
+        "fields": {"line": "Success."},
+    }
+
+
 def test_native_runtime_knobs_diagnostic_payload_uses_native_builder() -> None:
     assert run_events.build_native_runtime_knobs_configured_diagnostic_payload(
         bgen_decode_tile_variant_count=32,

@@ -406,6 +406,58 @@ def build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_paylo
     )
 
 
+def build_native_cli_stdout_diagnostic_payload(
+    *,
+    output_text: str,
+    max_payload_chars: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for bounded native CLI stdout."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_cli_stdout_diagnostic_payload(
+            output_text,
+            max_payload_chars,
+        )
+    )
+
+
+def build_native_cli_stderr_diagnostic_payload(
+    *,
+    output_text: str,
+    max_payload_chars: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for bounded native CLI stderr."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_native_cli_stderr_diagnostic_payload(
+            output_text,
+            max_payload_chars,
+        )
+    )
+
+
+def build_native_cli_interrupted_line_diagnostic_payload(
+    *,
+    line: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for one CLI interruption line."""
+    return diagnostic_event_payload_from_native(g._core.build_native_cli_interrupted_line_diagnostic_payload(line))
+
+
+def build_native_cli_failed_line_diagnostic_payload(
+    *,
+    line: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for one CLI failure line."""
+    return diagnostic_event_payload_from_native(g._core.build_native_cli_failed_line_diagnostic_payload(line))
+
+
+def build_native_cli_completed_line_diagnostic_payload(
+    *,
+    line: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for one CLI completion line."""
+    return diagnostic_event_payload_from_native(g._core.build_native_cli_completed_line_diagnostic_payload(line))
+
+
 def build_native_runtime_knobs_configured_diagnostic_payload(
     *,
     bgen_decode_tile_variant_count: int,

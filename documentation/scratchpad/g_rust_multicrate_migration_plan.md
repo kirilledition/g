@@ -1521,6 +1521,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Pipeline output lifecycle diagnostics for BGEN engine open/reuse, resume chunk
   counts, and writer-session creation now use native run-event diagnostic
   payload builders.
+- Native CLI stdout/stderr and rendered completion/interruption/failure line
+  diagnostics now use native run-event diagnostic payload builders.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

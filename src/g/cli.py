@@ -91,41 +91,34 @@ def print_native_cli_output(outcome: g._core.CliOutcome) -> None:
 
 def log_native_cli_output(outcome: g._core.CliOutcome, *, max_payload_chars: int) -> None:
     """Emit bounded diagnostics for native CLI stdout and stderr."""
+    if not outcome.stdout and not outcome.stderr:
+        return
+    from g.engine import run_events
+
     if outcome.stdout:
-        emit_diagnostic_event(
-            "info",
-            "native_cli_stdout",
-            "Native CLI emitted stdout output.",
-            bounded_output_fields("stdout", outcome.stdout, max_payload_chars=max_payload_chars),
+        emit_diagnostic_event_payload(
+            run_events.build_native_cli_stdout_diagnostic_payload(
+                output_text=outcome.stdout,
+                max_payload_chars=max_payload_chars,
+            )
         )
     if outcome.stderr:
-        emit_diagnostic_event(
-            "warn",
-            "native_cli_stderr",
-            "Native CLI emitted stderr output.",
-            bounded_output_fields("stderr", outcome.stderr, max_payload_chars=max_payload_chars),
+        emit_diagnostic_event_payload(
+            run_events.build_native_cli_stderr_diagnostic_payload(
+                output_text=outcome.stderr,
+                max_payload_chars=max_payload_chars,
+            )
         )
 
 
-def bounded_output_fields(stream_name: str, output_text: str, *, max_payload_chars: int) -> dict[str, object]:
-    """Build bounded diagnostic fields for native CLI output text."""
-    preview_character_count = max(0, max_payload_chars)
-    preview = output_text[:preview_character_count]
-    truncated = len(output_text) > preview_character_count
-    fields: dict[str, object] = {
-        f"{stream_name}_character_count": len(output_text),
-        f"{stream_name}_byte_count": len(output_text.encode("utf-8")),
-        f"{stream_name}_preview": preview,
-        f"{stream_name}_truncated": truncated,
-    }
-    if truncated:
-        fields[f"{stream_name}_omitted_character_count"] = len(output_text) - preview_character_count
-    return fields
-
-
-def emit_diagnostic_event(level: str, event: str, message: str, fields: dict[str, object]) -> None:
-    """Emit a structured CLI diagnostic through native tracing."""
-    g._core.emit_diagnostic_event_fields(level, event, message, fields)
+def emit_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
+    """Emit one native CLI diagnostic payload through native tracing."""
+    g._core.emit_diagnostic_event_fields(
+        str(payload["level"]),
+        str(payload["event_name"]),
+        str(payload["message"]),
+        typing.cast("typing.Mapping[str, object]", payload["fields"]),
+    )
 
 
 def print_interrupted_lines(run_events_module: typing.Any, interrupted_event: run_events.RunInterruptedEvent) -> None:
@@ -139,14 +132,7 @@ def log_interrupted_lines(run_events_module: typing.Any, interrupted_event: run_
     """Emit graceful interruption diagnostics."""
     interrupted_lines = run_events_module.render_run_interrupted_lines(interrupted_event)
     for line in interrupted_lines:
-        emit_diagnostic_event(
-            "warn",
-            "native_cli_interrupted_line",
-            "Native CLI interruption detail.",
-            {
-                "line": line,
-            },
-        )
+        emit_diagnostic_event_payload(run_events_module.build_native_cli_interrupted_line_diagnostic_payload(line=line))
 
 
 def print_and_log_failed_event(
@@ -189,14 +175,7 @@ def log_failed_lines(run_events_module: typing.Any, failed_event: run_events.Run
     failed_lines = run_events_module.render_run_failed_lines(failed_event)
     for line in failed_lines:
         with contextlib.suppress(Exception):
-            emit_diagnostic_event(
-                "error",
-                "native_cli_failed_line",
-                "Native CLI failure detail.",
-                {
-                    "line": line,
-                },
-            )
+            emit_diagnostic_event_payload(run_events_module.build_native_cli_failed_line_diagnostic_payload(line=line))
 
 
 def print_completed_lines(run_events_module: typing.Any, completed_event: run_events.RunCompletedEvent) -> None:
@@ -210,14 +189,7 @@ def log_completed_lines(run_events_module: typing.Any, completed_event: run_even
     """Emit completion diagnostics."""
     completed_lines = run_events_module.render_run_completed_lines(completed_event)
     for line in completed_lines:
-        emit_diagnostic_event(
-            "info",
-            "native_cli_completed_line",
-            "Native CLI completion detail.",
-            {
-                "line": line,
-            },
-        )
+        emit_diagnostic_event_payload(run_events_module.build_native_cli_completed_line_diagnostic_payload(line=line))
 
 
 def main() -> None:
