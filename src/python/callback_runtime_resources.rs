@@ -1063,6 +1063,22 @@ impl NativeCallbackRuntimeResources {
         scheduler_state.plan_dosage_buffer_return_attempt_value(py_object_identifier(dosage_buffer))
     }
 
+    fn get_releasable_dosage_buffer_owner(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        if !is_numpy_ndarray(dosage_buffer)? {
+            return Ok(None);
+        }
+        let dosage_buffer_owner = dosage_buffer_owner(py, dosage_buffer)?;
+        let return_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_buffer_return_attempt_value(py_object_identifier(dosage_buffer_owner.bind(py)))
+        };
+        if return_plan.should_return_value() { Ok(Some(dosage_buffer_owner)) } else { Ok(None) }
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     fn plan_dosage_buffer_reuse(
         &self,

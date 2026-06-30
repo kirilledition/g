@@ -2544,15 +2544,15 @@ class NativeBgenCallbackRunner(abc.ABC):
         dosage_buffer: jax.Array | HostGenotypeBuffer,
     ) -> HostGenotypeBuffer | None:
         """Return a host dosage buffer reference when it belongs to the reusable pool."""
+        if self.uses_native_callback_runtime_resources():
+            return typing.cast(
+                "HostGenotypeBuffer | None",
+                self.callback_runtime_resources.get_releasable_dosage_buffer_owner(dosage_buffer),
+            )
         if isinstance(dosage_buffer, np.ndarray):
             host_dosage_buffer = typing.cast("HostGenotypeBuffer", dosage_buffer)
             dosage_buffer_owner = self._dosage_buffer_owner(host_dosage_buffer)
-            if self.uses_native_callback_runtime_resources():
-                return_plan = self.callback_runtime_resources.plan_dosage_buffer_object_return_attempt(
-                    dosage_buffer_owner
-                )
-            else:
-                return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
+            return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
             if return_plan.should_return:
                 return dosage_buffer_owner
         return None

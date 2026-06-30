@@ -1312,6 +1312,10 @@ class NativeCallbackRuntimeResources:
         self,
         dosage_buffer: object,
     ) -> NativeDosageBufferReturnAttemptPlan: ...
+    def get_releasable_dosage_buffer_owner(
+        self,
+        dosage_buffer: object,
+    ) -> object | None: ...
     def plan_dosage_buffer_reuse(
         self,
         buffered_shape: typing.Sequence[int],

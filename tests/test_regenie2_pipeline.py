@@ -3126,6 +3126,12 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert unobserved_register_result.has_free_buffer_count is True
     assert unobserved_register_result.free_buffer_count == 0
     assert unobserved_register_result.observation_plan is None
+    unobserved_dosage_buffer_view = unobserved_dosage_buffer[:1, :1]
+    assert (
+        runtime_resources.get_releasable_dosage_buffer_owner(unobserved_dosage_buffer_view)
+        is unobserved_dosage_buffer
+    )
+    assert runtime_resources.get_releasable_dosage_buffer_owner(SimpleNamespace()) is None
     unobserved_return_attempt_plan = runtime_resources.plan_dosage_buffer_object_return_attempt(
         unobserved_dosage_buffer
     )
@@ -3211,6 +3217,29 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert runtime_resources.dosage_buffer_allocated_count == 0
     assert runtime_resources.callback_scheduler_state.dosage_buffer_allocated_count == 0
     assert runtime_resources.discard_dosage_buffer(id(dosage_buffer)) is None
+
+
+def test_native_callback_runner_uses_native_releasable_dosage_buffer_owner_resolution() -> None:
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        dosage_buffer_limit=1,
+    )
+    oversized_buffer = np.empty((4, 5), dtype=np.float32)
+    assert callback.callback_runtime_resources.register_dosage_buffer(id(oversized_buffer)) == 0
+    sliced_buffer = oversized_buffer[:2, :3]
+
+    try:
+        with patch.object(
+            callback_runtime.NativeBgenCallbackRunner,
+            "_dosage_buffer_owner",
+            side_effect=AssertionError("production runner should use native owner resolution"),
+        ):
+            assert callback.get_releasable_dosage_buffer(sliced_buffer) is oversized_buffer
+            assert callback.get_releasable_dosage_buffer(jnp.ones((2, 3), dtype=jnp.float32)) is None
+    finally:
+        callback.finish()
 
 
 def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup() -> None:
