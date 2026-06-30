@@ -2816,6 +2816,32 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
     assert release_observation_plan.blocked is False
     assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
+    runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    unobserved_release_plan = runtime_resources.release_result_in_flight_slot_with_optional_observation()
+    assert unobserved_release_plan is None
+    assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
+    observed_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
+        worker_name="native-resource-observed-result-slot-test",
+        dosage_worker_target=worker_target,
+        result_worker_target=worker_target,
+        staging_depth=1,
+        native_callback_batch_size=1,
+        expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+        has_telemetry_session=False,
+        flush_binary_correction_diagnostics_on_result_stop=False,
+        has_stage_timing_recorder=True,
+        result_in_flight_limit=1,
+        dosage_buffer_limit=1,
+    )
+    observed_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
+    observed_release_plan = observed_runtime_resources.release_result_in_flight_slot_with_optional_observation()
+    assert observed_release_plan is not None
+    assert observed_release_plan.resource_name == "result_in_flight_slots"
+    assert observed_release_plan.operation_name == "release"
+    assert observed_release_plan.blocked is False
+    assert observed_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
+
     acquire_result = runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout_without_observation()
     assert acquire_result.should_retry_acquisition is False
     assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 1
@@ -2847,8 +2873,8 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
         dosage_buffer_limit=1,
     )
     observed_dosage_buffer = np.empty((2, 2), dtype=np.float32)
-    register_operation_result = observed_runtime_resources.register_dosage_buffer_with_optional_observation(
-        id(observed_dosage_buffer)
+    register_operation_result = observed_runtime_resources.register_dosage_buffer_object_with_optional_observation(
+        observed_dosage_buffer
     )
     assert register_operation_result.has_free_buffer_count is True
     assert register_operation_result.free_buffer_count == 0
@@ -2856,8 +2882,7 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert register_observation_plan is not None
     assert register_observation_plan.operation_name == "allocate"
     assert register_observation_plan.blocked is False
-    return_operation_result = observed_runtime_resources.return_dosage_buffer_with_optional_observation(
-        id(observed_dosage_buffer),
+    return_operation_result = observed_runtime_resources.return_dosage_buffer_object_with_optional_observation(
         observed_dosage_buffer,
     )
     assert return_operation_result.has_free_buffer_count is True
@@ -2869,8 +2894,8 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     free_buffer_result = observed_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is observed_dosage_buffer
-    discard_operation_result = observed_runtime_resources.discard_dosage_buffer_with_optional_observation(
-        id(observed_dosage_buffer)
+    discard_operation_result = observed_runtime_resources.discard_dosage_buffer_object_with_optional_observation(
+        observed_dosage_buffer
     )
     assert discard_operation_result.has_free_buffer_count is True
     assert discard_operation_result.free_buffer_count == 0
@@ -2878,8 +2903,8 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert discard_observation_plan is not None
     assert discard_observation_plan.operation_name == "discard"
     assert discard_observation_plan.blocked is False
-    missing_discard_operation_result = observed_runtime_resources.discard_dosage_buffer_with_optional_observation(
-        id(observed_dosage_buffer)
+    missing_discard_operation_result = (
+        observed_runtime_resources.discard_dosage_buffer_object_with_optional_observation(observed_dosage_buffer)
     )
     assert missing_discard_operation_result.has_free_buffer_count is False
     assert missing_discard_operation_result.free_buffer_count is None
@@ -2900,14 +2925,17 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     dosage_buffer = np.empty((2, 2), dtype=np.float32)
 
     unobserved_dosage_buffer = np.empty((2, 2), dtype=np.float32)
-    unobserved_register_result = runtime_resources.register_dosage_buffer_with_optional_observation(
-        id(unobserved_dosage_buffer)
+    unobserved_register_result = runtime_resources.register_dosage_buffer_object_with_optional_observation(
+        unobserved_dosage_buffer
     )
     assert unobserved_register_result.has_free_buffer_count is True
     assert unobserved_register_result.free_buffer_count == 0
     assert unobserved_register_result.observation_plan is None
-    unobserved_return_result = runtime_resources.return_dosage_buffer_with_optional_observation(
-        id(unobserved_dosage_buffer),
+    unobserved_return_attempt_plan = runtime_resources.plan_dosage_buffer_object_return_attempt(
+        unobserved_dosage_buffer
+    )
+    assert unobserved_return_attempt_plan.should_return is True
+    unobserved_return_result = runtime_resources.return_dosage_buffer_object_with_optional_observation(
         unobserved_dosage_buffer,
     )
     assert unobserved_return_result.has_free_buffer_count is True
@@ -2916,12 +2944,16 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     free_buffer_result = runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
     assert free_buffer_result.has_item is True
     assert free_buffer_result.item is unobserved_dosage_buffer
-    unobserved_discard_result = runtime_resources.discard_dosage_buffer_with_optional_observation(
-        id(unobserved_dosage_buffer)
+    unobserved_discard_result = runtime_resources.discard_dosage_buffer_object_with_optional_observation(
+        unobserved_dosage_buffer
     )
     assert unobserved_discard_result.has_free_buffer_count is True
     assert unobserved_discard_result.free_buffer_count == 0
     assert unobserved_discard_result.observation_plan is None
+    missing_unobserved_return_attempt_plan = runtime_resources.plan_dosage_buffer_object_return_attempt(
+        unobserved_dosage_buffer
+    )
+    assert missing_unobserved_return_attempt_plan.should_return is False
 
     assert runtime_resources.free_dosage_buffer_count == 0
     assert runtime_resources.register_dosage_buffer(id(dosage_buffer)) == 0
@@ -3009,7 +3041,6 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
 
     pre_write_result = runtime_resources.release_result_work_item_pre_write_resources(
-        id(dosage_buffer),
         dosage_buffer,
     )
     assert pre_write_result.released_host_buffer is True
@@ -3024,7 +3055,6 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert free_buffer_result.item is dosage_buffer
 
     final_result = runtime_resources.release_result_work_item_final_resources(
-        id(dosage_buffer),
         dosage_buffer,
         has_released_host_dosage_buffer=True,
         release_in_flight_slot=True,
@@ -3055,7 +3085,6 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     unobserved_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
 
     unobserved_pre_write_result = unobserved_runtime_resources.release_result_work_item_pre_write_resources(
-        id(unobserved_dosage_buffer),
         unobserved_dosage_buffer,
     )
     assert unobserved_pre_write_result.released_host_buffer is True
@@ -3067,7 +3096,6 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert free_buffer_result.item is unobserved_dosage_buffer
 
     unobserved_final_result = unobserved_runtime_resources.release_result_work_item_final_resources(
-        id(unobserved_dosage_buffer),
         unobserved_dosage_buffer,
         has_released_host_dosage_buffer=True,
         release_in_flight_slot=True,

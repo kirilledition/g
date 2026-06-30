@@ -1244,8 +1244,13 @@ Remove Python as the chunk-level scheduler.
   summary decisions.
 - Callback runtime resources now own callback stage-timing availability for
   production dosage-buffer pool register, return, discard, and result cleanup
-  observation selection, so Python no longer chooses separate observed versus
-  unobserved native buffer-pool mutation methods.
+  observation selection plus direct result in-flight release observation
+  selection, so Python no longer chooses separate observed versus unobserved
+  native mutation methods.
+- Callback runtime resources now derive production dosage-buffer object
+  identities for buffer-pool eligibility, mutation, and result-cleanup paths,
+  leaving explicit identifier plumbing only on lower-level scheduler/testing
+  APIs.
 
 ### Tests
 

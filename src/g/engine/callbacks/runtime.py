@@ -1932,9 +1932,14 @@ class NativeBgenCallbackRunner(abc.ABC):
     def release_result_in_flight_slot(self) -> None:
         """Release capacity for one completed chunk of GPU result work."""
         if self.uses_native_callback_runtime_resources():
-            release_observation_plan = self.callback_runtime_resources.release_result_in_flight_slot()
+            release_observation_plan = (
+                self.callback_runtime_resources.release_result_in_flight_slot_with_optional_observation()
+            )
             if self.stage_timing_recorder is None:
                 return
+            if release_observation_plan is None:
+                message = "Native result in-flight release result omitted timing observation details."
+                raise RuntimeError(message)
             self.record_bounded_resource_operation(
                 resource_name=release_observation_plan.resource_name,
                 operation_name=release_observation_plan.operation_name,
@@ -2338,8 +2343,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Return a processed host dosage buffer to the reusable pool."""
         dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
         if self.uses_native_callback_runtime_resources():
-            operation_result = self.callback_runtime_resources.return_dosage_buffer_with_optional_observation(
-                id(dosage_buffer_owner),
+            operation_result = self.callback_runtime_resources.return_dosage_buffer_object_with_optional_observation(
                 dosage_buffer_owner,
             )
             self.record_dosage_buffer_pool_operation_result(operation_result)
@@ -2365,8 +2369,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Allocate and register one host genotype buffer slot."""
         dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
         if self.uses_native_callback_runtime_resources():
-            operation_result = self.callback_runtime_resources.register_dosage_buffer_with_optional_observation(
-                id(dosage_buffer)
+            operation_result = self.callback_runtime_resources.register_dosage_buffer_object_with_optional_observation(
+                dosage_buffer
             )
             self.record_dosage_buffer_pool_operation_result(operation_result)
             return dosage_buffer
@@ -2382,13 +2386,13 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Remove one discarded host genotype buffer slot from pool accounting."""
-        dosage_buffer_identifier = id(dosage_buffer)
         if self.uses_native_callback_runtime_resources():
-            operation_result = self.callback_runtime_resources.discard_dosage_buffer_with_optional_observation(
-                dosage_buffer_identifier
+            operation_result = self.callback_runtime_resources.discard_dosage_buffer_object_with_optional_observation(
+                dosage_buffer
             )
             self.record_dosage_buffer_pool_operation_result(operation_result)
             return
+        dosage_buffer_identifier = id(dosage_buffer)
         discard_plan = self.callback_scheduler_state.plan_dosage_buffer_discard_attempt(dosage_buffer_identifier)
         if not discard_plan.should_discard:
             return
@@ -2411,7 +2415,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         if isinstance(dosage_buffer, np.ndarray):
             host_dosage_buffer = typing.cast("HostGenotypeBuffer", dosage_buffer)
             dosage_buffer_owner = self._dosage_buffer_owner(host_dosage_buffer)
-            return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
+            if self.uses_native_callback_runtime_resources():
+                return_plan = self.callback_runtime_resources.plan_dosage_buffer_object_return_attempt(
+                    dosage_buffer_owner
+                )
+            else:
+                return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
             if return_plan.should_return:
                 return dosage_buffer_owner
         return None
@@ -2542,7 +2551,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.uses_native_callback_runtime_resources():
             host_dosage_buffer_owner = self.result_work_item_host_buffer_owner(work_item)
             release_result = self.callback_runtime_resources.release_result_work_item_pre_write_resources(
-                None if host_dosage_buffer_owner is None else id(host_dosage_buffer_owner),
                 host_dosage_buffer_owner,
             )
             self.record_result_work_item_resource_release_result(release_result)
@@ -2563,7 +2571,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.uses_native_callback_runtime_resources():
             host_dosage_buffer_owner = self.result_work_item_host_buffer_owner(work_item)
             release_result = self.callback_runtime_resources.release_result_work_item_final_resources(
-                None if host_dosage_buffer_owner is None else id(host_dosage_buffer_owner),
                 host_dosage_buffer_owner,
                 host_dosage_buffer_released,
                 work_item.release_in_flight_slot,

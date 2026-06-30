@@ -1095,14 +1095,15 @@ class NativeCallbackRuntimeResources:
         self,
     ) -> NativeResultInFlightAcquireResult: ...
     def release_result_in_flight_slot(self) -> NativeResultInFlightReleaseObservationPlan: ...
+    def release_result_in_flight_slot_with_optional_observation(
+        self,
+    ) -> NativeResultInFlightReleaseObservationPlan | None: ...
     def release_result_work_item_pre_write_resources(
         self,
-        host_dosage_buffer_identifier: int | None,
         host_dosage_buffer: object | None,
     ) -> NativeResultWorkItemResourceReleaseResult: ...
     def release_result_work_item_final_resources(
         self,
-        host_dosage_buffer_identifier: int | None,
         host_dosage_buffer: object | None,
         has_released_host_dosage_buffer: bool,
         release_in_flight_slot: bool,
@@ -1117,6 +1118,10 @@ class NativeCallbackRuntimeResources:
         self,
         buffer_identifier: int,
     ) -> NativeDosageBufferPoolOperationResult: ...
+    def register_dosage_buffer_object_with_optional_observation(
+        self,
+        dosage_buffer: object,
+    ) -> NativeDosageBufferPoolOperationResult: ...
     def return_dosage_buffer(self, buffer_identifier: int, dosage_buffer: object) -> int | None: ...
     def return_dosage_buffer_with_observation(
         self,
@@ -1128,6 +1133,10 @@ class NativeCallbackRuntimeResources:
         buffer_identifier: int,
         dosage_buffer: object,
     ) -> NativeDosageBufferPoolOperationResult: ...
+    def return_dosage_buffer_object_with_optional_observation(
+        self,
+        dosage_buffer: object,
+    ) -> NativeDosageBufferPoolOperationResult: ...
     def discard_dosage_buffer(self, buffer_identifier: int) -> int | None: ...
     def discard_dosage_buffer_with_observation(
         self,
@@ -1137,7 +1146,15 @@ class NativeCallbackRuntimeResources:
         self,
         buffer_identifier: int,
     ) -> NativeDosageBufferPoolOperationResult: ...
+    def discard_dosage_buffer_object_with_optional_observation(
+        self,
+        dosage_buffer: object,
+    ) -> NativeDosageBufferPoolOperationResult: ...
     def plan_dosage_buffer_return_attempt(self, buffer_identifier: int) -> NativeDosageBufferReturnAttemptPlan: ...
+    def plan_dosage_buffer_object_return_attempt(
+        self,
+        dosage_buffer: object,
+    ) -> NativeDosageBufferReturnAttemptPlan: ...
     def plan_dosage_buffer_reuse(
         self,
         buffered_shape: typing.Sequence[int],

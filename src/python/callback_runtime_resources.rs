@@ -702,10 +702,21 @@ impl NativeCallbackRuntimeResources {
         Ok(scheduler_state.plan_result_in_flight_slot_release_observation_value())
     }
 
+    fn release_result_in_flight_slot_with_optional_observation(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<NativeResultInFlightReleaseObservationPlan>> {
+        self.release_result_in_flight_slot_without_observation(py)?;
+        if !self.has_stage_timing_recorder {
+            return Ok(None);
+        }
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        Ok(Some(scheduler_state.plan_result_in_flight_slot_release_observation_value()))
+    }
+
     fn release_result_work_item_pre_write_resources(
         &self,
         py: Python<'_>,
-        host_dosage_buffer_identifier: Option<usize>,
         host_dosage_buffer: &Bound<'_, PyAny>,
     ) -> PyResult<NativeResultWorkItemResourceReleaseResult> {
         let has_host_dosage_buffer = !host_dosage_buffer.is_none();
@@ -713,18 +724,12 @@ impl NativeCallbackRuntimeResources {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state.plan_result_write_item_pre_write_resource_release_value(has_host_dosage_buffer)
         };
-        self.release_result_work_item_resources_with_plan(
-            py,
-            &resource_release_plan,
-            host_dosage_buffer_identifier,
-            host_dosage_buffer,
-        )
+        self.release_result_work_item_resources_with_plan(py, &resource_release_plan, host_dosage_buffer)
     }
 
     fn release_result_work_item_final_resources(
         &self,
         py: Python<'_>,
-        host_dosage_buffer_identifier: Option<usize>,
         host_dosage_buffer: &Bound<'_, PyAny>,
         has_released_host_dosage_buffer: bool,
         release_in_flight_slot: bool,
@@ -738,12 +743,7 @@ impl NativeCallbackRuntimeResources {
                 release_in_flight_slot,
             )
         };
-        self.release_result_work_item_resources_with_plan(
-            py,
-            &resource_release_plan,
-            host_dosage_buffer_identifier,
-            host_dosage_buffer,
-        )
+        self.release_result_work_item_resources_with_plan(py, &resource_release_plan, host_dosage_buffer)
     }
 
     fn acquire_dosage_buffer_with_backpressure_timeout(
@@ -843,6 +843,14 @@ impl NativeCallbackRuntimeResources {
         NativeDosageBufferPoolOperationResult::from_operation(py, Some(free_buffer_count), Some(observation_plan))
     }
 
+    fn register_dosage_buffer_object_with_optional_observation(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        self.register_dosage_buffer_with_optional_observation(py, py_object_identifier(dosage_buffer))
+    }
+
     fn return_dosage_buffer(
         &self,
         py: Python<'_>,
@@ -899,6 +907,14 @@ impl NativeCallbackRuntimeResources {
         NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
     }
 
+    fn return_dosage_buffer_object_with_optional_observation(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        self.return_dosage_buffer_with_optional_observation(py, py_object_identifier(dosage_buffer), dosage_buffer)
+    }
+
     fn discard_dosage_buffer(&self, py: Python<'_>, buffer_identifier: usize) -> PyResult<Option<usize>> {
         let discard_plan = {
             let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
@@ -944,6 +960,14 @@ impl NativeCallbackRuntimeResources {
         NativeDosageBufferPoolOperationResult::from_operation(py, free_buffer_count, Some(observation_plan))
     }
 
+    fn discard_dosage_buffer_object_with_optional_observation(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
+        self.discard_dosage_buffer_with_optional_observation(py, py_object_identifier(dosage_buffer))
+    }
+
     fn plan_dosage_buffer_return_attempt(
         &self,
         py: Python<'_>,
@@ -951,6 +975,15 @@ impl NativeCallbackRuntimeResources {
     ) -> NativeDosageBufferReturnAttemptPlan {
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         scheduler_state.plan_dosage_buffer_return_attempt_value(buffer_identifier)
+    }
+
+    fn plan_dosage_buffer_object_return_attempt(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> NativeDosageBufferReturnAttemptPlan {
+        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+        scheduler_state.plan_dosage_buffer_return_attempt_value(py_object_identifier(dosage_buffer))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -1946,7 +1979,6 @@ impl NativeCallbackRuntimeResources {
         &self,
         py: Python<'_>,
         resource_release_plan: &NativeResultWriteItemResourceReleasePlan,
-        host_dosage_buffer_identifier: Option<usize>,
         host_dosage_buffer: &Bound<'_, PyAny>,
     ) -> PyResult<NativeResultWorkItemResourceReleaseResult> {
         let mut release_result = NativeResultWorkItemResourceReleaseResult::empty();
@@ -1956,11 +1988,7 @@ impl NativeCallbackRuntimeResources {
                     "Native result work item resource release plan selected a missing host buffer.",
                 ));
             }
-            let Some(buffer_identifier) = host_dosage_buffer_identifier else {
-                return Err(PyRuntimeError::new_err(
-                    "Native result work item resource release plan selected a missing host buffer identifier.",
-                ));
-            };
+            let buffer_identifier = py_object_identifier(host_dosage_buffer);
             let free_buffer_count = self.return_dosage_buffer(py, buffer_identifier, host_dosage_buffer)?;
             let return_observation_plan = if self.has_stage_timing_recorder {
                 let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
@@ -1981,6 +2009,10 @@ impl NativeCallbackRuntimeResources {
         }
         Ok(release_result)
     }
+}
+
+fn py_object_identifier(object: &Bound<'_, PyAny>) -> usize {
+    object.as_ptr() as usize
 }
 
 fn normalize_timeout_duration(timeout_seconds: f64) -> Duration {
