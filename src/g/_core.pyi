@@ -3326,6 +3326,12 @@ def validate_multi_prediction_preflight_shape(
     sample_count: int,
 ) -> None: ...
 def emit_diagnostic_event(level: str, event: str, message: str, fields_json: str | None = None) -> None: ...
+def emit_diagnostic_event_fields(
+    level: str,
+    event: str,
+    message: str,
+    fields: object,
+) -> None: ...
 def align_sample_data_from_sample_file(
     sample_path: str,
     expected_sample_count: int,

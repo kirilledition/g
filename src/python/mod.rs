@@ -96,8 +96,8 @@ use logging::{
     NativeTelemetryClosePlan, NativeTelemetryEventEmissionPlan, NativeTelemetryProgressEmissionPlan,
     NativeTelemetryProgressThrottle, NativeTelemetryRunSession, NativeTelemetrySession,
     build_current_telemetry_event_payload, build_telemetry_event_payload, emit_diagnostic_event,
-    generate_telemetry_run_id_value, initialize_logging, plan_telemetry_close, plan_telemetry_event_emission,
-    plan_telemetry_progress_emission, shutdown_logging,
+    emit_diagnostic_event_fields, generate_telemetry_run_id_value, initialize_logging, plan_telemetry_close,
+    plan_telemetry_event_emission, plan_telemetry_progress_emission, shutdown_logging,
 };
 use output::{
     NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
@@ -2103,6 +2103,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(format_rayon_thread_pool_configuration_error_value, module)?)?;
     module.add_function(wrap_pyfunction!(describe_logging_runtime_policy_value, module)?)?;
     module.add_function(wrap_pyfunction!(emit_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(emit_diagnostic_event_fields, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
     module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
     module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import subprocess
 import sys
 import textwrap
@@ -102,7 +101,7 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
             stderr_buffer = io.StringIO()
             with (
                 unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
-                unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
+                unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
                 contextlib.redirect_stdout(stdout_buffer),
                 contextlib.redirect_stderr(stderr_buffer),
             ):
@@ -139,11 +138,11 @@ def test_log_native_cli_output_bounds_payloads() -> None:
         python_types.SimpleNamespace(stdout=long_stdout, stderr="", exit_code=0, config=None),
     )
 
-    with unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock:
+    with unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock:
         cli.log_native_cli_output(outcome, max_payload_chars=cli.NATIVE_CLI_OUTPUT_LOG_LIMIT)
 
     diagnostic_event_mock.assert_called_once()
-    payload = json.loads(diagnostic_event_mock.call_args.args[3])
+    payload = diagnostic_event_mock.call_args.args[3]
     assert payload["stdout_character_count"] == len(long_stdout)
     assert payload["stdout_preview"] == long_stdout[: cli.NATIVE_CLI_OUTPUT_LOG_LIMIT]
     assert payload["stdout_preview"] != long_stdout
@@ -189,7 +188,7 @@ def test_run_args_bridges_completion_events(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts) as regenie_mock,
-        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
+        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
     ):
         exit_code = cli.run_args(["regenie"])
 
@@ -238,7 +237,7 @@ def test_run_args_bridges_interruption_events(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=shutdown_request) as regenie_mock,
-        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
+        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
     ):
         exit_code = cli.run_args(["regenie"])
 
@@ -281,7 +280,7 @@ def test_run_args_reports_runtime_initialization_failure(
         unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy") as runtime_preflight_mock,
         unittest.mock.patch.object(runner_runtime, "initialize_logging", side_effect=RuntimeError("logging failed")),
         unittest.mock.patch.object(runner_execution, "regenie") as regenie_mock,
-        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
+        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
     ):
         exit_code = cli.run_args(["regenie"])
 
@@ -324,7 +323,7 @@ def test_run_args_reports_runner_failure_without_traceback(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=RuntimeError("pipeline failed")),
-        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
+        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
     ):
         exit_code = cli.run_args(["regenie"])
 
@@ -374,7 +373,7 @@ def test_run_args_reports_telemetry_close_failure(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts),
-        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event") as diagnostic_event_mock,
+        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
     ):
         exit_code = cli.run_args(["regenie"])
 

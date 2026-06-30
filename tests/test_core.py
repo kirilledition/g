@@ -109,6 +109,34 @@ def test_initialize_logging_defaults_to_info_filter(tmp_path: Path) -> None:
     assert "logging initialized" in log_text
 
 
+def test_emit_diagnostic_event_fields_serializes_mapping(tmp_path: Path) -> None:
+    log_path = tmp_path / "g-diagnostic-fields.jsonl"
+
+    run_logging_subprocess(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                "from g import _core",
+                f"log_path = {str(log_path)!r}",
+                '_core.initialize_logging(log_filter="info", log_file=log_path, log_stderr=False)',
+                "_core.emit_diagnostic_event_fields(",
+                '    "info",',
+                '    "native_fields_test",',
+                '    "Native fields diagnostic.",',
+                '    {"z_value": 3, "path_value": Path("cache")},',
+                ")",
+                "_core.shutdown_logging()",
+            ]
+        )
+    )
+
+    records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line]
+    diagnostic_record = next(record for record in records if record.get("g_event") == "native_fields_test")
+    diagnostic_fields = json.loads(typing.cast("str", diagnostic_record["g_fields"]))
+
+    assert diagnostic_fields == {"path_value": "cache", "z_value": 3}
+
+
 def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:
     """Ensure the native chunk planner returns chromosome-homogeneous work units."""
     chunks = _core.plan_genotype_chunks(

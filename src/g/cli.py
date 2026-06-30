@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import sys
 import typing
 
@@ -126,7 +125,7 @@ def bounded_output_fields(stream_name: str, output_text: str, *, max_payload_cha
 
 def emit_diagnostic_event(level: str, event: str, message: str, fields: dict[str, object]) -> None:
     """Emit a structured CLI diagnostic through native tracing."""
-    g._core.emit_diagnostic_event(level, event, message, json.dumps(fields, sort_keys=True, default=str))
+    g._core.emit_diagnostic_event_fields(level, event, message, fields)
 
 
 def print_interrupted_lines(run_events_module: typing.Any, interrupted_event: run_events.RunInterruptedEvent) -> None:

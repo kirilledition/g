@@ -1195,13 +1195,17 @@ fn telemetry_close_metadata_to_py_dict<'py>(
     Ok(payload)
 }
 
-fn serialize_telemetry_payload_json_line(py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<String> {
+fn serialize_py_payload_json_text(py: Python<'_>, payload: &Bound<'_, PyAny>) -> PyResult<String> {
     let json_module = PyModule::import(py, "json")?;
     let builtins_module = PyModule::import(py, "builtins")?;
     let keyword_arguments = PyDict::new(py);
     keyword_arguments.set_item("sort_keys", true)?;
     keyword_arguments.set_item("default", builtins_module.getattr("str")?)?;
-    let json_text = json_module.call_method("dumps", (payload,), Some(&keyword_arguments))?.extract::<String>()?;
+    json_module.call_method("dumps", (payload,), Some(&keyword_arguments))?.extract::<String>()
+}
+
+fn serialize_telemetry_payload_json_line(py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<String> {
+    let json_text = serialize_py_payload_json_text(py, payload.as_any())?;
     Ok(format!("{json_text}\n"))
 }
 
@@ -1229,6 +1233,18 @@ pub fn emit_diagnostic_event(level: &str, event: &str, message: &str, fields_jso
         }
     }
     Ok(())
+}
+
+#[pyfunction]
+pub fn emit_diagnostic_event_fields(
+    py: Python<'_>,
+    level: &str,
+    event: &str,
+    message: &str,
+    fields: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    let fields_json = serialize_py_payload_json_text(py, fields)?;
+    emit_diagnostic_event(level, event, message, Some(fields_json))
 }
 
 #[pyfunction]
