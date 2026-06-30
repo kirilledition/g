@@ -174,6 +174,12 @@ pub(crate) struct NativeResultWriteItemGetResult {
     drain_completion_plan: Py<NativeResultWriteDrainCompletionPlan>,
 }
 
+#[pyclass]
+pub(crate) struct NativeDosageWorkItemStageDurationAttribution {
+    metadata_items: Py<PyTuple>,
+    stage_duration_plan: Py<NativeDosageWorkItemStageDurationPlan>,
+}
+
 #[pymethods]
 impl NativeCallbackRuntimeResources {
     #[new]
@@ -1527,6 +1533,18 @@ impl NativeCallbackRuntimeResources {
         )
     }
 
+    fn plan_dosage_work_item_stage_duration_attribution_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        elapsed_seconds: f64,
+    ) -> PyResult<NativeDosageWorkItemStageDurationAttribution> {
+        let stage_duration_plan =
+            self.plan_dosage_work_item_stage_duration_for_object(py, work_item, elapsed_seconds)?;
+        let metadata_items = dosage_work_item_metadata_items(py, work_item)?;
+        NativeDosageWorkItemStageDurationAttribution::from_attribution(py, metadata_items, stage_duration_plan)
+    }
+
     fn plan_current_queue_backpressure_observation(
         &self,
         py: Python<'_>,
@@ -2144,6 +2162,29 @@ impl NativeCallbackQueueGetObservedResult {
     }
 }
 
+impl NativeDosageWorkItemStageDurationAttribution {
+    fn from_attribution(
+        py: Python<'_>,
+        metadata_items: Py<PyTuple>,
+        stage_duration_plan: NativeDosageWorkItemStageDurationPlan,
+    ) -> PyResult<Self> {
+        Ok(Self { metadata_items, stage_duration_plan: Py::new(py, stage_duration_plan)? })
+    }
+}
+
+#[pymethods]
+impl NativeDosageWorkItemStageDurationAttribution {
+    #[getter]
+    fn metadata_items(&self, py: Python<'_>) -> Py<PyTuple> {
+        self.metadata_items.clone_ref(py)
+    }
+
+    #[getter]
+    fn stage_duration_plan(&self, py: Python<'_>) -> Py<NativeDosageWorkItemStageDurationPlan> {
+        self.stage_duration_plan.clone_ref(py)
+    }
+}
+
 #[pymethods]
 impl NativeDosageWorkItemDrainResult {
     #[getter]
@@ -2619,6 +2660,19 @@ fn dosage_buffer_reuse_slice_tuple<'py>(py: Python<'py>, slice_dimensions: &[usi
         slices.push(PySlice::new(py, 0, slice_stop, 1));
     }
     PyTuple::new(py, slices)
+}
+
+fn dosage_work_item_metadata_items(py: Python<'_>, work_item: &Bound<'_, PyAny>) -> PyResult<Py<PyTuple>> {
+    if python_type_name(work_item)?.as_str() != "PreprocessedVariantMajorDosageChunkBatchWorkItem" {
+        return Ok(PyTuple::new(py, [work_item.getattr("metadata")?.unbind()])?.unbind());
+    }
+    let work_items = work_item.getattr("work_items")?;
+    let mut metadata_items = Vec::with_capacity(work_items.len()?);
+    for item_index in 0..work_items.len()? {
+        let chunk_work_item = work_items.get_item(item_index)?;
+        metadata_items.push(chunk_work_item.getattr("metadata")?.unbind());
+    }
+    Ok(PyTuple::new(py, metadata_items)?.unbind())
 }
 
 struct DosageWorkItemDescriptor {

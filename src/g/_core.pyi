@@ -1021,6 +1021,12 @@ class NativeResultWriteItemGetResult:
     @property
     def drain_completion_plan(self) -> NativeResultWriteDrainCompletionPlan: ...
 
+class NativeDosageWorkItemStageDurationAttribution:
+    @property
+    def metadata_items(self) -> tuple[object, ...]: ...
+    @property
+    def stage_duration_plan(self) -> NativeDosageWorkItemStageDurationPlan: ...
+
 class NativeCallbackObjectQueue:
     def __init__(self, capacity: int) -> None: ...
     @property
@@ -1416,6 +1422,11 @@ class NativeCallbackRuntimeResources:
         work_item: object,
         elapsed_seconds: float,
     ) -> NativeDosageWorkItemStageDurationPlan: ...
+    def plan_dosage_work_item_stage_duration_attribution_for_object(
+        self,
+        work_item: object,
+        elapsed_seconds: float,
+    ) -> NativeDosageWorkItemStageDurationAttribution: ...
     def plan_current_queue_backpressure_observation(
         self,
         queue_name: str,

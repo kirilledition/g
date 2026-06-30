@@ -586,16 +586,18 @@ class NativeBgenCallbackRunner(abc.ABC):
         elapsed_seconds: float,
     ) -> None:
         """Record a stage duration across one queued work item."""
-        if isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
-            chunk_metadata_items = tuple(chunk_work_item.metadata for chunk_work_item in work_item.work_items)
-        else:
-            chunk_metadata_items = (work_item.metadata,)
         if self.uses_native_callback_runtime_resources():
-            stage_duration_plan = self.callback_runtime_resources.plan_dosage_work_item_stage_duration_for_object(
+            attribution = self.callback_runtime_resources.plan_dosage_work_item_stage_duration_attribution_for_object(
                 work_item,
                 elapsed_seconds,
             )
+            chunk_metadata_items = attribution.metadata_items
+            stage_duration_plan = attribution.stage_duration_plan
         else:
+            if isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
+                chunk_metadata_items = tuple(chunk_work_item.metadata for chunk_work_item in work_item.work_items)
+            else:
+                chunk_metadata_items = (work_item.metadata,)
             dosage_work_item_kind = classify_dosage_work_item(work_item)
             stage_duration_plan = self.plan_dosage_work_item_stage_duration(
                 dosage_work_item_kind=dosage_work_item_kind.value,

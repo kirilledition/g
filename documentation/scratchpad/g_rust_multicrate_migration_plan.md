@@ -1127,6 +1127,9 @@ Remove Python as the chunk-level scheduler.
   from prepared work-item objects and variant-major batch input sequences.
 - Callback runtime resources now own production dosage work stage-duration
   attribution planning while Python keeps timing emission.
+- Callback runtime resources now derive production dosage work stage-duration
+  metadata items from queued work-item objects while Python keeps timing
+  emission.
 - Callback runtime resources now own production worker-error scheduler state
   updates while Python keeps the original exception objects for chaining.
 - Callback runtime resources now own production worker stop and join loops,

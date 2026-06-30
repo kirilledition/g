@@ -3165,6 +3165,21 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
     )
     assert sample_major_stage_duration_plan.chunk_count == 1
     assert sample_major_stage_duration_plan.duration_per_chunk == 3.0
+    sample_major_attribution = runtime_resources.plan_dosage_work_item_stage_duration_attribution_for_object(
+        sample_major_work_item,
+        3.0,
+    )
+    assert sample_major_attribution.metadata_items == (metadata,)
+    assert sample_major_attribution.stage_duration_plan.chunk_count == 1
+    batch_attribution = runtime_resources.plan_dosage_work_item_stage_duration_attribution_for_object(
+        callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem(
+            work_items=(variant_major_work_item, variant_major_work_item)
+        ),
+        4.0,
+    )
+    assert batch_attribution.metadata_items == (metadata, metadata)
+    assert batch_attribution.stage_duration_plan.chunk_count == 2
+    assert batch_attribution.stage_duration_plan.duration_per_chunk == 2.0
     with pytest.raises(ValueError, match="stop signal"):
         runtime_resources.plan_dosage_work_item_stage_duration_for_object(None, 1.0)
     with pytest.raises(RuntimeError, match="Unsupported preprocessed dosage work item type"):
@@ -4592,6 +4607,79 @@ def test_native_callback_runner_uses_scheduler_dosage_work_stage_duration_plan()
     assert scheduler_state.chunk_count == 2
     assert scheduler_state.elapsed_seconds == 4.0
     snapshot = callback.stage_timing_recorder.snapshot()
+    assert snapshot.stage_counts["python_callback"] == 2
+    assert tuple(chunk_timing.duration_seconds for chunk_timing in snapshot.chunk_stage_timings) == (2.0, 2.0)
+    assert tuple(chunk_timing.chunk_identifier for chunk_timing in snapshot.chunk_stage_timings) == (0, 2)
+
+
+def test_native_callback_runner_uses_native_stage_duration_attribution() -> None:
+    class StageDurationAttributionRuntimeResourcesProbe:
+        def __init__(self, runtime_resources: callback_runtime._core.NativeCallbackRuntimeResources) -> None:
+            self.runtime_resources = runtime_resources
+            self.work_items: list[object] = []
+            self.elapsed_seconds: list[float] = []
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.runtime_resources, name)
+
+        def plan_dosage_work_item_stage_duration_attribution_for_object(
+            self,
+            work_item: object,
+            elapsed_seconds: float,
+        ) -> callback_runtime._core.NativeDosageWorkItemStageDurationAttribution:
+            self.work_items.append(work_item)
+            self.elapsed_seconds.append(elapsed_seconds)
+            return self.runtime_resources.plan_dosage_work_item_stage_duration_attribution_for_object(
+                work_item,
+                elapsed_seconds,
+            )
+
+        def plan_dosage_work_item_stage_duration_for_object(
+            self,
+            work_item: object,
+            elapsed_seconds: float,
+        ) -> callback_runtime._core.NativeDosageWorkItemStageDurationPlan:
+            del work_item, elapsed_seconds
+            raise AssertionError("production runner should use native stage-duration attribution")
+
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        stage_timing_recorder=stage_timing_recorder,
+    )
+    callback_for_probe = typing.cast("typing.Any", callback)
+    original_runtime_resources = callback.callback_runtime_resources
+    first_metadata = build_native_metadata_for_chunk(chunk_identifier=0)
+    second_metadata = build_native_metadata_for_chunk(chunk_identifier=2)
+    chunk_stats = typing.cast("_core.ChunkStats", SimpleNamespace())
+    batch_work_item = callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem(
+        work_items=(
+            callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
+                metadata=first_metadata,
+                genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+                chunk_stats=chunk_stats,
+            ),
+            callback_shared.PreprocessedVariantMajorDosageChunkWorkItem(
+                metadata=second_metadata,
+                genotype_matrix_by_variant=np.full((2, 2), 2.0, dtype=np.float32),
+                chunk_stats=chunk_stats,
+            ),
+        )
+    )
+    runtime_resources_probe = StageDurationAttributionRuntimeResourcesProbe(callback.callback_runtime_resources)
+
+    try:
+        callback_for_probe.callback_runtime_resources = runtime_resources_probe
+        callback.record_work_item_stage_elapsed_duration(batch_work_item, "python_callback", 4.0)
+    finally:
+        callback_for_probe.callback_runtime_resources = original_runtime_resources
+        callback.finish()
+
+    assert runtime_resources_probe.work_items == [batch_work_item]
+    assert runtime_resources_probe.elapsed_seconds == [4.0]
+    snapshot = stage_timing_recorder.snapshot()
     assert snapshot.stage_counts["python_callback"] == 2
     assert tuple(chunk_timing.duration_seconds for chunk_timing in snapshot.chunk_stage_timings) == (2.0, 2.0)
     assert tuple(chunk_timing.chunk_identifier for chunk_timing in snapshot.chunk_stage_timings) == (0, 2)
