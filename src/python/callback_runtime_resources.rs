@@ -110,6 +110,7 @@ pub(crate) struct NativeDosageBufferPoolOperationResult {
 pub(crate) struct NativeResultInFlightAcquireResult {
     should_retry_acquisition: bool,
     observation_plan: Option<Py<NativeResultInFlightAcquireObservationPlan>>,
+    stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
 }
 
 #[pyclass]
@@ -817,13 +818,14 @@ impl NativeCallbackRuntimeResources {
                 attempt_plan.wait_timeout_seconds_value(),
             )?;
         }
-        NativeResultInFlightAcquireResult::from_acquire(py, !attempt_plan.should_acquire_value(), None)
+        NativeResultInFlightAcquireResult::from_acquire(py, !attempt_plan.should_acquire_value(), None, None)
     }
 
     fn acquire_result_in_flight_slot_with_optional_observation(
         &self,
         py: Python<'_>,
     ) -> PyResult<NativeResultInFlightAcquireResult> {
+        let acquire_start_time = Instant::now();
         let observed_generation = self.result_in_flight_slot_signal.bind(py).borrow().generation_value()?;
         let (attempt_plan, observation_plan) = {
             let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
@@ -842,7 +844,23 @@ impl NativeCallbackRuntimeResources {
                 attempt_plan.wait_timeout_seconds_value(),
             )?;
         }
-        NativeResultInFlightAcquireResult::from_acquire(py, !attempt_plan.should_acquire_value(), observation_plan)
+        let stage_backpressure_observation = if let Some(observation_plan) = observation_plan.as_ref() {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            Some(scheduler_state.plan_current_queue_stage_backpressure_observation_value(
+                observation_plan.resource_name_value(),
+                observation_plan.operation_name_value(),
+                acquire_start_time.elapsed().as_secs_f64(),
+                observation_plan.blocked_value(),
+            )?)
+        } else {
+            None
+        };
+        NativeResultInFlightAcquireResult::from_acquire(
+            py,
+            !attempt_plan.should_acquire_value(),
+            observation_plan,
+            stage_backpressure_observation,
+        )
     }
 
     fn release_result_in_flight_slot(&self, py: Python<'_>) -> PyResult<NativeResultInFlightReleaseObservationPlan> {
@@ -2374,10 +2392,14 @@ impl NativeResultInFlightAcquireResult {
         py: Python<'_>,
         should_retry_acquisition: bool,
         observation_plan: Option<NativeResultInFlightAcquireObservationPlan>,
+        stage_backpressure_observation: Option<NativeCallbackQueueStageBackpressureObservation>,
     ) -> PyResult<Self> {
         Ok(Self {
             should_retry_acquisition,
             observation_plan: observation_plan.map(|plan| Py::new(py, plan)).transpose()?,
+            stage_backpressure_observation: stage_backpressure_observation
+                .map(|observation| Py::new(py, observation))
+                .transpose()?,
         })
     }
 }
@@ -2392,6 +2414,14 @@ impl NativeResultInFlightAcquireResult {
     #[getter]
     fn observation_plan(&self, py: Python<'_>) -> Option<Py<NativeResultInFlightAcquireObservationPlan>> {
         self.observation_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+
+    #[getter]
+    fn stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueStageBackpressureObservation>> {
+        self.stage_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
     }
 }
 

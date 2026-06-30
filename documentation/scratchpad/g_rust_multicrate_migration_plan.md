@@ -1148,6 +1148,9 @@ Remove Python as the chunk-level scheduler.
   acquire attempts without building timing observation plans.
 - Callback runtime resources now own production result in-flight slot acquire
   observation selection in the same native call as the slot acquire/wait loop.
+- Callback runtime resources now return typed result in-flight slot acquire
+  stage/backpressure observations from native acquire attempts, so production
+  Python no longer derives acquire telemetry from native acquire plans.
 - Callback runtime resources now return typed result in-flight slot release
   backpressure observations for standalone releases, so Python no longer
   derives release telemetry from native release plans on production paths.

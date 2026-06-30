@@ -3466,6 +3466,7 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
 
     optional_acquire_result = runtime_resources.acquire_result_in_flight_slot_with_optional_observation()
     assert optional_acquire_result.observation_plan is None
+    assert optional_acquire_result.stage_backpressure_observation is None
     assert optional_acquire_result.should_retry_acquisition is False
     unobserved_release_plan = runtime_resources.release_result_in_flight_slot_with_optional_observation()
     assert unobserved_release_plan is None
@@ -3491,10 +3492,19 @@ def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:
     )
     observed_acquire_result = observed_runtime_resources.acquire_result_in_flight_slot_with_optional_observation()
     observed_acquire_plan = observed_acquire_result.observation_plan
+    observed_acquire_stage_observation = observed_acquire_result.stage_backpressure_observation
     assert observed_acquire_plan is not None
     assert observed_acquire_plan.resource_name == "result_in_flight_slots"
     assert observed_acquire_plan.operation_name == "acquire"
     assert observed_acquire_plan.blocked is False
+    assert observed_acquire_stage_observation is not None
+    assert observed_acquire_stage_observation.queue_name == "result_in_flight_slots"
+    assert observed_acquire_stage_observation.operation_name == "acquire"
+    assert observed_acquire_stage_observation.stage_name == "result_in_flight_slot_acquire"
+    assert observed_acquire_stage_observation.queue_depth == 1
+    assert observed_acquire_stage_observation.queue_capacity == 1
+    assert observed_acquire_stage_observation.elapsed_seconds >= 0.0
+    assert observed_acquire_stage_observation.blocked_seconds == 0.0
     assert observed_acquire_result.should_retry_acquisition is False
     observed_release_plan = observed_runtime_resources.release_result_in_flight_slot_with_optional_observation()
     assert observed_release_plan is not None

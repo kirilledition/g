@@ -1714,6 +1714,20 @@ impl NativeResultInFlightAcquireAttemptPlan {
     }
 }
 
+impl NativeResultInFlightAcquireObservationPlan {
+    pub(crate) fn resource_name_value(&self) -> &str {
+        &self.inner.resource_name
+    }
+
+    pub(crate) fn operation_name_value(&self) -> &str {
+        &self.inner.operation_name
+    }
+
+    pub(crate) fn blocked_value(&self) -> bool {
+        self.inner.blocked
+    }
+}
+
 #[pymethods]
 impl NativeResultInFlightAcquireObservationPlan {
     #[getter]
