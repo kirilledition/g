@@ -1262,6 +1262,9 @@ Remove Python as the chunk-level scheduler.
 - The PyO3-backed `AssociationBackend` adapter now runs through the native
   single-batch coordinator scaffold and exposes a typed native run report for
   phase-history and batch-result inspection.
+- Dosage callback batch partitioning now uses an explicit `g-engine` chunk
+  batch plan; the PyO3 BGEN delivery loop consumes native-planned batches
+  instead of deciding flush boundaries itself.
 - Callback runtime resources now own callback telemetry availability for
   production binary-correction diagnostics and worker-finish summary planning,
   so Python no longer computes or passes that fixed run property on native

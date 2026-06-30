@@ -2,6 +2,8 @@
 
 use std::collections::BTreeSet;
 
+use g_genotype::common::ChunkSpec;
+
 const DEFAULT_DELIVERY_CALLBACK_BATCH_SIZE: i64 = 1;
 const CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS: f64 = 0.1;
 const CALLBACK_WORKER_STOP_POLL_TIMEOUT_CAP_SECONDS: f64 = 0.1;
@@ -78,6 +80,28 @@ pub struct DosageBufferReusePlan {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VariantMajorDosageBatchHandoffPlan {
     pub chunk_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChunkBatchPlan {
+    pub chunk_batches: Vec<Vec<ChunkSpec>>,
+}
+
+impl ChunkBatchPlan {
+    #[must_use]
+    pub fn chunk_batch_count(&self) -> usize {
+        self.chunk_batches.len()
+    }
+
+    #[must_use]
+    pub fn chunk_count(&self) -> usize {
+        self.chunk_batches.iter().map(Vec::len).sum()
+    }
+
+    #[must_use]
+    pub fn into_chunk_batches(self) -> Vec<Vec<ChunkSpec>> {
+        self.chunk_batches
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2396,6 +2420,22 @@ pub fn plan_variant_major_dosage_batch_handoff(
     Ok(VariantMajorDosageBatchHandoffPlan { chunk_count: handoff_plan.chunk_count })
 }
 
+/// Partition planned genotype chunks into callback batches.
+///
+/// # Errors
+///
+/// Returns an error when the callback batch size is zero.
+pub fn plan_chunk_batches(
+    chunk_specs: &[ChunkSpec],
+    callback_batch_size: usize,
+) -> Result<ChunkBatchPlan, ScheduleError> {
+    if callback_batch_size == 0 {
+        return Err(ScheduleError::NonPositiveCallbackBatchSize);
+    }
+    let chunk_batches = chunk_specs.chunks(callback_batch_size).map(<[ChunkSpec]>::to_vec).collect();
+    Ok(ChunkBatchPlan { chunk_batches })
+}
+
 /// Plan a dosage work handoff into the callback queue.
 ///
 /// # Errors
@@ -2920,6 +2960,10 @@ pub fn plan_callback_queue_stage_backpressure_observation(
 mod tests {
     use super::*;
 
+    fn chunk_spec(variant_start_index: usize, variant_stop_index: usize) -> ChunkSpec {
+        ChunkSpec { variant_start_index, variant_stop_index }
+    }
+
     #[test]
     fn returns_empty_set_for_empty_inputs() {
         let shared_chunk_identifiers = intersect_committed_chunk_identifier_sets(&[]);
@@ -3144,6 +3188,42 @@ mod tests {
         assert_eq!(
             plan_variant_major_dosage_batch_handoff(2, 2, 2).unwrap(),
             VariantMajorDosageBatchHandoffPlan { chunk_count: 2 },
+        );
+    }
+
+    #[test]
+    fn plans_chunk_batches_from_callback_batch_size() {
+        let chunk_specs =
+            [chunk_spec(0, 4), chunk_spec(4, 8), chunk_spec(8, 12), chunk_spec(12, 16), chunk_spec(16, 20)];
+
+        let batch_plan = plan_chunk_batches(&chunk_specs, 2).unwrap();
+
+        assert_eq!(batch_plan.chunk_batch_count(), 3);
+        assert_eq!(batch_plan.chunk_count(), 5);
+        assert_eq!(
+            batch_plan.into_chunk_batches(),
+            vec![
+                vec![chunk_spec(0, 4), chunk_spec(4, 8)],
+                vec![chunk_spec(8, 12), chunk_spec(12, 16)],
+                vec![chunk_spec(16, 20)],
+            ],
+        );
+    }
+
+    #[test]
+    fn plans_no_chunk_batches_for_empty_chunk_specs() {
+        let batch_plan = plan_chunk_batches(&[], 2).unwrap();
+
+        assert_eq!(batch_plan.chunk_batch_count(), 0);
+        assert_eq!(batch_plan.chunk_count(), 0);
+        assert!(batch_plan.into_chunk_batches().is_empty());
+    }
+
+    #[test]
+    fn rejects_zero_chunk_batch_size() {
+        assert_eq!(
+            plan_chunk_batches(&[chunk_spec(0, 4)], 0).unwrap_err(),
+            ScheduleError::NonPositiveCallbackBatchSize,
         );
     }
 

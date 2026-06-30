@@ -1370,77 +1370,81 @@ impl Regenie2RunEngine {
     ) -> PyResult<usize> {
         let compute_dosage_chunk_batch_method =
             callback.getattr("compute_preprocessed_variant_major_dosage_chunk_batch")?;
+        let chunk_batch_plan = g_engine::plan_chunk_batches(chunk_specs, callback_batch_size)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let processed_chunk_count = chunk_batch_plan.chunk_count();
         let mut metadata_batch: Vec<Py<VariantMetadata>> = Vec::with_capacity(callback_batch_size);
         let mut output_array_batch: Vec<Py<PyAny>> = Vec::with_capacity(callback_batch_size);
         let mut stats_batch: Vec<Py<ChunkStats>> = Vec::with_capacity(callback_batch_size);
-        for chunk_spec in chunk_specs {
-            py.check_signals()?;
-            let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
-            let output_array_object =
-                acquire_dosage_buffer_method.call1((selected_variant_count, selected_sample_count))?;
-            let stats = {
-                let mut output_array = output_array_object.extract::<PyReadwriteArray2<'_, f32>>()?;
-                let output_shape = output_array.shape();
-                if output_shape != [selected_variant_count, selected_sample_count] {
-                    return Err(PyValueError::new_err(format!(
-                        "Reusable variant-major BGEN dosage buffer shape mismatch: expected ({selected_variant_count}, {}), observed ({}, {}).",
-                        selected_sample_count, output_shape[0], output_shape[1],
-                    )));
-                }
-                if !output_array.is_c_contiguous() {
-                    return Err(PyValueError::new_err(
-                        "Reusable variant-major BGEN dosage buffer must be C-contiguous float32.",
-                    ));
-                }
-                let output_slice = output_array.as_slice_mut().map_err(|_| {
-                    PyValueError::new_err(
-                        "Reusable variant-major BGEN dosage buffer must expose a contiguous mutable slice.",
-                    )
-                })?;
-                let output_pointer_address = output_slice.as_mut_ptr() as usize;
-                let output_value_count = output_slice.len();
-                let chunk_stats = py
-                    .detach(|| {
-                        self.engine.reader().read_preprocessed_variant_major_dosage_f32_into_address_prepared(
-                            chunk_spec.variant_start_index,
-                            chunk_spec.variant_stop_index,
-                            output_pointer_address,
-                            output_value_count,
+        for chunk_batch in chunk_batch_plan.into_chunk_batches() {
+            for chunk_spec in &chunk_batch {
+                py.check_signals()?;
+                let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
+                let output_array_object =
+                    acquire_dosage_buffer_method.call1((selected_variant_count, selected_sample_count))?;
+                let stats = {
+                    let mut output_array = output_array_object.extract::<PyReadwriteArray2<'_, f32>>()?;
+                    let output_shape = output_array.shape();
+                    if output_shape != [selected_variant_count, selected_sample_count] {
+                        return Err(PyValueError::new_err(format!(
+                            "Reusable variant-major BGEN dosage buffer shape mismatch: expected ({selected_variant_count}, {}), observed ({}, {}).",
+                            selected_sample_count, output_shape[0], output_shape[1],
+                        )));
+                    }
+                    if !output_array.is_c_contiguous() {
+                        return Err(PyValueError::new_err(
+                            "Reusable variant-major BGEN dosage buffer must be C-contiguous float32.",
+                        ));
+                    }
+                    let output_slice = output_array.as_slice_mut().map_err(|_| {
+                        PyValueError::new_err(
+                            "Reusable variant-major BGEN dosage buffer must expose a contiguous mutable slice.",
                         )
-                    })
-                    .map_err(|error| {
-                        convert_bgen_error("read_preprocessed_variant_major_dosage_f32_into_address_prepared", error)
                     })?;
-                Py::new(py, ChunkStats::new(chunk_stats))?
-            };
-            let metadata_columns = self
-                .engine
-                .reader()
-                .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
-                .map_err(|error| convert_bgen_error("variant_metadata_slice", error))?;
-            let metadata = Py::new(
-                py,
-                VariantMetadata::new(chunk_spec.variant_start_index, chunk_spec.variant_stop_index, metadata_columns),
-            )?;
-            metadata_batch.push(metadata);
-            output_array_batch.push(output_array_object.unbind());
-            stats_batch.push(stats);
-            if metadata_batch.len() == callback_batch_size {
-                flush_variant_major_dosage_batch(
-                    &compute_dosage_chunk_batch_method,
-                    &mut metadata_batch,
-                    &mut output_array_batch,
-                    &mut stats_batch,
+                    let output_pointer_address = output_slice.as_mut_ptr() as usize;
+                    let output_value_count = output_slice.len();
+                    let chunk_stats = py
+                        .detach(|| {
+                            self.engine.reader().read_preprocessed_variant_major_dosage_f32_into_address_prepared(
+                                chunk_spec.variant_start_index,
+                                chunk_spec.variant_stop_index,
+                                output_pointer_address,
+                                output_value_count,
+                            )
+                        })
+                        .map_err(|error| {
+                            convert_bgen_error(
+                                "read_preprocessed_variant_major_dosage_f32_into_address_prepared",
+                                error,
+                            )
+                        })?;
+                    Py::new(py, ChunkStats::new(chunk_stats))?
+                };
+                let metadata_columns = self
+                    .engine
+                    .reader()
+                    .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
+                    .map_err(|error| convert_bgen_error("variant_metadata_slice", error))?;
+                let metadata = Py::new(
+                    py,
+                    VariantMetadata::new(
+                        chunk_spec.variant_start_index,
+                        chunk_spec.variant_stop_index,
+                        metadata_columns,
+                    ),
                 )?;
+                metadata_batch.push(metadata);
+                output_array_batch.push(output_array_object.unbind());
+                stats_batch.push(stats);
             }
+            flush_variant_major_dosage_batch(
+                &compute_dosage_chunk_batch_method,
+                &mut metadata_batch,
+                &mut output_array_batch,
+                &mut stats_batch,
+            )?;
         }
-        flush_variant_major_dosage_batch(
-            &compute_dosage_chunk_batch_method,
-            &mut metadata_batch,
-            &mut output_array_batch,
-            &mut stats_batch,
-        )?;
-        Ok(chunk_specs.len())
+        Ok(processed_chunk_count)
     }
 
     fn run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks<'py>(

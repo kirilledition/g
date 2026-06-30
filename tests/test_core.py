@@ -2725,6 +2725,45 @@ def test_regenie2_run_engine_buffered_chunks_deliver_preprocessed_variant_major_
     assert callback.chunk_shapes == [(0, 2, 4), (2, 2, 4)]
 
 
+def test_regenie2_run_engine_buffered_chunks_deliver_preprocessed_variant_major_dosage_batches() -> None:
+    class RecordingBatchCallback:
+        def __init__(self) -> None:
+            self.chunk_batches: list[tuple[int, ...]] = []
+            self.free_buffers: list[np.ndarray] = []
+
+        def acquire_variant_major_dosage_buffer(self, variant_count: int, sample_count: int) -> np.ndarray:
+            if self.free_buffers:
+                return self.free_buffers.pop()
+            return np.empty((variant_count, sample_count), dtype=np.float32, order="C")
+
+        def compute_preprocessed_variant_major_dosage_chunk_batch(
+            self,
+            metadata_batch: list[_core.VariantMetadata],
+            genotype_matrix_batch: list[np.ndarray],
+            chunk_stats_batch: list[_core.ChunkStats],
+        ) -> None:
+            self.chunk_batches.append(tuple(metadata.variant_start_index for metadata in metadata_batch))
+            for metadata, genotype_matrix, chunk_stats in zip(metadata_batch, genotype_matrix_batch, chunk_stats_batch):
+                assert metadata.chromosome_label == "1"
+                assert genotype_matrix.shape == (1, 4)
+                assert not np.isnan(genotype_matrix).any()
+                np.testing.assert_allclose(chunk_stats.allele_one_frequency, genotype_matrix.mean(axis=1) / 2.0)
+                np.testing.assert_array_equal(chunk_stats.observation_count, np.full(genotype_matrix.shape[0], 4))
+                self.free_buffers.append(genotype_matrix)
+
+    callback = RecordingBatchCallback()
+    engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=1)
+
+    processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
+        np.arange(4, dtype=np.int64),
+        callback,
+        callback_batch_size=2,
+    )
+
+    assert processed_chunk_count == 4
+    assert callback.chunk_batches == [(0, 1), (2, 3)]
+
+
 def test_regenie2_run_engine_variant_major_chunks_support_untrusted_bgen() -> None:
     class RecordingCallback:
         def __init__(self) -> None:
