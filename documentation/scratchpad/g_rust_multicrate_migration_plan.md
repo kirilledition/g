@@ -1167,6 +1167,9 @@ Remove Python as the chunk-level scheduler.
   return observation selection in the same native call as host-buffer cleanup.
 - Callback runtime resources now own production result work-item in-flight-only
   slot release decisions for object-based cleanup callers.
+- Callback runtime resources now return typed result in-flight release
+  observation plans from result work-item cleanup, so Python no longer validates
+  split optional telemetry fields before emission.
 - Native telemetry run sessions now own production run completed, interrupted,
   and failed lifecycle event emission names, levels, and field construction.
 - CLI runtime-initialization failures now route run-failed telemetry through

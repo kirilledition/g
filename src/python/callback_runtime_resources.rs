@@ -133,9 +133,7 @@ pub(crate) struct NativeResultWorkItemResourceReleaseResult {
     free_buffer_count: Option<usize>,
     dosage_buffer_pool_observation_plan: Option<Py<NativeDosageBufferPoolObservationPlan>>,
     released_result_in_flight_slot: bool,
-    result_in_flight_resource_name: Option<String>,
-    result_in_flight_operation_name: Option<String>,
-    result_in_flight_blocked: Option<bool>,
+    result_in_flight_observation_plan: Option<Py<NativeResultInFlightReleaseObservationPlan>>,
 }
 
 #[pyclass]
@@ -2066,18 +2064,35 @@ impl NativeResultWorkItemResourceReleaseResult {
     }
 
     #[getter]
-    fn result_in_flight_resource_name(&self) -> Option<&str> {
-        self.result_in_flight_resource_name.as_deref()
+    fn result_in_flight_observation_plan(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeResultInFlightReleaseObservationPlan>> {
+        self.result_in_flight_observation_plan.as_ref().map(|plan| plan.clone_ref(py))
     }
 
     #[getter]
-    fn result_in_flight_operation_name(&self) -> Option<&str> {
-        self.result_in_flight_operation_name.as_deref()
+    fn result_in_flight_resource_name(&self, py: Python<'_>) -> Option<String> {
+        self.result_in_flight_observation_plan.as_ref().map(|plan| {
+            let plan_bound = plan.bind(py);
+            plan_bound.borrow().resource_name_value().to_owned()
+        })
     }
 
     #[getter]
-    fn result_in_flight_blocked(&self) -> Option<bool> {
-        self.result_in_flight_blocked
+    fn result_in_flight_operation_name(&self, py: Python<'_>) -> Option<String> {
+        self.result_in_flight_observation_plan.as_ref().map(|plan| {
+            let plan_bound = plan.bind(py);
+            plan_bound.borrow().operation_name_value().to_owned()
+        })
+    }
+
+    #[getter]
+    fn result_in_flight_blocked(&self, py: Python<'_>) -> Option<bool> {
+        self.result_in_flight_observation_plan.as_ref().map(|plan| {
+            let plan_bound = plan.bind(py);
+            plan_bound.borrow().blocked_value()
+        })
     }
 }
 
@@ -2088,22 +2103,18 @@ impl NativeResultWorkItemResourceReleaseResult {
             free_buffer_count: None,
             dosage_buffer_pool_observation_plan: None,
             released_result_in_flight_slot: false,
-            result_in_flight_resource_name: None,
-            result_in_flight_operation_name: None,
-            result_in_flight_blocked: None,
+            result_in_flight_observation_plan: None,
         }
     }
 
     fn record_result_in_flight_release(
         &mut self,
-        release_observation_plan: Option<&NativeResultInFlightReleaseObservationPlan>,
-    ) {
+        py: Python<'_>,
+        release_observation_plan: Option<NativeResultInFlightReleaseObservationPlan>,
+    ) -> PyResult<()> {
         self.released_result_in_flight_slot = true;
-        if let Some(release_observation_plan) = release_observation_plan {
-            self.result_in_flight_resource_name = Some(release_observation_plan.resource_name_value().to_owned());
-            self.result_in_flight_operation_name = Some(release_observation_plan.operation_name_value().to_owned());
-            self.result_in_flight_blocked = Some(release_observation_plan.blocked_value());
-        }
+        self.result_in_flight_observation_plan = release_observation_plan.map(|plan| Py::new(py, plan)).transpose()?;
+        Ok(())
     }
 
     fn record_host_buffer_return(
@@ -2786,10 +2797,10 @@ impl NativeCallbackRuntimeResources {
     ) -> PyResult<()> {
         if self.has_stage_timing_recorder {
             let release_observation_plan = self.release_result_in_flight_slot(py)?;
-            release_result.record_result_in_flight_release(Some(&release_observation_plan));
+            release_result.record_result_in_flight_release(py, Some(release_observation_plan))?;
         } else {
             self.release_result_in_flight_slot_without_observation(py)?;
-            release_result.record_result_in_flight_release(None);
+            release_result.record_result_in_flight_release(py, None)?;
         }
         Ok(())
     }

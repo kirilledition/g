@@ -2660,19 +2660,14 @@ class NativeBgenCallbackRunner(abc.ABC):
                 )
         if not release_result.released_result_in_flight_slot:
             return
-        resource_name = release_result.result_in_flight_resource_name
-        operation_name = release_result.result_in_flight_operation_name
-        blocked = release_result.result_in_flight_blocked
-        if resource_name is None and operation_name is None and blocked is None:
+        result_in_flight_observation_plan = release_result.result_in_flight_observation_plan
+        if result_in_flight_observation_plan is None:
             return
-        if resource_name is None or operation_name is None or blocked is None:
-            message = "Native result work item resource release result omitted in-flight release details."
-            raise RuntimeError(message)
         self.record_bounded_resource_operation(
-            resource_name=resource_name,
-            operation_name=operation_name,
+            resource_name=result_in_flight_observation_plan.resource_name,
+            operation_name=result_in_flight_observation_plan.operation_name,
             elapsed_seconds=0.0,
-            blocked=blocked,
+            blocked=result_in_flight_observation_plan.blocked,
         )
 
     def release_result_work_item_buffer(

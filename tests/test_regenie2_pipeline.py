@@ -3884,9 +3884,12 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert final_result.free_buffer_count is None
     assert final_result.dosage_buffer_pool_observation_plan is None
     assert final_result.released_result_in_flight_slot is True
+    final_result_in_flight_observation_plan = final_result.result_in_flight_observation_plan
+    assert final_result_in_flight_observation_plan is not None
+    assert final_result_in_flight_observation_plan.resource_name == "result_in_flight_slots"
+    assert final_result_in_flight_observation_plan.operation_name == "release"
+    assert final_result_in_flight_observation_plan.blocked is False
     assert final_result.result_in_flight_resource_name == "result_in_flight_slots"
-    assert final_result.result_in_flight_operation_name == "release"
-    assert final_result.result_in_flight_blocked is False
     assert runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
     unobserved_runtime_resources = callback_runtime._core.NativeCallbackRuntimeResources(
@@ -3925,6 +3928,7 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert unobserved_final_result.free_buffer_count is None
     assert unobserved_final_result.dosage_buffer_pool_observation_plan is None
     assert unobserved_final_result.released_result_in_flight_slot is True
+    assert unobserved_final_result.result_in_flight_observation_plan is None
     assert unobserved_final_result.result_in_flight_resource_name is None
     assert unobserved_final_result.result_in_flight_operation_name is None
     assert unobserved_final_result.result_in_flight_blocked is None
@@ -3979,6 +3983,7 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     )
     assert non_releasing_result.released_host_buffer is False
     assert non_releasing_result.released_result_in_flight_slot is False
+    assert non_releasing_result.result_in_flight_observation_plan is None
     assert non_releasing_result.result_in_flight_resource_name is None
     assert object_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
     object_runtime_resources.acquire_result_in_flight_slot_with_backpressure_timeout()
@@ -3989,9 +3994,12 @@ def test_native_callback_runtime_resources_own_result_work_item_resource_cleanup
     assert in_flight_only_result.free_buffer_count is None
     assert in_flight_only_result.dosage_buffer_pool_observation_plan is None
     assert in_flight_only_result.released_result_in_flight_slot is True
-    assert in_flight_only_result.result_in_flight_resource_name == "result_in_flight_slots"
+    in_flight_only_observation_plan = in_flight_only_result.result_in_flight_observation_plan
+    assert in_flight_only_observation_plan is not None
+    assert in_flight_only_observation_plan.resource_name == "result_in_flight_slots"
+    assert in_flight_only_observation_plan.operation_name == "release"
+    assert in_flight_only_observation_plan.blocked is False
     assert in_flight_only_result.result_in_flight_operation_name == "release"
-    assert in_flight_only_result.result_in_flight_blocked is False
     assert object_runtime_resources.callback_scheduler_state.result_in_flight_occupied_count == 0
 
 
