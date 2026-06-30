@@ -639,18 +639,22 @@ impl Regenie2RunEngine {
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (bgen_path, chunk_size, variant_limit=None, trusted_no_missing_diploid=false))]
     fn new(
+        py: Python<'_>,
         bgen_path: String,
         chunk_size: usize,
         variant_limit: Option<usize>,
         trusted_no_missing_diploid: bool,
     ) -> PyResult<Self> {
-        let engine = Regenie2RunEngineCore::open_bgen(
-            Path::new(&bgen_path),
-            chunk_size,
-            variant_limit,
-            trusted_no_missing_diploid,
-        )
-        .map_err(|error| convert_bgen_error("open_bgen", error))?;
+        let engine = py
+            .detach(|| {
+                Regenie2RunEngineCore::open_bgen(
+                    Path::new(&bgen_path),
+                    chunk_size,
+                    variant_limit,
+                    trusted_no_missing_diploid,
+                )
+            })
+            .map_err(|error| convert_bgen_error("open_bgen", error))?;
         Ok(Self { engine })
     }
 
@@ -872,10 +876,13 @@ impl Regenie2RunEngine {
         self.engine.reader().chromosome_boundary_indices()
     }
 
-    fn variant_metadata_slice(&self, variant_start: usize, variant_stop: usize) -> PyResult<VariantMetadataTuple> {
-        self.engine
-            .reader()
-            .variant_metadata_slice(variant_start, variant_stop)
+    fn variant_metadata_slice(
+        &self,
+        py: Python<'_>,
+        variant_start: usize,
+        variant_stop: usize,
+    ) -> PyResult<VariantMetadataTuple> {
+        py.detach(|| self.engine.reader().variant_metadata_slice(variant_start, variant_stop))
             .map(convert_variant_metadata_columns_to_tuple)
             .map_err(|error| convert_bgen_error("read_variant_metadata_slice", error))
     }
@@ -893,17 +900,13 @@ impl Regenie2RunEngine {
         build_profile_snapshot_dict(&self.engine.reader().profile_snapshot())
     }
 
-    fn validate_trusted_no_missing_diploid(&self) -> PyResult<()> {
-        self.engine
-            .reader()
-            .validate_trusted_no_missing_diploid()
+    fn validate_trusted_no_missing_diploid(&self, py: Python<'_>) -> PyResult<()> {
+        py.detach(|| self.engine.reader().validate_trusted_no_missing_diploid())
             .map_err(|error| convert_bgen_error("validate_trusted_no_missing_diploid", error))
     }
 
-    fn mark_trusted_no_missing_diploid_validated(&self) -> PyResult<()> {
-        self.engine
-            .reader()
-            .mark_trusted_no_missing_diploid_validated()
+    fn mark_trusted_no_missing_diploid_validated(&self, py: Python<'_>) -> PyResult<()> {
+        py.detach(|| self.engine.reader().mark_trusted_no_missing_diploid_validated())
             .map_err(|error| convert_bgen_error("mark_trusted_no_missing_diploid_validated", error))
     }
 
@@ -1229,9 +1232,7 @@ impl Regenie2RunEngine {
         if callback_batch_size == 0 {
             return Err(PyValueError::new_err("callback_batch_size must be positive."));
         }
-        self.engine
-            .reader()
-            .prepare_sample_selection(sample_index_values)
+        py.detach(|| self.engine.reader().prepare_sample_selection(sample_index_values))
             .map_err(|error| convert_bgen_error("prepare_sample_selection", error))?;
 
         let run_result = self.run_prepared_bgen_variant_major_dosage_buffered_chunks(
@@ -1241,10 +1242,8 @@ impl Regenie2RunEngine {
             committed_chunk_identifiers,
             callback_batch_size,
         );
-        let clear_result = self
-            .engine
-            .reader()
-            .clear_prepared_sample_selection()
+        let clear_result = py
+            .detach(|| self.engine.reader().clear_prepared_sample_selection())
             .map_err(|error| convert_bgen_error("clear_prepared_sample_selection", error));
         match (run_result, clear_result) {
             (Err(error), _) | (Ok(_), Err(error)) => Err(error),
@@ -1259,9 +1258,7 @@ impl Regenie2RunEngine {
         callback: &Bound<'py, PyAny>,
         committed_chunk_identifiers: Option<Vec<usize>>,
     ) -> PyResult<usize> {
-        self.engine
-            .reader()
-            .prepare_sample_selection(sample_index_values)
+        py.detach(|| self.engine.reader().prepare_sample_selection(sample_index_values))
             .map_err(|error| convert_bgen_error("prepare_sample_selection", error))?;
 
         let run_result = self.run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks(
@@ -1270,10 +1267,8 @@ impl Regenie2RunEngine {
             callback,
             committed_chunk_identifiers,
         );
-        let clear_result = self
-            .engine
-            .reader()
-            .clear_prepared_sample_selection()
+        let clear_result = py
+            .detach(|| self.engine.reader().clear_prepared_sample_selection())
             .map_err(|error| convert_bgen_error("clear_prepared_sample_selection", error));
         match (run_result, clear_result) {
             (Err(error), _) | (Ok(_), Err(error)) => Err(error),
@@ -1353,19 +1348,13 @@ impl Regenie2RunEngine {
                         })?;
                     Py::new(py, ChunkStats::new(chunk_stats))?
                 };
-                let metadata_columns = self
-                    .engine
-                    .reader()
-                    .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
+                let variant_start_index = chunk_spec.variant_start_index;
+                let variant_stop_index = chunk_spec.variant_stop_index;
+                let metadata_columns = py
+                    .detach(|| self.engine.reader().variant_metadata_slice(variant_start_index, variant_stop_index))
                     .map_err(|error| convert_bgen_error("variant_metadata_slice", error))?;
-                let metadata = Py::new(
-                    py,
-                    VariantMetadata::new(
-                        chunk_spec.variant_start_index,
-                        chunk_spec.variant_stop_index,
-                        metadata_columns,
-                    ),
-                )?;
+                let metadata =
+                    Py::new(py, VariantMetadata::new(variant_start_index, variant_stop_index, metadata_columns))?;
                 compute_dosage_chunk_method.call1((metadata, output_array_object, stats))?;
             }
         }
@@ -1433,19 +1422,13 @@ impl Regenie2RunEngine {
                         })?;
                     Py::new(py, ChunkStats::new(chunk_stats))?
                 };
-                let metadata_columns = self
-                    .engine
-                    .reader()
-                    .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
+                let variant_start_index = chunk_spec.variant_start_index;
+                let variant_stop_index = chunk_spec.variant_stop_index;
+                let metadata_columns = py
+                    .detach(|| self.engine.reader().variant_metadata_slice(variant_start_index, variant_stop_index))
                     .map_err(|error| convert_bgen_error("variant_metadata_slice", error))?;
-                let metadata = Py::new(
-                    py,
-                    VariantMetadata::new(
-                        chunk_spec.variant_start_index,
-                        chunk_spec.variant_stop_index,
-                        metadata_columns,
-                    ),
-                )?;
+                let metadata =
+                    Py::new(py, VariantMetadata::new(variant_start_index, variant_stop_index, metadata_columns))?;
                 metadata_batch.push(metadata);
                 output_array_batch.push(output_array_object.unbind());
                 stats_batch.push(stats);
@@ -1524,19 +1507,13 @@ impl Regenie2RunEngine {
                         })?;
                     Py::new(py, ChunkStats::new(chunk_stats))?
                 };
-                let metadata_columns = self
-                    .engine
-                    .reader()
-                    .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
+                let variant_start_index = chunk_spec.variant_start_index;
+                let variant_stop_index = chunk_spec.variant_stop_index;
+                let metadata_columns = py
+                    .detach(|| self.engine.reader().variant_metadata_slice(variant_start_index, variant_stop_index))
                     .map_err(|error| convert_bgen_error("variant_metadata_slice", error))?;
-                let metadata = Py::new(
-                    py,
-                    VariantMetadata::new(
-                        chunk_spec.variant_start_index,
-                        chunk_spec.variant_stop_index,
-                        metadata_columns,
-                    ),
-                )?;
+                let metadata =
+                    Py::new(py, VariantMetadata::new(variant_start_index, variant_stop_index, metadata_columns))?;
                 compute_packed_chunk_method.call1((metadata, output_array_object, stats))?;
             }
         }
