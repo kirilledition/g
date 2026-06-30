@@ -1170,6 +1170,140 @@ def test_execute_bgen_delivery_cleanup_plan_uses_native_action_order() -> None:
     assert interrupted_execution.final_parquet_paths == ()
 
 
+def test_run_bgen_engine_with_writer_sessions_records_native_delivery_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    diagnostic_events: list[tuple[str, dict[str, object]]] = []
+
+    def record_delivery_started(
+        *,
+        committed_chunk_count: int,
+        pipeline_label: str,
+        variant_major_packed8_probability_pairs: bool,
+    ) -> None:
+        diagnostic_events.append(
+            (
+                "started",
+                {
+                    "committed_chunk_count": committed_chunk_count,
+                    "pipeline_label": pipeline_label,
+                    "variant_major_packed8_probability_pairs": variant_major_packed8_probability_pairs,
+                },
+            )
+        )
+
+    def record_delivery_finished(
+        *,
+        pipeline_label: str,
+        processed_chunk_count: int,
+    ) -> None:
+        diagnostic_events.append(
+            (
+                "finished",
+                {
+                    "pipeline_label": pipeline_label,
+                    "processed_chunk_count": processed_chunk_count,
+                },
+            )
+        )
+
+    def record_pipeline_finished(
+        *,
+        final_parquet_path_count: int,
+        pipeline_label: str,
+    ) -> None:
+        diagnostic_events.append(
+            (
+                "pipeline_finished",
+                {
+                    "final_parquet_path_count": final_parquet_path_count,
+                    "pipeline_label": pipeline_label,
+                },
+            )
+        )
+
+    class DeliveryCallback:
+        def __init__(self) -> None:
+            self.started = False
+            self.finished = False
+
+        def start(self) -> None:
+            self.started = True
+
+        def finish(self) -> None:
+            self.finished = True
+
+    def ignore_stage_timing_snapshot(
+        recorder: timing.StageTimingRecorder | None,
+        stage_timing_path: Path | None,
+    ) -> None:
+        assert recorder is None
+        assert stage_timing_path is None
+
+    monkeypatch.setattr(
+        native_dispatch_delivery._core,
+        "record_native_dispatch_delivery_started_diagnostic_event",
+        record_delivery_started,
+    )
+    monkeypatch.setattr(
+        native_dispatch_delivery._core,
+        "record_native_dispatch_delivery_finished_diagnostic_event",
+        record_delivery_finished,
+    )
+    monkeypatch.setattr(
+        native_dispatch_delivery._core,
+        "record_native_dispatch_pipeline_finished_diagnostic_event",
+        record_pipeline_finished,
+    )
+
+    callback = DeliveryCallback()
+    writer_session = FakeWriterSession()
+    final_parquet_paths = native_dispatch_delivery.run_bgen_engine_with_writer_sessions(
+        engine=typing.cast("_core.Regenie2RunEngine", FakeRunEngine("study.bgen", chunk_size=32)),
+        run_input=typing.cast(
+            "native_dispatch_models.BgenDeliveryRunInputProtocol",
+            SimpleNamespace(sample_indices=np.asarray([0, 1])),
+        ),
+        committed_chunk_identifiers={5, 3},
+        writer_sessions=(writer_session,),
+        callback=callback,
+        stage_timing_recorder=None,
+        writer_finish_thread_count=1,
+        variant_major_packed8_probability_pairs=False,
+        pipeline_label="Native BGEN",
+        stage_timing_snapshot_writer=ignore_stage_timing_snapshot,
+    )
+
+    assert callback.started is True
+    assert callback.finished is True
+    assert writer_session.finished is True
+    assert final_parquet_paths == (Path("results/final.parquet"),)
+    assert diagnostic_events == [
+        (
+            "started",
+            {
+                "committed_chunk_count": 2,
+                "pipeline_label": "Native BGEN",
+                "variant_major_packed8_probability_pairs": False,
+            },
+        ),
+        (
+            "finished",
+            {
+                "pipeline_label": "Native BGEN",
+                "processed_chunk_count": 0,
+            },
+        ),
+        (
+            "pipeline_finished",
+            {
+                "final_parquet_path_count": 1,
+                "pipeline_label": "Native BGEN",
+            },
+        ),
+    ]
+
+
 def test_plan_output_write_methods_use_native_cleanup_policy() -> None:
     single_write_plan = callback_writers._core.plan_single_trait_output_write(
         is_native_writer_session=True,

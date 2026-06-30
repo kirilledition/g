@@ -1517,6 +1517,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   materialization only for compatibility helpers and tests.
 - Native-dispatch delivery lifecycle diagnostics now use native run-event
   diagnostic payload builders.
+- Native-dispatch delivery lifecycle production paths now call native
+  diagnostic recorders directly, leaving Python payload dict materialization
+  only for compatibility helpers and tests.
 - GPU genotype-format auto-resolution diagnostics now use native run-event
   diagnostic payload builders.
 - Binary callback null-logistic nonconvergence warnings now use native
