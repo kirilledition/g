@@ -95,8 +95,7 @@ pub(crate) struct NativeDosageBufferAcquireResult {
 #[pyclass]
 pub(crate) struct NativeDosageBufferReuseSelectionResult {
     dosage_buffer: Option<Py<PyAny>>,
-    reuse_operation_result: Option<Py<NativeDosageBufferPoolOperationResult>>,
-    discard_operation_result: Option<Py<NativeDosageBufferPoolOperationResult>>,
+    operation_result: Py<NativeDosageBufferPoolOperationResult>,
 }
 
 #[pyclass]
@@ -2171,13 +2170,18 @@ impl NativeDosageBufferReuseSelectionResult {
     }
 
     #[getter]
+    fn operation_result(&self, py: Python<'_>) -> Py<NativeDosageBufferPoolOperationResult> {
+        self.operation_result.clone_ref(py)
+    }
+
+    #[getter]
     fn reuse_operation_result(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolOperationResult>> {
-        self.reuse_operation_result.as_ref().map(|reuse_operation_result| reuse_operation_result.clone_ref(py))
+        self.dosage_buffer.as_ref().map(|_| self.operation_result.clone_ref(py))
     }
 
     #[getter]
     fn discard_operation_result(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolOperationResult>> {
-        self.discard_operation_result.as_ref().map(|discard_operation_result| discard_operation_result.clone_ref(py))
+        if self.dosage_buffer.is_some() { None } else { Some(self.operation_result.clone_ref(py)) }
     }
 }
 
@@ -2187,19 +2191,11 @@ impl NativeDosageBufferReuseSelectionResult {
         dosage_buffer: Py<PyAny>,
         reuse_operation_result: NativeDosageBufferPoolOperationResult,
     ) -> PyResult<Self> {
-        Ok(Self {
-            dosage_buffer: Some(dosage_buffer),
-            reuse_operation_result: Some(Py::new(py, reuse_operation_result)?),
-            discard_operation_result: None,
-        })
+        Ok(Self { dosage_buffer: Some(dosage_buffer), operation_result: Py::new(py, reuse_operation_result)? })
     }
 
     fn from_discard(py: Python<'_>, discard_operation_result: NativeDosageBufferPoolOperationResult) -> PyResult<Self> {
-        Ok(Self {
-            dosage_buffer: None,
-            reuse_operation_result: None,
-            discard_operation_result: Some(Py::new(py, discard_operation_result)?),
-        })
+        Ok(Self { dosage_buffer: None, operation_result: Py::new(py, discard_operation_result)? })
     }
 }
 

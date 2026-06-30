@@ -3647,6 +3647,10 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
         np.float32,
     )
     assert reusable_selection_result.dosage_buffer is not None
+    selection_operation_result = reusable_selection_result.operation_result
+    assert selection_operation_result.has_free_buffer_count is True
+    assert selection_operation_result.free_buffer_count == 0
+    assert selection_operation_result.observation_plan is None
     reuse_operation_result = reusable_selection_result.reuse_operation_result
     assert reuse_operation_result is not None
     assert reuse_operation_result.has_free_buffer_count is True
@@ -3705,6 +3709,9 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     )
     assert discard_selection_result.dosage_buffer is None
     assert discard_selection_result.reuse_operation_result is None
+    discard_selection_operation_result = discard_selection_result.operation_result
+    assert discard_selection_operation_result.has_free_buffer_count is True
+    assert discard_selection_operation_result.free_buffer_count == 0
     discard_operation_result = discard_selection_result.discard_operation_result
     assert discard_operation_result is not None
     assert discard_operation_result.has_free_buffer_count is True
@@ -3770,6 +3777,51 @@ def test_native_callback_runner_releases_numpy_dosage_buffers_natively() -> None
 
 
 def test_native_callback_runner_uses_native_dosage_buffer_reuse_selection() -> None:
+    class DosageBufferReuseSelectionResultProbe:
+        def __init__(self, result: callback_runtime._core.NativeDosageBufferReuseSelectionResult) -> None:
+            self.result = result
+            self.operation_result_access_count = 0
+
+        @property
+        def dosage_buffer(self) -> object | None:
+            return self.result.dosage_buffer
+
+        @property
+        def operation_result(self) -> callback_runtime._core.NativeDosageBufferPoolOperationResult:
+            self.operation_result_access_count += 1
+            return self.result.operation_result
+
+        @property
+        def reuse_operation_result(self) -> callback_runtime._core.NativeDosageBufferPoolOperationResult | None:
+            raise AssertionError("production runner should use the selected dosage-buffer operation result")
+
+        @property
+        def discard_operation_result(self) -> callback_runtime._core.NativeDosageBufferPoolOperationResult | None:
+            raise AssertionError("production runner should use the selected dosage-buffer operation result")
+
+    class DosageBufferReuseRuntimeResourcesProbe:
+        def __init__(self, runtime_resources: callback_runtime._core.NativeCallbackRuntimeResources) -> None:
+            self.runtime_resources = runtime_resources
+            self.selection_results: list[DosageBufferReuseSelectionResultProbe] = []
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.runtime_resources, name)
+
+        def select_reusable_dosage_buffer_or_discard(
+            self,
+            dosage_buffer: object,
+            expected_shape: tuple[int, ...],
+            expected_dtype: object,
+        ) -> DosageBufferReuseSelectionResultProbe:
+            result = self.runtime_resources.select_reusable_dosage_buffer_or_discard(
+                dosage_buffer,
+                expected_shape,
+                expected_dtype,
+            )
+            result_probe = DosageBufferReuseSelectionResultProbe(result)
+            self.selection_results.append(result_probe)
+            return result_probe
+
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     callback = build_test_linear_pipeline_callback(
         run_input=build_native_run_input(),
@@ -3781,8 +3833,12 @@ def test_native_callback_runner_uses_native_dosage_buffer_reuse_selection() -> N
     oversized_buffer = np.empty((4, 5), dtype=np.float32)
     assert callback.callback_runtime_resources.register_dosage_buffer(id(oversized_buffer)) == 0
     assert callback.callback_runtime_resources.return_dosage_buffer(id(oversized_buffer), oversized_buffer) == 1
+    callback_for_probe = typing.cast("typing.Any", callback)
+    original_runtime_resources = callback.callback_runtime_resources
+    runtime_resources_probe = DosageBufferReuseRuntimeResourcesProbe(callback.callback_runtime_resources)
 
     try:
+        callback_for_probe.callback_runtime_resources = runtime_resources_probe
         with (
             patch.object(
                 callback_runtime.NativeBgenCallbackRunner,
@@ -3807,7 +3863,10 @@ def test_native_callback_runner_uses_native_dosage_buffer_reuse_selection() -> N
             assert queue_backpressure_by_operation["reuse"].queue_name == "dosage_buffer_pool"
             callback.discard_dosage_buffer_slot(sliced_buffer)
             assert callback.callback_runtime_resources.dosage_buffer_allocated_count == 0
+            assert len(runtime_resources_probe.selection_results) == 1
+            assert runtime_resources_probe.selection_results[0].operation_result_access_count == 1
     finally:
+        callback_for_probe.callback_runtime_resources = original_runtime_resources
         callback.finish()
 
 

@@ -1156,6 +1156,9 @@ Remove Python as the chunk-level scheduler.
   consumer-wait observation selection while Python keeps timing emission.
 - Callback runtime resources now own production dosage-buffer reuse shape
   planning while Python keeps dtype checks and NumPy view slicing.
+- Callback runtime resources now return the selected dosage-buffer reuse or
+  discard operation result directly, so Python no longer validates split
+  optional reuse/discard telemetry fields after native selection.
 - Callback runtime resources now own production worker finish and abort
   lifecycle execution, including stop/join sequencing and worker-error raise
   planning, while Python keeps public shutdown exceptions, pending-diagnostics
