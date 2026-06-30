@@ -2847,6 +2847,15 @@ def build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
     resolution_reason: str,
     fallback_error: str | None,
 ) -> dict[str, object]: ...
+def build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
+    message: str,
+    chromosome: str,
+    nonconverged_count: int,
+    phenotype_count: int,
+    policy: str,
+    scalar_convergence: bool,
+    total_fit_count: int,
+) -> dict[str, object]: ...
 def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
     chunk_size: int,
     source_path: str,

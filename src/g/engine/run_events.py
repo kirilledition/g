@@ -492,6 +492,30 @@ def build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
     )
 
 
+def build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
+    *,
+    message: str,
+    chromosome: str,
+    nonconverged_count: int,
+    phenotype_count: int,
+    policy: types.NullLogisticNonconvergencePolicy,
+    scalar_convergence: bool,
+    total_fit_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for null-logistic nonconvergence warnings."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
+            message,
+            chromosome,
+            nonconverged_count,
+            phenotype_count,
+            policy.value,
+            scalar_convergence,
+            total_fit_count,
+        )
+    )
+
+
 def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
     *,
     chunk_size: int,

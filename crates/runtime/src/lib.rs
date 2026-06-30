@@ -25,7 +25,8 @@ pub use rayon_runtime::{
 };
 pub use run_events::{
     ASSOCIATION_BACKEND_SELECTED_EVENT_NAME, AssociationBackendSelectedTelemetryFields, BGEN_ENGINE_OPENED_EVENT_NAME,
-    BINARY_CORRECTION_SUMMARY_EVENT_NAME, BgenEngineOpenedTelemetryFields, EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME,
+    BINARY_CORRECTION_SUMMARY_EVENT_NAME, BgenEngineOpenedTelemetryFields,
+    CALLBACK_NULL_LOGISTIC_NONCONVERGENCE_WARNING_DIAGNOSTIC_EVENT_NAME, EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME,
     EXECUTION_PLAN_PREPARED_EVENT_NAME, EffectiveConfigWrittenTelemetryFields, ExecutionPlanPreparedTelemetryFields,
     GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME, GpuGenotypeFormatResolvedTelemetryFields,
     IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME, MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME,
@@ -80,6 +81,7 @@ pub use run_events::{
     SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME, SampleAlignmentCompletedTelemetryFields,
     SingleTraitPreflightCompletedTelemetryFields, WRITER_FINISHED_EVENT_NAME, build_artifact_telemetry_fields,
     build_association_backend_selected_telemetry_fields, build_bgen_engine_opened_telemetry_fields,
+    build_callback_null_logistic_nonconvergence_warning_diagnostic_payload,
     build_effective_config_written_telemetry_fields, build_execution_plan_prepared_telemetry_fields,
     build_gpu_genotype_format_resolved_telemetry_fields, build_io_output_resume_committed_chunks_diagnostic_payload,
     build_multi_phenotype_preflight_completed_telemetry_fields, build_multi_phenotype_sample_summary_telemetry_fields,

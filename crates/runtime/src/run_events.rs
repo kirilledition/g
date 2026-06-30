@@ -14,6 +14,8 @@ pub const GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME: &str = "gpu_genotype_format_r
 pub const ASSOCIATION_BACKEND_SELECTED_EVENT_NAME: &str = "association_backend_selected";
 pub const BGEN_ENGINE_OPENED_EVENT_NAME: &str = "bgen_engine_opened";
 pub const BINARY_CORRECTION_SUMMARY_EVENT_NAME: &str = "binary_correction_summary";
+pub const CALLBACK_NULL_LOGISTIC_NONCONVERGENCE_WARNING_DIAGNOSTIC_EVENT_NAME: &str =
+    "callback_null_logistic_nonconvergence_warning";
 pub const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
 pub const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
 pub const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
@@ -718,6 +720,32 @@ pub fn build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
             text_diagnostic_field("requested_gpu_genotype_format", requested_gpu_genotype_format),
             text_diagnostic_field("resolution_reason", resolution_reason),
             text_diagnostic_field("resolved_gpu_genotype_format", resolved_gpu_genotype_format),
+        ],
+    }
+}
+
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
+    message: &str,
+    chromosome: &str,
+    nonconverged_count: i64,
+    phenotype_count: i64,
+    policy: &str,
+    scalar_convergence: bool,
+    total_fit_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "warning",
+        event_name: CALLBACK_NULL_LOGISTIC_NONCONVERGENCE_WARNING_DIAGNOSTIC_EVENT_NAME,
+        message: message.to_string(),
+        fields: vec![
+            text_diagnostic_field("chromosome", chromosome),
+            integer_diagnostic_field("nonconverged_count", nonconverged_count),
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            text_diagnostic_field("policy", policy),
+            boolean_diagnostic_field("scalar_convergence", scalar_convergence),
+            integer_diagnostic_field("total_fit_count", total_fit_count),
         ],
     }
 }
@@ -1560,6 +1588,25 @@ mod tests {
             RunDiagnosticFieldValue::OptionalText(Some("packed8 incompatible".to_string()))
         );
         assert_eq!(payload.fields[3].value, RunDiagnosticFieldValue::Text("dosage".to_string()));
+    }
+
+    #[test]
+    fn builds_callback_null_logistic_nonconvergence_warning_diagnostic_payload() {
+        let payload = build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
+            "Null logistic failed.",
+            "1",
+            2,
+            3,
+            "warn",
+            false,
+            4,
+        );
+
+        assert_eq!(payload.level, "warning");
+        assert_eq!(payload.event_name, "callback_null_logistic_nonconvergence_warning");
+        assert_eq!(payload.message, "Null logistic failed.");
+        assert_eq!(payload.fields[0].value, RunDiagnosticFieldValue::Text("1".to_string()));
+        assert_eq!(payload.fields[5].value, RunDiagnosticFieldValue::Integer(4));
     }
 
     #[test]

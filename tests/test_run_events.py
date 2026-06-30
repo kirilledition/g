@@ -491,6 +491,30 @@ def test_pipeline_gpu_genotype_format_resolved_diagnostic_payload_uses_native_bu
     }
 
 
+def test_callback_null_logistic_warning_diagnostic_payload_uses_native_builder() -> None:
+    assert run_events.build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
+        message="Null logistic failed.",
+        chromosome="1",
+        nonconverged_count=2,
+        phenotype_count=3,
+        policy=types.NullLogisticNonconvergencePolicy.WARN,
+        scalar_convergence=False,
+        total_fit_count=4,
+    ) == {
+        "level": "warning",
+        "event_name": "callback_null_logistic_nonconvergence_warning",
+        "message": "Null logistic failed.",
+        "fields": {
+            "chromosome": "1",
+            "nonconverged_count": 2,
+            "phenotype_count": 3,
+            "policy": "warn",
+            "scalar_convergence": False,
+            "total_fit_count": 4,
+        },
+    }
+
+
 def test_native_dispatch_engine_diagnostic_payloads_use_native_builders() -> None:
     assert run_events.build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
         chunk_size=1024,

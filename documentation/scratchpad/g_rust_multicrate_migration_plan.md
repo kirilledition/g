@@ -1505,6 +1505,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
   diagnostic payload builders.
 - GPU genotype-format auto-resolution diagnostics now use native run-event
   diagnostic payload builders.
+- Binary callback null-logistic nonconvergence warnings now use native
+  run-event diagnostic payload builders.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

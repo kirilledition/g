@@ -121,7 +121,8 @@ use preparation::{
 };
 use profile::build_profile_snapshot_dict;
 use run_events::{
-    attach_run_metadata_payload, build_io_output_resume_committed_chunks_diagnostic_payload,
+    attach_run_metadata_payload, build_callback_null_logistic_nonconvergence_warning_diagnostic_payload,
+    build_io_output_resume_committed_chunks_diagnostic_payload,
     build_native_dispatch_bgen_engine_constructing_diagnostic_payload,
     build_native_dispatch_callback_drain_started_diagnostic_payload,
     build_native_dispatch_delivery_failed_diagnostic_payload,
@@ -2045,6 +2046,10 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
         .add_function(wrap_pyfunction!(build_native_dispatch_bgen_engine_constructing_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(
         build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        build_callback_null_logistic_nonconvergence_warning_diagnostic_payload,
         module
     )?)?;
     module.add_function(wrap_pyfunction!(build_pipeline_gpu_genotype_format_resolved_diagnostic_payload, module)?)?;
