@@ -2971,10 +2971,20 @@ def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
     trusted_no_missing_diploid: bool,
     variant_limit: int | None,
 ) -> dict[str, object]: ...
+def record_native_dispatch_bgen_engine_constructing_diagnostic_event(
+    chunk_size: int,
+    source_path: str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> None: ...
 def build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
     source_path: str,
     trusted_bgen_validation_mode: str,
 ) -> dict[str, object]: ...
+def record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
+    source_path: str,
+    trusted_bgen_validation_mode: str,
+) -> None: ...
 def build_native_dispatch_callback_drain_started_diagnostic_payload() -> dict[str, object]: ...
 def build_native_dispatch_delivery_started_diagnostic_payload(
     committed_chunk_count: int,

@@ -749,6 +749,22 @@ pub fn build_native_dispatch_bgen_engine_constructing_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_native_dispatch_bgen_engine_constructing_diagnostic_event(
+    chunk_size: i64,
+    source_path: &str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> PyResult<()> {
+    let payload = native_run_events::build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
+        chunk_size,
+        source_path,
+        trusted_no_missing_diploid,
+        variant_limit,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload<'py>(
     py: Python<'py>,
     source_path: &str,
@@ -759,6 +775,18 @@ pub fn build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload<
         trusted_bgen_validation_mode,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
+    source_path: &str,
+    trusted_bgen_validation_mode: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
+        source_path,
+        trusted_bgen_validation_mode,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]

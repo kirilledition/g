@@ -1510,6 +1510,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   diagnostic payload builders.
 - Native-dispatch BGEN engine construction and trusted-validation diagnostics
   now use native run-event diagnostic payload builders.
+- Native-dispatch BGEN engine construction and trusted-validation production
+  paths now call native diagnostic recorders directly, leaving Python payload
+  dict materialization only for compatibility helpers and tests.
 - Native-dispatch callback drain and writer finalization diagnostics now use
   native run-event diagnostic payload builders.
 - Native-dispatch callback drain and writer finalization production paths now

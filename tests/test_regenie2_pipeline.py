@@ -11919,6 +11919,110 @@ def test_multi_linear_pipeline_rejects_missing_sample_mode() -> None:
         )
 
 
+def test_build_bgen_run_engine_records_native_engine_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+    diagnostic_events: list[tuple[str, dict[str, object]]] = []
+
+    def record_bgen_engine_constructing(
+        *,
+        chunk_size: int,
+        source_path: str,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None:
+        diagnostic_events.append(
+            (
+                "constructing",
+                {
+                    "chunk_size": chunk_size,
+                    "source_path": source_path,
+                    "trusted_no_missing_diploid": trusted_no_missing_diploid,
+                    "variant_limit": variant_limit,
+                },
+            )
+        )
+
+    def record_trusted_bgen_validation_started(
+        *,
+        source_path: str,
+        trusted_bgen_validation_mode: str,
+    ) -> None:
+        diagnostic_events.append(
+            (
+                "trusted_validation_started",
+                {
+                    "source_path": source_path,
+                    "trusted_bgen_validation_mode": trusted_bgen_validation_mode,
+                },
+            )
+        )
+
+    def validate_trusted_bgen(
+        *,
+        engine: FakeRunEngine,
+        bgen_path: Path,
+        validation_mode: types.TrustedBgenValidationMode,
+    ) -> None:
+        assert engine.bgen_path == "study.bgen"
+        diagnostic_events.append(
+            (
+                "validator",
+                {
+                    "bgen_path": str(bgen_path),
+                    "validation_mode": validation_mode.value,
+                },
+            )
+        )
+
+    monkeypatch.setattr(
+        native_dispatch_engine._core,
+        "record_native_dispatch_bgen_engine_constructing_diagnostic_event",
+        record_bgen_engine_constructing,
+    )
+    monkeypatch.setattr(
+        native_dispatch_engine._core,
+        "record_native_dispatch_trusted_bgen_validation_started_diagnostic_event",
+        record_trusted_bgen_validation_started,
+    )
+
+    FakeRunEngine.instances.clear()
+    with patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine):
+        engine = build_test_bgen_run_engine(
+            genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
+            chunk_size=32,
+            variant_limit=100,
+            trusted_no_missing_diploid=True,
+            trusted_bgen_validation_mode=types.TrustedBgenValidationMode.FORCE_VALIDATE,
+            trusted_bgen_validator=validate_trusted_bgen,
+        )
+
+    assert isinstance(engine, FakeRunEngine)
+    assert diagnostic_events == [
+        (
+            "constructing",
+            {
+                "chunk_size": 32,
+                "source_path": "study.bgen",
+                "trusted_no_missing_diploid": True,
+                "variant_limit": 100,
+            },
+        ),
+        (
+            "trusted_validation_started",
+            {
+                "source_path": "study.bgen",
+                "trusted_bgen_validation_mode": "force_validate",
+            },
+        ),
+        (
+            "validator",
+            {
+                "bgen_path": "study.bgen",
+                "validation_mode": "force_validate",
+            },
+        ),
+    ]
+
+
 def test_build_bgen_run_engine_rejects_assumed_trusted_validation() -> None:
     FakeRunEngine.instances.clear()
 

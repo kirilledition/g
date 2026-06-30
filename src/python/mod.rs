@@ -175,11 +175,13 @@ use run_events::{
     build_runner_run_completed_diagnostic_payload, build_runner_run_failed_diagnostic_payload,
     build_runner_run_interrupted_diagnostic_payload, build_runner_run_started_diagnostic_payload,
     build_runner_single_phenotype_dispatch_started_diagnostic_payload,
+    record_native_dispatch_bgen_engine_constructing_diagnostic_event,
     record_native_dispatch_callback_drain_started_diagnostic_event,
     record_native_dispatch_delivery_failed_diagnostic_event, record_native_dispatch_delivery_finished_diagnostic_event,
     record_native_dispatch_delivery_interrupted_diagnostic_event,
     record_native_dispatch_delivery_started_diagnostic_event,
     record_native_dispatch_pipeline_finished_diagnostic_event,
+    record_native_dispatch_trusted_bgen_validation_started_diagnostic_event,
     record_native_dispatch_writer_session_finish_started_diagnostic_event,
     record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event,
     record_native_dispatch_writer_sessions_finish_started_diagnostic_event,
@@ -2089,8 +2091,13 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     module
         .add_function(wrap_pyfunction!(build_native_dispatch_bgen_engine_constructing_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_dispatch_bgen_engine_constructing_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(
         build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_native_dispatch_trusted_bgen_validation_started_diagnostic_event,
         module
     )?)?;
     module.add_function(wrap_pyfunction!(
