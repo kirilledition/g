@@ -1343,6 +1343,11 @@ class NativeCallbackRuntimeResources:
         chunk_count: int,
         elapsed_seconds: float,
     ) -> NativeDosageWorkItemStageDurationPlan: ...
+    def plan_dosage_work_item_stage_duration_for_object(
+        self,
+        work_item: object,
+        elapsed_seconds: float,
+    ) -> NativeDosageWorkItemStageDurationPlan: ...
     def plan_current_queue_backpressure_observation(
         self,
         queue_name: str,

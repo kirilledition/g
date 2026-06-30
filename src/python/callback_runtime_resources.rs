@@ -1272,6 +1272,21 @@ impl NativeCallbackRuntimeResources {
         scheduler_state.plan_dosage_work_item_stage_duration_value(dosage_work_item_kind, chunk_count, elapsed_seconds)
     }
 
+    fn plan_dosage_work_item_stage_duration_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        elapsed_seconds: f64,
+    ) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
+        let descriptor = classify_dosage_work_item(work_item)?;
+        self.plan_dosage_work_item_stage_duration(
+            py,
+            descriptor.dosage_work_item_kind,
+            descriptor.chunk_count,
+            elapsed_seconds,
+        )
+    }
+
     fn plan_current_queue_backpressure_observation(
         &self,
         py: Python<'_>,
@@ -2231,21 +2246,46 @@ fn py_object_identifier(object: &Bound<'_, PyAny>) -> usize {
     object.as_ptr() as usize
 }
 
-fn classify_dosage_work_item_kind(work_item: &Bound<'_, PyAny>) -> PyResult<&'static str> {
+struct DosageWorkItemDescriptor {
+    dosage_work_item_kind: &'static str,
+    chunk_count: usize,
+}
+
+fn classify_dosage_work_item(work_item: &Bound<'_, PyAny>) -> PyResult<DosageWorkItemDescriptor> {
     if work_item.is_none() {
-        return Ok(DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL);
+        return Ok(DosageWorkItemDescriptor {
+            dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL,
+            chunk_count: 0,
+        });
     }
-    match python_type_name(work_item)?.as_str() {
-        "PreprocessedDosageChunkWorkItem" => Ok(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE),
-        "PreprocessedVariantMajorDosageChunkWorkItem" => Ok(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE),
-        "PreprocessedVariantMajorDosageChunkBatchWorkItem" => Ok(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH),
-        "PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem" => {
-            Ok(DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR)
-        }
+    let descriptor = match python_type_name(work_item)?.as_str() {
+        "PreprocessedDosageChunkWorkItem" => DosageWorkItemDescriptor {
+            dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE,
+            chunk_count: 1,
+        },
+        "PreprocessedVariantMajorDosageChunkWorkItem" => DosageWorkItemDescriptor {
+            dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE,
+            chunk_count: 1,
+        },
+        "PreprocessedVariantMajorDosageChunkBatchWorkItem" => DosageWorkItemDescriptor {
+            dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH,
+            chunk_count: work_item.getattr("work_items")?.len()?,
+        },
+        "PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem" => DosageWorkItemDescriptor {
+            dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR,
+            chunk_count: 1,
+        },
         type_name => {
-            Err(PyRuntimeError::new_err(format!("Unsupported preprocessed dosage work item type: {type_name}")))
+            return Err(PyRuntimeError::new_err(format!(
+                "Unsupported preprocessed dosage work item type: {type_name}"
+            )));
         }
-    }
+    };
+    Ok(descriptor)
+}
+
+fn classify_dosage_work_item_kind(work_item: &Bound<'_, PyAny>) -> PyResult<&'static str> {
+    Ok(classify_dosage_work_item(work_item)?.dosage_work_item_kind)
 }
 
 fn classify_result_write_item_kind(work_item: &Bound<'_, PyAny>) -> PyResult<&'static str> {

@@ -2928,6 +2928,24 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
     )
     assert stage_duration_plan.chunk_count == 2
     assert stage_duration_plan.duration_per_chunk == 2.0
+    object_stage_duration_plan = runtime_resources.plan_dosage_work_item_stage_duration_for_object(
+        callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem(
+            work_items=(variant_major_work_item, variant_major_work_item)
+        ),
+        4.0,
+    )
+    assert object_stage_duration_plan.chunk_count == 2
+    assert object_stage_duration_plan.duration_per_chunk == 2.0
+    sample_major_stage_duration_plan = runtime_resources.plan_dosage_work_item_stage_duration_for_object(
+        sample_major_work_item,
+        3.0,
+    )
+    assert sample_major_stage_duration_plan.chunk_count == 1
+    assert sample_major_stage_duration_plan.duration_per_chunk == 3.0
+    with pytest.raises(ValueError, match="stop signal"):
+        runtime_resources.plan_dosage_work_item_stage_duration_for_object(None, 1.0)
+    with pytest.raises(RuntimeError, match="Unsupported preprocessed dosage work item type"):
+        runtime_resources.plan_dosage_work_item_stage_duration_for_object(SimpleNamespace(), 1.0)
 
     dosage_handoff_plan = runtime_resources.plan_dosage_work_handoff(2)
     assert dosage_handoff_plan.chunk_count == 2
