@@ -345,6 +345,59 @@ def test_runner_execution_plan_diagnostic_payloads_use_native_builders() -> None
     }
 
 
+def test_runner_dispatch_diagnostic_payloads_use_native_builders() -> None:
+    assert run_events.build_runner_multi_phenotype_dispatch_started_diagnostic_payload(
+        phenotype_count=3,
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+    ) == {
+        "level": "debug",
+        "event_name": "runner_multi_phenotype_dispatch_started",
+        "message": "Dispatching multi-phenotype native engine pipeline.",
+        "fields": {"phenotype_count": 3, "association_mode": "regenie2_binary"},
+    }
+    assert run_events.build_runner_single_phenotype_dispatch_started_diagnostic_payload(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        phenotype="height",
+    ) == {
+        "level": "debug",
+        "event_name": "runner_single_phenotype_dispatch_started",
+        "message": "Dispatching single-phenotype native engine pipeline.",
+        "fields": {"association_mode": "regenie2_linear", "phenotype": "height"},
+    }
+    assert run_events.build_runner_binary_engine_dispatch_started_diagnostic_payload(
+        phenotype="height",
+    ) == {
+        "level": "debug",
+        "event_name": "runner_binary_engine_dispatch_started",
+        "message": "Dispatching binary native engine pipeline.",
+        "fields": {"phenotype": "height"},
+    }
+    assert run_events.build_runner_linear_engine_dispatch_started_diagnostic_payload(
+        phenotype="height",
+    ) == {
+        "level": "debug",
+        "event_name": "runner_linear_engine_dispatch_started",
+        "message": "Dispatching linear native engine pipeline.",
+        "fields": {"phenotype": "height"},
+    }
+    assert run_events.build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload(
+        phenotype_count=3,
+    ) == {
+        "level": "debug",
+        "event_name": "runner_multi_phenotype_binary_engine_dispatch_started",
+        "message": "Dispatching multi-phenotype binary native engine pipeline.",
+        "fields": {"phenotype_count": 3},
+    }
+    assert run_events.build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(
+        phenotype_count=3,
+    ) == {
+        "level": "debug",
+        "event_name": "runner_multi_phenotype_linear_engine_dispatch_started",
+        "message": "Dispatching multi-phenotype linear native engine pipeline.",
+        "fields": {"phenotype_count": 3},
+    }
+
+
 def test_run_completed_rendering_uses_native_renderer() -> None:
     event = run_events.RunCompletedEvent(
         run_id=None,

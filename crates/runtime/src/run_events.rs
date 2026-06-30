@@ -36,6 +36,26 @@ pub const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
 pub const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE: &str = "Building REGENIE execution plan.";
 pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching REGENIE execution plan.";
 pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
+pub const RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "runner_multi_phenotype_dispatch_started";
+pub const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "runner_single_phenotype_dispatch_started";
+pub const RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_binary_engine_dispatch_started";
+pub const RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_linear_engine_dispatch_started";
+pub const RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "runner_multi_phenotype_binary_engine_dispatch_started";
+pub const RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+    "runner_multi_phenotype_linear_engine_dispatch_started";
+pub const RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+    "Dispatching multi-phenotype native engine pipeline.";
+pub const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+    "Dispatching single-phenotype native engine pipeline.";
+pub const RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching binary native engine pipeline.";
+pub const RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching linear native engine pipeline.";
+pub const RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+    "Dispatching multi-phenotype binary native engine pipeline.";
+pub const RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+    "Dispatching multi-phenotype linear native engine pipeline.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunArtifactPayload {
@@ -492,6 +512,82 @@ pub fn build_runner_execution_plan_finalization_started_diagnostic_payload(
             integer_diagnostic_field("phenotype_count", phenotype_count),
             text_diagnostic_field("association_mode", association_mode),
         ],
+    }
+}
+
+#[must_use]
+pub fn build_runner_multi_phenotype_dispatch_started_diagnostic_payload(
+    phenotype_count: i64,
+    association_mode: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            integer_diagnostic_field("phenotype_count", phenotype_count),
+            text_diagnostic_field("association_mode", association_mode),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_runner_single_phenotype_dispatch_started_diagnostic_payload(
+    association_mode: &str,
+    phenotype: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![
+            text_diagnostic_field("association_mode", association_mode),
+            text_diagnostic_field("phenotype", phenotype),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_runner_binary_engine_dispatch_started_diagnostic_payload(phenotype: &str) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![text_diagnostic_field("phenotype", phenotype)],
+    }
+}
+
+#[must_use]
+pub fn build_runner_linear_engine_dispatch_started_diagnostic_payload(phenotype: &str) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![text_diagnostic_field("phenotype", phenotype)],
+    }
+}
+
+#[must_use]
+pub fn build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload(
+    phenotype_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![integer_diagnostic_field("phenotype_count", phenotype_count)],
+    }
+}
+
+#[must_use]
+pub fn build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(
+    phenotype_count: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "debug",
+        event_name: RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME,
+        message: RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE.to_string(),
+        fields: vec![integer_diagnostic_field("phenotype_count", phenotype_count)],
     }
 }
 
@@ -980,6 +1076,35 @@ mod tests {
         assert_eq!(
             build_runner_execution_plan_finalization_started_diagnostic_payload(3, "regenie2_binary").event_name,
             "runner_execution_plan_finalization_started",
+        );
+    }
+
+    #[test]
+    fn builds_runner_dispatch_diagnostic_payloads() {
+        assert_eq!(
+            build_runner_multi_phenotype_dispatch_started_diagnostic_payload(3, "regenie2_binary").event_name,
+            "runner_multi_phenotype_dispatch_started",
+        );
+        assert_eq!(
+            build_runner_single_phenotype_dispatch_started_diagnostic_payload("regenie2_linear", "height").fields[1]
+                .value,
+            RunDiagnosticFieldValue::Text("height".to_string()),
+        );
+        assert_eq!(
+            build_runner_binary_engine_dispatch_started_diagnostic_payload("height").message,
+            "Dispatching binary native engine pipeline.",
+        );
+        assert_eq!(
+            build_runner_linear_engine_dispatch_started_diagnostic_payload("height").event_name,
+            "runner_linear_engine_dispatch_started",
+        );
+        assert_eq!(
+            build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload(3).fields[0].value,
+            RunDiagnosticFieldValue::Integer(3),
+        );
+        assert_eq!(
+            build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(3).message,
+            "Dispatching multi-phenotype linear native engine pipeline.",
         );
     }
 

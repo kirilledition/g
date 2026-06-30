@@ -19,16 +19,6 @@ if typing.TYPE_CHECKING:
 RunArtifacts = run_events.RunArtifacts
 
 
-def emit_runner_diagnostic_event(
-    level: str,
-    event: str,
-    message: str,
-    fields: typing.Mapping[str, object],
-) -> None:
-    """Emit one structured runner diagnostic through native tracing."""
-    _core.emit_diagnostic_event_fields(level, event, message, fields)
-
-
 def emit_runner_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
     """Emit one native diagnostic payload through native tracing."""
     _core.emit_diagnostic_event_fields(
@@ -272,11 +262,11 @@ def dispatch_execution_plan(
         telemetry_session=telemetry_session,
     )
     if len(plan.phenotype_run_plans) > 1:
-        emit_runner_diagnostic_event(
-            "debug",
-            "runner_multi_phenotype_dispatch_started",
-            "Dispatching multi-phenotype native engine pipeline.",
-            {"phenotype_count": len(plan.phenotype_run_plans), "association_mode": plan.association_mode.value},
+        emit_runner_diagnostic_event_payload(
+            run_events.build_runner_multi_phenotype_dispatch_started_diagnostic_payload(
+                phenotype_count=len(plan.phenotype_run_plans),
+                association_mode=plan.association_mode,
+            )
         )
         return dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
@@ -285,11 +275,11 @@ def dispatch_execution_plan(
             runtime_compatibility_token=runtime_compatibility_token,
             output_initialized_callback=output_initialized_callback,
         )
-    emit_runner_diagnostic_event(
-        "debug",
-        "runner_single_phenotype_dispatch_started",
-        "Dispatching single-phenotype native engine pipeline.",
-        {"association_mode": plan.association_mode.value, "phenotype": plan.phenotype_run_plans[0].phenotype_name},
+    emit_runner_diagnostic_event_payload(
+        run_events.build_runner_single_phenotype_dispatch_started_diagnostic_payload(
+            association_mode=plan.association_mode,
+            phenotype=plan.phenotype_run_plans[0].phenotype_name,
+        )
     )
     return (
         dispatch_one_phenotype_engine_pipeline(
@@ -360,11 +350,10 @@ def dispatch_one_phenotype_engine_pipeline(
         output_initialized_callback=output_initialized_callback,
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
-        emit_runner_diagnostic_event(
-            "debug",
-            "runner_binary_engine_dispatch_started",
-            "Dispatching binary native engine pipeline.",
-            {"phenotype": phenotype_run_plan.phenotype_name},
+        emit_runner_diagnostic_event_payload(
+            run_events.build_runner_binary_engine_dispatch_started_diagnostic_payload(
+                phenotype=phenotype_run_plan.phenotype_name
+            )
         )
         final_output_path = runtime.run_regenie2_binary_bgen_pipeline(
             genotype_source_config=common_request.genotype_source_config,
@@ -410,11 +399,10 @@ def dispatch_one_phenotype_engine_pipeline(
             final_output_path=final_output_path,
         )
         return final_output_path
-    emit_runner_diagnostic_event(
-        "debug",
-        "runner_linear_engine_dispatch_started",
-        "Dispatching linear native engine pipeline.",
-        {"phenotype": phenotype_run_plan.phenotype_name},
+    emit_runner_diagnostic_event_payload(
+        run_events.build_runner_linear_engine_dispatch_started_diagnostic_payload(
+            phenotype=phenotype_run_plan.phenotype_name
+        )
     )
     final_output_path = runtime.run_regenie2_linear_bgen_pipeline(
         genotype_source_config=common_request.genotype_source_config,
@@ -482,11 +470,10 @@ def dispatch_multi_phenotype_engine_pipeline(
         phenotype_run_plan.existing_manifest for phenotype_run_plan in plan.phenotype_run_plans
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
-        emit_runner_diagnostic_event(
-            "debug",
-            "runner_multi_phenotype_binary_engine_dispatch_started",
-            "Dispatching multi-phenotype binary native engine pipeline.",
-            {"phenotype_count": len(phenotype_names)},
+        emit_runner_diagnostic_event_payload(
+            run_events.build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload(
+                phenotype_count=len(phenotype_names)
+            )
         )
         final_output_paths = runtime.run_regenie2_multi_phenotype_binary_bgen_pipeline(
             genotype_source_config=common_request.genotype_source_config,
@@ -528,11 +515,10 @@ def dispatch_multi_phenotype_engine_pipeline(
             output_initialized_callback=common_request.output_initialized_callback,
         )
     else:
-        emit_runner_diagnostic_event(
-            "debug",
-            "runner_multi_phenotype_linear_engine_dispatch_started",
-            "Dispatching multi-phenotype linear native engine pipeline.",
-            {"phenotype_count": len(phenotype_names)},
+        emit_runner_diagnostic_event_payload(
+            run_events.build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(
+                phenotype_count=len(phenotype_names)
+            )
         )
         final_output_paths = runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline(
             genotype_source_config=common_request.genotype_source_config,

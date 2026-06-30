@@ -22,7 +22,7 @@ RUST_EXPORT_FILES = (
 STUB_FILE = Path("src/g/_core.pyi")
 
 CLASS_PATTERN = re.compile(r"add_class::<([A-Za-z_][A-Za-z0-9_]*)>")
-FUNC_PATTERN = re.compile(r"add_function\(wrap_pyfunction!\(([A-Za-z_][A-Za-z0-9_]*)")
+FUNC_PATTERN = re.compile(r"add_function\(wrap_pyfunction!\(\s*([A-Za-z_][A-Za-z0-9_]*)")
 ALLOWED_STUB_ONLY_CLASSES = {"ChunkStatsComputeArrays"}
 
 

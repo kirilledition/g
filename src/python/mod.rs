@@ -123,14 +123,20 @@ use profile::build_profile_snapshot_dict;
 use run_events::{
     attach_run_metadata_payload, build_run_completed_event_payload, build_run_completed_telemetry_fields,
     build_run_failed_event_payload, build_run_failed_telemetry_fields, build_run_interrupted_event_payload,
-    build_run_interrupted_telemetry_fields, build_runner_execution_plan_build_started_diagnostic_payload,
+    build_run_interrupted_telemetry_fields, build_runner_binary_engine_dispatch_started_diagnostic_payload,
+    build_runner_execution_plan_build_started_diagnostic_payload,
     build_runner_execution_plan_dispatch_started_diagnostic_payload,
     build_runner_execution_plan_finalization_started_diagnostic_payload,
     build_runner_execution_plan_prepared_diagnostic_payload,
-    build_runner_jax_runtime_configuration_started_diagnostic_payload, build_runner_run_completed_diagnostic_payload,
-    build_runner_run_failed_diagnostic_payload, build_runner_run_interrupted_diagnostic_payload,
-    build_runner_run_started_diagnostic_payload, render_run_completed_lines, render_run_failed_lines,
-    render_run_interrupted_lines,
+    build_runner_jax_runtime_configuration_started_diagnostic_payload,
+    build_runner_linear_engine_dispatch_started_diagnostic_payload,
+    build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload,
+    build_runner_multi_phenotype_dispatch_started_diagnostic_payload,
+    build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload,
+    build_runner_run_completed_diagnostic_payload, build_runner_run_failed_diagnostic_payload,
+    build_runner_run_interrupted_diagnostic_payload, build_runner_run_started_diagnostic_payload,
+    build_runner_single_phenotype_dispatch_started_diagnostic_payload, render_run_completed_lines,
+    render_run_failed_lines, render_run_interrupted_lines,
 };
 use run_metadata::{
     build_execution_run_artifacts_payload, build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload,
@@ -2002,6 +2008,19 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_runner_execution_plan_dispatch_started_diagnostic_payload, module)?)?;
     module
         .add_function(wrap_pyfunction!(build_runner_execution_plan_finalization_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_multi_phenotype_dispatch_started_diagnostic_payload, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(build_runner_single_phenotype_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_binary_engine_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_linear_engine_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;
     module.add_function(wrap_pyfunction!(default_shutdown_signal_numbers, module)?)?;

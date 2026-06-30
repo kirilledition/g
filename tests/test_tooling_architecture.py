@@ -20,6 +20,7 @@ import tooling.cli.rust_build_profiles as rust_build_profiles
 import tooling.cli.schema_check as schema_check
 import tooling.cli.server as grouped_server
 import tooling.configuration as tooling_configuration
+import tooling.debug.check_pyo3_stub as check_pyo3_stub
 import tooling.regenie.bgen_reader as regenie_bgen_reader
 from g.interface import config as interface_config
 from tooling.common import artifact_format as tooling_artifact_format
@@ -1129,6 +1130,21 @@ def test_grouped_cli_registries_document_tool_names() -> None:
         "smoke",
     )
     assert tooling_registry.registered_tool_names(grouped_server.TOOLS) == ("bootstrap_tools", "nsight_tools")
+
+
+def test_pyo3_stub_checker_reads_rustfmt_wrapped_pyfunction_registration() -> None:
+    registration_text = """
+    module.add_function(wrap_pyfunction!(
+        build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(build_runner_run_completed_diagnostic_payload, module)?)?;
+    """
+
+    assert check_pyo3_stub.FUNC_PATTERN.findall(registration_text) == [
+        "build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload",
+        "build_runner_run_completed_diagnostic_payload",
+    ]
 
 
 def test_tooling_entrypoint_exposes_cli_surface() -> None:

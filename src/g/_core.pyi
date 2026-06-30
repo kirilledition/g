@@ -2844,6 +2844,26 @@ def build_runner_execution_plan_finalization_started_diagnostic_payload(
     phenotype_count: int,
     association_mode: str,
 ) -> dict[str, object]: ...
+def build_runner_multi_phenotype_dispatch_started_diagnostic_payload(
+    phenotype_count: int,
+    association_mode: str,
+) -> dict[str, object]: ...
+def build_runner_single_phenotype_dispatch_started_diagnostic_payload(
+    association_mode: str,
+    phenotype: str,
+) -> dict[str, object]: ...
+def build_runner_binary_engine_dispatch_started_diagnostic_payload(
+    phenotype: str,
+) -> dict[str, object]: ...
+def build_runner_linear_engine_dispatch_started_diagnostic_payload(
+    phenotype: str,
+) -> dict[str, object]: ...
+def build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload(
+    phenotype_count: int,
+) -> dict[str, object]: ...
+def build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(
+    phenotype_count: int,
+) -> dict[str, object]: ...
 def build_execution_run_artifacts_payload(
     association_mode: str,
     phenotype_count: int,

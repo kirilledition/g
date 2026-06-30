@@ -338,6 +338,74 @@ def build_runner_execution_plan_finalization_started_diagnostic_payload(
     )
 
 
+def build_runner_multi_phenotype_dispatch_started_diagnostic_payload(
+    *,
+    phenotype_count: int,
+    association_mode: types.AssociationMode,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for multi-phenotype engine dispatch start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_multi_phenotype_dispatch_started_diagnostic_payload(
+            phenotype_count,
+            association_mode.value,
+        )
+    )
+
+
+def build_runner_single_phenotype_dispatch_started_diagnostic_payload(
+    *,
+    association_mode: types.AssociationMode,
+    phenotype: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for single-phenotype engine dispatch start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_single_phenotype_dispatch_started_diagnostic_payload(
+            association_mode.value,
+            phenotype,
+        )
+    )
+
+
+def build_runner_binary_engine_dispatch_started_diagnostic_payload(
+    *,
+    phenotype: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for binary engine dispatch start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_binary_engine_dispatch_started_diagnostic_payload(phenotype)
+    )
+
+
+def build_runner_linear_engine_dispatch_started_diagnostic_payload(
+    *,
+    phenotype: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for linear engine dispatch start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_linear_engine_dispatch_started_diagnostic_payload(phenotype)
+    )
+
+
+def build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload(
+    *,
+    phenotype_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for multi-phenotype binary engine dispatch start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload(phenotype_count)
+    )
+
+
+def build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(
+    *,
+    phenotype_count: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for multi-phenotype linear engine dispatch start."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(phenotype_count)
+    )
+
+
 def diagnostic_event_payload_from_native(payload: object) -> dict[str, typing.Any]:
     """Adapt a native diagnostic event payload to a mutable Python dictionary."""
     event_payload = native_mapping_payload(payload)
