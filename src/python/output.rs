@@ -64,6 +64,14 @@ pub(crate) struct NativeInitializedOutputRun {
     committed_chunk_identifiers: Vec<i64>,
 }
 
+struct Regenie2StatisticArrays {
+    beta: ArrayRef,
+    standard_error: ArrayRef,
+    chi_squared: ArrayRef,
+    log10_p_value: ArrayRef,
+    extra_code: Option<ArrayRef>,
+}
+
 #[pymethods]
 impl OutputWriterSession {
     #[new]
@@ -104,6 +112,7 @@ impl OutputWriterSession {
     #[pyo3(signature = (metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
     fn write_regenie2_native_chunk(
         &self,
+        py: Python<'_>,
         metadata: PyRef<'_, PyVariantMetadata>,
         chunk_stats: PyRef<'_, PyChunkStats>,
         beta: PyReadonlyArray1<'_, f32>,
@@ -129,22 +138,27 @@ impl OutputWriterSession {
             }
             _ => return Err(PyRuntimeError::new_err("Extra code array state was inconsistent.")),
         };
-        self.inner
-            .write_regenie2_native_chunk_handle_arrays(
-                chunk_handle,
-                beta_array,
-                standard_error_array,
-                chi_squared_array,
-                log10_p_value_array,
-                extra_code_array,
-            )
-            .map_err(|error| output_writer_error_to_py(error, "write_regenie2_native_chunk"))
+        let statistic_arrays = Regenie2StatisticArrays {
+            beta: beta_array,
+            standard_error: standard_error_array,
+            chi_squared: chi_squared_array,
+            log10_p_value: log10_p_value_array,
+            extra_code: extra_code_array,
+        };
+        write_regenie2_chunk_arrays_detached(
+            py,
+            &self.inner,
+            chunk_handle,
+            statistic_arrays,
+            "write_regenie2_native_chunk",
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
     fn write_regenie2_native_chunk_f64(
         &self,
+        py: Python<'_>,
         metadata: PyRef<'_, PyVariantMetadata>,
         chunk_stats: PyRef<'_, PyChunkStats>,
         beta: PyReadonlyArray1<'_, f64>,
@@ -170,16 +184,20 @@ impl OutputWriterSession {
             }
             _ => return Err(PyRuntimeError::new_err("Extra code array state was inconsistent.")),
         };
-        self.inner
-            .write_regenie2_native_chunk_handle_arrays(
-                chunk_handle,
-                beta_array,
-                standard_error_array,
-                chi_squared_array,
-                log10_p_value_array,
-                extra_code_array,
-            )
-            .map_err(|error| output_writer_error_to_py(error, "write_regenie2_native_chunk_f64"))
+        let statistic_arrays = Regenie2StatisticArrays {
+            beta: beta_array,
+            standard_error: standard_error_array,
+            chi_squared: chi_squared_array,
+            log10_p_value: log10_p_value_array,
+            extra_code: extra_code_array,
+        };
+        write_regenie2_chunk_arrays_detached(
+            py,
+            &self.inner,
+            chunk_handle,
+            statistic_arrays,
+            "write_regenie2_native_chunk_f64",
+        )
     }
 
     fn finish(&self, py: Python<'_>) -> PyResult<Option<String>> {
@@ -214,6 +232,7 @@ impl OutputWriterSession {
     extra_code=None,
 ))]
 pub(crate) fn write_regenie2_multi_native_chunk(
+    py: Python<'_>,
     writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
     active_trait_indices: Vec<usize>,
     metadata: PyRef<'_, PyVariantMetadata>,
@@ -271,17 +290,20 @@ pub(crate) fn write_regenie2_multi_native_chunk(
         let chi_squared_array = build_copied_arrow_array::<f32, Float32Type>(chi_squared_slice);
         let log10_p_value_array = build_copied_arrow_array::<f32, Float32Type>(log10_p_value_slice);
         let extra_code_array = extra_code_slice.map(build_copied_arrow_array::<i32, Int32Type>);
-        writer_sessions[trait_index]
-            .inner
-            .write_regenie2_native_chunk_handle_arrays(
-                chunk_handle.clone(),
-                beta_array,
-                standard_error_array,
-                chi_squared_array,
-                log10_p_value_array,
-                extra_code_array,
-            )
-            .map_err(|error| output_writer_error_to_py(error, "write_regenie2_multi_native_chunk"))?;
+        let statistic_arrays = Regenie2StatisticArrays {
+            beta: beta_array,
+            standard_error: standard_error_array,
+            chi_squared: chi_squared_array,
+            log10_p_value: log10_p_value_array,
+            extra_code: extra_code_array,
+        };
+        write_regenie2_chunk_arrays_detached(
+            py,
+            &writer_sessions[trait_index].inner,
+            chunk_handle.clone(),
+            statistic_arrays,
+            "write_regenie2_multi_native_chunk",
+        )?;
     }
     Ok(())
 }
@@ -301,6 +323,7 @@ pub(crate) fn write_regenie2_multi_native_chunk(
     extra_code=None,
 ))]
 pub(crate) fn write_regenie2_multi_native_chunk_f64(
+    py: Python<'_>,
     writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
     active_trait_indices: Vec<usize>,
     metadata: PyRef<'_, PyVariantMetadata>,
@@ -358,17 +381,20 @@ pub(crate) fn write_regenie2_multi_native_chunk_f64(
         let chi_squared_array = build_copied_arrow_array::<f64, Float64Type>(chi_squared_slice);
         let log10_p_value_array = build_copied_arrow_array::<f64, Float64Type>(log10_p_value_slice);
         let extra_code_array = extra_code_slice.map(build_copied_arrow_array::<i32, Int32Type>);
-        writer_sessions[trait_index]
-            .inner
-            .write_regenie2_native_chunk_handle_arrays(
-                chunk_handle.clone(),
-                beta_array,
-                standard_error_array,
-                chi_squared_array,
-                log10_p_value_array,
-                extra_code_array,
-            )
-            .map_err(|error| output_writer_error_to_py(error, "write_regenie2_multi_native_chunk_f64"))?;
+        let statistic_arrays = Regenie2StatisticArrays {
+            beta: beta_array,
+            standard_error: standard_error_array,
+            chi_squared: chi_squared_array,
+            log10_p_value: log10_p_value_array,
+            extra_code: extra_code_array,
+        };
+        write_regenie2_chunk_arrays_detached(
+            py,
+            &writer_sessions[trait_index].inner,
+            chunk_handle.clone(),
+            statistic_arrays,
+            "write_regenie2_multi_native_chunk_f64",
+        )?;
     }
     Ok(())
 }
@@ -685,6 +711,26 @@ pub(crate) fn repair_strict_manifest_chunk_commits(
             .collect::<Vec<_>>(),
     )
     .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+fn write_regenie2_chunk_arrays_detached(
+    py: Python<'_>,
+    writer_session: &NativeOutputWriterSession,
+    chunk_handle: NativeChunkHandle,
+    statistic_arrays: Regenie2StatisticArrays,
+    operation: &str,
+) -> PyResult<()> {
+    py.detach(move || {
+        writer_session.write_regenie2_native_chunk_handle_arrays(
+            chunk_handle,
+            statistic_arrays.beta,
+            statistic_arrays.standard_error,
+            statistic_arrays.chi_squared,
+            statistic_arrays.log10_p_value,
+            statistic_arrays.extra_code,
+        )
+    })
+    .map_err(|error| output_writer_error_to_py(error, operation))
 }
 
 fn manifest_file_fingerprint_to_dict<'py>(
