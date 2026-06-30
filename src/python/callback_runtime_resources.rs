@@ -1476,6 +1476,14 @@ impl NativeCallbackRuntimeResources {
         scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item)
     }
 
+    fn plan_dosage_work_drain_completion_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> NativeDosageWorkDrainCompletionPlan {
+        self.plan_dosage_work_drain_completion(py, !work_item.is_none())
+    }
+
     fn plan_validated_dosage_work_item_dispatch(
         &self,
         py: Python<'_>,
@@ -1858,6 +1866,14 @@ impl NativeCallbackRuntimeResources {
         has_result_work_item: bool,
     ) -> NativeResultWriteDrainCompletionPlan {
         self.plan_result_write_drain_completion_value(py, has_result_work_item)
+    }
+
+    fn plan_result_write_drain_completion_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> NativeResultWriteDrainCompletionPlan {
+        self.plan_result_write_drain_completion_value(py, !work_item.is_none())
     }
 
     fn plan_validated_result_write_item_dispatch(

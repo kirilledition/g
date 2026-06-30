@@ -1314,9 +1314,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> _core.NativeDosageWorkDrainCompletionPlan:
         """Plan dosage work queue drain completion from native scheduler policy."""
         if self.uses_native_callback_runtime_resources():
-            return self.callback_runtime_resources.plan_dosage_work_drain_completion(
-                has_dosage_work_item=work_item is not None,
-            )
+            return self.callback_runtime_resources.plan_dosage_work_drain_completion_for_object(work_item)
         return self.callback_scheduler_state.plan_dosage_work_drain_completion(
             has_dosage_work_item=work_item is not None,
         )
@@ -2641,9 +2639,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> _core.NativeResultWriteDrainCompletionPlan:
         """Plan result write queue drain completion from native scheduler policy."""
         if self.uses_native_callback_runtime_resources():
-            return self.callback_runtime_resources.plan_result_write_drain_completion(
-                has_result_work_item=work_item is not None,
-            )
+            return self.callback_runtime_resources.plan_result_write_drain_completion_for_object(work_item)
         return self.callback_scheduler_state.plan_result_write_drain_completion(
             has_result_work_item=work_item is not None,
             flush_binary_correction_diagnostics_on_stop=self.flush_binary_correction_diagnostics_on_result_stop,

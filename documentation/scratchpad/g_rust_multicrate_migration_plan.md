@@ -1114,6 +1114,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now own production dosage/result drain planning
   and validated work-item dispatch planning for object-based production callers,
   leaving Python to perform JAX/write side effects.
+- Callback runtime resources now derive production dosage/result drain
+  completion state directly from work-item objects instead of Python passing
+  boolean queue-sentinel classifications.
 - Callback runtime resources now classify production dosage work-item objects
   for native dispatch and stage-duration attribution, leaving Python to perform
   JAX side effects and timing emission.

@@ -3040,10 +3040,6 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
     assert dosage_drain_plan.should_stop is True
     dosage_continue_plan = runtime_resources.plan_dosage_work_drain_completion(has_dosage_work_item=True)
     assert dosage_continue_plan.should_stop is False
-    dosage_dispatch_plan = runtime_resources.plan_validated_dosage_work_item_dispatch(
-        callback_runtime.DosageWorkItemKind.SAMPLE_MAJOR_DOSAGE.value
-    )
-    assert dosage_dispatch_plan.should_process_sample_major_dosage is True
     metadata = build_native_metadata()
     chunk_stats = typing.cast("_core.ChunkStats", SimpleNamespace())
     sample_major_work_item = callback_shared.PreprocessedDosageChunkWorkItem(
@@ -3051,6 +3047,14 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         genotype_matrix=np.ones((2, 2), dtype=np.float32),
         chunk_stats=chunk_stats,
     )
+    object_dosage_drain_plan = runtime_resources.plan_dosage_work_drain_completion_for_object(None)
+    assert object_dosage_drain_plan.should_stop is True
+    object_dosage_continue_plan = runtime_resources.plan_dosage_work_drain_completion_for_object(sample_major_work_item)
+    assert object_dosage_continue_plan.should_stop is False
+    dosage_dispatch_plan = runtime_resources.plan_validated_dosage_work_item_dispatch(
+        callback_runtime.DosageWorkItemKind.SAMPLE_MAJOR_DOSAGE.value
+    )
+    assert dosage_dispatch_plan.should_process_sample_major_dosage is True
     object_dosage_dispatch_plan = runtime_resources.plan_validated_dosage_work_item_dispatch_for_object(
         sample_major_work_item
     )
@@ -3091,10 +3095,6 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
     )
     assert result_continue_plan.should_stop is False
     assert result_continue_plan.should_flush_binary_correction_diagnostics is False
-    result_dispatch_plan = runtime_resources.plan_validated_result_write_item_dispatch(
-        callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
-    )
-    assert result_dispatch_plan.should_process_result_write_item is True
     result_write_work_item = callback_shared.Regenie2ResultWriteWorkItem(
         metadata=metadata,
         chunk_stats=chunk_stats,
@@ -3107,6 +3107,18 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
         release_in_flight_slot=False,
         binary_chunk_diagnostics=None,
     )
+    object_result_drain_plan = runtime_resources.plan_result_write_drain_completion_for_object(None)
+    assert object_result_drain_plan.should_stop is True
+    assert object_result_drain_plan.should_flush_binary_correction_diagnostics is True
+    object_result_continue_plan = runtime_resources.plan_result_write_drain_completion_for_object(
+        result_write_work_item
+    )
+    assert object_result_continue_plan.should_stop is False
+    assert object_result_continue_plan.should_flush_binary_correction_diagnostics is False
+    result_dispatch_plan = runtime_resources.plan_validated_result_write_item_dispatch(
+        callback_runtime.ResultWriteItemKind.SINGLE_RESULT.value,
+    )
+    assert result_dispatch_plan.should_process_result_write_item is True
     object_result_dispatch_plan = runtime_resources.plan_validated_result_write_item_dispatch_for_object(
         result_write_work_item
     )
@@ -3175,6 +3187,91 @@ def test_native_callback_runtime_resources_own_dispatch_and_drain_plans() -> Non
             genotype_matrix_by_variant_count=1,
             chunk_stats_count=2,
         )
+
+
+def test_native_callback_runner_routes_drain_completion_through_native_work_item_objects() -> None:
+    class DrainCompletionRuntimeResourcesProbe:
+        def __init__(self, runtime_resources: callback_runtime._core.NativeCallbackRuntimeResources) -> None:
+            self.runtime_resources = runtime_resources
+            self.dosage_work_items: list[object] = []
+            self.result_work_items: list[object] = []
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.runtime_resources, name)
+
+        def plan_dosage_work_drain_completion_for_object(
+            self,
+            work_item: object,
+        ) -> callback_runtime._core.NativeDosageWorkDrainCompletionPlan:
+            self.dosage_work_items.append(work_item)
+            return self.runtime_resources.plan_dosage_work_drain_completion_for_object(work_item)
+
+        def plan_result_write_drain_completion_for_object(
+            self,
+            work_item: object,
+        ) -> callback_runtime._core.NativeResultWriteDrainCompletionPlan:
+            self.result_work_items.append(work_item)
+            return self.runtime_resources.plan_result_write_drain_completion_for_object(work_item)
+
+        def plan_dosage_work_drain_completion(
+            self,
+            *,
+            has_dosage_work_item: bool,
+        ) -> callback_runtime._core.NativeDosageWorkDrainCompletionPlan:
+            del has_dosage_work_item
+            raise AssertionError("production runner should plan dosage drain completion from work item objects")
+
+        def plan_result_write_drain_completion(
+            self,
+            *,
+            has_result_work_item: bool,
+        ) -> callback_runtime._core.NativeResultWriteDrainCompletionPlan:
+            del has_result_work_item
+            raise AssertionError("production runner should plan result drain completion from work item objects")
+
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+    )
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("_core.ChunkStats", SimpleNamespace())
+    dosage_work_item = callback_shared.PreprocessedDosageChunkWorkItem(
+        metadata=metadata,
+        genotype_matrix=np.ones((2, 2), dtype=np.float32),
+        chunk_stats=chunk_stats,
+    )
+    result_work_item = callback_shared.Regenie2ResultWriteWorkItem(
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=jnp.ones(2),
+        standard_error=jnp.ones(2),
+        chi_squared=jnp.ones(2),
+        log10_p_value=jnp.ones(2),
+        extra_code=None,
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=None,
+    )
+    runtime_resources_probe = DrainCompletionRuntimeResourcesProbe(callback.callback_runtime_resources)
+    callback_for_probe = typing.cast("typing.Any", callback)
+    original_runtime_resources = callback.callback_runtime_resources
+    try:
+        callback_for_probe.callback_runtime_resources = runtime_resources_probe
+        dosage_stop_plan = callback.plan_dosage_work_drain_completion(None)
+        dosage_continue_plan = callback.plan_dosage_work_drain_completion(dosage_work_item)
+        result_stop_plan = callback.plan_result_write_drain_completion(None)
+        result_continue_plan = callback.plan_result_write_drain_completion(result_work_item)
+    finally:
+        callback_for_probe.callback_runtime_resources = original_runtime_resources
+        callback.finish()
+
+    assert dosage_stop_plan.should_stop is True
+    assert dosage_continue_plan.should_stop is False
+    assert result_stop_plan.should_stop is True
+    assert result_continue_plan.should_stop is False
+    assert runtime_resources_probe.dosage_work_items == [None, dosage_work_item]
+    assert runtime_resources_probe.result_work_items == [None, result_work_item]
 
 
 def test_native_callback_runtime_resources_own_result_in_flight_slots() -> None:

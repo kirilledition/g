@@ -1393,6 +1393,10 @@ class NativeCallbackRuntimeResources:
         self,
         has_dosage_work_item: bool,
     ) -> NativeDosageWorkDrainCompletionPlan: ...
+    def plan_dosage_work_drain_completion_for_object(
+        self,
+        work_item: object,
+    ) -> NativeDosageWorkDrainCompletionPlan: ...
     def plan_validated_dosage_work_item_dispatch(
         self,
         dosage_work_item_kind: str,
@@ -1476,6 +1480,10 @@ class NativeCallbackRuntimeResources:
     def plan_result_write_drain_completion(
         self,
         has_result_work_item: bool,
+    ) -> NativeResultWriteDrainCompletionPlan: ...
+    def plan_result_write_drain_completion_for_object(
+        self,
+        work_item: object,
     ) -> NativeResultWriteDrainCompletionPlan: ...
     def plan_validated_result_write_item_dispatch(
         self,
