@@ -693,9 +693,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         blocked: bool,
     ) -> None:
         """Record a bounded-resource stage duration plus pressure metadata."""
-        elapsed_seconds = time.perf_counter() - start_time
         if self.stage_timing_recorder is None:
             return
+        elapsed_seconds = time.perf_counter() - start_time
         observation = self.plan_current_queue_stage_backpressure_observation(
             queue_name=resource_name,
             operation_name=operation_name,
@@ -791,9 +791,9 @@ class NativeBgenCallbackRunner(abc.ABC):
         blocked: bool,
     ) -> None:
         """Record dosage-buffer pool stage duration plus pressure metadata."""
-        elapsed_seconds = time.perf_counter() - start_time
         if self.stage_timing_recorder is None:
             return
+        elapsed_seconds = time.perf_counter() - start_time
         observation = self.plan_dosage_buffer_pool_stage_backpressure_observation(
             operation_name=operation_name,
             free_buffer_count=free_buffer_count,
@@ -1597,6 +1597,17 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Put work into the bounded worker queue while surfacing worker errors."""
         self.start()
         if self.uses_native_callback_runtime_resources():
+            if self.stage_timing_recorder is None:
+                while True:
+                    self.raise_worker_error_if_present()
+                    put_result = (
+                        self.callback_runtime_resources.put_dosage_work_item_with_optional_backpressure_observation(
+                            work_item
+                        )
+                    )
+                    if put_result.should_retry_put:
+                        continue
+                    return
             while True:
                 self.raise_worker_error_if_present()
                 put_start_time = time.perf_counter()
@@ -1753,6 +1764,17 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Put a computed result into the bounded materialization/write queue."""
         self.start()
         if self.uses_native_callback_runtime_resources():
+            if self.stage_timing_recorder is None:
+                while True:
+                    self.raise_worker_error_if_present()
+                    put_result = (
+                        self.callback_runtime_resources.put_result_write_item_with_optional_backpressure_observation(
+                            work_item
+                        )
+                    )
+                    if put_result.should_retry_put:
+                        continue
+                    return
             while True:
                 self.raise_worker_error_if_present()
                 put_start_time = time.perf_counter()

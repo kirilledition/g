@@ -343,6 +343,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     with (
         patch("g.interface.config.validate_config_for_run"),
         patch("g.runner.runtime.configure_runtime_before_jax_import") as mock_configure_runtime_before_jax_import,
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest={"committed_chunks": []}),
@@ -550,6 +551,8 @@ def test_regenie_does_not_write_run_start_metadata_before_output_initialization_
         raise RuntimeError(message)
 
     with (
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
+        patch("g.runner.runtime.initialize_logging"),
         patch("g.interface.config.validate_config_for_run"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
@@ -591,6 +594,8 @@ def test_regenie_writes_run_start_metadata_after_output_initialization() -> None
         raise RuntimeError(message)
 
     with (
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
+        patch("g.runner.runtime.initialize_logging"),
         patch("g.interface.config.validate_config_for_run"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
@@ -641,6 +646,7 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
         return Path("results/output.g/trait.regenie2_linear.run/final.parquet")
 
     with (
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch("g.runner.runtime.initialize_logging", side_effect=record_logging_bootstrap),
         patch("g.runner.runtime.configure_runtime", side_effect=record_native_runtime_bootstrap),
         patch("g.runner.runtime.configure_runtime_before_jax_import", side_effect=record_jax_bootstrap),
@@ -1374,6 +1380,8 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
     )
 
     with (
+        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
+        patch("g.runner.runtime.initialize_logging"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
             "g.execution_plan.output.prepare_output_run",

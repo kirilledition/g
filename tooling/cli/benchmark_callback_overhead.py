@@ -205,6 +205,8 @@ class CallbackOverheadBenchmarkRunner(callback_runtime.NativeBgenCallbackRunner)
             worker_name="callback-overhead-benchmark",
             staging_depth=staging_depth,
             native_callback_batch_size=1,
+            expected_result_work_item_kind=callback_runtime.ResultWriteItemKind.SINGLE_RESULT,
+            flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
             stage_timing_recorder=stage_timing_recorder,
