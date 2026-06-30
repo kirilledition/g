@@ -2825,6 +2825,10 @@ def build_native_runtime_knobs_configured_diagnostic_payload(
     bgen_decode_tile_variant_count: int,
     threads: int | None,
 ) -> dict[str, object]: ...
+def record_native_runtime_knobs_configured_diagnostic_event(
+    bgen_decode_tile_variant_count: int,
+    threads: int | None,
+) -> None: ...
 def build_runner_metadata_artifacts_finalized_diagnostic_payload(
     association_mode: str,
     phenotype_count: int,

@@ -322,6 +322,18 @@ pub fn build_native_runtime_knobs_configured_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_native_runtime_knobs_configured_diagnostic_event(
+    bgen_decode_tile_variant_count: i64,
+    threads: Option<i64>,
+) -> PyResult<()> {
+    let payload = native_run_events::build_native_runtime_knobs_configured_diagnostic_payload(
+        bgen_decode_tile_variant_count,
+        threads,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_runner_metadata_artifacts_finalized_diagnostic_payload<'py>(
     py: Python<'py>,
     association_mode: &str,

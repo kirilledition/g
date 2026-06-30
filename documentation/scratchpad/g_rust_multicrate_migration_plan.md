@@ -1502,6 +1502,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   native run-event diagnostic payload builders.
 - Native runtime knob configuration diagnostics now use native run-event
   diagnostic payload builders.
+- Native runtime knob configuration production paths now call the native
+  diagnostic recorder directly, leaving Python payload dict materialization
+  only for compatibility helpers and tests.
 - Runner metadata artifact-finalization diagnostics now use native run-event
   diagnostic payload builders.
 - Preflight warning diagnostics now use native run-event diagnostic payload

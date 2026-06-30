@@ -66,6 +66,14 @@ class NativeDiagnosticCore:
             },
         }
 
+    def record_native_runtime_knobs_configured_diagnostic_event(
+        self,
+        bgen_decode_tile_variant_count: int,
+        threads: int | None,
+    ) -> None:
+        """Accept one native runtime knob diagnostic event."""
+        del bgen_decode_tile_variant_count, threads
+
 
 def complete_mock_output_initialization(
     keyword_arguments: dict[str, object],
@@ -861,24 +869,15 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
 
 def test_configure_runtime_sets_native_knobs_and_threads() -> None:
     calls: list[tuple[str, int | str]] = []
-    diagnostic_calls: list[tuple[str, str, str, dict[str, object]]] = []
+    diagnostic_calls: list[tuple[int, int | None]] = []
 
     class FakeCoreModule(NativeDiagnosticCore):
-        def emit_diagnostic_event_fields(
+        def record_native_runtime_knobs_configured_diagnostic_event(
             self,
-            level: str,
-            event: str,
-            message: str,
-            fields: object,
+            bgen_decode_tile_variant_count: int,
+            threads: int | None,
         ) -> None:
-            diagnostic_calls.append(
-                (
-                    level,
-                    event,
-                    message,
-                    dict(typing.cast("typing.Mapping[str, object]", fields)),
-                )
-            )
+            diagnostic_calls.append((bgen_decode_tile_variant_count, threads))
 
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
@@ -897,14 +896,7 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
             build_trait_config(threads=4),
         )
 
-    assert diagnostic_calls == [
-        (
-            "debug",
-            "native_runtime_knobs_configured",
-            "Configuring native runtime knobs.",
-            {"bgen_decode_tile_variant_count": 32, "threads": 4},
-        )
-    ]
+    assert diagnostic_calls == [(32, 4)]
     assert calls == [("tile", 32), ("threads", 4)]
 
 
