@@ -402,18 +402,21 @@ pub(crate) fn write_regenie2_multi_native_chunk_f64(
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn finalize_output_run_chunks(
+    py: Python<'_>,
     run_directory: String,
     chunks_directory: String,
     association_mode: String,
     output_format: String,
 ) -> PyResult<String> {
     let native_output_format = OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
-    finalize_native_output_run_chunks(
-        Path::new(&run_directory),
-        Path::new(&chunks_directory),
-        &association_mode,
-        native_output_format,
-    )
+    py.detach(|| {
+        finalize_native_output_run_chunks(
+            Path::new(&run_directory),
+            Path::new(&chunks_directory),
+            &association_mode,
+            native_output_format,
+        )
+    })
     .map(|path| path.display().to_string())
     .map_err(|error| output_writer_error_to_py(error, "finalize_output_run_chunks"))
 }
@@ -437,6 +440,7 @@ pub(crate) fn resolve_output_run_paths(
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn prepare_output_run(
+    py: Python<'_>,
     output_root: String,
     association_mode: String,
     output_format: String,
@@ -445,9 +449,9 @@ pub(crate) fn prepare_output_run(
 ) -> PyResult<NativePreparedOutputRun> {
     let _runtime_compatibility_token = runtime_compatibility_token.native_token();
     let native_output_format = OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
-    let prepared_output_run =
-        prepare_native_output_run(Path::new(&output_root), &association_mode, native_output_format, resume)
-            .map_err(|error| output_writer_error_to_py(error, "prepare_output_run"))?;
+    let prepared_output_run = py
+        .detach(|| prepare_native_output_run(Path::new(&output_root), &association_mode, native_output_format, resume))
+        .map_err(|error| output_writer_error_to_py(error, "prepare_output_run"))?;
     Ok(NativePreparedOutputRun {
         run_directory: prepared_output_run.output_run_paths.run_directory.display().to_string(),
         chunks_directory: prepared_output_run.output_run_paths.chunks_directory.display().to_string(),
@@ -457,15 +461,15 @@ pub(crate) fn prepare_output_run(
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn load_run_manifest_json(run_directory: String) -> PyResult<Option<String>> {
-    load_native_run_manifest_json(Path::new(&run_directory))
+pub(crate) fn load_run_manifest_json(py: Python<'_>, run_directory: String) -> PyResult<Option<String>> {
+    py.detach(|| load_native_run_manifest_json(Path::new(&run_directory)))
         .map_err(|error| output_writer_error_to_py(error, "load_run_manifest_json"))
 }
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn write_run_manifest_json(run_directory: String, manifest_json: String) -> PyResult<()> {
-    write_native_run_manifest_json(Path::new(&run_directory), &manifest_json)
+pub(crate) fn write_run_manifest_json(py: Python<'_>, run_directory: String, manifest_json: String) -> PyResult<()> {
+    py.detach(|| write_native_run_manifest_json(Path::new(&run_directory), &manifest_json))
         .map_err(|error| output_writer_error_to_py(error, "write_run_manifest_json"))
 }
 
@@ -585,8 +589,8 @@ pub(crate) fn build_prepared_run_plan_json(prepared_run_plan_input_json: String)
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_file_content_sha256_value(path: String) -> PyResult<String> {
-    build_native_file_content_sha256(Path::new(&path))
+pub(crate) fn build_file_content_sha256_value(py: Python<'_>, path: String) -> PyResult<String> {
+    py.detach(|| build_native_file_content_sha256(Path::new(&path)))
         .map_err(|error| output_writer_error_to_py(error, "build_file_content_sha256_value"))
 }
 
@@ -605,7 +609,8 @@ pub(crate) fn build_manifest_file_fingerprint_payload<'py>(
     path: String,
     include_content_hash: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let file_fingerprint = build_native_manifest_file_fingerprint(Path::new(&path), include_content_hash)
+    let file_fingerprint = py
+        .detach(|| build_native_manifest_file_fingerprint(Path::new(&path), include_content_hash))
         .map_err(|error| output_writer_error_to_py(error, "build_manifest_file_fingerprint_payload"))?;
     manifest_file_fingerprint_to_dict(py, &file_fingerprint)
 }
@@ -649,6 +654,7 @@ pub(crate) fn read_manifest_committed_chunk_identifiers(manifest_json: String) -
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn initialize_output_run(
+    py: Python<'_>,
     run_directory: String,
     chunks_directory: String,
     existing_manifest_json: Option<String>,
@@ -660,39 +666,48 @@ pub(crate) fn initialize_output_run(
     let _runtime_compatibility_token = runtime_compatibility_token.native_token();
     let native_resume_mode = OutputResumeMode::parse(&resume_mode)
         .map_err(|error| output_writer_error_to_py(error, "parse_output_resume_mode"))?;
-    let initialized_output_run = initialize_native_output_run(
-        Path::new(&run_directory),
-        Path::new(&chunks_directory),
-        existing_manifest_json.as_deref(),
-        &current_header_json,
-        resume,
-        native_resume_mode,
-    )
-    .map_err(|error| output_writer_error_to_py(error, "initialize_output_run"))?;
+    let initialized_output_run = py
+        .detach(|| {
+            initialize_native_output_run(
+                Path::new(&run_directory),
+                Path::new(&chunks_directory),
+                existing_manifest_json.as_deref(),
+                &current_header_json,
+                resume,
+                native_resume_mode,
+            )
+        })
+        .map_err(|error| output_writer_error_to_py(error, "initialize_output_run"))?;
     Ok(NativeInitializedOutputRun { committed_chunk_identifiers: initialized_output_run.committed_chunk_identifiers })
 }
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn scan_committed_chunk_identifiers(chunks_directory: String) -> PyResult<Vec<i64>> {
-    scan_native_committed_chunk_identifiers(Path::new(&chunks_directory))
+pub(crate) fn scan_committed_chunk_identifiers(py: Python<'_>, chunks_directory: String) -> PyResult<Vec<i64>> {
+    py.detach(|| scan_native_committed_chunk_identifiers(Path::new(&chunks_directory)))
         .map_err(|error| output_writer_error_to_py(error, "scan_committed_chunk_identifiers"))
 }
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn validate_strict_manifest_chunks(chunks_directory: String, manifest_json: String) -> PyResult<Vec<i64>> {
-    validate_native_strict_manifest_chunks(Path::new(&chunks_directory), &manifest_json)
+pub(crate) fn validate_strict_manifest_chunks(
+    py: Python<'_>,
+    chunks_directory: String,
+    manifest_json: String,
+) -> PyResult<Vec<i64>> {
+    py.detach(|| validate_native_strict_manifest_chunks(Path::new(&chunks_directory), &manifest_json))
         .map_err(|error| output_writer_error_to_py(error, "validate_strict_manifest_chunks"))
 }
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn repair_strict_manifest_chunk_commits(
+    py: Python<'_>,
     chunks_directory: String,
     manifest_json: String,
 ) -> PyResult<String> {
-    let chunk_commits = repair_native_strict_manifest_chunk_commits(Path::new(&chunks_directory), &manifest_json)
+    let chunk_commits = py
+        .detach(|| repair_native_strict_manifest_chunk_commits(Path::new(&chunks_directory), &manifest_json))
         .map_err(|error| output_writer_error_to_py(error, "repair_strict_manifest_chunk_commits"))?;
     serde_json::to_string(
         &chunk_commits

@@ -1301,6 +1301,10 @@ Remove Python as the chunk-level scheduler.
 - Native output writer PyO3 entry points now release the GIL around Rust
   chunk enqueue/write dispatch after copying Python array inputs into owned
   Arrow arrays.
+- Native output lifecycle PyO3 helpers now release the GIL around Rust
+  filesystem and manifest I/O for output preparation, initialization,
+  finalization, manifest load/write, fingerprinting, committed-chunk scanning,
+  and strict manifest validation/repair.
 
 ### Tests
 
