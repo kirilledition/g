@@ -1465,6 +1465,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Runner, output, preflight, callback, native-dispatch, and pipeline diagnostic
   helpers now use the same native field-mapping emitter, leaving legacy
   JSON-string diagnostic emission only for compatibility adapters.
+- Telemetry close helpers now consult the native close plan and use the native
+  run-session close-with-event path when a native telemetry handle is present,
+  keeping legacy `close_with_event` only for adapters and tests without native
+  handles.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

@@ -1020,6 +1020,32 @@ def test_close_telemetry_session_uses_close_with_event_contract() -> None:
     assert fake_session.close_metadata == {"writer_counters": {"written_event_count": 3}}
 
 
+def test_close_telemetry_session_uses_native_close_plan() -> None:
+    class FakeNativeTelemetrySession:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def finish_with_current_close_event_metadata(self) -> object:
+            self.closed = True
+            return {"writer_counters": {"written_event_count": 1}}
+
+    class FakeNativeCloseableSession:
+        def __init__(self) -> None:
+            self.native_telemetry_session = FakeNativeTelemetrySession()
+            self.legacy_closed = False
+
+        def close_with_event(self) -> object:
+            self.legacy_closed = True
+            return {"writer_counters": {"written_event_count": 0}}
+
+    fake_session = FakeNativeCloseableSession()
+
+    telemetry.close_telemetry_session(fake_session)
+
+    assert fake_session.native_telemetry_session.closed is True
+    assert fake_session.legacy_closed is False
+
+
 def test_telemetry_progress_throttle_emits_after_chunk_interval(tmp_path: Path) -> None:
     telemetry_paths = telemetry.TelemetryPaths(
         log_dir=tmp_path,
