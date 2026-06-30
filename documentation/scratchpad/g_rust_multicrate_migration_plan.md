@@ -1271,6 +1271,8 @@ Remove Python as the chunk-level scheduler.
 - The PyO3-backed coordinator scaffold now accepts a typed Python run-effects
   adapter so Rust owns phase transitions, output-write calls, writer draining,
   and finalization ordering for group-level chromosome runs.
+- The typed PyO3 run-effects adapter is now available across single-batch,
+  chromosome-batch, and group-chromosome coordinator entrypoints.
 - Dosage callback batch partitioning now uses an explicit `g-engine` chunk
   batch plan; the PyO3 BGEN delivery loop consumes native-planned batches
   instead of deciding flush boundaries itself.

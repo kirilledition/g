@@ -303,16 +303,48 @@ impl NativePythonAssociationBackend {
         variant_count: usize,
         variant_offset: usize,
     ) -> PyResult<NativeAssociationEngineRunReport> {
-        let group = PreparedGroupInput::new(group_identifier, phenotype_count);
-        let predictions = PredictionView::new(prediction_chromosome.as_str(), prediction_row_count);
-        let batch = GenotypeBatchView::new(batch_chromosome.as_str(), variant_count, variant_offset);
-        let input = EngineRunInput::new(group, chromosome.as_str(), predictions, batch);
-        let backend = Self { backend: self.backend.clone_ref(py) };
-        let mut coordinator = EngineCoordinator::new(backend);
-        coordinator
-            .run_single_batch(&input)
-            .map(|report| NativeAssociationEngineRunReport { inner: report })
-            .map_err(|error| engine_error_to_py_runtime_error(&error))
+        self.run_single_batch_impl(
+            py,
+            group_identifier,
+            phenotype_count,
+            chromosome,
+            prediction_chromosome,
+            prediction_row_count,
+            batch_chromosome,
+            variant_count,
+            variant_offset,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn run_single_batch_with_effects<'py>(
+        &self,
+        py: Python<'py>,
+        group_identifier: String,
+        phenotype_count: usize,
+        chromosome: String,
+        prediction_chromosome: String,
+        prediction_row_count: usize,
+        batch_chromosome: String,
+        variant_count: usize,
+        variant_offset: usize,
+        effects: PyRef<'py, NativePythonEngineRunEffects>,
+    ) -> PyResult<NativeAssociationEngineRunReport> {
+        let mut native_effects = NativePythonEngineRunEffects { effects: effects.effects.clone_ref(py) };
+        self.run_single_batch_impl(
+            py,
+            group_identifier,
+            phenotype_count,
+            chromosome,
+            prediction_chromosome,
+            prediction_row_count,
+            batch_chromosome,
+            variant_count,
+            variant_offset,
+            Some(&mut native_effects),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -327,23 +359,42 @@ impl NativePythonAssociationBackend {
         prediction_row_count: usize,
         batches: Vec<PyRef<'py, NativeGenotypeBatchView>>,
     ) -> PyResult<NativeAssociationChromosomeRunReport> {
-        let group = PreparedGroupInput::new(group_identifier, phenotype_count);
-        let predictions = PredictionView::new(prediction_chromosome.as_str(), prediction_row_count);
-        let batch_chromosomes = batches.iter().map(|batch| batch.chromosome.clone()).collect::<Vec<_>>();
-        let batch_views = batches
-            .iter()
-            .zip(&batch_chromosomes)
-            .map(|(batch, batch_chromosome)| {
-                GenotypeBatchView::new(batch_chromosome.as_str(), batch.variant_count, batch.variant_offset)
-            })
-            .collect::<Vec<_>>();
-        let input = EngineChromosomeRunInput::new(group, chromosome.as_str(), predictions, batch_views);
-        let backend = Self { backend: self.backend.clone_ref(py) };
-        let mut coordinator = EngineCoordinator::new(backend);
-        coordinator
-            .run_chromosome_batches(&input)
-            .map(|report| NativeAssociationChromosomeRunReport { inner: report })
-            .map_err(|error| engine_error_to_py_runtime_error(&error))
+        self.run_chromosome_batches_impl(
+            py,
+            group_identifier,
+            phenotype_count,
+            chromosome,
+            prediction_chromosome,
+            prediction_row_count,
+            batches,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn run_chromosome_batches_with_effects<'py>(
+        &self,
+        py: Python<'py>,
+        group_identifier: String,
+        phenotype_count: usize,
+        chromosome: String,
+        prediction_chromosome: String,
+        prediction_row_count: usize,
+        batches: Vec<PyRef<'py, NativeGenotypeBatchView>>,
+        effects: PyRef<'py, NativePythonEngineRunEffects>,
+    ) -> PyResult<NativeAssociationChromosomeRunReport> {
+        let mut native_effects = NativePythonEngineRunEffects { effects: effects.effects.clone_ref(py) };
+        self.run_chromosome_batches_impl(
+            py,
+            group_identifier,
+            phenotype_count,
+            chromosome,
+            prediction_chromosome,
+            prediction_row_count,
+            batches,
+            Some(&mut native_effects),
+        )
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -378,6 +429,71 @@ impl NativePythonAssociationBackend {
 }
 
 impl NativePythonAssociationBackend {
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn run_single_batch_impl(
+        &self,
+        py: Python<'_>,
+        group_identifier: String,
+        phenotype_count: usize,
+        chromosome: String,
+        prediction_chromosome: String,
+        prediction_row_count: usize,
+        batch_chromosome: String,
+        variant_count: usize,
+        variant_offset: usize,
+        effects: Option<&mut NativePythonEngineRunEffects>,
+    ) -> PyResult<NativeAssociationEngineRunReport> {
+        let group = PreparedGroupInput::new(group_identifier, phenotype_count);
+        let predictions = PredictionView::new(prediction_chromosome.as_str(), prediction_row_count);
+        let batch = GenotypeBatchView::new(batch_chromosome.as_str(), variant_count, variant_offset);
+        let input = EngineRunInput::new(group, chromosome.as_str(), predictions, batch);
+        let backend = Self { backend: self.backend.clone_ref(py) };
+        let mut coordinator = EngineCoordinator::new(backend);
+        let report = match effects {
+            Some(effects) => coordinator.run_single_batch_with_effects(&input, effects),
+            None => coordinator.run_single_batch(&input),
+        };
+        report
+            .map(|inner| NativeAssociationEngineRunReport { inner })
+            .map_err(|error| engine_error_to_py_runtime_error(&error))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn run_chromosome_batches_impl<'py>(
+        &self,
+        py: Python<'py>,
+        group_identifier: String,
+        phenotype_count: usize,
+        chromosome: String,
+        prediction_chromosome: String,
+        prediction_row_count: usize,
+        batches: Vec<PyRef<'py, NativeGenotypeBatchView>>,
+        effects: Option<&mut NativePythonEngineRunEffects>,
+    ) -> PyResult<NativeAssociationChromosomeRunReport> {
+        let group = PreparedGroupInput::new(group_identifier, phenotype_count);
+        let predictions = PredictionView::new(prediction_chromosome.as_str(), prediction_row_count);
+        let batch_chromosomes = batches.iter().map(|batch| batch.chromosome.clone()).collect::<Vec<_>>();
+        let batch_views = batches
+            .iter()
+            .zip(&batch_chromosomes)
+            .map(|(batch, batch_chromosome)| {
+                GenotypeBatchView::new(batch_chromosome.as_str(), batch.variant_count, batch.variant_offset)
+            })
+            .collect::<Vec<_>>();
+        let input = EngineChromosomeRunInput::new(group, chromosome.as_str(), predictions, batch_views);
+        let backend = Self { backend: self.backend.clone_ref(py) };
+        let mut coordinator = EngineCoordinator::new(backend);
+        let report = match effects {
+            Some(effects) => coordinator.run_chromosome_batches_with_effects(&input, effects),
+            None => coordinator.run_chromosome_batches(&input),
+        };
+        report
+            .map(|inner| NativeAssociationChromosomeRunReport { inner })
+            .map_err(|error| engine_error_to_py_runtime_error(&error))
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     fn run_group_chromosomes_impl<'py>(
         &self,

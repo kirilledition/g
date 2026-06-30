@@ -374,6 +374,18 @@ class NativePythonAssociationBackend:
         variant_count: int,
         variant_offset: int,
     ) -> NativeAssociationEngineRunReport: ...
+    def run_single_batch_with_effects(
+        self,
+        group_identifier: str,
+        phenotype_count: int,
+        chromosome: str,
+        prediction_chromosome: str,
+        prediction_row_count: int,
+        batch_chromosome: str,
+        variant_count: int,
+        variant_offset: int,
+        effects: NativePythonEngineRunEffects,
+    ) -> NativeAssociationEngineRunReport: ...
     def run_chromosome_batches(
         self,
         group_identifier: str,
@@ -382,6 +394,16 @@ class NativePythonAssociationBackend:
         prediction_chromosome: str,
         prediction_row_count: int,
         batches: typing.Sequence[NativeGenotypeBatchView],
+    ) -> NativeAssociationChromosomeRunReport: ...
+    def run_chromosome_batches_with_effects(
+        self,
+        group_identifier: str,
+        phenotype_count: int,
+        chromosome: str,
+        prediction_chromosome: str,
+        prediction_row_count: int,
+        batches: typing.Sequence[NativeGenotypeBatchView],
+        effects: NativePythonEngineRunEffects,
     ) -> NativeAssociationChromosomeRunReport: ...
     def run_group_chromosomes(
         self,
