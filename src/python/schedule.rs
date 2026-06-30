@@ -32,6 +32,16 @@ pub(crate) struct NativeDosageBufferReusePlan {
     slice_dimensions: Vec<usize>,
 }
 
+impl NativeDosageBufferReusePlan {
+    pub(crate) fn requires_slice_value(&self) -> bool {
+        self.requires_slice
+    }
+
+    pub(crate) fn slice_dimensions_value(&self) -> &[usize] {
+        &self.slice_dimensions
+    }
+}
+
 #[pyclass]
 pub(crate) struct NativeVariantMajorDosageBatchHandoffPlan {
     #[pyo3(get)]

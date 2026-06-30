@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict};
+use pyo3::types::{PyAny, PyDict, PySlice, PyTuple};
 
 use super::callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
@@ -1110,6 +1110,33 @@ impl NativeCallbackRuntimeResources {
     ) -> Option<NativeDosageBufferReusePlan> {
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         scheduler_state.plan_dosage_buffer_reuse_value(&buffered_shape, &expected_shape)
+    }
+
+    fn get_reusable_dosage_buffer(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+        expected_shape: Vec<usize>,
+        expected_dtype: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let dosage_buffer_dtype = dosage_buffer.getattr("dtype")?;
+        if !dosage_buffer_dtype.eq(expected_dtype)? {
+            return Ok(None);
+        }
+        let expected_shape = expected_shape.into_boxed_slice();
+        let buffered_shape = dosage_buffer.getattr("shape")?.extract::<Vec<usize>>()?;
+        let reuse_plan = {
+            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+            scheduler_state.plan_dosage_buffer_reuse_value(&buffered_shape, &expected_shape)
+        };
+        let Some(reuse_plan) = reuse_plan else {
+            return Ok(None);
+        };
+        if !reuse_plan.requires_slice_value() {
+            return Ok(Some(dosage_buffer.clone().unbind()));
+        }
+        let slice_tuple = dosage_buffer_reuse_slice_tuple(py, reuse_plan.slice_dimensions_value())?;
+        Ok(Some(dosage_buffer.get_item(slice_tuple)?.unbind()))
     }
 
     fn try_put_dosage_work_item(
@@ -2349,6 +2376,16 @@ fn is_numpy_ndarray(object: &Bound<'_, PyAny>) -> PyResult<bool> {
     }
     let module_name = object_type.getattr("__module__")?.extract::<String>()?;
     Ok(module_name == "numpy")
+}
+
+fn dosage_buffer_reuse_slice_tuple<'py>(py: Python<'py>, slice_dimensions: &[usize]) -> PyResult<Bound<'py, PyTuple>> {
+    let mut slices = Vec::with_capacity(slice_dimensions.len());
+    for &slice_dimension in slice_dimensions {
+        let slice_stop = isize::try_from(slice_dimension)
+            .map_err(|_| PyRuntimeError::new_err("Native dosage-buffer reuse slice dimension exceeds isize."))?;
+        slices.push(PySlice::new(py, 0, slice_stop, 1));
+    }
+    PyTuple::new(py, slices)
 }
 
 struct DosageWorkItemDescriptor {

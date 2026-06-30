@@ -1311,6 +1311,8 @@ Remove Python as the chunk-level scheduler.
   for NumPy views before native buffer-pool returns.
 - Callback runtime resources now resolve production dosage-buffer discard owners
   for NumPy views before native buffer-pool slot removal.
+- Callback runtime resources now own production dosage-buffer reuse candidate
+  selection, including dtype comparison and NumPy view slicing.
 - Native output writer PyO3 entry points now release the GIL around Rust
   chunk enqueue/write dispatch after copying Python array inputs into owned
   Arrow arrays.

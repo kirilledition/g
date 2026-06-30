@@ -3187,10 +3187,27 @@ def test_native_callback_runtime_resources_own_dosage_buffer_lifecycle() -> None
     assert exact_reuse_plan is not None
     assert exact_reuse_plan.requires_slice is False
     assert exact_reuse_plan.slice_dimensions == [2, 2]
+    reusable_exact_buffer = runtime_resources.get_reusable_dosage_buffer(
+        dosage_buffer,
+        (2, 2),
+        np.float32,
+    )
+    assert reusable_exact_buffer is dosage_buffer
+    assert runtime_resources.get_reusable_dosage_buffer(dosage_buffer, (2, 2), np.uint8) is None
+    assert runtime_resources.get_reusable_dosage_buffer(dosage_buffer, (3, 2), np.float32) is None
     sliced_reuse_plan = runtime_resources.plan_dosage_buffer_reuse((4, 5), (2, 3))
     assert sliced_reuse_plan is not None
     assert sliced_reuse_plan.requires_slice is True
     assert sliced_reuse_plan.slice_dimensions == [2, 3]
+    oversized_dosage_buffer = np.empty((4, 5), dtype=np.float32)
+    reusable_sliced_buffer = runtime_resources.get_reusable_dosage_buffer(
+        oversized_dosage_buffer,
+        (2, 3),
+        np.float32,
+    )
+    assert isinstance(reusable_sliced_buffer, np.ndarray)
+    assert reusable_sliced_buffer.shape == (2, 3)
+    assert reusable_sliced_buffer.base is oversized_dosage_buffer
     assert runtime_resources.plan_dosage_buffer_reuse((2, 2), (3, 2)) is None
     pool_observation = runtime_resources.plan_dosage_buffer_pool_backpressure_observation(
         operation_name="return",
@@ -3242,6 +3259,33 @@ def test_native_callback_runner_uses_native_releasable_dosage_buffer_owner_resol
             free_buffer_result = callback.callback_runtime_resources.free_dosage_buffers.get(timeout_seconds=0.0)
             assert free_buffer_result.has_item is True
             assert free_buffer_result.item is oversized_buffer
+            callback.discard_dosage_buffer_slot(sliced_buffer)
+            assert callback.callback_runtime_resources.dosage_buffer_allocated_count == 0
+    finally:
+        callback.finish()
+
+
+def test_native_callback_runner_uses_native_dosage_buffer_reuse_selection() -> None:
+    callback = build_test_linear_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        dosage_buffer_limit=1,
+    )
+    oversized_buffer = np.empty((4, 5), dtype=np.float32)
+    assert callback.callback_runtime_resources.register_dosage_buffer(id(oversized_buffer)) == 0
+    assert callback.callback_runtime_resources.return_dosage_buffer(id(oversized_buffer), oversized_buffer) == 1
+
+    try:
+        with patch.object(
+            callback_runtime.NativeBgenCallbackRunner,
+            "_acquire_reused_dosage_buffer",
+            side_effect=AssertionError("production runner should use native reuse selection"),
+        ):
+            sliced_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+            assert sliced_buffer.shape == (2, 3)
+            assert np.shares_memory(sliced_buffer, oversized_buffer)
+            assert sliced_buffer.base is oversized_buffer
             callback.discard_dosage_buffer_slot(sliced_buffer)
             assert callback.callback_runtime_resources.dosage_buffer_allocated_count == 0
     finally:

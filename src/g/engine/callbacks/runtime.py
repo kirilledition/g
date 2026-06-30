@@ -2364,16 +2364,16 @@ class NativeBgenCallbackRunner(abc.ABC):
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
             if acquire_result.dosage_buffer is not None:
                 dosage_buffer = typing.cast("HostGenotypeBuffer", acquire_result.dosage_buffer)
-                reused_dosage_buffer = self._acquire_reused_dosage_buffer(
+                reused_dosage_buffer = self.callback_runtime_resources.get_reusable_dosage_buffer(
                     dosage_buffer,
-                    expected_shape=expected_shape,
-                    dtype=dtype,
+                    expected_shape,
+                    dtype,
                 )
                 if reused_dosage_buffer is not None:
                     self.record_dosage_buffer_pool_reuse_operation(
                         free_buffer_count=acquire_result.free_buffer_count,
                     )
-                    return reused_dosage_buffer
+                    return typing.cast("HostGenotypeBuffer", reused_dosage_buffer)
                 self.discard_dosage_buffer_slot(dosage_buffer)
                 continue
             acquire_observation_plan = acquire_result.observation_plan
