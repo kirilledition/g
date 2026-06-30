@@ -36,8 +36,10 @@ pub const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
 pub const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE: &str = "Building REGENIE execution plan.";
 pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching REGENIE execution plan.";
 pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
+pub const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_output_resume_committed_chunks";
 pub const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME: &str = "native_runtime_knobs_configured";
 pub const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_MESSAGE: &str = "Configuring native runtime knobs.";
+pub const PREFLIGHT_WARNING_DIAGNOSTIC_EVENT_NAME: &str = "preflight_warning";
 pub const RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "runner_multi_phenotype_dispatch_started";
 pub const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
@@ -627,6 +629,50 @@ pub fn build_runner_metadata_artifacts_finalized_diagnostic_payload(
 }
 
 #[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn build_preflight_warning_diagnostic_payload(
+    message: &str,
+    chromosome_count: i64,
+    covariate_count: i64,
+    preflight_scope: &str,
+    sample_count: i64,
+    trusted_no_missing_diploid: bool,
+    warning_index: i64,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "warning",
+        event_name: PREFLIGHT_WARNING_DIAGNOSTIC_EVENT_NAME,
+        message: message.to_string(),
+        fields: vec![
+            integer_diagnostic_field("chromosome_count", chromosome_count),
+            integer_diagnostic_field("covariate_count", covariate_count),
+            text_diagnostic_field("preflight_scope", preflight_scope),
+            integer_diagnostic_field("sample_count", sample_count),
+            boolean_diagnostic_field("trusted_no_missing_diploid", trusted_no_missing_diploid),
+            integer_diagnostic_field("warning_index", warning_index),
+        ],
+    }
+}
+
+#[must_use]
+pub fn build_io_output_resume_committed_chunks_diagnostic_payload(
+    chunks_directory: &str,
+    committed_chunk_count: i64,
+    run_directory: &str,
+) -> RunDiagnosticEventPayload {
+    RunDiagnosticEventPayload {
+        level: "info",
+        event_name: IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME,
+        message: format!("Resuming run with {committed_chunk_count} previously committed chunks."),
+        fields: vec![
+            text_diagnostic_field("chunks_directory", chunks_directory),
+            integer_diagnostic_field("committed_chunk_count", committed_chunk_count),
+            text_diagnostic_field("run_directory", run_directory),
+        ],
+    }
+}
+
+#[must_use]
 pub fn build_run_started_telemetry_fields(
     association_mode: &str,
     trait_type: &str,
@@ -1162,6 +1208,28 @@ mod tests {
         assert_eq!(payload.message, "Finalized REGENIE run artifacts for 3 phenotype(s).");
         assert_eq!(payload.fields[0].value, RunDiagnosticFieldValue::Text("regenie2_binary".to_string()));
         assert_eq!(payload.fields[1].value, RunDiagnosticFieldValue::Integer(3));
+    }
+
+    #[test]
+    fn builds_preflight_warning_diagnostic_payload() {
+        let payload = build_preflight_warning_diagnostic_payload("low degrees", 1, 2, "single_trait", 3, true, 0);
+
+        assert_eq!(payload.level, "warning");
+        assert_eq!(payload.event_name, "preflight_warning");
+        assert_eq!(payload.message, "low degrees");
+        assert_eq!(payload.fields[2].value, RunDiagnosticFieldValue::Text("single_trait".to_string()));
+        assert_eq!(payload.fields[4].value, RunDiagnosticFieldValue::Boolean(true));
+    }
+
+    #[test]
+    fn builds_io_output_resume_committed_chunks_diagnostic_payload() {
+        let payload = build_io_output_resume_committed_chunks_diagnostic_payload("out/chunks", 2, "out/run");
+
+        assert_eq!(payload.event_name, "io_output_resume_committed_chunks");
+        assert_eq!(payload.message, "Resuming run with 2 previously committed chunks.");
+        assert_eq!(payload.fields[0].value, RunDiagnosticFieldValue::Text("out/chunks".to_string()));
+        assert_eq!(payload.fields[1].value, RunDiagnosticFieldValue::Integer(2));
+        assert_eq!(payload.fields[2].value, RunDiagnosticFieldValue::Text("out/run".to_string()));
     }
 
     #[test]

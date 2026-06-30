@@ -434,6 +434,46 @@ def build_runner_metadata_artifacts_finalized_diagnostic_payload(
     )
 
 
+def build_preflight_warning_diagnostic_payload(
+    *,
+    message: str,
+    chromosome_count: int,
+    covariate_count: int,
+    preflight_scope: str,
+    sample_count: int,
+    trusted_no_missing_diploid: bool,
+    warning_index: int,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for one preflight warning."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_preflight_warning_diagnostic_payload(
+            message,
+            chromosome_count,
+            covariate_count,
+            preflight_scope,
+            sample_count,
+            trusted_no_missing_diploid,
+            warning_index,
+        )
+    )
+
+
+def build_io_output_resume_committed_chunks_diagnostic_payload(
+    *,
+    chunks_directory: str,
+    committed_chunk_count: int,
+    run_directory: str,
+) -> dict[str, typing.Any]:
+    """Return the native diagnostic payload for resumed output chunks."""
+    return diagnostic_event_payload_from_native(
+        g._core.build_io_output_resume_committed_chunks_diagnostic_payload(
+            chunks_directory,
+            committed_chunk_count,
+            run_directory,
+        )
+    )
+
+
 def diagnostic_event_payload_from_native(payload: object) -> dict[str, typing.Any]:
     """Adapt a native diagnostic event payload to a mutable Python dictionary."""
     event_payload = native_mapping_payload(payload)

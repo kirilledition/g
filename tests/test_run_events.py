@@ -431,6 +431,47 @@ def test_runner_metadata_artifacts_finalized_diagnostic_payload_uses_native_buil
     }
 
 
+def test_preflight_warning_diagnostic_payload_uses_native_builder() -> None:
+    assert run_events.build_preflight_warning_diagnostic_payload(
+        message="REGENIE step 2 is running with fewer than 10 residual degrees of freedom.",
+        chromosome_count=1,
+        covariate_count=2,
+        preflight_scope="single_trait",
+        sample_count=3,
+        trusted_no_missing_diploid=True,
+        warning_index=0,
+    ) == {
+        "level": "warning",
+        "event_name": "preflight_warning",
+        "message": "REGENIE step 2 is running with fewer than 10 residual degrees of freedom.",
+        "fields": {
+            "chromosome_count": 1,
+            "covariate_count": 2,
+            "preflight_scope": "single_trait",
+            "sample_count": 3,
+            "trusted_no_missing_diploid": True,
+            "warning_index": 0,
+        },
+    }
+
+
+def test_io_output_resume_committed_chunks_diagnostic_payload_uses_native_builder() -> None:
+    assert run_events.build_io_output_resume_committed_chunks_diagnostic_payload(
+        chunks_directory="out/chunks",
+        committed_chunk_count=2,
+        run_directory="out/run",
+    ) == {
+        "level": "info",
+        "event_name": "io_output_resume_committed_chunks",
+        "message": "Resuming run with 2 previously committed chunks.",
+        "fields": {
+            "chunks_directory": "out/chunks",
+            "committed_chunk_count": 2,
+            "run_directory": "out/run",
+        },
+    }
+
+
 def test_run_completed_rendering_uses_native_renderer() -> None:
     event = run_events.RunCompletedEvent(
         run_id=None,

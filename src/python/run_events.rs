@@ -284,6 +284,45 @@ pub fn build_runner_metadata_artifacts_finalized_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
+pub fn build_preflight_warning_diagnostic_payload<'py>(
+    py: Python<'py>,
+    message: &str,
+    chromosome_count: i64,
+    covariate_count: i64,
+    preflight_scope: &str,
+    sample_count: i64,
+    trusted_no_missing_diploid: bool,
+    warning_index: i64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_preflight_warning_diagnostic_payload(
+        message,
+        chromosome_count,
+        covariate_count,
+        preflight_scope,
+        sample_count,
+        trusted_no_missing_diploid,
+        warning_index,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn build_io_output_resume_committed_chunks_diagnostic_payload<'py>(
+    py: Python<'py>,
+    chunks_directory: &str,
+    committed_chunk_count: i64,
+    run_directory: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = native_run_events::build_io_output_resume_committed_chunks_diagnostic_payload(
+        chunks_directory,
+        committed_chunk_count,
+        run_directory,
+    );
+    run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
 pub fn render_run_completed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_completed_event_from_py(event)?;
     PyTuple::new(py, native_run_events::render_run_completed_lines(&event_payload))

@@ -2827,6 +2827,20 @@ def build_runner_metadata_artifacts_finalized_diagnostic_payload(
     association_mode: str,
     phenotype_count: int,
 ) -> dict[str, object]: ...
+def build_preflight_warning_diagnostic_payload(
+    message: str,
+    chromosome_count: int,
+    covariate_count: int,
+    preflight_scope: str,
+    sample_count: int,
+    trusted_no_missing_diploid: bool,
+    warning_index: int,
+) -> dict[str, object]: ...
+def build_io_output_resume_committed_chunks_diagnostic_payload(
+    chunks_directory: str,
+    committed_chunk_count: int,
+    run_directory: str,
+) -> dict[str, object]: ...
 def build_runner_run_started_diagnostic_payload(
     association_mode: str,
     trait_type: str,
