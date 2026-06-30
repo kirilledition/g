@@ -5,7 +5,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
 use g_engine::{
-    AssociationBackend, AssociationBatchResult, BackendError, GenotypeBatchView, PredictionView, PreparedGroupInput,
+    AssociationBackend, AssociationBatchResult, BackendError, EngineCoordinator, EngineError, EngineRunInput,
+    EngineRunReport, GenotypeBatchView, PredictionView, PreparedGroupInput,
 };
 
 #[pyclass(skip_from_py_object)]
@@ -33,6 +34,12 @@ pub(crate) struct NativeGenotypeBatchView {
 #[derive(Clone)]
 pub(crate) struct NativeAssociationBatchResult {
     inner: AssociationBatchResult,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeAssociationEngineRunReport {
+    inner: EngineRunReport,
 }
 
 #[pyclass]
@@ -133,6 +140,19 @@ impl NativeAssociationBatchResult {
 }
 
 #[pymethods]
+impl NativeAssociationEngineRunReport {
+    #[getter]
+    fn phase_history(&self) -> Vec<String> {
+        self.inner.phase_history.iter().map(ToString::to_string).collect()
+    }
+
+    #[getter]
+    fn result(&self) -> NativeAssociationBatchResult {
+        NativeAssociationBatchResult { inner: self.inner.result.clone() }
+    }
+}
+
+#[pymethods]
 impl NativePythonAssociationBackend {
     #[new]
     fn new(backend: Py<PyAny>) -> Self {
@@ -170,6 +190,32 @@ impl NativePythonAssociationBackend {
         AssociationBackend::compute_batch(self, &chromosome_state, batch)
             .map(|result| NativeAssociationBatchResult { inner: result })
             .map_err(|error| backend_error_to_py_runtime_error(&error))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn run_single_batch(
+        &self,
+        py: Python<'_>,
+        group_identifier: String,
+        phenotype_count: usize,
+        chromosome: String,
+        prediction_chromosome: String,
+        prediction_row_count: usize,
+        batch_chromosome: String,
+        variant_count: usize,
+        variant_offset: usize,
+    ) -> PyResult<NativeAssociationEngineRunReport> {
+        let group = PreparedGroupInput::new(group_identifier, phenotype_count);
+        let predictions = PredictionView::new(prediction_chromosome.as_str(), prediction_row_count);
+        let batch = GenotypeBatchView::new(batch_chromosome.as_str(), variant_count, variant_offset);
+        let input = EngineRunInput::new(group, chromosome.as_str(), predictions, batch);
+        let backend = Self { backend: self.backend.clone_ref(py) };
+        let mut coordinator = EngineCoordinator::new(backend);
+        coordinator
+            .run_single_batch(&input)
+            .map(|report| NativeAssociationEngineRunReport { inner: report })
+            .map_err(|error| engine_error_to_py_runtime_error(&error))
     }
 }
 
@@ -250,4 +296,8 @@ fn backend_error_from_py_error(error: &PyErr) -> BackendError {
 
 fn backend_error_to_py_runtime_error(error: &BackendError) -> PyErr {
     PyRuntimeError::new_err(error.message().to_owned())
+}
+
+fn engine_error_to_py_runtime_error(error: &EngineError) -> PyErr {
+    PyRuntimeError::new_err(error.to_string())
 }

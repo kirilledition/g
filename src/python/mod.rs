@@ -54,8 +54,8 @@ mod timing;
 mod trusted_validation;
 
 use association_backend::{
-    NativeAssociationBatchResult, NativeGenotypeBatchView, NativePredictionView, NativePreparedGroupInput,
-    NativePythonAssociationBackend,
+    NativeAssociationBatchResult, NativeAssociationEngineRunReport, NativeGenotypeBatchView, NativePredictionView,
+    NativePreparedGroupInput, NativePythonAssociationBackend,
 };
 use callback_diagnostics::{NativeNullLogisticNonconvergencePlan, plan_null_logistic_nonconvergence};
 use callback_progress::{
@@ -1840,6 +1840,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<ChunkSpec>()?;
     module.add_class::<ChunkStats>()?;
     module.add_class::<NativeAssociationBatchResult>()?;
+    module.add_class::<NativeAssociationEngineRunReport>()?;
     module.add_class::<NativeGenotypeBatchView>()?;
     module.add_class::<NativePredictionView>()?;
     module.add_class::<NativePreparedGroupInput>()?;

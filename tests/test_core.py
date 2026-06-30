@@ -226,6 +226,65 @@ def test_native_python_association_backend_uses_coarse_typed_calls() -> None:
     assert result.statistic_sum == 12.0
 
 
+def test_native_python_association_backend_runs_native_coordinator_single_batch() -> None:
+    class CoordinatorPythonAssociationBackend:
+        def __init__(self) -> None:
+            self.call_names: list[str] = []
+
+        def prepare_group(self, group_input: _core.NativePreparedGroupInput) -> dict[str, object]:
+            self.call_names.append("prepare_group")
+            return {"group_identifier": group_input.group_identifier, "phenotype_count": group_input.phenotype_count}
+
+        def prepare_chromosome(
+            self,
+            group_state: object,
+            chromosome: str,
+            predictions: _core.NativePredictionView,
+        ) -> dict[str, object]:
+            self.call_names.append("prepare_chromosome")
+            group_state_mapping = typing.cast("dict[str, object]", group_state)
+            return {
+                "group_identifier": group_state_mapping["group_identifier"],
+                "phenotype_count": group_state_mapping["phenotype_count"],
+                "chromosome": chromosome,
+                "prediction_row_count": predictions.row_count,
+            }
+
+        def compute_batch(
+            self,
+            chromosome_state: object,
+            batch: _core.NativeGenotypeBatchView,
+        ) -> _core.NativeAssociationBatchResult:
+            self.call_names.append("compute_batch")
+            chromosome_state_mapping = typing.cast("dict[str, object]", chromosome_state)
+            statistic_sum = typing.cast("int", chromosome_state_mapping["phenotype_count"])
+            statistic_sum *= batch.variant_count
+            statistic_sum += typing.cast("int", chromosome_state_mapping["prediction_row_count"])
+            statistic_sum += batch.variant_offset
+            return _core.NativeAssociationBatchResult(batch.chromosome, batch.variant_count, float(statistic_sum))
+
+    python_backend = CoordinatorPythonAssociationBackend()
+    native_backend = _core.NativePythonAssociationBackend(python_backend)
+
+    report = native_backend.run_single_batch("binary", 2, "chr2", "chr2", 5, "chr2", 4, 3)
+
+    assert python_backend.call_names == ["prepare_group", "prepare_chromosome", "compute_batch"]
+    assert report.phase_history == [
+        "planned",
+        "inputs_opened",
+        "inputs_aligned",
+        "preflight_validated",
+        "outputs_initialized",
+        "running",
+        "draining",
+        "finalizing",
+        "completed",
+    ]
+    assert report.result.chromosome == "chr2"
+    assert report.result.variant_count == 4
+    assert report.result.statistic_sum == 16.0
+
+
 def test_native_python_association_backend_maps_python_errors() -> None:
     class FailingPythonAssociationBackend:
         def prepare_group(self, group_input: _core.NativePreparedGroupInput) -> object:

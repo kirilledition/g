@@ -1259,6 +1259,9 @@ Remove Python as the chunk-level scheduler.
 - The first PyO3-backed `AssociationBackend` adapter now exposes typed group,
   prediction, genotype-batch, and batch-result wrappers and calls Python backend
   objects only at the coarse group/chromosome/batch boundary.
+- The PyO3-backed `AssociationBackend` adapter now runs through the native
+  single-batch coordinator scaffold and exposes a typed native run report for
+  phase-history and batch-result inspection.
 - Callback runtime resources now own callback telemetry availability for
   production binary-correction diagnostics and worker-finish summary planning,
   so Python no longer computes or passes that fixed run property on native
