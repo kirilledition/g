@@ -39,6 +39,13 @@ const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH: &str = "variant_major_do
 const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR: &str = "variant_major_packed8_probability_pair";
 const DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL: &str = "stop_signal";
 
+fn pending_diagnostics_count_from_object(pending_diagnostics: &Bound<'_, PyAny>) -> PyResult<i64> {
+    let pending_diagnostics_count = pending_diagnostics.len()?;
+    i64::try_from(pending_diagnostics_count).map_err(|_| {
+        PyRuntimeError::new_err("Pending binary correction diagnostics count exceeds native summary capacity.")
+    })
+}
+
 #[pyclass]
 pub(crate) struct NativeCallbackRuntimeResources {
     callback_scheduler_state: Py<NativeCallbackSchedulerState>,
@@ -389,6 +396,15 @@ impl NativeCallbackRuntimeResources {
         self.binary_correction_summary.bind(py).borrow().chunk_count_with_pending_value(pending_diagnostics_count)
     }
 
+    fn binary_correction_chunk_count_with_pending_diagnostics(
+        &self,
+        py: Python<'_>,
+        pending_diagnostics: &Bound<'_, PyAny>,
+    ) -> PyResult<i64> {
+        let pending_diagnostics_count = pending_diagnostics_count_from_object(pending_diagnostics)?;
+        self.binary_correction_chunk_count_with_pending(py, pending_diagnostics_count)
+    }
+
     fn add_binary_null_model_failure_count(&self, py: Python<'_>, failure_count: i64) -> PyResult<()> {
         self.binary_correction_summary.bind(py).borrow().add_null_model_failure_count_value(failure_count)
     }
@@ -422,6 +438,15 @@ impl NativeCallbackRuntimeResources {
             .bind(py)
             .borrow()
             .plan_summary_emit_value(self.has_telemetry_session, pending_diagnostics_count)
+    }
+
+    fn plan_binary_correction_summary_emit_for_pending_diagnostics(
+        &self,
+        py: Python<'_>,
+        pending_diagnostics: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeBinaryCorrectionSummaryEmitPlan> {
+        let pending_diagnostics_count = pending_diagnostics_count_from_object(pending_diagnostics)?;
+        self.plan_binary_correction_summary_emit(py, pending_diagnostics_count)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -650,6 +675,15 @@ impl NativeCallbackRuntimeResources {
             }
         }
         Ok(finish_result)
+    }
+
+    fn finish_worker_lifecycle_for_pending_diagnostics(
+        &self,
+        py: Python<'_>,
+        pending_diagnostics: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackWorkerFinishLifecycleResult> {
+        let pending_diagnostics_count = pending_diagnostics_count_from_object(pending_diagnostics)?;
+        self.finish_worker_lifecycle(py, pending_diagnostics_count)
     }
 
     fn abort_worker_lifecycle(&self, py: Python<'_>) -> PyResult<NativeCallbackWorkerAbortPlan> {

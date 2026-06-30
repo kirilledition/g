@@ -189,8 +189,8 @@ class NativeBgenCallbackRunner(abc.ABC):
     def binary_correction_summary_chunk_count(self) -> int:
         """Return the number of chunks included in binary correction summary telemetry."""
         if self.uses_native_callback_runtime_resources():
-            return self.callback_runtime_resources.binary_correction_chunk_count_with_pending(
-                len(self.binary_correction_pending_diagnostics)
+            return self.callback_runtime_resources.binary_correction_chunk_count_with_pending_diagnostics(
+                self.binary_correction_pending_diagnostics,
             )
         return self.binary_correction_summary.chunk_count_with_pending(len(self.binary_correction_pending_diagnostics))
 
@@ -1418,12 +1418,14 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def flush_binary_correction_diagnostics(self) -> None:
         """Materialize pending binary diagnostics and accumulate them into native summary counters."""
-        pending_diagnostics_count = len(self.binary_correction_pending_diagnostics)
         if self.uses_native_callback_runtime_resources():
-            summary_emit_plan = self.callback_runtime_resources.plan_binary_correction_summary_emit(
-                pending_diagnostics_count,
+            summary_emit_plan = (
+                self.callback_runtime_resources.plan_binary_correction_summary_emit_for_pending_diagnostics(
+                    self.binary_correction_pending_diagnostics,
+                )
             )
         else:
+            pending_diagnostics_count = len(self.binary_correction_pending_diagnostics)
             summary_emit_plan = self.binary_correction_summary.plan_summary_emit(
                 has_telemetry_session=True,
                 pending_diagnostics_count=pending_diagnostics_count,
@@ -1491,12 +1493,14 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def emit_binary_correction_summary(self) -> None:
         """Emit aggregate binary correction diagnostics when a binary run produced them."""
-        pending_diagnostics_count = len(self.binary_correction_pending_diagnostics)
         if self.uses_native_callback_runtime_resources():
-            summary_emit_plan = self.callback_runtime_resources.plan_binary_correction_summary_emit(
-                pending_diagnostics_count,
+            summary_emit_plan = (
+                self.callback_runtime_resources.plan_binary_correction_summary_emit_for_pending_diagnostics(
+                    self.binary_correction_pending_diagnostics,
+                )
             )
         else:
+            pending_diagnostics_count = len(self.binary_correction_pending_diagnostics)
             summary_emit_plan = self.binary_correction_summary.plan_summary_emit(
                 has_telemetry_session=self.telemetry_session is not None,
                 pending_diagnostics_count=pending_diagnostics_count,
@@ -2096,8 +2100,8 @@ class NativeBgenCallbackRunner(abc.ABC):
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
         if self.uses_native_callback_runtime_resources():
-            finish_result = self.callback_runtime_resources.finish_worker_lifecycle(
-                pending_diagnostics_count=len(self.binary_correction_pending_diagnostics),
+            finish_result = self.callback_runtime_resources.finish_worker_lifecycle_for_pending_diagnostics(
+                self.binary_correction_pending_diagnostics,
             )
             if finish_result.has_shutdown_timeout:
                 worker_name = finish_result.shutdown_worker_name

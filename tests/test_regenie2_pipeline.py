@@ -1635,9 +1635,27 @@ def test_native_callback_runner_uses_runtime_resource_binary_summary() -> None:
         def __init__(self, inner: callback_runtime._core.NativeCallbackRuntimeResources) -> None:
             self.inner = inner
             self.planned_payloads: list[object] = []
+            self.chunk_count_pending_diagnostics: list[object] = []
+            self.summary_emit_pending_diagnostics: list[object] = []
+            self.finish_pending_diagnostics: list[object] = []
 
         def __getattr__(self, name: str) -> typing.Any:
             return getattr(self.inner, name)
+
+        def binary_correction_chunk_count_with_pending(
+            self,
+            pending_diagnostics_count: object,
+        ) -> int:
+            del pending_diagnostics_count
+            message = "Production native resources should derive pending diagnostics counts from the object."
+            raise AssertionError(message)
+
+        def binary_correction_chunk_count_with_pending_diagnostics(
+            self,
+            pending_diagnostics: object,
+        ) -> int:
+            self.chunk_count_pending_diagnostics.append(pending_diagnostics)
+            return self.inner.binary_correction_chunk_count_with_pending_diagnostics(pending_diagnostics)
 
         def plan_binary_correction_diagnostics_record(
             self,
@@ -1653,6 +1671,36 @@ def test_native_callback_runner_uses_runtime_resource_binary_summary() -> None:
         ) -> callback_runtime._core.NativeBinaryCorrectionDiagnosticsRecordPlan:
             self.planned_payloads.append(binary_chunk_diagnostics)
             return self.inner.plan_binary_correction_diagnostics_record_for_object(binary_chunk_diagnostics)
+
+        def plan_binary_correction_summary_emit(
+            self,
+            pending_diagnostics_count: object,
+        ) -> callback_runtime._core.NativeBinaryCorrectionSummaryEmitPlan:
+            del pending_diagnostics_count
+            message = "Production native resources should plan summary emits from the pending diagnostics object."
+            raise AssertionError(message)
+
+        def plan_binary_correction_summary_emit_for_pending_diagnostics(
+            self,
+            pending_diagnostics: object,
+        ) -> callback_runtime._core.NativeBinaryCorrectionSummaryEmitPlan:
+            self.summary_emit_pending_diagnostics.append(pending_diagnostics)
+            return self.inner.plan_binary_correction_summary_emit_for_pending_diagnostics(pending_diagnostics)
+
+        def finish_worker_lifecycle(
+            self,
+            pending_diagnostics_count: object,
+        ) -> callback_runtime._core.NativeCallbackWorkerFinishLifecycleResult:
+            del pending_diagnostics_count
+            message = "Production native resources should finish workers from the pending diagnostics object."
+            raise AssertionError(message)
+
+        def finish_worker_lifecycle_for_pending_diagnostics(
+            self,
+            pending_diagnostics: object,
+        ) -> callback_runtime._core.NativeCallbackWorkerFinishLifecycleResult:
+            self.finish_pending_diagnostics.append(pending_diagnostics)
+            return self.inner.finish_worker_lifecycle_for_pending_diagnostics(pending_diagnostics)
 
     class ResourceBackedCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         def __init__(self) -> None:
@@ -1711,7 +1759,19 @@ def test_native_callback_runner_uses_runtime_resource_binary_summary() -> None:
     assert planning_probe.planned_payloads == [diagnostics, None]
     assert callback.binary_correction_summary.null_model_failure_count == 2
     assert callback.binary_correction_summary_chunk_count == 1
+    assert planning_probe.chunk_count_pending_diagnostics == [callback.binary_correction_pending_diagnostics]
     assert callback.binary_correction_pending_diagnostics == [diagnostics]
+    callback.binary_correction_pending_diagnostics.clear()
+
+    callback.flush_binary_correction_diagnostics()
+    callback.emit_binary_correction_summary()
+    callback.finish()
+
+    assert planning_probe.summary_emit_pending_diagnostics == [
+        callback.binary_correction_pending_diagnostics,
+        callback.binary_correction_pending_diagnostics,
+    ]
+    assert planning_probe.finish_pending_diagnostics == [callback.binary_correction_pending_diagnostics]
 
 
 class FakeRunEngine:
@@ -2769,6 +2829,7 @@ def test_native_callback_runtime_resources_own_binary_correction_summary() -> No
     )
 
     assert runtime_resources.binary_correction_chunk_count_with_pending(0) == 0
+    assert runtime_resources.binary_correction_chunk_count_with_pending_diagnostics([]) == 0
     has_diagnostics = True
     disabled_record_plan = disabled_runtime_resources.plan_binary_correction_diagnostics_record(
         has_diagnostics,
@@ -2812,17 +2873,25 @@ def test_native_callback_runtime_resources_own_binary_correction_summary() -> No
     )
 
     assert runtime_resources.binary_correction_chunk_count_with_pending(1) == 2
+    assert runtime_resources.binary_correction_chunk_count_with_pending_diagnostics([SimpleNamespace()]) == 2
     pending_diagnostics_count = 0
     emit_plan = runtime_resources.plan_binary_correction_summary_emit(
         pending_diagnostics_count,
     )
     assert emit_plan.should_flush_pending_diagnostics is False
     assert emit_plan.should_emit_summary is True
+    object_emit_plan = runtime_resources.plan_binary_correction_summary_emit_for_pending_diagnostics([])
+    assert object_emit_plan.should_flush_pending_diagnostics is False
+    assert object_emit_plan.should_emit_summary is True
     pending_diagnostics_count = 1
     flush_plan = runtime_resources.plan_binary_correction_summary_emit(
         pending_diagnostics_count,
     )
     assert flush_plan.should_flush_pending_diagnostics is True
+    object_flush_plan = runtime_resources.plan_binary_correction_summary_emit_for_pending_diagnostics(
+        [SimpleNamespace()],
+    )
+    assert object_flush_plan.should_flush_pending_diagnostics is True
     assert flush_plan.should_emit_summary is True
     summary_payload = runtime_resources.binary_correction_summary_payload()
     assert summary_payload["chunk_count"] == 1
@@ -3882,9 +3951,7 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
     start_plan = finish_runtime_resources.start_workers()
     assert start_plan.has_start_error is False
     finish_runtime_resources.add_binary_null_model_failure_count(2)
-    finish_result = finish_runtime_resources.finish_worker_lifecycle(
-        pending_diagnostics_count=0,
-    )
+    finish_result = finish_runtime_resources.finish_worker_lifecycle_for_pending_diagnostics([])
 
     assert finish_result.has_shutdown_timeout is False
     assert finish_result.shutdown_worker_name is None
