@@ -1957,7 +1957,10 @@ class NativeBgenCallbackRunner(abc.ABC):
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
         if self.uses_native_callback_runtime_resources():
-            finish_result = self.callback_runtime_resources.finish_worker_lifecycle()
+            finish_result = self.callback_runtime_resources.finish_worker_lifecycle(
+                has_telemetry_session=self.telemetry_session is not None,
+                pending_diagnostics_count=len(self.binary_correction_pending_diagnostics),
+            )
             if finish_result.has_shutdown_timeout:
                 worker_name = finish_result.shutdown_worker_name
                 timeout_seconds = finish_result.shutdown_timeout_seconds
@@ -1977,7 +1980,14 @@ class NativeBgenCallbackRunner(abc.ABC):
                     raise RuntimeError(message)
                 self.telemetry_session.log_callback_progress_event(progress_completion_event)
             if finish_result.emit_binary_correction_summary:
-                self.emit_binary_correction_summary()
+                summary_payload = finish_result.binary_correction_summary_payload
+                if summary_payload is not None:
+                    if self.telemetry_session is None:
+                        message = "Native callback worker finish result selected a missing telemetry session."
+                        raise RuntimeError(message)
+                    self.telemetry_session.log_binary_correction_summary(summary_payload)
+                else:
+                    self.emit_binary_correction_summary()
             return
         finish_plan = self.callback_scheduler_state.plan_worker_finish()
         if finish_plan.stop_dosage_worker:

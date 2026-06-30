@@ -3083,7 +3083,11 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
 
     start_plan = finish_runtime_resources.start_workers()
     assert start_plan.has_start_error is False
-    finish_result = finish_runtime_resources.finish_worker_lifecycle()
+    finish_runtime_resources.add_binary_null_model_failure_count(2)
+    finish_result = finish_runtime_resources.finish_worker_lifecycle(
+        has_telemetry_session=True,
+        pending_diagnostics_count=0,
+    )
 
     assert finish_result.has_shutdown_timeout is False
     assert finish_result.shutdown_worker_name is None
@@ -3091,6 +3095,9 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
     assert finish_result.raise_worker_error is True
     assert finish_result.complete_progress is True
     assert finish_result.emit_binary_correction_summary is True
+    summary_payload = finish_result.binary_correction_summary_payload
+    assert summary_payload is not None
+    assert summary_payload["null_model_failure_count"] == 2
     assert finish_runtime_resources.plan_worker_error_raise().should_raise is False
     dosage_error_update = finish_runtime_resources.update_dosage_worker_error("dosage failed")
     assert dosage_error_update.had_error is False

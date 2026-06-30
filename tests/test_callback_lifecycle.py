@@ -563,6 +563,48 @@ def test_native_callback_runner_emits_binary_correction_summary() -> None:
     ]
 
 
+def test_native_callback_runner_uses_finish_summary_payload_without_pending_diagnostics() -> None:
+    """Emit native finish summary payload without Python summary re-planning."""
+    telemetry_session = ProgressTrackingTelemetrySession()
+    callback = ProgressTrackingCallbackRunner(telemetry_session=telemetry_session)
+
+    def fail_emit_binary_correction_summary() -> typing.NoReturn:
+        message = "native runtime resources should return complete summary payloads during worker finish"
+        raise AssertionError(message)
+
+    callback.record_binary_null_model_failure_count(2)
+    typing.cast("typing.Any", callback).emit_binary_correction_summary = fail_emit_binary_correction_summary
+    callback.finish()
+
+    assert telemetry_session.logged_events == [
+        (
+            "binary_correction_summary",
+            "info",
+            {
+                "chunk_count": 0,
+                "score_only_count": 0,
+                "score_test_candidate_count": 0,
+                "firth_attempted_count": 0,
+                "firth_success_count": 0,
+                "firth_failed_count": 0,
+                "firth_numerical_failure_count": 0,
+                "firth_max_iteration_failure_count": 0,
+                "firth_invalid_statistic_failure_count": 0,
+                "firth_step_halving_failure_count": 0,
+                "pseudo_firth_attempt_count": 0,
+                "pseudo_firth_success_count": 0,
+                "nr_zero_start_attempt_count": 0,
+                "nr_zero_start_success_count": 0,
+                "nr_warm_start_attempt_count": 0,
+                "nr_warm_start_success_count": 0,
+                "sparse_correction_count": 0,
+                "dense_correction_count": 0,
+                "null_model_failure_count": 2,
+            },
+        )
+    ]
+
+
 def test_binary_correction_summary_skips_materialization_without_telemetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -71,6 +71,7 @@ pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
     complete_progress: bool,
     progress_completion_event: Option<NativeCallbackProgressTelemetryEvent>,
     emit_binary_correction_summary: bool,
+    binary_correction_summary_payload: Option<Py<PyDict>>,
 }
 
 #[pyclass]
@@ -523,7 +524,12 @@ impl NativeCallbackRuntimeResources {
         Ok(None)
     }
 
-    fn finish_worker_lifecycle(&self, py: Python<'_>) -> PyResult<NativeCallbackWorkerFinishLifecycleResult> {
+    fn finish_worker_lifecycle(
+        &self,
+        py: Python<'_>,
+        has_telemetry_session: bool,
+        pending_diagnostics_count: i64,
+    ) -> PyResult<NativeCallbackWorkerFinishLifecycleResult> {
         let finish_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state.plan_worker_finish_value()
@@ -572,6 +578,19 @@ impl NativeCallbackRuntimeResources {
         if finish_plan.complete_progress_value() {
             let progress_completion = self.progress_state.bind(py).borrow_mut().finish_progress_value();
             finish_result.record_progress_completion(progress_completion);
+        }
+        if finish_plan.emit_binary_correction_summary_value() {
+            let summary_emit_plan = self
+                .binary_correction_summary
+                .bind(py)
+                .borrow()
+                .plan_summary_emit_value(has_telemetry_session, pending_diagnostics_count)?;
+            if summary_emit_plan.should_emit_summary_value()
+                && !summary_emit_plan.should_flush_pending_diagnostics_value()
+            {
+                let summary_payload = self.binary_correction_summary.bind(py).borrow().summary_payload_value(py)?;
+                finish_result.record_binary_correction_summary_payload(summary_payload.unbind());
+            }
         }
         Ok(finish_result)
     }
@@ -1714,6 +1733,11 @@ impl NativeCallbackWorkerFinishLifecycleResult {
     fn emit_binary_correction_summary(&self) -> bool {
         self.emit_binary_correction_summary
     }
+
+    #[getter]
+    fn binary_correction_summary_payload(&self, py: Python<'_>) -> Option<Py<PyDict>> {
+        self.binary_correction_summary_payload.as_ref().map(|summary_payload| summary_payload.clone_ref(py))
+    }
 }
 
 impl NativeCallbackWorkerFinishLifecycleResult {
@@ -1725,6 +1749,7 @@ impl NativeCallbackWorkerFinishLifecycleResult {
             complete_progress: finish_plan.complete_progress_value(),
             progress_completion_event: None,
             emit_binary_correction_summary: finish_plan.emit_binary_correction_summary_value(),
+            binary_correction_summary_payload: None,
         }
     }
 
@@ -1735,6 +1760,10 @@ impl NativeCallbackWorkerFinishLifecycleResult {
 
     fn record_progress_completion(&mut self, progress_completion: Option<NativeCallbackProgressCompletion>) {
         self.progress_completion_event = progress_completion.map(|completion| completion.telemetry_event_value());
+    }
+
+    fn record_binary_correction_summary_payload(&mut self, summary_payload: Py<PyDict>) {
+        self.binary_correction_summary_payload = Some(summary_payload);
     }
 }
 

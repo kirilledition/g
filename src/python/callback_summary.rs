@@ -259,16 +259,26 @@ impl NativeBinaryCorrectionDiagnosticsRecordPlan {
     }
 }
 
+impl NativeBinaryCorrectionSummaryEmitPlan {
+    pub(crate) const fn should_flush_pending_diagnostics_value(&self) -> bool {
+        self.inner.should_flush_pending_diagnostics
+    }
+
+    pub(crate) const fn should_emit_summary_value(&self) -> bool {
+        self.inner.should_emit_summary
+    }
+}
+
 #[pymethods]
 impl NativeBinaryCorrectionSummaryEmitPlan {
     #[getter]
     fn should_flush_pending_diagnostics(&self) -> bool {
-        self.inner.should_flush_pending_diagnostics
+        self.should_flush_pending_diagnostics_value()
     }
 
     #[getter]
     fn should_emit_summary(&self) -> bool {
-        self.inner.should_emit_summary
+        self.should_emit_summary_value()
     }
 }
 

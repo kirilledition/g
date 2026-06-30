@@ -1125,8 +1125,8 @@ Remove Python as the chunk-level scheduler.
   planning while Python keeps dtype checks and NumPy view slicing.
 - Callback runtime resources now own production worker finish and abort
   lifecycle execution, including stop/join sequencing and worker-error raise
-  planning, while Python keeps public shutdown exceptions, progress completion,
-  summary emission, and exception chaining.
+  planning, while Python keeps public shutdown exceptions, pending-diagnostics
+  summary materialization, telemetry emission, and exception chaining.
 - Callback runtime resources now own production result work-item resource
   cleanup, including host-buffer returns and result in-flight slot releases,
   while Python keeps materialization, writes, and timing emission.
@@ -1223,6 +1223,9 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now finish native progress state during production
   worker lifecycle finalization and return the completion event for Python
   telemetry emission.
+- Callback runtime resources now return complete binary-correction summary
+  payloads during production worker finalization when no pending JAX
+  diagnostics require Python materialization.
 
 ### Tests
 
