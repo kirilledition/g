@@ -1313,6 +1313,13 @@ Remove Python as the chunk-level scheduler.
 - Production dosage/result drain and dispatch planner helpers now require
   native runtime resources; manual scheduler planner helpers live only in test
   fixtures.
+- Production dosage handoff and variant-major batch handoff planner helpers now
+  require native runtime resources; manual scheduler handoff helpers live only
+  in test fixtures.
+- The production callback runner no longer branches on manual versus native
+  runtime-resource ownership; manual scheduler lifecycle, queue, result-slot,
+  dosage-buffer, progress, summary, handoff, and cleanup paths live only in test
+  fixtures.
 - Production dosage and result consumers now consume native validated get/drain
   results that carry dispatch plans, removing separate Python dispatch planner
   calls after native queue gets.
@@ -1396,6 +1403,19 @@ Remove Python as the chunk-level scheduler.
   registration for scheduler, progress, summary, queue, wait-signal, or worker
   handles; remaining manual scheduler fixtures define their own test-only
   accessors outside the production runner.
+
+### Phase 10 punch list
+
+- Remaining production fallback audit: complete for the callback runner; no
+  production `uses_native_callback_runtime_resources()` branches or direct
+  scheduler-state fallback calls remain in `src/g/engine/callbacks/runtime.py`.
+- Focused scheduler/buffer validation: complete for the callback runner via
+  targeted scheduler, queue, result-slot, lifecycle, dosage-buffer, and full
+  `tests/test_regenie2_pipeline.py` coverage.
+- Benchmark checkpoint: complete for callback overhead on CPU/GPU, binary-hot
+  GPU smoke, and a bounded output-stage GPU writer checkpoint.
+- Phase 10 callback-runner fallback removal is ready for a grouped checkpoint
+  after final local validation, merge from `origin/main`, and push.
 
 ### Tests
 

@@ -96,7 +96,11 @@ runner's dosage and single-result consumers now also require native
 runtime-resource get/drain helpers, leaving manual scheduler consumer loops in
 test fixtures only. Base dosage/result drain and dispatch planner helpers now
 also require native runtime resources, with manual scheduler planner helpers
-confined to test fixtures.
+confined to test fixtures. Base dosage handoff and variant-major batch handoff
+planner helpers now follow the same native-resource-only rule. The base
+callback runner no longer branches on manual versus native runtime-resource
+ownership; manual scheduler lifecycle, queue, result-slot, dosage-buffer,
+progress, summary, handoff, and cleanup paths are test-fixture behavior only.
 
 ## Phase Order
 

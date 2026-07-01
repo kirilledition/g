@@ -12,8 +12,8 @@ tool:
   trials: 5
   warmup_trials: 1
   stage_timing_modes:
-    - off
-    - aggregate
+    - "off"
+    - "aggregate"
   workload_modes:
     - queue_only
     - host_to_device

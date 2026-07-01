@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import dataclasses
 import queue
 import threading
@@ -2676,6 +2677,104 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
     def uses_native_callback_runtime_resources(self) -> bool:
         return False
 
+    def start(self) -> None:
+        start_attempt_plan = self.callback_scheduler_state.plan_worker_start_attempt()
+        if start_attempt_plan.has_start_error:
+            error_message = start_attempt_plan.error_message
+            if error_message is None:
+                error_message = "Native callback worker lifecycle failed to mark workers started."
+            raise RuntimeError(error_message)
+        if start_attempt_plan.start_result_worker:
+            self.result_worker_thread.start()
+        if start_attempt_plan.start_dosage_worker:
+            self.worker_thread.start()
+
+    @property
+    def worker_threads_started(self) -> bool:
+        return self.callback_scheduler_state.has_started
+
+    @property
+    def dosage_worker_name(self) -> str:
+        return self.worker_thread.name
+
+    @property
+    def result_worker_name(self) -> str:
+        return self.result_worker_thread.name
+
+    @property
+    def dosage_worker_is_alive(self) -> bool:
+        return self.worker_thread.is_alive()
+
+    @property
+    def result_worker_is_alive(self) -> bool:
+        return self.result_worker_thread.is_alive()
+
+    @property
+    def native_callback_batch_size(self) -> int:
+        return self.callback_scheduler_state.native_callback_batch_size
+
+    @property
+    def dosage_queue_depth(self) -> int:
+        return self.callback_scheduler_state.dosage_queue_depth
+
+    @property
+    def result_queue_depth(self) -> int:
+        return self.callback_scheduler_state.result_queue_depth
+
+    @property
+    def result_in_flight_limit(self) -> int:
+        return self.callback_scheduler_state.result_in_flight_limit
+
+    @property
+    def dosage_buffer_limit(self) -> int:
+        return self.callback_scheduler_state.dosage_buffer_limit
+
+    @property
+    def worker_error(self) -> BaseException | None:
+        return getattr(self, "_manual_worker_error", None)
+
+    @worker_error.setter
+    def worker_error(self, error: BaseException | None) -> None:
+        self._manual_worker_error = error
+        self.worker_error_cause = error
+        error_message = None if error is None else str(error)
+        self.callback_scheduler_state.update_dosage_worker_error(error_message)
+
+    @property
+    def result_worker_error(self) -> BaseException | None:
+        return getattr(self, "_manual_result_worker_error", None)
+
+    @result_worker_error.setter
+    def result_worker_error(self, error: BaseException | None) -> None:
+        self._manual_result_worker_error = error
+        self.result_worker_error_cause = error
+        error_message = None if error is None else str(error)
+        self.callback_scheduler_state.update_result_worker_error(error_message)
+
+    @property
+    def dosage_buffer_count(self) -> int:
+        return self.callback_scheduler_state.dosage_buffer_allocated_count
+
+    @property
+    def dosage_buffer_identifiers(self) -> set[int]:
+        return set(self.callback_scheduler_state.dosage_buffer_identifiers)
+
+    @property
+    def free_dosage_buffer_count(self) -> int:
+        return self.free_dosage_buffers.occupied_count
+
+    @property
+    def result_in_flight_slot_count(self) -> int:
+        return self.callback_scheduler_state.result_in_flight_occupied_count
+
+    @property
+    def result_queue_count(self) -> int:
+        return self.callback_scheduler_state.result_queue_occupied_count
+
+    @property
+    def dosage_queue_count(self) -> int:
+        return self.callback_scheduler_state.dosage_queue_occupied_count
+
     @property
     def callback_scheduler_state(self) -> typing.Any:
         callback_scheduler_state = getattr(self, "_manual_callback_scheduler_state", None)
@@ -2796,6 +2895,240 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
     def result_worker_thread(self, result_worker_thread: typing.Any) -> None:
         self._manual_result_worker_thread = result_worker_thread
 
+    @property
+    def processed_chunk_count(self) -> int:
+        return self.progress_state.processed_chunk_count
+
+    @property
+    def current_progress_chromosome(self) -> str | None:
+        return self.progress_state.current_progress_chromosome
+
+    @property
+    def binary_correction_summary_chunk_count(self) -> int:
+        return self.binary_correction_summary.chunk_count_with_pending(len(self.binary_correction_pending_diagnostics))
+
+    def record_processed_chunk(self, chunk_identity: typing.Any) -> typing.Any:
+        return self.progress_state.record_processed_chunk(chunk_identity)
+
+    def record_processed_chunk_without_progress(self) -> None:
+        self.progress_state.record_processed_chunk_without_progress()
+
+    def finish_progress_state(self) -> typing.Any:
+        return self.progress_state.finish_progress()
+
+    def record_work_item_stage_elapsed_duration(
+        self,
+        work_item: object,
+        stage_name: str,
+        elapsed_seconds: float,
+    ) -> None:
+        if isinstance(work_item, callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem):
+            chunk_metadata_items = tuple(chunk_work_item.metadata for chunk_work_item in work_item.work_items)
+        else:
+            dosage_work_item = typing.cast("callback_runtime.PreprocessedDosageWorkItem", work_item)
+            chunk_metadata_items = (dosage_work_item.metadata,)
+        dosage_work_item_kind = callback_runtime.classify_dosage_work_item(
+            typing.cast("callback_runtime.PreprocessedDosageWorkItem", work_item)
+        )
+        stage_duration_plan = self.plan_dosage_work_item_stage_duration(
+            dosage_work_item_kind=dosage_work_item_kind.value,
+            chunk_count=len(chunk_metadata_items),
+            elapsed_seconds=elapsed_seconds,
+        )
+        if stage_duration_plan.chunk_count != len(chunk_metadata_items):
+            message = "Native dosage work stage duration plan disagrees with the work item chunk count."
+            raise RuntimeError(message)
+        for chunk_metadata in chunk_metadata_items:
+            self.record_chunk_stage_elapsed_duration(
+                chunk_metadata,
+                stage_name,
+                stage_duration_plan.duration_per_chunk,
+            )
+
+    def plan_dosage_work_item_stage_duration(
+        self,
+        *,
+        dosage_work_item_kind: str,
+        chunk_count: int,
+        elapsed_seconds: float,
+    ) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_work_item_stage_duration(
+            dosage_work_item_kind=dosage_work_item_kind,
+            chunk_count=chunk_count,
+            elapsed_seconds=elapsed_seconds,
+        )
+
+    def plan_current_queue_backpressure_observation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> typing.Any:
+        return self.callback_scheduler_state.plan_current_queue_backpressure_observation(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+
+    def plan_current_queue_stage_backpressure_observation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> typing.Any:
+        return self.callback_scheduler_state.plan_current_queue_stage_backpressure_observation(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+
+    def plan_dosage_queue_put_observation(self, *, queued: bool) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_queue_put_observation(queued=queued)
+
+    def plan_dosage_queue_get_observation(self) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_queue_get_observation()
+
+    def plan_result_queue_put_observation(self, *, queued: bool) -> typing.Any:
+        return self.callback_scheduler_state.plan_result_queue_put_observation(queued=queued)
+
+    def plan_result_queue_get_observation(self) -> typing.Any:
+        return self.callback_scheduler_state.plan_result_queue_get_observation()
+
+    def plan_dosage_buffer_pool_backpressure_observation(
+        self,
+        *,
+        operation_name: str,
+        free_buffer_count: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_backpressure_observation(
+            operation_name=operation_name,
+            free_buffer_count=free_buffer_count,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+
+    def plan_dosage_buffer_pool_stage_backpressure_observation(
+        self,
+        *,
+        operation_name: str,
+        free_buffer_count: int,
+        elapsed_seconds: float,
+        blocked: bool,
+    ) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_stage_backpressure_observation(
+            operation_name=operation_name,
+            free_buffer_count=free_buffer_count,
+            elapsed_seconds=elapsed_seconds,
+            blocked=blocked,
+        )
+
+    def plan_dosage_buffer_pool_reuse_observation(self) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_reuse_observation()
+
+    def plan_dosage_buffer_pool_return_observation(self) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_return_observation()
+
+    def plan_dosage_buffer_pool_allocate_observation(self) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_allocate_observation()
+
+    def plan_dosage_buffer_pool_discard_observation(self) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_discard_observation()
+
+    def plan_dosage_buffer_pool_consumer_wait_observation(self) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_buffer_pool_consumer_wait_observation()
+
+    def record_progress(self, metadata: typing.Any) -> None:
+        if self.telemetry_session is None:
+            self.record_processed_chunk_without_progress()
+            return
+        progress_update = self.record_processed_chunk(callback_runtime.build_native_callback_chunk_identity(metadata))
+        telemetry_plan = progress_update.telemetry_plan
+        for progress_event in telemetry_plan.events:
+            self.telemetry_session.log_callback_progress_event(progress_event)
+        progress_record = telemetry_plan.progress
+        self.telemetry_session.log_progress(
+            processed_chunk_count=progress_record.processed_chunk_count,
+            chromosome=progress_record.chromosome,
+            chunk_identifier=progress_record.chunk_identifier,
+            variant_start_index=progress_record.variant_start_index,
+            variant_stop_index=progress_record.variant_stop_index,
+            variant_count=progress_record.variant_count,
+        )
+
+    def record_binary_null_model_failure_count(self, failure_count: int) -> None:
+        self.binary_correction_summary.add_null_model_failure_count(failure_count)
+
+    def record_binary_correction_diagnostics(
+        self,
+        binary_chunk_diagnostics: regenie2_binary.BinaryChunkDiagnostics | None,
+    ) -> None:
+        diagnostics_record_plan = self.binary_correction_summary.plan_diagnostics_record(
+            has_telemetry_session=self.telemetry_session is not None,
+            has_diagnostics=binary_chunk_diagnostics is not None,
+        )
+        if not diagnostics_record_plan.should_record:
+            return
+        if binary_chunk_diagnostics is None:
+            message = "Native binary correction diagnostics record plan selected a missing diagnostics payload."
+            raise RuntimeError(message)
+        self.binary_correction_pending_diagnostics.append(binary_chunk_diagnostics)
+
+    def flush_binary_correction_diagnostics(self) -> None:
+        summary_emit_plan = self.binary_correction_summary.plan_summary_emit(
+            has_telemetry_session=True,
+            pending_diagnostics_count=len(self.binary_correction_pending_diagnostics),
+        )
+        if not summary_emit_plan.should_flush_pending_diagnostics:
+            return
+        self.materialize_binary_correction_pending_diagnostics()
+
+    def add_binary_correction_summary_counts(
+        self,
+        diagnostics_counts: regenie2_binary.BinaryCorrectionSummaryCounts,
+    ) -> None:
+        self.binary_correction_summary.add_diagnostics_totals(
+            diagnostics_counts.chunk_count,
+            diagnostics_counts.score_only_count,
+            diagnostics_counts.score_test_candidate_count,
+            diagnostics_counts.firth_candidate_count,
+            diagnostics_counts.firth_converged_count,
+            diagnostics_counts.firth_failed_count,
+            diagnostics_counts.firth_numerical_failure_count,
+            diagnostics_counts.firth_max_iteration_failure_count,
+            diagnostics_counts.firth_invalid_statistic_failure_count,
+            diagnostics_counts.firth_step_halving_failure_count,
+            diagnostics_counts.pseudo_firth_attempt_count,
+            diagnostics_counts.pseudo_firth_success_count,
+            diagnostics_counts.nr_zero_start_attempt_count,
+            diagnostics_counts.nr_zero_start_success_count,
+            diagnostics_counts.nr_warm_start_attempt_count,
+            diagnostics_counts.nr_warm_start_success_count,
+            diagnostics_counts.sparse_correction_count,
+            diagnostics_counts.dense_correction_count,
+        )
+
+    def emit_binary_correction_summary(self) -> None:
+        summary_emit_plan = self.binary_correction_summary.plan_summary_emit(
+            has_telemetry_session=self.telemetry_session is not None,
+            pending_diagnostics_count=len(self.binary_correction_pending_diagnostics),
+        )
+        if summary_emit_plan.should_flush_pending_diagnostics:
+            self.flush_binary_correction_diagnostics()
+        if not summary_emit_plan.should_emit_summary:
+            return
+        if self.telemetry_session is None:
+            message = "Native binary correction summary emit plan selected a missing telemetry session."
+            raise RuntimeError(message)
+        self.telemetry_session.log_binary_correction_summary(self.binary_correction_summary.summary_payload())
+
     def plan_dosage_work_drain_completion(self, work_item: object) -> typing.Any:
         return self.callback_scheduler_state.plan_dosage_work_drain_completion(
             has_dosage_work_item=work_item is not None,
@@ -2807,6 +3140,41 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         )
         return self.callback_scheduler_state.plan_dosage_work_item_dispatch(
             dosage_work_item_kind=dosage_work_item_kind.value,
+        )
+
+    def plan_dosage_work_handoff(self, *, chunk_count: int) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_work_handoff(chunk_count=chunk_count)
+
+    def plan_dosage_work_handoff_for_object(self, work_item: object) -> typing.Any:
+        if isinstance(work_item, callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem):
+            chunk_count = len(work_item.work_items)
+        else:
+            chunk_count = 1
+        return self.plan_dosage_work_handoff(chunk_count=chunk_count)
+
+    def plan_variant_major_dosage_batch_handoff(
+        self,
+        *,
+        metadata_count: int,
+        genotype_matrix_by_variant_count: int,
+        chunk_stats_count: int,
+    ) -> typing.Any:
+        return self.callback_scheduler_state.plan_variant_major_dosage_batch_handoff(
+            metadata_count=metadata_count,
+            genotype_matrix_by_variant_count=genotype_matrix_by_variant_count,
+            chunk_stats_count=chunk_stats_count,
+        )
+
+    def plan_variant_major_dosage_batch_handoff_for_sequences(
+        self,
+        metadata_batch: typing.Sequence[typing.Any],
+        genotype_matrix_by_variant_batch: typing.Sequence[typing.Any],
+        chunk_stats_batch: typing.Sequence[typing.Any],
+    ) -> typing.Any:
+        return self.plan_variant_major_dosage_batch_handoff(
+            metadata_count=len(metadata_batch),
+            genotype_matrix_by_variant_count=len(genotype_matrix_by_variant_batch),
+            chunk_stats_count=len(chunk_stats_batch),
         )
 
     def plan_result_write_drain_completion(self, work_item: object) -> typing.Any:
@@ -2908,6 +3276,554 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
                 continue
             message = "Native result write dispatch plan did not select a single-result processing path."
             raise RuntimeError(message)
+
+    def put_dosage_work_item(self, work_item: object) -> None:
+        self.start()
+        if self.stage_timing_recorder is None:
+            while True:
+                self.raise_worker_error_if_present()
+                if self.try_put_dosage_work_item_with_backpressure_timeout(work_item):
+                    return
+        while True:
+            self.raise_worker_error_if_present()
+            put_start_time = time.perf_counter()
+            queued = self.try_put_dosage_work_item_with_backpressure_timeout(work_item)
+            put_observation_plan = self.plan_dosage_queue_put_observation(queued=queued)
+            if put_observation_plan.should_retry_put:
+                self.record_bounded_resource_stage_duration(
+                    resource_name=put_observation_plan.queue_name,
+                    operation_name=put_observation_plan.operation_name,
+                    start_time=put_start_time,
+                    blocked=put_observation_plan.blocked,
+                )
+                continue
+            self.record_bounded_resource_stage_duration(
+                resource_name=put_observation_plan.queue_name,
+                operation_name=put_observation_plan.operation_name,
+                start_time=put_start_time,
+                blocked=put_observation_plan.blocked,
+            )
+            return
+
+    def try_put_dosage_work_item(
+        self,
+        work_item: object,
+        *,
+        timeout_seconds: float,
+    ) -> bool:
+        deadline = time.monotonic() + max(timeout_seconds, 0.0)
+        while True:
+            remaining_timeout_seconds = deadline - time.monotonic()
+            attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_attempt(
+                wait_timeout_seconds=remaining_timeout_seconds
+            )
+            if attempt_plan.should_put:
+                queued = self.dosage_queue.put(work_item, timeout_seconds=0.0)
+                if not queued:
+                    if not self.callback_scheduler_state.release_dosage_queue_slot():
+                        message = "Native dosage queue storage rejected a put after scheduler slot acquisition."
+                        raise RuntimeError(message)
+                    message = "Native dosage queue storage had no slot after scheduler selected put."
+                    raise RuntimeError(message)
+                return True
+            if not attempt_plan.should_wait:
+                return False
+            self.dosage_queue.wait_for_available_slot(timeout_seconds=attempt_plan.wait_timeout_seconds)
+
+    def try_put_dosage_work_item_with_backpressure_timeout(self, work_item: object) -> bool:
+        deadline: float | None = None
+        while True:
+            if deadline is None:
+                attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_backpressure_attempt()
+                if attempt_plan.should_wait:
+                    deadline = time.monotonic() + attempt_plan.wait_timeout_seconds
+            else:
+                remaining_timeout_seconds = deadline - time.monotonic()
+                attempt_plan = self.callback_scheduler_state.plan_dosage_queue_put_attempt(
+                    wait_timeout_seconds=remaining_timeout_seconds
+                )
+            if attempt_plan.should_put:
+                queued = self.dosage_queue.put(work_item, timeout_seconds=0.0)
+                if not queued:
+                    if not self.callback_scheduler_state.release_dosage_queue_slot():
+                        message = "Native dosage queue storage rejected a put after scheduler slot acquisition."
+                        raise RuntimeError(message)
+                    message = "Native dosage queue storage had no slot after scheduler selected put."
+                    raise RuntimeError(message)
+                return True
+            if not attempt_plan.should_wait:
+                return False
+            self.dosage_queue.wait_for_available_slot(timeout_seconds=attempt_plan.wait_timeout_seconds)
+
+    def get_dosage_work_item(self) -> object:
+        while True:
+            get_plan = self.callback_scheduler_state.plan_dosage_queue_get_attempt(
+                has_queued_item=self.dosage_queue.has_queued_item
+            )
+            if get_plan.has_release_error:
+                message = "Native dosage-queue state has no occupied slot to release."
+                raise RuntimeError(message)
+            if get_plan.should_get:
+                get_result = self.dosage_queue.get(timeout_seconds=0.0)
+                if not get_result.has_item:
+                    if not self.callback_scheduler_state.acquire_dosage_queue_slot():
+                        message = "Native dosage queue storage was empty after scheduler slot release."
+                        raise RuntimeError(message)
+                    message = "Native dosage queue storage had no queued item after scheduler selected get."
+                    raise RuntimeError(message)
+                return get_result.item
+            if get_plan.should_wait:
+                self.dosage_queue.wait_for_queued_item(timeout_seconds=get_plan.wait_timeout_seconds)
+
+    def raise_worker_error_if_present(self) -> None:
+        error_raise_plan = self.callback_scheduler_state.plan_worker_error_raise()
+        if not error_raise_plan.should_raise:
+            return
+        error_message = error_raise_plan.error_message
+        if error_message is None:
+            message = "Native callback worker error raise plan omitted the error message."
+            raise RuntimeError(message)
+        if error_raise_plan.raise_dosage_worker_error:
+            raise RuntimeError(error_message) from self.worker_error_cause
+        if error_raise_plan.raise_result_worker_error:
+            raise RuntimeError(error_message) from self.result_worker_error_cause
+        message = "Native callback worker error raise plan did not select a worker."
+        raise RuntimeError(message)
+
+    def put_result_write_item(self, work_item: object) -> None:
+        self.start()
+        if self.stage_timing_recorder is None:
+            while True:
+                self.raise_worker_error_if_present()
+                if self.try_put_result_write_item_with_backpressure_timeout(work_item):
+                    return
+        while True:
+            self.raise_worker_error_if_present()
+            put_start_time = time.perf_counter()
+            queued = self.try_put_result_write_item_with_backpressure_timeout(work_item)
+            put_observation_plan = self.plan_result_queue_put_observation(queued=queued)
+            if put_observation_plan.should_retry_put:
+                self.record_bounded_resource_stage_duration(
+                    resource_name=put_observation_plan.queue_name,
+                    operation_name=put_observation_plan.operation_name,
+                    start_time=put_start_time,
+                    blocked=put_observation_plan.blocked,
+                )
+                continue
+            self.record_bounded_resource_stage_duration(
+                resource_name=put_observation_plan.queue_name,
+                operation_name=put_observation_plan.operation_name,
+                start_time=put_start_time,
+                blocked=put_observation_plan.blocked,
+            )
+            return
+
+    def try_put_result_write_item(
+        self,
+        work_item: object,
+        *,
+        timeout_seconds: float,
+    ) -> bool:
+        handoff_plan = self.callback_scheduler_state.plan_result_write_handoff(
+            has_result_work_item=work_item is not None
+        )
+        if handoff_plan.has_result_work_item != (work_item is not None):
+            message = "Native result write handoff plan disagrees with the queued result item."
+            raise RuntimeError(message)
+        deadline = time.monotonic() + max(timeout_seconds, 0.0)
+        while True:
+            remaining_timeout_seconds = deadline - time.monotonic()
+            attempt_plan = self.callback_scheduler_state.plan_result_queue_put_attempt(
+                wait_timeout_seconds=remaining_timeout_seconds
+            )
+            if attempt_plan.should_put and handoff_plan.should_enqueue:
+                queued = self.result_queue.put(work_item, timeout_seconds=0.0)
+                if not queued:
+                    if not self.callback_scheduler_state.release_result_queue_slot():
+                        message = "Native result queue storage rejected a put after scheduler slot acquisition."
+                        raise RuntimeError(message)
+                    message = "Native result queue storage had no slot after scheduler selected put."
+                    raise RuntimeError(message)
+                return True
+            if not attempt_plan.should_wait:
+                return False
+            self.result_queue.wait_for_available_slot(timeout_seconds=attempt_plan.wait_timeout_seconds)
+
+    def try_put_result_write_item_with_backpressure_timeout(self, work_item: object) -> bool:
+        handoff_plan = self.callback_scheduler_state.plan_result_write_handoff(
+            has_result_work_item=work_item is not None
+        )
+        if handoff_plan.has_result_work_item != (work_item is not None):
+            message = "Native result write handoff plan disagrees with the queued result item."
+            raise RuntimeError(message)
+        deadline: float | None = None
+        while True:
+            if deadline is None:
+                attempt_plan = self.callback_scheduler_state.plan_result_queue_put_backpressure_attempt()
+                if attempt_plan.should_wait:
+                    deadline = time.monotonic() + attempt_plan.wait_timeout_seconds
+            else:
+                remaining_timeout_seconds = deadline - time.monotonic()
+                attempt_plan = self.callback_scheduler_state.plan_result_queue_put_attempt(
+                    wait_timeout_seconds=remaining_timeout_seconds
+                )
+            if attempt_plan.should_put and handoff_plan.should_enqueue:
+                queued = self.result_queue.put(work_item, timeout_seconds=0.0)
+                if not queued:
+                    if not self.callback_scheduler_state.release_result_queue_slot():
+                        message = "Native result queue storage rejected a put after scheduler slot acquisition."
+                        raise RuntimeError(message)
+                    message = "Native result queue storage had no slot after scheduler selected put."
+                    raise RuntimeError(message)
+                return True
+            if not attempt_plan.should_wait:
+                return False
+            self.result_queue.wait_for_available_slot(timeout_seconds=attempt_plan.wait_timeout_seconds)
+
+    def get_result_write_item(self) -> object:
+        while True:
+            get_plan = self.callback_scheduler_state.plan_result_queue_get_attempt(
+                has_queued_item=self.result_queue.has_queued_item
+            )
+            if get_plan.has_release_error:
+                message = "Native result-queue state has no occupied slot to release."
+                raise RuntimeError(message)
+            if get_plan.should_get:
+                get_result = self.result_queue.get(timeout_seconds=0.0)
+                if not get_result.has_item:
+                    if not self.callback_scheduler_state.acquire_result_queue_slot():
+                        message = "Native result queue storage was empty after scheduler slot release."
+                        raise RuntimeError(message)
+                    message = "Native result queue storage had no queued item after scheduler selected get."
+                    raise RuntimeError(message)
+                return get_result.item
+            if get_plan.should_wait:
+                self.result_queue.wait_for_queued_item(timeout_seconds=get_plan.wait_timeout_seconds)
+
+    def acquire_result_in_flight_slot(self) -> None:
+        if self.stage_timing_recorder is None:
+            while True:
+                self.raise_worker_error_if_present()
+                observed_generation = self.result_in_flight_slot_signal.generation
+                attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
+                if attempt_plan.should_acquire:
+                    return
+                if attempt_plan.should_wait:
+                    self.result_in_flight_slot_signal.wait_for_change(
+                        observed_generation,
+                        timeout_seconds=attempt_plan.wait_timeout_seconds,
+                    )
+        while True:
+            self.raise_worker_error_if_present()
+            acquire_start_time = time.perf_counter()
+            observed_generation = self.result_in_flight_slot_signal.generation
+            attempt_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt()
+            acquire_observation_plan = self.callback_scheduler_state.plan_result_in_flight_slot_acquire_observation(
+                attempt_plan
+            )
+            if not attempt_plan.should_acquire and attempt_plan.should_wait:
+                self.result_in_flight_slot_signal.wait_for_change(
+                    observed_generation,
+                    timeout_seconds=attempt_plan.wait_timeout_seconds,
+                )
+            if acquire_observation_plan.should_retry_acquisition:
+                self.record_bounded_resource_stage_duration(
+                    resource_name=acquire_observation_plan.resource_name,
+                    operation_name=acquire_observation_plan.operation_name,
+                    start_time=acquire_start_time,
+                    blocked=acquire_observation_plan.blocked,
+                )
+                continue
+            self.record_bounded_resource_stage_duration(
+                resource_name=acquire_observation_plan.resource_name,
+                operation_name=acquire_observation_plan.operation_name,
+                start_time=acquire_start_time,
+                blocked=acquire_observation_plan.blocked,
+            )
+            return
+
+    def release_result_in_flight_slot(self) -> None:
+        release_plan = self.callback_scheduler_state.plan_result_in_flight_slot_release_attempt()
+        if release_plan.has_release_error:
+            message = "Native result in-flight slot state has no occupied slot to release."
+            raise RuntimeError(message)
+        self.result_in_flight_slot_signal.notify_waiters()
+        if self.stage_timing_recorder is None:
+            return
+        release_observation_plan = self.callback_scheduler_state.plan_result_in_flight_slot_release_observation()
+        self.record_bounded_resource_operation(
+            resource_name=release_observation_plan.resource_name,
+            operation_name=release_observation_plan.operation_name,
+            elapsed_seconds=0.0,
+            blocked=release_observation_plan.blocked,
+        )
+
+    def finish(self) -> None:
+        finish_plan = self.callback_scheduler_state.plan_worker_finish()
+        if finish_plan.stop_dosage_worker:
+            self.stop_dosage_worker(timeout_seconds=finish_plan.dosage_stop_timeout_seconds)
+        if finish_plan.join_dosage_worker:
+            self.join_dosage_worker(timeout_seconds=finish_plan.dosage_join_timeout_seconds)
+        if finish_plan.stop_result_worker:
+            self.stop_result_worker(timeout_seconds=finish_plan.result_stop_timeout_seconds)
+        if finish_plan.join_result_worker:
+            self.join_result_worker(timeout_seconds=finish_plan.result_join_timeout_seconds)
+        if finish_plan.raise_worker_error:
+            self.raise_worker_error_if_present()
+        if finish_plan.complete_progress:
+            self.complete_progress()
+        if finish_plan.emit_binary_correction_summary:
+            self.emit_binary_correction_summary()
+
+    def abort(self) -> None:
+        abort_plan = self.callback_scheduler_state.plan_worker_abort()
+        if abort_plan.stop_dosage_worker:
+            with contextlib.suppress(callback_shared.NativeBgenWorkerShutdownError):
+                self.stop_dosage_worker(timeout_seconds=abort_plan.dosage_stop_timeout_seconds)
+        if abort_plan.stop_result_worker:
+            with contextlib.suppress(callback_shared.NativeBgenWorkerShutdownError):
+                self.stop_result_worker(timeout_seconds=abort_plan.result_stop_timeout_seconds)
+
+    def stop_dosage_worker(self, timeout_seconds: float | None) -> None:
+        stop_plan = self.callback_scheduler_state.plan_dosage_worker_stop(
+            timeout_seconds=timeout_seconds,
+            is_worker_alive=self.dosage_worker_is_alive,
+        )
+        if not stop_plan.should_stop:
+            return
+        stop_deadline = time.monotonic() + stop_plan.timeout_seconds
+        while time.monotonic() < stop_deadline:
+            stop_poll_plan = self.callback_scheduler_state.plan_dosage_worker_stop_poll(
+                remaining_timeout_seconds=stop_deadline - time.monotonic(),
+                is_worker_alive=self.dosage_worker_is_alive,
+            )
+            if not stop_poll_plan.should_stop:
+                return
+            if self.try_put_dosage_work_item(
+                None,
+                timeout_seconds=stop_poll_plan.poll_timeout_seconds,
+            ):
+                return
+        raise callback_shared.NativeBgenWorkerShutdownError(
+            worker_name=self.dosage_worker_name,
+            timeout_seconds=stop_plan.timeout_seconds,
+        )
+
+    def join_dosage_worker(self, timeout_seconds: float | None) -> None:
+        join_plan = self.callback_scheduler_state.plan_dosage_worker_join(timeout_seconds=timeout_seconds)
+        if not join_plan.should_join:
+            return
+        self.worker_thread.join(timeout=join_plan.timeout_seconds)
+        if self.dosage_worker_is_alive:
+            raise callback_shared.NativeBgenWorkerShutdownError(
+                worker_name=self.dosage_worker_name,
+                timeout_seconds=join_plan.timeout_seconds,
+            )
+
+    def stop_result_worker(self, timeout_seconds: float | None) -> None:
+        stop_plan = self.callback_scheduler_state.plan_result_worker_stop(
+            timeout_seconds=timeout_seconds,
+            is_worker_alive=self.result_worker_is_alive,
+        )
+        if not stop_plan.should_stop:
+            return
+        stop_deadline = time.monotonic() + stop_plan.timeout_seconds
+        while time.monotonic() < stop_deadline:
+            stop_poll_plan = self.callback_scheduler_state.plan_result_worker_stop_poll(
+                remaining_timeout_seconds=stop_deadline - time.monotonic(),
+                is_worker_alive=self.result_worker_is_alive,
+            )
+            if not stop_poll_plan.should_stop:
+                return
+            if self.try_put_result_write_item(
+                None,
+                timeout_seconds=stop_poll_plan.poll_timeout_seconds,
+            ):
+                return
+        raise callback_shared.NativeBgenWorkerShutdownError(
+            worker_name=self.result_worker_name,
+            timeout_seconds=stop_plan.timeout_seconds,
+        )
+
+    def join_result_worker(self, timeout_seconds: float | None) -> None:
+        join_plan = self.callback_scheduler_state.plan_result_worker_join(timeout_seconds=timeout_seconds)
+        if not join_plan.should_join:
+            return
+        self.result_worker_thread.join(timeout=join_plan.timeout_seconds)
+        if self.result_worker_is_alive:
+            raise callback_shared.NativeBgenWorkerShutdownError(
+                worker_name=self.result_worker_name,
+                timeout_seconds=join_plan.timeout_seconds,
+            )
+
+    def plan_dosage_buffer_reuse(
+        self,
+        *,
+        buffered_shape: tuple[int, ...],
+        expected_shape: tuple[int, ...],
+    ) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_buffer_reuse(
+            buffered_shape=buffered_shape,
+            expected_shape=expected_shape,
+        )
+
+    def plan_dosage_buffer_return_attempt(self, *, buffer_identifier: int) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_buffer_return_attempt(buffer_identifier)
+
+    def acquire_dosage_buffer_with_shape(
+        self,
+        expected_shape: tuple[int, ...],
+        dtype: typing.Any,
+    ) -> typing.Any:
+        while True:
+            self.raise_worker_error_if_present()
+            dosage_buffer: typing.Any | None = None
+            should_allocate_dosage_buffer = False
+            observed_generation = self.dosage_buffer_pool_signal.generation
+            acquire_plan = self.callback_scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt(
+                free_buffer_count=self.free_dosage_buffer_count
+            )
+            if acquire_plan.should_take_free_buffer:
+                free_buffer_result = self.free_dosage_buffers.get(timeout_seconds=0.0)
+                if not free_buffer_result.has_item:
+                    message = "Native dosage-buffer free queue was empty after scheduler selected reuse."
+                    raise RuntimeError(message)
+                dosage_buffer = free_buffer_result.item
+            elif acquire_plan.should_allocate:
+                should_allocate_dosage_buffer = True
+            elif self.stage_timing_recorder is None and acquire_plan.should_wait:
+                self.dosage_buffer_pool_signal.wait_for_change(
+                    observed_generation,
+                    timeout_seconds=acquire_plan.wait_timeout_seconds,
+                )
+            if should_allocate_dosage_buffer:
+                return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
+            if dosage_buffer is not None:
+                reused_dosage_buffer = self._acquire_reused_dosage_buffer(
+                    dosage_buffer,
+                    expected_shape=expected_shape,
+                    dtype=dtype,
+                )
+                if reused_dosage_buffer is not None:
+                    self.record_dosage_buffer_pool_reuse_operation(
+                        free_buffer_count=self.free_dosage_buffer_count,
+                    )
+                    return reused_dosage_buffer
+                self.discard_dosage_buffer_slot(dosage_buffer)
+                continue
+            if self.stage_timing_recorder is None:
+                continue
+            buffer_wait_start_time = time.perf_counter()
+            observed_generation = self.dosage_buffer_pool_signal.generation
+            acquire_plan = self.callback_scheduler_state.plan_dosage_buffer_acquire_backpressure_attempt(
+                free_buffer_count=self.free_dosage_buffer_count
+            )
+            if acquire_plan.should_take_free_buffer:
+                free_buffer_result = self.free_dosage_buffers.get(timeout_seconds=0.0)
+                if not free_buffer_result.has_item:
+                    message = "Native dosage-buffer free queue was empty after scheduler selected reuse."
+                    raise RuntimeError(message)
+                dosage_buffer = free_buffer_result.item
+            elif acquire_plan.should_allocate:
+                should_allocate_dosage_buffer = True
+            elif acquire_plan.should_wait:
+                self.dosage_buffer_pool_signal.wait_for_change(
+                    observed_generation,
+                    timeout_seconds=acquire_plan.wait_timeout_seconds,
+                )
+            current_depth = self.free_dosage_buffer_count
+            if should_allocate_dosage_buffer:
+                return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
+            if dosage_buffer is not None:
+                reused_dosage_buffer = self._acquire_reused_dosage_buffer(
+                    dosage_buffer,
+                    expected_shape=expected_shape,
+                    dtype=dtype,
+                )
+                if reused_dosage_buffer is not None:
+                    self.record_dosage_buffer_pool_reuse_operation(
+                        free_buffer_count=self.free_dosage_buffer_count,
+                    )
+                    return reused_dosage_buffer
+                self.discard_dosage_buffer_slot(dosage_buffer)
+                continue
+            self.record_dosage_buffer_pool_consumer_wait_stage_duration(
+                free_buffer_count=current_depth,
+                start_time=buffer_wait_start_time,
+            )
+
+    def release_dosage_buffer(self, dosage_buffer: typing.Any) -> None:
+        dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
+        return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
+        if not return_plan.should_return:
+            return
+        queued = self.free_dosage_buffers.put(dosage_buffer_owner, timeout_seconds=0.0)
+        if not queued:
+            message = "Native dosage-buffer free queue had no slot for returned buffer."
+            raise RuntimeError(message)
+        current_depth = self.free_dosage_buffer_count
+        self.dosage_buffer_pool_signal.notify_waiters()
+        self.record_dosage_buffer_pool_return_operation(
+            free_buffer_count=current_depth,
+        )
+
+    def allocate_dosage_buffer_with_shape(self, expected_shape: tuple[int, ...], dtype: typing.Any) -> typing.Any:
+        dosage_buffer = np.empty(expected_shape, dtype=dtype, order="C")
+        register_plan = self.callback_scheduler_state.plan_dosage_buffer_register_attempt(id(dosage_buffer))
+        if register_plan.has_registration_error:
+            message = "Native dosage-buffer pool has no available slot for allocation."
+            raise RuntimeError(message)
+        current_depth = self.free_dosage_buffer_count
+        self.record_dosage_buffer_pool_allocate_operation(
+            free_buffer_count=current_depth,
+        )
+        return dosage_buffer
+
+    def discard_dosage_buffer_slot(self, dosage_buffer: typing.Any) -> None:
+        discard_plan = self.callback_scheduler_state.plan_dosage_buffer_discard_attempt(id(dosage_buffer))
+        if not discard_plan.should_discard:
+            return
+        current_depth = self.free_dosage_buffer_count
+        self.dosage_buffer_pool_signal.notify_waiters()
+        self.record_dosage_buffer_pool_discard_operation(
+            free_buffer_count=current_depth,
+        )
+
+    def release_numpy_dosage_buffer(self, dosage_buffer: object) -> None:
+        if isinstance(dosage_buffer, np.ndarray):
+            self.release_dosage_buffer(dosage_buffer)
+
+    def get_releasable_dosage_buffer(self, dosage_buffer: object) -> typing.Any:
+        if isinstance(dosage_buffer, np.ndarray):
+            dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
+            return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
+            if return_plan.should_return:
+                return dosage_buffer_owner
+        return None
+
+    def release_result_work_item_host_buffer(self, work_item: typing.Any) -> bool:
+        resource_release_plan = self.callback_scheduler_state.plan_result_write_item_pre_write_resource_release(
+            has_host_dosage_buffer=work_item.host_dosage_buffer is not None,
+        )
+        self.release_result_work_item_resources(work_item, resource_release_plan)
+        return resource_release_plan.should_release_host_buffer
+
+    def release_result_work_item_final_resources(
+        self,
+        work_item: typing.Any,
+        *,
+        host_dosage_buffer_released: bool,
+    ) -> None:
+        resource_release_plan = self.callback_scheduler_state.plan_result_write_item_final_resource_release(
+            has_host_dosage_buffer=work_item.host_dosage_buffer is not None,
+            has_released_host_dosage_buffer=host_dosage_buffer_released,
+            release_in_flight_slot=work_item.release_in_flight_slot,
+        )
+        self.release_result_work_item_resources(work_item, resource_release_plan)
+
+    def release_result_work_item_in_flight_slot(self, work_item: typing.Any) -> None:
+        if work_item.release_in_flight_slot:
+            self.release_result_in_flight_slot()
 
     def compute_preprocessed_chunk(
         self,
