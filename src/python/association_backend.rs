@@ -2,7 +2,7 @@
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyModule};
 
 use g_engine::{
     AssociationBackend, AssociationBatchResult, BackendError, EngineChromosomeRunInput, EngineChromosomeRunReport,
@@ -686,6 +686,20 @@ impl From<GenotypeBatchView<'_>> for NativeGenotypeBatchView {
             variant_offset: view.variant_offset,
         }
     }
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeAssociationBatchResult>()?;
+    module.add_class::<NativeAssociationChromosomeRunInput>()?;
+    module.add_class::<NativeAssociationChromosomeRunReport>()?;
+    module.add_class::<NativeAssociationEngineRunReport>()?;
+    module.add_class::<NativeAssociationGroupRunReport>()?;
+    module.add_class::<NativeGenotypeBatchView>()?;
+    module.add_class::<NativePredictionView>()?;
+    module.add_class::<NativePreparedGroupInput>()?;
+    module.add_class::<NativePythonAssociationBackend>()?;
+    module.add_class::<NativePythonEngineRunEffects>()?;
+    Ok(())
 }
 
 fn backend_error_from_py_error(error: &PyErr) -> BackendError {

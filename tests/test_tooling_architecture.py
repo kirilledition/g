@@ -1148,6 +1148,7 @@ def test_pyo3_stub_checker_reads_rustfmt_wrapped_pyfunction_registration() -> No
 
 
 def test_pyo3_stub_checker_scans_delegated_registration_modules() -> None:
+    assert Path("src/python/association_backend.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/callback_diagnostics.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/callback_progress.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/callback_queue.rs") in check_pyo3_stub.RUST_EXPORT_FILES

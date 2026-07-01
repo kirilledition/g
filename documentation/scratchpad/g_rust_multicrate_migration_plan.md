@@ -1669,6 +1669,8 @@ Current implementation notes:
   registration now lives with the corresponding callback adapter modules.
 - Logging, JAX runtime, and runtime-state PyO3 export registration now lives
   with the corresponding adapter modules.
+- Association backend PyO3 export registration now lives in the association
+  backend adapter module.
 
 ### Tests
 

@@ -53,11 +53,6 @@ mod telemetry_policy;
 mod timing;
 mod trusted_validation;
 
-use association_backend::{
-    NativeAssociationBatchResult, NativeAssociationChromosomeRunInput, NativeAssociationChromosomeRunReport,
-    NativeAssociationEngineRunReport, NativeAssociationGroupRunReport, NativeGenotypeBatchView, NativePredictionView,
-    NativePreparedGroupInput, NativePythonAssociationBackend, NativePythonEngineRunEffects,
-};
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
 use g_engine::Regenie2RunEngineCore;
 use profile::build_profile_snapshot_dict;
@@ -1710,16 +1705,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     config::register_module(module)?;
     module.add_class::<ChunkSpec>()?;
     module.add_class::<ChunkStats>()?;
-    module.add_class::<NativeAssociationBatchResult>()?;
-    module.add_class::<NativeAssociationChromosomeRunInput>()?;
-    module.add_class::<NativeAssociationChromosomeRunReport>()?;
-    module.add_class::<NativeAssociationEngineRunReport>()?;
-    module.add_class::<NativeAssociationGroupRunReport>()?;
-    module.add_class::<NativeGenotypeBatchView>()?;
-    module.add_class::<NativePredictionView>()?;
-    module.add_class::<NativePreparedGroupInput>()?;
-    module.add_class::<NativePythonAssociationBackend>()?;
-    module.add_class::<NativePythonEngineRunEffects>()?;
+    association_backend::register_module(module)?;
     module.add_class::<NativeAlignedPhenotypeGroup>()?;
     module.add_class::<NativeAlignedSampleData>()?;
     callback_summary::register_module(module)?;
