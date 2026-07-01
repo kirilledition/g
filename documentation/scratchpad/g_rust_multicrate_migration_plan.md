@@ -1513,12 +1513,11 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Runner, output, preflight, callback, native-dispatch, and pipeline diagnostic
   helpers now use the same native field-mapping emitter, leaving legacy
   JSON-string diagnostic emission only for compatibility adapters.
-- Telemetry close helpers now consult the native close plan and use the native
-  run-session close-with-event path when a native telemetry handle is present,
-  keeping legacy `close_with_event` only for adapters and tests without native
-  handles.
+- Telemetry close helpers now consult the native close plan and require the
+  native run-session close-with-event path when a telemetry writer is present.
 - Telemetry close-helper dispatch now runs through one native PyO3 boundary
-  that owns the no-session, native-session, and legacy-adapter branches.
+  that owns the no-session and native-session branches and rejects non-native
+  close contracts instead of calling Python `close_with_event`.
 - Telemetry JSONL serialization now goes through `g-runtime`, so Python
   adapters no longer depend on Python's `json.dumps` for telemetry file writes
   or diagnostic field JSON.
@@ -1802,6 +1801,10 @@ Current implementation notes:
 - The Rust architecture checker now guards the Phase 12 root boundary by
   rejecting public internal-crate re-exports, a public root `python` module,
   and public root PyO3 registration.
+- Telemetry close dispatch no longer falls back to Python `close_with_event`
+  objects. The root PyO3 adapter now closes enabled native telemetry sessions,
+  no-ops disabled native sessions, and fails fast for non-native close
+  contracts while preserving the `_core` export name.
 
 ### Tests
 

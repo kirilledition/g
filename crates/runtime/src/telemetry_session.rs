@@ -442,9 +442,9 @@ pub fn plan_telemetry_progress_emission(
 #[must_use]
 pub fn plan_telemetry_close(has_telemetry_session: bool, is_native_telemetry_session: bool) -> TelemetryClosePlan {
     TelemetryClosePlan {
-        should_close: has_telemetry_session,
+        should_close: has_telemetry_session && is_native_telemetry_session,
         use_native_close_with_event: has_telemetry_session && is_native_telemetry_session,
-        should_emit_legacy_close_event: has_telemetry_session && !is_native_telemetry_session,
+        should_emit_legacy_close_event: false,
         legacy_close_event_name: TELEMETRY_SESSION_CLOSED_EVENT_NAME.to_string(),
         legacy_close_event_level: TELEMETRY_SESSION_CLOSED_EVENT_LEVEL.to_string(),
     }
@@ -596,9 +596,9 @@ mod tests {
         assert_eq!(
             plan_telemetry_close(true, false),
             TelemetryClosePlan {
-                should_close: true,
+                should_close: false,
                 use_native_close_with_event: false,
-                should_emit_legacy_close_event: true,
+                should_emit_legacy_close_event: false,
                 legacy_close_event_name: "telemetry_session_closed".to_string(),
                 legacy_close_event_level: "debug".to_string(),
             },

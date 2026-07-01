@@ -15,7 +15,7 @@ use g_runtime::logging_sink as native_logging_sink;
 use g_runtime::run_events as native_run_events;
 use g_runtime::telemetry_session as native_telemetry_session;
 use g_runtime::telemetry_writer as native_telemetry_writer;
-use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyModule, PyString, PyTuple};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
@@ -953,23 +953,22 @@ pub fn plan_telemetry_close(
 
 #[pyfunction]
 pub fn close_telemetry_session_with_event(py: Python<'_>, telemetry_session: &Bound<'_, PyAny>) -> PyResult<()> {
+    if telemetry_session.is_none() {
+        return Ok(());
+    }
     let native_telemetry_session = optional_native_telemetry_session(py, telemetry_session)?;
-    let close_plan = native_telemetry_session::plan_telemetry_close(
-        !telemetry_session.is_none(),
-        native_telemetry_session.is_some(),
-    );
+    let close_plan = native_telemetry_session::plan_telemetry_close(true, native_telemetry_session.is_some());
     if !close_plan.should_close {
         return Ok(());
     }
-    if close_plan.use_native_close_with_event {
-        let active_native_telemetry_session = native_telemetry_session
-            .ok_or_else(|| PyRuntimeError::new_err("Native telemetry close plan selected a missing native session."))?;
-        active_native_telemetry_session.call_method0("finish_with_current_close_event_metadata")?;
-        return Ok(());
+    if !close_plan.use_native_close_with_event {
+        return Err(PyTypeError::new_err(
+            "telemetry close requires a TelemetrySession with a native telemetry session handle.",
+        ));
     }
-    if close_plan.should_emit_legacy_close_event {
-        telemetry_session.call_method0("close_with_event")?;
-    }
+    let active_native_telemetry_session = native_telemetry_session
+        .ok_or_else(|| PyRuntimeError::new_err("Native telemetry close plan selected a missing native session."))?;
+    active_native_telemetry_session.call_method0("finish_with_current_close_event_metadata")?;
     Ok(())
 }
 
@@ -980,7 +979,9 @@ fn optional_native_telemetry_session<'py>(
     match telemetry_session.getattr("native_telemetry_session") {
         Ok(native_telemetry_session) if native_telemetry_session.is_none() => Ok(None),
         Ok(native_telemetry_session) => Ok(Some(native_telemetry_session)),
-        Err(error) if error.is_instance_of::<PyAttributeError>(py) => Ok(None),
+        Err(error) if error.is_instance_of::<PyAttributeError>(py) => Err(PyTypeError::new_err(
+            "telemetry close requires a TelemetrySession with a native telemetry session handle.",
+        )),
         Err(error) => Err(error),
     }
 }

@@ -431,7 +431,7 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
         has_telemetry_session=True,
         is_native_telemetry_session=True,
     )
-    legacy_close_plan = _core.plan_telemetry_close(
+    non_native_close_plan = _core.plan_telemetry_close(
         has_telemetry_session=True,
         is_native_telemetry_session=False,
     )
@@ -445,9 +445,9 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     assert native_close_plan.should_emit_legacy_close_event is False
     assert native_close_plan.legacy_close_event_name == "telemetry_session_closed"
     assert native_close_plan.legacy_close_event_level == "debug"
-    assert legacy_close_plan.should_close is True
-    assert legacy_close_plan.use_native_close_with_event is False
-    assert legacy_close_plan.should_emit_legacy_close_event is True
+    assert non_native_close_plan.should_close is False
+    assert non_native_close_plan.use_native_close_with_event is False
+    assert non_native_close_plan.should_emit_legacy_close_event is False
     assert disabled_close_plan.should_close is False
     assert isinstance(off_session.native_session_handle, _core.NativeTelemetryRunSession)
     assert not off_session.enabled
@@ -1040,8 +1040,8 @@ def test_native_telemetry_run_session_owns_jax_runtime_diagnostic_event(tmp_path
     assert event_payload["cache_entries"] == 7
 
 
-def test_close_telemetry_session_uses_close_with_event_contract() -> None:
-    class FakeCloseableSession:
+def test_close_telemetry_session_rejects_non_native_close_contract() -> None:
+    class FakeNonNativeSession:
         def __init__(self) -> None:
             self.closed = False
             self.close_metadata: dict[str, object] | None = None
@@ -1051,13 +1051,37 @@ def test_close_telemetry_session_uses_close_with_event_contract() -> None:
             self.close_metadata = {"writer_counters": {"written_event_count": 3}}
             return self.close_metadata
 
-    fake_session = FakeCloseableSession()
+    fake_session = FakeNonNativeSession()
 
     telemetry.close_telemetry_session(None)
-    telemetry.close_telemetry_session(fake_session)
+    with pytest.raises(TypeError, match="native telemetry session handle"):
+        telemetry.close_telemetry_session(typing.cast("telemetry.TelemetrySession", fake_session))
 
-    assert fake_session.closed is True
-    assert fake_session.close_metadata == {"writer_counters": {"written_event_count": 3}}
+    assert fake_session.closed is False
+    assert fake_session.close_metadata is None
+
+
+def test_close_telemetry_session_allows_disabled_native_session(tmp_path: Path) -> None:
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.OFF,
+        paths=telemetry.TelemetryPaths(
+            log_dir=tmp_path,
+            stream_file=tmp_path / "events.jsonl",
+            profile_summary_json=None,
+            stage_timings_json=None,
+        ),
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        queue_size=1024,
+        lossy=True,
+        trace_event_cap=0,
+        run_id="run-1",
+    )
+
+    telemetry.close_telemetry_session(telemetry_session)
+
+    assert telemetry_session.native_telemetry_session is None
+    assert telemetry_session.close_metadata is None
 
 
 def test_close_telemetry_session_uses_native_close_plan() -> None:
@@ -1072,18 +1096,12 @@ def test_close_telemetry_session_uses_native_close_plan() -> None:
     class FakeNativeCloseableSession:
         def __init__(self) -> None:
             self.native_telemetry_session = FakeNativeTelemetrySession()
-            self.legacy_closed = False
-
-        def close_with_event(self) -> object:
-            self.legacy_closed = True
-            return {"writer_counters": {"written_event_count": 0}}
 
     fake_session = FakeNativeCloseableSession()
 
-    telemetry.close_telemetry_session(fake_session)
+    telemetry.close_telemetry_session(typing.cast("telemetry.TelemetrySession", fake_session))
 
     assert fake_session.native_telemetry_session.closed is True
-    assert fake_session.legacy_closed is False
 
 
 def test_telemetry_progress_throttle_emits_after_chunk_interval(tmp_path: Path) -> None:

@@ -19,6 +19,24 @@ if typing.TYPE_CHECKING:
     import g._core
 
 
+class FakeNativeTelemetrySessionHandle:
+    """Native telemetry handle test double for close dispatch."""
+
+    def __init__(self, telemetry_session: FakeTelemetrySession) -> None:
+        self.telemetry_session = telemetry_session
+
+    def finish_with_current_close_event_metadata(self) -> dict[str, object]:
+        """Record native-style session closure."""
+        writer_counters = self.telemetry_session.writer_counters()
+        self.telemetry_session.log_event(
+            "telemetry_session_closed",
+            level="debug",
+            writer_counters=writer_counters,
+        )
+        self.telemetry_session.close()
+        return {"writer_counters": writer_counters}
+
+
 class FakeTelemetrySession:
     """Telemetry session test double for CLI ownership tests."""
 
@@ -33,6 +51,12 @@ class FakeTelemetrySession:
         self.closed = False
         self.close_error = close_error
         self.run_failed_error = run_failed_error
+        self.native_session_handle = FakeNativeTelemetrySessionHandle(self)
+
+    @property
+    def native_telemetry_session(self) -> FakeNativeTelemetrySessionHandle:
+        """Return the native close-dispatch handle."""
+        return self.native_session_handle
 
     def log_event(self, event: str, level: str = "info", **fields: object) -> None:
         """Record a telemetry event name."""
@@ -63,11 +87,6 @@ class FakeTelemetrySession:
         if self.close_error is not None:
             raise self.close_error
         self.closed = True
-
-    def close_with_event(self) -> None:
-        """Record native-style session closure."""
-        self.log_event("telemetry_session_closed", level="debug", writer_counters=self.writer_counters())
-        self.close()
 
 
 def test_run_args_configless_paths_print_without_runtime_imports() -> None:

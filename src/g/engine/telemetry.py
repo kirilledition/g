@@ -18,13 +18,6 @@ if typing.TYPE_CHECKING:
     from g.jax_runtime import models as jax_runtime_models
 
 
-class TelemetryCloseableSession(typing.Protocol):
-    """Telemetry session shape accepted by the close helper."""
-
-    def close_with_event(self) -> object:
-        """Emit the close event and close telemetry resources."""
-
-
 @dataclass(frozen=True)
 class TelemetryPaths:
     """Resolved telemetry output paths for one run.
@@ -511,6 +504,6 @@ def build_empty_writer_counters() -> TelemetryWriterCounters:
     )
 
 
-def close_telemetry_session(telemetry_session: TelemetryCloseableSession | None) -> None:
-    """Flush telemetry teardown hooks and preserve close failures."""
+def close_telemetry_session(telemetry_session: TelemetrySession | None) -> None:
+    """Flush native telemetry teardown hooks and preserve close failures."""
     _core.close_telemetry_session_with_event(telemetry_session)
