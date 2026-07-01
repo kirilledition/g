@@ -154,6 +154,7 @@ just check-core-stub
 just check-internal-defaults
 just check-internal-init-exports
 just check-rust-architecture
+just check-python-architecture
 uv run maturin develop
 uv run python -c "import g; import g._core"
 uv run g --help

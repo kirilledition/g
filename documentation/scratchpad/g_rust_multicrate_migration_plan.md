@@ -2180,6 +2180,12 @@ Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
 ```
 
+`just check-python-architecture` now enforces the `g.compute` and
+`g.jax_runtime` import-boundary rules through an AST-based checker. The
+production manifest-write and worker-queue guardrails remain tied to their
+owner-specific migration checks until those paths are ready for a repository
+wide production scan.
+
 ---
 
 # 11. Specific repository updates needed when the workspace is introduced

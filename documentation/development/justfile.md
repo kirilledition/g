@@ -167,8 +167,10 @@ in saved configs or named Just recipes.
 ## Guardrails
 
 `just check-rust-architecture` verifies Cargo workspace dependency boundaries
-for the Rust migration. `just check-justfile` verifies that the command surface
-stays config-backed and that maintained docs do not reference removed recipe
-names. Both are included in `just check` and `just check-local`; `just
-rust-check` and `just workspace-check` keep a Rust-focused validation lane for
-multicrate migration phases.
+for the Rust migration. `just check-python-architecture` verifies Python
+package ownership boundaries for compute kernels and JAX runtime helpers.
+`just check-justfile` verifies that the command surface stays config-backed and
+that maintained docs do not reference removed recipe names. These guardrails
+are included in `just check` and `just check-local`; `just rust-check` and
+`just workspace-check` keep a Rust-focused validation lane for multicrate
+migration phases.

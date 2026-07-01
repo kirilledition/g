@@ -15,6 +15,7 @@ from tooling.debug import (
     check_internal_init_exports,
     check_justfile,
     check_pyo3_stub,
+    check_python_architecture,
     check_rust_architecture,
 )
 
@@ -31,6 +32,7 @@ class DebugToolName(enum.StrEnum):
     CHECK_INTERNAL_DEFAULTS = "check_internal_defaults"
     CHECK_INTERNAL_INIT_EXPORTS = "check_internal_init_exports"
     CHECK_JUSTFILE = "check_justfile"
+    CHECK_PYTHON_ARCHITECTURE = "check_python_architecture"
     CHECK_PYO3_STUB = "check_pyo3_stub"
     CHECK_RUST_ARCHITECTURE = "check_rust_architecture"
     SCHEMA_CHECK = "schema_check"
@@ -123,6 +125,14 @@ def run_check_rust_architecture(arguments: None) -> None:
         raise SystemExit(exit_code)
 
 
+def run_check_python_architecture(arguments: None) -> None:
+    """Run the Python package architecture guardrail."""
+    del arguments
+    exit_code = check_python_architecture.run_tool(check_python_architecture.PRODUCTION_PACKAGE_ROOT)
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
 TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
     DebugToolName.BINARY_FIRTH.value: tooling_registry.ToolSpec(
         name=DebugToolName.BINARY_FIRTH.value,
@@ -171,6 +181,12 @@ TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
         config_name="debug_check_rust_architecture",
         build_arguments=build_no_arguments,
         run=run_check_rust_architecture,
+    ),
+    DebugToolName.CHECK_PYTHON_ARCHITECTURE.value: tooling_registry.ToolSpec(
+        name=DebugToolName.CHECK_PYTHON_ARCHITECTURE.value,
+        config_name="debug_check_python_architecture",
+        build_arguments=build_no_arguments,
+        run=run_check_python_architecture,
     ),
     DebugToolName.SCHEMA_CHECK.value: tooling_registry.ToolSpec(
         name=DebugToolName.SCHEMA_CHECK.value,
