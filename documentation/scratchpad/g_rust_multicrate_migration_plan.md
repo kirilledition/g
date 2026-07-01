@@ -1667,6 +1667,8 @@ Current implementation notes:
   leaving the root Python composition module to delegate those export groups.
 - Callback queue, progress, summary, and runtime-resource PyO3 export
   registration now lives with the corresponding callback adapter modules.
+- Logging, JAX runtime, and runtime-state PyO3 export registration now lives
+  with the corresponding adapter modules.
 
 ### Tests
 

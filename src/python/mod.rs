@@ -60,26 +60,7 @@ use association_backend::{
 };
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
 use g_engine::Regenie2RunEngineCore;
-use jax_runtime::{
-    NativeJaxRuntimeDiagnosticRecordPlan, NativeJaxRuntimeSetupSession, build_jax_runtime_setup_diagnostic_payloads,
-    complete_jax_runtime_setup_validation_payload, nvidia_driver_files_are_visible_value,
-    plan_jax_gpu_validation_payload, plan_jax_runtime_config_update_payloads, plan_jax_runtime_diagnostic_record,
-    plan_jax_runtime_diagnostic_record_payload, plan_jax_runtime_setup_side_effects_payload,
-    record_jax_runtime_diagnostic_log_event, resolve_jax_runtime_setup_payload,
-};
-use logging::{
-    NativeTelemetryClosePlan, NativeTelemetryEventEmissionPlan, NativeTelemetryProgressEmissionPlan,
-    NativeTelemetryProgressThrottle, NativeTelemetryRunSession, NativeTelemetrySession,
-    build_current_telemetry_event_payload, build_telemetry_event_payload, emit_diagnostic_event,
-    emit_diagnostic_event_fields, generate_telemetry_run_id_value, initialize_logging, plan_telemetry_close,
-    plan_telemetry_event_emission, plan_telemetry_progress_emission, shutdown_logging,
-};
 use profile::build_profile_snapshot_dict;
-use runtime_state::{
-    NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRunRuntime,
-    NativeRuntimeCompatibilityToken, NativeRuntimePolicy, NativeRuntimeState, build_jax_runtime_policy_payload,
-    build_runtime_policy_handle, global_process_runtime_state,
-};
 
 type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
 
@@ -1751,61 +1732,27 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeMultiAlignedSampleData>()?;
     preparation::register_module(module)?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
-    module.add_class::<NativeJaxRuntimeDiagnosticRecordPlan>()?;
-    module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
-    module.add_class::<NativeJaxRuntimeSetupSession>()?;
-    module.add_class::<NativeRayonThreadPoolConfigurationPlan>()?;
-    module.add_class::<NativeRunRuntime>()?;
-    module.add_class::<NativeRuntimeCompatibilityToken>()?;
-    module.add_class::<NativeRuntimePolicy>()?;
-    module.add_class::<NativeRuntimeState>()?;
-    module.add_function(wrap_pyfunction!(global_process_runtime_state, module)?)?;
+    jax_runtime::register_module(module)?;
+    runtime_state::register_module(module)?;
     shutdown::register_module(module)?;
     timing::register_module(module)?;
     output::register_module(module)?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
     module.add_class::<MultiRegeniePredictionSource>()?;
-    module.add_class::<NativeTelemetryClosePlan>()?;
-    module.add_class::<NativeTelemetryEventEmissionPlan>()?;
-    module.add_class::<NativeTelemetryProgressEmissionPlan>()?;
-    module.add_class::<NativeTelemetryProgressThrottle>()?;
-    module.add_class::<NativeTelemetryRunSession>()?;
-    module.add_class::<NativeTelemetrySession>()?;
+    logging::register_module(module)?;
     telemetry_policy::register_module(module)?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(resolve_prediction_loco_paths, module)?)?;
     run_events::register_module(module)?;
     runtime_policy::register_module(module)?;
     run_metadata::register_module(module)?;
-    module.add_function(wrap_pyfunction!(build_runtime_policy_handle, module)?)?;
     preflight::register_module(module)?;
     host_policy::register_module(module)?;
-    module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     runtime_paths::register_module(module)?;
-    module.add_function(wrap_pyfunction!(complete_jax_runtime_setup_validation_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(nvidia_driver_files_are_visible_value, module)?)?;
-    module.add_function(wrap_pyfunction!(build_jax_runtime_setup_diagnostic_payloads, module)?)?;
-    module.add_function(wrap_pyfunction!(build_jax_runtime_policy_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_jax_runtime_config_update_payloads, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_log_event, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_jax_runtime_setup_side_effects_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_telemetry_close, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;
-    module.add_function(wrap_pyfunction!(build_current_telemetry_event_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(generate_telemetry_run_id_value, module)?)?;
     trusted_validation::register_module(module)?;
     module.add_function(wrap_pyfunction!(summarize_variant_major_dosage_chunk_stats, module)?)?;
     runtime::register_module(module)?;
-    module.add_function(wrap_pyfunction!(emit_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(emit_diagnostic_event_fields, module)?)?;
-    module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
-    module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
     module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(align_sample_data, module)?)?;
     module.add_function(wrap_pyfunction!(align_grouped_sample_data, module)?)?;

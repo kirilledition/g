@@ -1474,6 +1474,26 @@ pub fn shutdown_logging() -> PyResult<()> {
     Ok(())
 }
 
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeTelemetryClosePlan>()?;
+    module.add_class::<NativeTelemetryEventEmissionPlan>()?;
+    module.add_class::<NativeTelemetryProgressEmissionPlan>()?;
+    module.add_class::<NativeTelemetryProgressThrottle>()?;
+    module.add_class::<NativeTelemetryRunSession>()?;
+    module.add_class::<NativeTelemetrySession>()?;
+    module.add_function(wrap_pyfunction!(plan_telemetry_close, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;
+    module.add_function(wrap_pyfunction!(build_current_telemetry_event_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(generate_telemetry_run_id_value, module)?)?;
+    module.add_function(wrap_pyfunction!(emit_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(emit_diagnostic_event_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
+    module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
+    Ok(())
+}
+
 fn lock_logging_guards() -> PyResult<std::sync::MutexGuard<'static, Option<Vec<WorkerGuard>>>> {
     LOGGING_GUARDS.lock().map_err(|_| PyRuntimeError::new_err("Logging guard mutex was poisoned."))
 }

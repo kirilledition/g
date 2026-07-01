@@ -5,7 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyModule, PyTuple};
 
 use g_runtime::jax_runtime as native_jax_runtime;
 
@@ -463,6 +463,22 @@ pub(crate) fn jax_runtime_diagnostic_event_fields_to_py_dict<'py>(
         fields.set_item(field_name, field_value)?;
     }
     Ok((event_name, fields))
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeJaxRuntimeDiagnosticRecordPlan>()?;
+    module.add_class::<NativeJaxRuntimeSetupSession>()?;
+    module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(complete_jax_runtime_setup_validation_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(nvidia_driver_files_are_visible_value, module)?)?;
+    module.add_function(wrap_pyfunction!(build_jax_runtime_setup_diagnostic_payloads, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_jax_runtime_config_update_payloads, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_log_event, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_jax_runtime_setup_side_effects_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;
+    Ok(())
 }
 
 fn jax_runtime_diagnostic_event_level(event: &Bound<'_, PyAny>) -> PyResult<String> {

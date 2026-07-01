@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict};
+use pyo3::types::{PyAny, PyDict, PyModule};
 
 use g_runtime::rayon_runtime as native_rayon_runtime;
 use g_runtime::runtime_policy as native_runtime_policy;
@@ -344,6 +344,19 @@ impl NativeRuntimeState {
     fn lock_state(&self) -> PyResult<MutexGuard<'_, native_runtime_state::ProcessRuntimeState>> {
         self.state.lock().map_err(|_| PyRuntimeError::new_err("Runtime state mutex was poisoned."))
     }
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
+    module.add_class::<NativeRayonThreadPoolConfigurationPlan>()?;
+    module.add_class::<NativeRunRuntime>()?;
+    module.add_class::<NativeRuntimeCompatibilityToken>()?;
+    module.add_class::<NativeRuntimePolicy>()?;
+    module.add_class::<NativeRuntimeState>()?;
+    module.add_function(wrap_pyfunction!(build_jax_runtime_policy_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runtime_policy_handle, module)?)?;
+    module.add_function(wrap_pyfunction!(global_process_runtime_state, module)?)?;
+    Ok(())
 }
 
 fn parse_logging_runtime_policy_payload(
