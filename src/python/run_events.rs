@@ -454,6 +454,24 @@ pub fn build_pipeline_bgen_engine_open_started_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_bgen_engine_open_started_diagnostic_event(
+    phenotype_count: Option<i64>,
+    phenotype_name: Option<&str>,
+    pipeline_label: &str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_bgen_engine_open_started_diagnostic_payload(
+        phenotype_count,
+        phenotype_name,
+        pipeline_label,
+        trusted_no_missing_diploid,
+        variant_limit,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_bgen_engine_opened_diagnostic_payload<'py>(
     py: Python<'py>,
     phenotype_count: Option<i64>,
@@ -473,6 +491,24 @@ pub fn build_pipeline_bgen_engine_opened_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_bgen_engine_opened_diagnostic_event(
+    phenotype_count: Option<i64>,
+    phenotype_name: Option<&str>,
+    pipeline_label: &str,
+    sample_count: i64,
+    variant_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_bgen_engine_opened_diagnostic_payload(
+        phenotype_count,
+        phenotype_name,
+        pipeline_label,
+        sample_count,
+        variant_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload<'py>(
     py: Python<'py>,
     phenotype_count: Option<i64>,
@@ -485,6 +521,20 @@ pub fn build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload<'py>(
         pipeline_label,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
+    phenotype_count: Option<i64>,
+    phenotype_name: Option<&str>,
+    pipeline_label: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
+        phenotype_count,
+        phenotype_name,
+        pipeline_label,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
@@ -501,6 +551,18 @@ pub fn build_pipeline_output_resume_committed_chunks_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_output_resume_committed_chunks_diagnostic_event(
+    committed_chunk_count: i64,
+    output_index: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_output_resume_committed_chunks_diagnostic_payload(
+        committed_chunk_count,
+        output_index,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_output_writer_sessions_create_started_diagnostic_payload<'py>(
     py: Python<'py>,
     association_mode: &str,
@@ -511,6 +573,18 @@ pub fn build_pipeline_output_writer_sessions_create_started_diagnostic_payload<'
         output_count,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_pipeline_output_writer_sessions_create_started_diagnostic_event(
+    association_mode: &str,
+    output_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
+        association_mode,
+        output_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]

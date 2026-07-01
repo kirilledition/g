@@ -2282,7 +2282,15 @@ def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
     )
     engine = FakeRunEngine("study.bgen", chunk_size=32, trusted_no_missing_diploid=True)
 
-    with patch("g.engine.regenie2_pipeline.outputs.native_dispatch_engine.build_bgen_run_engine", return_value=engine):
+    with (
+        patch("g.engine.regenie2_pipeline.outputs.native_dispatch_engine.build_bgen_run_engine", return_value=engine),
+        patch(
+            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_bgen_engine_open_started_diagnostic_event",
+        ) as record_engine_open_started_mock,
+        patch(
+            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_bgen_engine_opened_diagnostic_event",
+        ) as record_engine_opened_mock,
+    ):
         opened_engine = open_test_pipeline_bgen_engine(
             context=context,
             pipeline_label="linear",
@@ -2290,6 +2298,20 @@ def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
         )
 
     assert opened_engine is engine
+    record_engine_open_started_mock.assert_called_once_with(
+        phenotype_count=None,
+        phenotype_name="trait",
+        pipeline_label="linear",
+        trusted_no_missing_diploid=True,
+        variant_limit=None,
+    )
+    record_engine_opened_mock.assert_called_once_with(
+        phenotype_count=None,
+        phenotype_name="trait",
+        pipeline_label="linear",
+        sample_count=2,
+        variant_count=10,
+    )
     assert telemetry_session.events[0] == (
         "association_backend_selected",
         {
@@ -2302,6 +2324,65 @@ def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
     )
     assert telemetry_session.events[1][0] == "bgen_engine_opened"
     assert telemetry_session.events[1][1]["association_backend_kind"] == "jax_packed8"
+
+
+def test_use_prepared_pipeline_bgen_engine_records_native_diagnostics() -> None:
+    pipeline_options = build_default_pipeline_runtime_options()
+    context = build_test_regenie2_pipeline_context(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        genotype_source_config=build_test_genotype_source_config(source_path=Path("study.bgen")),
+        phenotype_path=Path("phenotype.tsv"),
+        prediction_list_path=Path("pred.list"),
+        covariate_path=None,
+        chunk_size=32,
+        variant_limit=100,
+        trusted_no_missing_diploid=False,
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+        bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+        jax_device=types.Device.CPU,
+        jax_matmul_precision=None,
+        score_dtype=pipeline_options.score_dtype,
+        firth_dtype=pipeline_options.firth_dtype,
+        gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
+        correction_plan=SCORE_ONLY_PLAN,
+        binary_kernel_config=None,
+        linear_numerical_config=None,
+        writer_settings=pipeline_options.writer_settings,
+        stage_timing_recorder=None,
+        telemetry_session=None,
+        alignment_config=None,
+    )
+    engine = FakeRunEngine("study.bgen", chunk_size=32)
+
+    with (
+        patch(
+            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event",
+        ) as record_prevalidated_engine_mock,
+        patch(
+            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_bgen_engine_opened_diagnostic_event",
+        ) as record_engine_opened_mock,
+    ):
+        prepared_engine = pipeline_outputs.use_prepared_pipeline_bgen_engine(
+            context=context,
+            engine=typing.cast("_core.Regenie2RunEngine", engine),
+            pipeline_label="linear",
+            phenotype_name="trait",
+            phenotype_count=None,
+        )
+
+    assert prepared_engine is engine
+    record_prevalidated_engine_mock.assert_called_once_with(
+        phenotype_count=None,
+        phenotype_name="trait",
+        pipeline_label="linear",
+    )
+    record_engine_opened_mock.assert_called_once_with(
+        phenotype_count=None,
+        phenotype_name="trait",
+        pipeline_label="linear",
+        sample_count=2,
+        variant_count=10,
+    )
 
 
 def build_native_run_input_with_alignment(
@@ -10119,6 +10200,12 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             ),
         ),
         patch(
+            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_output_resume_committed_chunks_diagnostic_event",
+        ) as record_resume_committed_chunks_mock,
+        patch(
+            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_output_writer_sessions_create_started_diagnostic_event",
+        ) as record_writer_sessions_create_started_mock,
+        patch(
             "g.engine.regenie2_pipeline.single_trait.preflight.run_regenie2_preflight",
             side_effect=record_preflight,
         ) as mock_preflight,
@@ -10211,6 +10298,14 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
         phenotype_name="trait",
         pipeline_label="linear",
         sample_count=2,
+    )
+    record_resume_committed_chunks_mock.assert_called_once_with(
+        committed_chunk_count=2,
+        output_index=0,
+    )
+    record_writer_sessions_create_started_mock.assert_called_once_with(
+        association_mode="regenie2_linear",
+        output_count=1,
     )
     assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_DOSAGE
 

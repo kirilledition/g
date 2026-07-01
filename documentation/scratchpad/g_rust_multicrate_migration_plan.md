@@ -1577,6 +1577,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Pipeline output lifecycle diagnostics for BGEN engine open/reuse, resume chunk
   counts, and writer-session creation now use native run-event diagnostic
   payload builders.
+- Pipeline output lifecycle production paths for BGEN engine open/reuse, resume
+  chunk counts, and writer-session creation now call native diagnostic
+  recorders directly, leaving Python payload dict materialization only for
+  compatibility helpers and tests.
 - Native CLI stdout/stderr and rendered completion/interruption/failure line
   diagnostics now use native run-event diagnostic payload builders.
 

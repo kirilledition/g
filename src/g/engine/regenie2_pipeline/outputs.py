@@ -8,23 +8,13 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, execution_plan, types
-from g.engine import run_events, timing
+from g.engine import timing
 from g.engine.native_dispatch import engine as native_dispatch_engine
 from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.io import output
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
-
-
-def emit_pipeline_output_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
-    """Emit one pipeline output diagnostic payload through native tracing."""
-    _core.emit_diagnostic_event_fields(
-        str(payload["level"]),
-        str(payload["event_name"]),
-        str(payload["message"]),
-        typing.cast("typing.Mapping[str, object]", payload["fields"]),
-    )
 
 
 @dataclass(frozen=True)
@@ -110,14 +100,12 @@ def open_pipeline_bgen_engine(
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN engine and emit shared telemetry."""
     engine_start_time = time.perf_counter()
-    emit_pipeline_output_diagnostic_event_payload(
-        run_events.build_pipeline_bgen_engine_open_started_diagnostic_payload(
-            phenotype_count=phenotype_count,
-            phenotype_name=phenotype_name,
-            pipeline_label=pipeline_label,
-            trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
-            variant_limit=context.variant_limit,
-        )
+    _core.record_pipeline_bgen_engine_open_started_diagnostic_event(
+        phenotype_count=phenotype_count,
+        phenotype_name=phenotype_name,
+        pipeline_label=pipeline_label,
+        trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
+        variant_limit=context.variant_limit,
     )
     log_association_backend_selected(context=context, phenotype_name=phenotype_name, phenotype_count=phenotype_count)
     engine = native_dispatch_engine.build_bgen_run_engine(
@@ -129,14 +117,12 @@ def open_pipeline_bgen_engine(
         trusted_bgen_validator=None,
     )
     timing.record_stage_duration(context.stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
-    emit_pipeline_output_diagnostic_event_payload(
-        run_events.build_pipeline_bgen_engine_opened_diagnostic_payload(
-            phenotype_count=phenotype_count,
-            phenotype_name=phenotype_name,
-            pipeline_label=pipeline_label,
-            sample_count=int(engine.sample_count),
-            variant_count=int(engine.variant_count),
-        )
+    _core.record_pipeline_bgen_engine_opened_diagnostic_event(
+        phenotype_count=phenotype_count,
+        phenotype_name=phenotype_name,
+        pipeline_label=pipeline_label,
+        sample_count=int(engine.sample_count),
+        variant_count=int(engine.variant_count),
     )
     log_bgen_engine_opened(
         context=context,
@@ -156,22 +142,18 @@ def use_prepared_pipeline_bgen_engine(
     phenotype_count: int | None,
 ) -> _core.Regenie2RunEngine:
     """Reuse a prevalidated BGEN engine and emit shared telemetry."""
-    emit_pipeline_output_diagnostic_event_payload(
-        run_events.build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
-            phenotype_count=phenotype_count,
-            phenotype_name=phenotype_name,
-            pipeline_label=pipeline_label,
-        )
+    _core.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
+        phenotype_count=phenotype_count,
+        phenotype_name=phenotype_name,
+        pipeline_label=pipeline_label,
     )
     log_association_backend_selected(context=context, phenotype_name=phenotype_name, phenotype_count=phenotype_count)
-    emit_pipeline_output_diagnostic_event_payload(
-        run_events.build_pipeline_bgen_engine_opened_diagnostic_payload(
-            phenotype_count=phenotype_count,
-            phenotype_name=phenotype_name,
-            pipeline_label=pipeline_label,
-            sample_count=int(engine.sample_count),
-            variant_count=int(engine.variant_count),
-        )
+    _core.record_pipeline_bgen_engine_opened_diagnostic_event(
+        phenotype_count=phenotype_count,
+        phenotype_name=phenotype_name,
+        pipeline_label=pipeline_label,
+        sample_count=int(engine.sample_count),
+        variant_count=int(engine.variant_count),
     )
     log_bgen_engine_opened(
         context=context,
@@ -273,11 +255,9 @@ def initialize_pipeline_output_runs(
             native_initialization.committed_chunk_identifier_sets()
         ):
             committed_chunk_count = len(committed_chunk_identifier_set)
-            emit_pipeline_output_diagnostic_event_payload(
-                run_events.build_pipeline_output_resume_committed_chunks_diagnostic_payload(
-                    committed_chunk_count=committed_chunk_count,
-                    output_index=output_index,
-                )
+            _core.record_pipeline_output_resume_committed_chunks_diagnostic_event(
+                committed_chunk_count=committed_chunk_count,
+                output_index=output_index,
             )
     return InitializedPipelineOutputRuns(native_initialization=native_initialization)
 
@@ -355,11 +335,9 @@ def create_pipeline_writer_sessions(
 ) -> tuple[typing.Any, ...]:
     """Create output writer sessions and record preparation timing."""
     writer_start_time = time.perf_counter()
-    emit_pipeline_output_diagnostic_event_payload(
-        run_events.build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
-            association_mode=context.association_mode,
-            output_count=len(output_run_paths_by_trait),
-        )
+    _core.record_pipeline_output_writer_sessions_create_started_diagnostic_event(
+        association_mode=context.association_mode.value,
+        output_count=len(output_run_paths_by_trait),
     )
     writer_sessions = tuple(
         output.create_output_writer_session(
