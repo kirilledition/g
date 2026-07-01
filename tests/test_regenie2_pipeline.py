@@ -699,6 +699,7 @@ class RecordingTelemetrySession:
         self.events: list[tuple[str, dict[str, object]]] = []
         self.progress_events: list[dict[str, object]] = []
         self.native_session_handle = self
+        self.native_telemetry_session = self
 
     def log_event(self, event_name: str, level: str, **fields: object) -> None:
         del level
@@ -707,7 +708,16 @@ class RecordingTelemetrySession:
     def log_progress(self, **fields: object) -> None:
         self.progress_events.append(fields)
 
+    def emit_progress(self, processed_chunk_count: int, fields: dict[str, object]) -> None:
+        self.progress_events.append({"processed_chunk_count": processed_chunk_count, **fields})
+
     def log_callback_progress_event(
+        self,
+        progress_event: callback_runtime._core.NativeCallbackProgressTelemetryEvent,
+    ) -> None:
+        self.emit_callback_progress_event(progress_event)
+
+    def emit_callback_progress_event(
         self,
         progress_event: callback_runtime._core.NativeCallbackProgressTelemetryEvent,
     ) -> None:

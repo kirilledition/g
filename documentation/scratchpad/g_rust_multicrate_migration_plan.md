@@ -1808,6 +1808,10 @@ Current implementation notes:
 - JAX runtime diagnostic telemetry dispatch now resolves the native telemetry
   session handle directly, no-ops disabled native telemetry sessions, and no
   longer calls Python `log_jax_runtime_diagnostic_event` fallback methods.
+- Callback progress telemetry dispatch now resolves the native telemetry
+  session handle directly, no-ops disabled native telemetry sessions, and no
+  longer calls Python `log_callback_progress_event` or `log_progress` fallback
+  methods.
 
 ### Tests
 

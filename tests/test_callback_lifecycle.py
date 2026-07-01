@@ -73,6 +73,7 @@ class ProgressTrackingTelemetrySession:
 
     def __init__(self) -> None:
         """Initialize telemetry capture state."""
+        self.native_telemetry_session = self
         self.logged_events: list[tuple[str, str, dict[str, typing.Any]]] = []
         self.logged_progress: list[dict[str, typing.Any]] = []
 
@@ -85,6 +86,13 @@ class ProgressTrackingTelemetrySession:
         progress_event: callback_runtime._core.NativeCallbackProgressTelemetryEvent,
     ) -> None:
         """Record a native callback progress event call."""
+        self.emit_callback_progress_event(progress_event)
+
+    def emit_callback_progress_event(
+        self,
+        progress_event: callback_runtime._core.NativeCallbackProgressTelemetryEvent,
+    ) -> None:
+        """Record a native callback progress event call through the handle."""
         self.log_event(
             progress_event.event_name,
             progress_event.level,
@@ -99,6 +107,10 @@ class ProgressTrackingTelemetrySession:
     def log_progress(self, **kwargs: typing.Any) -> None:
         """Record a progress callback call."""
         self.logged_progress.append(kwargs)
+
+    def emit_progress(self, processed_chunk_count: int, fields: dict[str, typing.Any]) -> None:
+        """Record a progress callback call through the native handle."""
+        self.logged_progress.append({"processed_chunk_count": processed_chunk_count, **fields})
 
 
 class ProgressTrackingCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
