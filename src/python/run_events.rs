@@ -801,6 +801,20 @@ pub fn build_pipeline_single_trait_started_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_single_trait_started_diagnostic_event(
+    association_mode: &str,
+    phenotype_name: &str,
+    pipeline_label: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_single_trait_started_diagnostic_payload(
+        association_mode,
+        phenotype_name,
+        pipeline_label,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_single_trait_input_load_started_diagnostic_payload<'py>(
     py: Python<'py>,
     phenotype_name: &str,
@@ -811,6 +825,18 @@ pub fn build_pipeline_single_trait_input_load_started_diagnostic_payload<'py>(
         pipeline_label,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_pipeline_single_trait_input_load_started_diagnostic_event(
+    phenotype_name: &str,
+    pipeline_label: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_single_trait_input_load_started_diagnostic_payload(
+        phenotype_name,
+        pipeline_label,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
@@ -831,6 +857,22 @@ pub fn build_pipeline_single_trait_input_aligned_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_single_trait_input_aligned_diagnostic_event(
+    covariate_count: i64,
+    phenotype_name: &str,
+    pipeline_label: &str,
+    sample_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_single_trait_input_aligned_diagnostic_payload(
+        covariate_count,
+        phenotype_name,
+        pipeline_label,
+        sample_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload<'py>(
     py: Python<'py>,
     phenotype_name: &str,
@@ -841,6 +883,18 @@ pub fn build_pipeline_single_trait_prediction_source_load_started_diagnostic_pay
         pipeline_label,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
+    phenotype_name: &str,
+    pipeline_label: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload(
+        phenotype_name,
+        pipeline_label,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
@@ -861,6 +915,22 @@ pub fn build_pipeline_single_trait_preflight_started_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_single_trait_preflight_started_diagnostic_event(
+    phenotype_name: &str,
+    pipeline_label: &str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_single_trait_preflight_started_diagnostic_payload(
+        phenotype_name,
+        pipeline_label,
+        trusted_no_missing_diploid,
+        variant_limit,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_single_trait_preflight_completed_diagnostic_payload<'py>(
     py: Python<'py>,
     chromosome_count: i64,
@@ -877,6 +947,25 @@ pub fn build_pipeline_single_trait_preflight_completed_diagnostic_payload<'py>(
         sample_count,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+pub fn record_pipeline_single_trait_preflight_completed_diagnostic_event(
+    chromosome_count: i64,
+    covariate_count: i64,
+    phenotype_name: &str,
+    pipeline_label: &str,
+    sample_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_single_trait_preflight_completed_diagnostic_payload(
+        chromosome_count,
+        covariate_count,
+        phenotype_name,
+        pipeline_label,
+        sample_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]

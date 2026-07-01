@@ -1557,6 +1557,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   materialization only for compatibility helpers and tests.
 - Single-trait pipeline start, input alignment, prediction-source loading, and
   preflight diagnostics now use native run-event diagnostic payload builders.
+- Single-trait pipeline start, input alignment, prediction-source loading, and
+  preflight production paths now call native diagnostic recorders directly,
+  leaving Python payload dict materialization only for compatibility helpers
+  and tests.
 - Complete-case multi-trait pipeline start, input alignment, and
   prediction-source loading diagnostics now use native run-event diagnostic
   payload builders.

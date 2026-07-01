@@ -10087,6 +10087,24 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             return_value=run_input,
         ),
         patch(
+            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_started_diagnostic_event",
+        ) as record_pipeline_started_mock,
+        patch(
+            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_input_load_started_diagnostic_event",
+        ) as record_input_load_started_mock,
+        patch(
+            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_input_aligned_diagnostic_event",
+        ) as record_input_aligned_mock,
+        patch(
+            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_prediction_source_load_started_diagnostic_event",
+        ) as record_prediction_source_load_started_mock,
+        patch(
+            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_preflight_started_diagnostic_event",
+        ) as record_preflight_started_mock,
+        patch(
+            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_preflight_completed_diagnostic_event",
+        ) as record_preflight_completed_mock,
+        patch(
             "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
         ),
@@ -10162,6 +10180,38 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.phenotype_name == "trait"
     assert prediction_source.native_aligned_sample_data is run_input.native_aligned_sample_data
     assert prediction_source.sample_key_mode == "iid"
+    record_pipeline_started_mock.assert_called_once_with(
+        association_mode="regenie2_linear",
+        phenotype_name="trait",
+        pipeline_label="linear",
+    )
+    record_input_load_started_mock.assert_called_once_with(
+        phenotype_name="trait",
+        pipeline_label="linear",
+    )
+    record_input_aligned_mock.assert_called_once_with(
+        covariate_count=2,
+        phenotype_name="trait",
+        pipeline_label="linear",
+        sample_count=2,
+    )
+    record_prediction_source_load_started_mock.assert_called_once_with(
+        phenotype_name="trait",
+        pipeline_label="linear",
+    )
+    record_preflight_started_mock.assert_called_once_with(
+        phenotype_name="trait",
+        pipeline_label="linear",
+        trusted_no_missing_diploid=True,
+        variant_limit=100,
+    )
+    record_preflight_completed_mock.assert_called_once_with(
+        chromosome_count=1,
+        covariate_count=1,
+        phenotype_name="trait",
+        pipeline_label="linear",
+        sample_count=2,
+    )
     assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_DOSAGE
 
 
