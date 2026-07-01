@@ -106,6 +106,48 @@ class PythonCallViolation:
     message: str
 
 
+@dataclasses.dataclass(frozen=True)
+class PythonDefinitionPolicy:
+    """A Python definition-boundary policy.
+
+    Attributes:
+        name: Stable policy name for diagnostics.
+        source_directory: Package directory, relative to the production package root.
+        forbidden_function_names: Function or method names rejected under the source directory.
+        allowed_paths: Source paths, relative to the production package root, excluded from this policy.
+        message: Human-readable policy description.
+
+    """
+
+    name: str
+    source_directory: Path
+    forbidden_function_names: tuple[str, ...]
+    allowed_paths: tuple[Path, ...]
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class PythonDefinitionViolation:
+    """A Python function or method definition that crosses an ownership boundary.
+
+    Attributes:
+        path: Source file containing the violation.
+        line_number: One-based source line number containing the definition.
+        column_offset: Zero-based source column containing the definition.
+        policy_name: Definition policy that rejected the definition.
+        function_name: Function or method name observed in source.
+        message: Human-readable policy description.
+
+    """
+
+    path: Path
+    line_number: int
+    column_offset: int
+    policy_name: str
+    function_name: str
+    message: str
+
+
 PYTHON_IMPORT_POLICIES = (
     PythonImportPolicy(
         name="compute_kernel_isolation",
@@ -237,6 +279,23 @@ PYTHON_CALL_POLICIES = (
         ),
         allowed_paths=(),
         message="JAX compute kernels must not read or write files directly",
+    ),
+)
+
+PYTHON_DEFINITION_POLICIES = (
+    PythonDefinitionPolicy(
+        name="native_telemetry_fallback_definition_isolation",
+        source_directory=Path(),
+        forbidden_function_names=(
+            "close_with_event",
+            "log_jax_runtime_diagnostic_event",
+            "log_callback_progress_event",
+            "log_binary_correction_summary",
+            "log_run_failed",
+            "log_progress",
+        ),
+        allowed_paths=(),
+        message="production Python must not define old telemetry fallback methods",
     ),
 )
 
@@ -417,6 +476,49 @@ def collect_python_call_policy_violations(
     return tuple(violations)
 
 
+def collect_definition_violations_for_statement(
+    relative_path: Path,
+    policy: PythonDefinitionPolicy,
+    statement: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[PythonDefinitionViolation, ...]:
+    """Collect definition-policy violations from one AST function statement."""
+    if statement.name not in policy.forbidden_function_names:
+        return ()
+    return (
+        PythonDefinitionViolation(
+            path=relative_path,
+            line_number=statement.lineno,
+            column_offset=statement.col_offset,
+            policy_name=policy.name,
+            function_name=statement.name,
+            message=policy.message,
+        ),
+    )
+
+
+def collect_python_definition_policy_violations(
+    package_root: Path,
+    policies: tuple[PythonDefinitionPolicy, ...] = PYTHON_DEFINITION_POLICIES,
+) -> tuple[PythonDefinitionViolation, ...]:
+    """Collect Python definition-boundary violations under a production package root."""
+    violations: list[PythonDefinitionViolation] = []
+    for policy in policies:
+        source_directory = package_root / policy.source_directory
+        if not source_directory.exists():
+            continue
+        for path in sorted(source_directory.rglob("*.py")):
+            relative_path = path.relative_to(package_root.parent)
+            package_relative_path = path.relative_to(package_root)
+            if package_relative_path in policy.allowed_paths:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for statement in ast.walk(tree):
+                if not isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                violations.extend(collect_definition_violations_for_statement(relative_path, policy, statement))
+    return tuple(violations)
+
+
 def render_violation(violation: PythonImportViolation) -> str:
     """Render an import-policy violation for command-line output."""
     location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
@@ -435,16 +537,25 @@ def render_call_violation(violation: PythonCallViolation) -> str:
     )
 
 
+def render_definition_violation(violation: PythonDefinitionViolation) -> str:
+    """Render a definition-policy violation for command-line output."""
+    location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
+    return f"{location}: {violation.policy_name} rejects definition `{violation.function_name}`: {violation.message}"
+
+
 def run_tool(package_root: Path) -> int:
     """Verify Python package ownership boundaries."""
     import_violations = collect_python_import_policy_violations(package_root)
     call_violations = collect_python_call_policy_violations(package_root)
-    if import_violations or call_violations:
+    definition_violations = collect_python_definition_policy_violations(package_root)
+    if import_violations or call_violations or definition_violations:
         print(f"Python architecture violations under `{package_root}`:")
         for violation in import_violations:
             print(f"  {render_violation(violation)}")
         for violation in call_violations:
             print(f"  {render_call_violation(violation)}")
+        for violation in definition_violations:
+            print(f"  {render_definition_violation(violation)}")
         return 1
 
     print(f"Python architecture policy passed for `{package_root}`.")

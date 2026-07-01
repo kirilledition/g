@@ -85,7 +85,9 @@ direct native diagnostic payload builders are limited to compatibility adapters,
 raw diagnostic emitters are rejected, and old Python telemetry fallback method
 calls cannot reappear in production modules.
 The real Python `TelemetrySession` no longer exposes those old fallback methods;
-focused telemetry tests call the native telemetry session handle directly.
+focused telemetry tests call the native telemetry session handle directly, and
+the Python architecture checker rejects reintroduced production definitions of
+those methods.
 Production JAX setup now validates GPU availability through the native
 setup-session default-probe method; the Python explicit-path validation wrapper
 remains for deterministic tests and compatibility helpers.

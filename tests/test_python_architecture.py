@@ -366,6 +366,38 @@ def test_telemetry_dispatch_policy_rejects_fallback_method_calls(tmp_path: Path)
     ]
 
 
+def test_telemetry_definition_policy_rejects_fallback_methods(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    telemetry_directory = package_root / "engine"
+    telemetry_directory.mkdir(parents=True)
+    (telemetry_directory / "telemetry.py").write_text(
+        "\n".join(
+            (
+                "class TelemetrySession:",
+                "    def log_run_failed(self, event):",
+                "        pass",
+                "    def close_with_event(self):",
+                "        pass",
+                "async def log_progress(processed_chunk_count):",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_definition_policy_violations(package_root)
+
+    observed_violations = sorted(
+        (violation.path, violation.line_number, violation.function_name) for violation in violations
+    )
+
+    assert observed_violations == [
+        (Path("g/engine/telemetry.py"), 2, "log_run_failed"),
+        (Path("g/engine/telemetry.py"), 4, "close_with_event"),
+        (Path("g/engine/telemetry.py"), 6, "log_progress"),
+    ]
+
+
 def test_compute_file_io_policy_rejects_direct_file_access(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     compute_directory = package_root / "compute"
