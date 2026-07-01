@@ -371,7 +371,6 @@ def test_native_dispatch_starts_callback_before_engine_delivery() -> None:
         callback=callback,
         stage_timing_recorder=None,
         variant_major_packed8_probability_pairs=False,
-        stage_timing_snapshot_writer=timing.write_stage_timing_snapshot,
     )
 
     assert callback.events == ["start", "engine", "finish"]

@@ -262,49 +262,6 @@ impl NativeStageTimingRecorder {
         build_stage_timing_snapshot_payload(py, &recorder.build_stage_timing_snapshot_payload())
     }
 
-    fn stage_timing_json_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let recorder = self.lock_recorder()?;
-        build_stage_timing_json_payload(py, &recorder.build_stage_timing_snapshot_payload())
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn write_stage_timing_snapshot(&self, path: String) -> PyResult<()> {
-        self.lock_recorder()?
-            .write_stage_timing_snapshot(Path::new(&path))
-            .map_err(|error| timing_file_error_to_py(&error))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn write_stage_timing_snapshot_if_configured(&self, path: Option<String>) -> PyResult<bool> {
-        self.lock_recorder()?
-            .write_stage_timing_snapshot_if_configured(path.as_deref().map(Path::new))
-            .map_err(|error| timing_file_error_to_py(&error))
-    }
-
-    fn derived_metrics_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let recorder = self.lock_recorder()?;
-        build_float_mapping(py, &recorder.build_derived_metrics())
-    }
-
-    fn profile_summary_payload<'py>(&self, py: Python<'py>, run_id: Option<String>) -> PyResult<Bound<'py, PyDict>> {
-        let recorder = self.lock_recorder()?;
-        build_profile_summary_payload(py, &recorder.build_profile_summary(run_id))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn write_profile_summary(&self, path: String, run_id: Option<String>) -> PyResult<()> {
-        self.lock_recorder()?
-            .write_profile_summary(Path::new(&path), run_id)
-            .map_err(|error| timing_file_error_to_py(&error))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn write_profile_summary_if_configured(&self, path: Option<String>, run_id: Option<String>) -> PyResult<bool> {
-        self.lock_recorder()?
-            .write_profile_summary_if_configured(path.as_deref().map(Path::new), run_id)
-            .map_err(|error| timing_file_error_to_py(&error))
-    }
-
     #[allow(clippy::needless_pass_by_value)]
     fn write_final_timing_outputs<'py>(
         &self,
@@ -357,22 +314,6 @@ pub(crate) fn plan_timing_file_write(
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_final_timing_outputs_write_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    stage_timing_path: Option<String>,
-    profile_summary_path: Option<String>,
-    run_id: Option<String>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_timing::build_final_timing_outputs_write_started_diagnostic_payload(
-        stage_timing_path.as_deref(),
-        profile_summary_path.as_deref(),
-        run_id.as_deref(),
-    );
-    final_timing_outputs_write_started_diagnostic_payload_to_dict(py, &payload)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn resolve_final_timing_output_context(
     diagnostics_stage_timing_path: Option<String>,
     telemetry_session: &Bound<'_, PyAny>,
@@ -421,7 +362,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeStageTimingRecorder>()?;
     module.add_class::<NativeStageTimingRecorderPlan>()?;
     module.add_class::<NativeTimingFileWritePlan>()?;
-    module.add_function(wrap_pyfunction!(build_final_timing_outputs_write_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(plan_stage_timing_recorder, module)?)?;
     module.add_function(wrap_pyfunction!(plan_timing_file_write, module)?)?;
@@ -636,22 +576,6 @@ fn build_float_mapping<'py>(py: Python<'py>, values: &BTreeMap<String, f64>) -> 
     Ok(mapping)
 }
 
-fn final_timing_outputs_write_started_diagnostic_payload_to_dict<'py>(
-    py: Python<'py>,
-    payload: &native_timing::FinalTimingOutputsWriteStartedDiagnosticPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let diagnostic_payload = PyDict::new(py);
-    let fields = PyDict::new(py);
-    fields.set_item("stage_timing_path", &payload.stage_timing_path)?;
-    fields.set_item("profile_summary_path", &payload.profile_summary_path)?;
-    fields.set_item("run_id", &payload.run_id)?;
-    diagnostic_payload.set_item("level", payload.level)?;
-    diagnostic_payload.set_item("event_name", payload.event_name)?;
-    diagnostic_payload.set_item("message", payload.message)?;
-    diagnostic_payload.set_item("fields", fields)?;
-    Ok(diagnostic_payload)
-}
-
 fn final_timing_outputs_write_result_payload_to_dict<'py>(
     py: Python<'py>,
     payload: &native_timing::FinalTimingOutputsWriteResultPayload,
@@ -698,15 +622,6 @@ fn build_stage_timing_snapshot_payload<'py>(
         "transfer_metadata",
         build_transfer_metadata_summary_payloads(py, &snapshot_payload.transfer_metadata)?,
     )?;
-    Ok(payload)
-}
-
-fn build_stage_timing_json_payload<'py>(
-    py: Python<'py>,
-    snapshot_payload: &native_timing::StageTimingSnapshotPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = build_stage_timing_snapshot_payload(py, snapshot_payload)?;
-    payload.set_item("derived_metrics", build_float_mapping(py, &snapshot_payload.derived_metrics)?)?;
     Ok(payload)
 }
 
@@ -779,59 +694,6 @@ fn build_null_logistic_diagnostics_payloads<'py>(
     PyTuple::new(py, &payloads)
 }
 
-fn build_profile_summary_payload<'py>(
-    py: Python<'py>,
-    summary: &native_timing::ProfileSummaryPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("schema_version", summary.schema_version)?;
-    payload.set_item("run_id", &summary.run_id)?;
-    payload.set_item("stage_totals_seconds", build_float_mapping(py, &summary.stage_totals_seconds)?)?;
-    payload.set_item("stage_counts", build_integer_mapping(py, &summary.stage_counts)?)?;
-    payload.set_item("native_bgen_profile", build_integer_mapping(py, &summary.native_bgen_profile)?)?;
-    payload.set_item("derived_metrics", build_float_mapping(py, &summary.derived_metrics)?)?;
-    payload.set_item("chunk_stage_summary", build_chunk_stage_summary_payload(py, &summary.chunk_stage_summary)?)?;
-    payload.set_item("binary_chunk_summary", build_numeric_diagnostics_payload(py, &summary.binary_chunk_summary)?)?;
-    payload
-        .set_item("queue_backpressure", build_queue_backpressure_summary_payloads(py, &summary.queue_backpressure)?)?;
-    payload.set_item("transfer_metadata", build_transfer_metadata_summary_payloads(py, &summary.transfer_metadata)?)?;
-    payload
-        .set_item("null_logistic_summary", build_null_logistic_summary_payload(py, &summary.null_logistic_summary)?)?;
-    Ok(payload)
-}
-
-fn build_chunk_stage_summary_payload<'py>(
-    py: Python<'py>,
-    summary: &BTreeMap<String, native_timing::ChunkStageSummary>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    for (stage_name, stage_summary) in summary {
-        let stage_payload = PyDict::new(py);
-        stage_payload.set_item("total_seconds", stage_summary.total_seconds)?;
-        stage_payload.set_item("count", stage_summary.count)?;
-        payload.set_item(stage_name, stage_payload)?;
-    }
-    Ok(payload)
-}
-
-fn build_numeric_diagnostics_payload<'py>(
-    py: Python<'py>,
-    diagnostics: &BTreeMap<String, native_timing::NumericDiagnosticValue>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    for (key, value) in diagnostics {
-        match value {
-            native_timing::NumericDiagnosticValue::Integer(integer_value) => {
-                payload.set_item(key, integer_value)?;
-            }
-            native_timing::NumericDiagnosticValue::Float(float_value) => {
-                payload.set_item(key, float_value)?;
-            }
-        }
-    }
-    Ok(payload)
-}
-
 fn build_queue_backpressure_summary_payloads<'py>(
     py: Python<'py>,
     queue_backpressure: &[native_timing::QueueBackpressureSnapshot],
@@ -873,13 +735,4 @@ fn build_transfer_metadata_summary_payloads<'py>(
         })
         .collect::<PyResult<Vec<_>>>()?;
     PyTuple::new(py, &payloads)
-}
-
-fn build_null_logistic_summary_payload<'py>(
-    py: Python<'py>,
-    summary: &native_timing::NullLogisticSummary,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("chromosome_count", summary.chromosome_count)?;
-    Ok(payload)
 }

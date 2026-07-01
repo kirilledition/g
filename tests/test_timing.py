@@ -166,7 +166,7 @@ def test_stage_timing_recorder_aggregates_queue_backpressure() -> None:
     )
 
 
-def test_stage_timing_recorder_aggregates_transfer_metadata() -> None:
+def test_stage_timing_recorder_aggregates_transfer_metadata(tmp_path: Path) -> None:
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)
 
     recorder.add_stage_duration("host_to_device_transfer", 2.0)
@@ -201,11 +201,19 @@ def test_stage_timing_recorder_aggregates_transfer_metadata() -> None:
             total_elements=24,
         ),
     )
-    assert recorder.derived_metrics_payload() == {"host_to_device_transfer_bytes_per_second": 48.0}
-    assert recorder.stage_timing_json_payload()["derived_metrics"] == {"host_to_device_transfer_bytes_per_second": 48.0}
+    output_path = tmp_path / "diagnostics" / "timings.json"
+    assert timing.write_final_timing_outputs(
+        recorder,
+        stage_timing_path=output_path,
+        profile_summary_path=None,
+        run_id=None,
+    ) == {"wrote_stage_timing_snapshot": True, "wrote_profile_summary": False}
+    assert json.loads(output_path.read_text(encoding="utf-8"))["derived_metrics"] == {
+        "host_to_device_transfer_bytes_per_second": 48.0
+    }
 
 
-def test_stage_timing_recorder_builds_transfer_metadata_from_shape() -> None:
+def test_stage_timing_recorder_builds_transfer_metadata_from_shape(tmp_path: Path) -> None:
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)
 
     recorder.add_stage_duration("host_to_device_transfer", 2.0)
@@ -229,7 +237,16 @@ def test_stage_timing_recorder_builds_transfer_metadata_from_shape() -> None:
             total_elements=32,
         ),
     )
-    assert recorder.derived_metrics_payload() == {"host_to_device_transfer_bytes_per_second": 64.0}
+    output_path = tmp_path / "diagnostics" / "timings.json"
+    assert timing.write_final_timing_outputs(
+        recorder,
+        stage_timing_path=output_path,
+        profile_summary_path=None,
+        run_id=None,
+    ) == {"wrote_stage_timing_snapshot": True, "wrote_profile_summary": False}
+    assert json.loads(output_path.read_text(encoding="utf-8"))["derived_metrics"] == {
+        "host_to_device_transfer_bytes_per_second": 64.0
+    }
 
 
 def test_stage_timing_recorder_rejects_invalid_transfer_metadata_shape() -> None:
@@ -320,26 +337,44 @@ def test_build_stage_timing_recorder_uses_native_handle_from_config(tmp_path: Pa
     assert recorder.exact_stage_timings is True
 
 
-def test_write_stage_timing_snapshot_noops_without_recorder_or_path(tmp_path: Path) -> None:
+def test_write_final_timing_outputs_noops_without_recorder_or_path(tmp_path: Path) -> None:
     output_path = tmp_path / "missing" / "timings.json"
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)
 
-    timing.write_stage_timing_snapshot(None, output_path)
-    timing.write_stage_timing_snapshot(recorder, None)
+    assert timing.write_final_timing_outputs(
+        None,
+        stage_timing_path=output_path,
+        profile_summary_path=None,
+        run_id=None,
+    ) == {"wrote_stage_timing_snapshot": False, "wrote_profile_summary": False}
+    assert timing.write_final_timing_outputs(
+        recorder,
+        stage_timing_path=None,
+        profile_summary_path=None,
+        run_id=None,
+    ) == {"wrote_stage_timing_snapshot": False, "wrote_profile_summary": False}
 
     assert not output_path.exists()
 
 
-def test_native_stage_timing_recorder_optional_file_writes(tmp_path: Path) -> None:
+def test_final_timing_outputs_skip_unconfigured_paths(tmp_path: Path) -> None:
     output_path = tmp_path / "diagnostics" / "timings.json"
     profile_summary_path = tmp_path / "diagnostics" / "profile.summary.json"
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     recorder.add_stage_duration("native_engine_delivery", 2.0)
 
-    assert recorder.write_stage_timing_snapshot_if_configured(None) is False
-    assert recorder.write_stage_timing_snapshot_if_configured(output_path) is True
-    assert recorder.write_profile_summary_if_configured(None, run_id="run-1") is False
-    assert recorder.write_profile_summary_if_configured(profile_summary_path, run_id="run-1") is True
+    assert timing.write_final_timing_outputs(
+        recorder,
+        stage_timing_path=None,
+        profile_summary_path=None,
+        run_id="run-1",
+    ) == {"wrote_stage_timing_snapshot": False, "wrote_profile_summary": False}
+    assert timing.write_final_timing_outputs(
+        recorder,
+        stage_timing_path=output_path,
+        profile_summary_path=profile_summary_path,
+        run_id="run-1",
+    ) == {"wrote_stage_timing_snapshot": True, "wrote_profile_summary": True}
 
     assert json.loads(output_path.read_text(encoding="utf-8"))["stage_counts"]["native_engine_delivery"] == 1
     assert json.loads(profile_summary_path.read_text(encoding="utf-8"))["run_id"] == "run-1"
@@ -367,6 +402,32 @@ def test_native_stage_timing_recorder_writes_final_timing_outputs(tmp_path: Path
         profile_summary_path=profile_summary_path,
         run_id="run-1",
     ) == {"wrote_stage_timing_snapshot": False, "wrote_profile_summary": False}
+
+
+def test_stage_timing_recorder_exposes_only_combined_timing_file_writer() -> None:
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    removed_method_names = (
+        "add_stage_duration_unlocked",
+        "write_stage_timing_snapshot",
+        "write_stage_timing_snapshot_if_configured",
+        "stage_timing_json_payload",
+        "derived_metrics_payload",
+        "profile_summary_payload",
+        "write_profile_summary",
+        "write_profile_summary_if_configured",
+    )
+
+    for method_name in removed_method_names:
+        assert not hasattr(recorder, method_name)
+        assert not hasattr(recorder.native_recorder, method_name)
+    assert hasattr(recorder, "write_final_timing_outputs")
+    assert hasattr(recorder.native_recorder, "write_final_timing_outputs")
+
+
+def test_timing_module_does_not_expose_payload_builder() -> None:
+    assert not hasattr(timing, "build_final_timing_outputs_write_started_diagnostic_payload")
+    assert not hasattr(_core, "build_final_timing_outputs_write_started_diagnostic_payload")
+    assert hasattr(_core, "record_final_timing_outputs_write_started_diagnostic_event")
 
 
 def test_resolve_final_timing_output_context_uses_native_policy(tmp_path: Path) -> None:
@@ -404,29 +465,7 @@ def test_resolve_final_timing_output_context_uses_native_policy(tmp_path: Path) 
     )
 
 
-def test_final_timing_outputs_write_started_diagnostic_payload(tmp_path: Path) -> None:
-    output_path = tmp_path / "diagnostics" / "timings.json"
-    profile_summary_path = tmp_path / "diagnostics" / "profile.summary.json"
-
-    payload = timing.build_final_timing_outputs_write_started_diagnostic_payload(
-        stage_timing_path=output_path,
-        profile_summary_path=profile_summary_path,
-        run_id="run-1",
-    )
-
-    assert payload == {
-        "level": "debug",
-        "event_name": "runner_final_timing_outputs_write_started",
-        "message": "Writing final timing outputs.",
-        "fields": {
-            "stage_timing_path": str(output_path),
-            "profile_summary_path": str(profile_summary_path),
-            "run_id": "run-1",
-        },
-    }
-
-
-def test_write_stage_timing_snapshot_persists_payload_and_derived_metrics(tmp_path: Path) -> None:
+def test_final_timing_outputs_persists_stage_snapshot_payload_and_derived_metrics(tmp_path: Path) -> None:
     output_path = tmp_path / "diagnostics" / "timings.json"
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     recorder.add_stage_duration("native_engine_delivery", 2.0)
@@ -447,7 +486,12 @@ def test_write_stage_timing_snapshot_persists_payload_and_derived_metrics(tmp_pa
     recorder.add_binary_chunk_diagnostics({"score_test_candidate_count": 1})
     recorder.add_null_logistic_diagnostics({"chromosome": "22"})
 
-    timing.write_stage_timing_snapshot(recorder, output_path)
+    assert timing.write_final_timing_outputs(
+        recorder,
+        stage_timing_path=output_path,
+        profile_summary_path=None,
+        run_id=None,
+    ) == {"wrote_stage_timing_snapshot": True, "wrote_profile_summary": False}
 
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["stage_totals_seconds"]["native_engine_delivery"] == 2.0
@@ -475,7 +519,7 @@ def test_write_stage_timing_snapshot_persists_payload_and_derived_metrics(tmp_pa
     }
 
 
-def test_write_profile_summary_persists_aggregate_payload(tmp_path: Path) -> None:
+def test_final_timing_outputs_persists_profile_summary_payload(tmp_path: Path) -> None:
     output_path = tmp_path / "logs" / "profile.summary.json"
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     recorder.add_stage_duration("native_engine_delivery", 2.0)
@@ -500,7 +544,12 @@ def test_write_profile_summary_persists_aggregate_payload(tmp_path: Path) -> Non
         }
     )
 
-    timing.write_profile_summary(recorder, output_path, run_id="run-1")
+    assert timing.write_final_timing_outputs(
+        recorder,
+        stage_timing_path=None,
+        profile_summary_path=output_path,
+        run_id="run-1",
+    ) == {"wrote_stage_timing_snapshot": False, "wrote_profile_summary": True}
 
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["schema_version"] == 1
@@ -513,13 +562,20 @@ def test_write_profile_summary_persists_aggregate_payload(tmp_path: Path) -> Non
     assert payload["binary_chunk_summary"]["firth_iteration_max"] == 8
 
 
-def test_native_derived_metrics_omit_zero_denominator_values() -> None:
+def test_native_derived_metrics_omit_zero_denominator_values(tmp_path: Path) -> None:
     recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     recorder.add_stage_duration("native_engine_delivery", 0.0)
     recorder.add_stage_duration("output_write", 2.0)
     recorder.set_native_bgen_profile({"variant_decode_count": 0, "selected_sample_count": 10})
 
-    assert recorder.derived_metrics_payload() == {}
+    output_path = tmp_path / "diagnostics" / "timings.json"
+    assert timing.write_final_timing_outputs(
+        recorder,
+        stage_timing_path=output_path,
+        profile_summary_path=None,
+        run_id=None,
+    ) == {"wrote_stage_timing_snapshot": True, "wrote_profile_summary": False}
+    assert json.loads(output_path.read_text(encoding="utf-8"))["derived_metrics"] == {}
 
 
 def test_record_stage_duration_uses_elapsed_perf_counter(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -244,5 +244,4 @@ def run_bgen_engine_with_multi_callback(
         writer_finish_thread_count=writer_finish_thread_count,
         variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
         pipeline_label="Multi-phenotype native BGEN",
-        stage_timing_snapshot_writer=timing.write_stage_timing_snapshot,
     )

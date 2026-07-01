@@ -1406,6 +1406,15 @@ Remove Python as the chunk-level scheduler.
 - Native output writer PyO3 entry points now release the GIL around Rust
   chunk enqueue/write dispatch after copying Python array inputs into owned
   Arrow arrays.
+- Native BGEN delivery cleanup no longer accepts a Python timing snapshot
+  writer callback; cleanup action ordering stays native-owned, and the runner
+  writes final timing snapshots and profile summaries once through the native
+  final-timing boundary after dispatch.
+- The root PyO3 timing recorder binding no longer exposes direct
+  stage-timing/profile payload builders, the final timing write-started
+  payload builder, or per-file writer methods; Python timing tests and
+  production code use typed snapshots, native diagnostic recorders, and the
+  combined native final-output writer.
 - Native output lifecycle PyO3 helpers now release the GIL around Rust
   filesystem and manifest I/O for output preparation, initialization,
   finalization, manifest load/write, fingerprinting, committed-chunk scanning,
@@ -1591,6 +1600,12 @@ Python/JAX should emit typed diagnostic events through a native handle.
   from `g-runtime`, and their write-started diagnostics get the event name,
   level, message, fields, and diagnostic field JSON serialization from the
   same native timing boundary.
+- Delivery cleanup no longer threads a Python timing snapshot writer callback;
+  the only production timing-file side effect is the runner's combined native
+  final-timing output write.
+- The Python `StageTimingRecorder` adapter no longer exposes direct
+  JSON/derived-metric payload helpers, per-file stage-timing/profile writer
+  wrappers, or the old no-lock duration alias.
 - Run-event diagnostic field JSON serialization now lives in `g-runtime`, so
   the root PyO3 run-event adapter only forwards native serialized fields to
   the logging boundary.

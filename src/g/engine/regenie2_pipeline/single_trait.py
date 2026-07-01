@@ -297,7 +297,6 @@ def run_single_trait_bgen_pipeline(
         callback=callback,
         stage_timing_recorder=context.stage_timing_recorder,
         variant_major_packed8_probability_pairs=context.uses_packed8_genotypes,
-        stage_timing_snapshot_writer=timing.write_stage_timing_snapshot,
     )
 
 

@@ -107,7 +107,6 @@ def execute_bgen_delivery_cleanup_plan(
     writer_sessions: tuple[typing.Any, ...],
     writer_finish_thread_count: int,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    stage_timing_snapshot_writer: typing.Callable[[timing.StageTimingRecorder | None, Path | None], None],
     shutdown_request: shutdown.GracefulShutdownRequested | None,
 ) -> BgenDeliveryCleanupExecution:
     """Execute cleanup side effects in the native lifecycle action order."""
@@ -139,7 +138,8 @@ def execute_bgen_delivery_cleanup_plan(
         elif cleanup_action is BgenDeliveryCleanupAction.ABORT_WRITER_SESSIONS:
             writers.abort_writer_sessions(writer_sessions)
         elif cleanup_action is BgenDeliveryCleanupAction.WRITE_STAGE_TIMING_SNAPSHOT:
-            stage_timing_snapshot_writer(stage_timing_recorder, None)
+            # The runner writes final timing outputs once after dispatch.
+            continue
     return BgenDeliveryCleanupExecution(
         final_parquet_paths=final_parquet_paths,
         callback_finished=resolved_callback_finished,
@@ -253,7 +253,6 @@ def run_bgen_engine_with_writer_sessions(
     writer_finish_thread_count: int,
     variant_major_packed8_probability_pairs: bool,
     pipeline_label: str,
-    stage_timing_snapshot_writer: typing.Callable[[timing.StageTimingRecorder | None, Path | None], None],
 ) -> tuple[Path | None, ...]:
     """Run native BGEN chunk delivery and close all output writers."""
     callback_finished = False
@@ -301,7 +300,6 @@ def run_bgen_engine_with_writer_sessions(
             writer_sessions=writer_sessions,
             writer_finish_thread_count=writer_finish_thread_count,
             stage_timing_recorder=stage_timing_recorder,
-            stage_timing_snapshot_writer=stage_timing_snapshot_writer,
             shutdown_request=None,
         )
         callback_finished = cleanup_execution.callback_finished
@@ -325,7 +323,6 @@ def run_bgen_engine_with_writer_sessions(
                 writer_sessions=writer_sessions,
                 writer_finish_thread_count=writer_finish_thread_count,
                 stage_timing_recorder=stage_timing_recorder,
-                stage_timing_snapshot_writer=stage_timing_snapshot_writer,
                 shutdown_request=shutdown_request,
             )
             callback_finished = cleanup_execution.callback_finished
@@ -341,7 +338,6 @@ def run_bgen_engine_with_writer_sessions(
                 writer_sessions=writer_sessions,
                 writer_finish_thread_count=writer_finish_thread_count,
                 stage_timing_recorder=stage_timing_recorder,
-                stage_timing_snapshot_writer=stage_timing_snapshot_writer,
                 shutdown_request=shutdown_request,
             )
             raise
@@ -363,7 +359,6 @@ def run_bgen_engine_with_writer_sessions(
             writer_sessions=writer_sessions,
             writer_finish_thread_count=writer_finish_thread_count,
             stage_timing_recorder=stage_timing_recorder,
-            stage_timing_snapshot_writer=stage_timing_snapshot_writer,
             shutdown_request=None,
         )
         raise
@@ -383,7 +378,6 @@ def run_bgen_engine_with_callback(
     callback: object,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     variant_major_packed8_probability_pairs: bool,
-    stage_timing_snapshot_writer: typing.Callable[[timing.StageTimingRecorder | None, Path | None], None],
 ) -> Path | None:
     """Run native BGEN chunk delivery and close the output writer."""
     final_parquet_paths = run_bgen_engine_with_writer_sessions(
@@ -396,6 +390,5 @@ def run_bgen_engine_with_callback(
         writer_finish_thread_count=1,
         variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
         pipeline_label="Native BGEN",
-        stage_timing_snapshot_writer=stage_timing_snapshot_writer,
     )
     return final_parquet_paths[0]

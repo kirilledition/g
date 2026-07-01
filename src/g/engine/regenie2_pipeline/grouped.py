@@ -350,7 +350,6 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         writer_finish_thread_count=1,
         variant_major_packed8_probability_pairs=False,
         pipeline_label="Grouped per-phenotype union native BGEN",
-        stage_timing_snapshot_writer=timing.write_stage_timing_snapshot,
     )
     final_parquet_paths_by_index: list[Path | None] = [None] * len(phenotype_names)
     final_path_offset = 0

@@ -163,6 +163,14 @@ native-dispatch writer adapter keeps the direct Python method fallback only for
 fake and transitional test writer sessions, and the Python architecture checker
 rejects direct calls to those native writer lifecycle helpers outside that
 adapter.
+Native BGEN delivery cleanup no longer carries a Python timing snapshot writer
+callback; final timing snapshots and profile summaries are written once through
+the runner's native final-timing boundary after dispatch.
+The root PyO3 timing recorder binding no longer exports direct
+stage-timing/profile payload builders, the final timing write-started payload
+builder, or per-file writer methods; Python callers use typed snapshots,
+native diagnostic recorders, and the combined native final-timing output
+writer.
 
 Phase 10 queue migration also has a native callback scheduler state handle that
 consolidates queue limits, worker-start state, result in-flight accounting, and

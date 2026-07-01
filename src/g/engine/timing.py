@@ -259,49 +259,6 @@ class TransferMetadataSnapshot:
     total_elements: int
 
 
-@dataclass
-class QueueBackpressureAccumulator:
-    """Mutable queue/backpressure aggregate held behind the recorder lock."""
-
-    observation_count: int
-    max_depth: int
-    max_capacity: int
-    total_elapsed_seconds: float
-    total_blocked_seconds: float
-
-    def add_observation(
-        self,
-        *,
-        queue_depth: int,
-        queue_capacity: int,
-        elapsed_seconds: float,
-        blocked_seconds: float,
-    ) -> None:
-        """Add one queue/backpressure observation."""
-        self.observation_count += 1
-        self.max_depth = max(self.max_depth, queue_depth)
-        self.max_capacity = max(self.max_capacity, queue_capacity)
-        self.total_elapsed_seconds += elapsed_seconds
-        self.total_blocked_seconds += blocked_seconds
-
-
-@dataclass
-class TransferMetadataAccumulator:
-    """Mutable transfer metadata aggregate held behind the recorder lock."""
-
-    observation_count: int
-    total_bytes: int
-    max_bytes: int
-    total_elements: int
-
-    def add_observation(self, *, byte_count: int, element_count: int) -> None:
-        """Add one transfer metadata observation."""
-        self.observation_count += 1
-        self.total_bytes += byte_count
-        self.max_bytes = max(self.max_bytes, byte_count)
-        self.total_elements += element_count
-
-
 def optional_numeric_diagnostic(
     diagnostics: typing.Mapping[str, int | float],
     key: str,
@@ -427,10 +384,6 @@ class StageTimingRecorder:
     def should_collect_exact_stage_timings(self) -> bool:
         """Return whether timing should force synchronized exact stage measurements."""
         return self.native_recorder.should_collect_exact_stage_timings()
-
-    def add_stage_duration_unlocked(self, stage_name: str, duration_seconds: float) -> None:
-        """Accumulate one measured duration."""
-        self.native_recorder.add_stage_duration(stage_name, duration_seconds)
 
     def add_stage_duration(self, stage_name: str, duration_seconds: float) -> None:
         """Accumulate one measured duration."""
@@ -565,49 +518,6 @@ class StageTimingRecorder:
     def snapshot(self) -> StageTimingSnapshot:
         """Return an immutable copy of the current timings."""
         return adapt_stage_timing_snapshot_payload(self.native_recorder.snapshot_payload())
-
-    def stage_timing_json_payload(self) -> dict[str, object]:
-        """Build the JSON-ready native stage timing payload."""
-        return dict(typing.cast("typing.Mapping[str, object]", self.native_recorder.stage_timing_json_payload()))
-
-    def write_stage_timing_snapshot(self, stage_timing_path: pathlib.Path) -> None:
-        """Persist the native stage timing JSON payload."""
-        self.native_recorder.write_stage_timing_snapshot(str(stage_timing_path))
-
-    def write_stage_timing_snapshot_if_configured(self, stage_timing_path: pathlib.Path | None) -> bool:
-        """Persist the native stage timing JSON payload when a path is configured."""
-        return self.native_recorder.write_stage_timing_snapshot_if_configured(
-            None if stage_timing_path is None else str(stage_timing_path)
-        )
-
-    def derived_metrics_payload(self) -> dict[str, float]:
-        """Build native derived metrics from the current timing state."""
-        return dict(typing.cast("typing.Mapping[str, float]", self.native_recorder.derived_metrics_payload()))
-
-    def profile_summary_payload(self, *, run_id: str | None) -> dict[str, object]:
-        """Build native aggregate profile summary payload from the current timing state."""
-        return dict(
-            typing.cast(
-                "typing.Mapping[str, object]",
-                self.native_recorder.profile_summary_payload(run_id),
-            )
-        )
-
-    def write_profile_summary(self, profile_summary_path: pathlib.Path, *, run_id: str | None) -> None:
-        """Persist the native profile summary JSON payload."""
-        self.native_recorder.write_profile_summary(str(profile_summary_path), run_id)
-
-    def write_profile_summary_if_configured(
-        self,
-        profile_summary_path: pathlib.Path | None,
-        *,
-        run_id: str | None,
-    ) -> bool:
-        """Persist the native profile summary JSON payload when a path is configured."""
-        return self.native_recorder.write_profile_summary_if_configured(
-            None if profile_summary_path is None else str(profile_summary_path),
-            run_id,
-        )
 
     def write_final_timing_outputs(
         self,
@@ -758,28 +668,6 @@ def should_collect_exact_stage_timings(stage_timing_recorder: StageTimingRecorde
     return stage_timing_recorder is not None and stage_timing_recorder.should_collect_exact_stage_timings()
 
 
-def write_stage_timing_snapshot(
-    stage_timing_recorder: StageTimingRecorder | None,
-    stage_timing_path: pathlib.Path | None,
-) -> None:
-    """Persist diagnostic stage timings when requested."""
-    if stage_timing_recorder is None:
-        return
-    stage_timing_recorder.write_stage_timing_snapshot_if_configured(stage_timing_path)
-
-
-def write_profile_summary(
-    stage_timing_recorder: StageTimingRecorder | None,
-    profile_summary_path: pathlib.Path | None,
-    *,
-    run_id: str | None,
-) -> None:
-    """Persist aggregate profile summary metrics when requested."""
-    if stage_timing_recorder is None:
-        return
-    stage_timing_recorder.write_profile_summary_if_configured(profile_summary_path, run_id=run_id)
-
-
 def write_final_timing_outputs(
     stage_timing_recorder: StageTimingRecorder | None,
     *,
@@ -795,27 +683,6 @@ def write_final_timing_outputs(
         profile_summary_path=profile_summary_path,
         run_id=run_id,
     )
-
-
-def build_final_timing_outputs_write_started_diagnostic_payload(
-    *,
-    stage_timing_path: pathlib.Path | None,
-    profile_summary_path: pathlib.Path | None,
-    run_id: str | None,
-) -> dict[str, typing.Any]:
-    """Build the native diagnostic payload for final timing output writes."""
-    payload = dict(
-        typing.cast(
-            "typing.Mapping[str, typing.Any]",
-            _core.build_final_timing_outputs_write_started_diagnostic_payload(
-                None if stage_timing_path is None else str(stage_timing_path),
-                None if profile_summary_path is None else str(profile_summary_path),
-                run_id,
-            ),
-        )
-    )
-    payload["fields"] = dict(typing.cast("typing.Mapping[str, typing.Any]", payload["fields"]))
-    return payload
 
 
 def serialize_chunk_stage_timings(

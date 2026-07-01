@@ -407,7 +407,6 @@ def build_test_multi_binary_pipeline_callback(
 def run_test_bgen_engine_with_callback(**keyword_arguments: typing.Any) -> Path | None:
     """Run native delivery with explicit optional test defaults."""
     keyword_arguments.setdefault("variant_major_packed8_probability_pairs", False)
-    keyword_arguments.setdefault("stage_timing_snapshot_writer", timing.write_stage_timing_snapshot)
     return native_dispatch_delivery.run_bgen_engine_with_callback(**keyword_arguments)
 
 
@@ -1491,14 +1490,6 @@ def test_execute_bgen_delivery_cleanup_plan_uses_native_action_order() -> None:
         def abort(self) -> None:
             events.append("writer.abort")
 
-    def record_snapshot(
-        recorder: timing.StageTimingRecorder | None,
-        stage_timing_path: Path | None,
-    ) -> None:
-        assert recorder is None
-        assert stage_timing_path is None
-        events.append("snapshot")
-
     success_plan = native_dispatch_delivery.plan_bgen_delivery_cleanup(
         cleanup_outcome=native_dispatch_delivery.BgenDeliveryCleanupOutcome.SUCCESS,
         callback_finished=False,
@@ -1510,11 +1501,10 @@ def test_execute_bgen_delivery_cleanup_plan_uses_native_action_order() -> None:
         writer_sessions=(OrderedWriterSession(),),
         writer_finish_thread_count=1,
         stage_timing_recorder=None,
-        stage_timing_snapshot_writer=record_snapshot,
         shutdown_request=None,
     )
 
-    assert events == ["callback.finish", "writer.finish", "snapshot"]
+    assert events == ["callback.finish", "writer.finish"]
     assert success_execution.callback_finished is True
     assert success_execution.final_parquet_paths == (Path("results/final.parquet"),)
 
@@ -1532,11 +1522,10 @@ def test_execute_bgen_delivery_cleanup_plan_uses_native_action_order() -> None:
         writer_sessions=(OrderedWriterSession(),),
         writer_finish_thread_count=1,
         stage_timing_recorder=None,
-        stage_timing_snapshot_writer=record_snapshot,
         shutdown_request=shutdown_request,
     )
 
-    assert events == ["callback.finish", "writer.finish_interrupted:SIGINT", "snapshot"]
+    assert events == ["callback.finish", "writer.finish_interrupted:SIGINT"]
     assert interrupted_execution.callback_finished is True
     assert interrupted_execution.final_parquet_paths == ()
 
@@ -1604,13 +1593,6 @@ def test_run_bgen_engine_with_writer_sessions_records_native_delivery_diagnostic
         def finish(self) -> None:
             self.finished = True
 
-    def ignore_stage_timing_snapshot(
-        recorder: timing.StageTimingRecorder | None,
-        stage_timing_path: Path | None,
-    ) -> None:
-        assert recorder is None
-        assert stage_timing_path is None
-
     monkeypatch.setattr(
         native_dispatch_delivery._core,
         "record_native_dispatch_delivery_started_diagnostic_event",
@@ -1642,7 +1624,6 @@ def test_run_bgen_engine_with_writer_sessions_records_native_delivery_diagnostic
         writer_finish_thread_count=1,
         variant_major_packed8_probability_pairs=False,
         pipeline_label="Native BGEN",
-        stage_timing_snapshot_writer=ignore_stage_timing_snapshot,
     )
 
     assert callback.started is True
@@ -12146,13 +12127,6 @@ def test_native_dispatch_records_profile_and_allows_no_final_path() -> None:
     callback = FinishTrackingCallback()
     writer_session = NoFinalWriterSession()
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
-    snapshot_calls: list[tuple[timing.StageTimingRecorder | None, Path | None]] = []
-
-    def record_snapshot(
-        recorder: timing.StageTimingRecorder | None,
-        stage_timing_path: Path | None,
-    ) -> None:
-        snapshot_calls.append((recorder, stage_timing_path))
 
     final_path = run_test_bgen_engine_with_callback(
         engine=typing.cast("typing.Any", engine),
@@ -12161,7 +12135,6 @@ def test_native_dispatch_records_profile_and_allows_no_final_path() -> None:
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
-        stage_timing_snapshot_writer=record_snapshot,
     )
 
     assert final_path is None
@@ -12172,7 +12145,6 @@ def test_native_dispatch_records_profile_and_allows_no_final_path() -> None:
     assert engine.run_arguments is not None
     assert engine.run_arguments[2] == [1, 2]
     assert stage_timing_recorder.snapshot().native_bgen_profile == {"variant_decode_count": 7}
-    assert len(snapshot_calls) == 1
 
 
 def test_multi_dispatch_graceful_shutdown_drains_and_marks_all_writers_interrupted() -> None:
