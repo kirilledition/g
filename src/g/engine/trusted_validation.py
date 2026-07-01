@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import json
-import typing
 from pathlib import Path
 
 from g import _core, types
-
-TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION = 1
 
 
 def assume_trusted_no_missing_diploid_validated() -> bool:
@@ -47,11 +43,6 @@ def trusted_bgen_validation_cache_path(fingerprint: str) -> Path:
     )
 
 
-def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
-    """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
-
-
 def validate_trusted_bgen_with_cache(
     *,
     engine: _core.Regenie2RunEngine,
@@ -79,15 +70,10 @@ def validate_trusted_bgen_with_cache(
         engine.mark_trusted_no_missing_diploid_validated()
         return
     engine.validate_trusted_no_missing_diploid()
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_payload = native_mapping_payload(
-        _core.build_trusted_bgen_validation_cache_payload(
-            fingerprint,
-            str(bgen_path),
-            int(engine.sample_count),
-            int(engine.variant_count),
-        )
+    _core.write_trusted_bgen_validation_cache_payload(
+        str(cache_path),
+        fingerprint,
+        str(bgen_path),
+        int(engine.sample_count),
+        int(engine.variant_count),
     )
-    temporary_cache_path = cache_path.with_suffix(".json.tmp")
-    temporary_cache_path.write_text(json.dumps(cache_payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    temporary_cache_path.replace(cache_path)

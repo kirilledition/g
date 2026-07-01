@@ -9,7 +9,6 @@ pub use g_output as output;
 pub use g_plan as plan;
 pub use g_runtime as runtime;
 pub mod python;
-pub(crate) mod trusted_validation;
 
 use pyo3::prelude::*;
 

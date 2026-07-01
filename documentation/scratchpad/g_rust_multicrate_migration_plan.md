@@ -1617,6 +1617,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Native CLI stdout/stderr and rendered completion/interruption/failure line
   production paths now call native diagnostic recorders directly, leaving
   Python payload dict materialization only for compatibility helpers and tests.
+- Trusted BGEN validation cache metadata, deterministic JSON serialization, and
+  atomic cache writes now live in `g-runtime`; Python validates the engine and
+  calls one native cache-write boundary instead of creating directories,
+  serializing JSON, or replacing cache files itself.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 
@@ -1703,6 +1707,9 @@ Current implementation notes:
   prediction-source PyO3 adapters now live in focused adapter modules.
 - The `Regenie2RunEngine` PyO3 adapter now lives in `run_engine.rs`, leaving
   the root Python module as composition-only registration.
+- Trusted BGEN validation cache helper logic moved out of the root crate and
+  into `g-runtime`; the root now keeps only the PyO3 adapter/export surface for
+  those helpers.
 
 ### Tests
 

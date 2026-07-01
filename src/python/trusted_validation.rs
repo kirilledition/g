@@ -6,7 +6,7 @@ use pyo3::exceptions::PyOSError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
-use crate::trusted_validation as native_trusted_validation;
+use g_runtime::trusted_validation as native_trusted_validation;
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
@@ -60,9 +60,32 @@ pub(crate) fn build_trusted_bgen_validation_cache_payload<'py>(
     Ok(payload)
 }
 
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn write_trusted_bgen_validation_cache_payload(
+    py: Python<'_>,
+    cache_path: String,
+    fingerprint: String,
+    bgen_path: String,
+    sample_count: i64,
+    variant_count: i64,
+) -> PyResult<()> {
+    py.detach(|| {
+        native_trusted_validation::write_trusted_bgen_validation_cache_payload(
+            Path::new(&cache_path),
+            fingerprint,
+            Path::new(&bgen_path),
+            sample_count,
+            variant_count,
+        )
+    })
+    .map_err(PyOSError::new_err)
+}
+
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_path_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_fingerprint_value, module)?)?;
+    module.add_function(wrap_pyfunction!(write_trusted_bgen_validation_cache_payload, module)?)?;
     Ok(())
 }
