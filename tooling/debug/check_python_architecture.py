@@ -61,6 +61,50 @@ class PythonImportViolation:
     message: str
 
 
+@dataclasses.dataclass(frozen=True)
+class PythonCallPolicy:
+    """A Python call-boundary policy.
+
+    Attributes:
+        name: Stable policy name for diagnostics.
+        source_directory: Package directory, relative to the production package root.
+        forbidden_calls: Dotted call names rejected under the source directory.
+        allowed_paths: Source paths, relative to the production package root, excluded from this policy.
+        message: Human-readable policy description.
+
+    """
+
+    name: str
+    source_directory: Path
+    forbidden_calls: tuple[str, ...]
+    allowed_paths: tuple[Path, ...]
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class PythonCallViolation:
+    """A Python call that crosses an ownership boundary.
+
+    Attributes:
+        path: Source file containing the violation.
+        line_number: One-based source line number containing the call.
+        column_offset: Zero-based source column containing the call.
+        policy_name: Call policy that rejected the call.
+        call_name: Dotted call name observed in source.
+        forbidden_call: Forbidden call pattern that matched the observed call.
+        message: Human-readable policy description.
+
+    """
+
+    path: Path
+    line_number: int
+    column_offset: int
+    policy_name: str
+    call_name: str
+    forbidden_call: str
+    message: str
+
+
 PYTHON_IMPORT_POLICIES = (
     PythonImportPolicy(
         name="compute_kernel_isolation",
@@ -73,6 +117,23 @@ PYTHON_IMPORT_POLICIES = (
         source_directory=Path("jax_runtime"),
         forbidden_imports=("g.runner",),
         message="JAX runtime helpers must not import runner orchestration packages",
+    ),
+)
+
+PYTHON_CALL_POLICIES = (
+    PythonCallPolicy(
+        name="production_manifest_write_isolation",
+        source_directory=Path(),
+        forbidden_calls=("output.write_run_manifest", "_core.write_run_manifest_json", "write_run_manifest"),
+        allowed_paths=(Path("io/output.py"),),
+        message="production Python must not write run manifests outside the output adapter helper",
+    ),
+    PythonCallPolicy(
+        name="callback_worker_queue_isolation",
+        source_directory=Path("engine/callbacks"),
+        forbidden_calls=("queue.Queue", "threading.Thread", "threading.BoundedSemaphore", "BoundedSemaphore"),
+        allowed_paths=(),
+        message="production callback code must use native worker queues and worker-thread handles",
     ),
 )
 
@@ -129,6 +190,23 @@ def import_matches_forbidden_prefix(import_name: str, forbidden_import: str) -> 
     return import_name == forbidden_import or import_name.startswith(f"{forbidden_import}.")
 
 
+def call_name_from_expression(expression: ast.expr) -> str | None:
+    """Return a dotted call name from an AST call expression."""
+    if isinstance(expression, ast.Name):
+        return expression.id
+    if isinstance(expression, ast.Attribute):
+        parent_name = call_name_from_expression(expression.value)
+        if parent_name is None:
+            return expression.attr
+        return f"{parent_name}.{expression.attr}"
+    return None
+
+
+def call_matches_forbidden_name(call_name: str, forbidden_call: str) -> bool:
+    """Return whether a call name violates a forbidden call pattern."""
+    return call_name == forbidden_call or call_name.endswith(f".{forbidden_call}")
+
+
 def collect_import_violations_for_statement(
     path: Path,
     relative_path: Path,
@@ -157,6 +235,35 @@ def collect_import_violations_for_statement(
     return tuple(violations)
 
 
+def collect_call_violations_for_statement(
+    relative_path: Path,
+    policy: PythonCallPolicy,
+    statement: ast.Call,
+) -> tuple[PythonCallViolation, ...]:
+    """Collect call-policy violations from one AST call statement."""
+    call_name = call_name_from_expression(statement.func)
+    if call_name is None:
+        return ()
+
+    violations: list[PythonCallViolation] = []
+    for forbidden_call in policy.forbidden_calls:
+        if not call_matches_forbidden_name(call_name, forbidden_call):
+            continue
+        violations.append(
+            PythonCallViolation(
+                path=relative_path,
+                line_number=statement.lineno,
+                column_offset=statement.col_offset,
+                policy_name=policy.name,
+                call_name=call_name,
+                forbidden_call=forbidden_call,
+                message=policy.message,
+            )
+        )
+        break
+    return tuple(violations)
+
+
 def collect_python_import_policy_violations(
     package_root: Path,
     policies: tuple[PythonImportPolicy, ...] = PYTHON_IMPORT_POLICIES,
@@ -179,6 +286,29 @@ def collect_python_import_policy_violations(
     return tuple(violations)
 
 
+def collect_python_call_policy_violations(
+    package_root: Path,
+    policies: tuple[PythonCallPolicy, ...] = PYTHON_CALL_POLICIES,
+) -> tuple[PythonCallViolation, ...]:
+    """Collect Python call-boundary violations under a production package root."""
+    violations: list[PythonCallViolation] = []
+    for policy in policies:
+        source_directory = package_root / policy.source_directory
+        if not source_directory.exists():
+            continue
+        for path in sorted(source_directory.rglob("*.py")):
+            relative_path = path.relative_to(package_root.parent)
+            package_relative_path = path.relative_to(package_root)
+            if package_relative_path in policy.allowed_paths:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for statement in ast.walk(tree):
+                if not isinstance(statement, ast.Call):
+                    continue
+                violations.extend(collect_call_violations_for_statement(relative_path, policy, statement))
+    return tuple(violations)
+
+
 def render_violation(violation: PythonImportViolation) -> str:
     """Render an import-policy violation for command-line output."""
     location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
@@ -188,13 +318,25 @@ def render_violation(violation: PythonImportViolation) -> str:
     )
 
 
+def render_call_violation(violation: PythonCallViolation) -> str:
+    """Render a call-policy violation for command-line output."""
+    location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
+    return (
+        f"{location}: {violation.policy_name} rejects `{violation.call_name}` "
+        f"via `{violation.forbidden_call}`: {violation.message}"
+    )
+
+
 def run_tool(package_root: Path) -> int:
     """Verify Python package ownership boundaries."""
-    violations = collect_python_import_policy_violations(package_root)
-    if violations:
+    import_violations = collect_python_import_policy_violations(package_root)
+    call_violations = collect_python_call_policy_violations(package_root)
+    if import_violations or call_violations:
         print(f"Python architecture violations under `{package_root}`:")
-        for violation in violations:
+        for violation in import_violations:
             print(f"  {render_violation(violation)}")
+        for violation in call_violations:
+            print(f"  {render_call_violation(violation)}")
         return 1
 
     print(f"Python architecture policy passed for `{package_root}`.")
