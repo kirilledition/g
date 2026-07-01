@@ -97,3 +97,18 @@ The published documentation site is expected at:
 ```text
 https://kirilledition.github.io/g/
 ```
+
+<!-- code-size-summary:start -->
+## Code Size
+
+Generated from Git-tracked files under `crates/` and `src/` using [`cloc`](https://github.com/AlDanial/cloc).
+
+| Language | Files | Blank | Comment | Code |
+| --- | ---: | ---: | ---: | ---: |
+| Rust | 117 | 5,364 | 817 | 51,834 |
+| Python | 95 | 3,203 | 2,433 | 25,168 |
+| TOML | 8 | 25 | 8 | 194 |
+| **Total** | 220 | 8,592 | 3,258 | 77,196 |
+
+`cloc` version: `2.09`.
+<!-- code-size-summary:end -->
