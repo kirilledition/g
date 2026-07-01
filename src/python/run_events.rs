@@ -93,6 +93,55 @@ pub fn build_run_failed_telemetry_fields<'py>(
 }
 
 #[pyfunction]
+pub fn record_runner_run_started_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    trait_type: &str,
+    phenotype_count: i64,
+    output_run_root: &str,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1("emit_run_started_event", (association_mode, trait_type, phenotype_count, output_run_root))
+        .map(|_| ())
+}
+
+#[pyfunction]
+pub fn record_runner_run_interrupted_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    event: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1("emit_run_interrupted_event", (event,)).map(|_| ())
+}
+
+#[pyfunction]
+pub fn record_runner_run_failed_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    event: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1("emit_run_failed_event", (event,)).map(|_| ())
+}
+
+#[pyfunction]
+pub fn record_runner_run_completed_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    event: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1("emit_run_completed_event", (event,)).map(|_| ())
+}
+
+#[pyfunction]
 pub fn record_execution_plan_prepared_telemetry_event(
     telemetry_session: &Bound<'_, PyAny>,
     association_mode: &str,
@@ -1889,6 +1938,10 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
     module.add_function(wrap_pyfunction!(build_run_completed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_failed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_started_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_interrupted_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_failed_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_completed_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_execution_plan_prepared_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_effective_config_written_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_writer_finished_telemetry_event, module)?)?;

@@ -1304,6 +1304,24 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
         def __init__(self) -> None:
             self.calls: list[tuple[str, tuple[object, ...]]] = []
 
+        def emit_run_started_event(
+            self,
+            association_mode: str,
+            trait_type: str,
+            phenotype_count: int,
+            output_run_root: str,
+        ) -> None:
+            self.calls.append(("run_started", (association_mode, trait_type, phenotype_count, output_run_root)))
+
+        def emit_run_interrupted_event(self, event: object) -> None:
+            self.calls.append(("run_interrupted", (event,)))
+
+        def emit_run_failed_event(self, event: object) -> None:
+            self.calls.append(("run_failed", (event,)))
+
+        def emit_run_completed_event(self, event: object) -> None:
+            self.calls.append(("run_completed", (event,)))
+
         def emit_execution_plan_prepared_event(
             self,
             association_mode: str,
@@ -1368,6 +1386,19 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
     )
     assert native_session_handle.calls == []
 
+    interrupted_event = object()
+    failed_event = object()
+    completed_event = object()
+    _core.record_runner_run_started_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "quantitative",
+        2,
+        "output.g",
+    )
+    _core.record_runner_run_interrupted_telemetry_event(telemetry_session, interrupted_event)
+    _core.record_runner_run_failed_telemetry_event(telemetry_session, failed_event)
+    _core.record_runner_run_completed_telemetry_event(telemetry_session, completed_event)
     _core.record_execution_plan_prepared_telemetry_event(
         telemetry_session,
         "regenie2_linear",
@@ -1398,6 +1429,10 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
     )
 
     assert native_session_handle.calls == [
+        ("run_started", ("regenie2_linear", "quantitative", 2, "output.g")),
+        ("run_interrupted", (interrupted_event,)),
+        ("run_failed", (failed_event,)),
+        ("run_completed", (completed_event,)),
         ("execution_plan_prepared", ("regenie2_linear", "quantitative", 2, 1024, None, "gpu")),
         ("effective_config_written", ("regenie2_linear", "height", "height/effective_config.toml", "height")),
         ("writer_finished", ("regenie2_linear", "height", "height.parquet")),

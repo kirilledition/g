@@ -98,11 +98,12 @@ def regenie(
             runtime.initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
         association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
         phenotype_count = len(regenie_config.input.pheno_columns)
-        active_telemetry_session.log_run_started(
-            association_mode=association_mode,
-            trait_type=regenie_config.trait.trait_type,
-            phenotype_count=phenotype_count,
-            output_run_root=telemetry.resolve_output_run_root(regenie_config),
+        _core.record_runner_run_started_telemetry_event(
+            active_telemetry_session,
+            association_mode.value,
+            regenie_config.trait.trait_type.value,
+            phenotype_count,
+            str(telemetry.resolve_output_run_root(regenie_config)),
         )
         _core.record_runner_run_started_diagnostic_event(
             association_mode=association_mode.value,
@@ -117,12 +118,12 @@ def regenie(
         )
     except shutdown.GracefulShutdownRequested as shutdown_request:
         interrupted_event = run_events.build_run_interrupted_event(shutdown_request)
-        active_telemetry_session.log_run_interrupted(interrupted_event)
+        _core.record_runner_run_interrupted_telemetry_event(active_telemetry_session, interrupted_event)
         _core.record_runner_run_interrupted_diagnostic_event(interrupted_event)
         raise
     except Exception as error:
         failed_event = run_events.build_run_failed_event(error)
-        active_telemetry_session.log_run_failed(failed_event)
+        _core.record_runner_run_failed_telemetry_event(active_telemetry_session, failed_event)
         _core.record_runner_run_failed_diagnostic_event(failed_event)
         raise
     else:
@@ -133,7 +134,7 @@ def regenie(
             phenotype_count=phenotype_count,
         )
         completed_event = run_events.build_run_completed_event(artifacts)
-        active_telemetry_session.log_run_completed(completed_event)
+        _core.record_runner_run_completed_telemetry_event(active_telemetry_session, completed_event)
         _core.record_runner_run_completed_diagnostic_event(completed_event)
         return artifacts
     finally:

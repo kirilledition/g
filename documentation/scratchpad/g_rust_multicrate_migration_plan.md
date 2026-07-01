@@ -1629,6 +1629,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   failures.
 - Native CLI run-failed telemetry emission now uses a native PyO3 boundary for
   the session-present check and telemetry-write failure suppression.
+- Runner run-started, run-interrupted, run-failed, and run-completed telemetry
+  dispatch now uses native PyO3 helpers that resolve the native telemetry
+  session handle before calling lifecycle event emitters.
 - Runner execution-plan, effective-config, single-writer, and multi-writer
   telemetry emission now uses native PyO3 dispatch helpers for the
   session-present check while preserving native telemetry run-session event

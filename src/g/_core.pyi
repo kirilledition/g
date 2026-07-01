@@ -2888,6 +2888,25 @@ def build_run_failed_event_payload(error: BaseException) -> dict[str, object]: .
 def build_run_completed_telemetry_fields(event: object) -> dict[str, object]: ...
 def build_run_interrupted_telemetry_fields(event: object) -> dict[str, object]: ...
 def build_run_failed_telemetry_fields(event: object) -> dict[str, object]: ...
+def record_runner_run_started_telemetry_event(
+    telemetry_session: object | None,
+    association_mode: str,
+    trait_type: str,
+    phenotype_count: int,
+    output_run_root: str,
+) -> None: ...
+def record_runner_run_interrupted_telemetry_event(
+    telemetry_session: object | None,
+    event: object,
+) -> None: ...
+def record_runner_run_failed_telemetry_event(
+    telemetry_session: object | None,
+    event: object,
+) -> None: ...
+def record_runner_run_completed_telemetry_event(
+    telemetry_session: object | None,
+    event: object,
+) -> None: ...
 def record_execution_plan_prepared_telemetry_event(
     telemetry_session: object | None,
     association_mode: str,
