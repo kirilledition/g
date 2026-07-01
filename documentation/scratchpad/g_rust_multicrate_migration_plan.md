@@ -1676,6 +1676,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   boundary: direct diagnostic payload builders are allowed only in
   compatibility adapters, raw diagnostic emitters are rejected in production
   Python, and calls to the old Python telemetry fallback methods are rejected.
+- The real Python `TelemetrySession` no longer exposes the old fallback
+  methods for run-failed, JAX diagnostic, callback progress, binary summary,
+  throttled progress, or close-with-event dispatch; focused tests now exercise
+  the native telemetry session handle directly.
 - Native CLI stdout/stderr and rendered completion/interruption/failure line
   diagnostics now use native run-event diagnostic payload builders.
 - Native CLI stdout/stderr and rendered completion/interruption/failure line

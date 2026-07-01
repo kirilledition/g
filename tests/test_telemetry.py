@@ -237,8 +237,8 @@ def test_telemetry_session_writes_schema_events_and_throttled_progress(tmp_path:
         association_mode="regenie2_linear",
         artifact_path=artifact_path,
     )
-    telemetry_session.log_progress(processed_chunk_count=1, chromosome="22")
-    telemetry_session.log_progress(processed_chunk_count=2, chromosome="22")
+    telemetry_session.native_session_handle.emit_progress(1, {"chromosome": "22"})
+    telemetry_session.native_session_handle.emit_progress(2, {"chromosome": "22"})
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
@@ -478,8 +478,8 @@ def test_native_telemetry_run_session_owns_progress_emission(tmp_path: Path) -> 
     )
 
     assert telemetry_session.native_session_handle.has_native_telemetry_session
-    telemetry_session.log_progress(processed_chunk_count=1, chromosome="22")
-    telemetry_session.log_progress(processed_chunk_count=2, chromosome="22")
+    telemetry_session.native_session_handle.emit_progress(1, {"chromosome": "22"})
+    telemetry_session.native_session_handle.emit_progress(2, {"chromosome": "22"})
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
@@ -546,7 +546,7 @@ def test_native_telemetry_run_session_owns_run_lifecycle_event_emission(tmp_path
     )
     telemetry_session.log_run_completed(completed_event)
     telemetry_session.log_run_interrupted(interrupted_event)
-    telemetry_session.log_run_failed(failed_event)
+    telemetry_session.native_session_handle.emit_run_failed_event(failed_event)
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
@@ -925,10 +925,10 @@ def test_native_telemetry_run_session_owns_callback_progress_events(tmp_path: Pa
     progress_state = _core.NativeCallbackProgressState()
 
     progress_update = progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr1", 0, 8))
-    telemetry_session.log_callback_progress_event(progress_update.telemetry_plan.events[0])
+    telemetry_session.native_session_handle.emit_callback_progress_event(progress_update.telemetry_plan.events[0])
     progress_completion = progress_state.finish_progress()
     assert progress_completion is not None
-    telemetry_session.log_callback_progress_event(progress_completion.telemetry_event)
+    telemetry_session.native_session_handle.emit_callback_progress_event(progress_completion.telemetry_event)
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
@@ -984,7 +984,7 @@ def test_native_telemetry_run_session_owns_binary_correction_summary(tmp_path: P
     )
     summary.add_null_model_failure_count(20)
 
-    telemetry_session.log_binary_correction_summary(summary.summary_payload())
+    telemetry_session.native_session_handle.emit_binary_correction_summary_event(summary.summary_payload())
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
@@ -1028,7 +1028,7 @@ def test_native_telemetry_run_session_owns_jax_runtime_diagnostic_event(tmp_path
         ),
     )
 
-    telemetry_session.log_jax_runtime_diagnostic_event(diagnostic_event, telemetry_level="trace")
+    telemetry_session.native_session_handle.emit_jax_runtime_diagnostic_event(diagnostic_event, "trace")
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
@@ -1122,9 +1122,9 @@ def test_telemetry_progress_throttle_emits_after_chunk_interval(tmp_path: Path) 
         run_id="run-1",
     )
 
-    telemetry_session.log_progress(processed_chunk_count=1, chromosome="22")
-    telemetry_session.log_progress(processed_chunk_count=2, chromosome="22")
-    telemetry_session.log_progress(processed_chunk_count=3, chromosome="22")
+    telemetry_session.native_session_handle.emit_progress(1, {"chromosome": "22"})
+    telemetry_session.native_session_handle.emit_progress(2, {"chromosome": "22"})
+    telemetry_session.native_session_handle.emit_progress(3, {"chromosome": "22"})
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None

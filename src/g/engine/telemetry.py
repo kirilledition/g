@@ -15,7 +15,6 @@ TelemetryCloseMetadata = dict[str, TelemetryWriterCounters]
 if typing.TYPE_CHECKING:
     from g.engine import run_events
     from g.interface import config
-    from g.jax_runtime import models as jax_runtime_models
 
 
 @dataclass(frozen=True)
@@ -120,10 +119,6 @@ class TelemetrySession:
     def log_run_interrupted(self, event: run_events.RunInterruptedEvent) -> None:
         """Write the canonical graceful-interruption event."""
         self.native_session_handle.emit_run_interrupted_event(event)
-
-    def log_run_failed(self, event: run_events.RunFailedEvent) -> None:
-        """Write the canonical run failure event."""
-        self.native_session_handle.emit_run_failed_event(event)
 
     def log_run_started(
         self,
@@ -345,30 +340,6 @@ class TelemetrySession:
             phenotype_count,
         )
 
-    def log_callback_progress_event(self, progress_event: _core.NativeCallbackProgressTelemetryEvent) -> None:
-        """Write a canonical callback chromosome progress event."""
-        self.native_session_handle.emit_callback_progress_event(progress_event)
-
-    def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
-        """Write the canonical binary correction summary event."""
-        self.native_session_handle.emit_binary_correction_summary_event(summary_payload)
-
-    def log_jax_runtime_diagnostic_event(
-        self,
-        event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
-        *,
-        telemetry_level: str,
-    ) -> None:
-        """Write a canonical JAX runtime diagnostic telemetry event."""
-        self.native_session_handle.emit_jax_runtime_diagnostic_event(event, telemetry_level)
-
-    def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
-        """Write throttled progress telemetry."""
-        self.native_session_handle.emit_progress(
-            processed_chunk_count,
-            fields,
-        )
-
     def should_emit_progress(self, processed_chunk_count: int) -> bool:
         """Return whether a progress event should be emitted now."""
         return self.native_session_handle.should_emit_progress(processed_chunk_count)
@@ -388,13 +359,6 @@ class TelemetrySession:
     def close(self) -> TelemetryCloseMetadata | None:
         """Flush buffered telemetry resources."""
         metadata = self.native_session_handle.finish_close_metadata()
-        if metadata is None:
-            return None
-        return typing.cast("TelemetryCloseMetadata", dict(metadata))
-
-    def close_with_event(self) -> TelemetryCloseMetadata | None:
-        """Emit the close event and flush buffered telemetry resources."""
-        metadata = self.native_session_handle.finish_with_current_close_event_metadata()
         if metadata is None:
             return None
         return typing.cast("TelemetryCloseMetadata", dict(metadata))
