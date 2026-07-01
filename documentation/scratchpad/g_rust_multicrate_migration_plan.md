@@ -1805,6 +1805,9 @@ Current implementation notes:
   objects. The root PyO3 adapter now closes enabled native telemetry sessions,
   no-ops disabled native sessions, and fails fast for non-native close
   contracts while preserving the `_core` export name.
+- JAX runtime diagnostic telemetry dispatch now resolves the native telemetry
+  session handle directly, no-ops disabled native telemetry sessions, and no
+  longer calls Python `log_jax_runtime_diagnostic_event` fallback methods.
 
 ### Tests
 

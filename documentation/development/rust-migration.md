@@ -69,6 +69,8 @@ module, or public root PyO3 registration.
 Telemetry close dispatch is native-only: `telemetry.close_telemetry_session`
 now closes enabled native telemetry sessions, no-ops disabled native sessions,
 and no longer falls back to Python `close_with_event` objects.
+JAX runtime diagnostic telemetry dispatch also resolves the native telemetry
+session handle directly instead of calling Python fallback logging methods.
 
 Phase 10 queue migration also has a native callback scheduler state handle that
 consolidates queue limits, worker-start state, result in-flight accounting, and

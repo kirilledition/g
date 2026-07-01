@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
-use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyAttributeError, PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyTuple};
 
@@ -262,13 +262,38 @@ pub(crate) fn record_jax_runtime_diagnostic_event(
     event: &Bound<'_, PyAny>,
     telemetry_session: &Bound<'_, PyAny>,
 ) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
-    let plan = record_jax_runtime_diagnostic_log_event_plan(py, event, !telemetry_session.is_none())?;
+    let native_telemetry_session = optional_native_telemetry_session(py, telemetry_session)?;
+    let plan = record_jax_runtime_diagnostic_log_event_plan(py, event, native_telemetry_session.is_some())?;
     if plan.should_emit_telemetry {
+        let active_native_telemetry_session = native_telemetry_session.ok_or_else(|| {
+            PyRuntimeError::new_err("Native JAX diagnostic telemetry plan selected a missing native session.")
+        })?;
         let keyword_arguments = PyDict::new(py);
         keyword_arguments.set_item("telemetry_level", &plan.telemetry_level)?;
-        telemetry_session.call_method("log_jax_runtime_diagnostic_event", (event,), Some(&keyword_arguments))?;
+        active_native_telemetry_session.call_method(
+            "emit_jax_runtime_diagnostic_event",
+            (event,),
+            Some(&keyword_arguments),
+        )?;
     }
     Ok(NativeJaxRuntimeDiagnosticRecordPlan::from_plan(plan))
+}
+
+fn optional_native_telemetry_session<'py>(
+    py: Python<'py>,
+    telemetry_session: &Bound<'py, PyAny>,
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    if telemetry_session.is_none() {
+        return Ok(None);
+    }
+    match telemetry_session.getattr("native_telemetry_session") {
+        Ok(native_telemetry_session) if native_telemetry_session.is_none() => Ok(None),
+        Ok(native_telemetry_session) => Ok(Some(native_telemetry_session)),
+        Err(error) if error.is_instance_of::<PyAttributeError>(py) => Err(PyTypeError::new_err(
+            "JAX runtime diagnostic telemetry requires a TelemetrySession with a native telemetry session handle.",
+        )),
+        Err(error) => Err(error),
+    }
 }
 
 fn record_jax_runtime_diagnostic_log_event_plan(

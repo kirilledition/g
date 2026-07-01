@@ -2029,28 +2029,47 @@ def test_native_jax_runtime_diagnostic_event_records_telemetry() -> None:
             self.message = "JAX diagnostic"
             self.fields = (DiagnosticField("platform", "cpu"),)
 
-    class RecordingTelemetrySession:
+    class RecordingNativeTelemetrySession:
         def __init__(self) -> None:
             self.events: list[tuple[object, str]] = []
 
+        def emit_jax_runtime_diagnostic_event(
+            self,
+            diagnostic_event: object,
+            telemetry_level: str,
+        ) -> None:
+            self.events.append((diagnostic_event, telemetry_level))
+
+    class RecordingTelemetrySession:
+        def __init__(self) -> None:
+            self.native_telemetry_session = RecordingNativeTelemetrySession()
+
+    class DisabledTelemetrySession:
+        native_telemetry_session = None
+
+    class LegacyTelemetrySession:
         def log_jax_runtime_diagnostic_event(
             self,
             diagnostic_event: object,
             *,
             telemetry_level: str,
         ) -> None:
-            self.events.append((diagnostic_event, telemetry_level))
+            raise AssertionError((diagnostic_event, telemetry_level))
 
     diagnostic_event = DiagnosticEvent()
     telemetry_session = RecordingTelemetrySession()
 
     emitted_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session)
+    disabled_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, DisabledTelemetrySession())
     skipped_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, None)
+    with pytest.raises(TypeError, match="native telemetry session handle"):
+        _core.record_jax_runtime_diagnostic_event(diagnostic_event, LegacyTelemetrySession())
 
     assert emitted_plan.should_emit_telemetry is True
     assert emitted_plan.telemetry_level == "info"
+    assert disabled_plan.should_emit_telemetry is False
     assert skipped_plan.should_emit_telemetry is False
-    assert telemetry_session.events == [(diagnostic_event, "info")]
+    assert telemetry_session.native_telemetry_session.events == [(diagnostic_event, "info")]
 
 
 def test_native_binary_correction_summary_plans_record_and_emit_policy() -> None:

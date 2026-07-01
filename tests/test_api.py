@@ -1019,18 +1019,21 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
 def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
     recorded_events: list[tuple[str, str, dict[str, object]]] = []
 
-    class RecordingTelemetrySession:
-        def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
-            recorded_events.append((event_name, level, fields))
-
-        def log_jax_runtime_diagnostic_event(
+    class RecordingNativeTelemetrySession:
+        def emit_jax_runtime_diagnostic_event(
             self,
             diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
-            *,
             telemetry_level: str,
         ) -> None:
             event_fields = {field.name: field.value for field in diagnostic_event.fields}
             recorded_events.append((diagnostic_event.event_name, telemetry_level, event_fields))
+
+    class RecordingTelemetrySession:
+        def __init__(self) -> None:
+            self.native_telemetry_session = RecordingNativeTelemetrySession()
+
+        def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
+            recorded_events.append((event_name, level, fields))
 
     class FakeJaxSetupModule:
         def configure_before_backend_init(
@@ -1087,18 +1090,21 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
     recorded_events: list[tuple[str, str, dict[str, object]]] = []
     logged_records: list[tuple[str, str, str, dict[str, object]]] = []
 
-    class RecordingTelemetrySession:
-        def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
-            recorded_events.append((event_name, level, fields))
-
-        def log_jax_runtime_diagnostic_event(
+    class RecordingNativeTelemetrySession:
+        def emit_jax_runtime_diagnostic_event(
             self,
             diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
-            *,
             telemetry_level: str,
         ) -> None:
             event_fields = {field.name: field.value for field in diagnostic_event.fields}
             recorded_events.append((diagnostic_event.event_name, telemetry_level, event_fields))
+
+    class RecordingTelemetrySession:
+        def __init__(self) -> None:
+            self.native_telemetry_session = RecordingNativeTelemetrySession()
+
+        def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
+            recorded_events.append((event_name, level, fields))
 
     class NativeDiagnosticRecordPlan:
         logging_level_name: str
@@ -1130,7 +1136,12 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
                 {diagnostic_field.name: diagnostic_field.value for diagnostic_field in event.fields},
             )
         )
-        active_telemetry_session.log_jax_runtime_diagnostic_event(event, telemetry_level="trace")
+        native_telemetry_session = active_telemetry_session.native_telemetry_session
+        assert native_telemetry_session is not None
+        native_telemetry_session.emit_jax_runtime_diagnostic_event(
+            event,
+            telemetry_level="trace",
+        )
         return NativeDiagnosticRecordPlan(
             logging_level_name="ERROR",
             should_emit_telemetry=True,
