@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import numpy as np
 
 import g
-from g.engine import run_events
 
 
 @dataclass(frozen=True)
@@ -43,16 +42,6 @@ class SingleTraitPreflightShape:
     covariate_count: int
 
 
-def emit_preflight_warning_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
-    """Emit one native preflight warning diagnostic payload through native tracing."""
-    g._core.emit_diagnostic_event_fields(
-        str(payload["level"]),
-        str(payload["event_name"]),
-        str(payload["message"]),
-        typing.cast("typing.Mapping[str, object]", payload["fields"]),
-    )
-
-
 def emit_preflight_warnings(
     *,
     preflight_scope: str,
@@ -61,16 +50,14 @@ def emit_preflight_warnings(
 ) -> None:
     """Emit all non-fatal preflight warnings through native tracing."""
     for warning_index, warning_message in enumerate(preflight_report.warning_messages):
-        emit_preflight_warning_diagnostic_event_payload(
-            run_events.build_preflight_warning_diagnostic_payload(
-                message=warning_message,
-                chromosome_count=preflight_report.chromosome_count,
-                covariate_count=preflight_report.covariate_count,
-                preflight_scope=preflight_scope,
-                sample_count=preflight_report.sample_count,
-                trusted_no_missing_diploid=trusted_no_missing_diploid,
-                warning_index=warning_index,
-            )
+        g._core.record_preflight_warning_diagnostic_event(
+            message=warning_message,
+            chromosome_count=preflight_report.chromosome_count,
+            covariate_count=preflight_report.covariate_count,
+            preflight_scope=preflight_scope,
+            sample_count=preflight_report.sample_count,
+            trusted_no_missing_diploid=trusted_no_missing_diploid,
+            warning_index=warning_index,
         )
 
 

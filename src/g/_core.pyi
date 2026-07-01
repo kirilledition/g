@@ -2846,6 +2846,15 @@ def build_preflight_warning_diagnostic_payload(
     trusted_no_missing_diploid: bool,
     warning_index: int,
 ) -> dict[str, object]: ...
+def record_preflight_warning_diagnostic_event(
+    message: str,
+    chromosome_count: int,
+    covariate_count: int,
+    preflight_scope: str,
+    sample_count: int,
+    trusted_no_missing_diploid: bool,
+    warning_index: int,
+) -> None: ...
 def build_io_output_resume_committed_chunks_diagnostic_payload(
     chunks_directory: str,
     committed_chunk_count: int,
@@ -2889,6 +2898,12 @@ def build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
     resolution_reason: str,
     fallback_error: str | None,
 ) -> dict[str, object]: ...
+def record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
+    requested_gpu_genotype_format: str,
+    resolved_gpu_genotype_format: str,
+    resolution_reason: str,
+    fallback_error: str | None,
+) -> None: ...
 def build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
     message: str,
     chromosome: str,
@@ -2898,6 +2913,15 @@ def build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
     scalar_convergence: bool,
     total_fit_count: int,
 ) -> dict[str, object]: ...
+def record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
+    message: str,
+    chromosome: str,
+    nonconverged_count: int,
+    phenotype_count: int,
+    policy: str,
+    scalar_convergence: bool,
+    total_fit_count: int,
+) -> None: ...
 def build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
     phenotype_count: int,
     phenotype_group_count: int,

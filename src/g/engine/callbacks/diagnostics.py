@@ -9,7 +9,7 @@ import numpy as np
 
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
-from g.engine import run_events, timing
+from g.engine import timing
 
 
 def block_until_ready(value: typing.Any) -> None:
@@ -17,16 +17,6 @@ def block_until_ready(value: typing.Any) -> None:
     block_until_ready_method = getattr(value, "block_until_ready", None)
     if callable(block_until_ready_method):
         block_until_ready_method()
-
-
-def emit_callback_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
-    """Emit one callback diagnostic payload through native tracing."""
-    _core.emit_diagnostic_event_fields(
-        str(payload["level"]),
-        str(payload["event_name"]),
-        str(payload["message"]),
-        typing.cast("typing.Mapping[str, object]", payload["fields"]),
-    )
 
 
 def enforce_null_logistic_nonconvergence_policy(
@@ -55,16 +45,14 @@ def enforce_null_logistic_nonconvergence_policy(
     warning_message = native_policy_plan.warning_message
     if warning_message is None:
         raise RuntimeError("Native null-logistic nonconvergence warning plan did not include a warning message.")
-    emit_callback_diagnostic_event_payload(
-        run_events.build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
-            message=warning_message,
-            chromosome=chromosome,
-            nonconverged_count=int(np.count_nonzero(~convergence_flags)),
-            phenotype_count=0 if phenotype_names is None else len(phenotype_names),
-            policy=policy,
-            scalar_convergence=convergence_flags.ndim == 0,
-            total_fit_count=int(convergence_flags.size),
-        )
+    _core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
+        message=warning_message,
+        chromosome=chromosome,
+        nonconverged_count=int(np.count_nonzero(~convergence_flags)),
+        phenotype_count=0 if phenotype_names is None else len(phenotype_names),
+        policy=policy.value,
+        scalar_convergence=convergence_flags.ndim == 0,
+        total_fit_count=int(convergence_flags.size),
     )
 
 

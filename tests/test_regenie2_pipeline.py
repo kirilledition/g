@@ -869,6 +869,60 @@ class RecordingTelemetrySession:
         )
 
 
+def test_log_auto_resolution_records_native_gpu_format_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
+    diagnostic_calls: list[dict[str, object]] = []
+
+    def record_gpu_format_resolved(
+        *,
+        requested_gpu_genotype_format: str,
+        resolved_gpu_genotype_format: str,
+        resolution_reason: str,
+        fallback_error: str | None,
+    ) -> None:
+        diagnostic_calls.append(
+            {
+                "requested_gpu_genotype_format": requested_gpu_genotype_format,
+                "resolved_gpu_genotype_format": resolved_gpu_genotype_format,
+                "resolution_reason": resolution_reason,
+                "fallback_error": fallback_error,
+            }
+        )
+
+    monkeypatch.setattr(
+        pipeline_gpu_format._core,
+        "record_pipeline_gpu_genotype_format_resolved_diagnostic_event",
+        record_gpu_format_resolved,
+    )
+
+    telemetry_session = RecordingTelemetrySession()
+    pipeline_gpu_format.log_auto_resolution(
+        telemetry_session=typing.cast("typing.Any", telemetry_session),
+        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
+        resolved_gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+        resolution_reason="trusted_validation_passed",
+        fallback_error=None,
+    )
+
+    assert diagnostic_calls == [
+        {
+            "requested_gpu_genotype_format": "auto",
+            "resolved_gpu_genotype_format": "packed8",
+            "resolution_reason": "trusted_validation_passed",
+            "fallback_error": None,
+        }
+    ]
+    assert telemetry_session.events == [
+        (
+            "gpu_genotype_format_resolved",
+            {
+                "requested_gpu_genotype_format": "auto",
+                "resolved_gpu_genotype_format": "packed8",
+                "resolution_reason": "trusted_validation_passed",
+            },
+        )
+    ]
+
+
 class NoFinalWriterSession:
     def __init__(self) -> None:
         self.finished = False
@@ -9442,8 +9496,8 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> No
     try:
         with (
             patch(
-                "g.engine.callbacks.diagnostics._core.emit_diagnostic_event_fields",
-            ) as emit_diagnostic_event_mock,
+                "g.engine.callbacks.diagnostics._core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event",
+            ) as record_warning_mock,
             patch(
                 "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
                 return_value=build_binary_chromosome_state(converged=False),
@@ -9454,12 +9508,13 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> No
         callback.finish()
 
     assert callback.current_chromosome == "22"
-    emit_diagnostic_event_mock.assert_called_once()
-    assert emit_diagnostic_event_mock.call_args.args[0] == "warning"
-    assert emit_diagnostic_event_mock.call_args.args[1] == "callback_null_logistic_nonconvergence_warning"
-    assert "--null_logistic_nonconvergence_policy=warn" in emit_diagnostic_event_mock.call_args.args[2]
-    assert dict(emit_diagnostic_event_mock.call_args.args[3]) == {
+    record_warning_mock.assert_called_once()
+    warning_call_arguments = dict(record_warning_mock.call_args.kwargs)
+    warning_message = str(warning_call_arguments["message"])
+    assert "--null_logistic_nonconvergence_policy=warn" in warning_message
+    assert warning_call_arguments == {
         "chromosome": "22",
+        "message": warning_message,
         "nonconverged_count": 1,
         "phenotype_count": 0,
         "policy": "warn",

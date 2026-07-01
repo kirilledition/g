@@ -1512,6 +1512,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   only for compatibility helpers and tests.
 - Preflight warning diagnostics now use native run-event diagnostic payload
   builders.
+- Preflight warning production paths now call the native diagnostic recorder
+  directly, leaving Python payload dict materialization only for compatibility
+  helpers and tests.
 - Output resume committed-chunk diagnostics now use native run-event
   diagnostic payload builders.
 - Legacy output resume committed-chunk production paths now call the native
@@ -1534,8 +1537,14 @@ Python/JAX should emit typed diagnostic events through a native handle.
   only for compatibility helpers and tests.
 - GPU genotype-format auto-resolution diagnostics now use native run-event
   diagnostic payload builders.
+- GPU genotype-format auto-resolution production paths now call the native
+  diagnostic recorder directly while preserving native telemetry session
+  events.
 - Binary callback null-logistic nonconvergence warnings now use native
   run-event diagnostic payload builders.
+- Binary callback null-logistic nonconvergence warning production paths now
+  call the native diagnostic recorder directly, leaving Python payload dict
+  materialization only for compatibility helpers and tests.
 - Multi-phenotype sample-summary diagnostics now use native run-event
   diagnostic payload builders.
 - Multi-phenotype group preflight start and completion diagnostics now use

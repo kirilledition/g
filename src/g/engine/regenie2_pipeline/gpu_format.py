@@ -8,7 +8,7 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, types
-from g.engine import run_events, timing
+from g.engine import timing
 from g.engine.native_dispatch import engine as native_dispatch_engine
 
 if typing.TYPE_CHECKING:
@@ -52,16 +52,6 @@ class ManifestGpuGenotypeFormatFields:
     association_backend_genotype_format: str | None
 
 
-def emit_gpu_format_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
-    """Emit one GPU genotype-format diagnostic payload through native tracing."""
-    _core.emit_diagnostic_event_fields(
-        str(payload["level"]),
-        str(payload["event_name"]),
-        str(payload["message"]),
-        typing.cast("typing.Mapping[str, object]", payload["fields"]),
-    )
-
-
 def log_auto_resolution(
     *,
     telemetry_session: telemetry.TelemetrySession | None,
@@ -71,13 +61,11 @@ def log_auto_resolution(
     fallback_error: str | None,
 ) -> None:
     """Emit logging and telemetry for an auto GPU genotype format decision."""
-    emit_gpu_format_diagnostic_event_payload(
-        run_events.build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
-            requested_gpu_genotype_format=requested_gpu_genotype_format,
-            resolved_gpu_genotype_format=resolved_gpu_genotype_format,
-            resolution_reason=resolution_reason,
-            fallback_error=fallback_error,
-        )
+    _core.record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
+        requested_gpu_genotype_format=requested_gpu_genotype_format.value,
+        resolved_gpu_genotype_format=resolved_gpu_genotype_format.value,
+        resolution_reason=resolution_reason,
+        fallback_error=fallback_error,
     )
     if telemetry_session is None:
         return

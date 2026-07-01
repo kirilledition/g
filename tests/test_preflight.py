@@ -342,7 +342,9 @@ def test_preflight_rejects_empty_variant_scans(
 
 
 def test_preflight_records_low_degrees_of_freedom_and_trusted_path_warnings() -> None:
-    with unittest.mock.patch("g.engine.preflight.g._core.emit_diagnostic_event_fields") as emit_diagnostic_event_mock:
+    with unittest.mock.patch(
+        "g.engine.preflight.g._core.record_preflight_warning_diagnostic_event"
+    ) as record_warning_mock:
         report = preflight.run_regenie2_preflight(
             run_input=build_run_input(),
             prediction_source=FakePredictionSource({"1": np.zeros(3, dtype=np.float32)}),
@@ -356,17 +358,13 @@ def test_preflight_records_low_degrees_of_freedom_and_trusted_path_warnings() ->
         "REGENIE step 2 is running with fewer than 10 residual degrees of freedom.",
         "Trusted no-missing diploid BGEN path is enabled after compatibility validation.",
     )
-    assert emit_diagnostic_event_mock.call_count == 2
-    assert [call.args[0] for call in emit_diagnostic_event_mock.call_args_list] == ["warning", "warning"]
-    assert [call.args[1] for call in emit_diagnostic_event_mock.call_args_list] == [
-        "preflight_warning",
-        "preflight_warning",
-    ]
-    assert [call.args[2] for call in emit_diagnostic_event_mock.call_args_list] == list(report.warning_messages)
-    assert [dict(call.args[3]) for call in emit_diagnostic_event_mock.call_args_list] == [
+    assert record_warning_mock.call_count == 2
+    observed_warning_calls = [dict(call.kwargs) for call in record_warning_mock.call_args_list]
+    assert observed_warning_calls == [
         {
             "chromosome_count": 1,
             "covariate_count": 2,
+            "message": report.warning_messages[0],
             "preflight_scope": "single_trait",
             "sample_count": 3,
             "trusted_no_missing_diploid": True,
@@ -375,6 +373,7 @@ def test_preflight_records_low_degrees_of_freedom_and_trusted_path_warnings() ->
         {
             "chromosome_count": 1,
             "covariate_count": 2,
+            "message": report.warning_messages[1],
             "preflight_scope": "single_trait",
             "sample_count": 3,
             "trusted_no_missing_diploid": True,

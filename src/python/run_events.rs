@@ -383,6 +383,29 @@ pub fn build_preflight_warning_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
+pub fn record_preflight_warning_diagnostic_event(
+    message: &str,
+    chromosome_count: i64,
+    covariate_count: i64,
+    preflight_scope: &str,
+    sample_count: i64,
+    trusted_no_missing_diploid: bool,
+    warning_index: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_preflight_warning_diagnostic_payload(
+        message,
+        chromosome_count,
+        covariate_count,
+        preflight_scope,
+        sample_count,
+        trusted_no_missing_diploid,
+        warning_index,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_io_output_resume_committed_chunks_diagnostic_payload<'py>(
     py: Python<'py>,
     chunks_directory: &str,
@@ -508,6 +531,22 @@ pub fn build_pipeline_gpu_genotype_format_resolved_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
+    requested_gpu_genotype_format: &str,
+    resolved_gpu_genotype_format: &str,
+    resolution_reason: &str,
+    fallback_error: Option<&str>,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
+        requested_gpu_genotype_format,
+        resolved_gpu_genotype_format,
+        resolution_reason,
+        fallback_error,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 pub fn build_callback_null_logistic_nonconvergence_warning_diagnostic_payload<'py>(
     py: Python<'py>,
@@ -529,6 +568,29 @@ pub fn build_callback_null_logistic_nonconvergence_warning_diagnostic_payload<'p
         total_fit_count,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+pub fn record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
+    message: &str,
+    chromosome: &str,
+    nonconverged_count: i64,
+    phenotype_count: i64,
+    policy: &str,
+    scalar_convergence: bool,
+    total_fit_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
+        message,
+        chromosome,
+        nonconverged_count,
+        phenotype_count,
+        policy,
+        scalar_convergence,
+        total_fit_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
