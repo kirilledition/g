@@ -2261,6 +2261,7 @@ the delayed import boundary that keeps JAX-facing pipeline modules and direct
 3. Change Rust benchmark recipes from generic `cargo bench` to:
    - `cargo bench --workspace`, or
    - explicit `cargo bench -p g-genotype`, etc.
+   - `just rust-bench` now uses `cargo bench --workspace`.
 4. Keep performance profiles in root `Cargo.toml`.
 5. Ensure docs and CI watch `crates/**`.
 6. Move Criterion benches to owning crates.

@@ -835,7 +835,7 @@ rust-test:
 
 # Run Rust Criterion benchmarks with native performance flags
 rust-bench:
-    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" cargo bench
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" cargo bench --workspace
 
 # Run non-mutating Rust format, lint, build, tests, and architecture checks
 rust-check: rust-format-check rust-lint-check rust-build rust-test check-rust-architecture

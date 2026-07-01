@@ -100,10 +100,13 @@ just bench-linear-startup-gpu-parquet
 just bench-binary-hot-gpu
 just bench-binary-hot-gpu-smoke
 just bench-output-stages-gpu
+just rust-bench
 just bench-rust-build-profiles
 just slurm-gpu-bench-binary-hot
 ```
 
+`rust-bench` runs Criterion benchmarks through `cargo bench --workspace` so
+workspace-owned benches are discovered from their owning crates.
 `bench-rust-build-profiles` includes linker comparison labels for `dev-fast`
 and the routine `perf` profile when the requested linker tooling is available.
 
