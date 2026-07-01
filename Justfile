@@ -143,7 +143,7 @@ dev-bootstrap-gpu:
 
 # Install CUDA-capable Python dependencies into the current environment
 dev-install-gpu-dependencies:
-    {{ server_env }} && uv sync --python {{ python_version }} --group dev --group gpu
+    {{ server_env }} && uv sync --python {{ python_version }} --group dev --group gpu --no-install-project
 
 # Install the native extension for development
 dev-install:
@@ -585,9 +585,17 @@ bench-binary-hot-gpu-smoke *overrides: dev-install-perf
 bench-output-stages-gpu *overrides: dev-install-perf
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_output_stages --config-name bench_output_stages_gpu {{ overrides }}
 
+# Benchmark single-trait chr22 linear GWAS against TorchGWAS
+bench-torchgwas-chr22 *overrides: dev-install-gpu-dependencies dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_torchgwas_chr22 --config-name benchmark_torchgwas_chr22 {{ overrides }}
+
 # Submit binary hot benchmark to the configured GPU node
 slurm-gpu-bench-binary-hot *overrides:
     {{ server_env }} && just slurm-gpu-just bench-binary-hot-gpu {{ overrides }}
+
+# Submit the TorchGWAS chr22 benchmark to the configured GPU node
+slurm-gpu-bench-torchgwas-chr22 *overrides:
+    {{ server_env }} && just slurm-gpu-just bench-torchgwas-chr22 {{ overrides }}
 
 # Submit callback overhead microbenchmark to the configured CPU node
 slurm-cpu-bench-callback-overhead *overrides:

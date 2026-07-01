@@ -100,8 +100,10 @@ just bench-linear-startup-gpu-parquet
 just bench-binary-hot-gpu
 just bench-binary-hot-gpu-smoke
 just bench-output-stages-gpu
+just bench-torchgwas-chr22
 just bench-rust-build-profiles
 just slurm-gpu-bench-binary-hot
+just slurm-gpu-bench-torchgwas-chr22
 ```
 
 `bench-rust-build-profiles` includes linker comparison labels for `dev-fast`
@@ -117,6 +119,23 @@ just legacy-regenie-comparison-gpu
 just legacy-profile-regenie-comparison-cpu
 just legacy-profile-regenie-comparison-gpu
 ```
+
+Use the TorchGWAS chr22 competitor benchmark through SLURM for real GPU
+evidence:
+
+```bash
+just slurm-gpu-bench-torchgwas-chr22
+just slurm-gpu-bench-torchgwas-chr22 tool.variant_limit=1000
+```
+
+The benchmark records cold and warm-style repeated runs for single-trait
+quantitative chr22. It is a workflow/runtime comparison, not strict statistical
+parity with REGENIE Step 2 LOCO output. `g` reads the chr22 BGEN plus sample
+file; full TorchGWAS runs read the existing PLINK `.bed/.bim/.fam` triplet
+because the pinned TorchGWAS BGEN path stalls in PLINK2 raw-table parsing at
+chr22 scale. TorchGWAS PLINK runs do not emit a persistent genotype cache, so
+their warm cases reflect repeated process/filesystem-cache behavior.
+Variant-limited smoke runs still use a generated NPY subset.
 
 ## Performance
 
