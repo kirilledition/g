@@ -1621,6 +1621,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   atomic cache writes now live in `g-runtime`; Python validates the engine and
   calls one native cache-write boundary instead of creating directories,
   serializing JSON, or replacing cache files itself.
+- JAX persistent-cache directory creation now runs through the native JAX
+  runtime setup session; Python still applies JAX config updates and GPU
+  validation, but no longer calls `Path.mkdir` for that setup side effect.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

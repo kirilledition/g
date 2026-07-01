@@ -169,6 +169,7 @@ def test_configure_before_backend_init_sets_platform_first(tmp_path: Path) -> No
         report = setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=None)
 
     assert report.cache_directory == cache_directory
+    assert cache_directory.exists()
     assert [call.args for call in mock_update.call_args_list] == [
         ("jax_platforms", "cpu"),
         ("jax_enable_x64", True),

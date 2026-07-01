@@ -38,8 +38,7 @@ def configure_before_backend_init(
     active_setup_session = resolve_active_setup_session(policy, native_setup_session)
     setup_report = resolution.jax_runtime_setup_report_from_native_payload(active_setup_session.setup_payload())
     side_effect_plan = active_setup_session.side_effect_plan_payload()
-    if typing.cast("bool", side_effect_plan["should_create_cache_directory"]):
-        setup_report.cache_directory.mkdir(parents=True, exist_ok=True)
+    active_setup_session.create_cache_directory_if_configured()
     apply_jax_runtime_config_updates(active_setup_session)
     if not typing.cast("bool", side_effect_plan["should_validate_gpu"]):
         if diagnostic_sink is not None:

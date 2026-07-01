@@ -1,5 +1,6 @@
 //! Deterministic JAX runtime setup policy and diagnostics.
 
+use std::fs;
 use std::path::Path;
 
 const DEVICE_GPU: &str = "gpu";
@@ -136,6 +137,20 @@ impl JaxRuntimeSetupSession {
     #[must_use]
     pub fn diagnostic_events(&self) -> Vec<JaxRuntimeDiagnosticEventPayload> {
         build_jax_runtime_setup_diagnostic_events(&self.setup)
+    }
+
+    /// Create the persistent JAX cache directory when requested by setup policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when persistent caching is enabled and the cache
+    /// directory cannot be created.
+    pub fn create_cache_directory_if_configured(&self) -> Result<bool, std::io::Error> {
+        if !self.side_effect_plan().should_create_cache_directory {
+            return Ok(false);
+        }
+        fs::create_dir_all(&self.setup.cache_directory)?;
+        Ok(true)
     }
 
     #[must_use]
@@ -490,6 +505,46 @@ mod tests {
             session.diagnostic_events()[4].fields[0].value,
             JaxRuntimeDiagnosticValue::Text("succeeded".to_string())
         );
+    }
+
+    #[test]
+    fn jax_runtime_setup_session_owns_cache_directory_creation() {
+        let cache_directory = temporary_test_path("jax-cache-create");
+        let setup = resolve_jax_runtime_setup(
+            "cpu",
+            cache_directory.to_str().expect("cache path should be valid UTF-8"),
+            None,
+            true,
+            0,
+            0,
+            false,
+            false,
+        );
+        let session = JaxRuntimeSetupSession::new(true, setup);
+
+        assert!(session.create_cache_directory_if_configured().expect("cache directory should be created"));
+        assert!(cache_directory.exists());
+
+        std::fs::remove_dir_all(cache_directory).expect("remove JAX cache test directory");
+    }
+
+    #[test]
+    fn jax_runtime_setup_session_skips_cache_directory_without_persistent_cache() {
+        let cache_directory = temporary_test_path("jax-cache-skip");
+        let setup = resolve_jax_runtime_setup(
+            "cpu",
+            cache_directory.to_str().expect("cache path should be valid UTF-8"),
+            None,
+            false,
+            0,
+            0,
+            false,
+            false,
+        );
+        let session = JaxRuntimeSetupSession::new(true, setup);
+
+        assert!(!session.create_cache_directory_if_configured().expect("cache directory should be skipped"));
+        assert!(!cache_directory.exists());
     }
 
     #[test]

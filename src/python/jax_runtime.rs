@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyOSError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyTuple};
 
@@ -100,6 +100,10 @@ impl NativeJaxRuntimeSetupSession {
             .map(|event| jax_runtime_diagnostic_event_payload_to_dict(py, event))
             .collect::<PyResult<Vec<_>>>()?;
         PyTuple::new(py, &event_payloads)
+    }
+
+    fn create_cache_directory_if_configured(&self) -> PyResult<bool> {
+        self.lock_session()?.create_cache_directory_if_configured().map_err(PyOSError::new_err)
     }
 }
 
