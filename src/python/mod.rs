@@ -189,7 +189,10 @@ use run_events::{
     record_native_dispatch_writer_sessions_finish_started_diagnostic_event,
     record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event,
     record_native_runtime_knobs_configured_diagnostic_event,
-    record_pipeline_gpu_genotype_format_resolved_diagnostic_event, record_preflight_warning_diagnostic_event,
+    record_pipeline_gpu_genotype_format_resolved_diagnostic_event,
+    record_pipeline_multi_group_preflight_completed_diagnostic_event,
+    record_pipeline_multi_group_preflight_started_diagnostic_event,
+    record_pipeline_multi_phenotype_sample_summary_diagnostic_event, record_preflight_warning_diagnostic_event,
     record_runner_metadata_artifacts_finalized_diagnostic_event, render_run_completed_lines, render_run_failed_lines,
     render_run_interrupted_lines,
 };
@@ -2120,6 +2123,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_pipeline_gpu_genotype_format_resolved_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_gpu_genotype_format_resolved_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_pipeline_multi_phenotype_sample_summary_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_multi_phenotype_sample_summary_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_pipeline_multi_trait_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_pipeline_multi_trait_input_load_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_pipeline_multi_trait_input_aligned_diagnostic_payload, module)?)?;
@@ -2135,8 +2139,10 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module
         .add_function(wrap_pyfunction!(build_pipeline_grouped_union_delivery_selected_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_pipeline_multi_group_preflight_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_multi_group_preflight_started_diagnostic_event, module)?)?;
     module
         .add_function(wrap_pyfunction!(build_pipeline_multi_group_preflight_completed_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_multi_group_preflight_completed_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_pipeline_single_trait_started_diagnostic_payload, module)?)?;
     module
         .add_function(wrap_pyfunction!(build_pipeline_single_trait_input_load_started_diagnostic_payload, module)?)?;

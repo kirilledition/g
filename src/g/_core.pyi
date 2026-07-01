@@ -2928,6 +2928,12 @@ def build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
     sample_counts_differ: bool,
     sample_mode: str,
 ) -> dict[str, object]: ...
+def record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+    phenotype_count: int,
+    phenotype_group_count: int,
+    sample_counts_differ: bool,
+    sample_mode: str,
+) -> None: ...
 def build_pipeline_multi_trait_started_diagnostic_payload(
     association_mode: str,
     phenotype_count: int,
@@ -2964,12 +2970,24 @@ def build_pipeline_multi_group_preflight_started_diagnostic_payload(
     trusted_no_missing_diploid: bool,
     variant_limit: int | None,
 ) -> dict[str, object]: ...
+def record_pipeline_multi_group_preflight_started_diagnostic_event(
+    phenotype_count: int,
+    sample_count: int,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> None: ...
 def build_pipeline_multi_group_preflight_completed_diagnostic_payload(
     phenotype_count: int,
     sample_count: int,
     trusted_no_missing_diploid: bool,
     variant_limit: int | None,
 ) -> dict[str, object]: ...
+def record_pipeline_multi_group_preflight_completed_diagnostic_event(
+    phenotype_count: int,
+    sample_count: int,
+    trusted_no_missing_diploid: bool,
+    variant_limit: int | None,
+) -> None: ...
 def build_pipeline_single_trait_started_diagnostic_payload(
     association_mode: str,
     phenotype_name: str,

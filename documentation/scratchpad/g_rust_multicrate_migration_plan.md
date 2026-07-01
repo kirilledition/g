@@ -1547,8 +1547,14 @@ Python/JAX should emit typed diagnostic events through a native handle.
   materialization only for compatibility helpers and tests.
 - Multi-phenotype sample-summary diagnostics now use native run-event
   diagnostic payload builders.
+- Multi-phenotype sample-summary production paths now call the native
+  diagnostic recorder directly while preserving native telemetry session
+  events.
 - Multi-phenotype group preflight start and completion diagnostics now use
   native run-event diagnostic payload builders.
+- Multi-phenotype group preflight start and completion production paths now
+  call native diagnostic recorders directly, leaving Python payload dict
+  materialization only for compatibility helpers and tests.
 - Single-trait pipeline start, input alignment, prediction-source loading, and
   preflight diagnostics now use native run-event diagnostic payload builders.
 - Complete-case multi-trait pipeline start, input alignment, and

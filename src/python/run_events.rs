@@ -611,6 +611,22 @@ pub fn build_pipeline_multi_phenotype_sample_summary_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+    phenotype_count: i64,
+    phenotype_group_count: i64,
+    sample_counts_differ: bool,
+    sample_mode: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
+        phenotype_count,
+        phenotype_group_count,
+        sample_counts_differ,
+        sample_mode,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_multi_trait_started_diagnostic_payload<'py>(
     py: Python<'py>,
     association_mode: &str,
@@ -721,6 +737,22 @@ pub fn build_pipeline_multi_group_preflight_started_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_multi_group_preflight_started_diagnostic_event(
+    phenotype_count: i64,
+    sample_count: i64,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_multi_group_preflight_started_diagnostic_payload(
+        phenotype_count,
+        sample_count,
+        trusted_no_missing_diploid,
+        variant_limit,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_multi_group_preflight_completed_diagnostic_payload<'py>(
     py: Python<'py>,
     phenotype_count: i64,
@@ -735,6 +767,22 @@ pub fn build_pipeline_multi_group_preflight_completed_diagnostic_payload<'py>(
         variant_limit,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_pipeline_multi_group_preflight_completed_diagnostic_event(
+    phenotype_count: i64,
+    sample_count: i64,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<i64>,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_multi_group_preflight_completed_diagnostic_payload(
+        phenotype_count,
+        sample_count,
+        trusted_no_missing_diploid,
+        variant_limit,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]

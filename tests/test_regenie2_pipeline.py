@@ -35,6 +35,7 @@ import g.engine.regenie2_pipeline.multi_group as pipeline_multi_group
 import g.engine.regenie2_pipeline.multi_trait as pipeline_multi_trait
 import g.engine.regenie2_pipeline.outputs as pipeline_outputs
 import g.engine.regenie2_pipeline.single_trait as pipeline_single_trait
+import g.engine.regenie2_pipeline.telemetry_events as pipeline_telemetry_events
 from g import _core, execution_plan, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
@@ -867,6 +868,69 @@ class RecordingTelemetrySession:
                 },
             )
         )
+
+
+def test_log_multi_phenotype_sample_summary_records_native_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
+    diagnostic_calls: list[dict[str, object]] = []
+
+    def record_multi_phenotype_sample_summary(
+        *,
+        phenotype_count: int,
+        phenotype_group_count: int,
+        sample_counts_differ: bool,
+        sample_mode: str,
+    ) -> None:
+        diagnostic_calls.append(
+            {
+                "phenotype_count": phenotype_count,
+                "phenotype_group_count": phenotype_group_count,
+                "sample_counts_differ": sample_counts_differ,
+                "sample_mode": sample_mode,
+            }
+        )
+
+    monkeypatch.setattr(
+        pipeline_telemetry_events._core,
+        "record_pipeline_multi_phenotype_sample_summary_diagnostic_event",
+        record_multi_phenotype_sample_summary,
+    )
+
+    telemetry_session = RecordingTelemetrySession()
+    context = SimpleNamespace(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        telemetry_session=telemetry_session,
+    )
+
+    pipeline_telemetry_events.log_multi_phenotype_sample_summary(
+        context=typing.cast("typing.Any", context),
+        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        sample_counts=(3, 2),
+        sample_set_fingerprints=("sample-a", "sample-b"),
+        phenotype_group_count=2,
+    )
+
+    assert diagnostic_calls == [
+        {
+            "phenotype_count": 2,
+            "phenotype_group_count": 2,
+            "sample_counts_differ": True,
+            "sample_mode": "per-phenotype",
+        }
+    ]
+    assert telemetry_session.events == [
+        (
+            "multi_phenotype_sample_summary",
+            {
+                "association_mode": "regenie2_linear",
+                "multi_phenotype_sample_mode": "per-phenotype",
+                "phenotype_count": 2,
+                "phenotype_group_count": 2,
+                "sample_counts": [3, 2],
+                "sample_counts_differ": True,
+                "shared_sample_set": False,
+            },
+        )
+    ]
 
 
 def test_log_auto_resolution_records_native_gpu_format_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -11368,6 +11432,12 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
             "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
             return_value=grouped_run_inputs,
         ) as mock_load_grouped_run_inputs,
+        patch(
+            "g.engine.regenie2_pipeline.multi_group._core.record_pipeline_multi_group_preflight_started_diagnostic_event",
+        ) as record_preflight_started_mock,
+        patch(
+            "g.engine.regenie2_pipeline.multi_group._core.record_pipeline_multi_group_preflight_completed_diagnostic_event",
+        ) as record_preflight_completed_mock,
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
         patch(
             "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
@@ -11423,6 +11493,18 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
     assert grouped_run_inputs[0].compute_group.covariate_design_fingerprint is not None
     assert grouped_run_inputs[0].compute_group.prediction_alignment_fingerprint is not None
     assert committed_chunk_identifiers == []
+    record_preflight_started_mock.assert_called_once_with(
+        phenotype_count=2,
+        sample_count=2,
+        trusted_no_missing_diploid=False,
+        variant_limit=100,
+    )
+    record_preflight_completed_mock.assert_called_once_with(
+        phenotype_count=2,
+        sample_count=2,
+        trusted_no_missing_diploid=False,
+        variant_limit=100,
+    )
     assert mock_run_multi_preflight.call_args.kwargs["run_input"].phenotype_names == ("trait_a", "trait_b")
     assert tuple(call.kwargs["multi_phenotype_sample_mode"] for call in mock_build_header.call_args_list) == (
         output.MultiPhenotypeSampleMode.PER_PHENOTYPE,

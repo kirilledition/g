@@ -5,20 +5,9 @@ from __future__ import annotations
 import typing
 
 from g import _core, types
-from g.engine import run_events
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
-
-
-def emit_pipeline_telemetry_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
-    """Emit one pipeline telemetry diagnostic payload through native tracing."""
-    _core.emit_diagnostic_event_fields(
-        str(payload["level"]),
-        str(payload["event_name"]),
-        str(payload["message"]),
-        typing.cast("typing.Mapping[str, object]", payload["fields"]),
-    )
 
 
 def log_sample_alignment_completed(
@@ -53,13 +42,11 @@ def log_multi_phenotype_sample_summary(
 ) -> None:
     """Emit a user-visible summary of multi-phenotype sample semantics."""
     sample_counts_differ = len(set(sample_counts)) > 1
-    emit_pipeline_telemetry_diagnostic_event_payload(
-        run_events.build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
-            phenotype_count=len(sample_counts),
-            phenotype_group_count=phenotype_group_count,
-            sample_counts_differ=sample_counts_differ,
-            sample_mode=sample_mode,
-        )
+    _core.record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+        phenotype_count=len(sample_counts),
+        phenotype_group_count=phenotype_group_count,
+        sample_counts_differ=sample_counts_differ,
+        sample_mode=sample_mode.value,
     )
     if context.telemetry_session is None:
         return
