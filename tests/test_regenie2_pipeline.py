@@ -732,6 +732,9 @@ class RecordingTelemetrySession:
         )
 
     def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
+        self.emit_binary_correction_summary_event(summary_payload)
+
+    def emit_binary_correction_summary_event(self, summary_payload: dict[str, int]) -> None:
         self.events.append(("binary_correction_summary", dict(summary_payload)))
 
     def emit_sample_alignment_completed_event(

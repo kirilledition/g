@@ -1812,6 +1812,13 @@ Current implementation notes:
   session handle directly, no-ops disabled native telemetry sessions, and no
   longer calls Python `log_callback_progress_event` or `log_progress` fallback
   methods.
+- Binary correction summary telemetry dispatch now resolves the native telemetry
+  session handle directly, no-ops disabled native telemetry sessions, and no
+  longer calls Python `log_binary_correction_summary` fallback methods.
+- CLI run-failed telemetry dispatch now resolves the native telemetry session
+  handle directly, no-ops disabled or Python-only telemetry objects under the
+  existing suppress-telemetry-errors policy, and no longer calls Python
+  `log_run_failed` fallback methods.
 
 ### Tests
 

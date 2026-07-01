@@ -73,6 +73,10 @@ JAX runtime diagnostic telemetry dispatch also resolves the native telemetry
 session handle directly instead of calling Python fallback logging methods.
 Callback progress telemetry dispatch follows the same native-handle rule for
 progress events and progress records.
+Binary correction summary telemetry dispatch also uses the native telemetry
+handle directly instead of Python fallback methods.
+CLI run-failed telemetry dispatch resolves the native telemetry handle directly
+and preserves its existing suppress-telemetry-errors policy.
 
 Phase 10 queue migration also has a native callback scheduler state handle that
 consolidates queue limits, worker-start state, result in-flight accounting, and

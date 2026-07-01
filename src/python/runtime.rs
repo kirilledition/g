@@ -1,4 +1,4 @@
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 
@@ -86,18 +86,50 @@ fn emit_cli_run_failed_telemetry_event(
     failed_event: &Bound<'_, PyAny>,
     should_log_run_failed_to_telemetry: bool,
 ) -> PyResult<()> {
-    let emission_plan =
-        native_plan_cli_run_failed_telemetry_emission(should_log_run_failed_to_telemetry, !telemetry_session.is_none());
+    if !should_log_run_failed_to_telemetry || telemetry_session.is_none() {
+        return Ok(());
+    }
+    let native_telemetry_session = match optional_native_telemetry_session(telemetry_session.py(), telemetry_session) {
+        Ok(native_telemetry_session) => native_telemetry_session,
+        Err(error) => {
+            let emission_plan = native_plan_cli_run_failed_telemetry_emission(should_log_run_failed_to_telemetry, true);
+            if emission_plan.should_suppress_errors {
+                return Ok(());
+            }
+            return Err(error);
+        }
+    };
+    let emission_plan = native_plan_cli_run_failed_telemetry_emission(
+        should_log_run_failed_to_telemetry,
+        native_telemetry_session.is_some(),
+    );
     if !emission_plan.should_emit {
         return Ok(());
     }
 
-    let emission_result = telemetry_session.call_method1("log_run_failed", (failed_event,));
+    let Some(active_native_telemetry_session) = native_telemetry_session else {
+        return Ok(());
+    };
+    let emission_result = active_native_telemetry_session.call_method1("emit_run_failed_event", (failed_event,));
     if emission_plan.should_suppress_errors {
         let _ = emission_result;
         return Ok(());
     }
     emission_result.map(|_| ())
+}
+
+fn optional_native_telemetry_session<'py>(
+    py: Python<'py>,
+    telemetry_session: &Bound<'py, PyAny>,
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    match telemetry_session.getattr("native_telemetry_session") {
+        Ok(native_telemetry_session) if native_telemetry_session.is_none() => Ok(None),
+        Ok(native_telemetry_session) => Ok(Some(native_telemetry_session)),
+        Err(error) if error.is_instance_of::<PyAttributeError>(py) => Err(PyTypeError::new_err(
+            "CLI run-failed telemetry requires a TelemetrySession with a native telemetry session handle.",
+        )),
+        Err(error) => Err(error),
+    }
 }
 
 #[pyfunction]

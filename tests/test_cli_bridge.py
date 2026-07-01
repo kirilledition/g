@@ -36,6 +36,21 @@ class FakeNativeTelemetrySessionHandle:
         self.telemetry_session.close()
         return {"writer_counters": writer_counters}
 
+    def emit_run_failed_event(self, event: typing.Any) -> None:
+        """Record a native run-failed telemetry event."""
+        if self.telemetry_session.run_failed_error is not None:
+            raise self.telemetry_session.run_failed_error
+        self.telemetry_session.logged_events.append("run_failed")
+        self.telemetry_session.logged_payloads.append(
+            {
+                "event": "run_failed",
+                "level": "error",
+                "failure_kind": "exception",
+                "error_type": event.error_type,
+                "error_message": event.error_message,
+            }
+        )
+
 
 class FakeTelemetrySession:
     """Telemetry session test double for CLI ownership tests."""

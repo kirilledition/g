@@ -102,6 +102,10 @@ class ProgressTrackingTelemetrySession:
 
     def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
         """Record a native binary correction summary event call."""
+        self.emit_binary_correction_summary_event(summary_payload)
+
+    def emit_binary_correction_summary_event(self, summary_payload: dict[str, int]) -> None:
+        """Record a native binary correction summary event call through the handle."""
         self.log_event("binary_correction_summary", "info", **summary_payload)
 
     def log_progress(self, **kwargs: typing.Any) -> None:

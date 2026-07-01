@@ -87,6 +87,10 @@ class RecordingNativeCallbackTelemetrySession:
 
     def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
         """Record one binary correction summary payload."""
+        self.emit_binary_correction_summary_event(summary_payload)
+
+    def emit_binary_correction_summary_event(self, summary_payload: dict[str, int]) -> None:
+        """Record one binary correction summary payload through the handle."""
         self.binary_summaries.append(dict(summary_payload))
 
 
@@ -1255,23 +1259,37 @@ def test_native_cli_run_lifecycle_state_plans_failed_telemetry() -> None:
 def test_native_cli_run_failed_telemetry_emission() -> None:
     class RecordingTelemetrySession:
         def __init__(self) -> None:
+            self.native_telemetry_session = self
             self.events: list[object] = []
 
-        def log_run_failed(self, event: object) -> None:
+        def emit_run_failed_event(self, event: object) -> None:
             self.events.append(event)
 
     class FailingTelemetrySession:
+        def __init__(self) -> None:
+            self.native_telemetry_session = self
+            self.call_count = 0
+
+        def emit_run_failed_event(self, event: object) -> None:
+            del event
+            self.call_count += 1
+            raise RuntimeError("telemetry write failed")
+
+    class DisabledTelemetrySession:
+        native_telemetry_session = None
+
+    class LegacyTelemetrySession:
         def __init__(self) -> None:
             self.call_count = 0
 
         def log_run_failed(self, event: object) -> None:
             del event
             self.call_count += 1
-            raise RuntimeError("telemetry write failed")
 
     failed_event = object()
     recording_session = RecordingTelemetrySession()
     failing_session = FailingTelemetrySession()
+    legacy_session = LegacyTelemetrySession()
 
     _core.emit_cli_run_failed_telemetry_event(
         None,
@@ -1284,6 +1302,17 @@ def test_native_cli_run_failed_telemetry_emission() -> None:
         should_log_run_failed_to_telemetry=False,
     )
     assert recording_session.events == []
+    _core.emit_cli_run_failed_telemetry_event(
+        DisabledTelemetrySession(),
+        failed_event,
+        should_log_run_failed_to_telemetry=True,
+    )
+    _core.emit_cli_run_failed_telemetry_event(
+        legacy_session,
+        failed_event,
+        should_log_run_failed_to_telemetry=True,
+    )
+    assert legacy_session.call_count == 0
 
     _core.emit_cli_run_failed_telemetry_event(
         recording_session,
@@ -2116,6 +2145,13 @@ def test_native_binary_correction_summary_plans_record_and_emit_policy() -> None
 
 
 def test_emit_binary_correction_summary_telemetry_uses_native_missing_session_policy() -> None:
+    class DisabledTelemetrySession:
+        native_telemetry_session = None
+
+    class LegacyTelemetrySession:
+        def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
+            raise AssertionError(summary_payload)
+
     telemetry_session = RecordingNativeCallbackTelemetrySession()
     summary = _core.NativeBinaryCorrectionSummary()
     summary.add_null_model_failure_count(3)
@@ -2123,10 +2159,19 @@ def test_emit_binary_correction_summary_telemetry_uses_native_missing_session_po
 
     _core.emit_binary_correction_summary_telemetry(telemetry_session, summary_payload, "missing summary session")
     _core.emit_binary_correction_summary_telemetry(None, None, "missing summary session")
+    _core.emit_binary_correction_summary_telemetry(
+        DisabledTelemetrySession(), summary_payload, "missing summary session"
+    )
 
     assert telemetry_session.binary_summaries == [summary_payload]
     with pytest.raises(RuntimeError, match="missing summary session"):
         _core.emit_binary_correction_summary_telemetry(None, summary_payload, "missing summary session")
+    with pytest.raises(TypeError, match="native telemetry session handle"):
+        _core.emit_binary_correction_summary_telemetry(
+            LegacyTelemetrySession(),
+            summary_payload,
+            "missing summary session",
+        )
 
 
 def test_native_nvidia_driver_visibility_uses_any_driver_path(tmp_path: Path) -> None:

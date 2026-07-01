@@ -2,9 +2,9 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyAny, PyDict, PyModule};
 
 use g_engine::callback_summary as native_callback_summary;
 
@@ -423,8 +423,29 @@ pub(crate) fn emit_binary_correction_summary_telemetry(
     if telemetry_session.is_none() {
         return Err(PyRuntimeError::new_err(missing_session_message.to_owned()));
     }
-    telemetry_session.call_method1("log_binary_correction_summary", (summary_payload,))?;
+    let Some(native_telemetry_session) = optional_native_telemetry_session(telemetry_session.py(), telemetry_session)?
+    else {
+        return Ok(());
+    };
+    native_telemetry_session.call_method1("emit_binary_correction_summary_event", (summary_payload,))?;
     Ok(())
+}
+
+fn optional_native_telemetry_session<'py>(
+    py: Python<'py>,
+    telemetry_session: &Bound<'py, PyAny>,
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    if telemetry_session.is_none() {
+        return Ok(None);
+    }
+    match telemetry_session.getattr("native_telemetry_session") {
+        Ok(native_telemetry_session) if native_telemetry_session.is_none() => Ok(None),
+        Ok(native_telemetry_session) => Ok(Some(native_telemetry_session)),
+        Err(error) if error.is_instance_of::<PyAttributeError>(py) => Err(PyTypeError::new_err(
+            "binary correction summary telemetry requires a TelemetrySession with a native telemetry session handle.",
+        )),
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
