@@ -1820,7 +1820,11 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
             runtime_compatibility_token=build_test_runtime_compatibility_token(regenie_config),
         )
 
-    runner_metadata.extend_run_manifest(plan=plan, phenotype_run_plan=plan.phenotype_run_plans[0])
+    with (
+        patch("g.io.output.load_run_manifest", side_effect=AssertionError("metadata extension must stay native")),
+        patch("g.io.output.write_run_manifest", side_effect=AssertionError("metadata extension must stay native")),
+    ):
+        runner_metadata.extend_run_manifest(plan=plan, phenotype_run_plan=plan.phenotype_run_plans[0])
 
     manifest = output.load_run_manifest(run_paths)
     assert manifest is not None

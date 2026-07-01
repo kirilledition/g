@@ -1400,6 +1400,10 @@ Remove Python as the chunk-level scheduler.
   filesystem and manifest I/O for output preparation, initialization,
   finalization, manifest load/write, fingerprinting, committed-chunk scanning,
   and strict manifest validation/repair.
+- Run-start manifest command/runtime metadata extension now goes through a
+  native `g-output` manifest upsert via the root PyO3 adapter, so Python no
+  longer loads, mutates, serializes, and rewrites run manifests for that
+  metadata.
 - Native BGEN PyO3 entry points now release the GIL around Rust BGEN opening,
   variant-metadata reads, trusted missingness validation, and prepared
   sample-selection setup/cleanup while keeping Python callback invocations

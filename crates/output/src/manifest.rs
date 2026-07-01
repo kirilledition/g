@@ -441,6 +441,21 @@ pub fn write_run_manifest_json(run_directory: &Path, manifest_json: &str) -> Res
     write_run_manifest_value(run_directory, &manifest).map_err(OutputWriterError::runtime)
 }
 
+pub fn extend_run_manifest_metadata(
+    run_directory: &Path,
+    command: Value,
+    runtime: Value,
+) -> Result<(), OutputWriterError> {
+    upsert_run_manifest(run_directory, |manifest| {
+        let manifest_object =
+            manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
+        manifest_object.insert("command".to_string(), command);
+        manifest_object.insert("runtime".to_string(), runtime);
+        Ok(())
+    })
+    .map_err(OutputWriterError::runtime)
+}
+
 pub fn validate_run_manifest_compatibility(
     manifest_json: &str,
     current_header_json: &str,
@@ -974,6 +989,23 @@ fn update_run_manifest(
     write_run_manifest_value_atomic(&manifest_path, &manifest)
 }
 
+fn upsert_run_manifest(
+    run_directory: &Path,
+    update_manifest: impl FnOnce(&mut Value) -> Result<(), String>,
+) -> Result<(), String> {
+    let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
+    let manifest_lock = get_run_manifest_update_lock();
+    let _manifest_guard = manifest_lock.lock().map_err(|_| "Run manifest update lock was poisoned.".to_string())?;
+    let mut manifest = if manifest_path.exists() {
+        let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
+        serde_json::from_str::<Value>(&manifest_text).map_err(|error| error.to_string())?
+    } else {
+        Value::Object(Map::new())
+    };
+    update_manifest(&mut manifest)?;
+    write_run_manifest_value_atomic(&manifest_path, &manifest)
+}
+
 fn write_run_manifest_value_atomic(manifest_path: &Path, manifest: &Value) -> Result<(), String> {
     let temporary_manifest_path = manifest_path.with_extension("json.tmp");
     let mut temporary_manifest_file = File::create(&temporary_manifest_path).map_err(|error| error.to_string())?;
@@ -1285,6 +1317,83 @@ mod tests {
         assert_eq!(manifest.get("schema_version").and_then(Value::as_i64), Some(7));
         assert_eq!(manifest.get("finalized").and_then(Value::as_bool), Some(false));
         assert_eq!(manifest.get("committed_chunks").and_then(Value::as_array).map(Vec::len), Some(0));
+
+        std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn extends_manifest_metadata_and_preserves_existing_fields() {
+        let run_directory = create_test_directory();
+        write_run_manifest_json(
+            &run_directory,
+            r#"{"schema_version":9,"bgen":{"path":"/inputs/input.bgen"},"committed_chunks":[]}"#,
+        )
+        .expect("manifest should be written");
+
+        extend_run_manifest_metadata(
+            &run_directory,
+            json!({
+                "interface": "g regenie",
+                "phenotype": "height",
+                "effective_config": "effective_config.toml",
+                "output_format": "parquet",
+            }),
+            json!({
+                "device": "gpu",
+                "staging_depth": 2,
+                "native_callback_batch_size": 3,
+                "threads": 4,
+                "writer_threads": 5,
+                "writer_queue_depth": 6,
+                "chunks_per_arrow_file": 7,
+                "arrow_compression": "zstd",
+                "parquet_compression": "snappy",
+                "output_statistic_dtype": "float32",
+                "bgen_decode_tile_variant_count": 8,
+                "trusted_no_missing_diploid": true,
+                "trusted_bgen_validation_mode": "strict",
+            }),
+        )
+        .expect("manifest metadata should be extended");
+
+        let manifest_json =
+            load_run_manifest_json(&run_directory).expect("manifest should load").expect("manifest should exist");
+        let manifest = serde_json::from_str::<Value>(&manifest_json).expect("manifest should parse");
+        assert_eq!(manifest.pointer("/command/interface").and_then(Value::as_str), Some("g regenie"));
+        assert_eq!(manifest.pointer("/command/phenotype").and_then(Value::as_str), Some("height"));
+        assert_eq!(manifest.pointer("/runtime/device").and_then(Value::as_str), Some("gpu"));
+        assert_eq!(manifest.pointer("/runtime/threads").and_then(Value::as_i64), Some(4));
+        assert_eq!(manifest.pointer("/bgen/path").and_then(Value::as_str), Some("/inputs/input.bgen"));
+        assert_eq!(manifest.get("committed_chunks").and_then(Value::as_array).map(Vec::len), Some(0));
+
+        std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn extend_manifest_metadata_creates_missing_manifest() {
+        let run_directory = create_test_directory();
+
+        extend_run_manifest_metadata(
+            &run_directory,
+            json!({
+                "interface": "g regenie",
+                "phenotype": "height",
+                "effective_config": "effective_config.toml",
+                "output_format": "regenie",
+            }),
+            json!({
+                "device": "cpu",
+                "staging_depth": 1,
+                "native_callback_batch_size": 2,
+            }),
+        )
+        .expect("manifest metadata should be written");
+
+        let manifest_json =
+            load_run_manifest_json(&run_directory).expect("manifest should load").expect("manifest should exist");
+        let manifest = serde_json::from_str::<Value>(&manifest_json).expect("manifest should parse");
+        assert_eq!(manifest.pointer("/command/phenotype").and_then(Value::as_str), Some("height"));
+        assert_eq!(manifest.pointer("/runtime/device").and_then(Value::as_str), Some("cpu"));
 
         std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
     }

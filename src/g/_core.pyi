@@ -3579,6 +3579,25 @@ def build_run_manifest_extension_payload(
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: str,
 ) -> dict[str, object]: ...
+def extend_run_manifest_metadata(
+    run_directory: str,
+    phenotype_name: str,
+    effective_config: str,
+    output_format: str,
+    device: str,
+    staging_depth: int,
+    native_callback_batch_size: int,
+    threads: int | None,
+    writer_threads: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
+    arrow_compression: str,
+    parquet_compression: str,
+    output_statistic_dtype: str,
+    bgen_decode_tile_variant_count: int,
+    trusted_no_missing_diploid: bool,
+    trusted_bgen_validation_mode: str,
+) -> None: ...
 def build_trusted_bgen_validation_fingerprint_value(
     bgen_path: str,
     sample_count: int,

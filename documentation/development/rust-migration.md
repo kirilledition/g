@@ -80,6 +80,10 @@ CLI run-failed telemetry dispatch resolves the native telemetry handle directly
 and preserves its existing suppress-telemetry-errors policy.
 The Rust architecture checker guards this telemetry boundary by rejecting root
 PyO3 adapter calls to the old Python fallback method names.
+Run-start manifest command/runtime metadata extension now goes through a native
+`g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
+longer loads, mutates, serializes, and rewrites run manifests for that
+metadata.
 
 Phase 10 queue migration also has a native callback scheduler state handle that
 consolidates queue limits, worker-start state, result in-flight accounting, and

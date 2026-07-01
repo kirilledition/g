@@ -1,5 +1,7 @@
 //! Deterministic run metadata and artifact payload construction.
 
+use serde::Serialize;
+
 pub use crate::run_events::RunArtifactsPayload;
 
 const COMMAND_INTERFACE: &str = "g regenie";
@@ -45,7 +47,7 @@ pub struct RunManifestExtensionInput {
     pub trusted_bgen_validation_mode: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RunManifestCommandPayload {
     pub interface: &'static str,
     pub phenotype: String,
@@ -53,7 +55,7 @@ pub struct RunManifestCommandPayload {
     pub output_format: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RunManifestRuntimePayload {
     pub device: String,
     pub staging_depth: i64,
@@ -70,7 +72,7 @@ pub struct RunManifestRuntimePayload {
     pub trusted_bgen_validation_mode: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RunManifestExtensionPayload {
     pub command: RunManifestCommandPayload,
     pub runtime: RunManifestRuntimePayload,

@@ -7,17 +7,11 @@ import typing
 from g import _core, execution_plan, types
 from g.engine import run_events, telemetry
 from g.interface import config
-from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
 RunArtifacts = run_events.RunArtifacts
-
-
-def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
-    """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
 
 
 def build_output_initialized_metadata_callback(
@@ -128,8 +122,8 @@ def extend_run_manifest(
     phenotype_run_plan: execution_plan.PhenotypeRunPlan,
 ) -> None:
     """Add command and runtime metadata to a run manifest."""
-    manifest = output.load_run_manifest(phenotype_run_plan.output_run_paths) or {}
-    manifest_extension_payload = _core.build_run_manifest_extension_payload(
+    _core.extend_run_manifest_metadata(
+        str(phenotype_run_plan.output_run_paths.run_directory),
         phenotype_run_plan.phenotype_name,
         str(phenotype_run_plan.effective_config_path),
         plan.output_plan.writer_settings.output_format.value,
@@ -147,6 +141,3 @@ def extend_run_manifest(
         plan.kernel_config.trusted_no_missing_diploid,
         plan.kernel_config.trusted_bgen_validation_mode.value,
     )
-    manifest["command"] = native_mapping_payload(manifest_extension_payload["command"])
-    manifest["runtime"] = native_mapping_payload(manifest_extension_payload["runtime"])
-    output.write_run_manifest(phenotype_run_plan.output_run_paths, manifest)
