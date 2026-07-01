@@ -52,13 +52,8 @@ class GracefulShutdownController:
 
     def __init__(self, handled_signals: tuple[signal.Signals, ...] | None) -> None:
         """Initialize the controller."""
-        resolved_signal_numbers = (
-            g._core.default_shutdown_signal_numbers()
-            if handled_signals is None
-            else [int(handled_signal) for handled_signal in handled_signals]
-        )
         self.native_controller = g._core.NativeShutdownController(
-            resolved_signal_numbers,
+            handled_signals,
         )
 
     @property

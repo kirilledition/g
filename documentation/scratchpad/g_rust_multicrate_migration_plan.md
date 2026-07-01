@@ -1514,6 +1514,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
   adapter.
 - The default graceful-shutdown signal set now comes from `g-runtime`, so the
   Python shutdown adapter no longer owns the CLI default signal policy.
+- Native shutdown controller construction now owns default signal resolution;
+  Python passes optional explicit signal values through to the native handle.
 - Public Python API entrypoints now document and test that they do not install
   CLI signal handlers, leaving handler installation to the CLI path.
 - Shutdown controller tests now cover first-signal graceful interruption and

@@ -54,12 +54,19 @@ def test_native_second_signal_exception_raiser() -> None:
 
 def test_native_shutdown_controller_owns_handler_lifecycle() -> None:
     native_controller = _core.NativeShutdownController([int(signal.SIGINT), int(signal.SIGTERM)])
+    default_controller = _core.NativeShutdownController()
 
     install_plan = dict(native_controller.handler_install_plan_payload())
     handled_signal_payloads = tuple(typing.cast("typing.Iterable[object]", install_plan["handled_signals"]))
+    default_install_plan = dict(default_controller.handler_install_plan_payload())
+    default_signal_payloads = tuple(typing.cast("typing.Iterable[object]", default_install_plan["handled_signals"]))
 
     assert native_controller.handlers_installed is False
     assert [typing.cast("typing.Mapping[str, object]", payload)["name"] for payload in handled_signal_payloads] == [
+        "SIGINT",
+        "SIGTERM",
+    ]
+    assert [typing.cast("typing.Mapping[str, object]", payload)["name"] for payload in default_signal_payloads] == [
         "SIGINT",
         "SIGTERM",
     ]
@@ -83,8 +90,8 @@ def test_native_shutdown_controller_installs_and_restores_python_handlers() -> N
     installed_handler = object()
 
     with (
-        unittest.mock.patch("g.engine.shutdown.signal.getsignal", return_value=previous_handler) as get_signal_mock,
-        unittest.mock.patch("g.engine.shutdown.signal.signal") as signal_mock,
+        unittest.mock.patch("signal.getsignal", return_value=previous_handler) as get_signal_mock,
+        unittest.mock.patch("signal.signal") as signal_mock,
     ):
         native_controller.install_python_signal_handlers(installed_handler)
         assert native_controller.handlers_installed is True
@@ -103,8 +110,8 @@ def test_native_shutdown_controller_restores_and_resets_handler_session() -> Non
     installed_handler = object()
 
     with (
-        unittest.mock.patch("g.engine.shutdown.signal.getsignal", return_value=previous_handler),
-        unittest.mock.patch("g.engine.shutdown.signal.signal") as signal_mock,
+        unittest.mock.patch("signal.getsignal", return_value=previous_handler),
+        unittest.mock.patch("signal.signal") as signal_mock,
     ):
         native_controller.install_python_signal_handlers(installed_handler)
         native_controller.request_shutdown_payload(int(signal.SIGINT))
@@ -124,8 +131,8 @@ def test_native_shutdown_controller_aborts_repeated_signal() -> None:
     installed_handler = object()
 
     with (
-        unittest.mock.patch("g.engine.shutdown.signal.getsignal", return_value=previous_handler),
-        unittest.mock.patch("g.engine.shutdown.signal.signal") as signal_mock,
+        unittest.mock.patch("signal.getsignal", return_value=previous_handler),
+        unittest.mock.patch("signal.signal") as signal_mock,
     ):
         native_controller.install_python_signal_handlers(installed_handler)
         first_signal_payload = dict(
@@ -159,8 +166,8 @@ def test_shutdown_controller_repeated_signal_restores_handlers_and_aborts() -> N
     previous_handler = object()
 
     with (
-        unittest.mock.patch("g.engine.shutdown.signal.getsignal", return_value=previous_handler),
-        unittest.mock.patch("g.engine.shutdown.signal.signal") as signal_mock,
+        unittest.mock.patch("signal.getsignal", return_value=previous_handler),
+        unittest.mock.patch("signal.signal") as signal_mock,
         controller,
     ):
         with pytest.raises(shutdown.GracefulShutdownRequested):
@@ -198,8 +205,8 @@ def test_shutdown_controller_context_resets_native_requested_signal() -> None:
     assert controller.requested_signal is not None
 
     with (
-        unittest.mock.patch("g.engine.shutdown.signal.getsignal", return_value=previous_handler),
-        unittest.mock.patch("g.engine.shutdown.signal.signal") as signal_mock,
+        unittest.mock.patch("signal.getsignal", return_value=previous_handler),
+        unittest.mock.patch("signal.signal") as signal_mock,
         controller as active_controller,
     ):
         assert active_controller.requested_signal is None
@@ -208,3 +215,21 @@ def test_shutdown_controller_context_resets_native_requested_signal() -> None:
     assert controller.requested_signal is None
     signal_mock.assert_any_call(signal.SIGTERM, controller.handle_signal)
     signal_mock.assert_any_call(signal.SIGTERM, previous_handler)
+
+
+def test_shutdown_controller_passes_optional_signals_to_native_handle() -> None:
+    default_controller = shutdown.GracefulShutdownController(handled_signals=None)
+    explicit_controller = shutdown.GracefulShutdownController(handled_signals=(signal.SIGTERM,))
+
+    default_install_plan = dict(default_controller.native_controller.handler_install_plan_payload())
+    explicit_install_plan = dict(explicit_controller.native_controller.handler_install_plan_payload())
+    default_signal_payloads = tuple(typing.cast("typing.Iterable[object]", default_install_plan["handled_signals"]))
+    explicit_signal_payloads = tuple(typing.cast("typing.Iterable[object]", explicit_install_plan["handled_signals"]))
+
+    assert [typing.cast("typing.Mapping[str, object]", payload)["name"] for payload in default_signal_payloads] == [
+        "SIGINT",
+        "SIGTERM",
+    ]
+    assert [typing.cast("typing.Mapping[str, object]", payload)["name"] for payload in explicit_signal_payloads] == [
+        "SIGTERM"
+    ]

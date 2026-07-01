@@ -36,11 +36,14 @@ impl NativeSecondSignalExceptionPlan {
 #[pymethods]
 impl NativeShutdownController {
     #[new]
+    #[pyo3(signature = (handled_signal_numbers=None))]
     #[allow(clippy::needless_pass_by_value)]
-    fn new(handled_signal_numbers: Vec<i32>) -> PyResult<Self> {
+    fn new(handled_signal_numbers: Option<Vec<i32>>) -> PyResult<Self> {
+        let resolved_signal_numbers =
+            handled_signal_numbers.unwrap_or_else(native_shutdown::default_shutdown_signal_numbers);
         Ok(Self {
             controller: Mutex::new(
-                native_shutdown::ShutdownController::new(&handled_signal_numbers).map_err(PyValueError::new_err)?,
+                native_shutdown::ShutdownController::new(&resolved_signal_numbers).map_err(PyValueError::new_err)?,
             ),
             previous_handlers: Mutex::new(BTreeMap::new()),
         })
