@@ -1513,6 +1513,16 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Telemetry JSONL serialization now goes through `g-runtime`, so Python
   adapters no longer depend on Python's `json.dumps` for telemetry file writes
   or diagnostic field JSON.
+- Telemetry file writer creation, shared log/telemetry stream reuse, event-cap
+  enforcement, writer counter snapshots, and writer tests now live in
+  `g-runtime`, leaving the PyO3 logging adapter to configure subscriber layers
+  and translate native writer errors.
+- Logging sink filter validation, tracing subscriber layer setup, worker-guard
+  ownership, and sink shutdown now live in `g-runtime`, leaving the PyO3
+  adapter to install only the Python host logging bridge.
+- Telemetry writer close/flush lifecycle, shared-writer clearing, final
+  counter snapshots, close metadata, and close tests now live in `g-runtime`,
+  leaving the PyO3 telemetry adapter as a thin locked wrapper.
 - Telemetry close-event names, levels, and writer-counter fields now come from
   a native close-event payload instead of being assembled in the PyO3 logging
   adapter.
@@ -1525,6 +1535,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Shutdown controller tests now cover first-signal graceful interruption and
   repeated-signal hard-interrupt behavior for `SIGINT` and `SIGTERM` through
   the native controller adapter.
+- Shutdown handler session state, including previous-handler storage and
+  restore/reset lifecycle bookkeeping, now lives in a Python-free generic
+  `g-runtime` type; the PyO3 adapter only calls the host `signal` module.
 - Process runtime state now returns a single native snapshot payload for the
   public Python API adapter, so Python no longer assembles runtime state through
   separate process-global logging/Rayon/JAX lookups.
@@ -1771,6 +1784,12 @@ Current implementation notes:
 - Trusted BGEN validation cache helper logic moved out of the root crate and
   into `g-runtime`; the root now keeps only the PyO3 adapter/export surface for
   those helpers.
+- Python-facing preflight variant-count validation now lives in `g-engine`;
+  the root PyO3 preflight adapter only translates native errors.
+- The root `g` crate no longer re-exports the internal domain crates as public
+  Rust aliases or publishes its internal `python` adapter module; PyO3
+  adapters import owning crates directly while `_core` export names remain
+  stable.
 
 ### Tests
 

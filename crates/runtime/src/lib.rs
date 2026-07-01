@@ -2,6 +2,7 @@
 
 pub mod cli_runtime;
 pub mod jax_runtime;
+pub mod logging_sink;
 pub mod rayon_runtime;
 pub mod run_events;
 pub mod run_metadata;
@@ -11,6 +12,7 @@ pub mod runtime_state;
 pub mod shutdown;
 pub mod telemetry_policy;
 pub mod telemetry_session;
+pub mod telemetry_writer;
 pub mod timing;
 pub mod trusted_validation;
 
@@ -26,6 +28,10 @@ pub use jax_runtime::{
     default_nvidia_driver_probe_paths, nvidia_driver_files_are_visible, plan_jax_gpu_validation,
     plan_jax_runtime_config_updates, plan_jax_runtime_diagnostic_record, plan_jax_runtime_setup_side_effects,
     resolve_jax_runtime_setup,
+};
+pub use logging_sink::{
+    LoggingSinkConfig, LoggingSinkError, LoggingSinkInitializationError, initialize_logging_sinks,
+    shutdown_logging_sinks,
 };
 pub use rayon_runtime::{
     RayonRuntimeError, configure_global_rayon_thread_pool, format_global_rayon_thread_pool_configuration_error,
@@ -184,8 +190,9 @@ pub use runtime_state::{
     RuntimePolicyPayload, RuntimeStateSnapshotPayload, build_jax_runtime_policy_payload, describe_jax_runtime_policy,
 };
 pub use shutdown::{
-    SecondSignalExceptionPlan, ShutdownControllerState, ShutdownRequestAction, ShutdownRequestDecisionPayload,
-    ShutdownSignalPayload, build_shutdown_signal, default_shutdown_signal_numbers, plan_second_signal_exception,
+    SecondSignalExceptionPlan, ShutdownControllerState, ShutdownHandlerSession, ShutdownRequestAction,
+    ShutdownRequestDecisionPayload, ShutdownSignalPayload, build_shutdown_signal, default_shutdown_signal_numbers,
+    plan_second_signal_exception,
 };
 pub use telemetry_policy::{
     TelemetryPathsPayload, TelemetryWriterCountersPayload, build_empty_writer_counters, format_timestamp,
@@ -198,6 +205,11 @@ pub use telemetry_session::{
     build_telemetry_close_metadata, build_telemetry_event_envelope, generate_run_id, plan_telemetry_close,
     plan_telemetry_event_emission, plan_telemetry_progress_emission, serialize_telemetry_payload_json_line,
     serialize_telemetry_payload_json_text,
+};
+pub use telemetry_writer::{
+    TelemetryLineWriter, TelemetryWriterFactory, build_log_file_writer, build_non_blocking_writer,
+    build_shared_or_log_file_writer, build_telemetry_file_writer, clear_shared_telemetry_writer, normalize_event_cap,
+    replace_shared_telemetry_writer, shared_telemetry_writer_for_path,
 };
 pub use timing::{
     ChunkStageSummary, ChunkStageTiming, FinalTimingOutputContext, FinalTimingOutputsWriteResultPayload,

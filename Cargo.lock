@@ -729,7 +729,6 @@ dependencies = [
  "g-output",
  "g-plan",
  "g-runtime",
- "memchr",
  "numpy",
  "pyo3",
  "pyo3-pylogger",
@@ -737,8 +736,6 @@ dependencies = [
  "serde_json",
  "toml",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -810,12 +807,15 @@ name = "g-runtime"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "memchr",
  "rayon",
  "serde",
  "serde_json",
  "sha2",
  "signal-hook",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "uuid",
 ]
 

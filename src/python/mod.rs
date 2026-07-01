@@ -36,7 +36,7 @@ mod trusted_validation;
 
 #[allow(clippy::missing_errors_doc)]
 #[allow(clippy::too_many_lines)]
-pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     config::register_module(module)?;
     genotype::register_module(module)?;
     association_backend::register_module(module)?;

@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::sample::{AlignmentInputs, MultiAlignmentInputs};
 use g_engine::Regenie2RunEngineCore;
 use g_genotype::common::ChunkSpec as NativeChunkSpec;
+use g_input::sample::{self, AlignmentInputs, MultiAlignmentInputs};
 use g_runtime::trusted_validation as native_trusted_validation;
 use numpy::{PyReadonlyArray1, PyReadwriteArray2, PyReadwriteArray3, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyOSError, PyValueError};
@@ -99,7 +99,7 @@ impl Regenie2RunEngine {
             let expected_sample_count = self.engine.reader().sample_count();
             return py
                 .detach(move || {
-                    crate::sample::align_sample_data_from_sample_file(
+                    sample::align_sample_data_from_sample_file(
                         Path::new(&sample_path),
                         expected_sample_count,
                         phenotype_path,
@@ -132,7 +132,7 @@ impl Regenie2RunEngine {
             is_binary_trait,
             sample_key_mode: parsed_sample_key_mode,
         };
-        py.detach(move || crate::sample::align_sample_data(inputs))
+        py.detach(move || sample::align_sample_data(inputs))
             .map(NativeAlignedSampleData::new)
             .map_err(PyValueError::new_err)
     }
@@ -164,7 +164,7 @@ impl Regenie2RunEngine {
             let expected_sample_count = self.engine.reader().sample_count();
             return py
                 .detach(move || {
-                    crate::sample::align_multi_sample_data_from_sample_file(
+                    sample::align_multi_sample_data_from_sample_file(
                         Path::new(&sample_path),
                         expected_sample_count,
                         phenotype_path,
@@ -197,7 +197,7 @@ impl Regenie2RunEngine {
             is_binary_trait,
             sample_key_mode: parsed_sample_key_mode,
         };
-        py.detach(move || crate::sample::align_multi_sample_data(inputs))
+        py.detach(move || sample::align_multi_sample_data(inputs))
             .map(NativeMultiAlignedSampleData::new)
             .map_err(PyValueError::new_err)
     }
@@ -229,7 +229,7 @@ impl Regenie2RunEngine {
             let expected_sample_count = self.engine.reader().sample_count();
             return py
                 .detach(move || {
-                    crate::sample::align_grouped_sample_data_from_sample_file(
+                    sample::align_grouped_sample_data_from_sample_file(
                         Path::new(&sample_path),
                         expected_sample_count,
                         phenotype_path,
@@ -262,7 +262,7 @@ impl Regenie2RunEngine {
             is_binary_trait,
             sample_key_mode: parsed_sample_key_mode,
         };
-        py.detach(move || crate::sample::align_grouped_sample_data(&inputs))
+        py.detach(move || sample::align_grouped_sample_data(&inputs))
             .map(NativeGroupedAlignedSampleData::new)
             .map_err(PyValueError::new_err)
     }

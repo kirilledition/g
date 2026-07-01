@@ -118,6 +118,21 @@ pub fn resolve_scanned_variant_count(
     Ok(scanned_variant_count)
 }
 
+/// Resolve a Python-facing preflight variant count using native scan policy.
+///
+/// # Errors
+///
+/// Returns an error when the BGEN input or requested scan contains no variants.
+pub fn resolve_preflight_variant_count(variant_count: i64, variant_limit: Option<i64>) -> Result<i64, PreflightError> {
+    if variant_count <= 0 {
+        return Err(PreflightError::EmptyBgenInput);
+    }
+    if matches!(variant_limit, Some(limit) if limit <= 0) {
+        return Err(PreflightError::EmptyBgenScan);
+    }
+    Ok(variant_limit.map_or(variant_count, |limit| limit.min(variant_count)))
+}
+
 /// Validate deterministic single-trait preflight dimensions.
 ///
 /// # Errors
@@ -367,6 +382,17 @@ mod tests {
     fn rejects_empty_variant_scans() {
         assert_eq!(resolve_scanned_variant_count(0, None).unwrap_err(), PreflightError::EmptyBgenInput);
         assert_eq!(resolve_scanned_variant_count(1, Some(0)).unwrap_err(), PreflightError::EmptyBgenScan);
+    }
+
+    #[test]
+    fn resolves_python_facing_preflight_variant_count() {
+        assert_eq!(resolve_preflight_variant_count(12, None).unwrap(), 12);
+        assert_eq!(resolve_preflight_variant_count(12, Some(5)).unwrap(), 5);
+        assert_eq!(resolve_preflight_variant_count(12, Some(50)).unwrap(), 12);
+        assert_eq!(resolve_preflight_variant_count(0, None).unwrap_err(), PreflightError::EmptyBgenInput);
+        assert_eq!(resolve_preflight_variant_count(-1, None).unwrap_err(), PreflightError::EmptyBgenInput);
+        assert_eq!(resolve_preflight_variant_count(12, Some(0)).unwrap_err(), PreflightError::EmptyBgenScan);
+        assert_eq!(resolve_preflight_variant_count(12, Some(-1)).unwrap_err(), PreflightError::EmptyBgenScan);
     }
 
     #[test]

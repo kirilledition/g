@@ -3,52 +3,26 @@
 #![allow(clippy::missing_errors_doc)]
 
 use std::ffi::CString;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::callback_progress::NativeCallbackProgressTelemetryEvent;
 use super::jax_runtime;
 use super::run_events;
+use g_runtime::logging_sink as native_logging_sink;
 use g_runtime::run_events as native_run_events;
 use g_runtime::telemetry_session as native_telemetry_session;
+use g_runtime::telemetry_writer as native_telemetry_writer;
 use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyModule, PyString, PyTuple};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
-use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt::format::FmtSpan;
-use tracing_subscriber::fmt::writer::MakeWriter;
-use tracing_subscriber::prelude::*;
 
-const DEFAULT_LOG_FILTER: &str = "info";
 const PYTHON_LOGGING_TARGET: &str = "g.python";
 
-static LOGGING_GUARDS: Mutex<Option<Vec<WorkerGuard>>> = Mutex::new(None);
 static PYTHON_LOGGING_INSTALLED: AtomicBool = AtomicBool::new(false);
-static TELEMETRY_WRITER: Mutex<Option<SharedTelemetryWriter>> = Mutex::new(None);
-
-#[derive(Clone)]
-struct SharedTelemetryWriter {
-    path: PathBuf,
-    writer: TelemetryWriterFactory,
-}
-
-#[derive(Clone)]
-struct TelemetryWriterFactory {
-    writer: NonBlocking,
-    event_cap_state: Arc<native_telemetry_session::TelemetryEventCapState>,
-}
-
-struct TelemetryLineWriter {
-    writer: NonBlocking,
-    event_cap_state: Arc<native_telemetry_session::TelemetryEventCapState>,
-    line_buffer: Vec<u8>,
-}
 
 #[pyclass]
 pub struct NativeTelemetryProgressThrottle {
@@ -76,83 +50,6 @@ pub struct NativeTelemetryRunSession {
     progress_start_time: Instant,
     state: Mutex<native_telemetry_session::TelemetryRunSessionState>,
     native_telemetry_session: Option<NativeTelemetrySession>,
-}
-
-impl TelemetryWriterFactory {
-    fn new(writer: NonBlocking, event_cap_state: native_telemetry_session::TelemetryEventCapState) -> Self {
-        Self { writer, event_cap_state: Arc::new(event_cap_state) }
-    }
-
-    fn write_json_line(&self, json_line: &str) -> io::Result<()> {
-        let mut line_writer = self.make_writer();
-        line_writer.write_all(json_line.as_bytes())?;
-        if !json_line.ends_with('\n') {
-            line_writer.write_all(b"\n")?;
-        }
-        line_writer.flush()
-    }
-
-    fn fail_if_lossless_cap_exceeded(&self) -> PyResult<()> {
-        if self.event_cap_state.should_fail_for_cap_exceeded() {
-            return Err(PyRuntimeError::new_err(self.event_cap_state.cap_exceeded_error_message()));
-        }
-        Ok(())
-    }
-
-    fn counter_snapshot(
-        &self,
-        finish_flush_duration_seconds: Option<f64>,
-    ) -> native_telemetry_session::TelemetryWriterCounterSnapshot {
-        self.event_cap_state
-            .counter_snapshot(self.writer.error_counter().dropped_lines(), finish_flush_duration_seconds)
-    }
-}
-
-impl<'a> MakeWriter<'a> for TelemetryWriterFactory {
-    type Writer = TelemetryLineWriter;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        TelemetryLineWriter {
-            writer: self.writer.clone(),
-            event_cap_state: Arc::clone(&self.event_cap_state),
-            line_buffer: Vec::new(),
-        }
-    }
-}
-
-impl TelemetryLineWriter {
-    fn write_complete_line(&mut self, line: &[u8]) -> io::Result<()> {
-        match self.event_cap_state.reserve_event()? {
-            native_telemetry_session::TelemetryCapAction::Write => self.writer.write_all(line),
-            native_telemetry_session::TelemetryCapAction::Drop => Ok(()),
-        }
-    }
-}
-
-impl io::Write for TelemetryLineWriter {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        if !self.event_cap_state.has_event_cap() {
-            let event_count = memchr::memchr_iter(b'\n', buffer).count();
-            self.event_cap_state.record_uncapped_event_count(event_count);
-            self.writer.write_all(buffer)?;
-            return Ok(buffer.len());
-        }
-
-        self.line_buffer.extend_from_slice(buffer);
-        while let Some(newline_index) = self.line_buffer.iter().position(|byte| *byte == b'\n') {
-            let complete_line = self.line_buffer.drain(..=newline_index).collect::<Vec<_>>();
-            self.write_complete_line(&complete_line)?;
-        }
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        if !self.line_buffer.is_empty() {
-            let complete_line = std::mem::take(&mut self.line_buffer);
-            self.write_complete_line(&complete_line)?;
-        }
-        self.writer.flush()
-    }
 }
 
 #[pymethods]
@@ -265,7 +162,7 @@ impl NativeTelemetryRunSession {
             let stream_file = stream_file
                 .ok_or_else(|| PyValueError::new_err("Telemetry stream file is required when telemetry is enabled."))?;
             Some(NativeTelemetrySession::new(
-                stream_file,
+                &stream_file,
                 queue_size,
                 lossy,
                 telemetry_event_cap_to_usize(writer_plan.event_cap)?,
@@ -794,35 +691,26 @@ impl NativeTelemetryRunSession {
 
 #[pyclass]
 pub struct NativeTelemetrySession {
-    path: PathBuf,
-    writer: Mutex<Option<TelemetryWriterFactory>>,
-    guard: Mutex<Option<WorkerGuard>>,
-    last_counter_snapshot: Mutex<Option<native_telemetry_session::TelemetryWriterCounterSnapshot>>,
+    writer: Mutex<native_telemetry_writer::TelemetrySessionWriter>,
 }
 
 #[pymethods]
 impl NativeTelemetrySession {
     #[new]
     #[pyo3(signature = (stream_file, queue_size=65536, lossy=true, event_cap=None))]
-    pub fn new(stream_file: String, queue_size: usize, lossy: bool, event_cap: Option<usize>) -> PyResult<Self> {
-        let path = PathBuf::from(stream_file);
-        let (writer, guard) = build_telemetry_file_writer(&path, queue_size, lossy, normalize_event_cap(event_cap))?;
-        replace_shared_telemetry_writer(path.clone(), writer.clone())?;
-        Ok(Self {
-            path,
-            writer: Mutex::new(Some(writer)),
-            guard: Mutex::new(Some(guard)),
-            last_counter_snapshot: Mutex::new(None),
-        })
+    pub fn new(stream_file: &str, queue_size: usize, lossy: bool, event_cap: Option<usize>) -> PyResult<Self> {
+        let writer = native_telemetry_writer::TelemetrySessionWriter::new(
+            Path::new(stream_file).to_path_buf(),
+            queue_size,
+            lossy,
+            event_cap,
+        )
+        .map_err(telemetry_writer_error_to_py)?;
+        Ok(Self { writer: Mutex::new(writer) })
     }
 
     pub fn emit_json_line(&self, json_line: &str) -> PyResult<()> {
-        let writer_guard =
-            self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
-        let Some(writer) = writer_guard.as_ref() else {
-            return Ok(());
-        };
-        writer.write_json_line(json_line).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        self.lock_writer()?.write_json_line(json_line).map_err(telemetry_writer_error_to_py)?;
         Ok(())
     }
 
@@ -889,15 +777,10 @@ impl NativeTelemetrySession {
     }
 
     pub fn close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
-        let last_counter_snapshot = self
-            .last_counter_snapshot
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
-        let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
-            return Ok(None);
-        };
-        let metadata = native_telemetry_session::build_telemetry_close_metadata(counter_snapshot.clone());
-        telemetry_close_metadata_to_py_dict(py, &metadata).map(Some)
+        self.lock_writer()?
+            .close_metadata()
+            .map(|metadata| telemetry_close_metadata_to_py_dict(py, &metadata))
+            .transpose()
     }
 
     pub fn finish<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -906,8 +789,7 @@ impl NativeTelemetrySession {
     }
 
     pub fn finish_close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let counter_snapshot = self.finish_counter_snapshot()?;
-        let metadata = native_telemetry_session::build_telemetry_close_metadata(counter_snapshot);
+        let metadata = self.lock_writer()?.finish_close_metadata().map_err(telemetry_writer_error_to_py)?;
         telemetry_close_metadata_to_py_dict(py, &metadata)
     }
 
@@ -952,19 +834,7 @@ impl NativeTelemetrySession {
 
 impl NativeTelemetrySession {
     fn counter_snapshot(&self) -> PyResult<native_telemetry_session::TelemetryWriterCounterSnapshot> {
-        let writer_guard =
-            self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
-        if let Some(writer) = writer_guard.as_ref() {
-            return Ok(writer.counter_snapshot(None));
-        }
-        let last_counter_snapshot = self
-            .last_counter_snapshot
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
-        let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
-            return Ok(native_telemetry_session::TelemetryWriterCounterSnapshot::empty());
-        };
-        Ok(counter_snapshot.clone())
+        Ok(self.lock_writer()?.counter_snapshot())
     }
 
     fn emit_close_event<'py>(
@@ -998,35 +868,11 @@ impl NativeTelemetrySession {
     }
 
     fn finish_counter_snapshot(&self) -> PyResult<native_telemetry_session::TelemetryWriterCounterSnapshot> {
-        let finish_start_time = Instant::now();
-        let mut writer_guard =
-            self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
-        let dropped_writer = writer_guard.take();
-        let mut guard =
-            self.guard.lock().map_err(|_| PyRuntimeError::new_err("Telemetry guard mutex was poisoned."))?;
-        let dropped_guard = guard.take();
-        drop(dropped_guard);
-        let finish_flush_duration_seconds = finish_start_time.elapsed().as_secs_f64();
-        clear_shared_telemetry_writer(&self.path)?;
-        let Some(writer) = dropped_writer.as_ref() else {
-            let last_counter_snapshot = self
-                .last_counter_snapshot
-                .lock()
-                .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
-            let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
-                return Ok(native_telemetry_session::TelemetryWriterCounterSnapshot::empty());
-            };
-            return Ok(counter_snapshot.clone());
-        };
+        self.lock_writer()?.finish_counter_snapshot().map_err(telemetry_writer_error_to_py)
+    }
 
-        let counter_snapshot = writer.counter_snapshot(Some(finish_flush_duration_seconds));
-        let mut last_counter_snapshot = self
-            .last_counter_snapshot
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
-        *last_counter_snapshot = Some(counter_snapshot.clone());
-        writer.fail_if_lossless_cap_exceeded()?;
-        Ok(counter_snapshot)
+    fn lock_writer(&self) -> PyResult<std::sync::MutexGuard<'_, native_telemetry_writer::TelemetrySessionWriter>> {
+        self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))
     }
 }
 
@@ -1386,6 +1232,7 @@ pub fn emit_diagnostic_event_fields(
 #[expect(
     clippy::too_many_arguments,
     clippy::fn_params_excessive_bools,
+    clippy::needless_pass_by_value,
     reason = "PyO3 exposes documented Python logging keyword arguments directly."
 )]
 #[pyo3(signature = (
@@ -1413,99 +1260,25 @@ pub fn initialize_logging(
     trace_filter: Option<String>,
     trace_event_cap: Option<usize>,
 ) -> PyResult<bool> {
-    let mut logging_guards = lock_logging_guards()?;
-    if logging_guards.is_some() {
-        setup_python_logging(py)?;
-        return Ok(false);
-    }
-
-    let resolved_log_filter = log_filter
-        .filter(|candidate_filter| !candidate_filter.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_LOG_FILTER.to_string());
-    let environment_filter = EnvFilter::try_new(&resolved_log_filter)
-        .map_err(|error| PyValueError::new_err(format!("Invalid g log filter: {error}")))?;
-
-    let mut worker_guards = Vec::new();
-    let stderr_layer = if log_stderr {
-        let (stderr_writer, stderr_guard) =
-            build_non_blocking_writer(std::io::stderr(), "g-tracing-stderr", log_queue_size, log_lossy);
-        worker_guards.push(stderr_guard);
-        let layer = tracing_subscriber::fmt::layer()
-            .compact()
-            .with_writer(stderr_writer)
-            .with_ansi(true)
-            .with_file(include_source_location)
-            .with_line_number(include_source_location)
-            .with_span_events(resolve_span_events(include_span_events));
-        Some(layer.boxed())
-    } else {
-        None
+    let config = native_logging_sink::LoggingSinkConfig {
+        log_filter: log_filter.as_deref(),
+        log_file: log_file.as_deref().map(Path::new),
+        log_stderr,
+        log_queue_size,
+        log_lossy,
+        include_source_location,
+        include_span_events,
+        trace_file: trace_file.as_deref().map(Path::new),
+        trace_filter: trace_filter.as_deref(),
+        trace_event_cap,
     };
-    let file_layer = if let Some(log_file_path) = log_file {
-        let (file_writer, maybe_file_guard) =
-            build_shared_or_log_file_writer(Path::new(&log_file_path), log_queue_size, log_lossy, None)?;
-        if let Some(file_guard) = maybe_file_guard {
-            worker_guards.push(file_guard);
-        }
-        let layer = tracing_subscriber::fmt::layer()
-            .json()
-            .flatten_event(true)
-            .with_ansi(false)
-            .with_writer(file_writer)
-            .with_file(include_source_location)
-            .with_line_number(include_source_location)
-            .with_span_events(resolve_span_events(include_span_events));
-        Some(layer.boxed())
-    } else {
-        None
-    };
-    let trace_layer = if let Some(trace_file_path) = trace_file {
-        let (trace_writer, maybe_trace_guard) = build_shared_or_log_file_writer(
-            Path::new(&trace_file_path),
-            log_queue_size,
-            log_lossy,
-            normalize_event_cap(trace_event_cap),
-        )?;
-        if let Some(trace_guard) = maybe_trace_guard {
-            worker_guards.push(trace_guard);
-        }
-        let resolved_trace_filter = trace_filter
-            .filter(|candidate_filter| !candidate_filter.trim().is_empty())
-            .unwrap_or_else(|| resolved_log_filter.clone());
-        let trace_environment_filter = EnvFilter::try_new(&resolved_trace_filter)
-            .map_err(|error| PyValueError::new_err(format!("Invalid g trace filter: {error}")))?;
-        let layer = tracing_subscriber::fmt::layer()
-            .json()
-            .flatten_event(true)
-            .with_ansi(false)
-            .with_writer(trace_writer)
-            .with_file(true)
-            .with_line_number(true)
-            .with_span_events(FmtSpan::FULL)
-            .with_filter(trace_environment_filter);
-        Some(layer.boxed())
-    } else {
-        None
-    };
-
-    let subscriber =
-        tracing_subscriber::registry().with(environment_filter).with(stderr_layer).with(file_layer).with(trace_layer);
-    if subscriber.try_init().is_err() {
-        setup_python_logging(py)?;
-        return Ok(false);
-    }
-
-    setup_python_logging(py)?;
-    *logging_guards = Some(worker_guards);
-    tracing::info!(target: "g.logging", "logging initialized");
-    Ok(true)
+    native_logging_sink::initialize_logging_sinks(config, || setup_python_logging(py))
+        .map_err(logging_sink_initialization_error_to_py)
 }
 
 #[pyfunction]
 pub fn shutdown_logging() -> PyResult<()> {
-    let mut logging_guards = lock_logging_guards()?;
-    let _dropped_guards = logging_guards.take();
-    Ok(())
+    native_logging_sink::shutdown_logging_sinks().map_err(logging_sink_error_to_py)
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -1527,14 +1300,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
     module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
     Ok(())
-}
-
-fn lock_logging_guards() -> PyResult<std::sync::MutexGuard<'static, Option<Vec<WorkerGuard>>>> {
-    LOGGING_GUARDS.lock().map_err(|_| PyRuntimeError::new_err("Logging guard mutex was poisoned."))
-}
-
-fn lock_telemetry_writer() -> PyResult<std::sync::MutexGuard<'static, Option<SharedTelemetryWriter>>> {
-    TELEMETRY_WRITER.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))
 }
 
 fn setup_python_logging(py: Python<'_>) -> PyResult<()> {
@@ -1581,14 +1346,6 @@ fn register_shutdown_logging(py: Python<'_>) -> PyResult<()> {
     Ok(())
 }
 
-fn resolve_span_events(include_span_events: bool) -> FmtSpan {
-    if include_span_events { FmtSpan::FULL } else { FmtSpan::NONE }
-}
-
-fn normalize_event_cap(event_cap: Option<usize>) -> Option<usize> {
-    event_cap.filter(|cap| *cap > 0)
-}
-
 fn telemetry_event_cap_to_usize(event_cap: Option<i64>) -> PyResult<Option<usize>> {
     event_cap
         .map(|value| {
@@ -1597,158 +1354,26 @@ fn telemetry_event_cap_to_usize(event_cap: Option<i64>) -> PyResult<Option<usize
         .transpose()
 }
 
-fn build_log_file_writer(path: &Path, log_queue_size: usize, log_lossy: bool) -> PyResult<(NonBlocking, WorkerGuard)> {
-    if let Some(parent_directory) = path.parent().filter(|parent_directory| !parent_directory.as_os_str().is_empty()) {
-        fs::create_dir_all(parent_directory).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+fn logging_sink_initialization_error_to_py(error: native_logging_sink::LoggingSinkInitializationError<PyErr>) -> PyErr {
+    match error {
+        native_logging_sink::LoggingSinkInitializationError::Sink(sink_error) => logging_sink_error_to_py(sink_error),
+        native_logging_sink::LoggingSinkInitializationError::HostLogging(host_logging_error) => host_logging_error,
     }
-    let log_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-    Ok(build_non_blocking_writer(log_file, "g-tracing-file", log_queue_size, log_lossy))
 }
 
-fn build_telemetry_file_writer(
-    path: &Path,
-    log_queue_size: usize,
-    log_lossy: bool,
-    event_cap: Option<usize>,
-) -> PyResult<(TelemetryWriterFactory, WorkerGuard)> {
-    let (writer, guard) = build_log_file_writer(path, log_queue_size, log_lossy)?;
-    let event_cap_state = native_telemetry_session::TelemetryEventCapState::new(path, event_cap, log_lossy);
-    Ok((TelemetryWriterFactory::new(writer, event_cap_state), guard))
-}
-
-fn build_shared_or_log_file_writer(
-    path: &Path,
-    log_queue_size: usize,
-    log_lossy: bool,
-    event_cap: Option<usize>,
-) -> PyResult<(TelemetryWriterFactory, Option<WorkerGuard>)> {
-    if let Some(shared_writer) = shared_telemetry_writer_for_path(path)? {
-        return Ok((shared_writer, None));
+#[expect(clippy::needless_pass_by_value, reason = "map_err passes the native logging sink error by value.")]
+fn logging_sink_error_to_py(error: native_logging_sink::LoggingSinkError) -> PyErr {
+    match error {
+        native_logging_sink::LoggingSinkError::InvalidLogFilter { .. }
+        | native_logging_sink::LoggingSinkError::InvalidTraceFilter { .. } => PyValueError::new_err(error.to_string()),
+        native_logging_sink::LoggingSinkError::Writer(_)
+        | native_logging_sink::LoggingSinkError::LoggingGuardMutexPoisoned => {
+            PyRuntimeError::new_err(error.to_string())
+        }
     }
-    let (writer, guard) = build_telemetry_file_writer(path, log_queue_size, log_lossy, event_cap)?;
-    Ok((writer, Some(guard)))
 }
 
-fn shared_telemetry_writer_for_path(path: &Path) -> PyResult<Option<TelemetryWriterFactory>> {
-    let normalized_path = normalize_path_for_comparison(path);
-    let telemetry_writer = lock_telemetry_writer()?;
-    Ok(telemetry_writer
-        .as_ref()
-        .filter(|shared_writer| normalize_path_for_comparison(&shared_writer.path) == normalized_path)
-        .map(|shared_writer| shared_writer.writer.clone()))
-}
-
-fn replace_shared_telemetry_writer(path: PathBuf, writer: TelemetryWriterFactory) -> PyResult<()> {
-    let mut telemetry_writer = lock_telemetry_writer()?;
-    *telemetry_writer = Some(SharedTelemetryWriter { path, writer });
-    Ok(())
-}
-
-fn clear_shared_telemetry_writer(path: &Path) -> PyResult<()> {
-    let normalized_path = normalize_path_for_comparison(path);
-    let mut telemetry_writer = lock_telemetry_writer()?;
-    if telemetry_writer
-        .as_ref()
-        .is_some_and(|shared_writer| normalize_path_for_comparison(&shared_writer.path) == normalized_path)
-    {
-        let _dropped_writer = telemetry_writer.take();
-    }
-    Ok(())
-}
-
-fn normalize_path_for_comparison(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-fn build_non_blocking_writer<Writer>(
-    writer: Writer,
-    thread_name: &str,
-    log_queue_size: usize,
-    log_lossy: bool,
-) -> (NonBlocking, WorkerGuard)
-where
-    Writer: std::io::Write + Send + 'static,
-{
-    NonBlockingBuilder::default()
-        .lossy(log_lossy)
-        .buffered_lines_limit(log_queue_size)
-        .thread_name(thread_name)
-        .finish(writer)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use super::*;
-
-    static NEXT_TEST_FILE_ID: AtomicUsize = AtomicUsize::new(0);
-
-    fn telemetry_test_path(test_name: &str) -> PathBuf {
-        let file_id = NEXT_TEST_FILE_ID.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("g-{test_name}-{}-{file_id}.jsonl", std::process::id()))
-    }
-
-    #[test]
-    fn telemetry_event_cap_fails_without_lossy_mode() {
-        let path = telemetry_test_path("telemetry-cap-fails");
-        let (telemetry_writer, guard) =
-            build_telemetry_file_writer(&path, 32, false, Some(2)).expect("writer should build");
-
-        telemetry_writer.write_json_line(r#"{"event":"first"}"#).expect("first event should write");
-        telemetry_writer.write_json_line(r#"{"event":"second"}"#).expect("second event should write");
-        let error =
-            telemetry_writer.write_json_line(r#"{"event":"third"}"#).expect_err("third event should exceed cap");
-
-        assert!(error.to_string().contains("Trace telemetry event cap exceeded at 2 events"));
-        assert!(telemetry_writer.fail_if_lossless_cap_exceeded().is_err());
-        drop(telemetry_writer);
-        drop(guard);
-
-        let line_count = fs::read_to_string(&path).expect("telemetry file should be readable").lines().count();
-        assert_eq!(line_count, 2);
-        fs::remove_file(path).expect("telemetry test file should be removed");
-    }
-
-    #[test]
-    fn telemetry_event_cap_drops_with_lossy_mode() {
-        let path = telemetry_test_path("telemetry-cap-drops");
-        let (telemetry_writer, guard) =
-            build_telemetry_file_writer(&path, 32, true, Some(1)).expect("writer should build");
-
-        telemetry_writer.write_json_line(r#"{"event":"first"}"#).expect("first event should write");
-        telemetry_writer.write_json_line(r#"{"event":"second"}"#).expect("second event should drop");
-        telemetry_writer.write_json_line(r#"{"event":"third"}"#).expect("third event should drop");
-        assert!(telemetry_writer.fail_if_lossless_cap_exceeded().is_ok());
-        drop(telemetry_writer);
-        drop(guard);
-
-        let telemetry_text = fs::read_to_string(&path).expect("telemetry file should be readable");
-        assert_eq!(telemetry_text.lines().count(), 1);
-        assert!(telemetry_text.contains(r#""event":"first""#));
-        fs::remove_file(path).expect("telemetry test file should be removed");
-    }
-
-    #[test]
-    fn telemetry_event_cap_zero_disables_cap() {
-        let path = telemetry_test_path("telemetry-cap-disabled");
-        let (telemetry_writer, guard) =
-            build_telemetry_file_writer(&path, 32, false, normalize_event_cap(Some(0))).expect("writer should build");
-
-        telemetry_writer.write_json_line(r#"{"event":"first"}"#).expect("first event should write");
-        telemetry_writer.write_json_line(r#"{"event":"second"}"#).expect("second event should write");
-        telemetry_writer.write_json_line(r#"{"event":"third"}"#).expect("third event should write");
-        assert!(telemetry_writer.fail_if_lossless_cap_exceeded().is_ok());
-        drop(telemetry_writer);
-        drop(guard);
-
-        let line_count = fs::read_to_string(&path).expect("telemetry file should be readable").lines().count();
-        assert_eq!(line_count, 3);
-        fs::remove_file(path).expect("telemetry test file should be removed");
-    }
+#[expect(clippy::needless_pass_by_value, reason = "map_err passes the native writer error by value.")]
+fn telemetry_writer_error_to_py(error: std::io::Error) -> PyErr {
+    PyRuntimeError::new_err(error.to_string())
 }

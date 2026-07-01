@@ -8,8 +8,8 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use crate::sample::{
-    AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, GroupedAlignedSampleData, MultiAlignedSampleData,
+use g_input::sample::{
+    self, AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, GroupedAlignedSampleData, MultiAlignedSampleData,
     MultiAlignmentInputs, ResolvedPhenotypeComputeGroup, SampleKeyMode,
 };
 
@@ -267,9 +267,7 @@ fn align_sample_data<'py>(
         is_binary_trait,
         sample_key_mode: parsed_sample_key_mode,
     };
-    py.detach(|| crate::sample::align_sample_data(inputs))
-        .map(NativeAlignedSampleData::new)
-        .map_err(PyValueError::new_err)
+    py.detach(|| sample::align_sample_data(inputs)).map(NativeAlignedSampleData::new).map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
@@ -311,7 +309,7 @@ fn align_multi_sample_data<'py>(
         is_binary_trait,
         sample_key_mode: parsed_sample_key_mode,
     };
-    py.detach(|| crate::sample::align_multi_sample_data(inputs))
+    py.detach(|| sample::align_multi_sample_data(inputs))
         .map(NativeMultiAlignedSampleData::new)
         .map_err(PyValueError::new_err)
 }
@@ -355,7 +353,7 @@ fn align_grouped_sample_data<'py>(
         is_binary_trait,
         sample_key_mode: parsed_sample_key_mode,
     };
-    py.detach(|| crate::sample::align_grouped_sample_data(&inputs))
+    py.detach(|| sample::align_grouped_sample_data(&inputs))
         .map(NativeGroupedAlignedSampleData::new)
         .map_err(PyValueError::new_err)
 }
@@ -386,7 +384,7 @@ fn align_sample_data_from_sample_file(
 ) -> PyResult<NativeAlignedSampleData> {
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
     py.detach(move || {
-        crate::sample::align_sample_data_from_sample_file(
+        sample::align_sample_data_from_sample_file(
             Path::new(&sample_path),
             expected_sample_count,
             phenotype_path,
@@ -427,7 +425,7 @@ fn align_multi_sample_data_from_sample_file(
 ) -> PyResult<NativeMultiAlignedSampleData> {
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
     py.detach(move || {
-        crate::sample::align_multi_sample_data_from_sample_file(
+        sample::align_multi_sample_data_from_sample_file(
             Path::new(&sample_path),
             expected_sample_count,
             phenotype_path,
@@ -451,7 +449,7 @@ fn resolve_single_phenotype_compute_group(
     sample_key_mode: String,
 ) -> PyResult<NativeResolvedPhenotypeComputeGroup> {
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    Ok(NativeResolvedPhenotypeComputeGroup::new(crate::sample::resolve_single_phenotype_compute_group(
+    Ok(NativeResolvedPhenotypeComputeGroup::new(sample::resolve_single_phenotype_compute_group(
         &aligned_sample_data.data,
         phenotype_name,
         prediction_list_path.as_deref(),
@@ -469,7 +467,7 @@ fn resolve_per_phenotype_compute_group(
     sample_key_mode: String,
 ) -> PyResult<NativeResolvedPhenotypeComputeGroup> {
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    Ok(NativeResolvedPhenotypeComputeGroup::new(crate::sample::resolve_per_phenotype_compute_group(
+    Ok(NativeResolvedPhenotypeComputeGroup::new(sample::resolve_per_phenotype_compute_group(
         &aligned_sample_data.data,
         phenotype_indices,
         phenotype_names,
@@ -488,7 +486,7 @@ fn resolve_complete_case_compute_group(
     sample_key_mode: String,
 ) -> PyResult<NativeResolvedPhenotypeComputeGroup> {
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    Ok(NativeResolvedPhenotypeComputeGroup::new(crate::sample::resolve_complete_case_compute_group(
+    Ok(NativeResolvedPhenotypeComputeGroup::new(sample::resolve_complete_case_compute_group(
         &aligned_sample_data.data,
         phenotype_indices,
         phenotype_names,

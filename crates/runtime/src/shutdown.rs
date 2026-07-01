@@ -1,5 +1,7 @@
 //! Deterministic graceful-shutdown signal metadata helpers.
 
+use std::collections::BTreeMap;
+
 use signal_hook::consts::signal;
 
 const SIGSTKFLT_NUMBER: i32 = 16;
@@ -64,6 +66,12 @@ pub struct ShutdownHandlerInstallPlan {
 pub struct ShutdownHandlerRestorePlan {
     pub should_restore: bool,
     pub handled_signals: Vec<ShutdownSignalPayload>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShutdownHandlerSession<Handler> {
+    controller: ShutdownController,
+    previous_handlers: BTreeMap<i32, Handler>,
 }
 
 impl ShutdownControllerState {
@@ -149,6 +157,74 @@ impl ShutdownController {
     /// Returns an error when `signal_number` is not a supported Linux signal.
     pub fn request_shutdown(&mut self, signal_number: i32) -> Result<ShutdownRequestDecisionPayload, String> {
         self.state.request_shutdown(signal_number)
+    }
+}
+
+impl<Handler> ShutdownHandlerSession<Handler> {
+    /// Build a handler session for the configured signal numbers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any signal number is unsupported.
+    pub fn new(handled_signal_numbers: &[i32]) -> Result<Self, String> {
+        Ok(Self { controller: ShutdownController::new(handled_signal_numbers)?, previous_handlers: BTreeMap::new() })
+    }
+
+    #[must_use]
+    pub const fn handlers_installed(&self) -> bool {
+        self.controller.handlers_installed()
+    }
+
+    #[must_use]
+    pub const fn requested_signal(&self) -> Option<&ShutdownSignalPayload> {
+        self.controller.requested_signal()
+    }
+
+    pub fn reset(&mut self) {
+        self.controller.reset();
+    }
+
+    #[must_use]
+    pub fn begin_handler_install(&mut self) -> ShutdownHandlerInstallPlan {
+        self.previous_handlers.clear();
+        self.controller.begin_handler_install()
+    }
+
+    pub fn record_previous_handler(&mut self, signal_number: i32, previous_handler: Handler) {
+        self.previous_handlers.insert(signal_number, previous_handler);
+    }
+
+    #[must_use]
+    pub fn previous_handler(&self, signal_number: i32) -> Option<&Handler> {
+        self.previous_handlers.get(&signal_number)
+    }
+
+    pub fn mark_handlers_installed(&mut self) {
+        self.controller.mark_handlers_installed();
+    }
+
+    #[must_use]
+    pub fn plan_handler_restore(&self) -> ShutdownHandlerRestorePlan {
+        self.controller.plan_handler_restore()
+    }
+
+    pub fn mark_handlers_restored(&mut self) {
+        self.controller.mark_handlers_restored();
+        self.previous_handlers.clear();
+    }
+
+    pub fn finish_handler_session(&mut self) {
+        self.controller.finish_handler_session();
+        self.previous_handlers.clear();
+    }
+
+    /// Record a handled shutdown signal and return the resulting action.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `signal_number` is not a supported Linux signal.
+    pub fn request_shutdown(&mut self, signal_number: i32) -> Result<ShutdownRequestDecisionPayload, String> {
+        self.controller.request_shutdown(signal_number)
     }
 }
 
@@ -281,6 +357,33 @@ mod tests {
         controller.finish_handler_session();
         assert_eq!(controller.requested_signal(), None);
         assert!(!controller.handlers_installed());
+    }
+
+    #[test]
+    fn shutdown_handler_session_owns_previous_handler_state() {
+        let mut session = ShutdownHandlerSession::new(&[signal::SIGINT, signal::SIGTERM]).unwrap();
+
+        let install_plan = session.begin_handler_install();
+        assert_eq!(install_plan.handled_signals.len(), 2);
+        session.record_previous_handler(signal::SIGINT, "previous-sigint".to_string());
+        session.record_previous_handler(signal::SIGTERM, "previous-sigterm".to_string());
+        session.mark_handlers_installed();
+
+        assert!(session.handlers_installed());
+        assert_eq!(session.previous_handler(signal::SIGINT).map(String::as_str), Some("previous-sigint"));
+        assert_eq!(session.previous_handler(signal::SIGTERM).map(String::as_str), Some("previous-sigterm"));
+        assert_eq!(session.request_shutdown(signal::SIGINT).unwrap().action, ShutdownRequestAction::Graceful);
+        assert!(session.requested_signal().is_some());
+
+        let restore_plan = session.plan_handler_restore();
+        assert!(restore_plan.should_restore);
+        session.mark_handlers_restored();
+        assert!(!session.handlers_installed());
+        assert_eq!(session.previous_handler(signal::SIGINT), None);
+        assert!(session.requested_signal().is_some());
+
+        session.finish_handler_session();
+        assert_eq!(session.requested_signal(), None);
     }
 
     #[test]

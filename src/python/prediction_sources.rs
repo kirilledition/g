@@ -8,7 +8,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyModule};
 
-use crate::regenie::{
+use g_input::regenie::{
     MultiPredictionSource as NativeMultiPredictionSource, PredictionSource,
     resolve_prediction_loco_paths as resolve_native_prediction_loco_paths,
 };

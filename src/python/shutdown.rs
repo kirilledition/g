@@ -1,6 +1,5 @@
 //! PyO3 adapters for deterministic graceful-shutdown signal helpers.
 
-use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 
 use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError, PySystemExit, PyValueError};
@@ -11,8 +10,7 @@ use g_runtime::shutdown as native_shutdown;
 
 #[pyclass]
 pub(crate) struct NativeShutdownController {
-    controller: Mutex<native_shutdown::ShutdownController>,
-    previous_handlers: Mutex<BTreeMap<i32, Py<PyAny>>>,
+    session: Mutex<native_shutdown::ShutdownHandlerSession<Py<PyAny>>>,
 }
 
 #[pyclass]
@@ -42,30 +40,30 @@ impl NativeShutdownController {
         let resolved_signal_numbers =
             handled_signal_numbers.unwrap_or_else(native_shutdown::default_shutdown_signal_numbers);
         Ok(Self {
-            controller: Mutex::new(
-                native_shutdown::ShutdownController::new(&resolved_signal_numbers).map_err(PyValueError::new_err)?,
+            session: Mutex::new(
+                native_shutdown::ShutdownHandlerSession::new(&resolved_signal_numbers)
+                    .map_err(PyValueError::new_err)?,
             ),
-            previous_handlers: Mutex::new(BTreeMap::new()),
         })
     }
 
     fn reset(&self) -> PyResult<()> {
-        self.lock_controller()?.reset();
+        self.lock_session()?.reset();
         Ok(())
     }
 
     #[getter]
     fn handlers_installed(&self) -> PyResult<bool> {
-        Ok(self.lock_controller()?.handlers_installed())
+        Ok(self.lock_session()?.handlers_installed())
     }
 
     fn requested_signal_payload<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
-        let controller = self.lock_controller()?;
-        controller.requested_signal().map(|payload| shutdown_signal_payload_to_dict(py, payload)).transpose()
+        let session = self.lock_session()?;
+        session.requested_signal().map(|payload| shutdown_signal_payload_to_dict(py, payload)).transpose()
     }
 
     fn request_shutdown_payload<'py>(&self, py: Python<'py>, signal_number: i32) -> PyResult<Bound<'py, PyDict>> {
-        let decision = self.lock_controller()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
+        let decision = self.lock_session()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
         shutdown_request_decision_payload_to_dict(py, &decision)
     }
 
@@ -74,7 +72,7 @@ impl NativeShutdownController {
         py: Python<'py>,
         signal_number: i32,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let decision = self.lock_controller()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
+        let decision = self.lock_session()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
         if decision.action == native_shutdown::ShutdownRequestAction::Force {
             self.restore_python_signal_handlers(py)?;
             return raise_second_signal_exception_from_plan(signal_number);
@@ -83,37 +81,34 @@ impl NativeShutdownController {
     }
 
     fn handler_install_plan_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let plan = self.lock_controller()?.begin_handler_install();
-        self.lock_previous_handlers()?.clear();
+        let plan = self.lock_session()?.begin_handler_install();
         let python_payload = PyDict::new(py);
         python_payload.set_item("handled_signals", shutdown_signal_payloads_to_tuple(py, &plan.handled_signals)?)?;
         Ok(python_payload)
     }
 
     fn mark_handlers_installed(&self) -> PyResult<()> {
-        self.lock_controller()?.mark_handlers_installed();
+        self.lock_session()?.mark_handlers_installed();
         Ok(())
     }
 
     fn install_python_signal_handlers(&self, py: Python<'_>, handler: &Bound<'_, PyAny>) -> PyResult<()> {
-        let plan = self.lock_controller()?.begin_handler_install();
+        let mut session = self.lock_session()?;
+        let plan = session.begin_handler_install();
         let signal_module = py.import("signal")?;
         let signal_class = signal_module.getattr("Signals")?;
-        let mut previous_handlers = self.lock_previous_handlers()?;
-        previous_handlers.clear();
         for signal_payload in &plan.handled_signals {
             let python_signal = signal_class.call1((signal_payload.number,))?;
             let previous_handler = signal_module.call_method1("getsignal", (&python_signal,))?;
             signal_module.call_method1("signal", (&python_signal, handler))?;
-            previous_handlers.insert(signal_payload.number, previous_handler.unbind());
+            session.record_previous_handler(signal_payload.number, previous_handler.unbind());
         }
-        drop(previous_handlers);
-        self.lock_controller()?.mark_handlers_installed();
+        session.mark_handlers_installed();
         Ok(())
     }
 
     fn handler_restore_plan_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let plan = self.lock_controller()?.plan_handler_restore();
+        let plan = self.lock_session()?.plan_handler_restore();
         let python_payload = PyDict::new(py);
         python_payload.set_item("should_restore", plan.should_restore)?;
         python_payload.set_item("handled_signals", shutdown_signal_payloads_to_tuple(py, &plan.handled_signals)?)?;
@@ -121,48 +116,39 @@ impl NativeShutdownController {
     }
 
     fn mark_handlers_restored(&self) -> PyResult<()> {
-        self.lock_controller()?.mark_handlers_restored();
-        self.lock_previous_handlers()?.clear();
+        self.lock_session()?.mark_handlers_restored();
         Ok(())
     }
 
     fn restore_python_signal_handlers(&self, py: Python<'_>) -> PyResult<bool> {
-        let plan = self.lock_controller()?.plan_handler_restore();
+        let mut session = self.lock_session()?;
+        let plan = session.plan_handler_restore();
         if !plan.should_restore {
             return Ok(false);
         }
         let signal_module = py.import("signal")?;
         let signal_class = signal_module.getattr("Signals")?;
-        let mut previous_handlers = self.lock_previous_handlers()?;
         for signal_payload in &plan.handled_signals {
             let python_signal = signal_class.call1((signal_payload.number,))?;
-            let Some(previous_handler) = previous_handlers.get(&signal_payload.number) else {
+            let Some(previous_handler) = session.previous_handler(signal_payload.number) else {
                 return Err(PyRuntimeError::new_err(format!("missing previous handler for {}", signal_payload.name)));
             };
             signal_module.call_method1("signal", (&python_signal, previous_handler.bind(py)))?;
         }
-        previous_handlers.clear();
-        drop(previous_handlers);
-        self.lock_controller()?.mark_handlers_restored();
+        session.mark_handlers_restored();
         Ok(true)
     }
 
     fn restore_python_signal_handlers_and_reset(&self, py: Python<'_>) -> PyResult<bool> {
         let restored_handlers = self.restore_python_signal_handlers(py)?;
-        self.lock_controller()?.finish_handler_session();
+        self.lock_session()?.finish_handler_session();
         Ok(restored_handlers)
     }
 }
 
 impl NativeShutdownController {
-    fn lock_controller(&self) -> PyResult<MutexGuard<'_, native_shutdown::ShutdownController>> {
-        self.controller.lock().map_err(|_| PyValueError::new_err("Shutdown controller mutex was poisoned."))
-    }
-
-    fn lock_previous_handlers(&self) -> PyResult<MutexGuard<'_, BTreeMap<i32, Py<PyAny>>>> {
-        self.previous_handlers
-            .lock()
-            .map_err(|_| PyValueError::new_err("Previous shutdown handlers mutex was poisoned."))
+    fn lock_session(&self) -> PyResult<MutexGuard<'_, native_shutdown::ShutdownHandlerSession<Py<PyAny>>>> {
+        self.session.lock().map_err(|_| PyValueError::new_err("Shutdown handler session mutex was poisoned."))
     }
 }
 
