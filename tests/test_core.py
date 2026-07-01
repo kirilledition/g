@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import typing
+import unittest.mock
 from pathlib import Path
 
 import numpy as np
@@ -1379,6 +1380,35 @@ def test_native_jax_runtime_setup_session_completes_validation() -> None:
     assert completed_payload["gpu_validation_status"] == "succeeded"
     assert native_setup_session.setup_payload()["gpu_validation_message"] == "gpu ready"
     assert gpu_validation_fields[0]["value"] == "succeeded"
+
+
+def test_native_jax_runtime_setup_session_applies_config_updates() -> None:
+    setup_payload = _core.resolve_jax_runtime_setup_payload(
+        requested_device="gpu",
+        cache_directory="/tmp/g-jax-cache",
+        matmul_precision="highest",
+        persistent_cache=True,
+        persistent_cache_min_entry_size_bytes=1024,
+        persistent_cache_min_compile_time_seconds=5,
+        xla_autotune_cache=True,
+        transfer_guard=True,
+    )
+    native_setup_session = _core.NativeJaxRuntimeSetupSession(setup_payload, should_configure=True)
+
+    with unittest.mock.patch("jax.config.update") as config_update_mock:
+        applied_count = native_setup_session.apply_config_updates()
+
+    assert applied_count == 8
+    assert [call.args for call in config_update_mock.call_args_list] == [
+        ("jax_platforms", "cuda"),
+        ("jax_enable_x64", True),
+        ("jax_default_matmul_precision", "highest"),
+        ("jax_compilation_cache_dir", "/tmp/g-jax-cache"),
+        ("jax_persistent_cache_min_entry_size_bytes", 1024),
+        ("jax_persistent_cache_min_compile_time_secs", 5),
+        ("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"),
+        ("jax_transfer_guard", "disallow"),
+    ]
 
 
 def test_native_jax_runtime_policy_payload() -> None:

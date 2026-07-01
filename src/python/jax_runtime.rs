@@ -80,6 +80,25 @@ impl NativeJaxRuntimeSetupSession {
         PyTuple::new(py, &update_payloads)
     }
 
+    fn apply_config_updates(&self, py: Python<'_>) -> PyResult<usize> {
+        let updates = self.lock_session()?.config_updates();
+        let update_function = py.import("jax")?.getattr("config")?.getattr("update")?;
+        for update in &updates {
+            match &update.value {
+                native_jax_runtime::JaxRuntimeConfigValue::Boolean(value) => {
+                    update_function.call1((update.setting_name.as_str(), *value))?;
+                }
+                native_jax_runtime::JaxRuntimeConfigValue::Integer(value) => {
+                    update_function.call1((update.setting_name.as_str(), *value))?;
+                }
+                native_jax_runtime::JaxRuntimeConfigValue::Text(value) => {
+                    update_function.call1((update.setting_name.as_str(), value.as_str()))?;
+                }
+            }
+        }
+        Ok(updates.len())
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     fn complete_validation_payload<'py>(
         &self,

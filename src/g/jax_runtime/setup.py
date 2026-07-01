@@ -103,10 +103,7 @@ def nvidia_driver_is_visible() -> bool:
 
 def apply_jax_runtime_config_updates(native_setup_session: _core.NativeJaxRuntimeSetupSession) -> None:
     """Apply native-ordered JAX runtime config updates."""
-    update_payloads = native_setup_session.config_update_payloads()
-    for update_payload in update_payloads:
-        update_mapping = dict(typing.cast("typing.Mapping[str, object]", update_payload))
-        jax.config.update(str(update_mapping["setting_name"]), update_mapping["value"])
+    native_setup_session.apply_config_updates()
 
 
 def complete_jax_runtime_setup_validation_report(
