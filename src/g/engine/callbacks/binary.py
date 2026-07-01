@@ -504,55 +504,9 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def consume_result_write_items(self) -> None:
         """Materialize computed multi-trait JAX results and write each trait in order."""
         try:
-            if self.uses_native_callback_runtime_resources():
-                self.consume_multi_result_write_items_with_native_runtime_resources()
-                return
-            if self.stage_timing_recorder is None:
-                self.consume_result_write_items_without_timing()
-                return
-            while True:
-                get_start_time = time.perf_counter()
-                work_item = self.get_result_write_item()
-                get_observation_plan = self.plan_result_queue_get_observation()
-                drain_completion_plan = self.plan_result_write_drain_completion(work_item)
-                if self.apply_result_write_drain_completion_plan(drain_completion_plan):
-                    return
-                self.record_bounded_resource_stage_duration(
-                    resource_name=get_observation_plan.queue_name,
-                    operation_name=get_observation_plan.operation_name,
-                    start_time=get_start_time,
-                    blocked=get_observation_plan.blocked,
-                )
-                dispatch_plan = self.plan_result_write_item_dispatch(
-                    work_item,
-                )
-                self.apply_result_write_item_dispatch_plan(dispatch_plan)
-                if dispatch_plan.should_process_multi_result_write_item:
-                    multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
-                    self.process_multi_result_write_item(multi_work_item)
-                    continue
-                message = "Native result write dispatch plan did not select a multi-result processing path."
-                raise RuntimeError(message)
+            self.consume_multi_result_write_items_with_native_runtime_resources()
         except Exception as error:  # noqa: BLE001
             self.result_worker_error = error
-
-    def consume_result_write_items_without_timing(self) -> None:
-        """Consume multi-trait result write items without diagnostic queue timing."""
-        while True:
-            work_item = self.get_result_write_item()
-            drain_completion_plan = self.plan_result_write_drain_completion(work_item)
-            if self.apply_result_write_drain_completion_plan(drain_completion_plan):
-                return
-            dispatch_plan = self.plan_result_write_item_dispatch(
-                work_item,
-            )
-            self.apply_result_write_item_dispatch_plan(dispatch_plan)
-            if dispatch_plan.should_process_multi_result_write_item:
-                multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
-                self.process_multi_result_write_item(multi_work_item)
-                continue
-            message = "Native result write dispatch plan did not select a multi-result processing path."
-            raise RuntimeError(message)
 
     def process_multi_result_write_item(self, multi_work_item: Regenie2MultiResultWriteWorkItem) -> None:
         """Materialize and write one multi-trait binary result work item."""

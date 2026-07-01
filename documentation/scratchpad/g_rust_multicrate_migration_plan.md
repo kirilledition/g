@@ -1304,6 +1304,9 @@ Remove Python as the chunk-level scheduler.
   result-queue get/drain path, so Rust owns timing-enabled versus untimed
   observation selection for both single-result and multi-result production
   consumers.
+- Multi-result linear and binary callback consumers now always enter the native
+  runtime-resource result-drain loop; their production subclass fallback loops
+  have been removed.
 - The timed dosage consumer fallback loop now contains only the manual scheduler
   path; production native dosage consumers enter the optional-observation native
   get/drain helper before timing-mode dispatch.

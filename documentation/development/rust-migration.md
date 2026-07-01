@@ -89,7 +89,9 @@ of a bounded Python queue, with Python retaining only transitional item storage
 and wakeups. Dosage queue occupancy is now
 tracked by native scheduler state instead of a bounded Python queue, with Python
 retaining only transitional item storage and wakeups. Dosage and result queue
-put/get wait decisions now come from native attempt plans.
+put/get wait decisions now come from native attempt plans. Multi-trait linear
+and binary result consumers now always use the native runtime-resource
+get/drain loop instead of a production Python fallback loop.
 
 ## Phase Order
 
