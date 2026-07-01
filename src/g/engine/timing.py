@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 import time
 import typing
 from dataclasses import dataclass
 
 from g import _core
-
-if typing.TYPE_CHECKING:
-    import pathlib
 
 
 @dataclass(frozen=True)
@@ -187,6 +185,24 @@ class StageTimingSnapshot:
     null_logistic_diagnostics: tuple[NullLogisticDiagnosticsSnapshot, ...]
     queue_backpressure: tuple[QueueBackpressureSnapshot, ...]
     transfer_metadata: tuple[TransferMetadataSnapshot, ...]
+
+
+@dataclass(frozen=True)
+class FinalTimingOutputContext:
+    """Resolved final timing output paths and recorder policy.
+
+    Attributes:
+        stage_timing_path: Optional exact stage timing output path.
+        profile_summary_path: Optional profile summary output path.
+        run_id: Optional telemetry run identifier for profile summaries.
+        force_stage_timing_recorder: Whether aggregate timing should be forced.
+
+    """
+
+    stage_timing_path: pathlib.Path | None
+    profile_summary_path: pathlib.Path | None
+    run_id: str | None
+    force_stage_timing_recorder: bool
 
 
 @dataclass(frozen=True)
@@ -669,6 +685,30 @@ def build_stage_timing_recorder(
     if native_recorder is None:
         return None
     return StageTimingRecorder.from_native_recorder(native_recorder)
+
+
+def resolve_final_timing_output_context(
+    diagnostics_stage_timing_path: pathlib.Path | None,
+    telemetry_session: object | None,
+) -> FinalTimingOutputContext:
+    """Resolve final timing output paths through the native runtime policy."""
+    native_context = _core.resolve_final_timing_output_context(
+        None if diagnostics_stage_timing_path is None else str(diagnostics_stage_timing_path),
+        telemetry_session,
+    )
+    return FinalTimingOutputContext(
+        stage_timing_path=path_from_native_context_value(native_context.stage_timing_path),
+        profile_summary_path=path_from_native_context_value(native_context.profile_summary_path),
+        run_id=native_context.run_id,
+        force_stage_timing_recorder=native_context.force_stage_timing_recorder,
+    )
+
+
+def path_from_native_context_value(path_value: str | None) -> pathlib.Path | None:
+    """Adapt a native optional path string into a Python path."""
+    if path_value is None:
+        return None
+    return pathlib.Path(path_value)
 
 
 def should_collect_exact_stage_timings(stage_timing_recorder: StageTimingRecorder | None) -> bool:

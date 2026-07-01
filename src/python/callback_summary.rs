@@ -411,10 +411,27 @@ impl From<native_callback_summary::BinaryCorrectionSummaryEmitPlan> for NativeBi
     }
 }
 
+#[pyfunction]
+pub(crate) fn emit_binary_correction_summary_telemetry(
+    telemetry_session: &Bound<'_, PyAny>,
+    summary_payload: &Bound<'_, PyAny>,
+    missing_session_message: &str,
+) -> PyResult<()> {
+    if summary_payload.is_none() {
+        return Ok(());
+    }
+    if telemetry_session.is_none() {
+        return Err(PyRuntimeError::new_err(missing_session_message.to_owned()));
+    }
+    telemetry_session.call_method1("log_binary_correction_summary", (summary_payload,))?;
+    Ok(())
+}
+
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeBinaryCorrectionDiagnosticsRecordPlan>()?;
     module.add_class::<NativeBinaryCorrectionSummary>()?;
     module.add_class::<NativeBinaryCorrectionSummaryEmitPlan>()?;
+    module.add_function(wrap_pyfunction!(emit_binary_correction_summary_telemetry, module)?)?;
     Ok(())
 }
 

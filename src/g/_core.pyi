@@ -961,6 +961,12 @@ class NativeBinaryCorrectionSummary:
     ) -> NativeBinaryCorrectionSummaryEmitPlan: ...
     def summary_payload(self) -> dict[str, int]: ...
 
+def emit_binary_correction_summary_telemetry(
+    telemetry_session: object | None,
+    summary_payload: dict[str, int] | None,
+    missing_session_message: str,
+) -> None: ...
+
 class NativeCallbackQueueLimits:
     @property
     def dosage_queue_depth(self) -> int: ...
@@ -2161,6 +2167,20 @@ class NativeCallbackProgressState:
     def record_processed_chunk_without_progress(self) -> None: ...
     def finish_progress(self) -> NativeCallbackProgressCompletion | None: ...
 
+def emit_callback_progress_update_telemetry(
+    telemetry_session: object | None,
+    progress_update: NativeCallbackProgressUpdate | None,
+) -> None: ...
+def emit_callback_progress_event_telemetry(
+    telemetry_session: object | None,
+    progress_event: NativeCallbackProgressTelemetryEvent | None,
+    missing_session_message: str,
+) -> None: ...
+def emit_callback_progress_completion_telemetry(
+    telemetry_session: object | None,
+    progress_completion: NativeCallbackProgressCompletion | None,
+) -> None: ...
+
 class NativeDosageBufferReusePlan:
     @property
     def requires_slice(self) -> bool: ...
@@ -2432,6 +2452,12 @@ class NativeStageTimingRecorderPlan:
 class NativeTimingFileWritePlan:
     should_write: bool
 
+class NativeFinalTimingOutputContext:
+    stage_timing_path: str | None
+    profile_summary_path: str | None
+    run_id: str | None
+    force_stage_timing_recorder: bool
+
 class NativeCliRunFailureTelemetryPlan:
     should_log_run_failed_to_telemetry: bool
 
@@ -2455,6 +2481,10 @@ def plan_cli_telemetry_close_failure(
     current_exit_code: int,
     runtime_failure_exit_code: int,
 ) -> NativeCliTelemetryCloseFailurePlan: ...
+def resolve_final_timing_output_context(
+    diagnostics_stage_timing_path: str | None,
+    telemetry_session: object | None,
+) -> NativeFinalTimingOutputContext: ...
 
 class NativeRuntimeCompatibilityToken:
     pass

@@ -214,6 +214,14 @@ pub struct FinalTimingOutputsWriteResultPayload {
     pub wrote_profile_summary: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalTimingOutputContext {
+    pub stage_timing_path: Option<String>,
+    pub profile_summary_path: Option<String>,
+    pub run_id: Option<String>,
+    pub force_stage_timing_recorder: bool,
+}
+
 #[derive(Debug)]
 pub enum TimingFileError {
     CreateParentDirectory { path: PathBuf, source: std::io::Error },
@@ -304,6 +312,31 @@ pub fn build_final_timing_outputs_write_started_diagnostic_payload(
         stage_timing_path: stage_timing_path.map(str::to_string),
         profile_summary_path: profile_summary_path.map(str::to_string),
         run_id: run_id.map(str::to_string),
+    }
+}
+
+#[must_use]
+pub fn resolve_final_timing_output_context(
+    diagnostics_stage_timing_path: Option<&str>,
+    telemetry_stage_timing_path: Option<&str>,
+    telemetry_profile_summary_path: Option<&str>,
+    telemetry_run_id: Option<&str>,
+    telemetry_profile_enabled: bool,
+    has_telemetry_session: bool,
+) -> FinalTimingOutputContext {
+    if has_telemetry_session {
+        return FinalTimingOutputContext {
+            stage_timing_path: telemetry_stage_timing_path.map(str::to_string),
+            profile_summary_path: telemetry_profile_summary_path.map(str::to_string),
+            run_id: telemetry_run_id.map(str::to_string),
+            force_stage_timing_recorder: telemetry_profile_enabled,
+        };
+    }
+    FinalTimingOutputContext {
+        stage_timing_path: diagnostics_stage_timing_path.map(str::to_string),
+        profile_summary_path: None,
+        run_id: None,
+        force_stage_timing_recorder: false,
     }
 }
 
@@ -1134,6 +1167,35 @@ mod tests {
                 stage_timing_path: Some("timings.json".to_string()),
                 profile_summary_path: Some("profile.summary.json".to_string()),
                 run_id: Some("run-1".to_string()),
+            },
+        );
+    }
+
+    #[test]
+    fn resolves_final_timing_output_context() {
+        assert_eq!(
+            resolve_final_timing_output_context(Some("diagnostics/timings.json"), None, None, None, false, false,),
+            FinalTimingOutputContext {
+                stage_timing_path: Some("diagnostics/timings.json".to_string()),
+                profile_summary_path: None,
+                run_id: None,
+                force_stage_timing_recorder: false,
+            },
+        );
+        assert_eq!(
+            resolve_final_timing_output_context(
+                Some("diagnostics/timings.json"),
+                Some("telemetry/timings.json"),
+                Some("telemetry/profile.summary.json"),
+                Some("run-1"),
+                true,
+                true,
+            ),
+            FinalTimingOutputContext {
+                stage_timing_path: Some("telemetry/timings.json".to_string()),
+                profile_summary_path: Some("telemetry/profile.summary.json".to_string()),
+                run_id: Some("run-1".to_string()),
+                force_stage_timing_recorder: true,
             },
         );
     }

@@ -28,6 +28,11 @@ pub(crate) struct NativeTimingFileWritePlan {
     inner: native_timing::TimingFileWritePlan,
 }
 
+#[pyclass]
+pub(crate) struct NativeFinalTimingOutputContext {
+    inner: native_timing::FinalTimingOutputContext,
+}
+
 #[pymethods]
 impl NativeStageTimingRecorderPlan {
     #[getter]
@@ -46,6 +51,29 @@ impl NativeTimingFileWritePlan {
     #[getter]
     fn should_write(&self) -> bool {
         self.inner.should_write
+    }
+}
+
+#[pymethods]
+impl NativeFinalTimingOutputContext {
+    #[getter]
+    fn stage_timing_path(&self) -> Option<String> {
+        self.inner.stage_timing_path.clone()
+    }
+
+    #[getter]
+    fn profile_summary_path(&self) -> Option<String> {
+        self.inner.profile_summary_path.clone()
+    }
+
+    #[getter]
+    fn run_id(&self) -> Option<String> {
+        self.inner.run_id.clone()
+    }
+
+    #[getter]
+    fn force_stage_timing_recorder(&self) -> bool {
+        self.inner.force_stage_timing_recorder
     }
 }
 
@@ -288,6 +316,34 @@ pub(crate) fn build_final_timing_outputs_write_started_diagnostic_payload<'py>(
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
+pub(crate) fn resolve_final_timing_output_context(
+    diagnostics_stage_timing_path: Option<String>,
+    telemetry_session: &Bound<'_, PyAny>,
+) -> PyResult<NativeFinalTimingOutputContext> {
+    let telemetry_fields = optional_final_timing_telemetry_fields(telemetry_session)?;
+    let context = match telemetry_fields {
+        Some(fields) => native_timing::resolve_final_timing_output_context(
+            diagnostics_stage_timing_path.as_deref(),
+            fields.stage_timing_path.as_deref(),
+            fields.profile_summary_path.as_deref(),
+            fields.run_id.as_deref(),
+            fields.profile_enabled,
+            true,
+        ),
+        None => native_timing::resolve_final_timing_output_context(
+            diagnostics_stage_timing_path.as_deref(),
+            None,
+            None,
+            None,
+            false,
+            false,
+        ),
+    };
+    Ok(NativeFinalTimingOutputContext { inner: context })
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
     stage_timing_path: Option<String>,
     profile_summary_path: Option<String>,
@@ -307,6 +363,7 @@ pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeFinalTimingOutputContext>()?;
     module.add_class::<NativeStageTimingRecorder>()?;
     module.add_class::<NativeStageTimingRecorderPlan>()?;
     module.add_class::<NativeTimingFileWritePlan>()?;
@@ -314,7 +371,38 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(plan_stage_timing_recorder, module)?)?;
     module.add_function(wrap_pyfunction!(plan_timing_file_write, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_final_timing_output_context, module)?)?;
     Ok(())
+}
+
+struct FinalTimingTelemetryFields {
+    stage_timing_path: Option<String>,
+    profile_summary_path: Option<String>,
+    run_id: Option<String>,
+    profile_enabled: bool,
+}
+
+fn optional_final_timing_telemetry_fields(
+    telemetry_session: &Bound<'_, PyAny>,
+) -> PyResult<Option<FinalTimingTelemetryFields>> {
+    if telemetry_session.is_none() {
+        return Ok(None);
+    }
+    let telemetry_paths = telemetry_session.getattr("paths")?;
+    Ok(Some(FinalTimingTelemetryFields {
+        stage_timing_path: optional_path_string(&telemetry_paths, "stage_timings_json")?,
+        profile_summary_path: optional_path_string(&telemetry_paths, "profile_summary_json")?,
+        run_id: Some(telemetry_session.getattr("run_id")?.extract::<String>()?),
+        profile_enabled: telemetry_session.getattr("profile_enabled")?.extract::<bool>()?,
+    }))
+}
+
+fn optional_path_string(source: &Bound<'_, PyAny>, attribute_name: &str) -> PyResult<Option<String>> {
+    let value = source.getattr(attribute_name)?;
+    if value.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(value.str()?.to_string_lossy().into_owned()))
 }
 
 fn parse_numeric_diagnostics_mapping(

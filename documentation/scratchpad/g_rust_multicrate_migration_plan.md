@@ -1100,15 +1100,16 @@ Remove Python as the chunk-level scheduler.
   occupancy, and free-buffer reads while Python keeps public runner property
   accessors.
 - Callback runtime resources now own production progress state reads, per-chunk
-  records, and completion while Python keeps telemetry emission.
+  records, and completion while native PyO3 helpers emit selected telemetry.
 - Callback runtime resources now derive production progress chunk identities
   directly from chunk metadata before progress-state updates, leaving explicit
   identity construction only on lower-level helper and test paths.
 - Callback runtime resources now own production callback-progress telemetry
-  availability decisions while Python keeps event emission.
+  availability decisions while native PyO3 helpers perform event emission.
 - Callback runtime resources now own production binary correction summary
   counters, retention/emit plans, and payload reads while Python keeps pending
-  diagnostics materialization and telemetry emission.
+  diagnostics materialization and native PyO3 helpers perform telemetry
+  emission.
 - Callback runtime resources now classify production binary-correction
   diagnostic payload presence from the object before retention planning, while
   Python only retains payloads selected by the native plan.
@@ -1636,6 +1637,12 @@ Python/JAX should emit typed diagnostic events through a native handle.
   BGEN-opened telemetry emission now uses native PyO3 dispatch helpers for the
   session-present check while preserving native telemetry run-session event
   payloads.
+- Callback progress and binary-correction-summary telemetry emission now uses
+  native PyO3 helpers for optional-session handling, invariant missing-session
+  errors, and telemetry method dispatch.
+- Runner final timing output context resolution now uses a native PyO3 helper
+  for the telemetry-session path/run-id/profile check before recorder creation
+  and final timing writes.
 - Native CLI telemetry close-failure planning now owns whether a close failure
   should be reported and whether it should replace the current process exit
   code.

@@ -149,19 +149,17 @@ def run_validated_regenie_config(
     """Plan, execute, and finalize a validated REGENIE-compatible config."""
     api_entry_start_time = time.perf_counter()
     stage_timing_recorder = None
-    stage_timing_path = (
-        regenie_config.g_diagnostics.stage_timings_json
-        if telemetry_session is None
-        else telemetry_session.paths.stage_timings_json
+    final_timing_context = timing.resolve_final_timing_output_context(
+        regenie_config.g_diagnostics.stage_timings_json,
+        telemetry_session,
     )
-    profile_summary_path = None if telemetry_session is None else telemetry_session.paths.profile_summary_json
     try:
         device_start_time = time.perf_counter()
         _core.record_runner_jax_runtime_configuration_started_diagnostic_event()
         runtime.configure_runtime_before_jax_import(regenie_config.g_compute, telemetry_session=telemetry_session)
         stage_timing_recorder = timing.build_stage_timing_recorder(
-            stage_timing_path,
-            force=telemetry_session is not None and telemetry_session.profile_enabled,
+            final_timing_context.stage_timing_path,
+            force=final_timing_context.force_stage_timing_recorder,
         )
         timing.record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
         output_start_time = time.perf_counter()
@@ -211,15 +209,17 @@ def run_validated_regenie_config(
         if stage_timing_recorder is not None:
             timing.record_stage_duration(stage_timing_recorder, "python_api_entry", api_entry_start_time)
             _core.record_final_timing_outputs_write_started_diagnostic_event(
-                None if stage_timing_path is None else str(stage_timing_path),
-                None if profile_summary_path is None else str(profile_summary_path),
-                None if telemetry_session is None else telemetry_session.run_id,
+                None if final_timing_context.stage_timing_path is None else str(final_timing_context.stage_timing_path),
+                None
+                if final_timing_context.profile_summary_path is None
+                else str(final_timing_context.profile_summary_path),
+                final_timing_context.run_id,
             )
             timing.write_final_timing_outputs(
                 stage_timing_recorder,
-                stage_timing_path=stage_timing_path,
-                profile_summary_path=profile_summary_path,
-                run_id=None if telemetry_session is None else telemetry_session.run_id,
+                stage_timing_path=final_timing_context.stage_timing_path,
+                profile_summary_path=final_timing_context.profile_summary_path,
+                run_id=final_timing_context.run_id,
             )
 
 

@@ -302,6 +302,41 @@ def test_native_stage_timing_recorder_writes_final_timing_outputs(tmp_path: Path
     ) == {"wrote_stage_timing_snapshot": False, "wrote_profile_summary": False}
 
 
+def test_resolve_final_timing_output_context_uses_native_policy(tmp_path: Path) -> None:
+    class FakeTelemetryPaths:
+        def __init__(self) -> None:
+            self.stage_timings_json = tmp_path / "telemetry" / "stage.json"
+            self.profile_summary_json = tmp_path / "telemetry" / "profile.json"
+
+    class FakeTelemetrySession:
+        def __init__(self, *, profile_enabled: bool) -> None:
+            self.paths = FakeTelemetryPaths()
+            self.run_id = "run-1"
+            self.profile_enabled = profile_enabled
+
+    no_session_context = timing.resolve_final_timing_output_context(
+        tmp_path / "diagnostics" / "stage.json",
+        None,
+    )
+    telemetry_context = timing.resolve_final_timing_output_context(
+        tmp_path / "diagnostics" / "stage.json",
+        FakeTelemetrySession(profile_enabled=True),
+    )
+
+    assert no_session_context == timing.FinalTimingOutputContext(
+        stage_timing_path=tmp_path / "diagnostics" / "stage.json",
+        profile_summary_path=None,
+        run_id=None,
+        force_stage_timing_recorder=False,
+    )
+    assert telemetry_context == timing.FinalTimingOutputContext(
+        stage_timing_path=tmp_path / "telemetry" / "stage.json",
+        profile_summary_path=tmp_path / "telemetry" / "profile.json",
+        run_id="run-1",
+        force_stage_timing_recorder=True,
+    )
+
+
 def test_final_timing_outputs_write_started_diagnostic_payload(tmp_path: Path) -> None:
     output_path = tmp_path / "diagnostics" / "timings.json"
     profile_summary_path = tmp_path / "diagnostics" / "profile.summary.json"

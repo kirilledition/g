@@ -1128,30 +1128,12 @@ class NativeBgenCallbackRunner(abc.ABC):
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""
         progress_update = self.callback_runtime_resources.record_progress_for_metadata(metadata)
-        if progress_update is None:
-            return
-        if self.telemetry_session is None:
-            message = "Native callback progress plan selected a missing telemetry session."
-            raise RuntimeError(message)
-        telemetry_plan = progress_update.telemetry_plan
-        for progress_event in telemetry_plan.events:
-            self.telemetry_session.log_callback_progress_event(progress_event)
-        progress_record = telemetry_plan.progress
-        self.telemetry_session.log_progress(
-            processed_chunk_count=progress_record.processed_chunk_count,
-            chromosome=progress_record.chromosome,
-            chunk_identifier=progress_record.chunk_identifier,
-            variant_start_index=progress_record.variant_start_index,
-            variant_stop_index=progress_record.variant_stop_index,
-            variant_count=progress_record.variant_count,
-        )
+        _core.emit_callback_progress_update_telemetry(self.telemetry_session, progress_update)
 
     def complete_progress(self) -> None:
         """Emit the native final progress completion event when telemetry consumed chunks."""
         progress_completion = self.finish_progress_state()
-        if self.telemetry_session is None or progress_completion is None:
-            return
-        self.telemetry_session.log_callback_progress_event(progress_completion.telemetry_event)
+        _core.emit_callback_progress_completion_telemetry(self.telemetry_session, progress_completion)
 
     def record_binary_null_model_failure_count(self, failure_count: int) -> None:
         """Accumulate binary null-model failures for run-level telemetry."""
@@ -1225,11 +1207,12 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.flush_binary_correction_diagnostics()
         if not summary_emit_plan.should_emit_summary:
             return
-        if self.telemetry_session is None:
-            message = "Native binary correction summary emit plan selected a missing telemetry session."
-            raise RuntimeError(message)
         summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
-        self.telemetry_session.log_binary_correction_summary(summary_payload)
+        _core.emit_binary_correction_summary_telemetry(
+            self.telemetry_session,
+            summary_payload,
+            "Native binary correction summary emit plan selected a missing telemetry session.",
+        )
 
     def consume_result_write_items(self) -> None:
         """Materialize computed JAX results and write them in order."""
@@ -1467,26 +1450,21 @@ class NativeBgenCallbackRunner(abc.ABC):
         if finish_result.raise_worker_error:
             self.raise_worker_error_if_present()
         progress_completion_event = finish_result.progress_completion_event
-        if progress_completion_event is not None:
-            if self.telemetry_session is None:
-                message = "Native callback worker finish result selected a missing telemetry session."
-                raise RuntimeError(message)
-            self.telemetry_session.log_callback_progress_event(progress_completion_event)
+        _core.emit_callback_progress_event_telemetry(
+            self.telemetry_session,
+            progress_completion_event,
+            "Native callback worker finish result selected a missing telemetry session.",
+        )
         if finish_result.emit_binary_correction_summary:
             summary_payload = finish_result.binary_correction_summary_payload
-            if summary_payload is not None:
-                if self.telemetry_session is None:
-                    message = "Native callback worker finish result selected a missing telemetry session."
-                    raise RuntimeError(message)
-                self.telemetry_session.log_binary_correction_summary(summary_payload)
-            elif finish_result.flush_binary_correction_pending_diagnostics:
+            if summary_payload is None and finish_result.flush_binary_correction_pending_diagnostics:
                 self.materialize_binary_correction_pending_diagnostics()
-                if self.telemetry_session is None:
-                    message = "Native callback worker finish result selected a missing telemetry session."
-                    raise RuntimeError(message)
-                self.telemetry_session.log_binary_correction_summary(
-                    self.callback_runtime_resources.binary_correction_summary_payload()
-                )
+                summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
+            _core.emit_binary_correction_summary_telemetry(
+                self.telemetry_session,
+                summary_payload,
+                "Native callback worker finish result selected a missing telemetry session.",
+            )
 
     def abort(self) -> None:
         """Stop the worker after an upstream failure."""
