@@ -101,6 +101,8 @@ The Python architecture checker now rejects production calls to the explicit
 JAX cache-directory resolver outside the compatibility adapter.
 It also rejects direct production calls to `jax.config.update` and
 `jax.devices`, keeping JAX setup side effects behind native setup sessions.
+The runner import rule also rejects direct `jax`/`jaxlib` imports so JAX-facing
+modules stay behind runtime setup.
 Prediction-input LOCO manifest fingerprints now route through a root PyO3
 helper that composes `g-input` LOCO path resolution with `g-output` file
 fingerprinting, leaving Python to adapt the native JSON payload for the

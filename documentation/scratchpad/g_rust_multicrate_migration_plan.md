@@ -2227,7 +2227,7 @@ Add an import-policy check for Python:
 ```text
 g.compute must not import CLI, output, or file parsers.
 g.jax_runtime must not import runner orchestration.
-g.runner must not import JAX-facing pipeline, callback, or compute modules at module scope.
+g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
 Production Python must not reconstruct canonical prepared-run plans.
@@ -2249,8 +2249,8 @@ lifecycle rule rejects direct `_core` output lifecycle calls outside the
 construction; the native diagnostic rules reject direct payload builders
 outside compatibility adapters, raw diagnostic emitters, and old telemetry
 fallback method calls in production Python. The runner import rule preserves
-the delayed import boundary that keeps JAX-facing pipeline modules behind
-runtime setup.
+the delayed import boundary that keeps JAX-facing pipeline modules and direct
+`jax`/`jaxlib` imports behind runtime setup.
 
 ---
 

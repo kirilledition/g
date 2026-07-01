@@ -537,6 +537,8 @@ def test_runner_import_policy_rejects_jax_facing_pipeline_imports(tmp_path: Path
                 "from g.engine.callbacks import linear",
                 "from g.compute.regenie2_binary import api",
                 "from ..engine.regenie2_pipeline import multi_trait",
+                "import jax",
+                "from jax import numpy",
             )
         ),
         encoding="utf-8",
@@ -562,4 +564,6 @@ def test_runner_import_policy_rejects_jax_facing_pipeline_imports(tmp_path: Path
             "g.engine.regenie2_pipeline.multi_trait",
             "g.engine.regenie2_pipeline",
         ),
+        (Path("g/runner/execution.py"), 5, "jax", "jax"),
+        (Path("g/runner/execution.py"), 6, "jax.numpy", "jax"),
     ]

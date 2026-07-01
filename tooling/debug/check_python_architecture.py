@@ -164,8 +164,8 @@ PYTHON_IMPORT_POLICIES = (
     PythonImportPolicy(
         name="runner_jax_import_boundary",
         source_directory=Path("runner"),
-        forbidden_imports=("g.engine.regenie2_pipeline", "g.engine.callbacks", "g.compute"),
-        message="runner modules must not import JAX-facing pipeline, callback, or compute modules at module scope",
+        forbidden_imports=("g.engine.regenie2_pipeline", "g.engine.callbacks", "g.compute", "jax", "jaxlib"),
+        message="runner modules must not import JAX-facing modules before runtime setup",
     ),
 )
 
