@@ -1536,6 +1536,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   telemetry emission.
 - JAX runtime diagnostic event recording now routes through one native PyO3
   boundary that owns the telemetry-session check and telemetry emission call.
+- JAX runtime diagnostic field JSON serialization now lives in `g-runtime`; the
+  root PyO3 adapter parses Python diagnostic events into typed native fields
+  before forwarding serialized fields to the logging boundary.
 - CLI lifecycle diagnostics now hand structured fields to the native diagnostic
   emitter instead of serializing diagnostic JSON in Python.
 - Runner, output, preflight, callback, native-dispatch, and pipeline diagnostic
@@ -1584,6 +1587,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   from `g-runtime`, and their write-started diagnostics get the event name,
   level, message, fields, and diagnostic field JSON serialization from the
   same native timing boundary.
+- Run-event diagnostic field JSON serialization now lives in `g-runtime`, so
+  the root PyO3 run-event adapter only forwards native serialized fields to
+  the logging boundary.
 - Top-level runner run started/interrupted/failed/completed diagnostics now get
   their event names, levels, messages, and fields from native run-event
   payload builders.

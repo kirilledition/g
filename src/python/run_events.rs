@@ -1,9 +1,7 @@
 //! PyO3 adapters for runtime-owned run lifecycle events.
 
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple};
-use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 
 use g_runtime::run_events as native_run_events;
 
@@ -2361,12 +2359,10 @@ fn run_diagnostic_fields_to_py_dict<'py>(
 }
 
 fn emit_run_diagnostic_event_payload(event: &native_run_events::RunDiagnosticEventPayload) -> PyResult<()> {
-    logging::emit_diagnostic_event(
-        event.level,
-        event.event_name,
-        &event.message,
-        Some(run_diagnostic_fields_to_json_text(&event.fields)?),
-    )
+    let fields_json = native_run_events::serialize_run_diagnostic_fields_json(&event.fields).map_err(|error| {
+        pyo3::exceptions::PyValueError::new_err(format!("Failed to serialize diagnostic event fields: {error}"))
+    })?;
+    logging::emit_diagnostic_event(event.level, event.event_name, &event.message, Some(fields_json))
 }
 
 fn optional_native_session_handle<'py>(telemetry_session: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
@@ -2374,29 +2370,6 @@ fn optional_native_session_handle<'py>(telemetry_session: &Bound<'py, PyAny>) ->
         return Ok(None);
     }
     telemetry_session.getattr("native_session_handle").map(Some)
-}
-
-fn run_diagnostic_fields_to_json_text(fields: &[native_run_events::RunDiagnosticFieldPayload]) -> PyResult<String> {
-    let mut payload = JsonMap::new();
-    for field in fields {
-        payload.insert(field.name.to_string(), run_diagnostic_field_value_to_json_value(&field.value));
-    }
-    serde_json::to_string(&JsonValue::Object(payload))
-        .map_err(|error| PyValueError::new_err(format!("Failed to serialize diagnostic event fields: {error}")))
-}
-
-fn run_diagnostic_field_value_to_json_value(value: &native_run_events::RunDiagnosticFieldValue) -> JsonValue {
-    match value {
-        native_run_events::RunDiagnosticFieldValue::Boolean(value) => JsonValue::Bool(*value),
-        native_run_events::RunDiagnosticFieldValue::Integer(value) => JsonValue::Number(JsonNumber::from(*value)),
-        native_run_events::RunDiagnosticFieldValue::OptionalInteger(value) => {
-            value.map(JsonNumber::from).map_or(JsonValue::Null, JsonValue::Number)
-        }
-        native_run_events::RunDiagnosticFieldValue::OptionalText(value) => {
-            value.as_ref().map_or(JsonValue::Null, |value| JsonValue::String(value.clone()))
-        }
-        native_run_events::RunDiagnosticFieldValue::Text(value) => JsonValue::String(value.clone()),
-    }
 }
 
 pub(crate) fn run_completed_telemetry_fields_to_py_dict<'py>(

@@ -1,5 +1,7 @@
 //! Runtime-owned run lifecycle event payloads and rendering policy.
 
+use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
+
 pub const RUN_STARTED_EVENT_NAME: &str = "run_started";
 pub const RUN_COMPLETED_EVENT_NAME: &str = "run_completed";
 pub const RUN_FAILED_EVENT_NAME: &str = "run_failed";
@@ -200,6 +202,37 @@ pub struct RunDiagnosticEventPayload {
     pub event_name: &'static str,
     pub message: String,
     pub fields: Vec<RunDiagnosticFieldPayload>,
+}
+
+/// Serialize run diagnostic fields for native diagnostic emission.
+///
+/// This keeps the diagnostic field JSON shape in `g-runtime`; PyO3 callers only
+/// pass the serialized fields through to the logging boundary.
+///
+/// # Errors
+///
+/// Returns a serialization error if the diagnostic field payload cannot be
+/// encoded as JSON.
+pub fn serialize_run_diagnostic_fields_json(fields: &[RunDiagnosticFieldPayload]) -> Result<String, serde_json::Error> {
+    let mut payload = JsonMap::new();
+    for field in fields {
+        payload.insert(field.name.to_string(), run_diagnostic_field_value_to_json_value(&field.value));
+    }
+    serde_json::to_string(&JsonValue::Object(payload))
+}
+
+fn run_diagnostic_field_value_to_json_value(value: &RunDiagnosticFieldValue) -> JsonValue {
+    match value {
+        RunDiagnosticFieldValue::Boolean(value) => JsonValue::Bool(*value),
+        RunDiagnosticFieldValue::Integer(value) => JsonValue::Number(JsonNumber::from(*value)),
+        RunDiagnosticFieldValue::OptionalInteger(value) => {
+            value.map(JsonNumber::from).map_or(JsonValue::Null, JsonValue::Number)
+        }
+        RunDiagnosticFieldValue::OptionalText(value) => {
+            value.as_ref().map_or(JsonValue::Null, |value| JsonValue::String(value.clone()))
+        }
+        RunDiagnosticFieldValue::Text(value) => JsonValue::String(value.clone()),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1996,6 +2029,34 @@ mod tests {
         assert_eq!(
             build_runner_run_completed_diagnostic_payload(&completed_event).fields[2].value,
             RunDiagnosticFieldValue::OptionalInteger(Some(2)),
+        );
+    }
+
+    #[test]
+    fn serializes_run_diagnostic_fields_json() {
+        let fields = vec![
+            RunDiagnosticFieldPayload { name: "flag", value: RunDiagnosticFieldValue::Boolean(true) },
+            RunDiagnosticFieldPayload { name: "count", value: RunDiagnosticFieldValue::Integer(3) },
+            RunDiagnosticFieldPayload { name: "maybe_count", value: RunDiagnosticFieldValue::OptionalInteger(None) },
+            RunDiagnosticFieldPayload {
+                name: "maybe_text",
+                value: RunDiagnosticFieldValue::OptionalText(Some("present".to_string())),
+            },
+            RunDiagnosticFieldPayload { name: "text", value: RunDiagnosticFieldValue::Text("value".to_string()) },
+        ];
+        let fields_text = serialize_run_diagnostic_fields_json(&fields).expect("fields should serialize");
+        let fields_payload: serde_json::Value =
+            serde_json::from_str(&fields_text).expect("fields should be valid JSON");
+
+        assert_eq!(
+            fields_payload,
+            serde_json::json!({
+                "flag": true,
+                "count": 3,
+                "maybe_count": null,
+                "maybe_text": "present",
+                "text": "value",
+            }),
         );
     }
 

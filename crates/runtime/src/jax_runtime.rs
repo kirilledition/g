@@ -3,6 +3,8 @@
 use std::fs;
 use std::path::Path;
 
+use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
+
 const DEVICE_GPU: &str = "gpu";
 const JAX_CONFIG_COMPILATION_CACHE_DIR: &str = "jax_compilation_cache_dir";
 const JAX_CONFIG_DEFAULT_MATMUL_PRECISION: &str = "jax_default_matmul_precision";
@@ -109,6 +111,33 @@ pub struct JaxRuntimeDiagnosticEventPayload {
     pub level: String,
     pub message: String,
     pub fields: Vec<JaxRuntimeDiagnosticFieldPayload>,
+}
+
+/// Serialize JAX runtime diagnostic fields for native diagnostic emission.
+///
+/// This keeps JAX diagnostic field JSON shape in `g-runtime`; PyO3 callers only
+/// pass the serialized fields through to the logging boundary.
+///
+/// # Errors
+///
+/// Returns a serialization error if the diagnostic field payload cannot be
+/// encoded as JSON.
+pub fn serialize_jax_runtime_diagnostic_fields_json(
+    fields: &[JaxRuntimeDiagnosticFieldPayload],
+) -> Result<String, serde_json::Error> {
+    let mut payload = JsonMap::new();
+    for field in fields {
+        payload.insert(field.name.clone(), jax_runtime_diagnostic_value_to_json_value(&field.value));
+    }
+    serde_json::to_string(&JsonValue::Object(payload))
+}
+
+fn jax_runtime_diagnostic_value_to_json_value(value: &JaxRuntimeDiagnosticValue) -> JsonValue {
+    match value {
+        JaxRuntimeDiagnosticValue::Boolean(value) => JsonValue::Bool(*value),
+        JaxRuntimeDiagnosticValue::Integer(value) => JsonValue::Number(JsonNumber::from(*value)),
+        JaxRuntimeDiagnosticValue::Text(value) => JsonValue::String(value.clone()),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -628,6 +657,36 @@ mod tests {
         assert_eq!(events[2].fields[0].value, JaxRuntimeDiagnosticValue::Boolean(false));
         assert_eq!(events[3].fields[0].value, JaxRuntimeDiagnosticValue::Boolean(true));
         assert_eq!(events[4].fields[0].value, JaxRuntimeDiagnosticValue::Text("skipped".to_string()));
+    }
+
+    #[test]
+    fn serializes_jax_runtime_diagnostic_fields_json() {
+        let fields = vec![
+            JaxRuntimeDiagnosticFieldPayload {
+                name: "enabled".to_string(),
+                value: JaxRuntimeDiagnosticValue::Boolean(true),
+            },
+            JaxRuntimeDiagnosticFieldPayload {
+                name: "entry_count".to_string(),
+                value: JaxRuntimeDiagnosticValue::Integer(7),
+            },
+            JaxRuntimeDiagnosticFieldPayload {
+                name: "platform".to_string(),
+                value: JaxRuntimeDiagnosticValue::Text("cuda".to_string()),
+            },
+        ];
+        let fields_text = serialize_jax_runtime_diagnostic_fields_json(&fields).expect("fields should serialize");
+        let fields_payload: serde_json::Value =
+            serde_json::from_str(&fields_text).expect("fields should be valid JSON");
+
+        assert_eq!(
+            fields_payload,
+            serde_json::json!({
+                "enabled": true,
+                "entry_count": 7,
+                "platform": "cuda",
+            }),
+        );
     }
 
     #[test]

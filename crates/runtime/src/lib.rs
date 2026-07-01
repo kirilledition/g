@@ -27,7 +27,7 @@ pub use jax_runtime::{
     build_jax_runtime_setup_diagnostic_events, complete_jax_runtime_setup_validation,
     default_nvidia_driver_probe_paths, nvidia_driver_files_are_visible, plan_jax_gpu_validation,
     plan_jax_runtime_config_updates, plan_jax_runtime_diagnostic_record, plan_jax_runtime_setup_side_effects,
-    resolve_jax_runtime_setup,
+    resolve_jax_runtime_setup, serialize_jax_runtime_diagnostic_fields_json,
 };
 pub use logging_sink::{
     LoggingSinkConfig, LoggingSinkError, LoggingSinkInitializationError, initialize_logging_sinks,
@@ -176,6 +176,7 @@ pub use run_events::{
     build_runner_single_phenotype_dispatch_started_diagnostic_payload,
     build_sample_alignment_completed_telemetry_fields, build_single_trait_preflight_completed_telemetry_fields,
     render_artifact_lines, render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
+    serialize_run_diagnostic_fields_json,
 };
 pub use run_metadata::{
     ExecutionRunArtifactsInput, PhenotypeRunArtifactsInput, RunArtifactsPayload, RunManifestCommandPayload,

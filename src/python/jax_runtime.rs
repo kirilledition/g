@@ -266,11 +266,11 @@ pub(crate) fn plan_jax_runtime_diagnostic_record(
 
 #[pyfunction]
 pub(crate) fn record_jax_runtime_diagnostic_log_event(
-    py: Python<'_>,
+    _py: Python<'_>,
     event: &Bound<'_, PyAny>,
     has_telemetry_session: bool,
 ) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
-    record_jax_runtime_diagnostic_log_event_plan(py, event, has_telemetry_session)
+    record_jax_runtime_diagnostic_log_event_plan(event, has_telemetry_session)
         .map(NativeJaxRuntimeDiagnosticRecordPlan::from_plan)
 }
 
@@ -281,7 +281,7 @@ pub(crate) fn record_jax_runtime_diagnostic_event(
     telemetry_session: &Bound<'_, PyAny>,
 ) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
     let native_telemetry_session = optional_native_telemetry_session(py, telemetry_session)?;
-    let plan = record_jax_runtime_diagnostic_log_event_plan(py, event, native_telemetry_session.is_some())?;
+    let plan = record_jax_runtime_diagnostic_log_event_plan(event, native_telemetry_session.is_some())?;
     if plan.should_emit_telemetry {
         let active_native_telemetry_session = native_telemetry_session.ok_or_else(|| {
             PyRuntimeError::new_err("Native JAX diagnostic telemetry plan selected a missing native session.")
@@ -315,21 +315,17 @@ fn optional_native_telemetry_session<'py>(
 }
 
 fn record_jax_runtime_diagnostic_log_event_plan(
-    py: Python<'_>,
     event: &Bound<'_, PyAny>,
     has_telemetry_session: bool,
 ) -> PyResult<native_jax_runtime::JaxRuntimeDiagnosticRecordPlan> {
     let diagnostic_level = jax_runtime_diagnostic_event_level(event)?;
     let plan = native_jax_runtime::plan_jax_runtime_diagnostic_record(&diagnostic_level, has_telemetry_session);
-    let (event_name, fields) = jax_runtime_diagnostic_event_fields_to_py_dict(py, event)?;
+    let (event_name, fields) = jax_runtime_diagnostic_event_fields_to_native(event)?;
     let message = event.getattr("message")?.extract::<String>()?;
-    logging::emit_diagnostic_event_fields(
-        py,
-        &plan.logging_level_name.to_lowercase(),
-        &event_name,
-        &message,
-        fields.as_any(),
-    )?;
+    let fields_json = native_jax_runtime::serialize_jax_runtime_diagnostic_fields_json(&fields).map_err(|error| {
+        PyValueError::new_err(format!("Failed to serialize JAX runtime diagnostic event fields: {error}"))
+    })?;
+    logging::emit_diagnostic_event(&plan.logging_level_name.to_lowercase(), &event_name, &message, Some(fields_json))?;
     Ok(plan)
 }
 
@@ -605,19 +601,58 @@ fn jax_runtime_diagnostic_event_payload_to_dict<'py>(
     Ok(payload)
 }
 
-pub(crate) fn jax_runtime_diagnostic_event_fields_to_py_dict<'py>(
-    py: Python<'py>,
-    event: &Bound<'py, PyAny>,
-) -> PyResult<(String, Bound<'py, PyDict>)> {
+fn jax_runtime_diagnostic_event_fields_to_native(
+    event: &Bound<'_, PyAny>,
+) -> PyResult<(String, Vec<native_jax_runtime::JaxRuntimeDiagnosticFieldPayload>)> {
     let event_name = event.getattr("event_name")?.extract::<String>()?;
-    let fields = PyDict::new(py);
+    let mut fields = Vec::new();
     for field in event.getattr("fields")?.try_iter()? {
         let field = field?;
         let field_name = field.getattr("name")?.extract::<String>()?;
         let field_value = field.getattr("value")?;
-        fields.set_item(field_name, field_value)?;
+        fields.push(native_jax_runtime::JaxRuntimeDiagnosticFieldPayload {
+            name: field_name,
+            value: jax_runtime_diagnostic_value_from_py(&field_value)?,
+        });
     }
     Ok((event_name, fields))
+}
+
+pub(crate) fn jax_runtime_diagnostic_event_fields_to_py_dict<'py>(
+    py: Python<'py>,
+    event: &Bound<'py, PyAny>,
+) -> PyResult<(String, Bound<'py, PyDict>)> {
+    let (event_name, native_fields) = jax_runtime_diagnostic_event_fields_to_native(event)?;
+    let fields = PyDict::new(py);
+    for native_field in native_fields {
+        match native_field.value {
+            native_jax_runtime::JaxRuntimeDiagnosticValue::Boolean(value) => {
+                fields.set_item(native_field.name, value)?;
+            }
+            native_jax_runtime::JaxRuntimeDiagnosticValue::Integer(value) => {
+                fields.set_item(native_field.name, value)?;
+            }
+            native_jax_runtime::JaxRuntimeDiagnosticValue::Text(value) => {
+                fields.set_item(native_field.name, value)?;
+            }
+        }
+    }
+    Ok((event_name, fields))
+}
+
+fn jax_runtime_diagnostic_value_from_py(
+    value: &Bound<'_, PyAny>,
+) -> PyResult<native_jax_runtime::JaxRuntimeDiagnosticValue> {
+    if let Ok(boolean_value) = value.extract::<bool>() {
+        return Ok(native_jax_runtime::JaxRuntimeDiagnosticValue::Boolean(boolean_value));
+    }
+    if let Ok(integer_value) = value.extract::<i64>() {
+        return Ok(native_jax_runtime::JaxRuntimeDiagnosticValue::Integer(integer_value));
+    }
+    let text_value = value
+        .extract::<String>()
+        .or_else(|_| value.str().map(|string_value| string_value.to_string_lossy().into_owned()))?;
+    Ok(native_jax_runtime::JaxRuntimeDiagnosticValue::Text(text_value))
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
