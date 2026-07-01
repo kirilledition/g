@@ -451,7 +451,9 @@ workspace = true
    - `crates/**/*.rs`;
    - `crates/**/Cargo.toml`;
    - root and crate-local embedded config/resources.
-7. Audit CI path filters for `crates/**`.
+7. Audit CI path filters for `crates/**`; PR CI has no path filters, README
+   code-size already watches `crates/**`, and documentation CI now watches
+   `crates/**` plus root Rust manifests.
 8. Add dependency-graph validation tooling that can fail CI when:
    - an internal crate depends on PyO3/NumPy;
    - a forbidden internal edge appears;
@@ -2263,7 +2265,9 @@ the delayed import boundary that keeps JAX-facing pipeline modules and direct
    - explicit `cargo bench -p g-genotype`, etc.
    - `just rust-bench` now uses `cargo bench --workspace`.
 4. Keep performance profiles in root `Cargo.toml`.
-5. Ensure docs and CI watch `crates/**`.
+5. Ensure docs and CI watch `crates/**`; documentation CI watches workspace
+   Rust paths, README code-size already watches `crates/**`, and PR CI is not
+   path-filtered.
 6. Move Criterion benches to owning crates.
 7. Update coverage source mapping if required.
 8. Ensure `_core.pyi` checker still sees all root registrations.
