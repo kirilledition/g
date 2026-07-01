@@ -11127,6 +11127,55 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> No
     }
 
 
+def test_binary_callback_records_null_logistic_timing_with_single_host_transfer() -> None:
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    callback = build_test_binary_pipeline_callback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        correction_plan=SCORE_ONLY_PLAN,
+        kernel_config=build_default_binary_kernel_config(),
+        stage_timing_recorder=stage_timing_recorder,
+    )
+    host_transfer_requests: list[object] = []
+    original_device_get = callback_diagnostics.jax.device_get
+
+    def recording_device_get(value: object) -> object:
+        host_transfer_requests.append(value)
+        return original_device_get(value)
+
+    try:
+        with (
+            patch.object(callback_diagnostics.jax, "device_get", recording_device_get),
+            patch(
+                "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
+                return_value=build_binary_chromosome_state(converged=True),
+            ),
+        ):
+            callback.prepare_chromosome_state(build_native_metadata())
+    finally:
+        callback.finish()
+
+    assert callback.binary_correction_summary.null_model_failure_count == 0
+    assert len(host_transfer_requests) == 1
+    assert set(typing.cast("dict[str, object]", host_transfer_requests[0])) == {
+        "converged",
+        "iteration_count",
+        "firth_iteration_count",
+        "firth_convergence_reason_code",
+    }
+    assert timing.serialize_null_logistic_diagnostics(stage_timing_recorder.snapshot().null_logistic_diagnostics) == (
+        {
+            "chromosome": "22",
+            "converged": 1,
+            "correction_method": "score_only",
+            "firth_convergence_reason_code": 0,
+            "firth_iteration_count": 0,
+            "iteration_count": 3,
+        },
+    )
+
+
 def test_multi_binary_callback_fails_when_any_null_logistic_trait_does_not_converge() -> None:
     callback = build_test_multi_binary_pipeline_callback(
         run_input=build_native_multi_run_input(),
@@ -11148,6 +11197,61 @@ def test_multi_binary_callback_fails_when_any_null_logistic_trait_does_not_conve
             callback.prepare_chromosome_state(build_native_metadata())
     finally:
         callback.finish()
+
+
+def test_multi_binary_callback_records_native_null_logistic_count_and_timing() -> None:
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+    callback = build_test_multi_binary_pipeline_callback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_sessions=(FakeWriterSession(), FakeWriterSession()),
+        committed_chunk_identifier_sets=(set(), set()),
+        correction_plan=SCORE_ONLY_PLAN,
+        kernel_config=build_default_binary_kernel_config(),
+        null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.WARN,
+        stage_timing_recorder=stage_timing_recorder,
+    )
+    host_transfer_requests: list[object] = []
+    original_device_get = callback_diagnostics.jax.device_get
+
+    def recording_device_get(value: object) -> object:
+        host_transfer_requests.append(value)
+        return original_device_get(value)
+
+    try:
+        with (
+            patch.object(callback_diagnostics.jax, "device_get", recording_device_get),
+            patch(
+                "g.engine.callbacks.diagnostics._core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event",
+            ),
+            patch(
+                "g.compute.regenie2_binary.api.prepare_regenie2_multi_binary_chromosome_state",
+                return_value=build_multi_binary_chromosome_state(convergence_flags=(True, False)),
+            ),
+        ):
+            callback.prepare_chromosome_state(build_native_metadata())
+    finally:
+        callback.finish()
+
+    assert callback.binary_correction_summary.null_model_failure_count == 1
+    assert len(host_transfer_requests) == 1
+    assert set(typing.cast("dict[str, object]", host_transfer_requests[0])) == {"converged", "iteration_count"}
+    assert timing.serialize_null_logistic_diagnostics(stage_timing_recorder.snapshot().null_logistic_diagnostics) == (
+        {
+            "chromosome": "22",
+            "converged": 1,
+            "correction_method": "score_only",
+            "iteration_count": 3,
+            "phenotype": "trait_a",
+        },
+        {
+            "chromosome": "22",
+            "converged": 0,
+            "correction_method": "score_only",
+            "iteration_count": 3,
+            "phenotype": "trait_b",
+        },
+    )
 
 
 @pytest.mark.parametrize(

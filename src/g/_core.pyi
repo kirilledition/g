@@ -2416,6 +2416,23 @@ class NativeStageTimingRecorder:
     def set_native_bgen_profile(self, profile_snapshot: dict[str, int]) -> None: ...
     def add_binary_chunk_diagnostics(self, diagnostics: dict[str, int | float]) -> None: ...
     def add_null_logistic_diagnostics(self, diagnostics: dict[str, int | str]) -> None: ...
+    def add_scalar_null_logistic_diagnostics_from_arrays(
+        self,
+        chromosome: str,
+        convergence_values: object,
+        iteration_count_values: object,
+        firth_iteration_count_values: object,
+        firth_convergence_reason_code_values: object,
+        correction_method: str,
+    ) -> None: ...
+    def add_multi_null_logistic_diagnostics_from_arrays(
+        self,
+        chromosome: str,
+        convergence_values: object,
+        iteration_count_values: object,
+        phenotype_names: typing.Sequence[str],
+        correction_method: str,
+    ) -> None: ...
     def add_queue_backpressure_observation(
         self,
         queue_name: str,

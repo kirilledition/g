@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
+use numpy::ndarray::IxDyn;
+use numpy::{PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods, dtype};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple};
@@ -142,6 +144,62 @@ impl NativeStageTimingRecorder {
     fn add_null_logistic_diagnostics(&self, diagnostics: &Bound<'_, PyAny>) -> PyResult<()> {
         let parsed_diagnostics = parse_null_logistic_diagnostics_mapping(diagnostics)?;
         self.lock_recorder()?.add_null_logistic_diagnostics(parsed_diagnostics);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn add_scalar_null_logistic_diagnostics_from_arrays(
+        &self,
+        py: Python<'_>,
+        chromosome: String,
+        convergence_values: &Bound<'_, PyUntypedArray>,
+        iteration_count_values: &Bound<'_, PyUntypedArray>,
+        firth_iteration_count_values: &Bound<'_, PyUntypedArray>,
+        firth_convergence_reason_code_values: &Bound<'_, PyUntypedArray>,
+        correction_method: String,
+    ) -> PyResult<()> {
+        let convergence_flags = parse_bool_array(py, convergence_values, "Null logistic convergence values")?;
+        let iteration_counts = parse_i64_array(py, iteration_count_values, "Null logistic iteration counts")?;
+        let firth_iteration_counts = parse_i64_array(py, firth_iteration_count_values, "Null Firth iteration counts")?;
+        let firth_convergence_reason_codes =
+            parse_i64_array(py, firth_convergence_reason_code_values, "Null Firth convergence reason codes")?;
+        let diagnostics = build_scalar_null_logistic_diagnostics(
+            chromosome,
+            convergence_flags,
+            iteration_counts,
+            firth_iteration_counts,
+            firth_convergence_reason_codes,
+            correction_method,
+        )?;
+        self.lock_recorder()?.add_null_logistic_diagnostics(diagnostics);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn add_multi_null_logistic_diagnostics_from_arrays(
+        &self,
+        py: Python<'_>,
+        chromosome: String,
+        convergence_values: &Bound<'_, PyUntypedArray>,
+        iteration_count_values: &Bound<'_, PyUntypedArray>,
+        phenotype_names: Vec<String>,
+        correction_method: String,
+    ) -> PyResult<()> {
+        let convergence_flags = parse_bool_array(py, convergence_values, "Null logistic convergence values")?;
+        let iteration_counts = parse_i64_array(py, iteration_count_values, "Null logistic iteration counts")?;
+        let diagnostics = build_multi_null_logistic_diagnostics(
+            &chromosome,
+            convergence_flags,
+            iteration_counts,
+            phenotype_names,
+            &correction_method,
+        )?;
+        let mut recorder = self.lock_recorder()?;
+        for diagnostic_payload in diagnostics {
+            recorder.add_null_logistic_diagnostics(diagnostic_payload);
+        }
         Ok(())
     }
 
@@ -434,6 +492,118 @@ fn parse_null_logistic_diagnostics_mapping(
         parsed_diagnostics.insert(key, parsed_value);
     }
     Ok(parsed_diagnostics)
+}
+
+fn parse_bool_array(py: Python<'_>, values: &Bound<'_, PyUntypedArray>, value_label: &str) -> PyResult<Vec<bool>> {
+    let element_type = values.dtype();
+    if !element_type.is_equiv_to(&dtype::<bool>(py)) {
+        return Err(PyValueError::new_err(format!("{value_label} must have bool dtype.")));
+    }
+    let typed_values = values.cast::<PyArray<bool, IxDyn>>()?;
+    let readonly_values = typed_values.readonly();
+    Ok(readonly_values.as_array().iter().copied().collect())
+}
+
+fn parse_i64_array(py: Python<'_>, values: &Bound<'_, PyUntypedArray>, value_label: &str) -> PyResult<Vec<i64>> {
+    let element_type = values.dtype();
+    if !element_type.is_equiv_to(&dtype::<i64>(py)) {
+        return Err(PyValueError::new_err(format!("{value_label} must have int64 dtype.")));
+    }
+    let typed_values = values.cast::<PyArray<i64, IxDyn>>()?;
+    let readonly_values = typed_values.readonly();
+    Ok(readonly_values.as_array().iter().copied().collect())
+}
+
+fn require_single_value<T>(values: Vec<T>, value_label: &str) -> PyResult<T> {
+    if values.len() != 1 {
+        return Err(PyValueError::new_err(format!("{value_label} must contain exactly one value.")));
+    }
+    values
+        .into_iter()
+        .next()
+        .ok_or_else(|| PyValueError::new_err(format!("{value_label} must contain exactly one value.")))
+}
+
+fn build_scalar_null_logistic_diagnostics(
+    chromosome: String,
+    convergence_flags: Vec<bool>,
+    iteration_counts: Vec<i64>,
+    firth_iteration_counts: Vec<i64>,
+    firth_convergence_reason_codes: Vec<i64>,
+    correction_method: String,
+) -> PyResult<BTreeMap<String, native_timing::NullLogisticDiagnosticValue>> {
+    let converged = require_single_value(convergence_flags, "Scalar null logistic convergence values")?;
+    let iteration_count = require_single_value(iteration_counts, "Scalar null logistic iteration counts")?;
+    let firth_iteration_count = require_single_value(firth_iteration_counts, "Scalar null Firth iteration counts")?;
+    let firth_convergence_reason_code =
+        require_single_value(firth_convergence_reason_codes, "Scalar null Firth convergence reason codes")?;
+    let mut diagnostics = BTreeMap::new();
+    diagnostics.insert("chromosome".to_string(), native_timing::NullLogisticDiagnosticValue::Text(chromosome));
+    diagnostics
+        .insert("iteration_count".to_string(), native_timing::NullLogisticDiagnosticValue::Integer(iteration_count));
+    diagnostics
+        .insert("converged".to_string(), native_timing::NullLogisticDiagnosticValue::Integer(i64::from(converged)));
+    diagnostics.insert(
+        "firth_iteration_count".to_string(),
+        native_timing::NullLogisticDiagnosticValue::Integer(firth_iteration_count),
+    );
+    diagnostics.insert(
+        "firth_convergence_reason_code".to_string(),
+        native_timing::NullLogisticDiagnosticValue::Integer(firth_convergence_reason_code),
+    );
+    diagnostics
+        .insert("correction_method".to_string(), native_timing::NullLogisticDiagnosticValue::Text(correction_method));
+    Ok(diagnostics)
+}
+
+fn build_multi_null_logistic_diagnostics(
+    chromosome: &str,
+    convergence_flags: Vec<bool>,
+    iteration_counts: Vec<i64>,
+    phenotype_names: Vec<String>,
+    correction_method: &str,
+) -> PyResult<Vec<BTreeMap<String, native_timing::NullLogisticDiagnosticValue>>> {
+    if convergence_flags.len() != iteration_counts.len() {
+        return Err(PyValueError::new_err(format!(
+            "Null logistic convergence value count ({}) must match iteration count value count ({}).",
+            convergence_flags.len(),
+            iteration_counts.len()
+        )));
+    }
+    if phenotype_names.len() != convergence_flags.len() {
+        return Err(PyValueError::new_err(format!(
+            "Null logistic phenotype name count ({}) must match convergence value count ({}).",
+            phenotype_names.len(),
+            convergence_flags.len()
+        )));
+    }
+    convergence_flags
+        .into_iter()
+        .zip(iteration_counts)
+        .zip(phenotype_names)
+        .map(|((converged, iteration_count), phenotype_name)| {
+            let mut diagnostics = BTreeMap::new();
+            diagnostics.insert(
+                "chromosome".to_string(),
+                native_timing::NullLogisticDiagnosticValue::Text(chromosome.to_string()),
+            );
+            diagnostics
+                .insert("phenotype".to_string(), native_timing::NullLogisticDiagnosticValue::Text(phenotype_name));
+            diagnostics.insert(
+                "iteration_count".to_string(),
+                native_timing::NullLogisticDiagnosticValue::Integer(iteration_count),
+            );
+            diagnostics.insert(
+                "converged".to_string(),
+                native_timing::NullLogisticDiagnosticValue::Integer(i64::from(converged)),
+            );
+            diagnostics.insert(
+                "correction_method".to_string(),
+                native_timing::NullLogisticDiagnosticValue::Text(correction_method.to_string()),
+            );
+            Ok(diagnostics)
+        })
+        .collect()
 }
 
 fn parse_numeric_diagnostic_value(value: &Bound<'_, PyAny>) -> PyResult<native_timing::NumericDiagnosticValue> {

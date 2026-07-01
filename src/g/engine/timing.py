@@ -10,6 +10,10 @@ from dataclasses import dataclass
 
 from g import _core
 
+if typing.TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+
 
 @dataclass(frozen=True)
 class ChunkTimingIdentity:
@@ -461,6 +465,44 @@ class StageTimingRecorder:
     def add_null_logistic_diagnostics(self, diagnostics: dict[str, int | str]) -> None:
         """Store null logistic fit diagnostics for one chromosome."""
         self.native_recorder.add_null_logistic_diagnostics(diagnostics)
+
+    def add_scalar_null_logistic_diagnostics_from_arrays(
+        self,
+        *,
+        chromosome: str,
+        convergence_values: npt.NDArray[np.bool_],
+        iteration_count_values: npt.NDArray[np.int64],
+        firth_iteration_count_values: npt.NDArray[np.int64],
+        firth_convergence_reason_code_values: npt.NDArray[np.int64],
+        correction_method: str,
+    ) -> None:
+        """Store scalar null logistic diagnostics from native array scans."""
+        self.native_recorder.add_scalar_null_logistic_diagnostics_from_arrays(
+            chromosome,
+            convergence_values,
+            iteration_count_values,
+            firth_iteration_count_values,
+            firth_convergence_reason_code_values,
+            correction_method,
+        )
+
+    def add_multi_null_logistic_diagnostics_from_arrays(
+        self,
+        *,
+        chromosome: str,
+        convergence_values: npt.NDArray[np.bool_],
+        iteration_count_values: npt.NDArray[np.int64],
+        phenotype_names: tuple[str, ...],
+        correction_method: str,
+    ) -> None:
+        """Store multi-trait null logistic diagnostics from native array scans."""
+        self.native_recorder.add_multi_null_logistic_diagnostics_from_arrays(
+            chromosome,
+            convergence_values,
+            iteration_count_values,
+            phenotype_names,
+            correction_method,
+        )
 
     def add_queue_backpressure_observation(
         self,

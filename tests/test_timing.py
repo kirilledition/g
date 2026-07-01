@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import typing
 
+import numpy as np
 import pytest
 
 from g import _core
@@ -64,6 +65,72 @@ def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> 
     )
     assert snapshot.queue_backpressure == ()
     assert snapshot.transfer_metadata == ()
+
+
+def test_stage_timing_recorder_records_null_logistic_diagnostics_from_arrays() -> None:
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+
+    recorder.add_scalar_null_logistic_diagnostics_from_arrays(
+        chromosome="22",
+        convergence_values=np.ones((), dtype=np.bool_),
+        iteration_count_values=np.asarray(3, dtype=np.int64),
+        firth_iteration_count_values=np.asarray(2, dtype=np.int64),
+        firth_convergence_reason_code_values=np.asarray(1, dtype=np.int64),
+        correction_method="firth_approximate",
+    )
+    recorder.add_multi_null_logistic_diagnostics_from_arrays(
+        chromosome="22",
+        convergence_values=np.asarray([True, False], dtype=np.bool_),
+        iteration_count_values=np.asarray([4, 5], dtype=np.int64),
+        phenotype_names=("trait_a", "trait_b"),
+        correction_method="score_only",
+    )
+
+    assert timing.serialize_null_logistic_diagnostics(recorder.snapshot().null_logistic_diagnostics) == (
+        {
+            "chromosome": "22",
+            "converged": 1,
+            "correction_method": "firth_approximate",
+            "firth_convergence_reason_code": 1,
+            "firth_iteration_count": 2,
+            "iteration_count": 3,
+        },
+        {
+            "chromosome": "22",
+            "converged": 1,
+            "correction_method": "score_only",
+            "iteration_count": 4,
+            "phenotype": "trait_a",
+        },
+        {
+            "chromosome": "22",
+            "converged": 0,
+            "correction_method": "score_only",
+            "iteration_count": 5,
+            "phenotype": "trait_b",
+        },
+    )
+
+
+def test_stage_timing_recorder_rejects_invalid_null_logistic_array_inputs() -> None:
+    recorder = timing.StageTimingRecorder(exact_stage_timings=False)
+
+    with pytest.raises(ValueError, match="bool dtype"):
+        recorder.add_multi_null_logistic_diagnostics_from_arrays(
+            chromosome="22",
+            convergence_values=np.asarray([0, 1], dtype=np.int64),
+            iteration_count_values=np.asarray([1, 2], dtype=np.int64),
+            phenotype_names=("trait_a", "trait_b"),
+            correction_method="score_only",
+        )
+    with pytest.raises(ValueError, match="must match iteration count"):
+        recorder.add_multi_null_logistic_diagnostics_from_arrays(
+            chromosome="22",
+            convergence_values=np.asarray([True, False], dtype=np.bool_),
+            iteration_count_values=np.asarray([1], dtype=np.int64),
+            phenotype_names=("trait_a", "trait_b"),
+            correction_method="score_only",
+        )
 
 
 def test_stage_timing_recorder_aggregates_queue_backpressure() -> None:

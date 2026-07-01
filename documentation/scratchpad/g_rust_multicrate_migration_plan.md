@@ -1260,6 +1260,10 @@ Remove Python as the chunk-level scheduler.
 - Binary callback null-logistic nonconvergence warnings now route through the
   native diagnostic emitter with policy and convergence-count context instead
   of Python logging.
+- Binary callback null-logistic chromosome diagnostics now materialize the
+  required JAX values with one host-transfer request, reuse the native
+  nonconvergence plan's failure count, and pass bool/int arrays into native
+  timing-recorder methods for scalar and multi-trait timing rows.
 - Multi-phenotype sample-summary diagnostics now route through the native
   diagnostic emitter while preserving native telemetry session events.
 - Multi-phenotype group preflight start and completion diagnostics now route
@@ -1802,9 +1806,11 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Callback null-logistic nonconvergence planning now has a PyO3 bool-array
   entry point that owns scalar detection, flattening, total-fit counts, and
   nonconverged counts before calling the `g-engine` policy helpers. Python
-  callback diagnostics still materialize the JAX convergence value, but no
-  longer use `np.ravel` or `np.count_nonzero` for that production policy path;
-  a focused Python architecture policy guards that boundary.
+  callback diagnostics still materialize JAX chromosome diagnostic values, but
+  now does so once per new chromosome and routes null-logistic failure counts
+  and timing-row construction through native helpers instead of Python sums,
+  loops, or dictionaries. A focused Python architecture policy guards the
+  old NumPy reduction boundary.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

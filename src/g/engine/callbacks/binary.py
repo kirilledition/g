@@ -43,9 +43,9 @@ write_materialized_regenie2_multi_native_chunk_with_optional_timing = (
     writers.write_materialized_regenie2_multi_native_chunk_with_optional_timing
 )
 block_until_ready = diagnostics.block_until_ready
-enforce_null_logistic_nonconvergence_policy = diagnostics.enforce_null_logistic_nonconvergence_policy
 collect_binary_chunk_diagnostics_if_needed = diagnostics.collect_binary_chunk_diagnostics_if_needed
 record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
+record_null_logistic_chromosome_diagnostics = diagnostics.record_null_logistic_chromosome_diagnostics
 get_metadata_chromosome = shared.get_metadata_chromosome
 
 
@@ -192,29 +192,18 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.current_chromosome_state,
         )
         block_until_ready(chromosome_ready_value)
-        enforce_null_logistic_nonconvergence_policy(
+        null_logistic_failure_count = record_null_logistic_chromosome_diagnostics(
             chromosome=chromosome,
             null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
+            null_logistic_iteration_count=self.current_chromosome_state.null_logistic_iteration_count,
+            null_firth_iteration_count=self.current_chromosome_state.null_firth_iteration_count,
+            null_firth_convergence_reason_code=self.current_chromosome_state.null_firth_convergence_reason_code,
             policy=self.null_logistic_nonconvergence_policy,
             phenotype_names=None,
+            correction_method=self.correction_plan.method,
+            stage_timing_recorder=self.stage_timing_recorder,
         )
-        null_logistic_converged = bool(jax.device_get(self.current_chromosome_state.null_logistic_converged))
-        self.record_binary_null_model_failure_count(0 if null_logistic_converged else 1)
-        if self.stage_timing_recorder is not None:
-            self.stage_timing_recorder.add_null_logistic_diagnostics(
-                {
-                    "chromosome": chromosome,
-                    "iteration_count": int(jax.device_get(self.current_chromosome_state.null_logistic_iteration_count)),
-                    "converged": int(jax.device_get(self.current_chromosome_state.null_logistic_converged)),
-                    "firth_iteration_count": int(
-                        jax.device_get(self.current_chromosome_state.null_firth_iteration_count)
-                    ),
-                    "firth_convergence_reason_code": int(
-                        jax.device_get(self.current_chromosome_state.null_firth_convergence_reason_code)
-                    ),
-                    "correction_method": self.correction_plan.method.value,
-                }
-            )
+        self.record_binary_null_model_failure_count(null_logistic_failure_count)
         timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
         self.current_chromosome = chromosome
 
@@ -817,26 +806,18 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.score_dtype,
         )
         block_until_ready(self.current_chromosome_state.score_residual)
-        enforce_null_logistic_nonconvergence_policy(
+        null_logistic_failure_count = record_null_logistic_chromosome_diagnostics(
             chromosome=chromosome,
             null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
+            null_logistic_iteration_count=self.current_chromosome_state.null_logistic_iteration_count,
+            null_firth_iteration_count=None,
+            null_firth_convergence_reason_code=None,
             policy=self.null_logistic_nonconvergence_policy,
             phenotype_names=self.run_input.phenotype_names,
+            correction_method=self.correction_plan.method,
+            stage_timing_recorder=self.stage_timing_recorder,
         )
-        convergence_flags = jax.device_get(self.current_chromosome_state.null_logistic_converged)
-        self.record_binary_null_model_failure_count(int((~convergence_flags).sum()))
-        if self.stage_timing_recorder is not None:
-            iteration_counts = jax.device_get(self.current_chromosome_state.null_logistic_iteration_count)
-            for trait_index, phenotype_name in enumerate(self.run_input.phenotype_names):
-                self.stage_timing_recorder.add_null_logistic_diagnostics(
-                    {
-                        "chromosome": chromosome,
-                        "phenotype": phenotype_name,
-                        "iteration_count": int(iteration_counts[trait_index]),
-                        "converged": int(convergence_flags[trait_index]),
-                        "correction_method": self.correction_plan.method.value,
-                    }
-                )
+        self.record_binary_null_model_failure_count(null_logistic_failure_count)
         timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
         self.current_chromosome = chromosome
 
