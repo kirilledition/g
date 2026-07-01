@@ -927,8 +927,12 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
 def test_native_preflight_binary_and_prediction_shape_policy() -> None:
     _core.validate_binary_phenotype_case_control_counts(case_count=1, control_count=2)
     _core.validate_finite_array("Phenotype", all_values_finite=True)
+    _core.validate_finite_array_values("Phenotype", np.asarray([0.0, 1.0], dtype=np.float32))
+    _core.validate_finite_array_values("Integer phenotype", np.asarray([0, 1], dtype=np.int64))
     _core.validate_covariate_matrix_rank(covariate_rank=2, covariate_count=2)
     _core.validate_binary_phenotype_coding(is_binary_coded=True)
+    _core.validate_binary_phenotype_array(np.asarray([0.0, 1.0, 1.0], dtype=np.float64))
+    _core.validate_binary_phenotype_array(np.asarray([False, True, True], dtype=np.bool_))
     _core.validate_single_prediction_preflight_shape("1", (3,), sample_count=3)
     _core.validate_multi_prediction_preflight_shape("2", (2, 3), trait_count=2, sample_count=3)
 
@@ -938,11 +942,20 @@ def test_native_preflight_binary_and_prediction_shape_policy() -> None:
     with pytest.raises(ValueError, match="Phenotype contains non-finite values"):
         _core.validate_finite_array("Phenotype", all_values_finite=False)
 
+    with pytest.raises(ValueError, match="Phenotype contains non-finite values"):
+        _core.validate_finite_array_values("Phenotype", np.asarray([0.0, np.nan], dtype=np.float64))
+
     with pytest.raises(ValueError, match="Covariate matrix is rank deficient"):
         _core.validate_covariate_matrix_rank(covariate_rank=1, covariate_count=2)
 
     with pytest.raises(ValueError, match="Binary phenotype must be coded as 0/1 after alignment"):
         _core.validate_binary_phenotype_coding(is_binary_coded=False)
+
+    with pytest.raises(ValueError, match="Binary phenotype must be coded as 0/1 after alignment"):
+        _core.validate_binary_phenotype_array(np.asarray([0.0, 0.5, 1.0], dtype=np.float32))
+
+    with pytest.raises(ValueError, match="Binary phenotype must contain at least one case and one control"):
+        _core.validate_binary_phenotype_array(np.asarray([0, 0, 0], dtype=np.int32))
 
     with pytest.raises(ValueError, match="Prediction sample count for chromosome 1 is 2, expected 3"):
         _core.validate_single_prediction_preflight_shape("1", (2,), sample_count=3)
@@ -1145,6 +1158,9 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert continue_plan.failed_trait_indices == []
     assert continue_plan.message is None
     assert continue_plan.warning_message is None
+    assert continue_plan.nonconverged_count == 0
+    assert continue_plan.scalar_convergence is True
+    assert continue_plan.total_fit_count == 1
 
     fail_plan = _core.plan_null_logistic_nonconvergence(
         chromosome="22",
@@ -1157,6 +1173,9 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert fail_plan.failed_trait_indices == [0]
     assert fail_plan.message == "Binary null logistic model did not converge for chromosome 22."
     assert fail_plan.warning_message is None
+    assert fail_plan.nonconverged_count == 1
+    assert fail_plan.scalar_convergence is True
+    assert fail_plan.total_fit_count == 1
 
     warn_plan = _core.plan_null_logistic_nonconvergence(
         chromosome="22",
@@ -1172,6 +1191,21 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
         "Binary null logistic model did not converge for chromosome 22: trait_b. "
         "Continuing because --null_logistic_nonconvergence_policy=warn."
     )
+    assert warn_plan.nonconverged_count == 1
+    assert warn_plan.scalar_convergence is False
+    assert warn_plan.total_fit_count == 2
+
+    array_plan = _core.plan_null_logistic_nonconvergence_from_array(
+        chromosome="22",
+        convergence_values=np.asarray([True, False, False], dtype=np.bool_),
+        phenotype_names=("trait_a", "trait_b", "trait_c"),
+        policy="warn",
+    )
+    assert array_plan.action == "warn"
+    assert array_plan.failed_trait_indices == [1, 2]
+    assert array_plan.nonconverged_count == 2
+    assert array_plan.scalar_convergence is False
+    assert array_plan.total_fit_count == 3
 
     with pytest.raises(ValueError, match="Unsupported null logistic nonconvergence policy"):
         _core.plan_null_logistic_nonconvergence(
@@ -1180,6 +1214,14 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
             scalar_convergence=True,
             phenotype_names=None,
             policy="ignore",
+        )
+
+    with pytest.raises(ValueError, match="bool dtype"):
+        _core.plan_null_logistic_nonconvergence_from_array(
+            chromosome="22",
+            convergence_values=np.asarray([0, 1], dtype=np.int32),
+            phenotype_names=None,
+            policy="warn",
         )
 
 

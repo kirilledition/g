@@ -3248,10 +3248,11 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
             return
         progress_update = self.record_processed_chunk(callback_runtime.build_native_callback_chunk_identity(metadata))
         telemetry_plan = progress_update.telemetry_plan
+        telemetry_session = typing.cast("typing.Any", self.telemetry_session)
         for progress_event in telemetry_plan.events:
-            self.telemetry_session.log_callback_progress_event(progress_event)
+            telemetry_session.log_callback_progress_event(progress_event)
         progress_record = telemetry_plan.progress
-        self.telemetry_session.log_progress(
+        telemetry_session.log_progress(
             processed_chunk_count=progress_record.processed_chunk_count,
             chromosome=progress_record.chromosome,
             chunk_identifier=progress_record.chunk_identifier,
@@ -3324,7 +3325,8 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         if self.telemetry_session is None:
             message = "Native binary correction summary emit plan selected a missing telemetry session."
             raise RuntimeError(message)
-        self.telemetry_session.log_binary_correction_summary(self.binary_correction_summary.summary_payload())
+        telemetry_session = typing.cast("typing.Any", self.telemetry_session)
+        telemetry_session.log_binary_correction_summary(self.binary_correction_summary.summary_payload())
 
     def plan_dosage_work_drain_completion(self, work_item: object) -> typing.Any:
         return self.callback_scheduler_state.plan_dosage_work_drain_completion(
@@ -10994,6 +10996,16 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> No
             patch(
                 "g.engine.callbacks.diagnostics._core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event",
             ) as record_warning_mock,
+            patch.object(
+                callback_diagnostics.np,
+                "ravel",
+                side_effect=AssertionError("old convergence flatten scan used"),
+            ),
+            patch.object(
+                callback_diagnostics.np,
+                "count_nonzero",
+                side_effect=AssertionError("old nonconvergence count scan used"),
+            ),
             patch(
                 "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
                 return_value=build_binary_chromosome_state(converged=False),

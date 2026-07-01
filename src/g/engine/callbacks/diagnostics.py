@@ -28,10 +28,9 @@ def enforce_null_logistic_nonconvergence_policy(
 ) -> None:
     """Raise or warn when a binary null-logistic chromosome fit did not converge."""
     convergence_flags = np.asarray(jax.device_get(null_logistic_converged), dtype=np.bool_)
-    native_policy_plan = _core.plan_null_logistic_nonconvergence(
+    native_policy_plan = _core.plan_null_logistic_nonconvergence_from_array(
         chromosome=chromosome,
-        convergence_flags=tuple(bool(flag) for flag in np.ravel(convergence_flags)),
-        scalar_convergence=convergence_flags.ndim == 0,
+        convergence_values=convergence_flags,
         phenotype_names=phenotype_names,
         policy=policy.value,
     )
@@ -48,11 +47,11 @@ def enforce_null_logistic_nonconvergence_policy(
     _core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
         message=warning_message,
         chromosome=chromosome,
-        nonconverged_count=int(np.count_nonzero(~convergence_flags)),
+        nonconverged_count=native_policy_plan.nonconverged_count,
         phenotype_count=0 if phenotype_names is None else len(phenotype_names),
         policy=policy.value,
-        scalar_convergence=convergence_flags.ndim == 0,
-        total_fit_count=int(convergence_flags.size),
+        scalar_convergence=native_policy_plan.scalar_convergence,
+        total_fit_count=native_policy_plan.total_fit_count,
     )
 
 

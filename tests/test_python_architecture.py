@@ -495,6 +495,86 @@ def test_jax_setup_side_effect_policy_rejects_direct_jax_calls(tmp_path: Path) -
     ]
 
 
+def test_preflight_numeric_scan_policy_rejects_old_numpy_reductions(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    engine_directory = package_root / "engine"
+    engine_directory.mkdir(parents=True)
+    (engine_directory / "preflight.py").write_text(
+        "\n".join(
+            (
+                "import numpy as np",
+                "def validate(values):",
+                "    np.isfinite(values).all()",
+                "    np.unique(values)",
+                "    np.count_nonzero(values == 1.0)",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (engine_directory / "other.py").write_text(
+        "\n".join(
+            (
+                "import numpy as np",
+                "def still_allowed_here(values):",
+                "    np.unique(values)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    observed_violations = sorted(
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    )
+
+    assert observed_violations == [
+        (Path("g/engine/preflight.py"), 3, "np.isfinite", "np.isfinite"),
+        (Path("g/engine/preflight.py"), 4, "np.unique", "np.unique"),
+        (Path("g/engine/preflight.py"), 5, "np.count_nonzero", "np.count_nonzero"),
+    ]
+
+
+def test_callback_convergence_scan_policy_rejects_old_numpy_reductions(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "diagnostics.py").write_text(
+        "\n".join(
+            (
+                "import numpy as np",
+                "def validate(values):",
+                "    np.ravel(values)",
+                "    np.count_nonzero(~values)",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (callback_directory / "other.py").write_text(
+        "\n".join(
+            (
+                "import numpy as np",
+                "def still_allowed_here(values):",
+                "    np.count_nonzero(values)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    observed_violations = sorted(
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    )
+
+    assert observed_violations == [
+        (Path("g/engine/callbacks/diagnostics.py"), 3, "np.ravel", "np.ravel"),
+        (Path("g/engine/callbacks/diagnostics.py"), 4, "np.count_nonzero", "np.count_nonzero"),
+    ]
+
+
 def test_telemetry_definition_policy_rejects_fallback_methods(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     telemetry_directory = package_root / "engine"

@@ -277,6 +277,27 @@ PYTHON_CALL_POLICIES = (
         message="production Python must execute JAX setup side effects through typed native setup sessions",
     ),
     PythonCallPolicy(
+        name="native_preflight_numeric_scan_isolation",
+        source_directory=Path("engine/preflight.py"),
+        forbidden_calls=(
+            "np.isfinite",
+            "numpy.isfinite",
+            "np.unique",
+            "numpy.unique",
+            "np.count_nonzero",
+            "numpy.count_nonzero",
+        ),
+        allowed_paths=(),
+        message="production preflight must use native PyO3 array checks for finite and binary scans",
+    ),
+    PythonCallPolicy(
+        name="native_callback_convergence_scan_isolation",
+        source_directory=Path("engine/callbacks/diagnostics.py"),
+        forbidden_calls=("np.ravel", "numpy.ravel", "np.count_nonzero", "numpy.count_nonzero"),
+        allowed_paths=(),
+        message="production callback diagnostics must use native PyO3 array checks for convergence scans",
+    ),
+    PythonCallPolicy(
         name="compute_kernel_file_io_isolation",
         source_directory=Path("compute"),
         forbidden_calls=(
@@ -462,7 +483,7 @@ def collect_python_import_policy_violations(
         source_directory = package_root / policy.source_directory
         if not source_directory.exists():
             continue
-        for path in sorted(source_directory.rglob("*.py")):
+        for path in python_source_paths_for_policy(source_directory):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             relative_path = path.relative_to(package_root.parent)
             for statement in ast.walk(tree):
@@ -484,7 +505,7 @@ def collect_python_call_policy_violations(
         source_directory = package_root / policy.source_directory
         if not source_directory.exists():
             continue
-        for path in sorted(source_directory.rglob("*.py")):
+        for path in python_source_paths_for_policy(source_directory):
             relative_path = path.relative_to(package_root.parent)
             package_relative_path = path.relative_to(package_root)
             if package_relative_path in policy.allowed_paths:
@@ -527,7 +548,7 @@ def collect_python_definition_policy_violations(
         source_directory = package_root / policy.source_directory
         if not source_directory.exists():
             continue
-        for path in sorted(source_directory.rglob("*.py")):
+        for path in python_source_paths_for_policy(source_directory):
             relative_path = path.relative_to(package_root.parent)
             package_relative_path = path.relative_to(package_root)
             if package_relative_path in policy.allowed_paths:
@@ -538,6 +559,15 @@ def collect_python_definition_policy_violations(
                     continue
                 violations.extend(collect_definition_violations_for_statement(relative_path, policy, statement))
     return tuple(violations)
+
+
+def python_source_paths_for_policy(source_path: Path) -> tuple[Path, ...]:
+    """Return Python source paths covered by one architecture policy."""
+    if source_path.is_file():
+        if source_path.suffix == ".py":
+            return (source_path,)
+        return ()
+    return tuple(sorted(source_path.rglob("*.py")))
 
 
 def render_violation(violation: PythonImportViolation) -> str:

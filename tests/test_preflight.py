@@ -128,6 +128,30 @@ def test_preflight_accepts_valid_binary_inputs() -> None:
     assert report.chromosome_count == 1
 
 
+def test_preflight_uses_native_finite_and_binary_array_checks() -> None:
+    with (
+        unittest.mock.patch.object(preflight.np, "isfinite", side_effect=AssertionError("old finite scan used")),
+        unittest.mock.patch.object(preflight.np, "unique", side_effect=AssertionError("old binary unique scan used")),
+        unittest.mock.patch.object(
+            preflight.np,
+            "count_nonzero",
+            side_effect=AssertionError("old binary count scan used"),
+        ),
+    ):
+        report = preflight.run_regenie2_preflight(
+            run_input=build_run_input(),
+            prediction_source=FakePredictionSource({"1": np.asarray([0.1, 0.2, 0.3], dtype=np.float32)}),
+            engine=FakeEngine(["1", "1"]),
+            variant_limit=None,
+            is_binary_trait=True,
+            trusted_no_missing_diploid=False,
+        )
+
+    assert report.sample_count == 3
+    assert report.covariate_count == 2
+    assert report.chromosome_count == 1
+
+
 def test_multi_preflight_accepts_valid_trait_major_inputs() -> None:
     report = preflight.run_regenie2_multi_preflight(
         run_input=build_multi_run_input(),

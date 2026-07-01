@@ -27,6 +27,9 @@ pub struct NullLogisticNonconvergencePlan {
     pub failed_trait_indices: Vec<usize>,
     pub message: Option<String>,
     pub warning_message: Option<String>,
+    pub nonconverged_count: usize,
+    pub scalar_convergence: bool,
+    pub total_fit_count: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,17 +76,30 @@ pub fn plan_null_logistic_nonconvergence(
     };
     let NullLogisticNonconvergenceMessage { failed_trait_indices, message } =
         build_null_logistic_nonconvergence_message(chromosome, convergence_flags, scalar_convergence, phenotype_names)?;
+    let nonconverged_count = failed_trait_indices.len();
+    let total_fit_count = convergence_flags.len();
     if failed_trait_indices.is_empty() {
         return Ok(NullLogisticNonconvergencePlan {
             action: NullLogisticNonconvergenceAction::Continue,
             failed_trait_indices,
             message: None,
             warning_message: None,
+            nonconverged_count,
+            scalar_convergence,
+            total_fit_count,
         });
     }
     let warning_message = (action == NullLogisticNonconvergenceAction::Warn)
         .then(|| format!("{message} Continuing because --null_logistic_nonconvergence_policy=warn."));
-    Ok(NullLogisticNonconvergencePlan { action, failed_trait_indices, message: Some(message), warning_message })
+    Ok(NullLogisticNonconvergencePlan {
+        action,
+        failed_trait_indices,
+        message: Some(message),
+        warning_message,
+        nonconverged_count,
+        scalar_convergence,
+        total_fit_count,
+    })
 }
 
 fn build_null_logistic_nonconvergence_message(
@@ -152,6 +168,9 @@ mod tests {
                 failed_trait_indices: Vec::new(),
                 message: None,
                 warning_message: None,
+                nonconverged_count: 0,
+                scalar_convergence: true,
+                total_fit_count: 1,
             },
         );
         assert_eq!(
@@ -169,6 +188,9 @@ mod tests {
                 failed_trait_indices: vec![0],
                 message: Some("Binary null logistic model did not converge for chromosome 22.".to_string()),
                 warning_message: None,
+                nonconverged_count: 1,
+                scalar_convergence: true,
+                total_fit_count: 1,
             },
         );
     }
@@ -193,6 +215,9 @@ mod tests {
                 warning_message: Some(
                     "Binary null logistic model did not converge for chromosome 22: trait_b, trait_c. Continuing because --null_logistic_nonconvergence_policy=warn.".to_string()
                 ),
+                nonconverged_count: 2,
+                scalar_convergence: false,
+                total_fit_count: 3,
             },
         );
     }

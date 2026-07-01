@@ -182,7 +182,7 @@ def run_regenie2_multi_preflight(
 
 def validate_finite_array(label: str, values: np.ndarray) -> None:
     """Validate that an array contains only finite values."""
-    g._core.validate_finite_array(label, bool(np.isfinite(values).all()))
+    g._core.validate_finite_array_values(label, values)
 
 
 def validate_covariate_matrix_rank(covariate_matrix: np.ndarray, covariate_count: int) -> None:
@@ -193,11 +193,7 @@ def validate_covariate_matrix_rank(covariate_matrix: np.ndarray, covariate_count
 
 def validate_binary_phenotype(phenotype_vector: np.ndarray) -> None:
     """Validate binary phenotype coding and case/control counts."""
-    unique_values = {float(value) for value in np.unique(phenotype_vector)}
-    g._core.validate_binary_phenotype_coding(unique_values.issubset({0.0, 1.0}))
-    control_count = int(np.count_nonzero(phenotype_vector == 0.0))
-    case_count = int(np.count_nonzero(phenotype_vector == 1.0))
-    g._core.validate_binary_phenotype_case_control_counts(case_count, control_count)
+    g._core.validate_binary_phenotype_array(phenotype_vector)
 
 
 def resolve_single_trait_preflight_shape(
