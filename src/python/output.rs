@@ -32,7 +32,8 @@ use pyo3::types::{PyDict, PyModule};
 use serde::de::DeserializeOwned;
 
 use super::{
-    ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata, runtime_state::NativeRuntimeCompatibilityToken,
+    genotype::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata},
+    runtime_state::NativeRuntimeCompatibilityToken,
 };
 
 #[pyclass]

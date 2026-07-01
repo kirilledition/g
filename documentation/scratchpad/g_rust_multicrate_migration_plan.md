@@ -1671,6 +1671,8 @@ Current implementation notes:
   with the corresponding adapter modules.
 - Association backend PyO3 export registration now lives in the association
   backend adapter module.
+- Genotype chunk, metadata, stats, sample-alignment, compute-group, and
+  prediction-source PyO3 adapters now live in focused adapter modules.
 
 ### Tests
 

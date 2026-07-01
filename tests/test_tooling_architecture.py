@@ -1156,16 +1156,19 @@ def test_pyo3_stub_checker_scans_delegated_registration_modules() -> None:
     assert Path("src/python/callback_summary.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/jax_runtime.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/logging.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/python/genotype.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/host_policy.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/output.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/preflight.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/preparation.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/python/prediction_sources.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/run_events.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/run_metadata.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/runtime.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/runtime_paths.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/runtime_policy.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/runtime_state.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/python/sample_alignment.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/schedule.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/shutdown.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/telemetry_policy.rs") in check_pyo3_stub.RUST_EXPORT_FILES
