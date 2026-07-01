@@ -50,6 +50,12 @@ from g.engine import shutdown, timing
 from g.interface import config as interface_config
 from g.io import output, source
 
+type NonBatchPreprocessedDosageWorkItem = (
+    callback_shared.PreprocessedDosageChunkWorkItem
+    | callback_shared.PreprocessedVariantMajorDosageChunkWorkItem
+    | callback_shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+)
+
 
 def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
     """Build the packaged-default kernel config for tests."""
@@ -2925,7 +2931,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         if isinstance(work_item, callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem):
             chunk_metadata_items = tuple(chunk_work_item.metadata for chunk_work_item in work_item.work_items)
         else:
-            dosage_work_item = typing.cast("callback_runtime.PreprocessedDosageWorkItem", work_item)
+            dosage_work_item = typing.cast("NonBatchPreprocessedDosageWorkItem", work_item)
             chunk_metadata_items = (dosage_work_item.metadata,)
         dosage_work_item_kind = callback_runtime.classify_dosage_work_item(
             typing.cast("callback_runtime.PreprocessedDosageWorkItem", work_item)
@@ -3355,7 +3361,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
                 return False
             self.dosage_queue.wait_for_available_slot(timeout_seconds=attempt_plan.wait_timeout_seconds)
 
-    def get_dosage_work_item(self) -> object:
+    def get_dosage_work_item(self) -> callback_runtime.QueuedPreprocessedDosageWorkItem:
         while True:
             get_plan = self.callback_scheduler_state.plan_dosage_queue_get_attempt(
                 has_queued_item=self.dosage_queue.has_queued_item
@@ -3371,7 +3377,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
                         raise RuntimeError(message)
                     message = "Native dosage queue storage had no queued item after scheduler selected get."
                     raise RuntimeError(message)
-                return get_result.item
+                return typing.cast("callback_runtime.QueuedPreprocessedDosageWorkItem", get_result.item)
             if get_plan.should_wait:
                 self.dosage_queue.wait_for_queued_item(timeout_seconds=get_plan.wait_timeout_seconds)
 
@@ -3480,7 +3486,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
                 return False
             self.result_queue.wait_for_available_slot(timeout_seconds=attempt_plan.wait_timeout_seconds)
 
-    def get_result_write_item(self) -> object:
+    def get_result_write_item(self) -> callback_runtime.QueuedResultWriteWorkItem:
         while True:
             get_plan = self.callback_scheduler_state.plan_result_queue_get_attempt(
                 has_queued_item=self.result_queue.has_queued_item
@@ -3496,7 +3502,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
                         raise RuntimeError(message)
                     message = "Native result queue storage had no queued item after scheduler selected get."
                     raise RuntimeError(message)
-                return get_result.item
+                return typing.cast("callback_runtime.QueuedResultWriteWorkItem", get_result.item)
             if get_plan.should_wait:
                 self.result_queue.wait_for_queued_item(timeout_seconds=get_plan.wait_timeout_seconds)
 
@@ -3795,7 +3801,9 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
 
     def get_releasable_dosage_buffer(self, dosage_buffer: object) -> typing.Any:
         if isinstance(dosage_buffer, np.ndarray):
-            dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
+            dosage_buffer_owner = self._dosage_buffer_owner(
+                typing.cast("callback_shared.HostGenotypeBuffer", dosage_buffer)
+            )
             return_plan = self.plan_dosage_buffer_return_attempt(buffer_identifier=id(dosage_buffer_owner))
             if return_plan.should_return:
                 return dosage_buffer_owner

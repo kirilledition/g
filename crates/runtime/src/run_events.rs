@@ -2176,8 +2176,8 @@ mod tests {
     #[test]
     fn builds_native_dispatch_writer_diagnostic_payloads() {
         let callback_payload = build_native_dispatch_callback_drain_started_diagnostic_payload();
-        let writer_payload = build_native_dispatch_writer_session_finish_started_diagnostic_payload();
-        let writers_payload = build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(2, 3);
+        let single_writer_payload = build_native_dispatch_writer_session_finish_started_diagnostic_payload();
+        let multi_writer_payload = build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(2, 3);
         let interrupted_payload =
             build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(130, "SIGINT", 2);
         let interrupted_writers_payload =
@@ -2187,8 +2187,8 @@ mod tests {
 
         assert_eq!(callback_payload.event_name, "native_dispatch_callback_drain_started");
         assert_eq!(callback_payload.fields, Vec::new());
-        assert_eq!(writer_payload.event_name, "native_dispatch_writer_session_finish_started");
-        assert_eq!(writers_payload.fields[1].value, RunDiagnosticFieldValue::Integer(3));
+        assert_eq!(single_writer_payload.event_name, "native_dispatch_writer_session_finish_started");
+        assert_eq!(multi_writer_payload.fields[1].value, RunDiagnosticFieldValue::Integer(3));
         assert_eq!(interrupted_payload.message, "Flushing interrupted output writer after SIGINT.");
         assert_eq!(interrupted_writers_payload.event_name, "native_dispatch_writer_sessions_interrupted_flush_started");
         assert_eq!(interrupted_writers_payload.fields[4].value, RunDiagnosticFieldValue::Integer(5));
