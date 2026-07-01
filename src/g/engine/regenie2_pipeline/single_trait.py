@@ -134,14 +134,14 @@ def run_single_trait_preflight(
         pipeline_label=pipeline_label,
         sample_count=preflight_report.sample_count,
     )
-    if context.telemetry_session is not None:
-        context.telemetry_session.log_single_trait_preflight_completed(
-            association_mode=context.association_mode,
-            phenotype=phenotype_name,
-            sample_count=preflight_report.sample_count,
-            covariate_count=preflight_report.covariate_count,
-            chromosome_count=preflight_report.chromosome_count,
-        )
+    _core.record_single_trait_preflight_completed_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        phenotype_name,
+        preflight_report.sample_count,
+        preflight_report.covariate_count,
+        preflight_report.chromosome_count,
+    )
 
 
 def build_single_trait_callback(

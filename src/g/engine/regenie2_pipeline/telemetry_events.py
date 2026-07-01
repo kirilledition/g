@@ -20,15 +20,14 @@ def log_sample_alignment_completed(
     phenotype_group_count: int | None,
 ) -> None:
     """Emit sample-alignment telemetry with mode-specific fields."""
-    if context.telemetry_session is None:
-        return
-    context.telemetry_session.log_sample_alignment_completed(
-        association_mode=context.association_mode,
-        phenotype=phenotype_name,
-        phenotype_count=phenotype_count,
-        sample_count=sample_count,
-        covariate_count=covariate_count,
-        phenotype_group_count=phenotype_group_count,
+    _core.record_sample_alignment_completed_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        phenotype_name,
+        phenotype_count,
+        sample_count,
+        covariate_count,
+        phenotype_group_count,
     )
 
 
@@ -48,14 +47,13 @@ def log_multi_phenotype_sample_summary(
         sample_counts_differ=sample_counts_differ,
         sample_mode=sample_mode.value,
     )
-    if context.telemetry_session is None:
-        return
-    context.telemetry_session.log_multi_phenotype_sample_summary(
-        association_mode=context.association_mode,
-        sample_mode=sample_mode,
-        sample_counts=sample_counts,
-        sample_set_fingerprints=sample_set_fingerprints,
-        phenotype_group_count=phenotype_group_count,
+    _core.record_multi_phenotype_sample_summary_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        sample_mode.value,
+        sample_counts,
+        sample_set_fingerprints,
+        phenotype_group_count,
     )
 
 
@@ -66,10 +64,9 @@ def log_prediction_source_loaded(
     phenotype_count: int | None,
 ) -> None:
     """Emit prediction-source telemetry with mode-specific fields."""
-    if context.telemetry_session is None:
-        return
-    context.telemetry_session.log_prediction_source_loaded(
-        association_mode=context.association_mode,
-        phenotype=phenotype_name,
-        phenotype_count=phenotype_count,
+    _core.record_prediction_source_loaded_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        phenotype_name,
+        phenotype_count,
     )

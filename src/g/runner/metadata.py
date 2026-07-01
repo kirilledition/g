@@ -56,12 +56,11 @@ def log_writer_finished(
     final_output_path: Path | None,
 ) -> None:
     """Record output writer completion."""
-    if telemetry_session is None:
-        return
-    telemetry_session.log_writer_finished(
-        association_mode=association_mode,
-        phenotype=phenotype,
-        final_output_path=final_output_path,
+    _core.record_writer_finished_telemetry_event(
+        telemetry_session,
+        association_mode.value,
+        phenotype,
+        None if final_output_path is None else str(final_output_path),
     )
 
 
@@ -78,13 +77,13 @@ def write_run_start_metadata(
         plan=plan,
         phenotype_run_plan=phenotype_run_plan,
     )
-    if telemetry_session is not None:
-        telemetry_session.log_effective_config_written(
-            association_mode=plan.association_mode,
-            phenotype=phenotype_run_plan.phenotype_name,
-            effective_config=phenotype_run_plan.effective_config_path,
-            output_run_directory=phenotype_run_plan.output_run_paths.run_directory,
-        )
+    _core.record_effective_config_written_telemetry_event(
+        telemetry_session,
+        plan.association_mode.value,
+        phenotype_run_plan.phenotype_name,
+        str(phenotype_run_plan.effective_config_path),
+        str(phenotype_run_plan.output_run_paths.run_directory),
+    )
 
 
 def finalize_execution_plan(

@@ -682,6 +682,7 @@ class RecordingTelemetrySession:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, object]]] = []
         self.progress_events: list[dict[str, object]] = []
+        self.native_session_handle = self
 
     def log_event(self, event_name: str, level: str, **fields: object) -> None:
         del level
@@ -707,17 +708,16 @@ class RecordingTelemetrySession:
     def log_binary_correction_summary(self, summary_payload: dict[str, int]) -> None:
         self.events.append(("binary_correction_summary", dict(summary_payload)))
 
-    def log_sample_alignment_completed(
+    def emit_sample_alignment_completed_event(
         self,
-        *,
-        association_mode: types.AssociationMode,
+        association_mode: str,
         phenotype: str | None,
         phenotype_count: int | None,
         sample_count: int | None,
         covariate_count: int | None,
         phenotype_group_count: int | None,
     ) -> None:
-        fields: dict[str, object] = {"association_mode": association_mode.value}
+        fields: dict[str, object] = {"association_mode": association_mode}
         if phenotype is not None:
             fields["phenotype"] = phenotype
         if phenotype_count is not None:
@@ -730,6 +730,38 @@ class RecordingTelemetrySession:
             fields["phenotype_group_count"] = phenotype_group_count
         self.events.append(("sample_alignment_completed", fields))
 
+    def log_sample_alignment_completed(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        phenotype: str | None,
+        phenotype_count: int | None,
+        sample_count: int | None,
+        covariate_count: int | None,
+        phenotype_group_count: int | None,
+    ) -> None:
+        self.emit_sample_alignment_completed_event(
+            association_mode.value,
+            phenotype,
+            phenotype_count,
+            sample_count,
+            covariate_count,
+            phenotype_group_count,
+        )
+
+    def emit_prediction_source_loaded_event(
+        self,
+        association_mode: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
+        fields: dict[str, object] = {"association_mode": association_mode}
+        if phenotype is not None:
+            fields["phenotype"] = phenotype
+        if phenotype_count is not None:
+            fields["phenotype_count"] = phenotype_count
+        self.events.append(("prediction_source_loaded", fields))
+
     def log_prediction_source_loaded(
         self,
         *,
@@ -737,20 +769,14 @@ class RecordingTelemetrySession:
         phenotype: str | None,
         phenotype_count: int | None,
     ) -> None:
-        fields: dict[str, object] = {"association_mode": association_mode.value}
-        if phenotype is not None:
-            fields["phenotype"] = phenotype
-        if phenotype_count is not None:
-            fields["phenotype_count"] = phenotype_count
-        self.events.append(("prediction_source_loaded", fields))
+        self.emit_prediction_source_loaded_event(association_mode.value, phenotype, phenotype_count)
 
-    def log_multi_phenotype_sample_summary(
+    def emit_multi_phenotype_sample_summary_event(
         self,
-        *,
-        association_mode: types.AssociationMode,
-        sample_mode: types.MultiPhenotypeSampleMode,
-        sample_counts: tuple[int, ...],
-        sample_set_fingerprints: tuple[str | None, ...],
+        association_mode: str,
+        multi_phenotype_sample_mode: str,
+        sample_counts: typing.Sequence[int],
+        sample_set_fingerprints: typing.Sequence[str | None],
         phenotype_group_count: int,
     ) -> None:
         sample_counts_differ = len(set(sample_counts)) > 1
@@ -764,8 +790,8 @@ class RecordingTelemetrySession:
             (
                 "multi_phenotype_sample_summary",
                 {
-                    "association_mode": association_mode.value,
-                    "multi_phenotype_sample_mode": sample_mode.value,
+                    "association_mode": association_mode,
+                    "multi_phenotype_sample_mode": multi_phenotype_sample_mode,
                     "phenotype_count": len(sample_counts),
                     "phenotype_group_count": phenotype_group_count,
                     "sample_counts": list(sample_counts),
@@ -775,6 +801,39 @@ class RecordingTelemetrySession:
             )
         )
 
+    def log_multi_phenotype_sample_summary(
+        self,
+        *,
+        association_mode: types.AssociationMode,
+        sample_mode: types.MultiPhenotypeSampleMode,
+        sample_counts: tuple[int, ...],
+        sample_set_fingerprints: tuple[str | None, ...],
+        phenotype_group_count: int,
+    ) -> None:
+        self.emit_multi_phenotype_sample_summary_event(
+            association_mode.value,
+            sample_mode.value,
+            sample_counts,
+            sample_set_fingerprints,
+            phenotype_group_count,
+        )
+
+    def emit_gpu_genotype_format_resolved_event(
+        self,
+        requested_gpu_genotype_format: str,
+        resolved_gpu_genotype_format: str,
+        resolution_reason: str,
+        fallback_error: str | None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "requested_gpu_genotype_format": requested_gpu_genotype_format,
+            "resolved_gpu_genotype_format": resolved_gpu_genotype_format,
+            "resolution_reason": resolution_reason,
+        }
+        if fallback_error is not None:
+            fields["fallback_error"] = fallback_error
+        self.events.append(("gpu_genotype_format_resolved", fields))
+
     def log_gpu_genotype_format_resolved(
         self,
         *,
@@ -783,14 +842,33 @@ class RecordingTelemetrySession:
         resolution_reason: str,
         fallback_error: str | None,
     ) -> None:
+        self.emit_gpu_genotype_format_resolved_event(
+            requested_gpu_genotype_format.value,
+            resolved_gpu_genotype_format.value,
+            resolution_reason,
+            fallback_error,
+        )
+
+    def emit_association_backend_selected_event(
+        self,
+        association_mode: str,
+        association_backend_kind: str,
+        device: str,
+        genotype_format: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
         fields: dict[str, object] = {
-            "requested_gpu_genotype_format": requested_gpu_genotype_format.value,
-            "resolved_gpu_genotype_format": resolved_gpu_genotype_format.value,
-            "resolution_reason": resolution_reason,
+            "association_mode": association_mode,
+            "association_backend_kind": association_backend_kind,
+            "device": device,
+            "genotype_format": genotype_format,
         }
-        if fallback_error is not None:
-            fields["fallback_error"] = fallback_error
-        self.events.append(("gpu_genotype_format_resolved", fields))
+        if phenotype is not None:
+            fields["phenotype"] = phenotype
+        if phenotype_count is not None:
+            fields["phenotype_count"] = phenotype_count
+        self.events.append(("association_backend_selected", fields))
 
     def log_association_backend_selected(
         self,
@@ -802,17 +880,35 @@ class RecordingTelemetrySession:
         phenotype: str | None,
         phenotype_count: int | None,
     ) -> None:
+        self.emit_association_backend_selected_event(
+            association_mode.value,
+            association_backend_kind.value,
+            device.value,
+            genotype_format.value,
+            phenotype,
+            phenotype_count,
+        )
+
+    def emit_bgen_engine_opened_event(
+        self,
+        association_mode: str,
+        association_backend_kind: str,
+        sample_count: int,
+        variant_count: int,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None:
         fields: dict[str, object] = {
-            "association_mode": association_mode.value,
-            "association_backend_kind": association_backend_kind.value,
-            "device": device.value,
-            "genotype_format": genotype_format.value,
+            "association_mode": association_mode,
+            "association_backend_kind": association_backend_kind,
+            "sample_count": sample_count,
+            "variant_count": variant_count,
         }
         if phenotype is not None:
             fields["phenotype"] = phenotype
         if phenotype_count is not None:
             fields["phenotype_count"] = phenotype_count
-        self.events.append(("association_backend_selected", fields))
+        self.events.append(("bgen_engine_opened", fields))
 
     def log_bgen_engine_opened(
         self,
@@ -824,17 +920,35 @@ class RecordingTelemetrySession:
         phenotype: str | None,
         phenotype_count: int | None,
     ) -> None:
-        fields: dict[str, object] = {
-            "association_mode": association_mode.value,
-            "association_backend_kind": association_backend_kind.value,
-            "sample_count": sample_count,
-            "variant_count": variant_count,
-        }
-        if phenotype is not None:
-            fields["phenotype"] = phenotype
-        if phenotype_count is not None:
-            fields["phenotype_count"] = phenotype_count
-        self.events.append(("bgen_engine_opened", fields))
+        self.emit_bgen_engine_opened_event(
+            association_mode.value,
+            association_backend_kind.value,
+            sample_count,
+            variant_count,
+            phenotype,
+            phenotype_count,
+        )
+
+    def emit_single_trait_preflight_completed_event(
+        self,
+        association_mode: str,
+        phenotype: str,
+        sample_count: int,
+        covariate_count: int,
+        chromosome_count: int,
+    ) -> None:
+        self.events.append(
+            (
+                "preflight_completed",
+                {
+                    "association_mode": association_mode,
+                    "phenotype": phenotype,
+                    "sample_count": sample_count,
+                    "covariate_count": covariate_count,
+                    "chromosome_count": chromosome_count,
+                },
+            )
+        )
 
     def log_single_trait_preflight_completed(
         self,
@@ -845,15 +959,27 @@ class RecordingTelemetrySession:
         covariate_count: int,
         chromosome_count: int,
     ) -> None:
+        self.emit_single_trait_preflight_completed_event(
+            association_mode.value,
+            phenotype,
+            sample_count,
+            covariate_count,
+            chromosome_count,
+        )
+
+    def emit_multi_phenotype_preflight_completed_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        sample_count: int,
+    ) -> None:
         self.events.append(
             (
                 "preflight_completed",
                 {
-                    "association_mode": association_mode.value,
-                    "phenotype": phenotype,
+                    "association_mode": association_mode,
+                    "phenotype_count": phenotype_count,
                     "sample_count": sample_count,
-                    "covariate_count": covariate_count,
-                    "chromosome_count": chromosome_count,
                 },
             )
         )
@@ -865,15 +991,10 @@ class RecordingTelemetrySession:
         phenotype_count: int,
         sample_count: int,
     ) -> None:
-        self.events.append(
-            (
-                "preflight_completed",
-                {
-                    "association_mode": association_mode.value,
-                    "phenotype_count": phenotype_count,
-                    "sample_count": sample_count,
-                },
-            )
+        self.emit_multi_phenotype_preflight_completed_event(
+            association_mode.value,
+            phenotype_count,
+            sample_count,
         )
 
 

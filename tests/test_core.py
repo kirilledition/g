@@ -1270,6 +1270,112 @@ def test_native_cli_run_failed_telemetry_emission() -> None:
     assert failing_session.call_count == 1
 
 
+def test_native_runner_telemetry_dispatch_helpers() -> None:
+    class RecordingNativeSessionHandle:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+        def emit_execution_plan_prepared_event(
+            self,
+            association_mode: str,
+            trait_type: str,
+            phenotype_count: int,
+            chunk_size: int,
+            variant_limit: int | None,
+            device: str,
+        ) -> None:
+            self.calls.append(
+                (
+                    "execution_plan_prepared",
+                    (association_mode, trait_type, phenotype_count, chunk_size, variant_limit, device),
+                )
+            )
+
+        def emit_effective_config_written_event(
+            self,
+            association_mode: str,
+            phenotype: str,
+            effective_config: str,
+            output_run_directory: str,
+        ) -> None:
+            self.calls.append(
+                (
+                    "effective_config_written",
+                    (association_mode, phenotype, effective_config, output_run_directory),
+                )
+            )
+
+        def emit_phenotype_writer_finished_event(
+            self,
+            association_mode: str,
+            phenotype: str,
+            final_output_path: str | None,
+        ) -> None:
+            self.calls.append(("writer_finished", (association_mode, phenotype, final_output_path)))
+
+        def emit_multi_phenotype_writer_finished_event(
+            self,
+            association_mode: str,
+            phenotype_count: int,
+            final_output_paths: typing.Sequence[str | None],
+        ) -> None:
+            self.calls.append(("multi_writer_finished", (association_mode, phenotype_count, tuple(final_output_paths))))
+
+    class RecordingTelemetrySession:
+        def __init__(self, native_session_handle: RecordingNativeSessionHandle) -> None:
+            self.native_session_handle = native_session_handle
+
+    native_session_handle = RecordingNativeSessionHandle()
+    telemetry_session = RecordingTelemetrySession(native_session_handle)
+
+    _core.record_execution_plan_prepared_telemetry_event(
+        None,
+        "regenie2_linear",
+        "quantitative",
+        2,
+        1024,
+        None,
+        "gpu",
+    )
+    assert native_session_handle.calls == []
+
+    _core.record_execution_plan_prepared_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "quantitative",
+        2,
+        1024,
+        None,
+        "gpu",
+    )
+    _core.record_effective_config_written_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "height",
+        "height/effective_config.toml",
+        "height",
+    )
+    _core.record_writer_finished_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "height",
+        "height.parquet",
+    )
+    _core.record_multi_writer_finished_telemetry_event(
+        telemetry_session,
+        "regenie2_binary",
+        2,
+        ("case_status.parquet", None),
+    )
+
+    assert native_session_handle.calls == [
+        ("execution_plan_prepared", ("regenie2_linear", "quantitative", 2, 1024, None, "gpu")),
+        ("effective_config_written", ("regenie2_linear", "height", "height/effective_config.toml", "height")),
+        ("writer_finished", ("regenie2_linear", "height", "height.parquet")),
+        ("multi_writer_finished", ("regenie2_binary", 2, ("case_status.parquet", None))),
+    ]
+
+
 def test_native_cli_telemetry_close_failure_plan() -> None:
     successful_run_plan = _core.plan_cli_telemetry_close_failure(
         current_exit_code=0,

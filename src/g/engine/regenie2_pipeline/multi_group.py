@@ -75,12 +75,12 @@ def prepare_multi_phenotype_bgen_group_delivery(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
         variant_limit=context.variant_limit,
     )
-    if context.telemetry_session is not None:
-        context.telemetry_session.log_multi_phenotype_preflight_completed(
-            association_mode=context.association_mode,
-            phenotype_count=len(run_input.phenotype_names),
-            sample_count=int(run_input.sample_indices.shape[0]),
-        )
+    _core.record_multi_phenotype_preflight_completed_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        len(run_input.phenotype_names),
+        int(run_input.sample_indices.shape[0]),
+    )
     current_headers = tuple(
         outputs.build_pipeline_manifest_header(
             context=context,

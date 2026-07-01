@@ -170,15 +170,15 @@ def run_validated_regenie_config(
             regenie_config,
             runtime_compatibility_token=runtime_compatibility_token,
         )
-        if telemetry_session is not None:
-            telemetry_session.log_execution_plan_prepared(
-                association_mode=plan.association_mode,
-                trait_type=regenie_config.trait.trait_type,
-                phenotype_count=len(plan.phenotype_run_plans),
-                chunk_size=plan.kernel_config.chunk_size,
-                variant_limit=plan.kernel_config.variant_limit,
-                device=plan.kernel_config.device,
-            )
+        _core.record_execution_plan_prepared_telemetry_event(
+            telemetry_session,
+            plan.association_mode.value,
+            regenie_config.trait.trait_type.value,
+            len(plan.phenotype_run_plans),
+            plan.kernel_config.chunk_size,
+            plan.kernel_config.variant_limit,
+            plan.kernel_config.device.value,
+        )
         _core.record_runner_execution_plan_prepared_diagnostic_event(
             association_mode=plan.association_mode.value,
             phenotype_count=len(plan.phenotype_run_plans),
@@ -515,10 +515,12 @@ def dispatch_multi_phenotype_engine_pipeline(
             phenotype_compute_groups=plan.phenotype_compute_groups,
             output_initialized_callback=common_request.output_initialized_callback,
         )
-    if telemetry_session is not None:
-        telemetry_session.log_multi_writer_finished(
-            association_mode=plan.association_mode,
-            phenotype_count=len(plan.phenotype_run_plans),
-            final_output_paths=final_output_paths,
-        )
+    _core.record_multi_writer_finished_telemetry_event(
+        telemetry_session,
+        plan.association_mode.value,
+        len(plan.phenotype_run_plans),
+        tuple(
+            None if final_output_path is None else str(final_output_path) for final_output_path in final_output_paths
+        ),
+    )
     return final_output_paths

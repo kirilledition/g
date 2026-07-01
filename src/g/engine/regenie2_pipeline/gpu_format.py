@@ -67,13 +67,12 @@ def log_auto_resolution(
         resolution_reason=resolution_reason,
         fallback_error=fallback_error,
     )
-    if telemetry_session is None:
-        return
-    telemetry_session.log_gpu_genotype_format_resolved(
-        requested_gpu_genotype_format=requested_gpu_genotype_format,
-        resolved_gpu_genotype_format=resolved_gpu_genotype_format,
-        resolution_reason=resolution_reason,
-        fallback_error=fallback_error,
+    _core.record_gpu_genotype_format_resolved_telemetry_event(
+        telemetry_session,
+        requested_gpu_genotype_format.value,
+        resolved_gpu_genotype_format.value,
+        resolution_reason,
+        fallback_error,
     )
 
 

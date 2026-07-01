@@ -59,15 +59,14 @@ def log_association_backend_selected(
     phenotype_count: int | None,
 ) -> None:
     """Emit telemetry for the concrete association backend selection."""
-    if context.telemetry_session is None:
-        return
-    context.telemetry_session.log_association_backend_selected(
-        association_mode=context.association_mode,
-        association_backend_kind=context.backend_plan.backend_kind,
-        device=context.backend_plan.jax_device,
-        genotype_format=context.backend_plan.genotype_format,
-        phenotype=phenotype_name,
-        phenotype_count=phenotype_count,
+    _core.record_association_backend_selected_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        context.backend_plan.backend_kind.value,
+        context.backend_plan.jax_device.value,
+        context.backend_plan.genotype_format.value,
+        phenotype_name,
+        phenotype_count,
     )
 
 
@@ -79,15 +78,14 @@ def log_bgen_engine_opened(
     phenotype_count: int | None,
 ) -> None:
     """Emit telemetry for an opened BGEN engine."""
-    if context.telemetry_session is None:
-        return
-    context.telemetry_session.log_bgen_engine_opened(
-        association_mode=context.association_mode,
-        association_backend_kind=context.backend_plan.backend_kind,
-        sample_count=int(engine.sample_count),
-        variant_count=int(engine.variant_count),
-        phenotype=phenotype_name,
-        phenotype_count=phenotype_count,
+    _core.record_bgen_engine_opened_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        context.backend_plan.backend_kind.value,
+        int(engine.sample_count),
+        int(engine.variant_count),
+        phenotype_name,
+        phenotype_count,
     )
 
 

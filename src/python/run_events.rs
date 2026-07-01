@@ -93,6 +93,242 @@ pub fn build_run_failed_telemetry_fields<'py>(
 }
 
 #[pyfunction]
+pub fn record_execution_plan_prepared_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    trait_type: &str,
+    phenotype_count: i64,
+    chunk_size: i64,
+    variant_limit: Option<i64>,
+    device: &str,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1(
+            "emit_execution_plan_prepared_event",
+            (association_mode, trait_type, phenotype_count, chunk_size, variant_limit, device),
+        )
+        .map(|_| ())
+}
+
+#[pyfunction]
+pub fn record_effective_config_written_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    phenotype: &str,
+    effective_config: &str,
+    output_run_directory: &str,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1(
+            "emit_effective_config_written_event",
+            (association_mode, phenotype, effective_config, output_run_directory),
+        )
+        .map(|_| ())
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn record_writer_finished_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    phenotype: &str,
+    final_output_path: Option<String>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1("emit_phenotype_writer_finished_event", (association_mode, phenotype, final_output_path))
+        .map(|_| ())
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn record_multi_writer_finished_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    phenotype_count: i64,
+    final_output_paths: Vec<Option<String>>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1(
+            "emit_multi_phenotype_writer_finished_event",
+            (association_mode, phenotype_count, final_output_paths),
+        )
+        .map(|_| ())
+}
+
+#[pyfunction]
+pub fn record_single_trait_preflight_completed_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    phenotype: &str,
+    sample_count: i64,
+    covariate_count: i64,
+    chromosome_count: i64,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1(
+            "emit_single_trait_preflight_completed_event",
+            (association_mode, phenotype, sample_count, covariate_count, chromosome_count),
+        )
+        .map(|_| ())
+}
+
+#[pyfunction]
+pub fn record_multi_phenotype_preflight_completed_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    phenotype_count: i64,
+    sample_count: i64,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1(
+            "emit_multi_phenotype_preflight_completed_event",
+            (association_mode, phenotype_count, sample_count),
+        )
+        .map(|_| ())
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn record_sample_alignment_completed_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    phenotype: Option<String>,
+    phenotype_count: Option<i64>,
+    sample_count: Option<i64>,
+    covariate_count: Option<i64>,
+    phenotype_group_count: Option<i64>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1(
+            "emit_sample_alignment_completed_event",
+            (association_mode, phenotype, phenotype_count, sample_count, covariate_count, phenotype_group_count),
+        )
+        .map(|_| ())
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn record_prediction_source_loaded_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    phenotype: Option<String>,
+    phenotype_count: Option<i64>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1("emit_prediction_source_loaded_event", (association_mode, phenotype, phenotype_count))
+        .map(|_| ())
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn record_multi_phenotype_sample_summary_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    sample_mode: &str,
+    sample_counts: Vec<i64>,
+    sample_set_fingerprints: Vec<Option<String>>,
+    phenotype_group_count: i64,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1(
+            "emit_multi_phenotype_sample_summary_event",
+            (association_mode, sample_mode, sample_counts, sample_set_fingerprints, phenotype_group_count),
+        )
+        .map(|_| ())
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn record_gpu_genotype_format_resolved_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    requested_gpu_genotype_format: &str,
+    resolved_gpu_genotype_format: &str,
+    resolution_reason: &str,
+    fallback_error: Option<String>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1(
+            "emit_gpu_genotype_format_resolved_event",
+            (requested_gpu_genotype_format, resolved_gpu_genotype_format, resolution_reason, fallback_error),
+        )
+        .map(|_| ())
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn record_association_backend_selected_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    association_backend_kind: &str,
+    device: &str,
+    genotype_format: &str,
+    phenotype: Option<String>,
+    phenotype_count: Option<i64>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1(
+            "emit_association_backend_selected_event",
+            (association_mode, association_backend_kind, device, genotype_format, phenotype, phenotype_count),
+        )
+        .map(|_| ())
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn record_bgen_engine_opened_telemetry_event(
+    telemetry_session: &Bound<'_, PyAny>,
+    association_mode: &str,
+    association_backend_kind: &str,
+    sample_count: i64,
+    variant_count: i64,
+    phenotype: Option<String>,
+    phenotype_count: Option<i64>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1(
+            "emit_bgen_engine_opened_event",
+            (association_mode, association_backend_kind, sample_count, variant_count, phenotype, phenotype_count),
+        )
+        .map(|_| ())
+}
+
+#[pyfunction]
 pub fn build_runner_run_started_diagnostic_payload<'py>(
     py: Python<'py>,
     association_mode: &str,
@@ -1653,6 +1889,18 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
     module.add_function(wrap_pyfunction!(build_run_completed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_failed_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(record_execution_plan_prepared_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_effective_config_written_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_writer_finished_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_multi_writer_finished_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_single_trait_preflight_completed_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_multi_phenotype_preflight_completed_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_sample_alignment_completed_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_prediction_source_loaded_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_multi_phenotype_sample_summary_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_gpu_genotype_format_resolved_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_association_backend_selected_telemetry_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_bgen_engine_opened_telemetry_event, module)?)?;
     Ok(())
 }
 
@@ -2066,6 +2314,13 @@ fn emit_run_diagnostic_event_payload(event: &native_run_events::RunDiagnosticEve
         &event.message,
         Some(run_diagnostic_fields_to_json_text(&event.fields)?),
     )
+}
+
+fn optional_native_session_handle<'py>(telemetry_session: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
+    if telemetry_session.is_none() {
+        return Ok(None);
+    }
+    telemetry_session.getattr("native_session_handle").map(Some)
 }
 
 fn run_diagnostic_fields_to_json_text(fields: &[native_run_events::RunDiagnosticFieldPayload]) -> PyResult<String> {
