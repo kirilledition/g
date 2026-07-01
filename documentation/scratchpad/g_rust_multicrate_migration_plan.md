@@ -1310,6 +1310,9 @@ Remove Python as the chunk-level scheduler.
 - Production dosage and single-result consumer loops now always enter native
   runtime-resource get/drain helpers; manual scheduler consumer loops live only
   in test fixtures.
+- Production dosage/result drain and dispatch planner helpers now require
+  native runtime resources; manual scheduler planner helpers live only in test
+  fixtures.
 - Production dosage and result consumers now consume native validated get/drain
   results that carry dispatch plans, removing separate Python dispatch planner
   calls after native queue gets.

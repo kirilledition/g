@@ -94,7 +94,9 @@ and binary result consumers now always use the native runtime-resource
 get/drain loop instead of a production Python fallback loop. The base callback
 runner's dosage and single-result consumers now also require native
 runtime-resource get/drain helpers, leaving manual scheduler consumer loops in
-test fixtures only.
+test fixtures only. Base dosage/result drain and dispatch planner helpers now
+also require native runtime resources, with manual scheduler planner helpers
+confined to test fixtures.
 
 ## Phase Order
 

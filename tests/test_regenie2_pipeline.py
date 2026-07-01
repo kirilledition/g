@@ -2796,6 +2796,34 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
     def result_worker_thread(self, result_worker_thread: typing.Any) -> None:
         self._manual_result_worker_thread = result_worker_thread
 
+    def plan_dosage_work_drain_completion(self, work_item: object) -> typing.Any:
+        return self.callback_scheduler_state.plan_dosage_work_drain_completion(
+            has_dosage_work_item=work_item is not None,
+        )
+
+    def plan_dosage_work_item_dispatch(self, work_item: object) -> typing.Any:
+        dosage_work_item_kind = callback_runtime.classify_dosage_work_item(
+            typing.cast("callback_runtime.QueuedPreprocessedDosageWorkItem", work_item)
+        )
+        return self.callback_scheduler_state.plan_dosage_work_item_dispatch(
+            dosage_work_item_kind=dosage_work_item_kind.value,
+        )
+
+    def plan_result_write_drain_completion(self, work_item: object) -> typing.Any:
+        return self.callback_scheduler_state.plan_result_write_drain_completion(
+            has_result_work_item=work_item is not None,
+            flush_binary_correction_diagnostics_on_stop=self.flush_binary_correction_diagnostics_on_result_stop,
+        )
+
+    def plan_result_write_item_dispatch(self, work_item: object) -> typing.Any:
+        result_work_item_kind = callback_runtime.classify_result_write_item(
+            typing.cast("callback_runtime.QueuedResultWriteWorkItem", work_item)
+        )
+        return self.callback_scheduler_state.plan_result_write_item_dispatch(
+            result_work_item_kind=result_work_item_kind.value,
+            expected_result_work_item_kind=self.expected_result_work_item_kind.value,
+        )
+
     def consume_dosage_chunks(self) -> None:
         try:
             if self.stage_timing_recorder is None:
