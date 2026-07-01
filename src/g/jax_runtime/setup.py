@@ -27,15 +27,12 @@ class NvidiaDriverProbePaths:
 
 
 def configure_before_backend_init(
-    policy: models.JaxRuntimePolicy,
-    *,
-    native_setup_session: _core.NativeJaxRuntimeSetupSession | None,
+    native_setup_session: _core.NativeJaxRuntimeSetupSession,
     diagnostic_sink: typing.Callable[[models.JaxRuntimeDiagnosticEvent], None] | None,
 ) -> models.JaxRuntimeSetupReport:
     """Configure JAX platform and runtime knobs before backend initialization.
 
     Args:
-        policy: Requested runtime policy.
         native_setup_session: Native setup session to own setup decisions.
         diagnostic_sink: Optional structured diagnostic event sink.
 
@@ -46,47 +43,26 @@ def configure_before_backend_init(
         RuntimeError: If GPU execution was requested but validation fails.
 
     """
-    active_setup_session = resolve_active_setup_session(policy, native_setup_session)
-    setup_report = resolution.jax_runtime_setup_report_from_native_payload(active_setup_session.setup_payload())
-    side_effect_plan = active_setup_session.side_effect_plan_payload()
-    active_setup_session.create_cache_directory_if_configured()
-    apply_jax_runtime_config_updates(active_setup_session)
-    if not typing.cast("bool", side_effect_plan["should_validate_gpu"]):
+    setup_report = resolution.jax_runtime_setup_report_from_native_payload(native_setup_session.setup_payload())
+    native_setup_session.create_cache_directory_if_configured()
+    apply_jax_runtime_config_updates(native_setup_session)
+    if not native_setup_session.should_validate_gpu:
         if diagnostic_sink is not None:
-            for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(active_setup_session):
+            for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(native_setup_session):
                 diagnostic_sink(diagnostic_event)
         return setup_report
     try:
-        validated_payload = validate_gpu_if_configured_with_default_probe_paths(active_setup_session)
+        validated_payload = validate_gpu_if_configured_with_default_probe_paths(native_setup_session)
     except RuntimeError:
         if diagnostic_sink is not None:
-            for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(active_setup_session):
+            for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(native_setup_session):
                 diagnostic_sink(diagnostic_event)
         raise
     validated_report = resolution.jax_runtime_setup_report_from_native_payload(validated_payload)
     if diagnostic_sink is not None:
-        for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(active_setup_session):
+        for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(native_setup_session):
             diagnostic_sink(diagnostic_event)
     return validated_report
-
-
-def resolve_active_setup_session(
-    policy: models.JaxRuntimePolicy,
-    native_setup_session: _core.NativeJaxRuntimeSetupSession | None,
-) -> _core.NativeJaxRuntimeSetupSession:
-    """Return the caller-provided native setup session or build a direct one.
-
-    Args:
-        policy: Requested runtime policy.
-        native_setup_session: Optional native setup session.
-
-    Returns:
-        Native setup session.
-
-    """
-    if native_setup_session is not None:
-        return native_setup_session
-    return resolution.build_native_jax_runtime_setup_session(policy)
 
 
 def default_nvidia_driver_probe_paths() -> NvidiaDriverProbePaths:
@@ -183,9 +159,9 @@ def validate_gpu_device() -> models.JaxGpuValidationReport:
         RuntimeError: If no visible NVIDIA driver or JAX GPU device is available.
 
     """
-    native_validation_session = _core.NativeJaxRuntimeSetupSession(
-        _core.resolve_jax_runtime_setup_payload(
-            requested_device="gpu",
+    native_validation_session = _core.NativeRuntimeState().build_jax_runtime_setup_session_resolving_cache_directory(
+        _core.build_jax_runtime_policy_payload(
+            device="gpu",
             cache_directory="",
             matmul_precision=None,
             persistent_cache=False,
@@ -193,10 +169,9 @@ def validate_gpu_device() -> models.JaxGpuValidationReport:
             persistent_cache_min_compile_time_seconds=0,
             xla_autotune_cache=False,
             transfer_guard=False,
-        ),
-        should_configure=False,
+        )
     )
-    validated_payload = validate_gpu_if_configured(native_validation_session)
+    validated_payload = validate_gpu_if_configured_with_default_probe_paths(native_validation_session)
     validated_report = resolution.jax_runtime_setup_report_from_native_payload(validated_payload)
     return models.JaxGpuValidationReport(
         status=validated_report.gpu_validation_status,

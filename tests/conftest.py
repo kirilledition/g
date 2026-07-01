@@ -16,8 +16,8 @@ COMPUTE_CONFIG = config.RegenieConfig.from_options(
         "jax_persistent_cache": False,
     }
 ).g_compute
+JAX_RUNTIME_POLICY = jax_runtime_resolution.resolve_jax_runtime_policy(COMPUTE_CONFIG)
 jax_runtime_setup.configure_before_backend_init(
-    jax_runtime_resolution.resolve_jax_runtime_policy(COMPUTE_CONFIG),
-    native_setup_session=None,
+    native_setup_session=jax_runtime_resolution.build_native_jax_runtime_setup_session(JAX_RUNTIME_POLICY),
     diagnostic_sink=None,
 )

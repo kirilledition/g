@@ -968,8 +968,6 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
     class FakeJaxSetupModule:
         def configure_before_backend_init(
             self,
-            policy: jax_runtime_models.JaxRuntimePolicy,
-            *,
             native_setup_session: _core.NativeJaxRuntimeSetupSession,
             diagnostic_sink: typing.Callable[[jax_runtime_models.JaxRuntimeDiagnosticEvent], None],
         ) -> jax_runtime_models.JaxRuntimeSetupReport:
@@ -977,21 +975,11 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
             assert isinstance(native_setup_session, _core.NativeJaxRuntimeSetupSession)
             assert native_setup_session.should_configure is True
             native_setup_session.complete_validation_payload("succeeded", None)
-            call_order.append(f"setup:{policy.device.value}")
-            return jax_runtime_models.JaxRuntimeSetupReport(
-                requested_device=policy.device,
-                platform_name=jax_runtime_models.JAX_CUDA_PLATFORM_NAME,
-                cache_directory=Path("/tmp/test-jax-cache"),
-                matmul_precision=types.JaxMatmulPrecision.FLOAT32,
-                persistent_cache_enabled=policy.persistent_cache,
-                persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
-                persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
-                xla_auxiliary_cache_mode=jax_runtime_models.XlaAuxiliaryCacheMode.DISABLED,
-                xla_auxiliary_cache_reason="not requested",
-                transfer_guard_enabled=policy.transfer_guard,
-                gpu_validation_status=jax_runtime_models.GpuValidationStatus.SUCCEEDED,
-                gpu_validation_message=None,
+            setup_report = jax_runtime_resolution.jax_runtime_setup_report_from_native_payload(
+                native_setup_session.setup_payload()
             )
+            call_order.append(f"setup:{setup_report.requested_device.value}")
+            return setup_report
 
     def import_module(module_name: str) -> object:
         call_order.append(f"import:{module_name}")
@@ -1000,15 +988,11 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
         raise AssertionError(f"Unexpected import: {module_name}")
 
     process_runtime_state = build_test_process_runtime_state(None, None)
+    assert not hasattr(jax_runtime_resolution, "resolve_jax_runtime_cache_directory")
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", process_runtime_state),
         patch("g.runner.runtime.importlib.import_module", side_effect=import_module),
-        patch.object(
-            jax_runtime_resolution,
-            "resolve_jax_runtime_cache_directory",
-            side_effect=AssertionError("JAX setup cache directory should be resolved by native runtime state"),
-        ),
     ):
         runner_runtime.configure_runtime_before_jax_import(
             build_compute_config(device=types.Device.GPU),
@@ -1043,25 +1027,12 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
     class FakeJaxSetupModule:
         def configure_before_backend_init(
             self,
-            policy: jax_runtime_models.JaxRuntimePolicy,
-            *,
             native_setup_session: _core.NativeJaxRuntimeSetupSession,
             diagnostic_sink: typing.Callable[[jax_runtime_models.JaxRuntimeDiagnosticEvent], None],
         ) -> jax_runtime_models.JaxRuntimeSetupReport:
             assert isinstance(native_setup_session, _core.NativeJaxRuntimeSetupSession)
-            setup_report = jax_runtime_models.JaxRuntimeSetupReport(
-                requested_device=policy.device,
-                platform_name=jax_runtime_models.JAX_CPU_PLATFORM_NAME,
-                cache_directory=Path("/tmp/test-jax-cache"),
-                matmul_precision=types.JaxMatmulPrecision.FLOAT32,
-                persistent_cache_enabled=policy.persistent_cache,
-                persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
-                persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
-                xla_auxiliary_cache_mode=jax_runtime_models.XlaAuxiliaryCacheMode.DISABLED,
-                xla_auxiliary_cache_reason="not requested",
-                transfer_guard_enabled=policy.transfer_guard,
-                gpu_validation_status=jax_runtime_models.GpuValidationStatus.SKIPPED,
-                gpu_validation_message=None,
+            setup_report = jax_runtime_resolution.jax_runtime_setup_report_from_native_payload(
+                native_setup_session.setup_payload()
             )
             for diagnostic_event in jax_runtime_diagnostics.diagnostic_events_from_setup_report(setup_report):
                 diagnostic_sink(diagnostic_event)
@@ -1184,28 +1155,16 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
     class FakeJaxSetupModule:
         def configure_before_backend_init(
             self,
-            policy: jax_runtime_models.JaxRuntimePolicy,
-            *,
             native_setup_session: _core.NativeJaxRuntimeSetupSession,
             diagnostic_sink: typing.Callable[[jax_runtime_models.JaxRuntimeDiagnosticEvent], None],
         ) -> jax_runtime_models.JaxRuntimeSetupReport:
             del diagnostic_sink
             assert isinstance(native_setup_session, _core.NativeJaxRuntimeSetupSession)
-            call_order.append(f"setup:{policy.cache_directory}")
-            return jax_runtime_models.JaxRuntimeSetupReport(
-                requested_device=policy.device,
-                platform_name=jax_runtime_models.JAX_CPU_PLATFORM_NAME,
-                cache_directory=typing.cast("Path", policy.cache_directory),
-                matmul_precision=types.JaxMatmulPrecision.FLOAT32,
-                persistent_cache_enabled=policy.persistent_cache,
-                persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
-                persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
-                xla_auxiliary_cache_mode=jax_runtime_models.XlaAuxiliaryCacheMode.DISABLED,
-                xla_auxiliary_cache_reason="not requested",
-                transfer_guard_enabled=policy.transfer_guard,
-                gpu_validation_status=jax_runtime_models.GpuValidationStatus.SKIPPED,
-                gpu_validation_message=None,
+            setup_report = jax_runtime_resolution.jax_runtime_setup_report_from_native_payload(
+                native_setup_session.setup_payload()
             )
+            call_order.append(f"setup:{setup_report.cache_directory}")
+            return setup_report
 
     def import_module(module_name: str) -> object:
         if module_name == "g.jax_runtime.setup":

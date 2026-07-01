@@ -1735,15 +1735,25 @@ Python/JAX should emit typed diagnostic events through a native handle.
   for that runtime-path policy.
 - Production process-runtime JAX setup sessions now resolve default cache
   directories inside `g-runtime`; the explicit Python cache-directory resolver
-  remains only for compatibility helpers and pure setup-report tests.
-- The Python architecture checker now rejects production calls to the explicit
-  JAX cache-directory resolver outside the compatibility adapter.
+  and Python setup-payload helper have been removed.
+- The Python architecture checker still rejects reintroduced production calls
+  to an explicit JAX cache-directory resolver outside the compatibility
+  adapter.
+- JAX backend initialization now takes only the native setup session from the
+  caller, so production setup no longer has a Python session-construction
+  fallback or duplicate requested policy argument. The runner also reuses the
+  JAX runtime adapter's native policy payload conversion. Production setup
+  consumes typed native setup-session properties instead of side-effect-plan
+  dictionaries, and the Python architecture checker rejects reintroduced
+  production calls to the dict payload helper.
 - The Python architecture checker also rejects direct production calls to
   `jax.config.update` and `jax.devices`, keeping JAX setup side effects behind
   native setup sessions.
 - Production JAX setup now calls the native setup-session default-probe GPU
   validation method directly; the Python explicit-path wrapper remains only for
   deterministic tests and compatibility helpers.
+- Standalone `require_gpu_device()` validation now also builds a native setup
+  session and uses the native default-probe method.
 - Process-global JAX setup completion recording now consumes the native setup
   session, so `g-runtime` rejects pending or failed setup sessions before
   recording a JAX policy as configured.

@@ -91,14 +91,22 @@ those methods.
 Production JAX setup now validates GPU availability through the native
 setup-session default-probe method; the Python explicit-path validation wrapper
 remains for deterministic tests and compatibility helpers.
+Standalone `require_gpu_device()` validation now also builds a native setup
+session and uses the native default-probe method.
 Default local JAX cache-directory resolution now comes from `g-runtime`; the
 Python runtime-path adapter no longer reads the platform temporary directory or
 current user name itself.
 Production process-runtime JAX setup sessions now resolve default cache
-directories inside `g-runtime`; the Python cache-directory resolver remains for
-compatibility helpers and pure setup-report tests.
-The Python architecture checker now rejects production calls to the explicit
-JAX cache-directory resolver outside the compatibility adapter.
+directories inside `g-runtime`; the explicit Python cache-directory resolver
+and Python setup-payload helper have been removed.
+The Python architecture checker still rejects reintroduced production calls to
+an explicit JAX cache-directory resolver outside the compatibility adapter.
+JAX backend initialization now takes only the native setup session from the
+caller, so the production setup path cannot fall back to Python-side
+setup-session construction or duplicate requested policy arguments. Production
+setup also reads typed native setup-session properties instead of unpacking
+side-effect-plan dictionaries, and the architecture checker rejects
+reintroduced production calls to those dict payload helpers.
 It also rejects direct production calls to `jax.config.update` and
 `jax.devices`, keeping JAX setup side effects behind native setup sessions.
 The runner import rule also rejects direct `jax`/`jaxlib` imports so JAX-facing

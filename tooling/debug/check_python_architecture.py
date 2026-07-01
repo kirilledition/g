@@ -265,9 +265,9 @@ PYTHON_CALL_POLICIES = (
     PythonCallPolicy(
         name="native_jax_setup_side_effect_isolation",
         source_directory=Path(),
-        forbidden_calls=("jax.config.update", "jax.devices"),
+        forbidden_calls=("jax.config.update", "jax.devices", "side_effect_plan_payload"),
         allowed_paths=(),
-        message="production Python must execute JAX setup side effects through native setup sessions",
+        message="production Python must execute JAX setup side effects through typed native setup sessions",
     ),
     PythonCallPolicy(
         name="compute_kernel_file_io_isolation",

@@ -140,7 +140,7 @@ def build_process_runtime_state(
     return _core.build_process_runtime_state_handle(
         None if logging_policy is None else logging_runtime_policy_to_native_payload(logging_policy),
         rayon_thread_count,
-        None if jax_policy is None else jax_runtime_policy_to_native_payload(jax_policy),
+        None if jax_policy is None else jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),
     )
 
 
@@ -172,7 +172,7 @@ def configure_runtime_before_jax_import(
     """Configure JAX platform and runtime before compute modules are imported."""
     requested_policy = jax_runtime_resolution.resolve_jax_runtime_policy(compute_config)
     native_setup_session = PROCESS_RUNTIME_STATE.build_jax_runtime_setup_session_resolving_cache_directory(
-        jax_runtime_policy_to_native_payload(requested_policy),
+        jax_runtime_resolution.jax_runtime_policy_to_native_payload(requested_policy),
     )
     if not native_setup_session.should_configure:
         return None
@@ -182,12 +182,11 @@ def configure_runtime_before_jax_import(
 
     setup_module = importlib.import_module("g.jax_runtime.setup")
     setup_report = setup_module.configure_before_backend_init(
-        requested_policy,
         native_setup_session=native_setup_session,
         diagnostic_sink=record_diagnostic_event,
     )
     PROCESS_RUNTIME_STATE.complete_jax_runtime_setup_session(
-        jax_runtime_policy_to_native_payload(requested_policy),
+        jax_runtime_resolution.jax_runtime_policy_to_native_payload(requested_policy),
         native_setup_session,
     )
     return setup_report
@@ -249,20 +248,6 @@ def logging_runtime_policy_to_native_payload(policy: LoggingRuntimePolicy) -> di
     }
 
 
-def jax_runtime_policy_to_native_payload(policy: jax_runtime_models.JaxRuntimePolicy) -> dict[str, object]:
-    """Adapt a Python JAX runtime policy view to the native payload shape."""
-    return {
-        "device": policy.device.value,
-        "cache_directory": None if policy.cache_directory is None else str(policy.cache_directory),
-        "matmul_precision": None if policy.matmul_precision is None else policy.matmul_precision.value,
-        "persistent_cache": policy.persistent_cache,
-        "persistent_cache_min_entry_size_bytes": policy.persistent_cache_min_entry_size_bytes,
-        "persistent_cache_min_compile_time_seconds": policy.persistent_cache_min_compile_time_seconds,
-        "xla_autotune_cache": policy.xla_autotune_cache,
-        "transfer_guard": policy.transfer_guard,
-    }
-
-
 def jax_runtime_policy_from_native_payload(payload: object) -> jax_runtime_models.JaxRuntimePolicy:
     """Adapt a native JAX runtime policy payload to the Python dataclass."""
     policy_payload = native_mapping_payload(payload)
@@ -303,7 +288,7 @@ def build_runtime_policy(
         native_policy=_core.build_runtime_policy_handle(
             logging_runtime_policy_to_native_payload(logging_policy),
             regenie_config.trait.threads,
-            jax_runtime_policy_to_native_payload(jax_policy),
+            jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),
         )
     )
 
@@ -340,12 +325,16 @@ def require_compatible_rayon_thread_count(thread_count: int | None) -> None:
 
 def require_compatible_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -> None:
     """Raise when a run requests incompatible process-global JAX settings."""
-    PROCESS_RUNTIME_STATE.require_compatible_jax_runtime_policy(jax_runtime_policy_to_native_payload(jax_policy))
+    PROCESS_RUNTIME_STATE.require_compatible_jax_runtime_policy(
+        jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy)
+    )
 
 
 def record_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -> None:
     """Record the process-global JAX runtime policy configured in this process."""
-    PROCESS_RUNTIME_STATE.record_jax_runtime_policy(jax_runtime_policy_to_native_payload(jax_policy))
+    PROCESS_RUNTIME_STATE.record_jax_runtime_policy(
+        jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy)
+    )
 
 
 def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> _core.NativeRuntimeCompatibilityToken:

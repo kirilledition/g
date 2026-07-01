@@ -1726,6 +1726,7 @@ def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
     assert configure_plan.should_configure is True
     assert isinstance(configure_session, _core.NativeJaxRuntimeSetupSession)
     assert configure_session.should_configure is True
+    assert configure_session.should_validate_gpu is False
     assert configure_session.setup_payload()["cache_directory"] == "/tmp/g-jax-cache"
     resolving_cache_directory = resolving_session.setup_payload()["cache_directory"]
     assert isinstance(resolving_cache_directory, str)

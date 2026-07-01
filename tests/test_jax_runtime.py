@@ -7,7 +7,7 @@ import typing
 from pathlib import Path
 from unittest.mock import patch
 
-from g import runtime_paths, types
+from g import _core, runtime_paths, types
 from g.interface import config
 from g.jax_runtime import models, resolution, setup
 
@@ -41,6 +41,21 @@ def build_nvidia_driver_probe_paths(
         uvm_device_path=uvm_device_path,
         driver_directory_path=driver_directory_path,
     )
+
+
+def validate_gpu_with_probe_paths(
+    probe_paths: setup.NvidiaDriverProbePaths,
+) -> typing.Callable[[_core.NativeJaxRuntimeSetupSession], dict[str, object]]:
+    """Build a deterministic validation function for standalone GPU tests."""
+
+    def validate(native_setup_session: _core.NativeJaxRuntimeSetupSession) -> dict[str, object]:
+        return native_setup_session.validate_gpu_if_configured(
+            str(probe_paths.control_device_path),
+            str(probe_paths.uvm_device_path),
+            str(probe_paths.driver_directory_path),
+        )
+
+    return validate
 
 
 def test_resolve_jax_runtime_policy_uses_native_payload() -> None:
@@ -182,7 +197,10 @@ def test_configure_before_backend_init_sets_platform_first(tmp_path: Path) -> No
     policy = dataclasses.replace(build_runtime_policy(), cache_directory=cache_directory)
 
     with patch("jax.config.update") as mock_update:
-        report = setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=None)
+        report = setup.configure_before_backend_init(
+            native_setup_session=resolution.build_native_jax_runtime_setup_session(policy),
+            diagnostic_sink=None,
+        )
 
     assert report.cache_directory == cache_directory
     assert cache_directory.exists()
@@ -235,7 +253,10 @@ def test_configure_before_backend_init_validates_gpu_after_runtime(tmp_path: Pat
         patch("jax.config.update", side_effect=record_config_update),
         patch("jax.devices", side_effect=record_jax_devices),
     ):
-        report = setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=None)
+        report = setup.configure_before_backend_init(
+            native_setup_session=resolution.build_native_jax_runtime_setup_session(policy),
+            diagnostic_sink=None,
+        )
 
     assert report.gpu_validation_status == models.GpuValidationStatus.SUCCEEDED
     assert call_order[0] == "jax_platforms"
@@ -251,7 +272,10 @@ def test_configure_before_backend_init_uses_native_side_effect_plan(tmp_path: Pa
         patch("jax.config.update"),
         patch("jax.devices") as jax_devices_mock,
     ):
-        setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=None)
+        setup.configure_before_backend_init(
+            native_setup_session=resolution.build_native_jax_runtime_setup_session(policy),
+            diagnostic_sink=None,
+        )
 
     assert not cache_directory.exists()
     jax_devices_mock.assert_not_called()
@@ -286,7 +310,10 @@ def test_configure_before_backend_init_emits_structured_diagnostics(tmp_path: Pa
     diagnostic_events: list[models.JaxRuntimeDiagnosticEvent] = []
 
     with patch("jax.config.update"):
-        setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=diagnostic_events.append)
+        setup.configure_before_backend_init(
+            native_setup_session=resolution.build_native_jax_runtime_setup_session(policy),
+            diagnostic_sink=diagnostic_events.append,
+        )
 
     event_names = [diagnostic_event.event_name for diagnostic_event in diagnostic_events]
     assert event_names == [
@@ -332,8 +359,7 @@ def test_configure_before_backend_init_emits_gpu_validation_failure_before_raise
     ):
         try:
             setup.configure_before_backend_init(
-                policy,
-                native_setup_session=None,
+                native_setup_session=resolution.build_native_jax_runtime_setup_session(policy),
                 diagnostic_sink=diagnostic_events.append,
             )
         except RuntimeError as error:
@@ -380,7 +406,10 @@ def test_require_gpu_device_accepts_gpu_platform(tmp_path: Path) -> None:
     )
 
     with (
-        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
+        patch(
+            "g.jax_runtime.setup.validate_gpu_if_configured_with_default_probe_paths",
+            side_effect=validate_gpu_with_probe_paths(probe_paths),
+        ),
         patch("jax.devices", return_value=[FakeDevice()]),
     ):
         setup.require_gpu_device()
@@ -416,7 +445,10 @@ def test_validate_gpu_device_returns_native_success_report(tmp_path: Path) -> No
     )
 
     with (
-        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
+        patch(
+            "g.jax_runtime.setup.validate_gpu_if_configured_with_default_probe_paths",
+            side_effect=validate_gpu_with_probe_paths(probe_paths),
+        ),
         patch("jax.devices", return_value=[FakeDevice()]),
     ):
         validation_report = setup.validate_gpu_device()
@@ -435,7 +467,10 @@ def test_require_gpu_device_rejects_missing_nvidia_driver(tmp_path: Path) -> Non
         tmp_path / "missing-driver",
     )
 
-    with patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths):
+    with patch(
+        "g.jax_runtime.setup.validate_gpu_if_configured_with_default_probe_paths",
+        side_effect=validate_gpu_with_probe_paths(probe_paths),
+    ):
         try:
             setup.require_gpu_device()
         except RuntimeError as error:
@@ -462,7 +497,10 @@ def test_require_gpu_device_rejects_cpu_only_backend(tmp_path: Path) -> None:
     )
 
     with (
-        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
+        patch(
+            "g.jax_runtime.setup.validate_gpu_if_configured_with_default_probe_paths",
+            side_effect=validate_gpu_with_probe_paths(probe_paths),
+        ),
         patch("jax.devices", return_value=[FakeDevice()]),
     ):
         try:
@@ -484,7 +522,10 @@ def test_require_gpu_device_wraps_backend_initialization_errors(tmp_path: Path) 
     )
 
     with (
-        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
+        patch(
+            "g.jax_runtime.setup.validate_gpu_if_configured_with_default_probe_paths",
+            side_effect=validate_gpu_with_probe_paths(probe_paths),
+        ),
         patch("jax.devices", side_effect=RuntimeError("Unknown backend cuda")),
     ):
         try:
@@ -506,7 +547,10 @@ def test_require_gpu_device_wraps_jax_plugin_assertion_errors(tmp_path: Path) ->
     )
 
     with (
-        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
+        patch(
+            "g.jax_runtime.setup.validate_gpu_if_configured_with_default_probe_paths",
+            side_effect=validate_gpu_with_probe_paths(probe_paths),
+        ),
         patch("jax.devices", side_effect=AssertionError("plugin initialization failed")),
     ):
         try:

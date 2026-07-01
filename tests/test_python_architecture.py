@@ -420,6 +420,7 @@ def test_jax_setup_side_effect_policy_rejects_direct_jax_calls(tmp_path: Path) -
                 "def configure():",
                 "    jax.config.update('jax_platforms', 'cpu')",
                 "    jax.devices()",
+                "    native_setup_session.side_effect_plan_payload()",
             )
         ),
         encoding="utf-8",
@@ -433,6 +434,12 @@ def test_jax_setup_side_effect_policy_rejects_direct_jax_calls(tmp_path: Path) -
     ] == [
         (Path("g/jax_runtime/setup.py"), 3, "jax.config.update", "jax.config.update"),
         (Path("g/jax_runtime/setup.py"), 4, "jax.devices", "jax.devices"),
+        (
+            Path("g/jax_runtime/setup.py"),
+            5,
+            "native_setup_session.side_effect_plan_payload",
+            "side_effect_plan_payload",
+        ),
     ]
 
 

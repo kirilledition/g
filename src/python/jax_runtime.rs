@@ -60,6 +60,11 @@ impl NativeJaxRuntimeSetupSession {
         Ok(self.lock_session()?.should_configure())
     }
 
+    #[getter]
+    fn should_validate_gpu(&self) -> PyResult<bool> {
+        Ok(self.lock_session()?.side_effect_plan().should_validate_gpu)
+    }
+
     fn setup_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let session = self.lock_session()?;
         jax_runtime_setup_payload_to_dict(py, session.setup())
