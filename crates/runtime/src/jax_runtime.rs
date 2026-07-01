@@ -23,6 +23,9 @@ const PYTHON_LOGGING_LEVEL_INFO: &str = "INFO";
 const JAX_RUNTIME_GPU_VALIDATION_FAILED: &str = "failed";
 const JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED: &str = "succeeded";
 const JAX_TRANSFER_GUARD_DISALLOW: &str = "disallow";
+const NVIDIA_CONTROL_DEVICE_PATH: &str = "/dev/nvidiactl";
+const NVIDIA_DRIVER_DIRECTORY_PATH: &str = "/proc/driver/nvidia";
+const NVIDIA_UVM_DEVICE_PATH: &str = "/dev/nvidia-uvm";
 const XLA_AUXILIARY_CACHE_DISABLED: &str = "none";
 const XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE: &str = "xla_gpu_per_fusion_autotune_cache_dir";
 
@@ -53,6 +56,13 @@ pub struct JaxGpuValidationPlan {
     pub status: String,
     pub message: String,
     pub should_raise: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NvidiaDriverProbePathsPayload {
+    pub control_device_path: String,
+    pub uvm_device_path: String,
+    pub driver_directory_path: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -241,6 +251,15 @@ pub fn nvidia_driver_files_are_visible(
     driver_directory_path: &Path,
 ) -> bool {
     control_device_path.exists() || uvm_device_path.exists() || driver_directory_path.exists()
+}
+
+#[must_use]
+pub fn default_nvidia_driver_probe_paths() -> NvidiaDriverProbePathsPayload {
+    NvidiaDriverProbePathsPayload {
+        control_device_path: NVIDIA_CONTROL_DEVICE_PATH.to_string(),
+        uvm_device_path: NVIDIA_UVM_DEVICE_PATH.to_string(),
+        driver_directory_path: NVIDIA_DRIVER_DIRECTORY_PATH.to_string(),
+    }
 }
 
 #[must_use]
@@ -562,6 +581,18 @@ mod tests {
         assert!(nvidia_driver_files_are_visible(&control_device_path, &uvm_device_path, &driver_directory_path,));
 
         std::fs::remove_dir_all(test_root).expect("remove nvidia driver test root");
+    }
+
+    #[test]
+    fn exposes_default_nvidia_driver_probe_paths() {
+        assert_eq!(
+            default_nvidia_driver_probe_paths(),
+            NvidiaDriverProbePathsPayload {
+                control_device_path: "/dev/nvidiactl".to_string(),
+                uvm_device_path: "/dev/nvidia-uvm".to_string(),
+                driver_directory_path: "/proc/driver/nvidia".to_string(),
+            },
+        );
     }
 
     #[test]

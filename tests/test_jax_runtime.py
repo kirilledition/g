@@ -30,6 +30,19 @@ def build_runtime_policy(**overrides: object) -> models.JaxRuntimePolicy:
     return dataclasses.replace(policy, **overrides)
 
 
+def build_nvidia_driver_probe_paths(
+    control_device_path: Path,
+    uvm_device_path: Path,
+    driver_directory_path: Path,
+) -> setup.NvidiaDriverProbePaths:
+    """Build injectable NVIDIA driver probe paths for tests."""
+    return setup.NvidiaDriverProbePaths(
+        control_device_path=control_device_path,
+        uvm_device_path=uvm_device_path,
+        driver_directory_path=driver_directory_path,
+    )
+
+
 def test_resolve_jax_runtime_policy_uses_native_payload() -> None:
     regenie_config = config.RegenieConfig.from_options(
         {
@@ -203,9 +216,14 @@ def test_configure_before_backend_init_validates_gpu_after_runtime(tmp_path: Pat
 
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
+    probe_paths = build_nvidia_driver_probe_paths(
+        control_device_path,
+        tmp_path / "missing-nvidia-uvm",
+        tmp_path / "missing-driver",
+    )
 
     with (
-        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
         patch("jax.config.update", side_effect=record_config_update),
         patch("jax.devices", side_effect=record_jax_devices),
     ):
@@ -288,9 +306,14 @@ def test_configure_before_backend_init_emits_gpu_validation_failure_before_raise
     diagnostic_events: list[models.JaxRuntimeDiagnosticEvent] = []
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
+    probe_paths = build_nvidia_driver_probe_paths(
+        control_device_path,
+        tmp_path / "missing-nvidia-uvm",
+        tmp_path / "missing-driver",
+    )
 
     with (
-        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
         patch("jax.config.update"),
         patch("jax.devices", side_effect=RuntimeError("Unknown backend cuda")),
     ):
@@ -337,9 +360,14 @@ def test_require_gpu_device_accepts_gpu_platform(tmp_path: Path) -> None:
 
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
+    probe_paths = build_nvidia_driver_probe_paths(
+        control_device_path,
+        tmp_path / "missing-nvidia-uvm",
+        tmp_path / "missing-driver",
+    )
 
     with (
-        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
         patch("jax.devices", return_value=[FakeDevice()]),
     ):
         setup.require_gpu_device()
@@ -349,12 +377,9 @@ def test_nvidia_driver_is_visible_uses_native_probe(tmp_path: Path) -> None:
     control_device_path = tmp_path / "nvidiactl"
     uvm_device_path = tmp_path / "nvidia-uvm"
     driver_directory_path = tmp_path / "driver"
+    probe_paths = build_nvidia_driver_probe_paths(control_device_path, uvm_device_path, driver_directory_path)
 
-    with (
-        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
-        patch("g.jax_runtime.setup.NVIDIA_UVM_DEVICE_PATH", uvm_device_path),
-        patch("g.jax_runtime.setup.NVIDIA_DRIVER_DIRECTORY_PATH", driver_directory_path),
-    ):
+    with patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths):
         assert setup.nvidia_driver_is_visible() is False
         control_device_path.touch()
         assert setup.nvidia_driver_is_visible() is True
@@ -371,9 +396,14 @@ def test_validate_gpu_device_returns_native_success_report(tmp_path: Path) -> No
 
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
+    probe_paths = build_nvidia_driver_probe_paths(
+        control_device_path,
+        tmp_path / "missing-nvidia-uvm",
+        tmp_path / "missing-driver",
+    )
 
     with (
-        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
         patch("jax.devices", return_value=[FakeDevice()]),
     ):
         validation_report = setup.validate_gpu_device()
@@ -386,11 +416,13 @@ def test_validate_gpu_device_returns_native_success_report(tmp_path: Path) -> No
 
 def test_require_gpu_device_rejects_missing_nvidia_driver(tmp_path: Path) -> None:
     """Ensure GPU validation fails before JAX when no NVIDIA device is visible."""
-    with (
-        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", tmp_path / "missing-nvidiactl"),
-        patch("g.jax_runtime.setup.NVIDIA_UVM_DEVICE_PATH", tmp_path / "missing-nvidia-uvm"),
-        patch("g.jax_runtime.setup.NVIDIA_DRIVER_DIRECTORY_PATH", tmp_path / "missing-driver"),
-    ):
+    probe_paths = build_nvidia_driver_probe_paths(
+        tmp_path / "missing-nvidiactl",
+        tmp_path / "missing-nvidia-uvm",
+        tmp_path / "missing-driver",
+    )
+
+    with patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths):
         try:
             setup.require_gpu_device()
         except RuntimeError as error:
@@ -410,9 +442,14 @@ def test_require_gpu_device_rejects_cpu_only_backend(tmp_path: Path) -> None:
 
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
+    probe_paths = build_nvidia_driver_probe_paths(
+        control_device_path,
+        tmp_path / "missing-nvidia-uvm",
+        tmp_path / "missing-driver",
+    )
 
     with (
-        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
         patch("jax.devices", return_value=[FakeDevice()]),
     ):
         try:
@@ -427,9 +464,14 @@ def test_require_gpu_device_wraps_backend_initialization_errors(tmp_path: Path) 
     """Ensure CUDA initialization errors get an actionable message."""
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
+    probe_paths = build_nvidia_driver_probe_paths(
+        control_device_path,
+        tmp_path / "missing-nvidia-uvm",
+        tmp_path / "missing-driver",
+    )
 
     with (
-        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
         patch("jax.devices", side_effect=RuntimeError("Unknown backend cuda")),
     ):
         try:
@@ -444,9 +486,14 @@ def test_require_gpu_device_wraps_jax_plugin_assertion_errors(tmp_path: Path) ->
     """Ensure CUDA plugin assertion failures get an actionable message."""
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
+    probe_paths = build_nvidia_driver_probe_paths(
+        control_device_path,
+        tmp_path / "missing-nvidia-uvm",
+        tmp_path / "missing-driver",
+    )
 
     with (
-        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
         patch("jax.devices", side_effect=AssertionError("plugin initialization failed")),
     ):
         try:

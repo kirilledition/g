@@ -3525,6 +3525,7 @@ def nvidia_driver_files_are_visible_value(
     uvm_device_path: str,
     driver_directory_path: str,
 ) -> bool: ...
+def default_nvidia_driver_probe_paths_payload() -> dict[str, str]: ...
 def plan_jax_runtime_setup_side_effects_payload(
     requested_device: str,
     persistent_cache_enabled: bool,

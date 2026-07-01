@@ -281,6 +281,11 @@ pub(crate) fn nvidia_driver_files_are_visible_value(
 }
 
 #[pyfunction]
+pub(crate) fn default_nvidia_driver_probe_paths_payload<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    nvidia_driver_probe_paths_payload_to_dict(py, &native_jax_runtime::default_nvidia_driver_probe_paths())
+}
+
+#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn complete_jax_runtime_setup_validation_payload<'py>(
@@ -480,6 +485,17 @@ fn jax_runtime_setup_side_effect_plan_to_dict<'py>(
     Ok(payload)
 }
 
+fn nvidia_driver_probe_paths_payload_to_dict<'py>(
+    py: Python<'py>,
+    paths: &native_jax_runtime::NvidiaDriverProbePathsPayload,
+) -> PyResult<Bound<'py, PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("control_device_path", &paths.control_device_path)?;
+    payload.set_item("uvm_device_path", &paths.uvm_device_path)?;
+    payload.set_item("driver_directory_path", &paths.driver_directory_path)?;
+    Ok(payload)
+}
+
 fn jax_gpu_validation_plan_to_dict<'py>(
     py: Python<'py>,
     plan: &native_jax_runtime::JaxGpuValidationPlan,
@@ -543,6 +559,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     module.add_function(wrap_pyfunction!(complete_jax_runtime_setup_validation_payload, module)?)?;
     module.add_function(wrap_pyfunction!(nvidia_driver_files_are_visible_value, module)?)?;
+    module.add_function(wrap_pyfunction!(default_nvidia_driver_probe_paths_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_jax_runtime_setup_diagnostic_payloads, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_config_update_payloads, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record, module)?)?;

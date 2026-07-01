@@ -1724,6 +1724,14 @@ def test_native_nvidia_driver_visibility_uses_any_driver_path(tmp_path: Path) ->
     )
 
 
+def test_native_default_nvidia_driver_probe_paths_payload() -> None:
+    assert _core.default_nvidia_driver_probe_paths_payload() == {
+        "control_device_path": "/dev/nvidiactl",
+        "uvm_device_path": "/dev/nvidia-uvm",
+        "driver_directory_path": "/proc/driver/nvidia",
+    }
+
+
 def test_native_default_local_cache_directory_value() -> None:
     assert (
         _core.build_default_local_cache_directory_value(

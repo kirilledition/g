@@ -16,10 +16,11 @@ pub mod trusted_validation;
 pub use jax_runtime::{
     JaxDeviceObservation, JaxGpuValidationPlan, JaxRuntimeConfigUpdatePayload, JaxRuntimeConfigValue,
     JaxRuntimeDiagnosticEventPayload, JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticRecordPlan,
-    JaxRuntimeDiagnosticValue, JaxRuntimeSetupPayload, JaxRuntimeSetupSideEffectPlan,
-    build_jax_runtime_setup_diagnostic_events, complete_jax_runtime_setup_validation, nvidia_driver_files_are_visible,
-    plan_jax_gpu_validation, plan_jax_runtime_config_updates, plan_jax_runtime_diagnostic_record,
-    plan_jax_runtime_setup_side_effects, resolve_jax_runtime_setup,
+    JaxRuntimeDiagnosticValue, JaxRuntimeSetupPayload, JaxRuntimeSetupSideEffectPlan, NvidiaDriverProbePathsPayload,
+    build_jax_runtime_setup_diagnostic_events, complete_jax_runtime_setup_validation,
+    default_nvidia_driver_probe_paths, nvidia_driver_files_are_visible, plan_jax_gpu_validation,
+    plan_jax_runtime_config_updates, plan_jax_runtime_diagnostic_record, plan_jax_runtime_setup_side_effects,
+    resolve_jax_runtime_setup,
 };
 pub use rayon_runtime::{
     RayonRuntimeError, configure_global_rayon_thread_pool, format_global_rayon_thread_pool_configuration_error,

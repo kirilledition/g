@@ -3,14 +3,27 @@
 from __future__ import annotations
 
 import typing
+from dataclasses import dataclass
 from pathlib import Path
 
 from g import _core
 from g.jax_runtime import diagnostics, models, resolution
 
-NVIDIA_CONTROL_DEVICE_PATH = Path("/dev/nvidiactl")
-NVIDIA_UVM_DEVICE_PATH = Path("/dev/nvidia-uvm")
-NVIDIA_DRIVER_DIRECTORY_PATH = Path("/proc/driver/nvidia")
+
+@dataclass(frozen=True)
+class NvidiaDriverProbePaths:
+    """Linux NVIDIA driver paths used for native GPU visibility checks.
+
+    Attributes:
+        control_device_path: NVIDIA control device path.
+        uvm_device_path: NVIDIA unified-memory device path.
+        driver_directory_path: NVIDIA procfs driver directory path.
+
+    """
+
+    control_device_path: Path
+    uvm_device_path: Path
+    driver_directory_path: Path
 
 
 def configure_before_backend_init(
@@ -44,11 +57,7 @@ def configure_before_backend_init(
                 diagnostic_sink(diagnostic_event)
         return setup_report
     try:
-        validated_payload = active_setup_session.validate_gpu_if_configured(
-            str(NVIDIA_CONTROL_DEVICE_PATH),
-            str(NVIDIA_UVM_DEVICE_PATH),
-            str(NVIDIA_DRIVER_DIRECTORY_PATH),
-        )
+        validated_payload = validate_gpu_if_configured(active_setup_session)
     except RuntimeError:
         if diagnostic_sink is not None:
             for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(active_setup_session):
@@ -80,6 +89,19 @@ def resolve_active_setup_session(
     return resolution.build_native_jax_runtime_setup_session(policy)
 
 
+def default_nvidia_driver_probe_paths() -> NvidiaDriverProbePaths:
+    """Return native-owned default NVIDIA driver probe paths."""
+    paths_payload = typing.cast(
+        "typing.Mapping[str, str]",
+        _core.default_nvidia_driver_probe_paths_payload(),
+    )
+    return NvidiaDriverProbePaths(
+        control_device_path=Path(paths_payload["control_device_path"]),
+        uvm_device_path=Path(paths_payload["uvm_device_path"]),
+        driver_directory_path=Path(paths_payload["driver_directory_path"]),
+    )
+
+
 def nvidia_driver_is_visible() -> bool:
     """Return whether the process can see a Linux NVIDIA driver/device mount.
 
@@ -87,16 +109,27 @@ def nvidia_driver_is_visible() -> bool:
         Whether NVIDIA driver files are visible.
 
     """
+    probe_paths = default_nvidia_driver_probe_paths()
     return _core.nvidia_driver_files_are_visible_value(
-        control_device_path=str(NVIDIA_CONTROL_DEVICE_PATH),
-        uvm_device_path=str(NVIDIA_UVM_DEVICE_PATH),
-        driver_directory_path=str(NVIDIA_DRIVER_DIRECTORY_PATH),
+        control_device_path=str(probe_paths.control_device_path),
+        uvm_device_path=str(probe_paths.uvm_device_path),
+        driver_directory_path=str(probe_paths.driver_directory_path),
     )
 
 
 def apply_jax_runtime_config_updates(native_setup_session: _core.NativeJaxRuntimeSetupSession) -> None:
     """Apply native-ordered JAX runtime config updates."""
     native_setup_session.apply_config_updates()
+
+
+def validate_gpu_if_configured(native_setup_session: _core.NativeJaxRuntimeSetupSession) -> dict[str, object]:
+    """Validate GPU setup using native-owned default probe paths."""
+    probe_paths = default_nvidia_driver_probe_paths()
+    return native_setup_session.validate_gpu_if_configured(
+        str(probe_paths.control_device_path),
+        str(probe_paths.uvm_device_path),
+        str(probe_paths.driver_directory_path),
+    )
 
 
 def complete_jax_runtime_setup_validation_report(
@@ -156,11 +189,7 @@ def validate_gpu_device() -> models.JaxGpuValidationReport:
         ),
         should_configure=False,
     )
-    validated_payload = native_validation_session.validate_gpu_if_configured(
-        str(NVIDIA_CONTROL_DEVICE_PATH),
-        str(NVIDIA_UVM_DEVICE_PATH),
-        str(NVIDIA_DRIVER_DIRECTORY_PATH),
-    )
+    validated_payload = validate_gpu_if_configured(native_validation_session)
     validated_report = resolution.jax_runtime_setup_report_from_native_payload(validated_payload)
     return models.JaxGpuValidationReport(
         status=validated_report.gpu_validation_status,
