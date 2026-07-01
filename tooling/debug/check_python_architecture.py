@@ -135,6 +135,31 @@ PYTHON_CALL_POLICIES = (
         allowed_paths=(),
         message="production callback code must use native worker queues and worker-thread handles",
     ),
+    PythonCallPolicy(
+        name="compute_kernel_file_io_isolation",
+        source_directory=Path("compute"),
+        forbidden_calls=(
+            "open",
+            "Path.open",
+            "read_text",
+            "write_text",
+            "read_bytes",
+            "write_bytes",
+            "np.load",
+            "numpy.load",
+            "jnp.load",
+            "np.loadtxt",
+            "numpy.loadtxt",
+            "np.genfromtxt",
+            "numpy.genfromtxt",
+            "pandas.read_csv",
+            "pd.read_csv",
+            "pandas.read_parquet",
+            "pd.read_parquet",
+        ),
+        allowed_paths=(),
+        message="JAX compute kernels must not read or write files directly",
+    ),
 )
 
 

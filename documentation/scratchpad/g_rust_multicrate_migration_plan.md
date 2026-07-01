@@ -2187,7 +2187,8 @@ Production Python must not create native worker queues after Phase 10.
 `just check-python-architecture` now enforces these Python import and call
 boundaries through an AST-based checker. The production manifest-write rule
 allows the `g.io.output` adapter helper itself, but rejects production callers
-outside that helper.
+outside that helper; the compute-kernel rule rejects direct file I/O and common
+NumPy/pandas file loaders under `g.compute`.
 
 ---
 

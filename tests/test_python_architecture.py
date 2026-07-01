@@ -119,6 +119,39 @@ def test_callback_worker_queue_policy_rejects_python_queue_and_thread_primitives
     ]
 
 
+def test_compute_file_io_policy_rejects_direct_file_access(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    compute_directory = package_root / "compute"
+    compute_directory.mkdir(parents=True)
+    (compute_directory / "kernel.py").write_text(
+        "\n".join(
+            (
+                "import numpy as np",
+                "import pandas as pd",
+                "from pathlib import Path",
+                "def load_kernel_inputs(path):",
+                "    open(path)",
+                "    Path(path).read_text()",
+                "    np.load(path)",
+                "    pd.read_parquet(path)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/compute/kernel.py"), 5, "open", "open"),
+        (Path("g/compute/kernel.py"), 6, "read_text", "read_text"),
+        (Path("g/compute/kernel.py"), 7, "np.load", "np.load"),
+        (Path("g/compute/kernel.py"), 8, "pd.read_parquet", "pd.read_parquet"),
+    ]
+
+
 def test_jax_runtime_import_policy_rejects_runner_orchestration_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     jax_runtime_directory = package_root / "jax_runtime"
