@@ -444,23 +444,6 @@ def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
     return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
 
 
-def file_fingerprint_to_mapping(
-    file_fingerprint: ManifestFileFingerprint | None,
-) -> dict[str, typing.Any] | None:
-    """Serialize a file fingerprint to manifest JSON fields."""
-    if file_fingerprint is None:
-        return None
-    return native_mapping_payload(
-        _core.build_manifest_file_fingerprint_mapping_payload(
-            file_fingerprint.path,
-            file_fingerprint.size,
-            file_fingerprint.mtime_ns,
-            file_fingerprint.content_hash_algorithm,
-            file_fingerprint.content_sha256,
-        )
-    )
-
-
 def require_manifest_file_fingerprint(
     file_fingerprint: ManifestFileFingerprint | None,
     role_name: str,
@@ -470,20 +453,6 @@ def require_manifest_file_fingerprint(
         message = f"{role_name} fingerprint is required."
         raise ValueError(message)
     return file_fingerprint
-
-
-def prediction_loco_file_fingerprint_to_mapping(
-    loco_file_fingerprint: PredictionLocoFileFingerprint,
-) -> dict[str, typing.Any]:
-    """Serialize a LOCO file fingerprint to manifest JSON fields."""
-    return {
-        "phenotype": loco_file_fingerprint.phenotype,
-        "path": loco_file_fingerprint.path,
-        "size": loco_file_fingerprint.size,
-        "mtime_ns": loco_file_fingerprint.mtime_ns,
-        "content_hash_algorithm": loco_file_fingerprint.content_hash_algorithm,
-        "content_sha256": loco_file_fingerprint.content_sha256,
-    }
 
 
 def build_prediction_loco_file_fingerprints(
@@ -764,7 +733,9 @@ def build_native_prepared_run_manifest_header_mapping(
     current_header: CurrentRunManifestHeader,
 ) -> dict[str, typing.Any]:
     """Build the manifest header from a native prepared-run plan payload."""
-    manifest_json = _core.build_prepared_run_manifest_header_json(build_native_prepared_run_plan_json(current_header))
+    manifest_json = _core.build_prepared_run_manifest_header_json_from_current_header_json(
+        current_run_manifest_header_to_json(current_header)
+    )
     manifest_header = json.loads(manifest_json)
     if not isinstance(manifest_header, dict):
         message = "Native prepared run manifest header must contain a JSON object."
@@ -774,92 +745,14 @@ def build_native_prepared_run_manifest_header_mapping(
 
 def build_native_prepared_run_plan_json(current_header: CurrentRunManifestHeader) -> str:
     """Build the native prepared-run contract from the transitional header."""
-    return _core.build_prepared_run_plan_json(
-        json.dumps(build_native_prepared_run_plan_input_mapping(current_header), sort_keys=True)
+    return _core.build_prepared_run_plan_json_from_current_header_json(
+        current_run_manifest_header_to_json(current_header)
     )
 
 
-def build_native_prepared_run_plan_input_mapping(
-    current_header: CurrentRunManifestHeader,
-) -> dict[str, typing.Any]:
-    """Build the transitional input payload consumed by the native prepared-plan builder."""
-    matmul_precision: str | None
-    if current_header.jax_policy.matmul_precision == JAX_MATMUL_PRECISION_WHEN_UNSET:
-        matmul_precision = None
-    else:
-        matmul_precision = current_header.jax_policy.matmul_precision
-    binary_kernel_config = (
-        None
-        if current_header.binary_kernel_config is None
-        else normalize_execution_plan_value(current_header.binary_kernel_config)
-    )
-    prediction_list = typing.cast("dict[str, typing.Any]", file_fingerprint_to_mapping(current_header.prediction_list))
-    phenotype_compute_group = (
-        None
-        if current_header.phenotype_compute_group_id is None
-        else {
-            "group_id": current_header.phenotype_compute_group_id,
-            "sample_set_fingerprint": current_header.sample_set_fingerprint,
-            "covariate_design_fingerprint": current_header.covariate_design_fingerprint,
-            "prediction_alignment_fingerprint": current_header.prediction_alignment_fingerprint,
-        }
-    )
-    return {
-        "association_mode": current_header.association_mode.value,
-        "input_identity": {
-            "bgen": file_fingerprint_to_mapping(current_header.bgen),
-            "sample": file_fingerprint_to_mapping(current_header.sample),
-            "phenotype_file": file_fingerprint_to_mapping(current_header.phenotype_file),
-            "covariate_file": file_fingerprint_to_mapping(current_header.covariate_file),
-            "prediction_list": prediction_list,
-            "prediction_inputs": {
-                "prediction_list": prediction_list,
-                "loco_files": [
-                    prediction_loco_file_fingerprint_to_mapping(loco_file)
-                    for loco_file in current_header.prediction_inputs.loco_files
-                ],
-            },
-        },
-        "phenotype_name": current_header.phenotype_name,
-        "covariate_names": list(current_header.covariate_names),
-        "sample_count": current_header.sample_count,
-        "variant_count": current_header.variant_count,
-        "chunk_size": current_header.chunk_size,
-        "variant_limit": current_header.variant_limit,
-        "correction": {
-            "method": current_header.binary_correction_plan.method,
-            "p_threshold": current_header.binary_correction_plan.p_threshold,
-            "firth_se": current_header.binary_correction_plan.firth_se,
-        },
-        "binary_kernel_config": binary_kernel_config,
-        "compute": {
-            "trusted_no_missing_diploid": current_header.trusted_no_missing_diploid,
-            "trusted_bgen_validation_mode": current_header.trusted_bgen_validation_mode.value,
-            "sample_key_mode": current_header.sample_key_mode.value,
-            "bgen_decode_tile_variant_count": current_header.bgen_decode_tile_variant_count,
-            "jax_policy": {
-                "device": current_header.jax_policy.device,
-                "enable_x64": current_header.jax_policy.enable_x64,
-                "matmul_precision": matmul_precision,
-            },
-            "requested_gpu_genotype_format": current_header.requested_gpu_genotype_format.value,
-            "resolved_gpu_genotype_format": current_header.gpu_genotype_format.value,
-            "score_dtype": current_header.score_dtype.value,
-            "firth_dtype": current_header.firth_dtype.value,
-            "sample_mode": current_header.multi_phenotype_sample_mode.value,
-        },
-        "phenotype_compute_group": phenotype_compute_group,
-        "output_writer": {
-            "output_format": current_header.output_writer.output_format,
-            "finalize_parquet": current_header.output_writer.finalize_parquet,
-            "writer_thread_count": current_header.output_writer.writer_thread_count,
-            "writer_queue_depth": current_header.output_writer.writer_queue_depth,
-            "chunks_per_arrow_file": current_header.output_writer.chunks_per_arrow_file,
-            "arrow_compression": current_header.output_writer.arrow_compression,
-            "parquet_compression": current_header.output_writer.parquet_compression,
-            "output_statistic_dtype": current_header.output_writer.result_statistic_dtype,
-        },
-    }
+def current_run_manifest_header_to_json(current_header: CurrentRunManifestHeader) -> str:
+    """Serialize the cached current-run header for native prepared-plan construction."""
+    return json.dumps(normalize_execution_plan_value(current_header), sort_keys=True)
 
 
 def current_run_manifest_header_to_mapping(current_header: CurrentRunManifestHeader) -> dict[str, typing.Any]:

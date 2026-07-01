@@ -136,6 +136,13 @@ PYTHON_CALL_POLICIES = (
         message="production callback code must use native worker queues and worker-thread handles",
     ),
     PythonCallPolicy(
+        name="prepared_plan_reconstruction_isolation",
+        source_directory=Path(),
+        forbidden_calls=("_core.build_prepared_run_plan_json", "build_native_prepared_run_plan_input_mapping"),
+        allowed_paths=(),
+        message="production Python must not reconstruct canonical prepared-run plans",
+    ),
+    PythonCallPolicy(
         name="compute_kernel_file_io_isolation",
         source_directory=Path("compute"),
         forbidden_calls=(

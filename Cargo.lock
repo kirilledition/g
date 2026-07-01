@@ -788,6 +788,7 @@ dependencies = [
  "crossbeam-channel",
  "g-plan",
  "parquet",
+ "serde",
  "serde_json",
  "sha2",
  "thiserror",

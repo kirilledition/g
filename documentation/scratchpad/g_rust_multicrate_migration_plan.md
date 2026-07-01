@@ -1404,6 +1404,10 @@ Remove Python as the chunk-level scheduler.
   native `g-output` manifest upsert via the root PyO3 adapter, so Python no
   longer loads, mutates, serializes, and rewrites run manifests for that
   metadata.
+- Prepared-run plan construction from current manifest headers now routes
+  through native `g-output`/`g-plan` conversion. Python preserves the existing
+  run-scoped fingerprint cache by serializing the cached current header only,
+  and no longer builds `PreparedRunPlanInput` dictionaries.
 - Native BGEN PyO3 entry points now release the GIL around Rust BGEN opening,
   variant-metadata reads, trusted missingness validation, and prepared
   sample-selection setup/cleanup while keeping Python callback invocations
@@ -2182,13 +2186,15 @@ g.compute must not import CLI, output, or file parsers.
 g.jax_runtime must not import runner orchestration.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
+Production Python must not reconstruct canonical prepared-run plans.
 ```
 
 `just check-python-architecture` now enforces these Python import and call
 boundaries through an AST-based checker. The production manifest-write rule
 allows the `g.io.output` adapter helper itself, but rejects production callers
 outside that helper; the compute-kernel rule rejects direct file I/O and common
-NumPy/pandas file loaders under `g.compute`.
+NumPy/pandas file loaders under `g.compute`; the prepared-plan rule rejects
+production calls that rebuild canonical plan payloads in Python.
 
 ---
 

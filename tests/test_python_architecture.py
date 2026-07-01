@@ -119,6 +119,38 @@ def test_callback_worker_queue_policy_rejects_python_queue_and_thread_primitives
     ]
 
 
+def test_prepared_plan_policy_rejects_python_plan_reconstruction(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    output_directory = package_root / "io"
+    output_directory.mkdir(parents=True)
+    (output_directory / "output.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build_prepared_plan(header):",
+                "    build_native_prepared_run_plan_input_mapping(header)",
+                "    _core.build_prepared_run_plan_json('{}')",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/io/output.py"),
+            3,
+            "build_native_prepared_run_plan_input_mapping",
+            "build_native_prepared_run_plan_input_mapping",
+        ),
+        (Path("g/io/output.py"), 4, "_core.build_prepared_run_plan_json", "_core.build_prepared_run_plan_json"),
+    ]
+
+
 def test_compute_file_io_policy_rejects_direct_file_access(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     compute_directory = package_root / "compute"

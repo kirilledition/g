@@ -14,6 +14,8 @@ use g_output::{
     build_manifest_file_fingerprint as build_native_manifest_file_fingerprint,
     build_manifest_json_sha256 as build_native_manifest_json_sha256,
     build_prepared_run_manifest_header_json as build_native_prepared_run_manifest_header_json,
+    build_prepared_run_manifest_header_json_from_current_header_json as build_native_prepared_run_manifest_header_json_from_current_header_json,
+    build_prepared_run_plan_json_from_current_header_json as build_native_prepared_run_plan_json_from_current_header_json,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
     initialize_output_run as initialize_native_output_run, load_run_manifest_json as load_native_run_manifest_json,
     prepare_output_run as prepare_native_output_run,
@@ -577,6 +579,16 @@ pub(crate) fn build_prepared_run_manifest_header_json(prepared_run_plan_json: St
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_prepared_run_manifest_header_json_from_current_header_json(
+    current_header_json: String,
+) -> PyResult<String> {
+    build_native_prepared_run_manifest_header_json_from_current_header_json(&current_header_json).map_err(|error| {
+        output_writer_error_to_py(error, "build_prepared_run_manifest_header_json_from_current_header_json")
+    })
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_prepared_run_plan_json(prepared_run_plan_input_json: String) -> PyResult<String> {
     let prepared_run_plan_input = parse_json_argument::<g_plan::PreparedRunPlanInput>(
         "prepared_run_plan_input_json",
@@ -586,6 +598,13 @@ pub(crate) fn build_prepared_run_plan_json(prepared_run_plan_input_json: String)
         .map_err(|error| PyValueError::new_err(format!("Invalid prepared run plan input: {error}")))?;
     serde_json::to_string(&prepared_run_plan)
         .map_err(|error| PyRuntimeError::new_err(format!("Could not serialize prepared run plan JSON: {error}")))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_prepared_run_plan_json_from_current_header_json(current_header_json: String) -> PyResult<String> {
+    build_native_prepared_run_plan_json_from_current_header_json(&current_header_json)
+        .map_err(|error| output_writer_error_to_py(error, "build_prepared_run_plan_json_from_current_header_json"))
 }
 
 #[pyfunction]
@@ -740,7 +759,9 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_json_sha256, module)?)?;
     module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json_from_current_header_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_prepared_run_plan_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_prepared_run_plan_json_from_current_header_json, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
     module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;

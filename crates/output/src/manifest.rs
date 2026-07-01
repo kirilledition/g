@@ -8,6 +8,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
@@ -121,6 +122,147 @@ pub struct CurrentRunManifestHeaderInput {
     pub arrow_compression: String,
     pub parquet_compression: String,
     pub output_statistic_dtype: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct CurrentRunManifestHeaderContract {
+    association_mode: g_plan::AssociationMode,
+    bgen: g_plan::ManifestFileFingerprint,
+    #[serde(default)]
+    sample: Option<g_plan::ManifestFileFingerprint>,
+    phenotype_file: g_plan::ManifestFileFingerprint,
+    phenotype_name: String,
+    #[serde(default)]
+    covariate_file: Option<g_plan::ManifestFileFingerprint>,
+    covariate_names: Vec<String>,
+    prediction_list: g_plan::ManifestFileFingerprint,
+    prediction_inputs: g_plan::PredictionInputsIdentity,
+    sample_count: i64,
+    variant_count: i64,
+    chunk_size: i64,
+    #[serde(default)]
+    variant_limit: Option<i64>,
+    binary_correction_plan: g_plan::CorrectionPlan,
+    #[serde(default)]
+    binary_kernel_config: Option<Value>,
+    trusted_no_missing_diploid: bool,
+    trusted_bgen_validation_mode: g_plan::TrustedBgenValidationMode,
+    sample_key_mode: g_plan::SampleKeyMode,
+    bgen_decode_tile_variant_count: i64,
+    jax_policy: CurrentJaxPolicyManifest,
+    #[serde(default)]
+    requested_gpu_genotype_format: Option<g_plan::GpuGenotypeFormat>,
+    gpu_genotype_format: g_plan::GpuGenotypeFormat,
+    score_dtype: g_plan::FloatingPointDtype,
+    firth_dtype: g_plan::FloatingPointDtype,
+    multi_phenotype_sample_mode: g_plan::PreparedSampleMode,
+    #[serde(default)]
+    phenotype_compute_group_id: Option<String>,
+    #[serde(default)]
+    sample_set_fingerprint: Option<String>,
+    #[serde(default)]
+    covariate_design_fingerprint: Option<String>,
+    #[serde(default)]
+    prediction_alignment_fingerprint: Option<String>,
+    output_writer: CurrentOutputWriterManifest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+struct CurrentJaxPolicyManifest {
+    device: g_plan::Device,
+    enable_x64: bool,
+    matmul_precision: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+struct CurrentOutputWriterManifest {
+    output_format: g_plan::OutputFormat,
+    finalize_parquet: bool,
+    writer_thread_count: i64,
+    writer_queue_depth: i64,
+    chunks_per_arrow_file: i64,
+    arrow_compression: g_plan::ArrowCompression,
+    parquet_compression: g_plan::ParquetCompression,
+    result_statistic_dtype: g_plan::FloatingPointDtype,
+}
+
+impl CurrentRunManifestHeaderContract {
+    fn into_prepared_run_plan_input(self) -> Result<g_plan::PreparedRunPlanInput, OutputWriterError> {
+        let requested_gpu_genotype_format = self.requested_gpu_genotype_format.unwrap_or(self.gpu_genotype_format);
+        let phenotype_compute_group =
+            self.phenotype_compute_group_id.map(|group_id| g_plan::PreparedPhenotypeComputeGroup {
+                group_id,
+                sample_set_fingerprint: self.sample_set_fingerprint,
+                covariate_design_fingerprint: self.covariate_design_fingerprint,
+                prediction_alignment_fingerprint: self.prediction_alignment_fingerprint,
+            });
+        Ok(g_plan::PreparedRunPlanInput {
+            association_mode: self.association_mode,
+            input_identity: g_plan::PreparedInputIdentity {
+                bgen: self.bgen,
+                sample: self.sample,
+                phenotype_file: self.phenotype_file,
+                covariate_file: self.covariate_file,
+                prediction_list: self.prediction_list,
+                prediction_inputs: self.prediction_inputs,
+            },
+            phenotype_name: self.phenotype_name,
+            covariate_names: self.covariate_names,
+            sample_count: self.sample_count,
+            variant_count: self.variant_count,
+            chunk_size: self.chunk_size,
+            variant_limit: self.variant_limit,
+            correction: self.binary_correction_plan,
+            binary_kernel_config: self.binary_kernel_config,
+            compute: g_plan::PreparedComputePlan {
+                trusted_no_missing_diploid: self.trusted_no_missing_diploid,
+                trusted_bgen_validation_mode: self.trusted_bgen_validation_mode,
+                sample_key_mode: self.sample_key_mode,
+                bgen_decode_tile_variant_count: self.bgen_decode_tile_variant_count,
+                jax_policy: self.jax_policy.into_prepared_jax_policy()?,
+                requested_gpu_genotype_format,
+                resolved_gpu_genotype_format: self.gpu_genotype_format,
+                score_dtype: self.score_dtype,
+                firth_dtype: self.firth_dtype,
+                sample_mode: self.multi_phenotype_sample_mode,
+            },
+            phenotype_compute_group,
+            output_writer: self.output_writer.into_prepared_output_writer_plan(),
+        })
+    }
+}
+
+impl CurrentJaxPolicyManifest {
+    fn into_prepared_jax_policy(self) -> Result<g_plan::JaxPolicyPlan, OutputWriterError> {
+        let matmul_precision = if self.matmul_precision == JAX_MATMUL_PRECISION_WHEN_UNSET {
+            None
+        } else {
+            Some(parse_current_header_matmul_precision(self.matmul_precision)?)
+        };
+        Ok(g_plan::JaxPolicyPlan { device: self.device, enable_x64: self.enable_x64, matmul_precision })
+    }
+}
+
+impl CurrentOutputWriterManifest {
+    fn into_prepared_output_writer_plan(self) -> g_plan::PreparedOutputWriterPlan {
+        g_plan::PreparedOutputWriterPlan {
+            output_format: self.output_format,
+            finalize_parquet: self.finalize_parquet,
+            writer_thread_count: self.writer_thread_count,
+            writer_queue_depth: self.writer_queue_depth,
+            chunks_per_arrow_file: self.chunks_per_arrow_file,
+            arrow_compression: self.arrow_compression,
+            parquet_compression: self.parquet_compression,
+            output_statistic_dtype: self.result_statistic_dtype,
+        }
+    }
+}
+
+fn parse_current_header_matmul_precision(
+    matmul_precision: String,
+) -> Result<g_plan::JaxMatmulPrecision, OutputWriterError> {
+    serde_json::from_value(Value::String(matmul_precision))
+        .map_err(|error| OutputWriterError::InvalidInput(format!("Invalid JAX matmul precision: {error}")))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -257,6 +399,32 @@ pub fn build_prepared_run_manifest_header_json(
     let execution_plan = build_prepared_run_execution_plan(prepared_run_plan)?;
     let current_header = build_prepared_run_manifest_header(prepared_run_plan, &execution_plan)?;
     serde_json::to_string(&current_header).map_err(OutputWriterError::runtime)
+}
+
+pub fn build_prepared_run_plan_from_current_header_json(
+    current_header_json: &str,
+) -> Result<g_plan::PreparedRunPlan, OutputWriterError> {
+    let current_header =
+        serde_json::from_str::<CurrentRunManifestHeaderContract>(current_header_json).map_err(|error| {
+            OutputWriterError::InvalidInput(format!("Invalid current run manifest header JSON: {error}"))
+        })?;
+    let prepared_run_plan_input = current_header.into_prepared_run_plan_input()?;
+    g_plan::build_prepared_run_plan(prepared_run_plan_input)
+        .map_err(|error| OutputWriterError::InvalidInput(format!("Invalid prepared run plan input: {error}")))
+}
+
+pub fn build_prepared_run_plan_json_from_current_header_json(
+    current_header_json: &str,
+) -> Result<String, OutputWriterError> {
+    let prepared_run_plan = build_prepared_run_plan_from_current_header_json(current_header_json)?;
+    serde_json::to_string(&prepared_run_plan).map_err(OutputWriterError::runtime)
+}
+
+pub fn build_prepared_run_manifest_header_json_from_current_header_json(
+    current_header_json: &str,
+) -> Result<String, OutputWriterError> {
+    let prepared_run_plan = build_prepared_run_plan_from_current_header_json(current_header_json)?;
+    build_prepared_run_manifest_header_json(&prepared_run_plan)
 }
 
 fn build_prepared_run_execution_plan(prepared_run_plan: &g_plan::PreparedRunPlan) -> Result<Value, OutputWriterError> {
@@ -1251,6 +1419,37 @@ mod tests {
         let prepared_header =
             serde_json::from_str::<Value>(&prepared_header_json).expect("prepared header should parse");
         assert_eq!(prepared_header, current_header);
+
+        std::fs::remove_dir_all(test_files.root_directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn prepared_run_plan_from_current_header_json_matches_prepared_contract() {
+        let test_files = create_manifest_fixture_files();
+        let current_header_json = build_test_current_header_json(&test_files);
+        let prepared_run_plan = build_prepared_run_plan_from_current_header_json(&current_header_json)
+            .expect("prepared run plan should build from current header");
+
+        assert_eq!(prepared_run_plan, build_test_prepared_run_plan(&test_files));
+
+        std::fs::remove_dir_all(test_files.root_directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn prepared_run_plan_from_current_header_json_preserves_requested_gpu_format() {
+        let test_files = create_manifest_fixture_files();
+        let current_header_json = build_test_current_header_json(&test_files);
+        let mut current_header = serde_json::from_str::<Value>(&current_header_json)
+            .expect("current header should deserialize for test mutation");
+        current_header["requested_gpu_genotype_format"] = json!("auto");
+        let current_header_json =
+            serde_json::to_string(&current_header).expect("mutated current header should serialize");
+        let prepared_run_plan = build_prepared_run_plan_from_current_header_json(&current_header_json)
+            .expect("prepared run plan should build from current header");
+
+        assert_eq!(prepared_run_plan.compute.requested_gpu_genotype_format, g_plan::GpuGenotypeFormat::Auto);
+        assert_eq!(prepared_run_plan.compute.resolved_gpu_genotype_format, g_plan::GpuGenotypeFormat::Packed8,);
+        assert_eq!(prepared_run_plan.association_backend.kind, g_plan::AssociationBackendKind::JaxPacked8);
 
         std::fs::remove_dir_all(test_files.root_directory).expect("test directory should be removed");
     }
