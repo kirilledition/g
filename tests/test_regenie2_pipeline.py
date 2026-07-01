@@ -2673,6 +2673,129 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         self.variant_major_metadata: list[object] = []
         self.packed_metadata: list[object] = []
 
+    def uses_native_callback_runtime_resources(self) -> bool:
+        return False
+
+    @property
+    def callback_scheduler_state(self) -> typing.Any:
+        callback_scheduler_state = getattr(self, "_manual_callback_scheduler_state", None)
+        if callback_scheduler_state is None:
+            message = "Manual callback scheduler state has not been initialized."
+            raise AttributeError(message)
+        return callback_scheduler_state
+
+    @callback_scheduler_state.setter
+    def callback_scheduler_state(self, callback_scheduler_state: typing.Any) -> None:
+        self._manual_callback_scheduler_state = callback_scheduler_state
+
+    @property
+    def progress_state(self) -> typing.Any:
+        progress_state = getattr(self, "_manual_progress_state", None)
+        if progress_state is None:
+            message = "Manual callback progress state has not been initialized."
+            raise AttributeError(message)
+        return progress_state
+
+    @progress_state.setter
+    def progress_state(self, progress_state: typing.Any) -> None:
+        self._manual_progress_state = progress_state
+
+    @property
+    def binary_correction_summary(self) -> typing.Any:
+        binary_correction_summary = getattr(self, "_manual_binary_correction_summary", None)
+        if binary_correction_summary is None:
+            message = "Manual binary correction summary has not been initialized."
+            raise AttributeError(message)
+        return binary_correction_summary
+
+    @binary_correction_summary.setter
+    def binary_correction_summary(self, binary_correction_summary: typing.Any) -> None:
+        self._manual_binary_correction_summary = binary_correction_summary
+
+    @property
+    def result_in_flight_slot_signal(self) -> typing.Any:
+        result_in_flight_slot_signal = getattr(self, "_manual_result_in_flight_slot_signal", None)
+        if result_in_flight_slot_signal is None:
+            message = "Manual result in-flight slot signal has not been initialized."
+            raise AttributeError(message)
+        return result_in_flight_slot_signal
+
+    @result_in_flight_slot_signal.setter
+    def result_in_flight_slot_signal(self, result_in_flight_slot_signal: typing.Any) -> None:
+        self._manual_result_in_flight_slot_signal = result_in_flight_slot_signal
+
+    @property
+    def dosage_buffer_pool_signal(self) -> typing.Any:
+        dosage_buffer_pool_signal = getattr(self, "_manual_dosage_buffer_pool_signal", None)
+        if dosage_buffer_pool_signal is None:
+            message = "Manual dosage-buffer pool signal has not been initialized."
+            raise AttributeError(message)
+        return dosage_buffer_pool_signal
+
+    @dosage_buffer_pool_signal.setter
+    def dosage_buffer_pool_signal(self, dosage_buffer_pool_signal: typing.Any) -> None:
+        self._manual_dosage_buffer_pool_signal = dosage_buffer_pool_signal
+
+    @property
+    def dosage_queue(self) -> typing.Any:
+        dosage_queue = getattr(self, "_manual_dosage_queue", None)
+        if dosage_queue is None:
+            message = "Manual dosage queue has not been initialized."
+            raise AttributeError(message)
+        return dosage_queue
+
+    @dosage_queue.setter
+    def dosage_queue(self, dosage_queue: typing.Any) -> None:
+        self._manual_dosage_queue = dosage_queue
+
+    @property
+    def result_queue(self) -> typing.Any:
+        result_queue = getattr(self, "_manual_result_queue", None)
+        if result_queue is None:
+            message = "Manual result queue has not been initialized."
+            raise AttributeError(message)
+        return result_queue
+
+    @result_queue.setter
+    def result_queue(self, result_queue: typing.Any) -> None:
+        self._manual_result_queue = result_queue
+
+    @property
+    def free_dosage_buffers(self) -> typing.Any:
+        free_dosage_buffers = getattr(self, "_manual_free_dosage_buffers", None)
+        if free_dosage_buffers is None:
+            message = "Manual free dosage-buffer queue has not been initialized."
+            raise AttributeError(message)
+        return free_dosage_buffers
+
+    @free_dosage_buffers.setter
+    def free_dosage_buffers(self, free_dosage_buffers: typing.Any) -> None:
+        self._manual_free_dosage_buffers = free_dosage_buffers
+
+    @property
+    def worker_thread(self) -> typing.Any:
+        worker_thread = getattr(self, "_manual_worker_thread", None)
+        if worker_thread is None:
+            message = "Manual dosage worker thread has not been initialized."
+            raise AttributeError(message)
+        return worker_thread
+
+    @worker_thread.setter
+    def worker_thread(self, worker_thread: typing.Any) -> None:
+        self._manual_worker_thread = worker_thread
+
+    @property
+    def result_worker_thread(self) -> typing.Any:
+        result_worker_thread = getattr(self, "_manual_result_worker_thread", None)
+        if result_worker_thread is None:
+            message = "Manual result worker thread has not been initialized."
+            raise AttributeError(message)
+        return result_worker_thread
+
+    @result_worker_thread.setter
+    def result_worker_thread(self, result_worker_thread: typing.Any) -> None:
+        self._manual_result_worker_thread = result_worker_thread
+
     def compute_preprocessed_chunk(
         self,
         *,

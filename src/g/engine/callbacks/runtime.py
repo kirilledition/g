@@ -72,7 +72,7 @@ class DosageWorkItemKind(enum.StrEnum):
 
 
 class CallbackWorkerThreadHandle(typing.Protocol):
-    """Thread-like callback worker handle used by manual fallback runners."""
+    """Thread-like callback worker handle used by callback runner adapters."""
 
     @property
     def name(self) -> str: ...
@@ -196,18 +196,17 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def start(self) -> None:
         """Start asynchronous callback workers after owner setup is complete."""
-        should_start_fallback_workers = False
-        if self.uses_native_callback_runtime_resources():
+        uses_native_runtime_resources = self.uses_native_callback_runtime_resources()
+        if uses_native_runtime_resources:
             start_attempt_plan = self.callback_runtime_resources.start_workers()
         else:
             start_attempt_plan = self.callback_scheduler_state.plan_worker_start_attempt()
-            should_start_fallback_workers = True
         if start_attempt_plan.has_start_error:
             error_message = start_attempt_plan.error_message
             if error_message is None:
                 error_message = "Native callback worker lifecycle failed to mark workers started."
             raise RuntimeError(error_message)
-        if should_start_fallback_workers:
+        if not uses_native_runtime_resources:
             if start_attempt_plan.start_result_worker:
                 self.result_worker_thread.start()
             if start_attempt_plan.start_dosage_worker:
@@ -229,160 +228,80 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Return the active native callback scheduler state."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.callback_scheduler_state
-        fallback_callback_scheduler_state = getattr(self, "fallback_callback_scheduler_state", None)
-        if fallback_callback_scheduler_state is None:
-            message = "Callback scheduler state has not been initialized."
-            raise AttributeError(message)
-        return typing.cast("_core.NativeCallbackSchedulerState", fallback_callback_scheduler_state)
-
-    @callback_scheduler_state.setter
-    def callback_scheduler_state(self, callback_scheduler_state: _core.NativeCallbackSchedulerState) -> None:
-        """Store a fallback scheduler state for manual callback runners."""
-        self.fallback_callback_scheduler_state = callback_scheduler_state
+        message = "Callback runtime resources have not been initialized."
+        raise AttributeError(message)
 
     @property
     def progress_state(self) -> _core.NativeCallbackProgressState:
         """Return the active native callback progress state."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.progress_state
-        fallback_progress_state = getattr(self, "fallback_progress_state", None)
-        if fallback_progress_state is None:
-            message = "Callback progress state has not been initialized."
-            raise AttributeError(message)
-        return typing.cast("_core.NativeCallbackProgressState", fallback_progress_state)
-
-    @progress_state.setter
-    def progress_state(self, progress_state: _core.NativeCallbackProgressState) -> None:
-        """Store a fallback progress state for manual callback runners."""
-        self.fallback_progress_state = progress_state
+        message = "Callback runtime resources have not been initialized."
+        raise AttributeError(message)
 
     @property
     def binary_correction_summary(self) -> _core.NativeBinaryCorrectionSummary:
         """Return the active native binary correction summary."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.binary_correction_summary
-        fallback_binary_correction_summary = getattr(self, "fallback_binary_correction_summary", None)
-        if fallback_binary_correction_summary is None:
-            message = "Binary correction summary has not been initialized."
-            raise AttributeError(message)
-        return typing.cast("_core.NativeBinaryCorrectionSummary", fallback_binary_correction_summary)
-
-    @binary_correction_summary.setter
-    def binary_correction_summary(self, binary_correction_summary: _core.NativeBinaryCorrectionSummary) -> None:
-        """Store a fallback binary correction summary for manual callback runners."""
-        self.fallback_binary_correction_summary = binary_correction_summary
+        message = "Callback runtime resources have not been initialized."
+        raise AttributeError(message)
 
     @property
     def result_in_flight_slot_signal(self) -> _core.NativeCallbackWaitSignal:
         """Return the active native result in-flight wait signal."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.result_in_flight_slot_signal
-        fallback_result_in_flight_slot_signal = getattr(self, "fallback_result_in_flight_slot_signal", None)
-        if fallback_result_in_flight_slot_signal is None:
-            message = "Result in-flight slot signal has not been initialized."
-            raise AttributeError(message)
-        return typing.cast("_core.NativeCallbackWaitSignal", fallback_result_in_flight_slot_signal)
-
-    @result_in_flight_slot_signal.setter
-    def result_in_flight_slot_signal(self, result_in_flight_slot_signal: _core.NativeCallbackWaitSignal) -> None:
-        """Store a fallback result in-flight wait signal for manual callback runners."""
-        self.fallback_result_in_flight_slot_signal = result_in_flight_slot_signal
+        message = "Callback runtime resources have not been initialized."
+        raise AttributeError(message)
 
     @property
     def dosage_buffer_pool_signal(self) -> _core.NativeCallbackWaitSignal:
         """Return the active native dosage-buffer pool wait signal."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.dosage_buffer_pool_signal
-        fallback_dosage_buffer_pool_signal = getattr(self, "fallback_dosage_buffer_pool_signal", None)
-        if fallback_dosage_buffer_pool_signal is None:
-            message = "Dosage-buffer pool signal has not been initialized."
-            raise AttributeError(message)
-        return typing.cast("_core.NativeCallbackWaitSignal", fallback_dosage_buffer_pool_signal)
-
-    @dosage_buffer_pool_signal.setter
-    def dosage_buffer_pool_signal(self, dosage_buffer_pool_signal: _core.NativeCallbackWaitSignal) -> None:
-        """Store a fallback dosage-buffer pool wait signal for manual callback runners."""
-        self.fallback_dosage_buffer_pool_signal = dosage_buffer_pool_signal
+        message = "Callback runtime resources have not been initialized."
+        raise AttributeError(message)
 
     @property
     def dosage_queue(self) -> _core.NativeCallbackObjectQueue:
         """Return the active native dosage work queue."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.dosage_queue
-        fallback_dosage_queue = getattr(self, "fallback_dosage_queue", None)
-        if fallback_dosage_queue is None:
-            message = "Dosage queue has not been initialized."
-            raise AttributeError(message)
-        return typing.cast("_core.NativeCallbackObjectQueue", fallback_dosage_queue)
-
-    @dosage_queue.setter
-    def dosage_queue(self, dosage_queue: _core.NativeCallbackObjectQueue) -> None:
-        """Store a fallback dosage work queue for manual callback runners."""
-        self.fallback_dosage_queue = dosage_queue
+        message = "Callback runtime resources have not been initialized."
+        raise AttributeError(message)
 
     @property
     def result_queue(self) -> _core.NativeCallbackObjectQueue:
         """Return the active native result write queue."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.result_queue
-        fallback_result_queue = getattr(self, "fallback_result_queue", None)
-        if fallback_result_queue is None:
-            message = "Result queue has not been initialized."
-            raise AttributeError(message)
-        return typing.cast("_core.NativeCallbackObjectQueue", fallback_result_queue)
-
-    @result_queue.setter
-    def result_queue(self, result_queue: _core.NativeCallbackObjectQueue) -> None:
-        """Store a fallback result write queue for manual callback runners."""
-        self.fallback_result_queue = result_queue
+        message = "Callback runtime resources have not been initialized."
+        raise AttributeError(message)
 
     @property
     def free_dosage_buffers(self) -> _core.NativeCallbackObjectQueue:
         """Return the active native free dosage-buffer queue."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.free_dosage_buffers
-        fallback_free_dosage_buffers = getattr(self, "fallback_free_dosage_buffers", None)
-        if fallback_free_dosage_buffers is None:
-            message = "Free dosage-buffer queue has not been initialized."
-            raise AttributeError(message)
-        return typing.cast("_core.NativeCallbackObjectQueue", fallback_free_dosage_buffers)
-
-    @free_dosage_buffers.setter
-    def free_dosage_buffers(self, free_dosage_buffers: _core.NativeCallbackObjectQueue) -> None:
-        """Store a fallback free dosage-buffer queue for manual callback runners."""
-        self.fallback_free_dosage_buffers = free_dosage_buffers
+        message = "Callback runtime resources have not been initialized."
+        raise AttributeError(message)
 
     @property
     def worker_thread(self) -> CallbackWorkerThreadHandle:
         """Return the active dosage worker thread handle."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.worker_thread
-        fallback_worker_thread = getattr(self, "fallback_worker_thread", None)
-        if fallback_worker_thread is None:
-            message = "Dosage worker thread has not been initialized."
-            raise AttributeError(message)
-        return typing.cast("CallbackWorkerThreadHandle", fallback_worker_thread)
-
-    @worker_thread.setter
-    def worker_thread(self, worker_thread: CallbackWorkerThreadHandle) -> None:
-        """Store a fallback dosage worker thread for manual callback runners."""
-        self.fallback_worker_thread = worker_thread
+        message = "Callback runtime resources have not been initialized."
+        raise AttributeError(message)
 
     @property
     def result_worker_thread(self) -> CallbackWorkerThreadHandle:
         """Return the active result worker thread handle."""
         if self.uses_native_callback_runtime_resources():
             return self.callback_runtime_resources.result_worker_thread
-        fallback_result_worker_thread = getattr(self, "fallback_result_worker_thread", None)
-        if fallback_result_worker_thread is None:
-            message = "Result worker thread has not been initialized."
-            raise AttributeError(message)
-        return typing.cast("CallbackWorkerThreadHandle", fallback_result_worker_thread)
-
-    @result_worker_thread.setter
-    def result_worker_thread(self, result_worker_thread: CallbackWorkerThreadHandle) -> None:
-        """Store a fallback result worker thread for manual callback runners."""
-        self.fallback_result_worker_thread = result_worker_thread
+        message = "Callback runtime resources have not been initialized."
+        raise AttributeError(message)
 
     @property
     def dosage_worker_name(self) -> str:
@@ -415,7 +334,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     def uses_native_callback_runtime_resources(self) -> bool:
         """Return whether this runner still uses its production native resource owner."""
         runtime_resources = getattr(self, "callback_runtime_resources", None)
-        return runtime_resources is not None and getattr(self, "fallback_callback_scheduler_state", None) is None
+        return runtime_resources is not None
 
     @property
     def native_callback_batch_size(self) -> int:

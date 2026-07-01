@@ -1055,20 +1055,18 @@ Remove Python as the chunk-level scheduler.
   retain scheduler state, progress state, queues, wait signals, binary summary
   state, worker handles, and the worker-start lock for production runners.
 - Production callback runners now resolve scheduler state from the native
-  runtime-resource owner, leaving direct scheduler assignment only for manual
-  fallback runners.
+  runtime-resource owner and no longer expose direct scheduler assignment.
 - Production callback runners now resolve progress state from the native
-  runtime-resource owner, leaving direct progress-state assignment only for
-  manual fallback runners.
+  runtime-resource owner and no longer expose direct progress-state assignment.
 - Production callback runners now resolve binary correction summary state from
-  the native runtime-resource owner, leaving direct summary assignment only for
-  manual fallback runners.
+  the native runtime-resource owner and no longer expose direct summary
+  assignment.
 - Production callback runners now resolve callback queues, free-buffer storage,
-  and wait signals from the native runtime-resource owner, leaving direct handle
-  assignment only for manual fallback runners.
+  and wait signals from the native runtime-resource owner and no longer expose
+  direct handle assignment.
 - Production callback runners now resolve callback worker thread handles from
-  the native runtime-resource owner, leaving direct handle assignment only for
-  manual fallback runners.
+  the native runtime-resource owner and no longer expose direct handle
+  assignment.
 - Callback runtime resources now own production dosage/result queue put,
   backpressure, and get loops, including scheduler slot rollback on native
   storage inconsistencies.
@@ -1388,6 +1386,10 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now classify production dosage and result work
   item objects for dispatch in Rust, leaving Python dataclass classification
   only on manual fallback scheduler paths.
+- The base callback runner no longer accepts direct fallback resource
+  registration for scheduler, progress, summary, queue, wait-signal, or worker
+  handles; remaining manual scheduler fixtures define their own test-only
+  accessors outside the production runner.
 
 ### Tests
 
