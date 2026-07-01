@@ -1665,6 +1665,8 @@ Current implementation notes:
 - Host-policy, preflight, preparation, run-metadata, and callback diagnostic
   PyO3 export registration now lives with the corresponding adapter modules,
   leaving the root Python composition module to delegate those export groups.
+- Callback queue, progress, summary, and runtime-resource PyO3 export
+  registration now lives with the corresponding callback adapter modules.
 
 ### Tests
 

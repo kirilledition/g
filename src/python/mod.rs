@@ -58,25 +58,6 @@ use association_backend::{
     NativeAssociationEngineRunReport, NativeAssociationGroupRunReport, NativeGenotypeBatchView, NativePredictionView,
     NativePreparedGroupInput, NativePythonAssociationBackend, NativePythonEngineRunEffects,
 };
-use callback_progress::{
-    NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
-    NativeCallbackProgressTelemetryEvent, NativeCallbackProgressTelemetryPlan, NativeCallbackProgressTelemetryRecord,
-    NativeCallbackProgressUpdate, build_callback_chunk_identity,
-};
-use callback_queue::{
-    NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
-};
-use callback_runtime_resources::{
-    NativeCallbackQueueGetObservedResult, NativeCallbackQueuePutResult, NativeCallbackRuntimeResources,
-    NativeCallbackWorkerFinishLifecycleResult, NativeDosageBufferAcquireResult, NativeDosageBufferPoolOperationResult,
-    NativeDosageBufferReuseSelectionResult, NativeDosageWorkItemDrainResult, NativeDosageWorkItemGetResult,
-    NativeDosageWorkItemStageDurationAttribution, NativeResultInFlightAcquireResult,
-    NativeResultInFlightSlotReleaseResult, NativeResultWorkItemResourceReleaseResult, NativeResultWriteItemDrainResult,
-    NativeResultWriteItemGetResult,
-};
-use callback_summary::{
-    NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
-};
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
 use g_engine::Regenie2RunEngineCore;
 use jax_runtime::{
@@ -1760,37 +1741,12 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePythonEngineRunEffects>()?;
     module.add_class::<NativeAlignedPhenotypeGroup>()?;
     module.add_class::<NativeAlignedSampleData>()?;
-    module.add_class::<NativeBinaryCorrectionDiagnosticsRecordPlan>()?;
-    module.add_class::<NativeBinaryCorrectionSummary>()?;
-    module.add_class::<NativeBinaryCorrectionSummaryEmitPlan>()?;
-    module.add_class::<NativeCallbackChunkIdentity>()?;
-    module.add_class::<NativeCallbackObjectQueue>()?;
-    module.add_class::<NativeCallbackObjectQueueGetResult>()?;
-    module.add_class::<NativeCallbackQueueGetObservedResult>()?;
-    module.add_class::<NativeCallbackRuntimeResources>()?;
-    module.add_class::<NativeCallbackWaitSignal>()?;
-    module.add_class::<NativeCallbackWorkerThread>()?;
-    module.add_class::<NativeCallbackProgressCompletion>()?;
-    module.add_class::<NativeCallbackProgressState>()?;
-    module.add_class::<NativeCallbackProgressTelemetryEvent>()?;
-    module.add_class::<NativeCallbackProgressTelemetryPlan>()?;
-    module.add_class::<NativeCallbackProgressTelemetryRecord>()?;
-    module.add_class::<NativeCallbackProgressUpdate>()?;
+    callback_summary::register_module(module)?;
+    callback_progress::register_module(module)?;
+    callback_queue::register_module(module)?;
+    callback_runtime_resources::register_module(module)?;
     callback_diagnostics::register_module(module)?;
     schedule::register_module(module)?;
-    module.add_class::<NativeCallbackWorkerFinishLifecycleResult>()?;
-    module.add_class::<NativeCallbackQueuePutResult>()?;
-    module.add_class::<NativeDosageBufferAcquireResult>()?;
-    module.add_class::<NativeDosageBufferPoolOperationResult>()?;
-    module.add_class::<NativeDosageBufferReuseSelectionResult>()?;
-    module.add_class::<NativeDosageWorkItemDrainResult>()?;
-    module.add_class::<NativeDosageWorkItemGetResult>()?;
-    module.add_class::<NativeDosageWorkItemStageDurationAttribution>()?;
-    module.add_class::<NativeResultInFlightAcquireResult>()?;
-    module.add_class::<NativeResultInFlightSlotReleaseResult>()?;
-    module.add_class::<NativeResultWorkItemResourceReleaseResult>()?;
-    module.add_class::<NativeResultWriteItemDrainResult>()?;
-    module.add_class::<NativeResultWriteItemGetResult>()?;
     module.add_class::<NativeGroupedAlignedSampleData>()?;
     module.add_class::<NativeMultiAlignedSampleData>()?;
     preparation::register_module(module)?;
@@ -1837,7 +1793,6 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_log_event, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_setup_side_effects_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_close, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;

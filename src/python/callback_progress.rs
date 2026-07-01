@@ -1,6 +1,7 @@
 //! PyO3 adapters for callback progress state.
 
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 use g_engine::callback_progress as native_callback_progress;
 
@@ -315,4 +316,16 @@ pub(crate) fn build_callback_chunk_identity(
     variant_stop_index: i64,
 ) -> NativeCallbackChunkIdentity {
     native_callback_progress::CallbackChunkIdentity::new(chromosome, variant_start_index, variant_stop_index).into()
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeCallbackChunkIdentity>()?;
+    module.add_class::<NativeCallbackProgressCompletion>()?;
+    module.add_class::<NativeCallbackProgressState>()?;
+    module.add_class::<NativeCallbackProgressTelemetryEvent>()?;
+    module.add_class::<NativeCallbackProgressTelemetryPlan>()?;
+    module.add_class::<NativeCallbackProgressTelemetryRecord>()?;
+    module.add_class::<NativeCallbackProgressUpdate>()?;
+    module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
+    Ok(())
 }

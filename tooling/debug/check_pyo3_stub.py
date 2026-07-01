@@ -17,6 +17,10 @@ if typing.TYPE_CHECKING:
 
 RUST_EXPORT_FILES = (
     Path("src/python/callback_diagnostics.rs"),
+    Path("src/python/callback_progress.rs"),
+    Path("src/python/callback_queue.rs"),
+    Path("src/python/callback_runtime_resources.rs"),
+    Path("src/python/callback_summary.rs"),
     Path("src/python/mod.rs"),
     Path("src/python/config/mod.rs"),
     Path("src/python/host_policy.rs"),

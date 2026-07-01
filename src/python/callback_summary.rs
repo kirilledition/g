@@ -4,7 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyModule};
 
 use g_engine::callback_summary as native_callback_summary;
 
@@ -409,6 +409,13 @@ impl From<native_callback_summary::BinaryCorrectionSummaryEmitPlan> for NativeBi
     fn from(emit_plan: native_callback_summary::BinaryCorrectionSummaryEmitPlan) -> Self {
         Self { inner: emit_plan }
     }
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeBinaryCorrectionDiagnosticsRecordPlan>()?;
+    module.add_class::<NativeBinaryCorrectionSummary>()?;
+    module.add_class::<NativeBinaryCorrectionSummaryEmitPlan>()?;
+    Ok(())
 }
 
 fn parse_binary_chunk_diagnostics(

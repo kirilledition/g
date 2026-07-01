@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PySlice, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyModule, PySlice, PyTuple};
 
 use super::callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
@@ -3200,6 +3200,25 @@ fn dosage_buffer_reuse_slice_tuple<'py>(py: Python<'py>, slice_dimensions: &[usi
         slices.push(PySlice::new(py, 0, slice_stop, 1));
     }
     PyTuple::new(py, slices)
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeCallbackQueueGetObservedResult>()?;
+    module.add_class::<NativeCallbackQueuePutResult>()?;
+    module.add_class::<NativeCallbackRuntimeResources>()?;
+    module.add_class::<NativeCallbackWorkerFinishLifecycleResult>()?;
+    module.add_class::<NativeDosageBufferAcquireResult>()?;
+    module.add_class::<NativeDosageBufferPoolOperationResult>()?;
+    module.add_class::<NativeDosageBufferReuseSelectionResult>()?;
+    module.add_class::<NativeDosageWorkItemDrainResult>()?;
+    module.add_class::<NativeDosageWorkItemGetResult>()?;
+    module.add_class::<NativeDosageWorkItemStageDurationAttribution>()?;
+    module.add_class::<NativeResultInFlightAcquireResult>()?;
+    module.add_class::<NativeResultInFlightSlotReleaseResult>()?;
+    module.add_class::<NativeResultWorkItemResourceReleaseResult>()?;
+    module.add_class::<NativeResultWriteItemDrainResult>()?;
+    module.add_class::<NativeResultWriteItemGetResult>()?;
+    Ok(())
 }
 
 fn dosage_work_item_metadata_items(py: Python<'_>, work_item: &Bound<'_, PyAny>) -> PyResult<Py<PyTuple>> {

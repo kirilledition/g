@@ -417,6 +417,14 @@ impl NativeCallbackObjectQueueGetResult {
     }
 }
 
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeCallbackObjectQueue>()?;
+    module.add_class::<NativeCallbackObjectQueueGetResult>()?;
+    module.add_class::<NativeCallbackWaitSignal>()?;
+    module.add_class::<NativeCallbackWorkerThread>()?;
+    Ok(())
+}
+
 fn normalize_timeout_duration(timeout_seconds: f64) -> Duration {
     if timeout_seconds.is_finite() && timeout_seconds > 0.0 {
         Duration::try_from_secs_f64(timeout_seconds).unwrap_or(Duration::MAX)
