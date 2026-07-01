@@ -165,7 +165,7 @@ def test_configure_before_backend_init_sets_platform_first(tmp_path: Path) -> No
     cache_directory = tmp_path / "jax-cache"
     policy = dataclasses.replace(build_runtime_policy(), cache_directory=cache_directory)
 
-    with patch("g.jax_runtime.setup.jax.config.update") as mock_update:
+    with patch("jax.config.update") as mock_update:
         report = setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=None)
 
     assert report.cache_directory == cache_directory
@@ -191,23 +191,30 @@ def test_configure_before_backend_init_validates_gpu_after_runtime(tmp_path: Pat
         del value
         call_order.append(setting_name)
 
-    def record_validate_gpu_device() -> models.JaxGpuValidationReport:
-        call_order.append("validate_gpu_device")
-        return models.JaxGpuValidationReport(
-            status=models.GpuValidationStatus.SUCCEEDED,
-            message="JAX reported at least one GPU device.",
-        )
+    class FakeDevice:
+        platform = "gpu"
+
+        def __str__(self) -> str:
+            return "GpuDevice(id=0)"
+
+    def record_jax_devices() -> list[FakeDevice]:
+        call_order.append("jax.devices")
+        return [FakeDevice()]
+
+    control_device_path = tmp_path / "nvidiactl"
+    control_device_path.touch()
 
     with (
-        patch("g.jax_runtime.setup.jax.config.update", side_effect=record_config_update),
-        patch("g.jax_runtime.setup.validate_gpu_device", side_effect=record_validate_gpu_device),
+        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("jax.config.update", side_effect=record_config_update),
+        patch("jax.devices", side_effect=record_jax_devices),
     ):
         report = setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=None)
 
     assert report.gpu_validation_status == models.GpuValidationStatus.SUCCEEDED
     assert call_order[0] == "jax_platforms"
     assert "jax_compilation_cache_dir" in call_order
-    assert call_order[-1] == "validate_gpu_device"
+    assert call_order[-1] == "jax.devices"
 
 
 def test_configure_before_backend_init_uses_native_side_effect_plan(tmp_path: Path) -> None:
@@ -215,13 +222,13 @@ def test_configure_before_backend_init_uses_native_side_effect_plan(tmp_path: Pa
     policy = dataclasses.replace(build_runtime_policy(persistent_cache=False), cache_directory=cache_directory)
 
     with (
-        patch("g.jax_runtime.setup.jax.config.update"),
-        patch("g.jax_runtime.setup.validate_gpu_device") as validate_gpu_device_mock,
+        patch("jax.config.update"),
+        patch("jax.devices") as jax_devices_mock,
     ):
         setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=None)
 
     assert not cache_directory.exists()
-    validate_gpu_device_mock.assert_not_called()
+    jax_devices_mock.assert_not_called()
 
 
 def test_complete_jax_runtime_setup_validation_report_uses_native_payload(tmp_path: Path) -> None:
@@ -252,7 +259,7 @@ def test_configure_before_backend_init_emits_structured_diagnostics(tmp_path: Pa
     )
     diagnostic_events: list[models.JaxRuntimeDiagnosticEvent] = []
 
-    with patch("g.jax_runtime.setup.jax.config.update"):
+    with patch("jax.config.update"):
         setup.configure_before_backend_init(policy, native_setup_session=None, diagnostic_sink=diagnostic_events.append)
 
     event_names = [diagnostic_event.event_name for diagnostic_event in diagnostic_events]
@@ -279,10 +286,13 @@ def test_configure_before_backend_init_emits_gpu_validation_failure_before_raise
     cache_directory = tmp_path / "jax-cache"
     policy = dataclasses.replace(build_runtime_policy(device=types.Device.GPU), cache_directory=cache_directory)
     diagnostic_events: list[models.JaxRuntimeDiagnosticEvent] = []
+    control_device_path = tmp_path / "nvidiactl"
+    control_device_path.touch()
 
     with (
-        patch("g.jax_runtime.setup.jax.config.update"),
-        patch("g.jax_runtime.setup.validate_gpu_device", side_effect=RuntimeError("no gpu")),
+        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("jax.config.update"),
+        patch("jax.devices", side_effect=RuntimeError("Unknown backend cuda")),
     ):
         try:
             setup.configure_before_backend_init(
@@ -291,17 +301,16 @@ def test_configure_before_backend_init_emits_gpu_validation_failure_before_raise
                 diagnostic_sink=diagnostic_events.append,
             )
         except RuntimeError as error:
-            assert str(error) == "no gpu"
+            assert "no CUDA-enabled JAX backend" in str(error)
         else:
             raise AssertionError("Expected GPU validation failure.")
 
     failure_event = diagnostic_events[-1]
     assert failure_event.event_name == "jax_gpu_validation"
     assert failure_event.level == models.JaxRuntimeDiagnosticLevel.ERROR
-    assert {diagnostic_field.name: diagnostic_field.value for diagnostic_field in failure_event.fields} == {
-        "status": "failed",
-        "message": "no gpu",
-    }
+    failure_fields = {diagnostic_field.name: diagnostic_field.value for diagnostic_field in failure_event.fields}
+    assert failure_fields["status"] == "failed"
+    assert "no CUDA-enabled JAX backend" in str(failure_fields["message"])
 
 
 def test_compute_import_does_not_configure_jax_backend() -> None:
@@ -317,15 +326,21 @@ def test_compute_import_does_not_configure_jax_backend() -> None:
             sys.modules[module_name] = previous_module
 
 
-def test_require_gpu_device_accepts_gpu_platform() -> None:
+def test_require_gpu_device_accepts_gpu_platform(tmp_path: Path) -> None:
     """Ensure GPU validation accepts a JAX GPU device."""
 
     class FakeDevice:
         platform = "gpu"
 
+        def __str__(self) -> str:
+            return "GpuDevice(id=0)"
+
+    control_device_path = tmp_path / "nvidiactl"
+    control_device_path.touch()
+
     with (
-        patch("g.jax_runtime.setup.nvidia_driver_is_visible", return_value=True),
-        patch("g.jax_runtime.setup.jax.devices", return_value=[FakeDevice()]),
+        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("jax.devices", return_value=[FakeDevice()]),
     ):
         setup.require_gpu_device()
 
@@ -345,7 +360,7 @@ def test_nvidia_driver_is_visible_uses_native_probe(tmp_path: Path) -> None:
         assert setup.nvidia_driver_is_visible() is True
 
 
-def test_validate_gpu_device_returns_native_success_report() -> None:
+def test_validate_gpu_device_returns_native_success_report(tmp_path: Path) -> None:
     """Ensure GPU validation success details come from native runtime policy."""
 
     class FakeDevice:
@@ -354,9 +369,12 @@ def test_validate_gpu_device_returns_native_success_report() -> None:
         def __str__(self) -> str:
             return "GpuDevice(id=0)"
 
+    control_device_path = tmp_path / "nvidiactl"
+    control_device_path.touch()
+
     with (
-        patch("g.jax_runtime.setup.nvidia_driver_is_visible", return_value=True),
-        patch("g.jax_runtime.setup.jax.devices", return_value=[FakeDevice()]),
+        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("jax.devices", return_value=[FakeDevice()]),
     ):
         validation_report = setup.validate_gpu_device()
 
@@ -366,9 +384,13 @@ def test_validate_gpu_device_returns_native_success_report() -> None:
     )
 
 
-def test_require_gpu_device_rejects_missing_nvidia_driver() -> None:
+def test_require_gpu_device_rejects_missing_nvidia_driver(tmp_path: Path) -> None:
     """Ensure GPU validation fails before JAX when no NVIDIA device is visible."""
-    with patch("g.jax_runtime.setup.nvidia_driver_is_visible", return_value=False):
+    with (
+        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", tmp_path / "missing-nvidiactl"),
+        patch("g.jax_runtime.setup.NVIDIA_UVM_DEVICE_PATH", tmp_path / "missing-nvidia-uvm"),
+        patch("g.jax_runtime.setup.NVIDIA_DRIVER_DIRECTORY_PATH", tmp_path / "missing-driver"),
+    ):
         try:
             setup.require_gpu_device()
         except RuntimeError as error:
@@ -377,7 +399,7 @@ def test_require_gpu_device_rejects_missing_nvidia_driver() -> None:
             raise AssertionError("Expected GPU validation to fail without visible NVIDIA devices.")
 
 
-def test_require_gpu_device_rejects_cpu_only_backend() -> None:
+def test_require_gpu_device_rejects_cpu_only_backend(tmp_path: Path) -> None:
     """Ensure GPU validation rejects CPU-only device lists."""
 
     class FakeDevice:
@@ -386,9 +408,12 @@ def test_require_gpu_device_rejects_cpu_only_backend() -> None:
         def __str__(self) -> str:
             return "CpuDevice(id=0)"
 
+    control_device_path = tmp_path / "nvidiactl"
+    control_device_path.touch()
+
     with (
-        patch("g.jax_runtime.setup.nvidia_driver_is_visible", return_value=True),
-        patch("g.jax_runtime.setup.jax.devices", return_value=[FakeDevice()]),
+        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("jax.devices", return_value=[FakeDevice()]),
     ):
         try:
             setup.require_gpu_device()
@@ -398,11 +423,14 @@ def test_require_gpu_device_rejects_cpu_only_backend() -> None:
             raise AssertionError("Expected GPU validation to fail for CPU-only devices.")
 
 
-def test_require_gpu_device_wraps_backend_initialization_errors() -> None:
+def test_require_gpu_device_wraps_backend_initialization_errors(tmp_path: Path) -> None:
     """Ensure CUDA initialization errors get an actionable message."""
+    control_device_path = tmp_path / "nvidiactl"
+    control_device_path.touch()
+
     with (
-        patch("g.jax_runtime.setup.nvidia_driver_is_visible", return_value=True),
-        patch("g.jax_runtime.setup.jax.devices", side_effect=RuntimeError("Unknown backend cuda")),
+        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("jax.devices", side_effect=RuntimeError("Unknown backend cuda")),
     ):
         try:
             setup.require_gpu_device()
@@ -412,11 +440,14 @@ def test_require_gpu_device_wraps_backend_initialization_errors() -> None:
             raise AssertionError("Expected GPU validation to fail when CUDA initialization fails.")
 
 
-def test_require_gpu_device_wraps_jax_plugin_assertion_errors() -> None:
+def test_require_gpu_device_wraps_jax_plugin_assertion_errors(tmp_path: Path) -> None:
     """Ensure CUDA plugin assertion failures get an actionable message."""
+    control_device_path = tmp_path / "nvidiactl"
+    control_device_path.touch()
+
     with (
-        patch("g.jax_runtime.setup.nvidia_driver_is_visible", return_value=True),
-        patch("g.jax_runtime.setup.jax.devices", side_effect=AssertionError("plugin initialization failed")),
+        patch("g.jax_runtime.setup.NVIDIA_CONTROL_DEVICE_PATH", control_device_path),
+        patch("jax.devices", side_effect=AssertionError("plugin initialization failed")),
     ):
         try:
             setup.require_gpu_device()

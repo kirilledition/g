@@ -1622,11 +1622,14 @@ Python/JAX should emit typed diagnostic events through a native handle.
   calls one native cache-write boundary instead of creating directories,
   serializing JSON, or replacing cache files itself.
 - JAX persistent-cache directory creation now runs through the native JAX
-  runtime setup session; Python still triggers JAX setup and GPU validation, but
-  no longer calls `Path.mkdir` for that setup side effect.
+  runtime setup session; Python still triggers JAX setup, but no longer calls
+  `Path.mkdir` for that setup side effect.
 - JAX runtime config-update execution now runs through the native setup session;
-  Python still triggers the setup boundary and handles GPU validation, but no
-  longer loops over native config payloads to call `jax.config.update`.
+  Python still triggers the setup boundary, but no longer loops over native
+  config payloads to call `jax.config.update`.
+- JAX GPU validation execution now runs through the native setup session; the
+  PyO3 adapter owns the NVIDIA driver probe, `jax.devices()` call, native
+  validation planning, setup-state completion, and failure raising.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

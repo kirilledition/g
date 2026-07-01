@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
-use pyo3::exceptions::{PyOSError, PyValueError};
+use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyTuple};
 
@@ -124,6 +124,33 @@ impl NativeJaxRuntimeSetupSession {
     fn create_cache_directory_if_configured(&self) -> PyResult<bool> {
         self.lock_session()?.create_cache_directory_if_configured().map_err(PyOSError::new_err)
     }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn validate_gpu_if_configured<'py>(
+        &self,
+        py: Python<'py>,
+        control_device_path: String,
+        uvm_device_path: String,
+        driver_directory_path: String,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        if !self.lock_session()?.side_effect_plan().should_validate_gpu {
+            let session = self.lock_session()?;
+            return jax_runtime_setup_payload_to_dict(py, session.setup());
+        }
+        let nvidia_driver_visible = native_jax_runtime::nvidia_driver_files_are_visible(
+            Path::new(&control_device_path),
+            Path::new(&uvm_device_path),
+            Path::new(&driver_directory_path),
+        );
+        if !nvidia_driver_visible {
+            return self.complete_gpu_validation_or_raise(py, false, false, &[]);
+        }
+        let devices = match observe_jax_devices(py) {
+            Ok(devices) => devices,
+            Err(_error) => return self.complete_gpu_validation_or_raise(py, true, true, &[]),
+        };
+        self.complete_gpu_validation_or_raise(py, true, false, &devices)
+    }
 }
 
 impl NativeJaxRuntimeSetupSession {
@@ -133,6 +160,24 @@ impl NativeJaxRuntimeSetupSession {
 
     fn lock_session(&self) -> PyResult<MutexGuard<'_, native_jax_runtime::JaxRuntimeSetupSession>> {
         self.session.lock().map_err(|_| PyValueError::new_err("JAX runtime setup session mutex was poisoned."))
+    }
+
+    fn complete_gpu_validation_or_raise<'py>(
+        &self,
+        py: Python<'py>,
+        nvidia_driver_visible: bool,
+        backend_initialization_failed: bool,
+        devices: &[native_jax_runtime::JaxDeviceObservation],
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let validation_plan =
+            native_jax_runtime::plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, devices);
+        let validation_message = validation_plan.message.clone();
+        let mut session = self.lock_session()?;
+        let completed_setup = session.complete_validation(&validation_plan.status, Some(validation_message.as_str()));
+        if validation_plan.should_raise {
+            return Err(PyRuntimeError::new_err(validation_message));
+        }
+        jax_runtime_setup_payload_to_dict(py, &completed_setup)
     }
 }
 
@@ -535,4 +580,24 @@ fn set_optional_string(py: Python<'_>, payload: &Bound<'_, PyDict>, key: &str, v
 
 fn extract_optional_string(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
     if value.is_none() { Ok(None) } else { Ok(Some(value.extract::<String>()?)) }
+}
+
+fn observe_jax_devices(py: Python<'_>) -> PyResult<Vec<native_jax_runtime::JaxDeviceObservation>> {
+    let devices = py.import("jax")?.call_method0("devices")?;
+    let mut device_observations = Vec::new();
+    for device in devices.try_iter()? {
+        let device = device?;
+        device_observations.push(native_jax_runtime::JaxDeviceObservation {
+            platform: python_attribute_to_string(&device, "platform")?,
+            description: device.str()?.to_string_lossy().into_owned(),
+        });
+    }
+    Ok(device_observations)
+}
+
+fn python_attribute_to_string(object: &Bound<'_, PyAny>, attribute_name: &str) -> PyResult<String> {
+    match object.getattr(attribute_name) {
+        Ok(value) => Ok(value.str()?.to_string_lossy().into_owned()),
+        Err(_error) => Ok(String::new()),
+    }
 }

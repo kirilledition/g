@@ -5,8 +5,6 @@ from __future__ import annotations
 import typing
 from pathlib import Path
 
-import jax
-
 from g import _core
 from g.jax_runtime import diagnostics, models, resolution
 
@@ -46,22 +44,17 @@ def configure_before_backend_init(
                 diagnostic_sink(diagnostic_event)
         return setup_report
     try:
-        gpu_validation_report = validate_gpu_device()
-    except RuntimeError as error:
-        complete_jax_runtime_setup_validation_report(
-            active_setup_session,
-            validation_status=models.GpuValidationStatus.FAILED,
-            validation_message=str(error),
+        validated_payload = active_setup_session.validate_gpu_if_configured(
+            str(NVIDIA_CONTROL_DEVICE_PATH),
+            str(NVIDIA_UVM_DEVICE_PATH),
+            str(NVIDIA_DRIVER_DIRECTORY_PATH),
         )
+    except RuntimeError:
         if diagnostic_sink is not None:
             for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(active_setup_session):
                 diagnostic_sink(diagnostic_event)
         raise
-    validated_report = complete_jax_runtime_setup_validation_report(
-        active_setup_session,
-        validation_status=gpu_validation_report.status,
-        validation_message=gpu_validation_report.message,
-    )
+    validated_report = resolution.jax_runtime_setup_report_from_native_payload(validated_payload)
     if diagnostic_sink is not None:
         for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(active_setup_session):
             diagnostic_sink(diagnostic_event)
@@ -150,41 +143,29 @@ def validate_gpu_device() -> models.JaxGpuValidationReport:
         RuntimeError: If no visible NVIDIA driver or JAX GPU device is available.
 
     """
-    if not nvidia_driver_is_visible():
-        missing_driver_plan = jax_gpu_validation_report_from_native_payload(
-            _core.plan_jax_gpu_validation_payload(
-                nvidia_driver_visible=False,
-                backend_initialization_failed=False,
-                device_platforms=(),
-                device_descriptions=(),
-            )
-        )
-        raise RuntimeError(missing_driver_plan.message)
-    try:
-        devices = jax.devices()
-    except Exception as error:
-        backend_failure_plan = jax_gpu_validation_report_from_native_payload(
-            _core.plan_jax_gpu_validation_payload(
-                nvidia_driver_visible=True,
-                backend_initialization_failed=True,
-                device_platforms=(),
-                device_descriptions=(),
-            )
-        )
-        raise RuntimeError(backend_failure_plan.message) from error
-    validation_report = jax_gpu_validation_report_from_native_payload(
-        _core.plan_jax_gpu_validation_payload(
-            nvidia_driver_visible=True,
-            backend_initialization_failed=False,
-            device_platforms=tuple(
-                str(getattr(typing.cast("typing.Any", device), "platform", "")) for device in devices
-            ),
-            device_descriptions=tuple(str(device) for device in devices),
-        )
+    native_validation_session = _core.NativeJaxRuntimeSetupSession(
+        _core.resolve_jax_runtime_setup_payload(
+            requested_device="gpu",
+            cache_directory="",
+            matmul_precision=None,
+            persistent_cache=False,
+            persistent_cache_min_entry_size_bytes=0,
+            persistent_cache_min_compile_time_seconds=0,
+            xla_autotune_cache=False,
+            transfer_guard=False,
+        ),
+        should_configure=False,
     )
-    if validation_report.status == models.GpuValidationStatus.FAILED:
-        raise RuntimeError(validation_report.message)
-    return validation_report
+    validated_payload = native_validation_session.validate_gpu_if_configured(
+        str(NVIDIA_CONTROL_DEVICE_PATH),
+        str(NVIDIA_UVM_DEVICE_PATH),
+        str(NVIDIA_DRIVER_DIRECTORY_PATH),
+    )
+    validated_report = resolution.jax_runtime_setup_report_from_native_payload(validated_payload)
+    return models.JaxGpuValidationReport(
+        status=validated_report.gpu_validation_status,
+        message="" if validated_report.gpu_validation_message is None else validated_report.gpu_validation_message,
+    )
 
 
 def jax_gpu_validation_report_from_native_payload(payload: object) -> models.JaxGpuValidationReport:

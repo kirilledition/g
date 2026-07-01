@@ -1411,6 +1411,40 @@ def test_native_jax_runtime_setup_session_applies_config_updates() -> None:
     ]
 
 
+def test_native_jax_runtime_setup_session_validates_gpu_devices(tmp_path: Path) -> None:
+    class FakeDevice:
+        platform = "gpu"
+
+        def __str__(self) -> str:
+            return "GpuDevice(id=0)"
+
+    control_device_path = tmp_path / "nvidiactl"
+    control_device_path.touch()
+    setup_payload = _core.resolve_jax_runtime_setup_payload(
+        requested_device="gpu",
+        cache_directory="/tmp/g-jax-cache",
+        matmul_precision=None,
+        persistent_cache=False,
+        persistent_cache_min_entry_size_bytes=0,
+        persistent_cache_min_compile_time_seconds=0,
+        xla_autotune_cache=False,
+        transfer_guard=False,
+    )
+    native_setup_session = _core.NativeJaxRuntimeSetupSession(setup_payload, should_configure=True)
+
+    with unittest.mock.patch("jax.devices", return_value=[FakeDevice()]) as devices_mock:
+        validated_payload = native_setup_session.validate_gpu_if_configured(
+            str(control_device_path),
+            str(tmp_path / "missing-nvidia-uvm"),
+            str(tmp_path / "missing-driver"),
+        )
+
+    devices_mock.assert_called_once_with()
+    assert validated_payload["gpu_validation_status"] == "succeeded"
+    assert native_setup_session.setup_payload()["gpu_validation_status"] == "succeeded"
+    assert native_setup_session.setup_payload()["gpu_validation_message"] == "JAX reported at least one GPU device."
+
+
 def test_native_jax_runtime_policy_payload() -> None:
     jax_policy_payload = _core.build_jax_runtime_policy_payload(
         device="gpu",
