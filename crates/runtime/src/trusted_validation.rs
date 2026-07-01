@@ -1,6 +1,7 @@
 //! Deterministic trusted BGEN validation cache metadata and writes.
 
 use std::collections::BTreeMap;
+use std::error::Error;
 use std::fmt::Write as _;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
@@ -10,6 +11,12 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 const TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION: i64 = 1;
+const ASSUME_VALIDATED_UNSAFE_MESSAGE: &str = concat!(
+    "Trusted no-missing diploid validation mode 'assume_validated' is unsafe for calculation runs. ",
+    "Use 'cache_on_miss' or 'force_validate' so BGEN compatibility is checked before decoding."
+);
+const TRUSTED_BGEN_VALIDATION_CACHE_APPLICATION_DIRECTORY: &str = "g";
+const TRUSTED_BGEN_VALIDATION_CACHE_DIRECTORY_NAME: &str = "bgen_validation";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrustedBgenValidationFingerprintInput {
@@ -27,6 +34,49 @@ pub struct TrustedBgenValidationCachePayload {
     pub sample_count: i64,
     pub variant_count: i64,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrustedBgenValidationCacheLookupPlan {
+    pub should_mark_validated: bool,
+    pub should_validate: bool,
+    pub should_write_cache: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TrustedBgenValidationCacheLookupError {
+    UnsafeAssumeValidatedMode,
+    UnsupportedValidationMode(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TrustedBgenValidationCacheDirectoryError {
+    MissingHomeDirectory,
+}
+
+impl std::fmt::Display for TrustedBgenValidationCacheLookupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsafeAssumeValidatedMode => formatter.write_str(ASSUME_VALIDATED_UNSAFE_MESSAGE),
+            Self::UnsupportedValidationMode(validation_mode) => {
+                write!(formatter, "Unsupported trusted BGEN validation mode: {validation_mode}")
+            }
+        }
+    }
+}
+
+impl Error for TrustedBgenValidationCacheLookupError {}
+
+impl std::fmt::Display for TrustedBgenValidationCacheDirectoryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingHomeDirectory => formatter.write_str(
+                "Unable to resolve trusted BGEN validation cache directory: neither XDG_CACHE_HOME nor HOME is set.",
+            ),
+        }
+    }
+}
+
+impl Error for TrustedBgenValidationCacheDirectoryError {}
 
 /// Build the cache fingerprint for trusted BGEN validation inputs.
 ///
@@ -57,6 +107,82 @@ pub fn build_trusted_bgen_validation_fingerprint(
 #[must_use]
 pub fn build_trusted_bgen_validation_cache_path(cache_directory: &Path, fingerprint: &str) -> PathBuf {
     cache_directory.join(format!("{fingerprint}.json"))
+}
+
+/// Resolve the default trusted BGEN validation cache directory from the process environment.
+///
+/// # Errors
+///
+/// Returns an error when neither `XDG_CACHE_HOME` nor `HOME` is available.
+pub fn default_trusted_bgen_validation_cache_directory() -> Result<PathBuf, TrustedBgenValidationCacheDirectoryError> {
+    let xdg_cache_home = non_empty_environment_path("XDG_CACHE_HOME");
+    let home_directory = non_empty_environment_path("HOME");
+    build_default_trusted_bgen_validation_cache_directory(xdg_cache_home.as_deref(), home_directory.as_deref())
+}
+
+/// Build the default trusted BGEN validation cache directory from optional root paths.
+///
+/// # Errors
+///
+/// Returns an error when no XDG cache root or home directory is available.
+pub fn build_default_trusted_bgen_validation_cache_directory(
+    xdg_cache_home: Option<&Path>,
+    home_directory: Option<&Path>,
+) -> Result<PathBuf, TrustedBgenValidationCacheDirectoryError> {
+    if let Some(cache_directory_root) = xdg_cache_home {
+        return Ok(cache_directory_root
+            .join(TRUSTED_BGEN_VALIDATION_CACHE_APPLICATION_DIRECTORY)
+            .join(TRUSTED_BGEN_VALIDATION_CACHE_DIRECTORY_NAME));
+    }
+    let home_directory = home_directory.ok_or(TrustedBgenValidationCacheDirectoryError::MissingHomeDirectory)?;
+    Ok(home_directory
+        .join(".cache")
+        .join(TRUSTED_BGEN_VALIDATION_CACHE_APPLICATION_DIRECTORY)
+        .join(TRUSTED_BGEN_VALIDATION_CACHE_DIRECTORY_NAME))
+}
+
+/// Require a cache-backed trusted BGEN validation mode for calculation runs.
+///
+/// # Errors
+///
+/// Returns an error when the validation mode would skip validation or is not
+/// known.
+pub fn require_cache_backed_trusted_bgen_validation_mode(
+    validation_mode: &str,
+) -> Result<(), TrustedBgenValidationCacheLookupError> {
+    match validation_mode {
+        "cache_on_miss" | "force_validate" => Ok(()),
+        "assume_validated" => Err(TrustedBgenValidationCacheLookupError::UnsafeAssumeValidatedMode),
+        unsupported_validation_mode => Err(TrustedBgenValidationCacheLookupError::UnsupportedValidationMode(
+            unsupported_validation_mode.to_string(),
+        )),
+    }
+}
+
+/// Plan cache lookup behavior for trusted BGEN validation.
+///
+/// # Errors
+///
+/// Returns an error when the validation mode is not supported for calculation
+/// runs.
+pub fn plan_trusted_bgen_validation_cache_lookup(
+    validation_mode: &str,
+    cache_path: &Path,
+) -> Result<TrustedBgenValidationCacheLookupPlan, TrustedBgenValidationCacheLookupError> {
+    require_cache_backed_trusted_bgen_validation_mode(validation_mode)?;
+    match validation_mode {
+        "cache_on_miss" if cache_path.exists() => Ok(TrustedBgenValidationCacheLookupPlan {
+            should_mark_validated: true,
+            should_validate: false,
+            should_write_cache: false,
+        }),
+        "cache_on_miss" | "force_validate" => Ok(TrustedBgenValidationCacheLookupPlan {
+            should_mark_validated: false,
+            should_validate: true,
+            should_write_cache: true,
+        }),
+        _ => unreachable!("validation mode compatibility was checked before planning"),
+    }
 }
 
 /// Build the trusted BGEN validation cache payload.
@@ -144,6 +270,10 @@ fn finalize_sha256_hex(digest_bytes: impl AsRef<[u8]>) -> String {
     digest_hex
 }
 
+fn non_empty_environment_path(variable_name: &str) -> Option<PathBuf> {
+    std::env::var_os(variable_name).filter(|environment_value| !environment_value.is_empty()).map(PathBuf::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,5 +316,104 @@ mod tests {
         assert!(!cache_path.with_extension("json.tmp").exists());
 
         fs::remove_dir_all(test_directory).expect("test directory should be removable");
+    }
+
+    #[test]
+    fn builds_default_cache_directory_from_xdg_cache_home() {
+        let cache_directory = build_default_trusted_bgen_validation_cache_directory(
+            Some(Path::new("/tmp/xdg-cache")),
+            Some(Path::new("/home/alice")),
+        )
+        .expect("cache directory should be built");
+
+        assert_eq!(cache_directory, PathBuf::from("/tmp/xdg-cache/g/bgen_validation"));
+    }
+
+    #[test]
+    fn builds_default_cache_directory_from_home_directory() {
+        let cache_directory =
+            build_default_trusted_bgen_validation_cache_directory(None, Some(Path::new("/home/alice")))
+                .expect("cache directory should be built");
+
+        assert_eq!(cache_directory, PathBuf::from("/home/alice/.cache/g/bgen_validation"));
+    }
+
+    #[test]
+    fn rejects_missing_default_cache_directory_roots() {
+        let error = build_default_trusted_bgen_validation_cache_directory(None, None)
+            .expect_err("missing cache roots should be rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "Unable to resolve trusted BGEN validation cache directory: neither XDG_CACHE_HOME nor HOME is set."
+        );
+    }
+
+    #[test]
+    fn plans_cache_hit_without_python_file_probe() {
+        let test_directory = trusted_validation_test_directory("cache-hit");
+        let cache_path = test_directory.join("cache").join("abc123.json");
+        fs::create_dir_all(cache_path.parent().expect("cache path should have a parent"))
+            .expect("cache directory should be created");
+        fs::write(&cache_path, b"{}").expect("cache payload should be written");
+
+        let plan = plan_trusted_bgen_validation_cache_lookup("cache_on_miss", &cache_path)
+            .expect("cache hit should be planned");
+
+        assert!(plan.should_mark_validated);
+        assert!(!plan.should_validate);
+        assert!(!plan.should_write_cache);
+
+        fs::remove_dir_all(test_directory).expect("test directory should be removable");
+    }
+
+    #[test]
+    fn plans_cache_miss_validation_and_write() {
+        let test_directory = trusted_validation_test_directory("cache-miss");
+        let cache_path = test_directory.join("cache").join("abc123.json");
+
+        let plan = plan_trusted_bgen_validation_cache_lookup("cache_on_miss", &cache_path)
+            .expect("cache miss should be planned");
+
+        assert!(!plan.should_mark_validated);
+        assert!(plan.should_validate);
+        assert!(plan.should_write_cache);
+    }
+
+    #[test]
+    fn plans_force_validation_even_when_cache_exists() {
+        let test_directory = trusted_validation_test_directory("force-validate");
+        let cache_path = test_directory.join("cache").join("abc123.json");
+        fs::create_dir_all(cache_path.parent().expect("cache path should have a parent"))
+            .expect("cache directory should be created");
+        fs::write(&cache_path, b"{}").expect("cache payload should be written");
+
+        let plan = plan_trusted_bgen_validation_cache_lookup("force_validate", &cache_path)
+            .expect("force validation should be planned");
+
+        assert!(!plan.should_mark_validated);
+        assert!(plan.should_validate);
+        assert!(plan.should_write_cache);
+
+        fs::remove_dir_all(test_directory).expect("test directory should be removable");
+    }
+
+    #[test]
+    fn rejects_unsafe_assumed_validation_mode() {
+        let error = require_cache_backed_trusted_bgen_validation_mode("assume_validated")
+            .expect_err("unsafe validation mode should be rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "Trusted no-missing diploid validation mode 'assume_validated' is unsafe for calculation runs. Use 'cache_on_miss' or 'force_validate' so BGEN compatibility is checked before decoding."
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_validation_mode() {
+        let error = plan_trusted_bgen_validation_cache_lookup("unknown", Path::new("/tmp/cache.json"))
+            .expect_err("unknown validation mode should be rejected");
+
+        assert_eq!(error.to_string(), "Unsupported trusted BGEN validation mode: unknown");
     }
 }

@@ -2,11 +2,34 @@
 
 use std::path::Path;
 
-use pyo3::exceptions::PyOSError;
+use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
 use g_runtime::trusted_validation as native_trusted_validation;
+
+#[pyclass]
+pub(crate) struct NativeTrustedBgenValidationCacheLookupPlan {
+    inner: native_trusted_validation::TrustedBgenValidationCacheLookupPlan,
+}
+
+#[pymethods]
+impl NativeTrustedBgenValidationCacheLookupPlan {
+    #[getter]
+    fn should_mark_validated(&self) -> bool {
+        self.inner.should_mark_validated
+    }
+
+    #[getter]
+    fn should_validate(&self) -> bool {
+        self.inner.should_validate
+    }
+
+    #[getter]
+    fn should_write_cache(&self) -> bool {
+        self.inner.should_write_cache
+    }
+}
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
@@ -33,6 +56,31 @@ pub(crate) fn build_trusted_bgen_validation_cache_path_value(cache_directory: St
     native_trusted_validation::build_trusted_bgen_validation_cache_path(Path::new(&cache_directory), &fingerprint)
         .display()
         .to_string()
+}
+
+#[pyfunction]
+pub(crate) fn default_trusted_bgen_validation_cache_directory_value() -> PyResult<String> {
+    native_trusted_validation::default_trusted_bgen_validation_cache_directory()
+        .map(|cache_directory| cache_directory.display().to_string())
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn plan_trusted_bgen_validation_cache_lookup(
+    py: Python<'_>,
+    validation_mode: String,
+    cache_path: String,
+) -> PyResult<NativeTrustedBgenValidationCacheLookupPlan> {
+    let plan = py
+        .detach(|| {
+            native_trusted_validation::plan_trusted_bgen_validation_cache_lookup(
+                &validation_mode,
+                Path::new(&cache_path),
+            )
+        })
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    Ok(NativeTrustedBgenValidationCacheLookupPlan { inner: plan })
 }
 
 #[pyfunction]
@@ -83,9 +131,12 @@ pub(crate) fn write_trusted_bgen_validation_cache_payload(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeTrustedBgenValidationCacheLookupPlan>()?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_path_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_fingerprint_value, module)?)?;
+    module.add_function(wrap_pyfunction!(default_trusted_bgen_validation_cache_directory_value, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_trusted_bgen_validation_cache_lookup, module)?)?;
     module.add_function(wrap_pyfunction!(write_trusted_bgen_validation_cache_payload, module)?)?;
     Ok(())
 }

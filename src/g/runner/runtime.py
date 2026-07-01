@@ -137,14 +137,11 @@ def build_process_runtime_state(
         Native process runtime state handle.
 
     """
-    process_runtime_state = _core.NativeRuntimeState()
-    if logging_policy is not None:
-        process_runtime_state.record_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))
-    if rayon_thread_count is not None:
-        process_runtime_state.record_rayon_thread_count(rayon_thread_count)
-    if jax_policy is not None:
-        process_runtime_state.record_jax_runtime_policy(jax_runtime_policy_to_native_payload(jax_policy))
-    return process_runtime_state
+    return _core.build_process_runtime_state_handle(
+        None if logging_policy is None else logging_runtime_policy_to_native_payload(logging_policy),
+        rayon_thread_count,
+        None if jax_policy is None else jax_runtime_policy_to_native_payload(jax_policy),
+    )
 
 
 PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.global_process_runtime_state()
@@ -414,13 +411,10 @@ def effective_rayon_thread_count(requested_thread_count: int | None) -> int | No
 
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
     """Apply native runtime knobs before engine execution."""
-    _core.record_native_runtime_knobs_configured_diagnostic_event(
+    PROCESS_RUNTIME_STATE.configure_runtime_knobs(
         compute_config.bgen_decode_tile_variant_count,
         trait_config.threads,
     )
-    _core.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
-    if trait_config.threads is not None:
-        configure_rayon_thread_pool(trait_config.threads)
 
 
 def initialize_logging(

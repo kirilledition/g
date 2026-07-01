@@ -27,54 +27,6 @@ from g.runner import metadata as runner_metadata
 from g.runner import runtime as runner_runtime
 
 
-class NativeDiagnosticCore:
-    """Fake-core mixin that accepts native diagnostic events."""
-
-    def emit_diagnostic_event(
-        self,
-        level: str,
-        event: str,
-        message: str,
-        fields_json: str | None = None,
-    ) -> None:
-        """Accept one structured native diagnostic event."""
-        del level, event, message, fields_json
-
-    def emit_diagnostic_event_fields(
-        self,
-        level: str,
-        event: str,
-        message: str,
-        fields: object,
-    ) -> None:
-        """Accept one native diagnostic event with structured fields."""
-        del level, event, message, fields
-
-    def build_native_runtime_knobs_configured_diagnostic_payload(
-        self,
-        bgen_decode_tile_variant_count: int,
-        threads: int | None,
-    ) -> dict[str, object]:
-        """Return a native-shaped runtime knob diagnostic payload."""
-        return {
-            "level": "debug",
-            "event_name": "native_runtime_knobs_configured",
-            "message": "Configuring native runtime knobs.",
-            "fields": {
-                "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
-                "threads": threads,
-            },
-        }
-
-    def record_native_runtime_knobs_configured_diagnostic_event(
-        self,
-        bgen_decode_tile_variant_count: int,
-        threads: int | None,
-    ) -> None:
-        """Accept one native runtime knob diagnostic event."""
-        del bgen_decode_tile_variant_count, threads
-
-
 def complete_mock_output_initialization(
     keyword_arguments: dict[str, object],
     phenotype_names: tuple[str, ...] = ("trait",),
@@ -868,121 +820,64 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
 
 
 def test_configure_runtime_sets_native_knobs_and_threads() -> None:
-    calls: list[tuple[str, int | str]] = []
-    diagnostic_calls: list[tuple[int, int | None]] = []
+    calls: list[tuple[int, int | None]] = []
 
-    class FakeCoreModule(NativeDiagnosticCore):
-        def record_native_runtime_knobs_configured_diagnostic_event(
+    class FakeProcessRuntimeState:
+        def configure_runtime_knobs(
             self,
             bgen_decode_tile_variant_count: int,
-            threads: int | None,
-        ) -> None:
-            diagnostic_calls.append((bgen_decode_tile_variant_count, threads))
-
-        def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
-            calls.append(("tile", tile_variant_count))
-
-    class FakeProcessRuntimeState:
-        def configure_rayon_thread_pool(self, thread_count: int) -> object:
-            calls.append(("threads", thread_count))
+            rayon_thread_count: int | None,
+        ) -> object:
+            calls.append((bgen_decode_tile_variant_count, rayon_thread_count))
             return object()
 
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
         runner_runtime.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
             build_trait_config(threads=4),
         )
 
-    assert diagnostic_calls == [(32, 4)]
-    assert calls == [("tile", 32), ("threads", 4)]
+    assert calls == [(32, 4)]
 
 
-def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None:
-    calls: list[tuple[str, int | str]] = []
-
-    class FakeCoreModule(NativeDiagnosticCore):
-        def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
-            calls.append(("tile", tile_variant_count))
-
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
-        runner_runtime.configure_runtime(
-            build_compute_config(bgen_decode_tile_variant_count=32),
-            build_trait_config(threads=4),
-        )
-
-    assert calls == [("tile", 32)]
-
-
-def test_configure_runtime_delegates_rayon_configuration_to_native_state() -> None:
-    calls: list[tuple[str, int | str]] = []
-    configuration_calls: list[int] = []
+def test_configure_runtime_passes_missing_rayon_thread_policy() -> None:
+    calls: list[tuple[int, int | None]] = []
 
     class FakeProcessRuntimeState:
-        def configure_rayon_thread_pool(self, thread_count: int) -> object:
-            configuration_calls.append(thread_count)
+        def configure_runtime_knobs(
+            self,
+            bgen_decode_tile_variant_count: int,
+            rayon_thread_count: int | None,
+        ) -> object:
+            calls.append((bgen_decode_tile_variant_count, rayon_thread_count))
             return object()
 
-    class FakeCoreModule(NativeDiagnosticCore):
-        def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
-            calls.append(("tile", tile_variant_count))
-
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-    ):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
         runner_runtime.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
-            build_trait_config(threads=4),
+            build_trait_config(),
         )
 
-    assert configuration_calls == [4]
-    assert calls == [("tile", 32)]
+    assert calls == [(32, None)]
 
 
-def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -> None:
-    calls: list[tuple[str, int | str]] = []
-
-    class FakeCoreModule(NativeDiagnosticCore):
-        def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
-            calls.append(("tile", tile_variant_count))
-
-    with (
-        patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
-        patch("g.runner.runtime._core", FakeCoreModule()),
-        pytest.raises(RuntimeError, match="Rayon --threads is process-global"),
-    ):
-        runner_runtime.configure_runtime(
-            build_compute_config(bgen_decode_tile_variant_count=32),
-            build_trait_config(threads=8),
-        )
-
-    assert calls == [("tile", 32)]
-
-
-def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
-    calls: list[tuple[str, int | str]] = []
-
-    class FakeCoreModule(NativeDiagnosticCore):
-        def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
-            calls.append(("tile", tile_variant_count))
+def test_configure_runtime_propagates_native_runtime_knob_failure() -> None:
+    calls: list[tuple[int, int | None]] = []
 
     class FakeProcessRuntimeState:
-        def configure_rayon_thread_pool(self, thread_count: int) -> object:
-            calls.append(("threads", thread_count))
+        def configure_runtime_knobs(
+            self,
+            bgen_decode_tile_variant_count: int,
+            rayon_thread_count: int | None,
+        ) -> object:
+            calls.append((bgen_decode_tile_variant_count, rayon_thread_count))
             raise RuntimeError(
-                f"Unable to configure Rayon global thread pool for --threads={thread_count}; "
+                f"Unable to configure Rayon global thread pool for --threads={rayon_thread_count}; "
                 "existing Rayon settings are unknown: global pool already initialized"
             )
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()),
-        patch("g.runner.runtime._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Unable to configure Rayon global thread pool"),
     ):
         runner_runtime.configure_runtime(
@@ -990,7 +885,7 @@ def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
             build_trait_config(threads=4),
         )
 
-    assert calls == [("tile", 32), ("threads", 4)]
+    assert calls == [(32, 4)]
 
 
 def test_finalize_execution_plan_records_native_metadata_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:

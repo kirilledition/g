@@ -2230,6 +2230,47 @@ class FakeRunEngine:
     def mark_trusted_no_missing_diploid_validated(self) -> None:
         self.trusted_validation_mark_count += 1
 
+    def validate_trusted_no_missing_diploid_with_cache(
+        self,
+        bgen_path: str,
+        validation_mode: str,
+        cache_directory: str,
+    ) -> None:
+        if validation_mode == types.TrustedBgenValidationMode.ASSUME_VALIDATED.value:
+            message = (
+                "Trusted no-missing diploid validation mode 'assume_validated' is unsafe for calculation runs. "
+                "Use 'cache_on_miss' or 'force_validate' so BGEN compatibility is checked before decoding."
+            )
+            raise ValueError(message)
+        if validation_mode not in {
+            types.TrustedBgenValidationMode.CACHE_ON_MISS.value,
+            types.TrustedBgenValidationMode.FORCE_VALIDATE.value,
+        }:
+            message = f"Unsupported trusted BGEN validation mode: {validation_mode}"
+            raise ValueError(message)
+        trusted_no_missing_diploid = True
+        fingerprint = _core.build_trusted_bgen_validation_fingerprint_value(
+            bgen_path,
+            self.sample_count,
+            self.variant_count,
+            trusted_no_missing_diploid,
+        )
+        cache_path = _core.build_trusted_bgen_validation_cache_path_value(cache_directory, fingerprint)
+        cache_lookup_plan = _core.plan_trusted_bgen_validation_cache_lookup(validation_mode, cache_path)
+        if cache_lookup_plan.should_mark_validated:
+            self.mark_trusted_no_missing_diploid_validated()
+        if not cache_lookup_plan.should_validate:
+            return
+        self.validate_trusted_no_missing_diploid()
+        if cache_lookup_plan.should_write_cache:
+            _core.write_trusted_bgen_validation_cache_payload(
+                cache_path,
+                fingerprint,
+                bgen_path,
+                self.sample_count,
+                self.variant_count,
+            )
+
     def variant_metadata_slice(
         self,
         variant_start: int,
@@ -13673,6 +13714,7 @@ def test_build_bgen_run_engine_caches_trusted_validation(tmp_path: Path, monkeyp
     second_fake_engine = typing.cast("FakeRunEngine", second_engine)
     assert first_fake_engine.validation_count == 1
     assert second_fake_engine.validation_count == 0
+    assert any((tmp_path / "cache" / "g" / "bgen_validation").glob("*.json"))
 
 
 def test_build_bgen_run_engine_force_validates_trusted_bgen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

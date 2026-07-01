@@ -1502,6 +1502,47 @@ def test_native_runtime_state_returns_snapshot_payload() -> None:
     }
 
 
+def test_native_process_runtime_state_handle_seeds_snapshot_payload() -> None:
+    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+        log_filter="info",
+        log_file=None,
+        log_stderr=False,
+        log_queue_size=1024,
+        log_lossy=True,
+        include_source_location=False,
+        include_span_events=False,
+        trace_file=None,
+        trace_filter="info",
+        trace_event_cap=None,
+        telemetry_mode="off",
+        telemetry_stream_file=None,
+    )
+    jax_policy_payload: dict[str, object] = {
+        "device": "cpu",
+        "cache_directory": "/tmp/g-jax-cache",
+        "matmul_precision": None,
+        "persistent_cache": True,
+        "persistent_cache_min_entry_size_bytes": 0,
+        "persistent_cache_min_compile_time_seconds": 0,
+        "xla_autotune_cache": False,
+        "transfer_guard": False,
+    }
+
+    runtime_state = _core.build_process_runtime_state_handle(logging_policy_payload, 4, jax_policy_payload)
+    empty_runtime_state = _core.build_process_runtime_state_handle(None, None, None)
+
+    assert runtime_state.runtime_state_payload() == {
+        "logging_policy": logging_policy_payload,
+        "rayon_thread_count": 4,
+        "jax_policy": jax_policy_payload,
+    }
+    assert empty_runtime_state.runtime_state_payload() == {
+        "logging_policy": None,
+        "rayon_thread_count": None,
+        "jax_policy": None,
+    }
+
+
 def test_global_process_runtime_state_is_native_owned_singleton() -> None:
     completed_process = run_logging_subprocess(
         "\n".join(
@@ -1537,6 +1578,68 @@ def test_native_runtime_state_plans_rayon_thread_pool_configuration() -> None:
         _core.NativeRuntimeState().configure_rayon_thread_pool(0)
     with pytest.raises(RuntimeError, match="Rayon --threads is process-global"):
         runtime_state.plan_rayon_thread_pool_configuration(8)
+
+
+def test_native_runtime_state_configures_runtime_knobs() -> None:
+    runtime_state = _core.NativeRuntimeState()
+    runtime_state.record_rayon_thread_count(4)
+
+    no_thread_plan = runtime_state.configure_runtime_knobs(32, None)
+    matching_thread_plan = runtime_state.configure_runtime_knobs(32, 4)
+
+    assert no_thread_plan is None
+    assert matching_thread_plan is not None
+    assert matching_thread_plan.should_configure is False
+    assert matching_thread_plan.thread_count is None
+
+
+def test_native_trusted_bgen_validation_cache_lookup_plan(tmp_path: Path) -> None:
+    cache_path = tmp_path / "cache" / "abc123.json"
+
+    miss_plan = _core.plan_trusted_bgen_validation_cache_lookup("cache_on_miss", str(cache_path))
+    assert miss_plan.should_mark_validated is False
+    assert miss_plan.should_validate is True
+    assert miss_plan.should_write_cache is True
+
+    cache_path.parent.mkdir()
+    cache_path.write_text("{}", encoding="utf-8")
+
+    hit_plan = _core.plan_trusted_bgen_validation_cache_lookup("cache_on_miss", str(cache_path))
+    assert hit_plan.should_mark_validated is True
+    assert hit_plan.should_validate is False
+    assert hit_plan.should_write_cache is False
+
+    force_plan = _core.plan_trusted_bgen_validation_cache_lookup("force_validate", str(cache_path))
+    assert force_plan.should_mark_validated is False
+    assert force_plan.should_validate is True
+    assert force_plan.should_write_cache is True
+
+    with pytest.raises(ValueError, match="unsafe for calculation runs"):
+        _core.plan_trusted_bgen_validation_cache_lookup("assume_validated", str(cache_path))
+
+    with pytest.raises(ValueError, match="Unsupported trusted BGEN validation mode"):
+        _core.plan_trusted_bgen_validation_cache_lookup("unknown", str(cache_path))
+
+
+def test_native_default_trusted_bgen_validation_cache_directory_value(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    xdg_cache_home = tmp_path / "xdg-cache"
+    home_directory = tmp_path / "home"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_cache_home))
+    monkeypatch.setenv("HOME", str(home_directory))
+
+    assert (
+        Path(_core.default_trusted_bgen_validation_cache_directory_value()) == xdg_cache_home / "g" / "bgen_validation"
+    )
+
+    monkeypatch.delenv("XDG_CACHE_HOME")
+
+    assert (
+        Path(_core.default_trusted_bgen_validation_cache_directory_value())
+        == home_directory / ".cache" / "g" / "bgen_validation"
+    )
 
 
 def test_native_runtime_state_initializes_logging_runtime_policy_preflight() -> None:

@@ -6,12 +6,15 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule};
 
+use g_genotype::bgen::set_bgen_decode_tile_variant_count;
 use g_runtime::rayon_runtime as native_rayon_runtime;
 use g_runtime::runtime_policy as native_runtime_policy;
 use g_runtime::runtime_state as native_runtime_state;
 
+use super::errors;
 use super::jax_runtime::NativeJaxRuntimeSetupSession;
 use super::logging;
+use super::run_events;
 
 #[pyclass]
 pub(crate) struct NativeRuntimeCompatibilityToken {
@@ -68,6 +71,25 @@ pub(crate) fn global_process_runtime_state() -> NativeRuntimeState {
                 .get_or_init(|| Arc::new(Mutex::new(native_runtime_state::ProcessRuntimeState::default()))),
         ),
     }
+}
+
+#[pyfunction]
+pub(crate) fn build_process_runtime_state_handle(
+    logging_policy_payload: &Bound<'_, PyAny>,
+    rayon_thread_count: Option<i64>,
+    jax_policy_payload: &Bound<'_, PyAny>,
+) -> PyResult<NativeRuntimeState> {
+    let mut state = native_runtime_state::ProcessRuntimeState::default();
+    if !logging_policy_payload.is_none() {
+        state.record_logging_policy(parse_logging_runtime_policy_payload(logging_policy_payload)?);
+    }
+    if let Some(thread_count) = rayon_thread_count {
+        state.record_rayon_thread_count(thread_count);
+    }
+    if !jax_policy_payload.is_none() {
+        state.record_jax_policy(parse_jax_runtime_policy_payload(jax_policy_payload)?);
+    }
+    Ok(NativeRuntimeState { state: Arc::new(Mutex::new(state)) })
 }
 
 #[pyfunction]
@@ -283,6 +305,29 @@ impl NativeRuntimeState {
         Ok(NativeRayonThreadPoolConfigurationPlan { inner: plan })
     }
 
+    fn configure_runtime_knobs(
+        &self,
+        bgen_decode_tile_variant_count: i64,
+        rayon_thread_count: Option<i64>,
+    ) -> PyResult<Option<NativeRayonThreadPoolConfigurationPlan>> {
+        run_events::record_native_runtime_knobs_configured_diagnostic_event(
+            bgen_decode_tile_variant_count,
+            rayon_thread_count,
+        )?;
+        let tile_variant_count =
+            non_negative_i64_to_usize(bgen_decode_tile_variant_count, "bgen_decode_tile_variant_count")?;
+        set_bgen_decode_tile_variant_count(tile_variant_count)
+            .map_err(|error| errors::convert_bgen_error("configure_runtime_knobs", error))?;
+        let Some(thread_count) = rayon_thread_count else {
+            return Ok(None);
+        };
+        let plan = self
+            .lock_state()?
+            .configure_rayon_thread_pool(thread_count)
+            .map_err(|error| rayon_thread_pool_configuration_error_to_py(&error))?;
+        Ok(Some(NativeRayonThreadPoolConfigurationPlan { inner: plan }))
+    }
+
     fn effective_rayon_thread_count(&self, requested_thread_count: Option<i64>) -> PyResult<Option<i64>> {
         Ok(self.lock_state()?.effective_rayon_thread_count(requested_thread_count))
     }
@@ -366,6 +411,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeRuntimePolicy>()?;
     module.add_class::<NativeRuntimeState>()?;
     module.add_function(wrap_pyfunction!(build_jax_runtime_policy_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_process_runtime_state_handle, module)?)?;
     module.add_function(wrap_pyfunction!(build_runtime_policy_handle, module)?)?;
     module.add_function(wrap_pyfunction!(global_process_runtime_state, module)?)?;
     Ok(())

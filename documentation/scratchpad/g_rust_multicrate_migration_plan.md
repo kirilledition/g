@@ -1276,6 +1276,9 @@ Remove Python as the chunk-level scheduler.
   recording after Python/JAX side effects finish.
 - The production process-runtime singleton now comes from a native global handle,
   while `NativeRuntimeState()` remains available for isolated tests.
+- Seeded process-runtime handles now come from native state construction, so
+  Python adapters no longer replay logging/Rayon/JAX record calls when building
+  isolated runtime-state handles.
 - Native shutdown controllers now own context-exit handler restoration plus
   requested-signal state reset as one native lifecycle transition.
 - Native shutdown controllers now own repeated-signal handler restoration and
@@ -1525,6 +1528,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Process runtime state now returns a single native snapshot payload for the
   public Python API adapter, so Python no longer assembles runtime state through
   separate process-global logging/Rayon/JAX lookups.
+- Seeded process-runtime state construction now runs through the native handle
+  builder, leaving Python to translate optional dataclasses into native payloads
+  without replaying individual record operations.
 - Final timing output writes now return their native result payload directly
   from `g-runtime`, and their write-started diagnostics get the event name,
   level, message, and fields from the same native timing boundary.
@@ -1543,6 +1549,13 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Native runtime knob configuration production paths now call the native
   diagnostic recorder directly, leaving Python payload dict materialization
   only for compatibility helpers and tests.
+- Native runtime knob configuration now runs through one native runtime-state
+  boundary that records diagnostics, configures the BGEN decode tile size, and
+  applies optional Rayon thread-pool configuration.
+- Trusted BGEN validation cache-backed execution now runs through a native
+  engine boundary that owns fingerprinting, cache-hit planning, engine
+  mark/validate decisions, unsafe-mode rejection, default cache-directory
+  policy, and cache writes.
 - Runner metadata artifact-finalization diagnostics now use native run-event
   diagnostic payload builders.
 - Runner metadata artifact-finalization production paths now call the native
@@ -1649,9 +1662,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Native CLI telemetry close-failure planning now owns whether a close failure
   should be reported and whether it should replace the current process exit
   code.
-- Trusted BGEN validation cache metadata, deterministic JSON serialization, and
-  atomic cache writes now live in `g-runtime`; Python validates the engine and
-  calls one native cache-write boundary instead of creating directories,
+- Trusted BGEN validation cache metadata, default cache-directory policy,
+  cache-hit planning, engine mark/validate decisions, deterministic JSON
+  serialization, and atomic cache writes now live in native runtime/engine
+  boundaries instead of Python probing cache files, creating directories,
   serializing JSON, or replacing cache files itself.
 - JAX persistent-cache directory creation now runs through the native JAX
   runtime setup session; Python still triggers JAX setup, but no longer calls
