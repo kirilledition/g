@@ -1331,7 +1331,7 @@ def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
 
     configure_plan = runtime_state.plan_jax_runtime_setup_lifecycle(jax_policy_payload)
     configure_session = runtime_state.build_jax_runtime_setup_session(jax_policy_payload, "/tmp/g-jax-cache")
-    runtime_state.complete_jax_runtime_setup(jax_policy_payload)
+    runtime_state.complete_jax_runtime_setup_session(jax_policy_payload, configure_session)
     skip_plan = runtime_state.plan_jax_runtime_setup_lifecycle(jax_policy_payload)
     skip_session = runtime_state.build_jax_runtime_setup_session(jax_policy_payload, "/tmp/g-jax-cache")
 
@@ -1357,6 +1357,24 @@ def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
         )
     with pytest.raises(RuntimeError, match="JAX runtime is already configured"):
         runtime_state.complete_jax_runtime_setup({**jax_policy_payload, "cache_directory": "/tmp/other-cache"})
+
+
+def test_native_runtime_state_rejects_pending_jax_setup_session_completion() -> None:
+    runtime_state = _core.NativeRuntimeState()
+    jax_policy_payload: dict[str, object] = {
+        "device": "gpu",
+        "cache_directory": "/tmp/g-jax-cache",
+        "matmul_precision": None,
+        "persistent_cache": True,
+        "persistent_cache_min_entry_size_bytes": 0,
+        "persistent_cache_min_compile_time_seconds": 0,
+        "xla_autotune_cache": False,
+        "transfer_guard": False,
+    }
+    pending_setup_session = runtime_state.build_jax_runtime_setup_session(jax_policy_payload, "/tmp/g-jax-cache")
+
+    with pytest.raises(RuntimeError, match="before GPU validation completes"):
+        runtime_state.complete_jax_runtime_setup_session(jax_policy_payload, pending_setup_session)
 
 
 def test_native_jax_runtime_setup_session_completes_validation() -> None:

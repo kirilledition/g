@@ -158,6 +158,10 @@ impl NativeJaxRuntimeSetupSession {
         Self { session: Mutex::new(session) }
     }
 
+    pub(crate) fn native_session_snapshot(&self) -> PyResult<native_jax_runtime::JaxRuntimeSetupSession> {
+        Ok(self.lock_session()?.clone())
+    }
+
     fn lock_session(&self) -> PyResult<MutexGuard<'_, native_jax_runtime::JaxRuntimeSetupSession>> {
         self.session.lock().map_err(|_| PyValueError::new_err("JAX runtime setup session mutex was poisoned."))
     }

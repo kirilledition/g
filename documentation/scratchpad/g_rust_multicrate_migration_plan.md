@@ -1630,6 +1630,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - JAX GPU validation execution now runs through the native setup session; the
   PyO3 adapter owns the NVIDIA driver probe, `jax.devices()` call, native
   validation planning, setup-state completion, and failure raising.
+- Process-global JAX setup completion recording now consumes the native setup
+  session, so `g-runtime` rejects pending or failed setup sessions before
+  recording a JAX policy as configured.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

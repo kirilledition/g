@@ -351,6 +351,34 @@ impl ProcessRuntimeState {
         Ok(())
     }
 
+    /// Record successful JAX runtime setup after a native setup session finishes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the completed setup conflicts with previously
+    /// configured process-global JAX runtime settings, or when the setup session
+    /// still has pending or failed GPU validation.
+    pub fn complete_jax_runtime_setup_session(
+        &mut self,
+        requested_policy: JaxRuntimePolicyPayload,
+        setup_session: &jax_runtime::JaxRuntimeSetupSession,
+    ) -> Result<(), RuntimeCompatibilityError> {
+        if setup_session.should_configure() {
+            let setup = setup_session.setup();
+            if setup.gpu_validation_status == "pending" {
+                return Err(RuntimeCompatibilityError::new(
+                    "Cannot record JAX runtime setup before GPU validation completes.".to_string(),
+                ));
+            }
+            if setup.gpu_validation_status == "failed" {
+                return Err(RuntimeCompatibilityError::new(
+                    "Cannot record failed JAX runtime setup as process-global runtime state.".to_string(),
+                ));
+            }
+        }
+        self.complete_jax_runtime_setup(requested_policy)
+    }
+
     /// Plan whether JAX runtime setup should run for one request.
     ///
     /// # Errors
@@ -593,6 +621,54 @@ mod tests {
                 .to_string()
                 .contains("JAX runtime is already configured")
         );
+    }
+
+    #[test]
+    fn completes_jax_runtime_setup_from_session() {
+        let mut state = ProcessRuntimeState::default();
+        let requested_policy = build_jax_policy(Some("/tmp/cache"));
+        let completed_cpu_session = state
+            .build_jax_runtime_setup_session(&requested_policy, "/tmp/cache")
+            .expect("compatible JAX policy should build a setup session");
+
+        state
+            .complete_jax_runtime_setup_session(requested_policy.clone(), &completed_cpu_session)
+            .expect("completed CPU JAX setup should be recorded");
+
+        assert_eq!(state.jax_policy, Some(requested_policy));
+    }
+
+    #[test]
+    fn rejects_pending_jax_runtime_setup_session_completion() {
+        let mut state = ProcessRuntimeState::default();
+        let requested_policy =
+            build_jax_runtime_policy_payload("gpu", Some("/tmp/cache"), None, true, 0, 0, false, false);
+        let pending_gpu_session = state
+            .build_jax_runtime_setup_session(&requested_policy, "/tmp/cache")
+            .expect("compatible JAX policy should build a setup session");
+
+        let error = state
+            .complete_jax_runtime_setup_session(requested_policy, &pending_gpu_session)
+            .expect_err("pending GPU validation should not be recorded");
+
+        assert_eq!(error.to_string(), "Cannot record JAX runtime setup before GPU validation completes.");
+    }
+
+    #[test]
+    fn rejects_failed_jax_runtime_setup_session_completion() {
+        let mut state = ProcessRuntimeState::default();
+        let requested_policy =
+            build_jax_runtime_policy_payload("gpu", Some("/tmp/cache"), None, true, 0, 0, false, false);
+        let mut failed_gpu_session = state
+            .build_jax_runtime_setup_session(&requested_policy, "/tmp/cache")
+            .expect("compatible JAX policy should build a setup session");
+        let _failed_setup = failed_gpu_session.complete_validation("failed", Some("no GPU"));
+
+        let error = state
+            .complete_jax_runtime_setup_session(requested_policy, &failed_gpu_session)
+            .expect_err("failed GPU validation should not be recorded");
+
+        assert_eq!(error.to_string(), "Cannot record failed JAX runtime setup as process-global runtime state.",);
     }
 
     #[test]

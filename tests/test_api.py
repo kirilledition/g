@@ -1081,6 +1081,7 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
             del diagnostic_sink
             assert isinstance(native_setup_session, _core.NativeJaxRuntimeSetupSession)
             assert native_setup_session.should_configure is True
+            native_setup_session.complete_validation_payload("succeeded", None)
             call_order.append(f"setup:{policy.device.value}")
             return jax_runtime_models.JaxRuntimeSetupReport(
                 requested_device=policy.device,
