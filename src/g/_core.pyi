@@ -2451,7 +2451,6 @@ def emit_cli_run_failed_telemetry_event(
     failed_event: object,
     should_log_run_failed_to_telemetry: bool,
 ) -> None: ...
-
 def plan_cli_telemetry_close_failure(
     current_exit_code: int,
     runtime_failure_exit_code: int,
