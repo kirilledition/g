@@ -162,16 +162,9 @@ def record_jax_runtime_diagnostic_event(
         telemetry_session: Optional run telemetry session.
 
     """
-    record_plan = _core.record_jax_runtime_diagnostic_log_event(
+    _core.record_jax_runtime_diagnostic_event(
         diagnostic_event,
-        has_telemetry_session=telemetry_session is not None,
-    )
-    if not record_plan.should_emit_telemetry:
-        return
-    active_telemetry_session = typing.cast("telemetry.TelemetrySession", telemetry_session)
-    active_telemetry_session.log_jax_runtime_diagnostic_event(
-        diagnostic_event,
-        telemetry_level=record_plan.telemetry_level,
+        telemetry_session,
     )
 
 

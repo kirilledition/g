@@ -1743,6 +1743,43 @@ def test_native_jax_runtime_diagnostic_record_plan() -> None:
     }
 
 
+def test_native_jax_runtime_diagnostic_event_records_telemetry() -> None:
+    class DiagnosticField:
+        def __init__(self, name: str, value: object) -> None:
+            self.name = name
+            self.value = value
+
+    class DiagnosticEvent:
+        def __init__(self) -> None:
+            self.event_name = "jax_native_dispatch_test"
+            self.level = "info"
+            self.message = "JAX diagnostic"
+            self.fields = (DiagnosticField("platform", "cpu"),)
+
+    class RecordingTelemetrySession:
+        def __init__(self) -> None:
+            self.events: list[tuple[object, str]] = []
+
+        def log_jax_runtime_diagnostic_event(
+            self,
+            diagnostic_event: object,
+            *,
+            telemetry_level: str,
+        ) -> None:
+            self.events.append((diagnostic_event, telemetry_level))
+
+    diagnostic_event = DiagnosticEvent()
+    telemetry_session = RecordingTelemetrySession()
+
+    emitted_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session)
+    skipped_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, None)
+
+    assert emitted_plan.should_emit_telemetry is True
+    assert emitted_plan.telemetry_level == "info"
+    assert skipped_plan.should_emit_telemetry is False
+    assert telemetry_session.events == [(diagnostic_event, "info")]
+
+
 def test_native_binary_correction_summary_plans_record_and_emit_policy() -> None:
     summary = _core.NativeBinaryCorrectionSummary()
 

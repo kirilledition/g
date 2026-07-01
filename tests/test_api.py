@@ -1221,13 +1221,12 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
             self.should_emit_telemetry = should_emit_telemetry
             self.telemetry_level = telemetry_level
 
-    def record_jax_runtime_diagnostic_log_event(
+    def record_jax_runtime_diagnostic_event(
         event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
-        *,
-        has_telemetry_session: bool,
+        telemetry_session: telemetry_module.TelemetrySession | None,
     ) -> NativeDiagnosticRecordPlan:
         assert event is diagnostic_event
-        assert has_telemetry_session is True
+        assert telemetry_session is active_telemetry_session
         logged_records.append(
             (
                 "error",
@@ -1236,6 +1235,7 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
                 {diagnostic_field.name: diagnostic_field.value for diagnostic_field in event.fields},
             )
         )
+        active_telemetry_session.log_jax_runtime_diagnostic_event(event, telemetry_level="trace")
         return NativeDiagnosticRecordPlan(
             logging_level_name="ERROR",
             should_emit_telemetry=True,
@@ -1248,13 +1248,16 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
         message="planned diagnostic",
         fields=(jax_runtime_models.JaxRuntimeDiagnosticField(name="field", value="value"),),
     )
-    telemetry_session = typing.cast("telemetry_module.TelemetrySession", RecordingTelemetrySession())
+    active_telemetry_session = typing.cast("telemetry_module.TelemetrySession", RecordingTelemetrySession())
 
     with patch(
-        "g.runner.runtime._core.record_jax_runtime_diagnostic_log_event",
-        side_effect=record_jax_runtime_diagnostic_log_event,
+        "g.runner.runtime._core.record_jax_runtime_diagnostic_event",
+        side_effect=record_jax_runtime_diagnostic_event,
     ):
-        runner_runtime.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session=telemetry_session)
+        runner_runtime.record_jax_runtime_diagnostic_event(
+            diagnostic_event,
+            telemetry_session=active_telemetry_session,
+        )
 
     assert logged_records == [("error", "jax_native_plan_test", "planned diagnostic", {"field": "value"})]
     assert recorded_events == [("jax_native_plan_test", "trace", {"field": "value"})]

@@ -252,6 +252,30 @@ pub(crate) fn record_jax_runtime_diagnostic_log_event(
     event: &Bound<'_, PyAny>,
     has_telemetry_session: bool,
 ) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
+    record_jax_runtime_diagnostic_log_event_plan(py, event, has_telemetry_session)
+        .map(NativeJaxRuntimeDiagnosticRecordPlan::from_plan)
+}
+
+#[pyfunction]
+pub(crate) fn record_jax_runtime_diagnostic_event(
+    py: Python<'_>,
+    event: &Bound<'_, PyAny>,
+    telemetry_session: &Bound<'_, PyAny>,
+) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
+    let plan = record_jax_runtime_diagnostic_log_event_plan(py, event, !telemetry_session.is_none())?;
+    if plan.should_emit_telemetry {
+        let keyword_arguments = PyDict::new(py);
+        keyword_arguments.set_item("telemetry_level", &plan.telemetry_level)?;
+        telemetry_session.call_method("log_jax_runtime_diagnostic_event", (event,), Some(&keyword_arguments))?;
+    }
+    Ok(NativeJaxRuntimeDiagnosticRecordPlan::from_plan(plan))
+}
+
+fn record_jax_runtime_diagnostic_log_event_plan(
+    py: Python<'_>,
+    event: &Bound<'_, PyAny>,
+    has_telemetry_session: bool,
+) -> PyResult<native_jax_runtime::JaxRuntimeDiagnosticRecordPlan> {
     let diagnostic_level = jax_runtime_diagnostic_event_level(event)?;
     let plan = native_jax_runtime::plan_jax_runtime_diagnostic_record(&diagnostic_level, has_telemetry_session);
     let (event_name, fields) = jax_runtime_diagnostic_event_fields_to_py_dict(py, event)?;
@@ -263,7 +287,7 @@ pub(crate) fn record_jax_runtime_diagnostic_log_event(
         &message,
         fields.as_any(),
     )?;
-    Ok(NativeJaxRuntimeDiagnosticRecordPlan::from_plan(plan))
+    Ok(plan)
 }
 
 #[pyfunction]
@@ -564,6 +588,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_jax_runtime_config_update_payloads, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_log_event, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_setup_side_effects_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;
