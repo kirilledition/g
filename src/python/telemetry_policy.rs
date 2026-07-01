@@ -4,7 +4,7 @@ use std::path::Path;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyModule};
 
 use g_runtime::telemetry_policy as native_telemetry_policy;
 
@@ -142,4 +142,16 @@ pub(crate) fn resolve_telemetry_session_policy_payload<'py>(
     payload.set_item("profile_enabled", policy.profile_enabled)?;
     payload.set_item("event_cap", policy.event_cap)?;
     Ok(payload)
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeTelemetrySessionPolicy>()?;
+    module.add_function(wrap_pyfunction!(build_empty_telemetry_writer_counters_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(format_telemetry_timestamp_value, module)?)?;
+    module.add_function(wrap_pyfunction!(paths_refer_to_same_file_value, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_telemetry_output_run_root_value, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_telemetry_paths_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_telemetry_session_policy_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
+    Ok(())
 }

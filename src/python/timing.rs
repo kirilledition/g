@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyModule, PyTuple};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use g_runtime::timing as native_timing;
@@ -304,6 +304,17 @@ pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
         payload.message,
         Some(final_timing_outputs_write_started_diagnostic_fields_json(&payload)?),
     )
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeStageTimingRecorder>()?;
+    module.add_class::<NativeStageTimingRecorderPlan>()?;
+    module.add_class::<NativeTimingFileWritePlan>()?;
+    module.add_function(wrap_pyfunction!(build_final_timing_outputs_write_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_stage_timing_recorder, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_timing_file_write, module)?)?;
+    Ok(())
 }
 
 fn parse_numeric_diagnostics_mapping(

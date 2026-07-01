@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 use g_runtime::runtime_paths as native_runtime_paths;
 
@@ -19,4 +20,9 @@ pub(crate) fn build_default_local_cache_directory_value(
         &directory_name,
     );
     cache_directory.to_string_lossy().into_owned()
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(build_default_local_cache_directory_value, module)?)?;
+    Ok(())
 }

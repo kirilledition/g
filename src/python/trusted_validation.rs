@@ -4,7 +4,7 @@ use std::path::Path;
 
 use pyo3::exceptions::PyOSError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyModule};
 
 use crate::trusted_validation as native_trusted_validation;
 
@@ -58,4 +58,11 @@ pub(crate) fn build_trusted_bgen_validation_cache_payload<'py>(
     payload.set_item("sample_count", cache_payload.sample_count)?;
     payload.set_item("variant_count", cache_payload.variant_count)?;
     Ok(payload)
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_path_value, module)?)?;
+    module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_fingerprint_value, module)?)?;
+    Ok(())
 }

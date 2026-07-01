@@ -1,7 +1,7 @@
 //! PyO3 adapters for deterministic process runtime policy helpers.
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyModule};
 
 use g_runtime::runtime_policy as native_runtime_policy;
 
@@ -67,6 +67,12 @@ pub(crate) fn describe_logging_runtime_policy_value(
         trace_filter,
         trace_event_cap,
     })
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(describe_logging_runtime_policy_value, module)?)?;
+    Ok(())
 }
 
 fn logging_runtime_policy_payload_to_dict<'py>(

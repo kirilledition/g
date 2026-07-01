@@ -114,34 +114,10 @@ use run_metadata::{
     build_execution_run_artifacts_payload, build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload,
     build_run_manifest_extension_payload,
 };
-use runtime::{
-    configure_bgen_decode_tile_variant_count, configure_rayon_global_thread_pool,
-    format_rayon_thread_pool_configuration_error_value,
-};
-use runtime_paths::build_default_local_cache_directory_value;
-use runtime_policy::{build_logging_runtime_policy_payload, describe_logging_runtime_policy_value};
 use runtime_state::{
     NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRunRuntime,
     NativeRuntimeCompatibilityToken, NativeRuntimePolicy, NativeRuntimeState, build_jax_runtime_policy_payload,
     build_runtime_policy_handle, global_process_runtime_state,
-};
-use shutdown::{
-    NativeSecondSignalExceptionPlan, NativeShutdownController, build_shutdown_signal_payload,
-    default_shutdown_signal_numbers, plan_second_signal_exception, raise_second_signal_exception,
-};
-use telemetry_policy::{
-    NativeTelemetrySessionPolicy, build_empty_telemetry_writer_counters_payload, format_telemetry_timestamp_value,
-    paths_refer_to_same_file_value, resolve_telemetry_output_run_root_value, resolve_telemetry_paths_payload,
-    resolve_telemetry_session_policy_payload, resolve_telemetry_stream_file_value,
-};
-use timing::{
-    NativeStageTimingRecorder, NativeStageTimingRecorderPlan, NativeTimingFileWritePlan,
-    build_final_timing_outputs_write_started_diagnostic_payload, plan_stage_timing_recorder, plan_timing_file_write,
-    record_final_timing_outputs_write_started_diagnostic_event,
-};
-use trusted_validation::{
-    build_trusted_bgen_validation_cache_path_value, build_trusted_bgen_validation_cache_payload,
-    build_trusted_bgen_validation_fingerprint_value,
 };
 
 type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
@@ -1849,13 +1825,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeRuntimePolicy>()?;
     module.add_class::<NativeRuntimeState>()?;
     module.add_function(wrap_pyfunction!(global_process_runtime_state, module)?)?;
-    module.add_class::<NativeSecondSignalExceptionPlan>()?;
-    module.add_class::<NativeShutdownController>()?;
-    module.add_class::<NativeStageTimingRecorder>()?;
-    module.add_class::<NativeStageTimingRecorderPlan>()?;
-    module.add_class::<NativeTimingFileWritePlan>()?;
-    module.add_function(wrap_pyfunction!(build_final_timing_outputs_write_started_diagnostic_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;
+    shutdown::register_module(module)?;
+    timing::register_module(module)?;
     output::register_module(module)?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
@@ -1865,17 +1836,12 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeTelemetryProgressEmissionPlan>()?;
     module.add_class::<NativeTelemetryProgressThrottle>()?;
     module.add_class::<NativeTelemetryRunSession>()?;
-    module.add_class::<NativeTelemetrySessionPolicy>()?;
     module.add_class::<NativeTelemetrySession>()?;
+    telemetry_policy::register_module(module)?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(resolve_prediction_loco_paths, module)?)?;
-    module.add_function(wrap_pyfunction!(build_empty_telemetry_writer_counters_payload, module)?)?;
     run_events::register_module(module)?;
-    module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(default_shutdown_signal_numbers, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_second_signal_exception, module)?)?;
-    module.add_function(wrap_pyfunction!(raise_second_signal_exception, module)?)?;
+    runtime_policy::register_module(module)?;
     module.add_function(wrap_pyfunction!(build_execution_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_multi_run_artifacts_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_compute_group_id_value, module)?)?;
@@ -1899,12 +1865,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(normalize_binary_correction_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_association_backend_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_telemetry_output_run_root_value, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_telemetry_paths_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_telemetry_session_policy_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_default_local_cache_directory_value, module)?)?;
+    runtime_paths::register_module(module)?;
     module.add_function(wrap_pyfunction!(complete_jax_runtime_setup_validation_payload, module)?)?;
     module.add_function(wrap_pyfunction!(nvidia_driver_files_are_visible_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_jax_runtime_setup_diagnostic_payloads, module)?)?;
@@ -1921,21 +1883,12 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_telemetry_close, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_stage_timing_recorder, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_timing_file_write, module)?)?;
     module.add_function(wrap_pyfunction!(build_current_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(generate_telemetry_run_id_value, module)?)?;
-    module.add_function(wrap_pyfunction!(format_telemetry_timestamp_value, module)?)?;
-    module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_path_value, module)?)?;
-    module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_fingerprint_value, module)?)?;
+    trusted_validation::register_module(module)?;
     module.add_function(wrap_pyfunction!(summarize_variant_major_dosage_chunk_stats, module)?)?;
-    module.add_function(wrap_pyfunction!(paths_refer_to_same_file_value, module)?)?;
-    module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
-    module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
-    module.add_function(wrap_pyfunction!(format_rayon_thread_pool_configuration_error_value, module)?)?;
-    module.add_function(wrap_pyfunction!(describe_logging_runtime_policy_value, module)?)?;
+    runtime::register_module(module)?;
     module.add_function(wrap_pyfunction!(emit_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(emit_diagnostic_event_fields, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;

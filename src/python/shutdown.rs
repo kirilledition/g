@@ -5,7 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError, PySystemExit, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyModule, PyTuple};
 
 use g_runtime::shutdown as native_shutdown;
 
@@ -183,6 +183,16 @@ pub(crate) fn plan_second_signal_exception(signal_number: i32) -> PyResult<Nativ
 #[pyfunction]
 pub(crate) fn raise_second_signal_exception(signal_number: i32) -> PyResult<()> {
     raise_second_signal_exception_from_plan(signal_number)
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeSecondSignalExceptionPlan>()?;
+    module.add_class::<NativeShutdownController>()?;
+    module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(default_shutdown_signal_numbers, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_second_signal_exception, module)?)?;
+    module.add_function(wrap_pyfunction!(raise_second_signal_exception, module)?)?;
+    Ok(())
 }
 
 fn raise_second_signal_exception_from_plan<T>(signal_number: i32) -> PyResult<T> {

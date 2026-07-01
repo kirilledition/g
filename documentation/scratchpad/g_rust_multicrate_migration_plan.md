@@ -1659,6 +1659,9 @@ Current implementation notes:
 - Output PyO3 export registration now lives in the output adapter module,
   keeping manifest, writer-session, and output-run exports grouped with their
   adapter code while the root Python composition module delegates that group.
+- Runtime-support PyO3 export registration for shutdown, runtime knobs, runtime
+  paths, runtime policy, telemetry policy, timing, and trusted-validation cache
+  helpers now lives with the corresponding adapter modules.
 
 ### Tests
 
