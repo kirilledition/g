@@ -91,6 +91,9 @@ those methods.
 Production JAX setup now validates GPU availability through the native
 setup-session default-probe method; the Python explicit-path validation wrapper
 remains for deterministic tests and compatibility helpers.
+Default local JAX cache-directory resolution now comes from `g-runtime`; the
+Python runtime-path adapter no longer reads the platform temporary directory or
+current user name itself.
 Prediction-input LOCO manifest fingerprints now route through a root PyO3
 helper that composes `g-input` LOCO path resolution with `g-output` file
 fingerprinting, leaving Python to adapt the native JSON payload for the

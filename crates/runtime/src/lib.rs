@@ -182,7 +182,9 @@ pub use run_metadata::{
     RunManifestExtensionInput, RunManifestExtensionPayload, RunManifestRuntimePayload, build_execution_run_artifacts,
     build_multi_run_artifacts, build_phenotype_run_artifacts, build_run_manifest_extension,
 };
-pub use runtime_paths::build_default_local_cache_directory;
+pub use runtime_paths::{
+    build_default_local_cache_directory, default_local_cache_directory, default_local_temporary_root,
+};
 pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_policy, describe_logging_runtime_policy};
 pub use runtime_state::{
     JaxRuntimePolicyPayload, JaxRuntimeSetupLifecyclePlan, ProcessRuntimeState, RayonThreadPoolConfigurationError,

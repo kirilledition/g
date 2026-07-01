@@ -1728,6 +1728,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - JAX GPU validation default NVIDIA driver probe paths now come from
   `g-runtime`, leaving Python to adapt the native payload and preserving
   explicit injected paths for deterministic tests.
+- Default local JAX cache-directory resolution now comes from `g-runtime`;
+  Python no longer reads the platform temporary directory or current user name
+  for that runtime-path policy.
 - Production JAX setup now calls the native setup-session default-probe GPU
   validation method directly; the Python explicit-path wrapper remains only for
   deterministic tests and compatibility helpers.

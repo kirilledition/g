@@ -96,12 +96,15 @@ def test_resolve_jax_cache_uses_fallback() -> None:
     assert report.cache_directory.name == "g-jax-cache"
 
 
-def test_default_local_cache_directory_uses_native_policy(tmp_path: Path) -> None:
-    with (
-        patch("g.runtime_paths.DEFAULT_LOCAL_TEMPORARY_ROOT", tmp_path),
-        patch("g.runtime_paths.getpass.getuser", return_value=""),
-    ):
-        cache_directory = runtime_paths.default_local_cache_directory("g-jax-cache")
+def test_default_local_cache_directory_uses_native_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("LOGNAME", raising=False)
+
+    cache_directory = runtime_paths.default_local_cache_directory("g-jax-cache")
 
     assert cache_directory == tmp_path / "unknown" / "g-jax-cache"
 

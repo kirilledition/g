@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import getpass
-import tempfile
 from pathlib import Path
 
 from g import _core
 
-DEFAULT_LOCAL_TEMPORARY_ROOT = Path(tempfile.gettempdir()).expanduser()
+DEFAULT_LOCAL_TEMPORARY_ROOT = Path(_core.default_local_temporary_root_value())
 
 
 def default_local_cache_directory(directory_name: str) -> Path:
@@ -21,10 +19,4 @@ def default_local_cache_directory(directory_name: str) -> Path:
         Default temporary cache directory path.
 
     """
-    return Path(
-        _core.build_default_local_cache_directory_value(
-            temporary_root=str(DEFAULT_LOCAL_TEMPORARY_ROOT),
-            user_name=getpass.getuser(),
-            directory_name=directory_name,
-        )
-    )
+    return Path(_core.default_local_cache_directory_value(directory_name))
