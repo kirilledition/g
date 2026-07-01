@@ -2796,6 +2796,91 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
     def result_worker_thread(self, result_worker_thread: typing.Any) -> None:
         self._manual_result_worker_thread = result_worker_thread
 
+    def consume_dosage_chunks(self) -> None:
+        try:
+            if self.stage_timing_recorder is None:
+                self.consume_dosage_chunks_without_timing()
+                return
+            while True:
+                get_start_time = time.perf_counter()
+                work_item = self.get_dosage_work_item()
+                drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
+                if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
+                    return
+                dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
+                self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
+                dosage_work_item = typing.cast("callback_runtime.PreprocessedDosageWorkItem", work_item)
+                get_observation_plan = self.plan_dosage_queue_get_observation()
+                self.record_bounded_resource_stage_duration(
+                    resource_name=get_observation_plan.queue_name,
+                    operation_name=get_observation_plan.operation_name,
+                    start_time=get_start_time,
+                    blocked=get_observation_plan.blocked,
+                )
+                python_callback_start_time = time.perf_counter()
+                try:
+                    self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
+                finally:
+                    elapsed_seconds = time.perf_counter() - python_callback_start_time
+                    self.record_work_item_stage_elapsed_duration(dosage_work_item, "python_callback", elapsed_seconds)
+        except Exception as error:  # noqa: BLE001
+            self.worker_error = error
+
+    def consume_dosage_chunks_without_timing(self) -> None:
+        while True:
+            work_item = self.get_dosage_work_item()
+            drain_completion_plan = self.plan_dosage_work_drain_completion(work_item)
+            if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
+                return
+            dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
+            self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
+            dosage_work_item = typing.cast("callback_runtime.PreprocessedDosageWorkItem", work_item)
+            self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
+
+    def consume_result_write_items(self) -> None:
+        try:
+            if self.stage_timing_recorder is None:
+                self.consume_result_write_items_without_timing()
+                return
+            while True:
+                get_start_time = time.perf_counter()
+                work_item = self.get_result_write_item()
+                drain_completion_plan = self.plan_result_write_drain_completion(work_item)
+                if self.apply_result_write_drain_completion_plan(drain_completion_plan):
+                    return
+                get_observation_plan = self.plan_result_queue_get_observation()
+                self.record_bounded_resource_stage_duration(
+                    resource_name=get_observation_plan.queue_name,
+                    operation_name=get_observation_plan.operation_name,
+                    start_time=get_start_time,
+                    blocked=get_observation_plan.blocked,
+                )
+                dispatch_plan = self.plan_result_write_item_dispatch(work_item)
+                self.apply_result_write_item_dispatch_plan(dispatch_plan)
+                if dispatch_plan.should_process_result_write_item:
+                    result_work_item = typing.cast("callback_shared.Regenie2ResultWriteWorkItem", work_item)
+                    self.process_result_write_item(result_work_item)
+                    continue
+                message = "Native result write dispatch plan did not select a single-result processing path."
+                raise RuntimeError(message)
+        except Exception as error:  # noqa: BLE001
+            self.result_worker_error = error
+
+    def consume_result_write_items_without_timing(self) -> None:
+        while True:
+            work_item = self.get_result_write_item()
+            drain_completion_plan = self.plan_result_write_drain_completion(work_item)
+            if self.apply_result_write_drain_completion_plan(drain_completion_plan):
+                return
+            dispatch_plan = self.plan_result_write_item_dispatch(work_item)
+            self.apply_result_write_item_dispatch_plan(dispatch_plan)
+            if dispatch_plan.should_process_result_write_item:
+                result_work_item = typing.cast("callback_shared.Regenie2ResultWriteWorkItem", work_item)
+                self.process_result_write_item(result_work_item)
+                continue
+            message = "Native result write dispatch plan did not select a single-result processing path."
+            raise RuntimeError(message)
+
     def compute_preprocessed_chunk(
         self,
         *,

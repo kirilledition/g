@@ -91,7 +91,10 @@ tracked by native scheduler state instead of a bounded Python queue, with Python
 retaining only transitional item storage and wakeups. Dosage and result queue
 put/get wait decisions now come from native attempt plans. Multi-trait linear
 and binary result consumers now always use the native runtime-resource
-get/drain loop instead of a production Python fallback loop.
+get/drain loop instead of a production Python fallback loop. The base callback
+runner's dosage and single-result consumers now also require native
+runtime-resource get/drain helpers, leaving manual scheduler consumer loops in
+test fixtures only.
 
 ## Phase Order
 

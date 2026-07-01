@@ -1307,12 +1307,12 @@ Remove Python as the chunk-level scheduler.
 - Multi-result linear and binary callback consumers now always enter the native
   runtime-resource result-drain loop; their production subclass fallback loops
   have been removed.
-- The timed dosage consumer fallback loop now contains only the manual scheduler
-  path; production native dosage consumers enter the optional-observation native
-  get/drain helper before timing-mode dispatch.
-- Production dosage and result consumer loops now consume native validated
-  get/drain results that carry dispatch plans, removing separate Python dispatch
-  planner calls after native queue gets.
+- Production dosage and single-result consumer loops now always enter native
+  runtime-resource get/drain helpers; manual scheduler consumer loops live only
+  in test fixtures.
+- Production dosage and result consumers now consume native validated get/drain
+  results that carry dispatch plans, removing separate Python dispatch planner
+  calls after native queue gets.
 - The first PyO3-backed `AssociationBackend` adapter now exposes typed group,
   prediction, genotype-batch, and batch-result wrappers and calls Python backend
   objects only at the coarse group/chromosome/batch boundary.
