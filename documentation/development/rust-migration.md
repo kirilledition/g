@@ -32,6 +32,9 @@ Target crates:
 
 No internal crate may depend on `pyo3` or `numpy`. The root `g` crate may depend
 on all internal crates and remains the only native Python binding crate.
+`check_rust_architecture` enforces this split and also rejects root-crate public
+Rust re-exports of internal domain crates, a public root `python` adapter
+module, or public root PyO3 registration.
 
 ## Non-Negotiable Invariants
 

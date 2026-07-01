@@ -49,6 +49,52 @@ def test_python_binding_markers_are_isolated_to_python_modules() -> None:
     assert violations == []
 
 
+def test_root_crate_boundary_policy_allows_current_private_adapter() -> None:
+    assert check_rust_architecture.collect_root_crate_boundary_violations(REPOSITORY_ROOT) == ()
+
+
+def test_root_crate_boundary_policy_rejects_public_domain_reexports(tmp_path: Path) -> None:
+    root_source_directory = tmp_path / "src"
+    python_source_directory = root_source_directory / "python"
+    python_source_directory.mkdir(parents=True)
+    (root_source_directory / "lib.rs").write_text(
+        "\n".join(
+            (
+                "pub use g_engine as engine;",
+                "pub mod python;",
+                "fn _core() {}",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (python_source_directory / "mod.rs").write_text("pub fn register_module() {}\n", encoding="utf-8")
+
+    violations = check_rust_architecture.collect_root_crate_boundary_violations(tmp_path)
+
+    assert violations == (
+        check_rust_architecture.RootCrateBoundaryViolation(
+            source_path=Path("src/lib.rs"),
+            marker="pub use g_",
+            message="root crate must not re-export internal domain crates as public Rust aliases",
+        ),
+        check_rust_architecture.RootCrateBoundaryViolation(
+            source_path=Path("src/lib.rs"),
+            marker="pub mod python;",
+            message="root crate must keep its internal PyO3 adapter module private",
+        ),
+        check_rust_architecture.RootCrateBoundaryViolation(
+            source_path=Path("src/lib.rs"),
+            marker="mod python;",
+            message="root crate must declare the internal PyO3 adapter module privately",
+        ),
+        check_rust_architecture.RootCrateBoundaryViolation(
+            source_path=Path("src/python/mod.rs"),
+            marker="pub(crate) fn register_module",
+            message="root PyO3 adapter registration must be crate-private",
+        ),
+    )
+
+
 def build_package_payload(package_name: str, dependency_names: tuple[str, ...]) -> dict[str, typing.Any]:
     """Build a small Cargo metadata package payload for architecture tests."""
     return {

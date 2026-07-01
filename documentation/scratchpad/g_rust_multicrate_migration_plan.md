@@ -1799,6 +1799,9 @@ Current implementation notes:
   Rust aliases or publishes its internal `python` adapter module; PyO3
   adapters import owning crates directly while `_core` export names remain
   stable.
+- The Rust architecture checker now guards the Phase 12 root boundary by
+  rejecting public internal-crate re-exports, a public root `python` module,
+  and public root PyO3 registration.
 
 ### Tests
 

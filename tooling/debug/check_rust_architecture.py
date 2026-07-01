@@ -13,6 +13,8 @@ from pathlib import Path
 ROOT_PACKAGE_NAME = "g"
 RESTRICTED_PYTHON_NATIVE_DEPENDENCIES = {"numpy", "pyo3"}
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+ROOT_CRATE_LIB_PATH = Path("src/lib.rs")
+ROOT_CRATE_PYTHON_MODULE_PATH = Path("src/python/mod.rs")
 
 ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-plan": set(),
@@ -38,6 +40,22 @@ class RustArchitectureViolation:
 
     package_name: str
     dependency_name: str
+    message: str
+
+
+@dataclass(frozen=True)
+class RootCrateBoundaryViolation:
+    """A root crate PyO3 adapter boundary violation.
+
+    Attributes:
+        source_path: Source file containing the violation.
+        marker: Source marker that violates or proves the policy.
+        message: Human-readable violation description.
+
+    """
+
+    source_path: Path
+    marker: str
     message: str
 
 
@@ -115,6 +133,73 @@ def collect_rust_architecture_violations(
     return tuple(violations)
 
 
+def collect_root_crate_boundary_violations(repository_root: Path) -> tuple[RootCrateBoundaryViolation, ...]:
+    """Collect root crate PyO3 adapter boundary violations."""
+    root_lib_path = repository_root / ROOT_CRATE_LIB_PATH
+    root_python_module_path = repository_root / ROOT_CRATE_PYTHON_MODULE_PATH
+    violations: list[RootCrateBoundaryViolation] = []
+
+    try:
+        root_lib_text = root_lib_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return (
+            RootCrateBoundaryViolation(
+                source_path=ROOT_CRATE_LIB_PATH,
+                marker="missing",
+                message="root crate library entrypoint is missing",
+            ),
+        )
+
+    root_lib_lines = {source_line.strip() for source_line in root_lib_text.splitlines()}
+    if any(source_line.startswith("pub use g_") for source_line in root_lib_lines):
+        violations.append(
+            RootCrateBoundaryViolation(
+                source_path=ROOT_CRATE_LIB_PATH,
+                marker="pub use g_",
+                message="root crate must not re-export internal domain crates as public Rust aliases",
+            )
+        )
+    if "pub mod python;" in root_lib_lines:
+        violations.append(
+            RootCrateBoundaryViolation(
+                source_path=ROOT_CRATE_LIB_PATH,
+                marker="pub mod python;",
+                message="root crate must keep its internal PyO3 adapter module private",
+            )
+        )
+    if "mod python;" not in root_lib_lines:
+        violations.append(
+            RootCrateBoundaryViolation(
+                source_path=ROOT_CRATE_LIB_PATH,
+                marker="mod python;",
+                message="root crate must declare the internal PyO3 adapter module privately",
+            )
+        )
+
+    try:
+        root_python_module_text = root_python_module_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        violations.append(
+            RootCrateBoundaryViolation(
+                source_path=ROOT_CRATE_PYTHON_MODULE_PATH,
+                marker="missing",
+                message="root PyO3 adapter registration module is missing",
+            )
+        )
+        return tuple(violations)
+
+    if "pub(crate) fn register_module" not in root_python_module_text:
+        violations.append(
+            RootCrateBoundaryViolation(
+                source_path=ROOT_CRATE_PYTHON_MODULE_PATH,
+                marker="pub(crate) fn register_module",
+                message="root PyO3 adapter registration must be crate-private",
+            )
+        )
+
+    return tuple(violations)
+
+
 def load_cargo_metadata(repository_root: Path) -> dict[str, typing.Any]:
     """Load workspace Cargo metadata from the repository root."""
     completed_process = subprocess.run(
@@ -142,6 +227,11 @@ def format_violations(violations: tuple[RustArchitectureViolation, ...]) -> str:
     )
 
 
+def format_root_crate_boundary_violations(violations: tuple[RootCrateBoundaryViolation, ...]) -> str:
+    """Format root crate boundary violations for command-line output."""
+    return "\n".join(f"- {violation.source_path} [{violation.marker}]: {violation.message}" for violation in violations)
+
+
 def run_tool(repository_root: Path) -> int:
     """Verify Rust workspace architecture policy."""
     try:
@@ -150,10 +240,14 @@ def run_tool(repository_root: Path) -> int:
         print(error)
         return 1
 
-    violations = collect_rust_architecture_violations(metadata_payload)
-    if violations:
+    dependency_violations = collect_rust_architecture_violations(metadata_payload)
+    root_crate_violations = collect_root_crate_boundary_violations(repository_root)
+    if dependency_violations or root_crate_violations:
         print("Rust workspace architecture violations:")
-        print(format_violations(violations))
+        if dependency_violations:
+            print(format_violations(dependency_violations))
+        if root_crate_violations:
+            print(format_root_crate_boundary_violations(root_crate_violations))
         return 1
 
     print("Rust workspace architecture policy passed.")
