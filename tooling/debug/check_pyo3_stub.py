@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that the Python stub mirrors top-level `_core` registrations."""
+"""Verify that the Python stub mirrors `_core` registrations."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ if typing.TYPE_CHECKING:
 RUST_EXPORT_FILES = (
     Path("src/python/mod.rs"),
     Path("src/python/config/mod.rs"),
+    Path("src/python/run_events.rs"),
 )
 STUB_FILE = Path("src/g/_core.pyi")
 
@@ -82,7 +83,7 @@ def run_tool() -> int:
         print(format_list(set(extra_functions)))
         return 1
 
-    print("`src/g/_core.pyi` matches top-level Rust `_core` registrations.")
+    print("`src/g/_core.pyi` matches Rust `_core` registrations.")
     return 0
 
 

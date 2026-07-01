@@ -2,7 +2,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyModule, PyTuple};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 
 use g_runtime::run_events as native_run_events;
@@ -1632,6 +1632,255 @@ pub fn render_run_interrupted_lines<'py>(py: Python<'py>, event: &Bound<'py, PyA
 pub fn render_run_failed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_failed_event_from_py(event)?;
     PyTuple::new(py, native_run_events::render_run_failed_lines(&event_payload))
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_run_lifecycle_exports(module)?;
+    register_runner_diagnostic_exports(module)?;
+    register_cli_and_runtime_diagnostic_exports(module)?;
+    register_output_and_preflight_diagnostic_exports(module)?;
+    register_pipeline_diagnostic_exports(module)?;
+    register_native_dispatch_diagnostic_exports(module)?;
+    register_rendering_exports(module)?;
+    Ok(())
+}
+
+fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(attach_run_metadata_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_completed_event_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_interrupted_event_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_failed_event_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_completed_telemetry_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_failed_telemetry_fields, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
+    Ok(())
+}
+
+fn register_runner_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(build_runner_run_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_run_interrupted_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_run_failed_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_run_completed_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_interrupted_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_failed_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_completed_diagnostic_event, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(build_runner_jax_runtime_configuration_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_jax_runtime_configuration_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_execution_plan_build_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_execution_plan_build_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_execution_plan_prepared_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_execution_plan_prepared_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_execution_plan_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_execution_plan_dispatch_started_diagnostic_event, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(build_runner_execution_plan_finalization_started_diagnostic_payload, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(record_runner_execution_plan_finalization_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_multi_phenotype_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_multi_phenotype_dispatch_started_diagnostic_event, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(build_runner_single_phenotype_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_single_phenotype_dispatch_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_binary_engine_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_binary_engine_dispatch_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_runner_linear_engine_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_linear_engine_dispatch_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event,
+        module
+    )?)?;
+    Ok(())
+}
+
+fn register_cli_and_runtime_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(build_native_cli_stdout_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_cli_stderr_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_cli_interrupted_line_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_cli_failed_line_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_cli_completed_line_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_stdout_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_stderr_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_interrupted_line_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_failed_line_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_completed_line_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_runtime_knobs_configured_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_runtime_knobs_configured_diagnostic_event, module)?)?;
+    Ok(())
+}
+
+fn register_output_and_preflight_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(build_runner_metadata_artifacts_finalized_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_metadata_artifacts_finalized_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_preflight_warning_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_preflight_warning_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_io_output_resume_committed_chunks_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_io_output_resume_committed_chunks_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_bgen_engine_open_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_bgen_engine_open_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_bgen_engine_opened_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_bgen_engine_opened_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_prevalidated_bgen_engine_used_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_output_resume_committed_chunks_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_output_resume_committed_chunks_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        build_pipeline_output_writer_sessions_create_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_pipeline_output_writer_sessions_create_started_diagnostic_event,
+        module
+    )?)?;
+    Ok(())
+}
+
+fn register_pipeline_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(build_pipeline_gpu_genotype_format_resolved_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_gpu_genotype_format_resolved_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_multi_phenotype_sample_summary_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_multi_phenotype_sample_summary_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_multi_trait_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_multi_trait_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_multi_trait_input_load_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_multi_trait_input_load_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_multi_trait_input_aligned_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_multi_trait_input_aligned_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_grouped_per_phenotype_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_grouped_per_phenotype_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event,
+        module
+    )?)?;
+    module
+        .add_function(wrap_pyfunction!(build_pipeline_grouped_union_delivery_selected_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_grouped_union_delivery_selected_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_multi_group_preflight_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_multi_group_preflight_started_diagnostic_event, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(build_pipeline_multi_group_preflight_completed_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_multi_group_preflight_completed_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_single_trait_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_single_trait_started_diagnostic_event, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(build_pipeline_single_trait_input_load_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_single_trait_input_load_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_single_trait_input_aligned_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_single_trait_input_aligned_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_pipeline_single_trait_prediction_source_load_started_diagnostic_event,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(build_pipeline_single_trait_preflight_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_single_trait_preflight_started_diagnostic_event, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(build_pipeline_single_trait_preflight_completed_diagnostic_payload, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(record_pipeline_single_trait_preflight_completed_diagnostic_event, module)?)?;
+    Ok(())
+}
+
+fn register_native_dispatch_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module
+        .add_function(wrap_pyfunction!(build_native_dispatch_bgen_engine_constructing_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_dispatch_bgen_engine_constructing_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_native_dispatch_trusted_bgen_validation_started_diagnostic_event,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        build_callback_null_logistic_nonconvergence_warning_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_callback_null_logistic_nonconvergence_warning_diagnostic_event,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_callback_drain_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_dispatch_callback_drain_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_finished_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_finished_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_interrupted_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_interrupted_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_failed_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_failed_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(build_native_dispatch_pipeline_finished_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_dispatch_pipeline_finished_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        build_native_dispatch_writer_session_finish_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_native_dispatch_writer_session_finish_started_diagnostic_event,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        build_native_dispatch_writer_sessions_finish_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_native_dispatch_writer_sessions_finish_started_diagnostic_event,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event,
+        module
+    )?)?;
+    Ok(())
+}
+
+fn register_rendering_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(render_run_completed_lines, module)?)?;
+    module.add_function(wrap_pyfunction!(render_run_failed_lines, module)?)?;
+    module.add_function(wrap_pyfunction!(render_run_interrupted_lines, module)?)?;
+    Ok(())
 }
 
 pub(crate) fn run_completed_event_from_py(

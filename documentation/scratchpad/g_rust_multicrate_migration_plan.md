@@ -1648,6 +1648,12 @@ src/
 5. Ensure all Rust logic is in internal crates.
 6. Delete temporary Python fallback implementations.
 
+Current implementation notes:
+
+- Run-event PyO3 export registration now lives in the run-event adapter module,
+  so the root Python composition module delegates that export group instead of
+  importing and registering every run-event symbol directly.
+
 ### Tests
 
 - `_core.pyi` sync;
