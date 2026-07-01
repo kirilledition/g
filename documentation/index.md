@@ -1,5 +1,9 @@
 # Documentation Directory
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 | Documentation maintainers |
+
 This page exists as the published site entry point. The documentation source is
 split by audience:
 

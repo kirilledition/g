@@ -1,5 +1,9 @@
 # Output Files
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 output file contracts | Public user docs |
+
 This page is the canonical user-facing output contract for `g regenie`.
 
 For resume validation, see [Resume and Manifest](resume-and-manifest.md). For

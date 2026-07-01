@@ -1,5 +1,9 @@
 # Development Tooling Architecture
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 tooling architecture | Development tooling maintainers |
+
 Development-only benchmark and profiling entrypoints live in the top-level `tooling/` package. This package is intentionally not listed in `tool.maturin.python-packages` and is not exposed through `[project.scripts]`, so packaged consumers continue to receive only `src/g` and the existing `g` entrypoints.
 
 Hydra is used for development tool parameters, saved development configurations, benchmark campaigns, machine profiles, telemetry defaults, and sweep profiles. Production REGENIE configuration remains in `src/g` and continues to use the TOML-backed `RegenieConfig` and `ExecutionPlan` flow.

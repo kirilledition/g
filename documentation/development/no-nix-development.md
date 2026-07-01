@@ -1,5 +1,9 @@
 # No-Nix Development
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 reduced local toolchain workflow | Development maintainers |
+
 Some development environments for this repo have `uv` and `maturin` available
 but do not expose `nix`, `cargo`, `rustfmt`, or `cargo-clippy` directly.
 
@@ -15,7 +19,7 @@ Equivalent commands without `just`:
 ```bash
 uv run ruff format --check .
 uv run ruff check .
-uv run ty check src tests scripts
+uv run ty check src tests scripts tooling
 uv run pytest tests/test_core.py tests/test_io_output.py
 uv run pytest tests/ -m "not phase0_data and not phase1_parity"
 ```

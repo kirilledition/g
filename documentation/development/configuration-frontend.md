@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Development contract | CLI, TOML, Python option dictionaries, defaults, and `RegenieConfig` construction | Interface maintainers |
+| Pre-release draft; development contract | main branch as of 2026-06-30 CLI/TOML/Python config frontend | Interface maintainers |
 
 This page defines how developers keep CLI, TOML, Python options, defaults, and
 execution planning unified. User-facing behavior is documented in

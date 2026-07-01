@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Development contract | Correctness tests, parity checks, CLI/config validation, and native/JAX boundaries | Development maintainers |
+| Pre-release draft; development contract | main branch as of 2026-06-30 tests and parity workflow | Development maintainers |
 
 This page defines how to validate changes without confusing fast local checks,
 full correctness runs, and external REGENIE parity work.

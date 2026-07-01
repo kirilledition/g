@@ -1,5 +1,9 @@
 # Resume And Manifest
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 resume and manifest behavior | Public user docs |
+
 This page is the canonical user-facing reference for resumable output runs.
 
 For output layout and schemas, see [Output Files](output-files.md). For config

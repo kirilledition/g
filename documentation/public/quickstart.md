@@ -1,5 +1,9 @@
 # Quickstart
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 `g regenie` examples | Public user docs |
+
 These examples assume you installed `g` with [Installation](installation.md) and are running commands
 from the repository checkout. Replace the paths with your own BGEN, phenotype, covariate, and
 upstream REGENIE Step 1 prediction files.
@@ -185,8 +189,9 @@ Developers and evaluators can generate local 1000 Genomes chromosome 22 fixture 
 recipes:
 
 ```bash
-just setup-data
-just setup-binary-baseline
+just data-prepare
+just data-baseline-qt
+just data-baseline-binary
 ```
 
 These commands require the development tooling described in

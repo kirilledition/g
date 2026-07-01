@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Public algorithm and result-interpretation reference | BGEN-backed REGENIE Step 2 quantitative, binary score, and binary approximate-Firth modes | Public interface and compute maintainers |
+| Pre-release draft; public algorithm and result-interpretation reference | main branch as of 2026-06-30 BGEN-backed Step 2 modes | Public interface and compute maintainers |
 
 `g` runs REGENIE-compatible Step 2 single-variant association tests on BGEN input. It does **not** run REGENIE Step 1. Step 2 needs the chromosome-specific leave-one-chromosome-out prediction file produced by Step 1; pass that file with `--pred`.[^regenie-step2]
 
@@ -293,6 +293,25 @@ Multiple phenotypes can be requested with repeated `--phenoCol` or with `--pheno
 | `--score_dtype` | Can change compute precision. Persisted output precision is controlled separately by `--output_statistic_dtype`. |
 
 Runtime options such as `--bsize`, `--threads`, `--device`, `--format`, `--resume`, and telemetry/logging settings should not intentionally change scientific conclusions. If they change results beyond normal floating-point tolerance, treat that as a reproducibility bug.
+
+## Trust And Parity Status
+
+The quantitative and binary score-test paths are the primary parity targets.
+Binary approximate-Firth support is implemented but remains a pre-release,
+parity-sensitive surface. Treat changes to fallback candidate selection,
+iteration policy, failure labels, or reported Firth statistics as scientific
+behavior changes that require targeted parity review.
+
+Known intentional scope limits:
+
+- REGENIE Step 1 is not implemented.
+- Exact Firth without `--approx` is not implemented.
+- SPA fallback is not implemented.
+- BGEN 1.2 is the supported genotype source.
+
+Implementation choices such as chunk size, device, writer format, and telemetry
+mode are operational. They should not change the mathematical contract, except
+for ordinary floating-point tolerance and explicitly documented dtype choices.
 
 ## Reading output rows
 

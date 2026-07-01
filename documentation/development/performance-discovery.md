@@ -1,5 +1,9 @@
 # Performance Discovery Playbook
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 performance discovery workflow | Performance maintainers |
+
 Use this playbook when a Linear issue asks an agent to search for optimization
 opportunities instead of implementing one specific change. Discovery work must
 produce evidence, ranking, and bounded implementation tasks. It must not turn a

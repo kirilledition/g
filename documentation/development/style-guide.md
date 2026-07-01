@@ -1,5 +1,9 @@
 # **Development Style Guide & Project Rules**
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 coding and review rules | Development maintainers |
+
 ## **1\. Core Philosophy**
 
 Optimize for explicit, self-documenting code over terse keystroke-saving. Prioritize legibility and mathematical clarity. Engineers should never have to guess what variables represent.

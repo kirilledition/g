@@ -2,11 +2,11 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Current Rust frontend TOML reference | `--config`, effective configs, and config/CLI merge semantics | Public interface |
+| Pre-release draft; current Rust frontend TOML reference | main branch as of 2026-06-30 `--config` and effective configs | Public user docs |
 
 `g` accepts TOML configuration files grouped by section. The Rust frontend owns
 TOML decoding, default overlay, validation, and effective config serialization.
-The packaged defaults live in `src/interface/config.default.toml`.
+The packaged defaults live in `crates/interface/src/config.default.toml`.
 
 This experimental Rust CLI/config branch does not expose the previous
 `g config init`, `g config validate`, or `g config explain` helper commands.
@@ -16,7 +16,7 @@ This experimental Rust CLI/config branch does not expose the previous
 Configuration is merged in this order:
 
 ```text
-packaged defaults in src/interface/config.default.toml
+packaged defaults in crates/interface/src/config.default.toml
         < values in --config
         < explicit CLI flags
 ```
@@ -37,6 +37,56 @@ uv run g regenie \
   --phenoCol phenotype_b \
   --out /path/to/output/phenotype_b \
   --device gpu
+```
+
+## Layering Patterns
+
+A common cluster pattern is to keep technical runtime policy in one TOML file
+and pass run-specific scientific inputs on the CLI.
+
+`server-gpu.toml`:
+
+```toml
+[compute]
+device = "gpu"
+jax_persistent_cache = true
+jax_cache_dir = "/path/to/local/jax-cache"
+staging_depth = 2
+
+[output]
+format = "parquet"
+writer_threads = 2
+resume = true
+
+[diagnostics]
+telemetry = "progress"
+```
+
+Run-specific CLI values then override or fill the scientific fields:
+
+```bash
+uv run g regenie \
+  --config server-gpu.toml \
+  --step 2 \
+  --qt \
+  --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
+  --phenoFile /path/to/phenotypes.tsv \
+  --phenoCol phenotype_continuous \
+  --covarFile /path/to/covariates.tsv \
+  --covarColList age,sex \
+  --pred /path/to/regenie_step1_qt_pred.list \
+  --out /path/to/output/g_quantitative_regenie2
+```
+
+For reproducible run scripts, put input/output fields in TOML too and override
+only the changing phenotype or output prefix:
+
+```bash
+uv run g regenie \
+  --config regenie.toml \
+  --phenoCol phenotype_b \
+  --out /path/to/output/phenotype_b
 ```
 
 ## Required Runtime Fields
@@ -63,7 +113,7 @@ from the BGEN. It does not infer an adjacent `.sample` path.
 
 This example intentionally omits mutable runtime defaults such as block size,
 writer counts, and numerical thresholds. They come from
-`src/interface/config.default.toml` unless overridden.
+`crates/interface/src/config.default.toml` unless overridden.
 
 ```toml
 [input]
@@ -204,11 +254,30 @@ requested run against this manifest before reusing chunks.
 See [Resume and Manifest](resume-and-manifest.md) for resume modes and
 compatibility checks.
 
+## Validation
+
+Validation happens during config construction and run preflight. The current
+Rust frontend does not provide standalone `g config validate` or `g config
+explain` commands.
+
+Config construction rejects:
+
+- invalid TOML syntax;
+- unknown sections or keys;
+- wrong value types;
+- mutually exclusive phenotype or covariate column spellings;
+- incompatible trait flags such as simultaneous quantitative and binary mode;
+- binary-only options explicitly supplied for a quantitative run.
+
+Run preflight then checks file availability, sample and column contracts,
+prediction-list compatibility, output directory state, and resume manifest
+compatibility.
+
 ## Defaults Policy
 
 Do not copy mutable defaults into runbooks unless they are generated from the
 current checkout. The authoritative source is
-`src/interface/config.default.toml`.
+`crates/interface/src/config.default.toml`.
 
 For implementation rules behind this interface, see
 [Configuration Frontend](../development/configuration-frontend.md).

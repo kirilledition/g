@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Development contract | Rust BGEN reading, sample alignment, output writing, manifests, and Python bridge | Native runtime maintainers |
+| Pre-release draft; development contract | main branch as of 2026-06-30 Rust I/O and output runtime | Native runtime maintainers |
 
 Native I/O owns the parts of the hot path that should not depend on Python
 DataFrame libraries: BGEN decode, sample/covariate/phenotype alignment, chunk

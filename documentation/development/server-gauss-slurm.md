@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Server-specific development operations | gauss login node, `cantor` CPU node, `landau` GPU node, and repository SLURM recipes | Development maintainers |
+| Pre-release draft; server-specific development operations | main branch as of 2026-06-30 gauss SLURM workflows | Development maintainers |
 
 This repository was originally developed inside the Nix flake on a personal machine. On the Ubuntu SLURM server, keep `just` as the single entrypoint and split work between:
 

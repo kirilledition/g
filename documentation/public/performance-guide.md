@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Public performance guidance, not a benchmark guarantee | CPU and GPU `g regenie` Step 2 runs | Public interface |
+| Pre-release draft; guidance, not a benchmark guarantee | main branch as of 2026-06-30 CPU and GPU Step 2 runs | Public user docs |
 
 Performance depends on genotype format, trait mode, phenotype count, BGEN
 decode cost, host-device transfer, JAX compilation, output format, storage, and
@@ -67,7 +67,7 @@ incompatible BGEN cases. Explicit `packed8` keeps fail-fast validation behavior.
 `--native_callback_batch_size` currently applies to variant-major dosage BGEN
 delivery. Packed8 and grouped union delivery reject values above `1`.
 
-Current default values are in `src/interface/config.default.toml`.
+Current default values are in `crates/interface/src/config.default.toml`.
 
 Project profiling recipes isolate CPU JAX caches by host and CPU feature
 fingerprint under `/tmp/g-jax-cpu-profile-cache` by default. This avoids reusing
