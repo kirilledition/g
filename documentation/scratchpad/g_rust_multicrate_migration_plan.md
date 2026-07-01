@@ -1739,6 +1739,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - The Python architecture checker still rejects reintroduced production calls
   to an explicit JAX cache-directory resolver outside the compatibility
   adapter.
+- The Python architecture checker also rejects raw native setup-payload and
+  setup-session construction from production Python; setup sessions must come
+  from native runtime state.
 - JAX backend initialization now takes only the native setup session from the
   caller, so production setup no longer has a Python session-construction
   fallback or duplicate requested policy argument. The runner also reuses the
@@ -1750,8 +1753,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
   `jax.config.update` and `jax.devices`, keeping JAX setup side effects behind
   native setup sessions.
 - Production JAX setup now calls the native setup-session default-probe GPU
-  validation method directly; the Python explicit-path wrapper remains only for
-  deterministic tests and compatibility helpers.
+  validation method directly; the old Python explicit-path validation wrapper
+  has been removed.
 - Standalone `require_gpu_device()` validation now also builds a native setup
   session and uses the native default-probe method.
 - Process-global JAX setup completion recording now consumes the native setup
@@ -1763,9 +1766,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   files in its manifest-header loop, and the old Python-facing raw LOCO path
   resolver is no longer exported from `_core`.
 - Run-scoped manifest file fingerprint caching now lives in `g-output` behind
-  a native PyO3 cache handle; Python adapts native payloads instead of
+  a native PyO3 cache handle; control-file and prediction-input LOCO
+  fingerprints share that handle, and Python adapts native payloads instead of
   resolving paths, statting files, or maintaining fingerprint cache keys for
-  control-file manifest inputs.
+  manifest input fingerprints.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

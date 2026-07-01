@@ -629,7 +629,15 @@ def test_prediction_loco_fingerprints_use_native_payload(
         del path, include_content_hash
         raise AssertionError("LOCO fingerprints should be built by the native output helper")
 
+    def fail_uncached_native_loco_fingerprints(
+        prediction_list_path: str,
+        phenotype_names: list[str],
+    ) -> str:
+        del prediction_list_path, phenotype_names
+        raise AssertionError("Cached LOCO fingerprints should use the native output cache handle")
+
     monkeypatch.setattr(output, "build_file_fingerprint", fail_python_file_fingerprint)
+    monkeypatch.setattr(_core, "build_prediction_loco_file_fingerprints_json", fail_uncached_native_loco_fingerprints)
 
     loco_files = output.build_prediction_loco_file_fingerprints(
         prediction_list_path=prediction_list_path,
@@ -639,6 +647,34 @@ def test_prediction_loco_fingerprints_use_native_payload(
 
     assert [loco_file.phenotype for loco_file in loco_files] == ["first", "second"]
     assert [loco_file.path for loco_file in loco_files] == [str(loco_path.resolve()), str(loco_path.resolve())]
+
+
+def test_prediction_loco_fingerprints_reuse_run_scoped_native_cache(tmp_path: Path) -> None:
+    loco_path = tmp_path / "trait.loco"
+    loco_path.write_text("FID_IID F1_I1\n22 0.1\n", encoding="utf-8")
+    prediction_list_path = tmp_path / "predictions.list"
+    prediction_list_path.write_text("trait trait.loco\n", encoding="utf-8")
+
+    fingerprint_cache = output.ManifestFileFingerprintCache()
+    cached_fingerprint = fingerprint_cache.build_file_fingerprint(loco_path, include_content_hash=True)
+    assert cached_fingerprint is not None
+
+    replace_file_text_preserving_size_and_mtime(loco_path, "FID_IID F1_I1\n22 0.2\n")
+
+    cached_loco_files = output.build_prediction_loco_file_fingerprints(
+        prediction_list_path=prediction_list_path,
+        phenotype_names=("trait",),
+        fingerprint_cache=fingerprint_cache,
+    )
+    uncached_loco_files = output.build_prediction_loco_file_fingerprints(
+        prediction_list_path=prediction_list_path,
+        phenotype_names=("trait",),
+        fingerprint_cache=None,
+    )
+
+    expected_mutated_hash = hashlib.sha256(loco_path.read_bytes()).hexdigest()
+    assert cached_loco_files[0].content_sha256 == cached_fingerprint.content_sha256
+    assert uncached_loco_files[0].content_sha256 == expected_mutated_hash
 
 
 def test_manifest_file_fingerprint_cache_uses_native_payload(

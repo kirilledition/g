@@ -98,16 +98,6 @@ def apply_jax_runtime_config_updates(native_setup_session: _core.NativeJaxRuntim
     native_setup_session.apply_config_updates()
 
 
-def validate_gpu_if_configured(native_setup_session: _core.NativeJaxRuntimeSetupSession) -> dict[str, object]:
-    """Validate GPU setup using Python-adapted default probe paths."""
-    probe_paths = default_nvidia_driver_probe_paths()
-    return native_setup_session.validate_gpu_if_configured(
-        str(probe_paths.control_device_path),
-        str(probe_paths.uvm_device_path),
-        str(probe_paths.driver_directory_path),
-    )
-
-
 def validate_gpu_if_configured_with_default_probe_paths(
     native_setup_session: _core.NativeJaxRuntimeSetupSession,
 ) -> dict[str, object]:

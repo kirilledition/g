@@ -89,8 +89,8 @@ focused telemetry tests call the native telemetry session handle directly, and
 the Python architecture checker rejects reintroduced production definitions of
 those methods.
 Production JAX setup now validates GPU availability through the native
-setup-session default-probe method; the Python explicit-path validation wrapper
-remains for deterministic tests and compatibility helpers.
+setup-session default-probe method; the old Python explicit-path validation
+wrapper has been removed.
 Standalone `require_gpu_device()` validation now also builds a native setup
 session and uses the native default-probe method.
 Default local JAX cache-directory resolution now comes from `g-runtime`; the
@@ -101,6 +101,8 @@ directories inside `g-runtime`; the explicit Python cache-directory resolver
 and Python setup-payload helper have been removed.
 The Python architecture checker still rejects reintroduced production calls to
 an explicit JAX cache-directory resolver outside the compatibility adapter.
+It also rejects raw native setup-payload and setup-session construction from
+production Python; setup sessions must come from native runtime state.
 JAX backend initialization now takes only the native setup session from the
 caller, so the production setup path cannot fall back to Python-side
 setup-session construction or duplicate requested policy arguments. Production
@@ -117,8 +119,9 @@ fingerprinting, leaving Python to adapt the native JSON payload for the
 transitional manifest-header dataclass; the old Python-facing raw LOCO path
 resolver is no longer exported from `_core`.
 Run-scoped manifest file fingerprint caching now lives in `g-output` behind a
-native PyO3 cache handle; Python no longer resolves paths, stats files, or
-maintains cache keys for control-file fingerprints.
+native PyO3 cache handle; control-file and prediction-input LOCO fingerprints
+share that handle, and Python no longer resolves paths, stats files, or
+maintains cache keys for manifest input fingerprints.
 Run-start manifest command/runtime metadata extension now goes through a native
 `g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
 longer loads, mutates, serializes, and rewrites run manifests for that

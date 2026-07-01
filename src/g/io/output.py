@@ -430,10 +430,15 @@ def build_prediction_loco_file_fingerprints(
     fingerprint_cache: ManifestFileFingerprintCache | None,
 ) -> tuple[PredictionLocoFileFingerprint, ...]:
     """Build content fingerprints for LOCO files selected from a prediction list."""
-    del fingerprint_cache
-    loco_file_payloads = json.loads(
+    loco_file_payload_json = (
         _core.build_prediction_loco_file_fingerprints_json(str(prediction_list_path), list(phenotype_names))
+        if fingerprint_cache is None
+        else fingerprint_cache.native_cache.build_prediction_loco_file_fingerprints_json(
+            str(prediction_list_path),
+            list(phenotype_names),
+        )
     )
+    loco_file_payloads = json.loads(loco_file_payload_json)
     if not isinstance(loco_file_payloads, list):
         message = "Native LOCO fingerprint payload must contain a JSON array."
         raise ValueError(message)

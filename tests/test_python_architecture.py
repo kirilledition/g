@@ -401,11 +401,63 @@ def test_jax_cache_resolution_policy_rejects_production_python_resolver_calls(tm
         for violation in violations
     ] == [
         (
+            Path("g/jax_runtime/resolution.py"),
+            4,
+            "resolve_jax_runtime_cache_directory",
+            "resolve_jax_runtime_cache_directory",
+        ),
+        (
             Path("g/runner/runtime.py"),
             3,
             "jax_runtime_resolution.resolve_jax_runtime_cache_directory",
             "resolve_jax_runtime_cache_directory",
-        )
+        ),
+    ]
+
+
+def test_jax_setup_session_policy_rejects_raw_session_construction(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    jax_runtime_directory = package_root / "jax_runtime"
+    jax_runtime_directory.mkdir(parents=True)
+    (jax_runtime_directory / "setup.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build_session():",
+                "    payload = _core.resolve_jax_runtime_setup_payload(",
+                "        requested_device='gpu',",
+                "        cache_directory='',",
+                "        matmul_precision=None,",
+                "        persistent_cache=False,",
+                "        persistent_cache_min_entry_size_bytes=0,",
+                "        persistent_cache_min_compile_time_seconds=0,",
+                "        xla_autotune_cache=False,",
+                "        transfer_guard=False,",
+                "    )",
+                "    return _core.NativeJaxRuntimeSetupSession(payload, should_configure=False)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/jax_runtime/setup.py"),
+            3,
+            "_core.resolve_jax_runtime_setup_payload",
+            "_core.resolve_jax_runtime_setup_payload",
+        ),
+        (
+            Path("g/jax_runtime/setup.py"),
+            13,
+            "_core.NativeJaxRuntimeSetupSession",
+            "_core.NativeJaxRuntimeSetupSession",
+        ),
     ]
 
 

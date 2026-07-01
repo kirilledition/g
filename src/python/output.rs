@@ -1,6 +1,5 @@
 #![allow(clippy::needless_pass_by_value)]
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -112,6 +111,28 @@ impl NativeManifestFileFingerprintCache {
             })
             .map_err(|error| output_writer_error_to_py(error, "build_cached_manifest_file_fingerprint_payload"))?;
         manifest_file_fingerprint_to_dict(py, &file_fingerprint)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn build_prediction_loco_file_fingerprints_json(
+        &self,
+        py: Python<'_>,
+        prediction_list_path: String,
+        phenotype_names: Vec<String>,
+    ) -> PyResult<String> {
+        py.detach(|| {
+            let mut fingerprint_cache = self.inner.lock().map_err(|_| {
+                PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(
+                    "Manifest file fingerprint cache mutex was poisoned.".to_string(),
+                ))
+            })?;
+            build_prediction_loco_file_fingerprints_json_with_cache(
+                &prediction_list_path,
+                &phenotype_names,
+                &mut fingerprint_cache,
+            )
+        })
+        .map_err(prediction_loco_fingerprint_build_error_to_py)
     }
 }
 
@@ -868,23 +889,26 @@ fn build_prediction_loco_file_fingerprints_json_detached(
     prediction_list_path: &str,
     phenotype_names: &[String],
 ) -> Result<String, PredictionLocoFingerprintBuildError> {
+    let mut fingerprint_cache = NativeManifestFileFingerprintCacheState::new();
+    build_prediction_loco_file_fingerprints_json_with_cache(
+        prediction_list_path,
+        phenotype_names,
+        &mut fingerprint_cache,
+    )
+}
+
+fn build_prediction_loco_file_fingerprints_json_with_cache(
+    prediction_list_path: &str,
+    phenotype_names: &[String],
+    fingerprint_cache: &mut NativeManifestFileFingerprintCacheState,
+) -> Result<String, PredictionLocoFingerprintBuildError> {
     let resolved_loco_paths = resolve_native_prediction_loco_paths(Path::new(prediction_list_path), phenotype_names)
         .map_err(PredictionLocoFingerprintBuildError::Prediction)?;
-    let mut fingerprints_by_canonical_path: HashMap<std::path::PathBuf, NativeManifestFileFingerprint> = HashMap::new();
     let mut loco_file_payloads = Vec::with_capacity(resolved_loco_paths.len());
     for resolved_loco_path in resolved_loco_paths {
-        let canonical_loco_path = resolved_loco_path.loco_file_path.canonicalize().map_err(|error| {
-            PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(error.to_string()))
-        })?;
-        let file_fingerprint =
-            if let Some(cached_fingerprint) = fingerprints_by_canonical_path.get(&canonical_loco_path) {
-                cached_fingerprint.clone()
-            } else {
-                let fingerprint = build_native_manifest_file_fingerprint(&canonical_loco_path, true)
-                    .map_err(PredictionLocoFingerprintBuildError::Output)?;
-                fingerprints_by_canonical_path.insert(canonical_loco_path, fingerprint.clone());
-                fingerprint
-            };
+        let file_fingerprint = fingerprint_cache
+            .build_file_fingerprint(&resolved_loco_path.loco_file_path, true)
+            .map_err(PredictionLocoFingerprintBuildError::Output)?;
         loco_file_payloads.push(serde_json::json!({
             "phenotype": resolved_loco_path.phenotype_name,
             "path": file_fingerprint.path,

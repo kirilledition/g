@@ -259,8 +259,15 @@ PYTHON_CALL_POLICIES = (
         name="native_jax_cache_resolution_isolation",
         source_directory=Path(),
         forbidden_calls=("resolve_jax_runtime_cache_directory",),
-        allowed_paths=(Path("jax_runtime/resolution.py"),),
+        allowed_paths=(),
         message="production Python must resolve JAX setup cache directories through native runtime state",
+    ),
+    PythonCallPolicy(
+        name="native_jax_setup_session_construction_isolation",
+        source_directory=Path(),
+        forbidden_calls=("_core.resolve_jax_runtime_setup_payload", "_core.NativeJaxRuntimeSetupSession"),
+        allowed_paths=(),
+        message="production Python must construct JAX setup sessions through native runtime state",
     ),
     PythonCallPolicy(
         name="native_jax_setup_side_effect_isolation",

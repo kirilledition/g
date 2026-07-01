@@ -2700,6 +2700,11 @@ class NativeManifestFileFingerprintCache:
         path: str,
         include_content_hash: bool,
     ) -> dict[str, object]: ...
+    def build_prediction_loco_file_fingerprints_json(
+        self,
+        prediction_list_path: str,
+        phenotype_names: list[str],
+    ) -> str: ...
 
 def write_regenie2_multi_native_chunk(
     *,
