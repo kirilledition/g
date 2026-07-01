@@ -211,8 +211,21 @@ use run_events::{
     record_pipeline_single_trait_preflight_completed_diagnostic_event,
     record_pipeline_single_trait_preflight_started_diagnostic_event,
     record_pipeline_single_trait_started_diagnostic_event, record_preflight_warning_diagnostic_event,
-    record_runner_metadata_artifacts_finalized_diagnostic_event, render_run_completed_lines, render_run_failed_lines,
-    render_run_interrupted_lines,
+    record_runner_binary_engine_dispatch_started_diagnostic_event,
+    record_runner_execution_plan_build_started_diagnostic_event,
+    record_runner_execution_plan_dispatch_started_diagnostic_event,
+    record_runner_execution_plan_finalization_started_diagnostic_event,
+    record_runner_execution_plan_prepared_diagnostic_event,
+    record_runner_jax_runtime_configuration_started_diagnostic_event,
+    record_runner_linear_engine_dispatch_started_diagnostic_event,
+    record_runner_metadata_artifacts_finalized_diagnostic_event,
+    record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event,
+    record_runner_multi_phenotype_dispatch_started_diagnostic_event,
+    record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event,
+    record_runner_run_completed_diagnostic_event, record_runner_run_failed_diagnostic_event,
+    record_runner_run_interrupted_diagnostic_event, record_runner_run_started_diagnostic_event,
+    record_runner_single_phenotype_dispatch_started_diagnostic_event, render_run_completed_lines,
+    render_run_failed_lines, render_run_interrupted_lines,
 };
 use run_metadata::{
     build_execution_run_artifacts_payload, build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload,
@@ -278,6 +291,7 @@ use telemetry_policy::{
 use timing::{
     NativeStageTimingRecorder, NativeStageTimingRecorderPlan, NativeTimingFileWritePlan,
     build_final_timing_outputs_write_started_diagnostic_payload, plan_stage_timing_recorder, plan_timing_file_write,
+    record_final_timing_outputs_write_started_diagnostic_event,
 };
 use trusted_validation::{
     build_trusted_bgen_validation_cache_path_value, build_trusted_bgen_validation_cache_payload,
@@ -2046,6 +2060,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeStageTimingRecorderPlan>()?;
     module.add_class::<NativeTimingFileWritePlan>()?;
     module.add_function(wrap_pyfunction!(build_final_timing_outputs_write_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;
     module.add_class::<OutputWriterSession>()?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
@@ -2078,24 +2093,46 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_runner_run_interrupted_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_runner_run_failed_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_runner_run_completed_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_started_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_interrupted_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_failed_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_run_completed_diagnostic_event, module)?)?;
     module
         .add_function(wrap_pyfunction!(build_runner_jax_runtime_configuration_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_jax_runtime_configuration_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_runner_execution_plan_build_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_execution_plan_build_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_runner_execution_plan_prepared_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_execution_plan_prepared_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_runner_execution_plan_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_execution_plan_dispatch_started_diagnostic_event, module)?)?;
     module
         .add_function(wrap_pyfunction!(build_runner_execution_plan_finalization_started_diagnostic_payload, module)?)?;
+    module
+        .add_function(wrap_pyfunction!(record_runner_execution_plan_finalization_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_runner_multi_phenotype_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_multi_phenotype_dispatch_started_diagnostic_event, module)?)?;
     module
         .add_function(wrap_pyfunction!(build_runner_single_phenotype_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_single_phenotype_dispatch_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_runner_binary_engine_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_binary_engine_dispatch_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_runner_linear_engine_dispatch_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_runner_linear_engine_dispatch_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(
         build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload,
         module
     )?)?;
     module.add_function(wrap_pyfunction!(
+        record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
         build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event,
         module
     )?)?;
     module.add_function(wrap_pyfunction!(build_native_cli_stdout_diagnostic_payload, module)?)?;
