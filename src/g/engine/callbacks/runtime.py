@@ -275,11 +275,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Return whether the native result worker thread is alive."""
         return self.callback_runtime_resources.result_worker_is_alive
 
-    def uses_native_callback_runtime_resources(self) -> bool:
-        """Return whether this runner still uses its production native resource owner."""
-        runtime_resources = getattr(self, "callback_runtime_resources", None)
-        return runtime_resources is not None
-
     @property
     def native_callback_batch_size(self) -> int:
         """Return the native callback batch size."""

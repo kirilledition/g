@@ -1193,6 +1193,10 @@ Remove Python as the chunk-level scheduler.
 - Callback runtime resources now attach typed result cleanup backpressure
   observations for host-buffer returns and result in-flight releases, so Python
   no longer derives cleanup telemetry from native observation plans.
+- The production callback runtime fallback audit now has a source guard:
+  manual scheduler/resource state, Python queue/thread ownership, and native
+  runtime-resource probing are confined to test fixtures instead of production
+  runner code.
 - Native telemetry run sessions now own production run completed, interrupted,
   and failed lifecycle event emission names, levels, and field construction.
 - CLI runtime-initialization failures now route run-failed telemetry through
@@ -1412,14 +1416,19 @@ Remove Python as the chunk-level scheduler.
 
 - Remaining production fallback audit: complete for the callback runner; no
   production `uses_native_callback_runtime_resources()` branches or direct
-  scheduler-state fallback calls remain in `src/g/engine/callbacks/runtime.py`.
+  scheduler-state fallback calls remain in `src/g/engine/callbacks/runtime.py`,
+  and a source guard keeps manual scheduler/resource state test-only.
 - Focused scheduler/buffer validation: complete for the callback runner via
-  targeted scheduler, queue, result-slot, lifecycle, dosage-buffer, and full
-  `tests/test_regenie2_pipeline.py` coverage.
+  targeted scheduler, queue, result-slot, lifecycle, dosage-buffer, and native
+  runtime-resource tests; full `tests/test_regenie2_pipeline.py` coverage
+  remains a broader pre-push or handoff check.
 - Benchmark checkpoint: complete for callback overhead on CPU/GPU, binary-hot
-  GPU smoke, and a bounded output-stage GPU writer checkpoint.
-- Phase 10 callback-runner fallback removal is ready for a grouped checkpoint
-  after final local validation, merge from `origin/main`, and push.
+  GPU smoke, a bounded output-stage GPU writer checkpoint, and the `g-engine`
+  fake-backend coordinator benchmark; the warmed coordinator rerun reported no
+  detected performance change with a median around 311 ns.
+- Phase 10 callback-runner fallback removal is ready for a grouped local
+  checkpoint; merge from `origin/main` and push are deferred until the next
+  substantial remote checkpoint.
 
 ### Tests
 

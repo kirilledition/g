@@ -69,6 +69,22 @@ SCORE_ONLY_PLAN = types.BinaryCorrectionPlan(
 )
 
 
+def test_production_callback_runtime_has_no_manual_scheduler_fallbacks() -> None:
+    """Ensure manual scheduler/resource state remains confined to tests."""
+    callback_runtime_source = Path("src/g/engine/callbacks/runtime.py").read_text()
+    forbidden_snippets = (
+        "uses_native_callback_runtime_resources",
+        "fallback_",
+        "_manual_",
+        "queue.Queue",
+        "threading.Thread",
+        "BoundedSemaphore",
+    )
+
+    for forbidden_snippet in forbidden_snippets:
+        assert forbidden_snippet not in callback_runtime_source, forbidden_snippet
+
+
 def build_test_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:
     """Build a native runtime compatibility token for pipeline tests."""
     runtime_state = _core.NativeRuntimeState()
