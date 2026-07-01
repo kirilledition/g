@@ -22,12 +22,17 @@ if typing.TYPE_CHECKING:
 class FakeTelemetrySession:
     """Telemetry session test double for CLI ownership tests."""
 
-    def __init__(self, close_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        close_error: Exception | None = None,
+        run_failed_error: Exception | None = None,
+    ) -> None:
         self.paths = python_types.SimpleNamespace()
         self.logged_events: list[str] = []
         self.logged_payloads: list[dict[str, object]] = []
         self.closed = False
         self.close_error = close_error
+        self.run_failed_error = run_failed_error
 
     def log_event(self, event: str, level: str = "info", **fields: object) -> None:
         """Record a telemetry event name."""
@@ -36,6 +41,8 @@ class FakeTelemetrySession:
 
     def log_run_failed(self, event: typing.Any) -> None:
         """Record a native run-failed telemetry event."""
+        if self.run_failed_error is not None:
+            raise self.run_failed_error
         self.logged_events.append("run_failed")
         self.logged_payloads.append(
             {
@@ -299,6 +306,43 @@ def test_run_args_reports_runtime_initialization_failure(
     assert telemetry_session.logged_events == ["run_failed", "telemetry_session_closed"]
     assert telemetry_session.logged_payloads[0]["error_type"] == "RuntimeError"
     assert telemetry_session.logged_payloads[0]["error_message"] == "logging failed"
+    assert telemetry_session.closed is True
+    failed_lines = [call.kwargs["line"] for call in failed_record_mock.call_args_list]
+    assert "Error: logging failed" in failed_lines
+
+
+def test_run_args_suppresses_run_failed_telemetry_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ensure telemetry logging failures do not mask runtime failures."""
+    from g.engine import telemetry as telemetry_module
+    from g.runner import execution as runner_execution
+    from g.runner import runtime as runner_runtime
+
+    run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
+    telemetry_session = FakeTelemetrySession(run_failed_error=RuntimeError("telemetry write failed"))
+    outcome = python_types.SimpleNamespace(stdout="", stderr="", exit_code=0, config=run_config)
+    runtime_policy = python_types.SimpleNamespace()
+
+    with (
+        unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
+        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_runtime, "build_runtime_policy", return_value=runtime_policy),
+        unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy"),
+        unittest.mock.patch.object(runner_runtime, "initialize_logging", side_effect=RuntimeError("logging failed")),
+        unittest.mock.patch.object(runner_execution, "regenie") as regenie_mock,
+        unittest.mock.patch("g.cli.g._core.record_native_cli_failed_line_diagnostic_event") as failed_record_mock,
+    ):
+        exit_code = cli.run_args(["regenie"])
+
+    output = capsys.readouterr()
+    assert exit_code == 1
+    assert output.out == ""
+    assert output.err == "Error: logging failed\n"
+    assert "telemetry write failed" not in output.err
+    assert "Traceback" not in output.err
+    regenie_mock.assert_not_called()
+    assert telemetry_session.logged_events == ["telemetry_session_closed"]
     assert telemetry_session.closed is True
     failed_lines = [call.kwargs["line"] for call in failed_record_mock.call_args_list]
     assert "Error: logging failed" in failed_lines

@@ -2446,6 +2446,12 @@ class NativeCliRunLifecycleState:
     def mark_runner_started(self) -> None: ...
     def plan_run_failed_telemetry(self) -> NativeCliRunFailureTelemetryPlan: ...
 
+def emit_cli_run_failed_telemetry_event(
+    telemetry_session: object | None,
+    failed_event: object,
+    should_log_run_failed_to_telemetry: bool,
+) -> None: ...
+
 def plan_cli_telemetry_close_failure(
     current_exit_code: int,
     runtime_failure_exit_code: int,
@@ -3761,6 +3767,7 @@ def plan_telemetry_close(
     has_telemetry_session: bool,
     is_native_telemetry_session: bool,
 ) -> NativeTelemetryClosePlan: ...
+def close_telemetry_session_with_event(telemetry_session: object | None) -> None: ...
 def plan_telemetry_event_emission(
     telemetry_enabled: bool,
     has_native_telemetry_session: bool,

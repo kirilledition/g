@@ -513,21 +513,4 @@ def build_empty_writer_counters() -> TelemetryWriterCounters:
 
 def close_telemetry_session(telemetry_session: TelemetryCloseableSession | None) -> None:
     """Flush telemetry teardown hooks and preserve close failures."""
-    if telemetry_session is None:
-        return
-    native_telemetry_session = typing.cast(
-        "_core.NativeTelemetryRunSession | None",
-        getattr(telemetry_session, "native_telemetry_session", None),
-    )
-    close_plan = _core.plan_telemetry_close(
-        has_telemetry_session=True,
-        is_native_telemetry_session=native_telemetry_session is not None,
-    )
-    if not close_plan.should_close:
-        return
-    if close_plan.use_native_close_with_event:
-        active_native_telemetry_session = typing.cast("_core.NativeTelemetryRunSession", native_telemetry_session)
-        active_native_telemetry_session.finish_with_current_close_event_metadata()
-        return
-    if close_plan.should_emit_legacy_close_event:
-        telemetry_session.close_with_event()
+    _core.close_telemetry_session_with_event(telemetry_session)

@@ -1053,6 +1053,7 @@ def test_close_telemetry_session_uses_close_with_event_contract() -> None:
 
     fake_session = FakeCloseableSession()
 
+    telemetry.close_telemetry_session(None)
     telemetry.close_telemetry_session(fake_session)
 
     assert fake_session.closed is True

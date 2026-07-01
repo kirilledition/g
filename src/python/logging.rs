@@ -15,7 +15,7 @@ use super::jax_runtime;
 use super::run_events;
 use g_runtime::run_events as native_run_events;
 use g_runtime::telemetry_session as native_telemetry_session;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyModule, PyString, PyTuple};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
@@ -1106,6 +1106,40 @@ pub fn plan_telemetry_close(
 }
 
 #[pyfunction]
+pub fn close_telemetry_session_with_event(py: Python<'_>, telemetry_session: &Bound<'_, PyAny>) -> PyResult<()> {
+    let native_telemetry_session = optional_native_telemetry_session(py, telemetry_session)?;
+    let close_plan = native_telemetry_session::plan_telemetry_close(
+        !telemetry_session.is_none(),
+        native_telemetry_session.is_some(),
+    );
+    if !close_plan.should_close {
+        return Ok(());
+    }
+    if close_plan.use_native_close_with_event {
+        let active_native_telemetry_session = native_telemetry_session
+            .ok_or_else(|| PyRuntimeError::new_err("Native telemetry close plan selected a missing native session."))?;
+        active_native_telemetry_session.call_method0("finish_with_current_close_event_metadata")?;
+        return Ok(());
+    }
+    if close_plan.should_emit_legacy_close_event {
+        telemetry_session.call_method0("close_with_event")?;
+    }
+    Ok(())
+}
+
+fn optional_native_telemetry_session<'py>(
+    py: Python<'py>,
+    telemetry_session: &Bound<'py, PyAny>,
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    match telemetry_session.getattr("native_telemetry_session") {
+        Ok(native_telemetry_session) if native_telemetry_session.is_none() => Ok(None),
+        Ok(native_telemetry_session) => Ok(Some(native_telemetry_session)),
+        Err(error) if error.is_instance_of::<PyAttributeError>(py) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 pub fn build_telemetry_event_payload<'py>(
     py: Python<'py>,
@@ -1481,6 +1515,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeTelemetryProgressThrottle>()?;
     module.add_class::<NativeTelemetryRunSession>()?;
     module.add_class::<NativeTelemetrySession>()?;
+    module.add_function(wrap_pyfunction!(close_telemetry_session_with_event, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_close, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;

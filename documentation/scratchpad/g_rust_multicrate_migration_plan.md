@@ -1502,6 +1502,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
   run-session close-with-event path when a native telemetry handle is present,
   keeping legacy `close_with_event` only for adapters and tests without native
   handles.
+- Telemetry close-helper dispatch now runs through one native PyO3 boundary
+  that owns the no-session, native-session, and legacy-adapter branches.
 - Telemetry JSONL serialization now goes through `g-runtime`, so Python
   adapters no longer depend on Python's `json.dumps` for telemetry file writes
   or diagnostic field JSON.
@@ -1620,6 +1622,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Native CLI run lifecycle state now owns the runner-started marker and
   run-failed telemetry duplicate-suppression decision for top-level CLI
   failures.
+- Native CLI run-failed telemetry emission now uses a native PyO3 boundary for
+  the session-present check and telemetry-write failure suppression.
 - Native CLI telemetry close-failure planning now owns whether a close failure
   should be reported and whether it should replace the current process exit
   code.

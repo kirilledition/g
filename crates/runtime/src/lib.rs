@@ -15,7 +15,8 @@ pub mod timing;
 pub mod trusted_validation;
 
 pub use cli_runtime::{
-    CliRunFailureTelemetryPlan, CliRunLifecycleState, CliTelemetryCloseFailurePlan, plan_cli_telemetry_close_failure,
+    CliRunFailedTelemetryEmissionPlan, CliRunFailureTelemetryPlan, CliRunLifecycleState, CliTelemetryCloseFailurePlan,
+    plan_cli_run_failed_telemetry_emission, plan_cli_telemetry_close_failure,
 };
 pub use jax_runtime::{
     JaxDeviceObservation, JaxGpuValidationPlan, JaxRuntimeConfigUpdatePayload, JaxRuntimeConfigValue,

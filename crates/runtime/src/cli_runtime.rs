@@ -11,6 +11,12 @@ pub struct CliRunFailureTelemetryPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CliRunFailedTelemetryEmissionPlan {
+    pub should_emit: bool,
+    pub should_suppress_errors: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CliTelemetryCloseFailurePlan {
     pub should_report_failure: bool,
     pub exit_code: i32,
@@ -41,6 +47,17 @@ pub const fn plan_cli_telemetry_close_failure(
     CliTelemetryCloseFailurePlan {
         should_report_failure,
         exit_code: if should_report_failure { runtime_failure_exit_code } else { current_exit_code },
+    }
+}
+
+#[must_use]
+pub const fn plan_cli_run_failed_telemetry_emission(
+    should_log_run_failed_to_telemetry: bool,
+    has_telemetry_session: bool,
+) -> CliRunFailedTelemetryEmissionPlan {
+    CliRunFailedTelemetryEmissionPlan {
+        should_emit: should_log_run_failed_to_telemetry && has_telemetry_session,
+        should_suppress_errors: true,
     }
 }
 
@@ -79,6 +96,26 @@ mod tests {
         assert_eq!(
             plan_cli_telemetry_close_failure(130, 1),
             CliTelemetryCloseFailurePlan { should_report_failure: false, exit_code: 130 },
+        );
+    }
+
+    #[test]
+    fn emits_run_failed_telemetry_when_requested_and_session_exists() {
+        assert_eq!(
+            plan_cli_run_failed_telemetry_emission(true, true),
+            CliRunFailedTelemetryEmissionPlan { should_emit: true, should_suppress_errors: true },
+        );
+    }
+
+    #[test]
+    fn skips_run_failed_telemetry_when_not_requested_or_session_missing() {
+        assert_eq!(
+            plan_cli_run_failed_telemetry_emission(false, true),
+            CliRunFailedTelemetryEmissionPlan { should_emit: false, should_suppress_errors: true },
+        );
+        assert_eq!(
+            plan_cli_run_failed_telemetry_emission(true, false),
+            CliRunFailedTelemetryEmissionPlan { should_emit: false, should_suppress_errors: true },
         );
     }
 }

@@ -1222,6 +1222,54 @@ def test_native_cli_run_lifecycle_state_plans_failed_telemetry() -> None:
     assert started_plan.should_log_run_failed_to_telemetry is False
 
 
+def test_native_cli_run_failed_telemetry_emission() -> None:
+    class RecordingTelemetrySession:
+        def __init__(self) -> None:
+            self.events: list[object] = []
+
+        def log_run_failed(self, event: object) -> None:
+            self.events.append(event)
+
+    class FailingTelemetrySession:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def log_run_failed(self, event: object) -> None:
+            del event
+            self.call_count += 1
+            raise RuntimeError("telemetry write failed")
+
+    failed_event = object()
+    recording_session = RecordingTelemetrySession()
+    failing_session = FailingTelemetrySession()
+
+    _core.emit_cli_run_failed_telemetry_event(
+        None,
+        failed_event,
+        should_log_run_failed_to_telemetry=True,
+    )
+    _core.emit_cli_run_failed_telemetry_event(
+        recording_session,
+        failed_event,
+        should_log_run_failed_to_telemetry=False,
+    )
+    assert recording_session.events == []
+
+    _core.emit_cli_run_failed_telemetry_event(
+        recording_session,
+        failed_event,
+        should_log_run_failed_to_telemetry=True,
+    )
+    assert recording_session.events == [failed_event]
+
+    _core.emit_cli_run_failed_telemetry_event(
+        failing_session,
+        failed_event,
+        should_log_run_failed_to_telemetry=True,
+    )
+    assert failing_session.call_count == 1
+
+
 def test_native_cli_telemetry_close_failure_plan() -> None:
     successful_run_plan = _core.plan_cli_telemetry_close_failure(
         current_exit_code=0,

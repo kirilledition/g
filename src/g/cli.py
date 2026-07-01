@@ -131,23 +131,14 @@ def print_and_log_failed_event(
 ) -> int:
     """Print and log a concise runtime failure."""
     failed_event = run_events_module.build_run_failed_event(error)
-    if log_run_failed_to_telemetry:
-        log_run_failed_telemetry_event(failed_event, telemetry_session=telemetry_session)
+    g._core.emit_cli_run_failed_telemetry_event(
+        telemetry_session,
+        failed_event,
+        log_run_failed_to_telemetry,
+    )
     print_failed_lines(run_events_module, failed_event)
     log_failed_lines(run_events_module, failed_event)
     return RUNTIME_FAILURE_EXIT_CODE
-
-
-def log_run_failed_telemetry_event(
-    failed_event: run_events.RunFailedEvent,
-    *,
-    telemetry_session: typing.Any,
-) -> None:
-    """Write a run failure event to telemetry when available."""
-    if telemetry_session is None:
-        return
-    with contextlib.suppress(Exception):
-        telemetry_session.log_run_failed(failed_event)
 
 
 def print_failed_lines(run_events_module: typing.Any, failed_event: run_events.RunFailedEvent) -> None:
