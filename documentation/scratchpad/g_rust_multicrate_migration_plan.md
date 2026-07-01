@@ -1702,7 +1702,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
   must route telemetry through typed native PyO3 dispatch helpers.
 - The real Python `TelemetrySession` no longer exposes the old fallback
   methods for run-failed, JAX diagnostic, callback progress, binary summary,
-  throttled progress, or close-with-event dispatch; focused tests now exercise
+  throttled progress, or close-with-event dispatch, and no longer exposes the
+  typed `log_*` compatibility dispatch wrappers; focused tests now exercise
   the native telemetry session handle directly, and the Python architecture
   checker rejects reintroduced production definitions of those methods.
 - Native CLI stdout/stderr and rendered completion/interruption/failure line

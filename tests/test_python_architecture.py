@@ -755,6 +755,14 @@ def test_telemetry_definition_policy_rejects_fallback_methods(tmp_path: Path) ->
                 "        pass",
                 "    def close_with_event(self):",
                 "        pass",
+                "    def log_event(self):",
+                "        pass",
+                "    def log_run_started(self):",
+                "        pass",
+                "    def build_event_payload(self):",
+                "        pass",
+                "    def native_session_policy(self):",
+                "        pass",
                 "async def log_progress(processed_chunk_count):",
                 "    pass",
             )
@@ -771,7 +779,11 @@ def test_telemetry_definition_policy_rejects_fallback_methods(tmp_path: Path) ->
     assert observed_violations == [
         (Path("g/engine/telemetry.py"), 2, "log_run_failed"),
         (Path("g/engine/telemetry.py"), 4, "close_with_event"),
-        (Path("g/engine/telemetry.py"), 6, "log_progress"),
+        (Path("g/engine/telemetry.py"), 6, "log_event"),
+        (Path("g/engine/telemetry.py"), 8, "log_run_started"),
+        (Path("g/engine/telemetry.py"), 10, "build_event_payload"),
+        (Path("g/engine/telemetry.py"), 12, "native_session_policy"),
+        (Path("g/engine/telemetry.py"), 14, "log_progress"),
     ]
 
 

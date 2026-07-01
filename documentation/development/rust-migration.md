@@ -88,10 +88,10 @@ It also rejects direct production event emission through `TelemetrySession`
 compatibility wrappers or `native_session_handle`/`native_telemetry_session`
 handles outside the telemetry adapter; production callers must use typed native
 PyO3 dispatch helpers.
-The real Python `TelemetrySession` no longer exposes those old fallback methods;
-focused telemetry tests call the native telemetry session handle directly, and
-the Python architecture checker rejects reintroduced production definitions of
-those methods.
+The real Python `TelemetrySession` no longer exposes those old fallback methods
+or the typed `log_*` compatibility dispatch wrappers; focused telemetry tests
+call the native telemetry session handle directly, and the Python architecture
+checker rejects reintroduced production definitions of those methods.
 Production JAX setup now validates GPU availability through the native
 setup-session default-probe method; the old Python explicit-path validation
 wrapper has been removed.

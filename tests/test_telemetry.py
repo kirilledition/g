@@ -17,6 +17,28 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
 
+def emit_current_telemetry_event(
+    telemetry_session: telemetry.TelemetrySession,
+    event: str,
+    *,
+    level: str = "info",
+    **fields: object,
+) -> None:
+    """Emit one current-run event through the native telemetry handle."""
+    telemetry_session.native_session_handle.emit_current_event(event, level, fields)
+
+
+def build_current_telemetry_event_payload(
+    telemetry_session: telemetry.TelemetrySession,
+    *,
+    event: str,
+    level: str,
+    **fields: object,
+) -> dict[str, object]:
+    """Build one current-run event payload through the native telemetry handle."""
+    return dict(telemetry_session.native_session_handle.build_current_event_payload(event, level, fields))
+
+
 def test_resolve_telemetry_paths_defaults_to_output_run_logs() -> None:
     regenie_config = config.RegenieConfig.from_options(
         {
@@ -231,7 +253,8 @@ def test_telemetry_session_writes_schema_events_and_throttled_progress(tmp_path:
     )
 
     artifact_path = tmp_path / "artifact.txt"
-    telemetry_session.log_event(
+    emit_current_telemetry_event(
+        telemetry_session,
         "run_started",
         level="info",
         association_mode="regenie2_linear",
@@ -279,7 +302,7 @@ def test_telemetry_session_generates_native_run_id(tmp_path: Path) -> None:
     assert telemetry_session.run_id == telemetry_session.run_id.lower()
     int(telemetry_session.run_id, 16)
 
-    telemetry_session.log_event("run_started", level="info")
+    emit_current_telemetry_event(telemetry_session, "run_started", level="info")
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
@@ -305,7 +328,8 @@ def test_telemetry_session_builds_current_event_payload_natively(tmp_path: Path)
         run_id="run-1",
     )
 
-    event_payload = telemetry_session.build_event_payload(
+    event_payload = build_current_telemetry_event_payload(
+        telemetry_session,
         event="payload_built",
         level="debug",
         kept_field="value",
@@ -342,7 +366,8 @@ def test_telemetry_session_serializes_payloads_without_python_json_dumps(tmp_pat
     artifact_path = tmp_path / "artifact.txt"
 
     with unittest.mock.patch("json.dumps", side_effect=AssertionError("Python JSON must not serialize telemetry")):
-        telemetry_session.log_event(
+        emit_current_telemetry_event(
+            telemetry_session,
             "native_serialization",
             level="info",
             artifact_path=artifact_path,
@@ -452,7 +477,7 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     assert isinstance(off_session.native_session_handle, _core.NativeTelemetryRunSession)
     assert not off_session.enabled
     assert not off_session.profile_enabled
-    assert off_session.native_session_policy.event_cap is None
+    assert off_session.native_session_handle.event_cap is None
     assert off_session.native_telemetry_session is None
     assert isinstance(profile_session.native_telemetry_session, _core.NativeTelemetryRunSession)
     assert profile_session.enabled
@@ -530,22 +555,22 @@ def test_native_telemetry_run_session_owns_run_lifecycle_event_emission(tmp_path
     )
     failed_event = run_events.RunFailedEvent(error_type="RuntimeError", error_message="boom")
 
-    telemetry_session.log_run_started(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        trait_type=types.RegenieTraitType.QUANTITATIVE,
-        phenotype_count=1,
-        output_run_root=tmp_path / "output.g",
+    telemetry_session.native_session_handle.emit_run_started_event(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        types.RegenieTraitType.QUANTITATIVE.value,
+        1,
+        str(tmp_path / "output.g"),
     )
-    telemetry_session.log_execution_plan_prepared(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        trait_type=types.RegenieTraitType.QUANTITATIVE,
-        phenotype_count=1,
-        chunk_size=128,
-        variant_limit=None,
-        device=types.Device.GPU,
+    telemetry_session.native_session_handle.emit_execution_plan_prepared_event(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        types.RegenieTraitType.QUANTITATIVE.value,
+        1,
+        128,
+        None,
+        types.Device.GPU.value,
     )
-    telemetry_session.log_run_completed(completed_event)
-    telemetry_session.log_run_interrupted(interrupted_event)
+    telemetry_session.native_session_handle.emit_run_completed_event(completed_event)
+    telemetry_session.native_session_handle.emit_run_interrupted_event(interrupted_event)
     telemetry_session.native_session_handle.emit_run_failed_event(failed_event)
     telemetry_session.close()
 
@@ -589,21 +614,21 @@ def test_native_telemetry_run_session_owns_writer_lifecycle_event_emission(tmp_p
         run_id="run-1",
     )
 
-    telemetry_session.log_effective_config_written(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        phenotype="height",
-        effective_config=tmp_path / "height" / "effective_config.toml",
-        output_run_directory=tmp_path / "height",
+    telemetry_session.native_session_handle.emit_effective_config_written_event(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        "height",
+        str(tmp_path / "height" / "effective_config.toml"),
+        str(tmp_path / "height"),
     )
-    telemetry_session.log_writer_finished(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        phenotype="height",
-        final_output_path=tmp_path / "height.parquet",
+    telemetry_session.native_session_handle.emit_phenotype_writer_finished_event(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        "height",
+        str(tmp_path / "height.parquet"),
     )
-    telemetry_session.log_multi_writer_finished(
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-        phenotype_count=2,
-        final_output_paths=(tmp_path / "case_status.parquet", None),
+    telemetry_session.native_session_handle.emit_multi_phenotype_writer_finished_event(
+        types.AssociationMode.REGENIE2_BINARY.value,
+        2,
+        (str(tmp_path / "case_status.parquet"), None),
     )
     telemetry_session.close()
 
@@ -644,17 +669,17 @@ def test_native_telemetry_run_session_owns_preflight_event_emission(tmp_path: Pa
         run_id="run-1",
     )
 
-    telemetry_session.log_single_trait_preflight_completed(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        phenotype="height",
-        sample_count=2504,
-        covariate_count=3,
-        chromosome_count=22,
+    telemetry_session.native_session_handle.emit_single_trait_preflight_completed_event(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        "height",
+        2504,
+        3,
+        22,
     )
-    telemetry_session.log_multi_phenotype_preflight_completed(
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-        phenotype_count=4,
-        sample_count=2504,
+    telemetry_session.native_session_handle.emit_multi_phenotype_preflight_completed_event(
+        types.AssociationMode.REGENIE2_BINARY.value,
+        4,
+        2504,
     )
     telemetry_session.close()
 
@@ -693,31 +718,31 @@ def test_native_telemetry_run_session_owns_pipeline_setup_event_emission(tmp_pat
         run_id="run-1",
     )
 
-    telemetry_session.log_sample_alignment_completed(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        phenotype="height",
-        phenotype_count=None,
-        sample_count=2504,
-        covariate_count=3,
-        phenotype_group_count=None,
+    telemetry_session.native_session_handle.emit_sample_alignment_completed_event(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        "height",
+        None,
+        2504,
+        3,
+        None,
     )
-    telemetry_session.log_sample_alignment_completed(
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-        phenotype=None,
-        phenotype_count=4,
-        sample_count=None,
-        covariate_count=None,
-        phenotype_group_count=2,
+    telemetry_session.native_session_handle.emit_sample_alignment_completed_event(
+        types.AssociationMode.REGENIE2_BINARY.value,
+        None,
+        4,
+        None,
+        None,
+        2,
     )
-    telemetry_session.log_prediction_source_loaded(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        phenotype="height",
-        phenotype_count=None,
+    telemetry_session.native_session_handle.emit_prediction_source_loaded_event(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        "height",
+        None,
     )
-    telemetry_session.log_prediction_source_loaded(
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-        phenotype=None,
-        phenotype_count=4,
+    telemetry_session.native_session_handle.emit_prediction_source_loaded_event(
+        types.AssociationMode.REGENIE2_BINARY.value,
+        None,
+        4,
     )
     telemetry_session.close()
 
@@ -762,19 +787,19 @@ def test_native_telemetry_run_session_owns_multi_phenotype_sample_summary(tmp_pa
         run_id="run-1",
     )
 
-    telemetry_session.log_multi_phenotype_sample_summary(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
-        sample_counts=(3, 2),
-        sample_set_fingerprints=("sample-a", "sample-b"),
-        phenotype_group_count=2,
+    telemetry_session.native_session_handle.emit_multi_phenotype_sample_summary_event(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        types.MultiPhenotypeSampleMode.PER_PHENOTYPE.value,
+        (3, 2),
+        ("sample-a", "sample-b"),
+        2,
     )
-    telemetry_session.log_multi_phenotype_sample_summary(
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
-        sample_counts=(2504, 2504),
-        sample_set_fingerprints=("shared", "shared"),
-        phenotype_group_count=1,
+    telemetry_session.native_session_handle.emit_multi_phenotype_sample_summary_event(
+        types.AssociationMode.REGENIE2_BINARY.value,
+        types.MultiPhenotypeSampleMode.COMPLETE_CASE.value,
+        (2504, 2504),
+        ("shared", "shared"),
+        1,
     )
     telemetry_session.close()
 
@@ -817,17 +842,17 @@ def test_native_telemetry_run_session_owns_gpu_genotype_format_resolution(tmp_pa
         run_id="run-1",
     )
 
-    telemetry_session.log_gpu_genotype_format_resolved(
-        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
-        resolved_gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
-        resolution_reason="trusted_validation_passed",
-        fallback_error=None,
+    telemetry_session.native_session_handle.emit_gpu_genotype_format_resolved_event(
+        types.GpuGenotypeFormat.AUTO.value,
+        types.GpuGenotypeFormat.PACKED8.value,
+        "trusted_validation_passed",
+        None,
     )
-    telemetry_session.log_gpu_genotype_format_resolved(
-        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
-        resolved_gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
-        resolution_reason="trusted_validation_failed",
-        fallback_error="packed8 incompatible",
+    telemetry_session.native_session_handle.emit_gpu_genotype_format_resolved_event(
+        types.GpuGenotypeFormat.AUTO.value,
+        types.GpuGenotypeFormat.DOSAGE.value,
+        "trusted_validation_failed",
+        "packed8 incompatible",
     )
     telemetry_session.close()
 
@@ -866,21 +891,21 @@ def test_native_telemetry_run_session_owns_engine_opening_events(tmp_path: Path)
         run_id="run-1",
     )
 
-    telemetry_session.log_association_backend_selected(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        association_backend_kind=types.AssociationBackendKind.JAX_PACKED8,
-        device=types.Device.GPU,
-        genotype_format=types.GpuGenotypeFormat.PACKED8,
-        phenotype="height",
-        phenotype_count=None,
+    telemetry_session.native_session_handle.emit_association_backend_selected_event(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        types.AssociationBackendKind.JAX_PACKED8.value,
+        types.Device.GPU.value,
+        types.GpuGenotypeFormat.PACKED8.value,
+        "height",
+        None,
     )
-    telemetry_session.log_bgen_engine_opened(
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-        association_backend_kind=types.AssociationBackendKind.JAX_DOSAGE,
-        sample_count=2504,
-        variant_count=12345,
-        phenotype=None,
-        phenotype_count=3,
+    telemetry_session.native_session_handle.emit_bgen_engine_opened_event(
+        types.AssociationMode.REGENIE2_BINARY.value,
+        types.AssociationBackendKind.JAX_DOSAGE.value,
+        2504,
+        12345,
+        None,
+        3,
     )
     telemetry_session.close()
 
@@ -1152,7 +1177,7 @@ def test_profile_telemetry_flushes_buffered_events_on_close(tmp_path: Path) -> N
     )
 
     for chunk_index in range(20):
-        telemetry_session.log_event("chunk_profile", level="info", chunk_index=chunk_index)
+        emit_current_telemetry_event(telemetry_session, "chunk_profile", level="info", chunk_index=chunk_index)
     assert telemetry_session.close_metadata is None
     telemetry.close_telemetry_session(telemetry_session)
     assert telemetry_session.close_metadata is not None
@@ -1188,8 +1213,8 @@ def test_telemetry_close_returns_writer_counters(tmp_path: Path) -> None:
         run_id="run-1",
     )
 
-    telemetry_session.log_event("first_profile_event", level="info")
-    telemetry_session.log_event("second_profile_event", level="info")
+    emit_current_telemetry_event(telemetry_session, "first_profile_event", level="info")
+    emit_current_telemetry_event(telemetry_session, "second_profile_event", level="info")
     assert telemetry_session.close_metadata is None
     close_metadata = telemetry_session.close()
 
@@ -1238,10 +1263,10 @@ def test_trace_telemetry_event_cap_fails_without_lossy_mode(tmp_path: Path) -> N
         run_id="run-1",
     )
 
-    telemetry_session.log_event("first_trace_event", level="info")
-    telemetry_session.log_event("second_trace_event", level="info")
+    emit_current_telemetry_event(telemetry_session, "first_trace_event", level="info")
+    emit_current_telemetry_event(telemetry_session, "second_trace_event", level="info")
     with pytest.raises(RuntimeError, match="Trace telemetry event cap exceeded at 2 events"):
-        telemetry_session.log_event("third_trace_event", level="info")
+        emit_current_telemetry_event(telemetry_session, "third_trace_event", level="info")
     with pytest.raises(RuntimeError, match="Trace telemetry event cap exceeded at 2 events"):
         telemetry_session.close()
 
@@ -1272,7 +1297,7 @@ def test_trace_telemetry_event_cap_drops_with_lossy_mode(tmp_path: Path) -> None
     )
 
     for event_index in range(5):
-        telemetry_session.log_event("trace_event", level="info", event_index=event_index)
+        emit_current_telemetry_event(telemetry_session, "trace_event", level="info", event_index=event_index)
     close_metadata = telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
@@ -1310,7 +1335,7 @@ def test_non_trace_telemetry_ignores_trace_event_cap(tmp_path: Path, telemetry_m
     )
 
     for event_index in range(3):
-        telemetry_session.log_event("non_trace_event", level="info", event_index=event_index)
+        emit_current_telemetry_event(telemetry_session, "non_trace_event", level="info", event_index=event_index)
     telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
