@@ -199,6 +199,17 @@ PYTHON_CALL_POLICIES = (
         message="production Python must route native output lifecycle calls through the output adapter helper",
     ),
     PythonCallPolicy(
+        name="native_output_writer_lifecycle_adapter_isolation",
+        source_directory=Path(),
+        forbidden_calls=(
+            "_core.finish_output_writer_session",
+            "_core.finish_output_writer_session_interrupted",
+            "_core.abort_output_writer_session",
+        ),
+        allowed_paths=(Path("engine/native_dispatch/writers.py"),),
+        message="production Python must route native writer lifecycle calls through the native-dispatch adapter",
+    ),
+    PythonCallPolicy(
         name="callback_worker_queue_isolation",
         source_directory=Path("engine/callbacks"),
         forbidden_calls=(

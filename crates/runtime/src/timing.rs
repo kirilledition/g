@@ -315,6 +315,25 @@ pub fn build_final_timing_outputs_write_started_diagnostic_payload(
     }
 }
 
+/// Serialize final timing output diagnostic fields for native diagnostic emission.
+///
+/// This keeps the event payload's JSON field shape in `g-runtime`; PyO3 callers
+/// only pass the serialized fields through to the logging boundary.
+///
+/// # Errors
+///
+/// Returns a serialization error if the diagnostic field payload cannot be
+/// encoded as JSON.
+pub fn serialize_final_timing_outputs_write_started_diagnostic_fields_json(
+    payload: &FinalTimingOutputsWriteStartedDiagnosticPayload,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&serde_json::json!({
+        "stage_timing_path": payload.stage_timing_path.as_deref(),
+        "profile_summary_path": payload.profile_summary_path.as_deref(),
+        "run_id": payload.run_id.as_deref(),
+    }))
+}
+
 #[must_use]
 pub fn resolve_final_timing_output_context(
     diagnostics_stage_timing_path: Option<&str>,
@@ -1168,6 +1187,28 @@ mod tests {
                 profile_summary_path: Some("profile.summary.json".to_string()),
                 run_id: Some("run-1".to_string()),
             },
+        );
+    }
+
+    #[test]
+    fn serializes_final_timing_outputs_write_started_diagnostic_fields_json() {
+        let payload = build_final_timing_outputs_write_started_diagnostic_payload(
+            Some("timings.json"),
+            Some("profile.summary.json"),
+            Some("run-1"),
+        );
+        let fields_text = serialize_final_timing_outputs_write_started_diagnostic_fields_json(&payload)
+            .expect("diagnostic fields should serialize");
+        let fields: serde_json::Value =
+            serde_json::from_str(&fields_text).expect("diagnostic fields should be valid JSON");
+
+        assert_eq!(
+            fields,
+            serde_json::json!({
+                "stage_timing_path": "timings.json",
+                "profile_summary_path": "profile.summary.json",
+                "run_id": "run-1",
+            }),
         );
     }
 

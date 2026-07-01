@@ -1435,7 +1435,9 @@ Remove Python as the chunk-level scheduler.
 - Real native output writer finish, interrupted flush, and abort lifecycle calls
   now route through root PyO3 helper functions before entering `g-output`. The
   native-dispatch writer adapter keeps the direct method fallback only for fake
-  and transitional test writer sessions.
+  and transitional test writer sessions, and the Python architecture checker
+  rejects direct calls to those native writer lifecycle helpers outside that
+  adapter.
 
 ### Phase 10 punch list
 
@@ -1580,7 +1582,8 @@ Python/JAX should emit typed diagnostic events through a native handle.
   without replaying individual record operations.
 - Final timing output writes now return their native result payload directly
   from `g-runtime`, and their write-started diagnostics get the event name,
-  level, message, and fields from the same native timing boundary.
+  level, message, fields, and diagnostic field JSON serialization from the
+  same native timing boundary.
 - Top-level runner run started/interrupted/failed/completed diagnostics now get
   their event names, levels, messages, and fields from native run-event
   payload builders.

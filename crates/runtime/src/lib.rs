@@ -222,8 +222,8 @@ pub use timing::{
     TimingFileWritePlan, TransferMetadataAccumulator, TransferMetadataError, TransferMetadataKey,
     TransferMetadataObservation, TransferMetadataSnapshot, build_final_timing_outputs_write_started_diagnostic_payload,
     build_transfer_metadata_observation, plan_stage_timing_recorder, plan_timing_file_write,
-    resolve_final_timing_output_context, should_collect_exact_stage_timings, write_profile_summary_payload,
-    write_stage_timing_snapshot_payload,
+    resolve_final_timing_output_context, serialize_final_timing_outputs_write_started_diagnostic_fields_json,
+    should_collect_exact_stage_timings, write_profile_summary_payload, write_stage_timing_snapshot_payload,
 };
 pub use trusted_validation::{
     TrustedBgenValidationCachePayload, TrustedBgenValidationFingerprintInput, build_trusted_bgen_validation_cache_path,

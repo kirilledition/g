@@ -132,6 +132,65 @@ def test_output_lifecycle_policy_rejects_direct_native_output_calls(tmp_path: Pa
     ]
 
 
+def test_output_writer_lifecycle_policy_rejects_direct_native_writer_cleanup_calls(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    writer_adapter_directory = package_root / "engine" / "native_dispatch"
+    runner_directory.mkdir(parents=True)
+    writer_adapter_directory.mkdir(parents=True)
+    (runner_directory / "cleanup.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "import g",
+                "def cleanup(session):",
+                "    _core.finish_output_writer_session(session)",
+                "    _core.finish_output_writer_session_interrupted(session, 'SIGINT')",
+                "    g._core.abort_output_writer_session(session)",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (writer_adapter_directory / "writers.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def cleanup(session):",
+                "    _core.finish_output_writer_session(session)",
+                "    _core.finish_output_writer_session_interrupted(session, 'SIGINT')",
+                "    _core.abort_output_writer_session(session)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/cleanup.py"),
+            4,
+            "_core.finish_output_writer_session",
+            "_core.finish_output_writer_session",
+        ),
+        (
+            Path("g/runner/cleanup.py"),
+            5,
+            "_core.finish_output_writer_session_interrupted",
+            "_core.finish_output_writer_session_interrupted",
+        ),
+        (
+            Path("g/runner/cleanup.py"),
+            6,
+            "g._core.abort_output_writer_session",
+            "_core.abort_output_writer_session",
+        ),
+    ]
+
+
 def test_callback_worker_queue_policy_rejects_python_queue_and_thread_primitives(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     callback_directory = package_root / "engine" / "callbacks"

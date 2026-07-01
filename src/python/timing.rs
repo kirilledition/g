@@ -7,7 +7,6 @@ use std::sync::{Mutex, MutexGuard};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple};
-use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use g_runtime::timing as native_timing;
 
@@ -354,12 +353,9 @@ pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
         profile_summary_path.as_deref(),
         run_id.as_deref(),
     );
-    logging::emit_diagnostic_event(
-        payload.level,
-        payload.event_name,
-        payload.message,
-        Some(final_timing_outputs_write_started_diagnostic_fields_json(&payload)?),
-    )
+    let fields_json = native_timing::serialize_final_timing_outputs_write_started_diagnostic_fields_json(&payload)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    logging::emit_diagnostic_event(payload.level, payload.event_name, payload.message, Some(fields_json))
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -484,23 +480,6 @@ fn final_timing_outputs_write_started_diagnostic_payload_to_dict<'py>(
     diagnostic_payload.set_item("message", payload.message)?;
     diagnostic_payload.set_item("fields", fields)?;
     Ok(diagnostic_payload)
-}
-
-fn final_timing_outputs_write_started_diagnostic_fields_json(
-    payload: &native_timing::FinalTimingOutputsWriteStartedDiagnosticPayload,
-) -> PyResult<String> {
-    let mut fields = JsonMap::new();
-    fields.insert("stage_timing_path".to_string(), optional_string_to_json_value(payload.stage_timing_path.as_deref()));
-    fields.insert(
-        "profile_summary_path".to_string(),
-        optional_string_to_json_value(payload.profile_summary_path.as_deref()),
-    );
-    fields.insert("run_id".to_string(), optional_string_to_json_value(payload.run_id.as_deref()));
-    serde_json::to_string(&JsonValue::Object(fields)).map_err(|error| PyValueError::new_err(error.to_string()))
-}
-
-fn optional_string_to_json_value(value: Option<&str>) -> JsonValue {
-    value.map_or(JsonValue::Null, |inner| JsonValue::String(inner.to_owned()))
 }
 
 fn final_timing_outputs_write_result_payload_to_dict<'py>(
