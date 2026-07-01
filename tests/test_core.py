@@ -1222,6 +1222,23 @@ def test_native_cli_run_lifecycle_state_plans_failed_telemetry() -> None:
     assert started_plan.should_log_run_failed_to_telemetry is False
 
 
+def test_native_cli_telemetry_close_failure_plan() -> None:
+    successful_run_plan = _core.plan_cli_telemetry_close_failure(
+        current_exit_code=0,
+        runtime_failure_exit_code=1,
+    )
+    interrupted_run_plan = _core.plan_cli_telemetry_close_failure(
+        current_exit_code=130,
+        runtime_failure_exit_code=1,
+    )
+
+    assert isinstance(successful_run_plan, _core.NativeCliTelemetryCloseFailurePlan)
+    assert successful_run_plan.should_report_failure is True
+    assert successful_run_plan.exit_code == 1
+    assert interrupted_run_plan.should_report_failure is False
+    assert interrupted_run_plan.exit_code == 130
+
+
 def test_native_runtime_state_returns_snapshot_payload() -> None:
     runtime_state = _core.NativeRuntimeState()
     logging_policy_payload = _core.build_logging_runtime_policy_payload(

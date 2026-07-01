@@ -1620,6 +1620,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Native CLI run lifecycle state now owns the runner-started marker and
   run-failed telemetry duplicate-suppression decision for top-level CLI
   failures.
+- Native CLI telemetry close-failure planning now owns whether a close failure
+  should be reported and whether it should replace the current process exit
+  code.
 - Trusted BGEN validation cache metadata, deterministic JSON serialization, and
   atomic cache writes now live in `g-runtime`; Python validates the engine and
   calls one native cache-write boundary instead of creating directories,

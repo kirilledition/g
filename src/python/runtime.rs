@@ -4,8 +4,9 @@ use pyo3::types::PyModule;
 
 use g_genotype::bgen::set_bgen_decode_tile_variant_count;
 use g_runtime::{
-    CliRunFailureTelemetryPlan, CliRunLifecycleState, RayonRuntimeError, configure_global_rayon_thread_pool,
-    format_global_rayon_thread_pool_configuration_error,
+    CliRunFailureTelemetryPlan, CliRunLifecycleState, CliTelemetryCloseFailurePlan, RayonRuntimeError,
+    configure_global_rayon_thread_pool, format_global_rayon_thread_pool_configuration_error,
+    plan_cli_telemetry_close_failure as native_plan_cli_telemetry_close_failure,
 };
 
 use super::errors;
@@ -20,11 +21,29 @@ pub(super) struct NativeCliRunFailureTelemetryPlan {
     plan: CliRunFailureTelemetryPlan,
 }
 
+#[pyclass]
+pub(super) struct NativeCliTelemetryCloseFailurePlan {
+    plan: CliTelemetryCloseFailurePlan,
+}
+
 #[pymethods]
 impl NativeCliRunFailureTelemetryPlan {
     #[getter]
     fn should_log_run_failed_to_telemetry(&self) -> bool {
         self.plan.should_log_run_failed_to_telemetry
+    }
+}
+
+#[pymethods]
+impl NativeCliTelemetryCloseFailurePlan {
+    #[getter]
+    fn should_report_failure(&self) -> bool {
+        self.plan.should_report_failure
+    }
+
+    #[getter]
+    fn exit_code(&self) -> i32 {
+        self.plan.exit_code
     }
 }
 
@@ -50,6 +69,16 @@ impl NativeCliRunLifecycleState {
 }
 
 #[pyfunction]
+fn plan_cli_telemetry_close_failure(
+    current_exit_code: i32,
+    runtime_failure_exit_code: i32,
+) -> NativeCliTelemetryCloseFailurePlan {
+    NativeCliTelemetryCloseFailurePlan {
+        plan: native_plan_cli_telemetry_close_failure(current_exit_code, runtime_failure_exit_code),
+    }
+}
+
+#[pyfunction]
 #[allow(clippy::missing_errors_doc)]
 pub(super) fn configure_bgen_decode_tile_variant_count(tile_variant_count: usize) -> PyResult<()> {
     set_bgen_decode_tile_variant_count(tile_variant_count)
@@ -71,6 +100,8 @@ pub(super) fn format_rayon_thread_pool_configuration_error_value(thread_count: i
 pub(super) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCliRunFailureTelemetryPlan>()?;
     module.add_class::<NativeCliRunLifecycleState>()?;
+    module.add_class::<NativeCliTelemetryCloseFailurePlan>()?;
+    module.add_function(wrap_pyfunction!(plan_cli_telemetry_close_failure, module)?)?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
     module.add_function(wrap_pyfunction!(format_rayon_thread_pool_configuration_error_value, module)?)?;

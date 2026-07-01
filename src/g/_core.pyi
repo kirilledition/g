@@ -2435,12 +2435,21 @@ class NativeTimingFileWritePlan:
 class NativeCliRunFailureTelemetryPlan:
     should_log_run_failed_to_telemetry: bool
 
+class NativeCliTelemetryCloseFailurePlan:
+    should_report_failure: bool
+    exit_code: int
+
 class NativeCliRunLifecycleState:
     def __init__(self) -> None: ...
     @property
     def runner_started(self) -> bool: ...
     def mark_runner_started(self) -> None: ...
     def plan_run_failed_telemetry(self) -> NativeCliRunFailureTelemetryPlan: ...
+
+def plan_cli_telemetry_close_failure(
+    current_exit_code: int,
+    runtime_failure_exit_code: int,
+) -> NativeCliTelemetryCloseFailurePlan: ...
 
 class NativeRuntimeCompatibilityToken:
     pass

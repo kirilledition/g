@@ -71,14 +71,15 @@ def run_args(arguments: typing.Sequence[str]) -> int:
             try:
                 telemetry.close_telemetry_session(run_telemetry_session)
             except Exception as error:  # noqa: BLE001
-                if exit_code == 0:
+                close_failure_plan = g._core.plan_cli_telemetry_close_failure(exit_code, RUNTIME_FAILURE_EXIT_CODE)
+                if close_failure_plan.should_report_failure:
                     print_and_log_failed_event(
                         run_events,
                         error,
                         telemetry_session=None,
                         log_run_failed_to_telemetry=False,
                     )
-                    exit_code = RUNTIME_FAILURE_EXIT_CODE
+                exit_code = close_failure_plan.exit_code
     return exit_code
 
 

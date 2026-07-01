@@ -393,3 +393,41 @@ def test_run_args_reports_telemetry_close_failure(
     failed_lines = [call.kwargs["line"] for call in failed_record_mock.call_args_list]
     assert "Success. Chunked run saved to output.run" in completed_lines
     assert "Error: telemetry close failed" in failed_lines
+
+
+def test_run_args_preserves_runner_failure_when_telemetry_close_fails(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ensure close failures do not replace an existing runner failure."""
+    from g.engine import shutdown
+    from g.engine import telemetry as telemetry_module
+    from g.runner import execution as runner_execution
+    from g.runner import runtime as runner_runtime
+
+    run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
+    telemetry_session = FakeTelemetrySession(close_error=RuntimeError("telemetry close failed"))
+    outcome = python_types.SimpleNamespace(stdout="", stderr="", exit_code=0, config=run_config)
+    runtime_policy = python_types.SimpleNamespace()
+    with (
+        unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
+        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_runtime, "build_runtime_policy", return_value=runtime_policy),
+        unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy"),
+        unittest.mock.patch.object(runner_runtime, "initialize_logging"),
+        unittest.mock.patch.object(
+            shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
+        ),
+        unittest.mock.patch.object(runner_execution, "regenie", side_effect=RuntimeError("pipeline failed")),
+        unittest.mock.patch("g.cli.g._core.record_native_cli_failed_line_diagnostic_event") as failed_record_mock,
+    ):
+        exit_code = cli.run_args(["regenie"])
+
+    output = capsys.readouterr()
+    assert exit_code == 1
+    assert output.out == ""
+    assert output.err == "Error: pipeline failed\n"
+    assert telemetry_session.logged_events == ["telemetry_session_closed"]
+    assert telemetry_session.closed is False
+    failed_lines = [call.kwargs["line"] for call in failed_record_mock.call_args_list]
+    assert "Error: pipeline failed" in failed_lines
+    assert "Error: telemetry close failed" not in failed_lines
