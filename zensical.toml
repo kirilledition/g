@@ -60,6 +60,11 @@ extra_javascript = [
   "assets/javascripts/mermaid.js",
 ]
 
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+
 [project.extra]
 generator = false
 

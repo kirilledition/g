@@ -124,10 +124,20 @@
       if (scrollHeightDelta) {
         window.scrollBy(0, scrollHeightDelta);
       }
+      dispatchContentLoaded(insertedPage);
       return;
     }
 
     currentArticle.appendChild(insertedPage);
+    dispatchContentLoaded(insertedPage);
+  }
+
+  function dispatchContentLoaded(insertedPage) {
+    document.dispatchEvent(
+      new CustomEvent("g:content-loaded", {
+        detail: { root: insertedPage },
+      }),
+    );
   }
 
   function buildPageSection(fetchedArticle, pageUrl, pageTitle) {

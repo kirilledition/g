@@ -53,6 +53,7 @@ Serve and build the Zensical site:
 ```bash
 just docs-serve
 just docs-build
+just docs-check
 ```
 
 When changing user-facing CLI behavior, configuration, input/output contracts,

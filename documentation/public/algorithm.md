@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; public algorithm and result-interpretation reference | main branch as of 2026-06-30 BGEN-backed Step 2 modes | Public interface and compute maintainers |
+| Pre-release draft; public algorithm and result-interpretation reference | main branch as of 2026-07-01 BGEN-backed Step 2 modes | Public interface and compute maintainers |
 
 `g` runs REGENIE-compatible Step 2 single-variant association tests on BGEN input. It does **not** run REGENIE Step 1. Step 2 needs the chromosome-specific leave-one-chromosome-out prediction file produced by Step 1; pass that file with `--pred`.[^regenie-step2]
 
@@ -328,7 +328,7 @@ for ordinary floating-point tolerance and explicitly documented dtype choices.
 | `CHISQ` | One-degree-of-freedom chi-squared statistic. |
 | `LOG10P` | Negative base-ten logarithm of the chi-squared tail probability. |
 | `EXTRA` | Null/`NA` for ordinary successful rows; `TEST_FAIL` when the statistic or correction failed. |
-| `CORRECTION_METHOD` | Diagnostic method label: `score`, `firth_approximate`, or `spa`. |
+| `CORRECTION_METHOD` | Diagnostic method label: `score` or `firth_approximate`. SPA labels are reserved for future support. |
 | `CORRECTION_STATUS` | Diagnostic status label: `success` or `failed`. |
 
 `EXTRA` stays sparse for REGENIE-style parsing. Prefer `CORRECTION_METHOD` and `CORRECTION_STATUS` when deciding which statistical path produced a row.
