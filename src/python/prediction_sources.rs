@@ -6,12 +6,9 @@ use numpy::ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyModule};
+use pyo3::types::PyModule;
 
-use g_input::regenie::{
-    MultiPredictionSource as NativeMultiPredictionSource, PredictionSource,
-    resolve_prediction_loco_paths as resolve_native_prediction_loco_paths,
-};
+use g_input::regenie::{MultiPredictionSource as NativeMultiPredictionSource, PredictionSource};
 
 use super::{
     errors::convert_prediction_error,
@@ -194,28 +191,8 @@ impl MultiRegeniePredictionSource {
     }
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn resolve_prediction_loco_paths(
-    py: Python<'_>,
-    prediction_list_path: String,
-    phenotype_names: Vec<String>,
-) -> PyResult<Bound<'_, PyList>> {
-    let resolved_loco_paths = resolve_native_prediction_loco_paths(Path::new(&prediction_list_path), &phenotype_names)
-        .map_err(|error| convert_prediction_error("resolve_prediction_loco_paths", &error))?;
-    let payloads = PyList::empty(py);
-    for resolved_loco_path in resolved_loco_paths {
-        let payload = PyDict::new(py);
-        payload.set_item("phenotype", resolved_loco_path.phenotype_name)?;
-        payload.set_item("path", resolved_loco_path.loco_file_path.display().to_string())?;
-        payloads.append(payload)?;
-    }
-    Ok(payloads)
-}
-
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<RegeniePredictionSource>()?;
     module.add_class::<MultiRegeniePredictionSource>()?;
-    module.add_function(wrap_pyfunction!(resolve_prediction_loco_paths, module)?)?;
     Ok(())
 }

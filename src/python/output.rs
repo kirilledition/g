@@ -1,10 +1,12 @@
 #![allow(clippy::needless_pass_by_value)]
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, PrimitiveArray};
 use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64Type, Int32Type};
+use g_input::regenie::{PredictionError, resolve_prediction_loco_paths as resolve_native_prediction_loco_paths};
 use g_output::{
     CurrentRunManifestHeaderInput, ManifestFileFingerprint as NativeManifestFileFingerprint, NativeChunkHandle,
     NativeChunkStats as NativeOutputChunkStats, OutputFileFormat, OutputResumeMode, OutputWriterError,
@@ -34,6 +36,7 @@ use pyo3::types::{PyDict, PyModule};
 use serde::de::DeserializeOwned;
 
 use super::{
+    errors::convert_prediction_error,
     genotype::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata},
     runtime_state::NativeRuntimeCompatibilityToken,
 };
@@ -73,6 +76,11 @@ struct Regenie2StatisticArrays {
     chi_squared: ArrayRef,
     log10_p_value: ArrayRef,
     extra_code: Option<ArrayRef>,
+}
+
+enum PredictionLocoFingerprintBuildError {
+    Prediction(PredictionError),
+    Output(OutputWriterError),
 }
 
 #[pymethods]
@@ -609,6 +617,17 @@ pub(crate) fn build_prepared_run_plan_json_from_current_header_json(current_head
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_prediction_loco_file_fingerprints_json(
+    py: Python<'_>,
+    prediction_list_path: String,
+    phenotype_names: Vec<String>,
+) -> PyResult<String> {
+    py.detach(|| build_prediction_loco_file_fingerprints_json_detached(&prediction_list_path, &phenotype_names))
+        .map_err(prediction_loco_fingerprint_build_error_to_py)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_file_content_sha256_value(py: Python<'_>, path: String) -> PyResult<String> {
     py.detach(|| build_native_file_content_sha256(Path::new(&path)))
         .map_err(|error| output_writer_error_to_py(error, "build_file_content_sha256_value"))
@@ -762,6 +781,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json_from_current_header_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_prepared_run_plan_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_prepared_run_plan_json_from_current_header_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_prediction_loco_file_fingerprints_json, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
     module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;
@@ -809,6 +829,51 @@ fn manifest_file_fingerprint_to_dict<'py>(
     payload.set_item("content_hash_algorithm", &file_fingerprint.content_hash_algorithm)?;
     payload.set_item("content_sha256", &file_fingerprint.content_sha256)?;
     Ok(payload)
+}
+
+fn build_prediction_loco_file_fingerprints_json_detached(
+    prediction_list_path: &str,
+    phenotype_names: &[String],
+) -> Result<String, PredictionLocoFingerprintBuildError> {
+    let resolved_loco_paths = resolve_native_prediction_loco_paths(Path::new(prediction_list_path), phenotype_names)
+        .map_err(PredictionLocoFingerprintBuildError::Prediction)?;
+    let mut fingerprints_by_canonical_path: HashMap<std::path::PathBuf, NativeManifestFileFingerprint> = HashMap::new();
+    let mut loco_file_payloads = Vec::with_capacity(resolved_loco_paths.len());
+    for resolved_loco_path in resolved_loco_paths {
+        let canonical_loco_path = resolved_loco_path.loco_file_path.canonicalize().map_err(|error| {
+            PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(error.to_string()))
+        })?;
+        let file_fingerprint =
+            if let Some(cached_fingerprint) = fingerprints_by_canonical_path.get(&canonical_loco_path) {
+                cached_fingerprint.clone()
+            } else {
+                let fingerprint = build_native_manifest_file_fingerprint(&canonical_loco_path, true)
+                    .map_err(PredictionLocoFingerprintBuildError::Output)?;
+                fingerprints_by_canonical_path.insert(canonical_loco_path, fingerprint.clone());
+                fingerprint
+            };
+        loco_file_payloads.push(serde_json::json!({
+            "phenotype": resolved_loco_path.phenotype_name,
+            "path": file_fingerprint.path,
+            "size": file_fingerprint.size,
+            "mtime_ns": file_fingerprint.mtime_ns,
+            "content_hash_algorithm": file_fingerprint.content_hash_algorithm,
+            "content_sha256": file_fingerprint.content_sha256,
+        }));
+    }
+    serde_json::to_string(&loco_file_payloads)
+        .map_err(|error| PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(error.to_string())))
+}
+
+fn prediction_loco_fingerprint_build_error_to_py(error: PredictionLocoFingerprintBuildError) -> PyErr {
+    match error {
+        PredictionLocoFingerprintBuildError::Prediction(prediction_error) => {
+            convert_prediction_error("build_prediction_loco_file_fingerprints_json", &prediction_error)
+        }
+        PredictionLocoFingerprintBuildError::Output(output_error) => {
+            output_writer_error_to_py(output_error, "build_prediction_loco_file_fingerprints_json")
+        }
+    }
 }
 
 fn output_writer_error_to_py(error: OutputWriterError, operation: &str) -> PyErr {

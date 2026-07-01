@@ -612,7 +612,7 @@ def test_fast_resume_rejects_loco_file_content_change_with_preserved_metadata(tm
         initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
 
-def test_prediction_loco_fingerprints_hash_shared_file_once(
+def test_prediction_loco_fingerprints_use_native_payload(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -620,19 +620,16 @@ def test_prediction_loco_fingerprints_hash_shared_file_once(
     loco_path.write_text("FID_IID F1_I1\n22 0.1\n", encoding="utf-8")
     prediction_list_path = tmp_path / "predictions.list"
     prediction_list_path.write_text("first shared.loco\nsecond shared.loco\n", encoding="utf-8")
-    observed_loco_paths: list[Path] = []
-    real_build_file_fingerprint = output.build_file_fingerprint
 
-    def record_file_fingerprint(
+    def fail_python_file_fingerprint(
         path: Path | None,
         *,
         include_content_hash: bool,
     ) -> output.ManifestFileFingerprint | None:
-        if path is not None and path.name == "shared.loco":
-            observed_loco_paths.append(path)
-        return real_build_file_fingerprint(path, include_content_hash=include_content_hash)
+        del path, include_content_hash
+        raise AssertionError("LOCO fingerprints should be built by the native output helper")
 
-    monkeypatch.setattr(output, "build_file_fingerprint", record_file_fingerprint)
+    monkeypatch.setattr(output, "build_file_fingerprint", fail_python_file_fingerprint)
 
     loco_files = output.build_prediction_loco_file_fingerprints(
         prediction_list_path=prediction_list_path,
@@ -642,7 +639,6 @@ def test_prediction_loco_fingerprints_hash_shared_file_once(
 
     assert [loco_file.phenotype for loco_file in loco_files] == ["first", "second"]
     assert [loco_file.path for loco_file in loco_files] == [str(loco_path.resolve()), str(loco_path.resolve())]
-    assert observed_loco_paths == [loco_path.resolve()]
 
 
 def test_prediction_loco_fingerprints_are_stable_for_relative_and_absolute_paths(tmp_path: Path) -> None:

@@ -87,6 +87,11 @@ calls cannot reappear in production modules.
 Production JAX setup now validates GPU availability through the native
 setup-session default-probe method; the Python explicit-path validation wrapper
 remains for deterministic tests and compatibility helpers.
+Prediction-input LOCO manifest fingerprints now route through a root PyO3
+helper that composes `g-input` LOCO path resolution with `g-output` file
+fingerprinting, leaving Python to adapt the native JSON payload for the
+transitional manifest-header dataclass; the old Python-facing raw LOCO path
+resolver is no longer exported from `_core`.
 Run-start manifest command/runtime metadata extension now goes through a native
 `g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
 longer loads, mutates, serializes, and rewrites run manifests for that

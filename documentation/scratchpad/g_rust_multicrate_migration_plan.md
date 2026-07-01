@@ -1729,6 +1729,11 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Process-global JAX setup completion recording now consumes the native setup
   session, so `g-runtime` rejects pending or failed setup sessions before
   recording a JAX policy as configured.
+- Prediction-input LOCO manifest fingerprints now use a root PyO3 helper that
+  composes `g-input` LOCO path resolution with `g-output` file fingerprinting;
+  Python adapts the native JSON payload instead of resolving and hashing LOCO
+  files in its manifest-header loop, and the old Python-facing raw LOCO path
+  resolver is no longer exported from `_core`.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 
