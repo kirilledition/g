@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import typing
 
-from g import _core, types
+if typing.TYPE_CHECKING:
+    from pathlib import Path
 
-
-def trusted_bgen_validation_cache_directory() -> Path:
-    """Return the trusted BGEN validation cache directory."""
-    return Path(_core.default_trusted_bgen_validation_cache_directory_value())
+    from g import _core, types
 
 
 def validate_trusted_bgen_with_cache(
@@ -19,8 +17,7 @@ def validate_trusted_bgen_with_cache(
     validation_mode: types.TrustedBgenValidationMode,
 ) -> None:
     """Validate or trust the no-missing diploid BGEN path according to mode."""
-    engine.validate_trusted_no_missing_diploid_with_cache(
+    engine.validate_trusted_no_missing_diploid_with_default_cache(
         str(bgen_path),
         validation_mode.value,
-        str(trusted_bgen_validation_cache_directory()),
     )

@@ -38,11 +38,6 @@ impl NativeTelemetrySessionPolicy {
 }
 
 #[pyfunction]
-pub(crate) fn format_telemetry_timestamp_value(timestamp_seconds: f64) -> String {
-    native_telemetry_policy::format_timestamp(timestamp_seconds)
-}
-
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn resolve_telemetry_output_run_root_value(
     output_path: String,
@@ -89,69 +84,9 @@ pub(crate) fn resolve_telemetry_paths_payload<'py>(
     Ok(python_payload)
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn resolve_telemetry_stream_file_value(
-    telemetry_mode: String,
-    log_dir: Option<String>,
-    log_file: Option<String>,
-    trace_file: Option<String>,
-) -> PyResult<Option<String>> {
-    native_telemetry_policy::resolve_telemetry_stream_file(
-        &telemetry_mode,
-        log_dir.as_deref().map(Path::new),
-        log_file.as_deref().map(Path::new),
-        trace_file.as_deref().map(Path::new),
-    )
-    .map(|path| path.map(|value| value.display().to_string()))
-    .map_err(PyValueError::new_err)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn paths_refer_to_same_file_value(first_path: String, second_path: String) -> bool {
-    native_telemetry_policy::paths_refer_to_same_file(Path::new(&first_path), Path::new(&second_path))
-}
-
-#[pyfunction]
-pub(crate) fn build_empty_telemetry_writer_counters_payload<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-    let counters = native_telemetry_policy::build_empty_writer_counters();
-    let payload = PyDict::new(py);
-    payload.set_item("accepted_event_count", counters.accepted_event_count)?;
-    payload.set_item("written_event_count", counters.written_event_count)?;
-    payload.set_item("dropped_event_count", counters.dropped_event_count)?;
-    payload.set_item("cap_dropped_event_count", counters.cap_dropped_event_count)?;
-    payload.set_item("queue_dropped_event_count", counters.queue_dropped_event_count)?;
-    payload.set_item("event_cap_exceeded", counters.event_cap_exceeded)?;
-    payload.set_item("lossy", counters.lossy)?;
-    payload.set_item("event_cap", counters.event_cap)?;
-    payload.set_item("finish_flush_duration_seconds", counters.finish_flush_duration_seconds)?;
-    Ok(payload)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn resolve_telemetry_session_policy_payload<'py>(
-    py: Python<'py>,
-    telemetry_mode: String,
-    trace_event_cap: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let policy = native_telemetry_policy::resolve_telemetry_session_policy(&telemetry_mode, trace_event_cap);
-    let payload = PyDict::new(py);
-    payload.set_item("enabled", policy.enabled)?;
-    payload.set_item("profile_enabled", policy.profile_enabled)?;
-    payload.set_item("event_cap", policy.event_cap)?;
-    Ok(payload)
-}
-
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeTelemetrySessionPolicy>()?;
-    module.add_function(wrap_pyfunction!(build_empty_telemetry_writer_counters_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(format_telemetry_timestamp_value, module)?)?;
-    module.add_function(wrap_pyfunction!(paths_refer_to_same_file_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_telemetry_output_run_root_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_telemetry_paths_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_telemetry_session_policy_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_telemetry_stream_file_value, module)?)?;
     Ok(())
 }

@@ -681,22 +681,6 @@ pub(crate) fn build_manifest_file_fingerprint_payload<'py>(
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_manifest_file_fingerprint_mapping_payload<'py>(
-    py: Python<'py>,
-    path: String,
-    size: u64,
-    mtime_ns: i64,
-    content_hash_algorithm: String,
-    content_sha256: Option<String>,
-) -> PyResult<Bound<'py, PyDict>> {
-    manifest_file_fingerprint_to_dict(
-        py,
-        &NativeManifestFileFingerprint { path, size, mtime_ns, content_hash_algorithm, content_sha256 },
-    )
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_manifest_json_sha256(manifest_json: String) -> String {
     build_native_manifest_json_sha256(&manifest_json)
 }
@@ -801,7 +785,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(abort_output_writer_session, module)?)?;
     module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json_from_input_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_file_content_sha256_value, module)?)?;
-    module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_mapping_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_json_sha256, module)?)?;
     module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json, module)?)?;

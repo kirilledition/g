@@ -192,869 +192,90 @@ def test_run_completed_event_preserves_missing_native_metadata() -> None:
     assert event.artifacts[0].output_run_directory == Path("out/run")
 
 
-def test_run_completed_telemetry_fields_use_native_payload_builder() -> None:
-    event = run_events.build_run_completed_event(
-        run_events.RunArtifacts(
-            output_run_directory=Path("out/run"),
-            final_dataset=Path("out/dataset"),
-            final_parquet=Path("out/final.parquet"),
-            final_regenie=None,
-            effective_config=Path("out/effective_config.toml"),
-            phenotype_artifacts=(),
-            phenotype_name="height",
-            association_mode=types.AssociationMode.REGENIE2_LINEAR,
-            phenotype_count=1,
-            run_id="run-1",
-        )
+def test_recorder_only_diagnostic_payload_builders_are_not_exported() -> None:
+    builder_names = (
+        "build_runner_run_started_diagnostic_payload",
+        "build_runner_run_interrupted_diagnostic_payload",
+        "build_runner_run_failed_diagnostic_payload",
+        "build_runner_run_completed_diagnostic_payload",
+        "build_runner_jax_runtime_configuration_started_diagnostic_payload",
+        "build_runner_execution_plan_build_started_diagnostic_payload",
+        "build_runner_execution_plan_prepared_diagnostic_payload",
+        "build_runner_execution_plan_dispatch_started_diagnostic_payload",
+        "build_runner_execution_plan_finalization_started_diagnostic_payload",
+        "build_runner_multi_phenotype_dispatch_started_diagnostic_payload",
+        "build_runner_single_phenotype_dispatch_started_diagnostic_payload",
+        "build_runner_binary_engine_dispatch_started_diagnostic_payload",
+        "build_runner_linear_engine_dispatch_started_diagnostic_payload",
+        "build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload",
+        "build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload",
+        "build_native_cli_stdout_diagnostic_payload",
+        "build_native_cli_stderr_diagnostic_payload",
+        "build_native_cli_interrupted_line_diagnostic_payload",
+        "build_native_cli_failed_line_diagnostic_payload",
+        "build_native_cli_completed_line_diagnostic_payload",
+        "build_native_runtime_knobs_configured_diagnostic_payload",
+        "build_runner_metadata_artifacts_finalized_diagnostic_payload",
+        "build_preflight_warning_diagnostic_payload",
+        "build_io_output_resume_committed_chunks_diagnostic_payload",
+        "build_pipeline_bgen_engine_open_started_diagnostic_payload",
+        "build_pipeline_bgen_engine_opened_diagnostic_payload",
+        "build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload",
+        "build_pipeline_output_resume_committed_chunks_diagnostic_payload",
+        "build_pipeline_output_writer_sessions_create_started_diagnostic_payload",
+        "build_pipeline_gpu_genotype_format_resolved_diagnostic_payload",
+        "build_callback_null_logistic_nonconvergence_warning_diagnostic_payload",
+        "build_pipeline_multi_phenotype_sample_summary_diagnostic_payload",
+        "build_pipeline_multi_trait_started_diagnostic_payload",
+        "build_pipeline_multi_trait_input_load_started_diagnostic_payload",
+        "build_pipeline_multi_trait_input_aligned_diagnostic_payload",
+        "build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload",
+        "build_pipeline_grouped_per_phenotype_started_diagnostic_payload",
+        "build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload",
+        "build_pipeline_grouped_union_delivery_selected_diagnostic_payload",
+        "build_pipeline_multi_group_preflight_started_diagnostic_payload",
+        "build_pipeline_multi_group_preflight_completed_diagnostic_payload",
+        "build_pipeline_single_trait_started_diagnostic_payload",
+        "build_pipeline_single_trait_input_load_started_diagnostic_payload",
+        "build_pipeline_single_trait_input_aligned_diagnostic_payload",
+        "build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload",
+        "build_pipeline_single_trait_preflight_started_diagnostic_payload",
+        "build_pipeline_single_trait_preflight_completed_diagnostic_payload",
+        "build_native_dispatch_bgen_engine_constructing_diagnostic_payload",
+        "build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload",
+        "build_native_dispatch_callback_drain_started_diagnostic_payload",
+        "build_native_dispatch_delivery_started_diagnostic_payload",
+        "build_native_dispatch_delivery_finished_diagnostic_payload",
+        "build_native_dispatch_delivery_interrupted_diagnostic_payload",
+        "build_native_dispatch_delivery_failed_diagnostic_payload",
+        "build_native_dispatch_pipeline_finished_diagnostic_payload",
+        "build_native_dispatch_writer_session_finish_started_diagnostic_payload",
+        "build_native_dispatch_writer_sessions_finish_started_diagnostic_payload",
+        "build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload",
+        "build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload",
     )
 
-    telemetry_fields = run_events.run_completed_telemetry_fields(event)
-
-    assert telemetry_fields == {
-        "artifact_count": 1,
-        "phenotype_artifacts": (
-            {
-                "phenotype": "height",
-                "output_run_directory": "out/run",
-                "final_dataset": "out/dataset",
-                "final_parquet": "out/final.parquet",
-                "effective_config": "out/effective_config.toml",
-            },
-        ),
-        "run_id": "run-1",
-        "association_mode": "regenie2_linear",
-        "phenotype_count": 1,
-        "phenotype": "height",
-        "output_run_directory": "out/run",
-        "final_dataset": "out/dataset",
-        "final_parquet": "out/final.parquet",
-        "effective_config": "out/effective_config.toml",
-    }
+    for builder_name in builder_names:
+        assert not hasattr(run_events, builder_name)
+        assert not hasattr(_core, builder_name)
 
 
-def test_runner_lifecycle_diagnostic_payloads_use_native_builders() -> None:
-    started_payload = run_events.build_runner_run_started_diagnostic_payload(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        trait_type=types.RegenieTraitType.QUANTITATIVE,
-        phenotype_count=2,
+def test_run_event_telemetry_field_builders_are_not_exported() -> None:
+    builder_names = (
+        "build_run_completed_telemetry_fields",
+        "build_run_interrupted_telemetry_fields",
+        "build_run_failed_telemetry_fields",
     )
-    interrupted_event = run_events.RunInterruptedEvent(
-        signal_number=2,
-        signal_name="SIGINT",
-        exit_code=130,
-        flushed_for_resume=True,
-    )
-    failed_event = run_events.RunFailedEvent(error_type="RuntimeError", error_message="boom")
-    completed_event = run_events.RunCompletedEvent(
-        run_id="run-1",
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        phenotype_count=2,
-        artifacts=(),
+    wrapper_names = (
+        "run_completed_telemetry_fields",
+        "run_interrupted_telemetry_fields",
+        "run_failed_telemetry_fields",
     )
 
-    assert started_payload == {
-        "level": "info",
-        "event_name": "runner_regenie_run_started",
-        "message": "Starting REGENIE run.",
-        "fields": {
-            "association_mode": "regenie2_linear",
-            "trait_type": "quantitative",
-            "phenotype_count": 2,
-        },
-    }
-    assert run_events.build_runner_run_interrupted_diagnostic_payload(interrupted_event) == {
-        "level": "warn",
-        "event_name": "runner_regenie_run_interrupted",
-        "message": "REGENIE run interrupted by SIGINT.",
-        "fields": {
-            "signal_number": 2,
-            "signal_name": "SIGINT",
-            "exit_code": 130,
-            "flushed_for_resume": True,
-        },
-    }
-    assert run_events.build_runner_run_failed_diagnostic_payload(failed_event) == {
-        "level": "error",
-        "event_name": "runner_regenie_run_failed",
-        "message": "REGENIE run failed.",
-        "fields": {
-            "error_type": "RuntimeError",
-            "error_message": "boom",
-        },
-    }
-    assert run_events.build_runner_run_completed_diagnostic_payload(completed_event) == {
-        "level": "info",
-        "event_name": "runner_regenie_run_completed",
-        "message": "Finished REGENIE run.",
-        "fields": {
-            "run_id": "run-1",
-            "association_mode": "regenie2_linear",
-            "phenotype_count": 2,
-        },
-    }
-
-
-def test_runner_execution_plan_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_runner_jax_runtime_configuration_started_diagnostic_payload() == {
-        "level": "debug",
-        "event_name": "runner_jax_runtime_configuration_started",
-        "message": "Configuring JAX runtime before backend initialization.",
-        "fields": {},
-    }
-    assert run_events.build_runner_execution_plan_build_started_diagnostic_payload() == {
-        "level": "debug",
-        "event_name": "runner_execution_plan_build_started",
-        "message": "Building REGENIE execution plan.",
-        "fields": {},
-    }
-    assert run_events.build_runner_execution_plan_prepared_diagnostic_payload(
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-        phenotype_count=3,
-        chunk_size=1024,
-        variant_limit=4096,
-        device=types.Device.GPU,
-    ) == {
-        "level": "info",
-        "event_name": "runner_execution_plan_prepared",
-        "message": "Prepared REGENIE execution plan for 3 phenotype(s).",
-        "fields": {
-            "association_mode": "regenie2_binary",
-            "phenotype_count": 3,
-            "chunk_size": 1024,
-            "variant_limit": 4096,
-            "device": "gpu",
-        },
-    }
-    assert run_events.build_runner_execution_plan_dispatch_started_diagnostic_payload(
-        phenotype_count=3,
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-    ) == {
-        "level": "debug",
-        "event_name": "runner_execution_plan_dispatch_started",
-        "message": "Dispatching REGENIE execution plan.",
-        "fields": {"phenotype_count": 3, "association_mode": "regenie2_binary"},
-    }
-    assert run_events.build_runner_execution_plan_finalization_started_diagnostic_payload(
-        phenotype_count=3,
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-    ) == {
-        "level": "debug",
-        "event_name": "runner_execution_plan_finalization_started",
-        "message": "Finalizing REGENIE execution plan.",
-        "fields": {"phenotype_count": 3, "association_mode": "regenie2_binary"},
-    }
-
-
-def test_runner_dispatch_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_runner_multi_phenotype_dispatch_started_diagnostic_payload(
-        phenotype_count=3,
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-    ) == {
-        "level": "debug",
-        "event_name": "runner_multi_phenotype_dispatch_started",
-        "message": "Dispatching multi-phenotype native engine pipeline.",
-        "fields": {"phenotype_count": 3, "association_mode": "regenie2_binary"},
-    }
-    assert run_events.build_runner_single_phenotype_dispatch_started_diagnostic_payload(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        phenotype="height",
-    ) == {
-        "level": "debug",
-        "event_name": "runner_single_phenotype_dispatch_started",
-        "message": "Dispatching single-phenotype native engine pipeline.",
-        "fields": {"association_mode": "regenie2_linear", "phenotype": "height"},
-    }
-    assert run_events.build_runner_binary_engine_dispatch_started_diagnostic_payload(
-        phenotype="height",
-    ) == {
-        "level": "debug",
-        "event_name": "runner_binary_engine_dispatch_started",
-        "message": "Dispatching binary native engine pipeline.",
-        "fields": {"phenotype": "height"},
-    }
-    assert run_events.build_runner_linear_engine_dispatch_started_diagnostic_payload(
-        phenotype="height",
-    ) == {
-        "level": "debug",
-        "event_name": "runner_linear_engine_dispatch_started",
-        "message": "Dispatching linear native engine pipeline.",
-        "fields": {"phenotype": "height"},
-    }
-    assert run_events.build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload(
-        phenotype_count=3,
-    ) == {
-        "level": "debug",
-        "event_name": "runner_multi_phenotype_binary_engine_dispatch_started",
-        "message": "Dispatching multi-phenotype binary native engine pipeline.",
-        "fields": {"phenotype_count": 3},
-    }
-    assert run_events.build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(
-        phenotype_count=3,
-    ) == {
-        "level": "debug",
-        "event_name": "runner_multi_phenotype_linear_engine_dispatch_started",
-        "message": "Dispatching multi-phenotype linear native engine pipeline.",
-        "fields": {"phenotype_count": 3},
-    }
-
-
-def test_native_cli_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_native_cli_stdout_diagnostic_payload(
-        output_text="abcdef",
-        max_payload_chars=3,
-    ) == {
-        "level": "info",
-        "event_name": "native_cli_stdout",
-        "message": "Native CLI emitted stdout output.",
-        "fields": {
-            "stdout_character_count": 6,
-            "stdout_byte_count": 6,
-            "stdout_preview": "abc",
-            "stdout_truncated": True,
-            "stdout_omitted_character_count": 3,
-        },
-    }
-    assert run_events.build_native_cli_stderr_diagnostic_payload(
-        output_text="éx",
-        max_payload_chars=5,
-    ) == {
-        "level": "warn",
-        "event_name": "native_cli_stderr",
-        "message": "Native CLI emitted stderr output.",
-        "fields": {
-            "stderr_character_count": 2,
-            "stderr_byte_count": 3,
-            "stderr_preview": "éx",
-            "stderr_truncated": False,
-        },
-    }
-    assert run_events.build_native_cli_interrupted_line_diagnostic_payload(line="Interrupted.") == {
-        "level": "warn",
-        "event_name": "native_cli_interrupted_line",
-        "message": "Native CLI interruption detail.",
-        "fields": {"line": "Interrupted."},
-    }
-    assert run_events.build_native_cli_failed_line_diagnostic_payload(line="Error: failed.") == {
-        "level": "error",
-        "event_name": "native_cli_failed_line",
-        "message": "Native CLI failure detail.",
-        "fields": {"line": "Error: failed."},
-    }
-    assert run_events.build_native_cli_completed_line_diagnostic_payload(line="Success.") == {
-        "level": "info",
-        "event_name": "native_cli_completed_line",
-        "message": "Native CLI completion detail.",
-        "fields": {"line": "Success."},
-    }
-
-
-def test_native_runtime_knobs_diagnostic_payload_uses_native_builder() -> None:
-    assert run_events.build_native_runtime_knobs_configured_diagnostic_payload(
-        bgen_decode_tile_variant_count=32,
-        threads=None,
-    ) == {
-        "level": "debug",
-        "event_name": "native_runtime_knobs_configured",
-        "message": "Configuring native runtime knobs.",
-        "fields": {"bgen_decode_tile_variant_count": 32, "threads": None},
-    }
-    assert run_events.build_native_runtime_knobs_configured_diagnostic_payload(
-        bgen_decode_tile_variant_count=32,
-        threads=4,
-    ) == {
-        "level": "debug",
-        "event_name": "native_runtime_knobs_configured",
-        "message": "Configuring native runtime knobs.",
-        "fields": {"bgen_decode_tile_variant_count": 32, "threads": 4},
-    }
-
-
-def test_runner_metadata_artifacts_finalized_diagnostic_payload_uses_native_builder() -> None:
-    assert run_events.build_runner_metadata_artifacts_finalized_diagnostic_payload(
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-        phenotype_count=3,
-    ) == {
-        "level": "info",
-        "event_name": "runner_metadata_artifacts_finalized",
-        "message": "Finalized REGENIE run artifacts for 3 phenotype(s).",
-        "fields": {"association_mode": "regenie2_binary", "phenotype_count": 3},
-    }
-
-
-def test_preflight_warning_diagnostic_payload_uses_native_builder() -> None:
-    assert run_events.build_preflight_warning_diagnostic_payload(
-        message="REGENIE step 2 is running with fewer than 10 residual degrees of freedom.",
-        chromosome_count=1,
-        covariate_count=2,
-        preflight_scope="single_trait",
-        sample_count=3,
-        trusted_no_missing_diploid=True,
-        warning_index=0,
-    ) == {
-        "level": "warning",
-        "event_name": "preflight_warning",
-        "message": "REGENIE step 2 is running with fewer than 10 residual degrees of freedom.",
-        "fields": {
-            "chromosome_count": 1,
-            "covariate_count": 2,
-            "preflight_scope": "single_trait",
-            "sample_count": 3,
-            "trusted_no_missing_diploid": True,
-            "warning_index": 0,
-        },
-    }
-
-
-def test_io_output_resume_committed_chunks_diagnostic_payload_uses_native_builder() -> None:
-    assert run_events.build_io_output_resume_committed_chunks_diagnostic_payload(
-        chunks_directory="out/chunks",
-        committed_chunk_count=2,
-        run_directory="out/run",
-    ) == {
-        "level": "info",
-        "event_name": "io_output_resume_committed_chunks",
-        "message": "Resuming run with 2 previously committed chunks.",
-        "fields": {
-            "chunks_directory": "out/chunks",
-            "committed_chunk_count": 2,
-            "run_directory": "out/run",
-        },
-    }
-
-
-def test_pipeline_output_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_pipeline_bgen_engine_open_started_diagnostic_payload(
-        phenotype_count=None,
-        phenotype_name="trait",
-        pipeline_label="binary",
-        trusted_no_missing_diploid=True,
-        variant_limit=100,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_bgen_engine_open_started",
-        "message": "Opening native BGEN engine for binary pipeline.",
-        "fields": {
-            "phenotype_count": None,
-            "phenotype_name": "trait",
-            "pipeline_label": "binary",
-            "trusted_no_missing_diploid": True,
-            "variant_limit": 100,
-        },
-    }
-    assert run_events.build_pipeline_bgen_engine_opened_diagnostic_payload(
-        phenotype_count=2,
-        phenotype_name=None,
-        pipeline_label="multi-phenotype",
-        sample_count=3,
-        variant_count=4,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_bgen_engine_opened",
-        "message": "Native BGEN engine opened for multi-phenotype pipeline: sample_count=3 variant_count=4.",
-        "fields": {
-            "phenotype_count": 2,
-            "phenotype_name": None,
-            "pipeline_label": "multi-phenotype",
-            "sample_count": 3,
-            "variant_count": 4,
-        },
-    }
-    assert run_events.build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
-        phenotype_count=None,
-        phenotype_name="trait",
-        pipeline_label="binary",
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_prevalidated_bgen_engine_used",
-        "message": "Using prevalidated native BGEN engine for binary pipeline.",
-        "fields": {
-            "phenotype_count": None,
-            "phenotype_name": "trait",
-            "pipeline_label": "binary",
-        },
-    }
-    assert run_events.build_pipeline_output_resume_committed_chunks_diagnostic_payload(
-        committed_chunk_count=5,
-        output_index=1,
-    ) == {
-        "level": "info",
-        "event_name": "pipeline_output_resume_committed_chunks",
-        "message": "Resuming run with 5 previously committed chunks.",
-        "fields": {
-            "committed_chunk_count": 5,
-            "output_index": 1,
-        },
-    }
-    assert run_events.build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        output_count=2,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_output_writer_sessions_create_started",
-        "message": "Creating output writer(s) for regenie2_linear pipeline.",
-        "fields": {
-            "association_mode": "regenie2_linear",
-            "output_count": 2,
-        },
-    }
-
-
-def test_pipeline_gpu_genotype_format_resolved_diagnostic_payload_uses_native_builder() -> None:
-    assert run_events.build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
-        requested_gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
-        resolved_gpu_genotype_format=types.GpuGenotypeFormat.DOSAGE,
-        resolution_reason="trusted_validation_failed",
-        fallback_error="packed8 incompatible",
-    ) == {
-        "level": "info",
-        "event_name": "pipeline_gpu_genotype_format_resolved",
-        "message": "Resolved gpu_genotype_format=auto to dosage: trusted_validation_failed.",
-        "fields": {
-            "fallback_error": "packed8 incompatible",
-            "requested_gpu_genotype_format": "auto",
-            "resolution_reason": "trusted_validation_failed",
-            "resolved_gpu_genotype_format": "dosage",
-        },
-    }
-
-
-def test_callback_null_logistic_warning_diagnostic_payload_uses_native_builder() -> None:
-    assert run_events.build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
-        message="Null logistic failed.",
-        chromosome="1",
-        nonconverged_count=2,
-        phenotype_count=3,
-        policy=types.NullLogisticNonconvergencePolicy.WARN,
-        scalar_convergence=False,
-        total_fit_count=4,
-    ) == {
-        "level": "warning",
-        "event_name": "callback_null_logistic_nonconvergence_warning",
-        "message": "Null logistic failed.",
-        "fields": {
-            "chromosome": "1",
-            "nonconverged_count": 2,
-            "phenotype_count": 3,
-            "policy": "warn",
-            "scalar_convergence": False,
-            "total_fit_count": 4,
-        },
-    }
-
-
-def test_pipeline_multi_phenotype_sample_summary_diagnostic_payload_uses_native_builder() -> None:
-    assert run_events.build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
-        phenotype_count=2,
-        phenotype_group_count=1,
-        sample_counts_differ=False,
-        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
-    ) == {
-        "level": "info",
-        "event_name": "pipeline_multi_phenotype_sample_summary",
-        "message": "Analyzed 2 phenotypes in complete-case sample mode; one shared sample set was used.",
-        "fields": {
-            "phenotype_count": 2,
-            "phenotype_group_count": 1,
-            "sample_counts_differ": False,
-            "sample_mode": "complete-case",
-        },
-    }
-    assert (
-        run_events.build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
-            phenotype_count=2,
-            phenotype_group_count=2,
-            sample_counts_differ=True,
-            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
-        )["message"]
-        == "Analyzed 2 phenotypes in per-phenotype sample mode; sample counts differ across phenotypes."
-    )
-
-
-def test_pipeline_multi_trait_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_pipeline_multi_trait_started_diagnostic_payload(
-        association_mode=types.AssociationMode.REGENIE2_LINEAR,
-        phenotype_count=2,
-        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
-    ) == {
-        "level": "info",
-        "event_name": "pipeline_multi_trait_started",
-        "message": "Starting multi-phenotype REGENIE step 2 BGEN pipeline.",
-        "fields": {
-            "association_mode": "regenie2_linear",
-            "phenotype_count": 2,
-            "sample_mode": "complete-case",
-        },
-    }
-    assert run_events.build_pipeline_multi_trait_input_load_started_diagnostic_payload(
-        phenotype_count=2,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_multi_trait_input_load_started",
-        "message": "Loading aligned native sample, phenotype, and covariate inputs for multi-phenotype pipeline.",
-        "fields": {
-            "phenotype_count": 2,
-        },
-    }
-    assert run_events.build_pipeline_multi_trait_input_aligned_diagnostic_payload(
-        covariate_count=3,
-        phenotype_count=2,
-        sample_count=4,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_multi_trait_input_aligned",
-        "message": "Aligned multi-phenotype pipeline inputs: sample_count=4 phenotype_count=2 covariate_count=3.",
-        "fields": {
-            "covariate_count": 3,
-            "phenotype_count": 2,
-            "sample_count": 4,
-        },
-    }
-    assert run_events.build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
-        phenotype_count=2,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_multi_trait_prediction_source_load_started",
-        "message": "Loading REGENIE prediction source for multi-phenotype pipeline.",
-        "fields": {
-            "phenotype_count": 2,
-        },
-    }
-
-
-def test_pipeline_grouped_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-        phenotype_count=2,
-        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
-    ) == {
-        "level": "info",
-        "event_name": "pipeline_grouped_per_phenotype_started",
-        "message": "Starting grouped per-phenotype REGENIE step 2 BGEN pipeline.",
-        "fields": {
-            "association_mode": "regenie2_binary",
-            "phenotype_count": 2,
-            "sample_mode": "per-phenotype",
-        },
-    }
-    assert run_events.build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
-        phenotype_count=2,
-        phenotype_group_count=1,
-    ) == {
-        "level": "info",
-        "event_name": "pipeline_grouped_per_phenotype_groups_prepared",
-        "message": "Prepared 1 compatible per-phenotype group(s) for 2 phenotype(s).",
-        "fields": {
-            "phenotype_count": 2,
-            "phenotype_group_count": 1,
-        },
-    }
-    assert run_events.build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
-        grouped_sample_count=6,
-        phenotype_group_count=2,
-        union_sample_count=4,
-    ) == {
-        "level": "info",
-        "event_name": "pipeline_grouped_union_delivery_selected",
-        "message": (
-            "Using union per-phenotype BGEN delivery: group_count=2 union_sample_count=4 grouped_sample_count=6."
-        ),
-        "fields": {
-            "grouped_sample_count": 6,
-            "phenotype_group_count": 2,
-            "union_sample_count": 4,
-        },
-    }
-
-
-def test_pipeline_multi_group_preflight_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_pipeline_multi_group_preflight_started_diagnostic_payload(
-        phenotype_count=2,
-        sample_count=3,
-        trusted_no_missing_diploid=True,
-        variant_limit=100,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_multi_group_preflight_started",
-        "message": "Running preflight validation for multi-phenotype pipeline.",
-        "fields": {
-            "phenotype_count": 2,
-            "sample_count": 3,
-            "trusted_no_missing_diploid": True,
-            "variant_limit": 100,
-        },
-    }
-    assert run_events.build_pipeline_multi_group_preflight_completed_diagnostic_payload(
-        phenotype_count=2,
-        sample_count=3,
-        trusted_no_missing_diploid=False,
-        variant_limit=None,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_multi_group_preflight_completed",
-        "message": "Preflight validation passed for multi-phenotype pipeline.",
-        "fields": {
-            "phenotype_count": 2,
-            "sample_count": 3,
-            "trusted_no_missing_diploid": False,
-            "variant_limit": None,
-        },
-    }
-
-
-def test_pipeline_single_trait_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_pipeline_single_trait_started_diagnostic_payload(
-        association_mode=types.AssociationMode.REGENIE2_BINARY,
-        phenotype_name="trait",
-        pipeline_label="binary",
-    ) == {
-        "level": "info",
-        "event_name": "pipeline_single_trait_started",
-        "message": "Starting binary REGENIE step 2 BGEN pipeline.",
-        "fields": {
-            "association_mode": "regenie2_binary",
-            "phenotype_name": "trait",
-            "pipeline_label": "binary",
-        },
-    }
-    assert run_events.build_pipeline_single_trait_input_load_started_diagnostic_payload(
-        phenotype_name="trait",
-        pipeline_label="binary",
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_single_trait_input_load_started",
-        "message": "Loading aligned native sample, phenotype, and covariate inputs for binary pipeline.",
-        "fields": {
-            "phenotype_name": "trait",
-            "pipeline_label": "binary",
-        },
-    }
-    assert run_events.build_pipeline_single_trait_input_aligned_diagnostic_payload(
-        covariate_count=2,
-        phenotype_name="trait",
-        pipeline_label="binary",
-        sample_count=3,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_single_trait_input_aligned",
-        "message": "Aligned binary pipeline inputs: sample_count=3 covariate_count=2.",
-        "fields": {
-            "covariate_count": 2,
-            "phenotype_name": "trait",
-            "pipeline_label": "binary",
-            "sample_count": 3,
-        },
-    }
-    assert run_events.build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload(
-        phenotype_name="trait",
-        pipeline_label="binary",
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_single_trait_prediction_source_load_started",
-        "message": "Loading REGENIE prediction source for binary pipeline.",
-        "fields": {
-            "phenotype_name": "trait",
-            "pipeline_label": "binary",
-        },
-    }
-    assert run_events.build_pipeline_single_trait_preflight_started_diagnostic_payload(
-        phenotype_name="trait",
-        pipeline_label="binary",
-        trusted_no_missing_diploid=True,
-        variant_limit=100,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_single_trait_preflight_started",
-        "message": "Running preflight validation for binary pipeline.",
-        "fields": {
-            "phenotype_name": "trait",
-            "pipeline_label": "binary",
-            "trusted_no_missing_diploid": True,
-            "variant_limit": 100,
-        },
-    }
-    assert run_events.build_pipeline_single_trait_preflight_completed_diagnostic_payload(
-        chromosome_count=22,
-        covariate_count=2,
-        phenotype_name="trait",
-        pipeline_label="binary",
-        sample_count=3,
-    ) == {
-        "level": "debug",
-        "event_name": "pipeline_single_trait_preflight_completed",
-        "message": (
-            "Preflight validation passed for binary pipeline: sample_count=3 covariate_count=2 chromosome_count=22."
-        ),
-        "fields": {
-            "chromosome_count": 22,
-            "covariate_count": 2,
-            "phenotype_name": "trait",
-            "pipeline_label": "binary",
-            "sample_count": 3,
-        },
-    }
-
-
-def test_native_dispatch_engine_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
-        chunk_size=1024,
-        source_path="input.bgen",
-        trusted_no_missing_diploid=True,
-        variant_limit=None,
-    ) == {
-        "level": "debug",
-        "event_name": "native_dispatch_bgen_engine_constructing",
-        "message": "Constructing native BGEN run engine.",
-        "fields": {
-            "chunk_size": 1024,
-            "source_path": "input.bgen",
-            "trusted_no_missing_diploid": True,
-            "variant_limit": None,
-        },
-    }
-    assert run_events.build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
-        source_path="input.bgen",
-        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
-    ) == {
-        "level": "debug",
-        "event_name": "native_dispatch_trusted_bgen_validation_started",
-        "message": "Validating trusted no-missing diploid BGEN mode.",
-        "fields": {
-            "source_path": "input.bgen",
-            "trusted_bgen_validation_mode": "cache_on_miss",
-        },
-    }
-
-
-def test_native_dispatch_writer_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_native_dispatch_callback_drain_started_diagnostic_payload() == {
-        "level": "debug",
-        "event_name": "native_dispatch_callback_drain_started",
-        "message": "Draining native callback worker queues.",
-        "fields": {},
-    }
-    assert run_events.build_native_dispatch_writer_session_finish_started_diagnostic_payload() == {
-        "level": "debug",
-        "event_name": "native_dispatch_writer_session_finish_started",
-        "message": "Finishing output writer and optional Parquet finalization.",
-        "fields": {},
-    }
-    assert run_events.build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
-        requested_thread_count=2,
-        writer_session_count=3,
-    ) == {
-        "level": "debug",
-        "event_name": "native_dispatch_writer_sessions_finish_started",
-        "message": "Finishing output writer(s) and optional Parquet finalization.",
-        "fields": {
-            "requested_thread_count": 2,
-            "writer_session_count": 3,
-        },
-    }
-    assert run_events.build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(
-        signal_exit_code=130,
-        signal_name="SIGINT",
-        signal_number=2,
-    ) == {
-        "level": "info",
-        "event_name": "native_dispatch_writer_session_interrupted_flush_started",
-        "message": "Flushing interrupted output writer after SIGINT.",
-        "fields": {
-            "signal_exit_code": 130,
-            "signal_name": "SIGINT",
-            "signal_number": 2,
-        },
-    }
-    assert run_events.build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
-        requested_thread_count=4,
-        signal_exit_code=143,
-        signal_name="SIGTERM",
-        signal_number=15,
-        writer_session_count=5,
-    ) == {
-        "level": "info",
-        "event_name": "native_dispatch_writer_sessions_interrupted_flush_started",
-        "message": "Flushing interrupted output writer(s) after SIGTERM.",
-        "fields": {
-            "requested_thread_count": 4,
-            "signal_exit_code": 143,
-            "signal_name": "SIGTERM",
-            "signal_number": 15,
-            "writer_session_count": 5,
-        },
-    }
-
-
-def test_native_dispatch_delivery_diagnostic_payloads_use_native_builders() -> None:
-    assert run_events.build_native_dispatch_delivery_started_diagnostic_payload(
-        committed_chunk_count=2,
-        pipeline_label="Native BGEN",
-        variant_major_packed8_probability_pairs=True,
-    ) == {
-        "level": "debug",
-        "event_name": "native_dispatch_delivery_started",
-        "message": (
-            "Starting Native BGEN delivery: committed_chunk_count=2 variant_major_packed8_probability_pairs=true."
-        ),
-        "fields": {
-            "committed_chunk_count": 2,
-            "pipeline_label": "Native BGEN",
-            "variant_major_packed8_probability_pairs": True,
-        },
-    }
-    assert run_events.build_native_dispatch_delivery_finished_diagnostic_payload(
-        pipeline_label="Native BGEN",
-        processed_chunk_count=3,
-    ) == {
-        "level": "debug",
-        "event_name": "native_dispatch_delivery_finished",
-        "message": "Native BGEN delivery finished: processed_chunk_count=3.",
-        "fields": {
-            "pipeline_label": "Native BGEN",
-            "processed_chunk_count": 3,
-        },
-    }
-    assert run_events.build_native_dispatch_delivery_interrupted_diagnostic_payload(
-        pipeline_label="Native BGEN",
-        signal_exit_code=130,
-        signal_name="SIGINT",
-        signal_number=2,
-    ) == {
-        "level": "info",
-        "event_name": "native_dispatch_delivery_interrupted",
-        "message": "Native BGEN delivery interrupted by SIGINT.",
-        "fields": {
-            "pipeline_label": "Native BGEN",
-            "signal_exit_code": 130,
-            "signal_name": "SIGINT",
-            "signal_number": 2,
-        },
-    }
-    assert run_events.build_native_dispatch_delivery_failed_diagnostic_payload(
-        exception_message="decode failed",
-        exception_type="RuntimeError",
-        pipeline_label="Native BGEN",
-    ) == {
-        "level": "error",
-        "event_name": "native_dispatch_delivery_failed",
-        "message": "Native BGEN delivery failed.",
-        "fields": {
-            "exception_message": "decode failed",
-            "exception_type": "RuntimeError",
-            "pipeline_label": "Native BGEN",
-        },
-    }
-    assert run_events.build_native_dispatch_pipeline_finished_diagnostic_payload(
-        final_parquet_path_count=1,
-        pipeline_label="Native BGEN",
-    ) == {
-        "level": "info",
-        "event_name": "native_dispatch_pipeline_finished",
-        "message": "Native BGEN pipeline finished.",
-        "fields": {
-            "final_parquet_path_count": 1,
-            "pipeline_label": "Native BGEN",
-        },
-    }
+    for builder_name in builder_names:
+        assert not hasattr(_core, builder_name)
+    for wrapper_name in wrapper_names:
+        assert not hasattr(run_events, wrapper_name)
 
 
 def test_run_completed_rendering_uses_native_renderer() -> None:
@@ -1099,13 +320,6 @@ def test_interrupted_run_event_uses_native_payload_builder_and_renderer() -> Non
     assert event.signal_name == "SIGINT"
     assert event.exit_code == 130
     assert event.flushed_for_resume is True
-    assert run_events.run_interrupted_telemetry_fields(event) == {
-        "failure_kind": "graceful_shutdown",
-        "signal_number": 2,
-        "signal_name": "SIGINT",
-        "exit_code": 130,
-        "flushed_for_resume": True,
-    }
     assert run_events.render_run_interrupted_lines(event) == (
         "Interrupted by SIGINT. Flushed queued chunks and saved committed output for --resume.",
     )
@@ -1119,9 +333,4 @@ def test_failed_run_event_uses_native_payload_builder_and_renderer() -> None:
     assert native_payload == {"error_type": "RuntimeError", "error_message": "boom"}
     assert event.error_type == "RuntimeError"
     assert event.error_message == "boom"
-    assert run_events.run_failed_telemetry_fields(event) == {
-        "failure_kind": "exception",
-        "error_type": "RuntimeError",
-        "error_message": "boom",
-    }
     assert run_events.render_run_failed_lines(event) == ("Error: boom",)

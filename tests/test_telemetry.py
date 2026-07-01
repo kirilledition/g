@@ -28,7 +28,7 @@ def emit_current_telemetry_event(
     telemetry_session.native_session_handle.emit_current_event(event, level, fields)
 
 
-def build_current_telemetry_event_payload(
+def build_current_event_payload_via_native_handle(
     telemetry_session: telemetry.TelemetrySession,
     *,
     event: str,
@@ -328,7 +328,7 @@ def test_telemetry_session_builds_current_event_payload_natively(tmp_path: Path)
         run_id="run-1",
     )
 
-    event_payload = build_current_telemetry_event_payload(
+    event_payload = build_current_event_payload_via_native_handle(
         telemetry_session,
         event="payload_built",
         level="debug",
@@ -344,6 +344,17 @@ def test_telemetry_session_builds_current_event_payload_natively(tmp_path: Path)
     assert event_payload["thread_name"] == "MainThread"
     assert event_payload["kept_field"] == "value"
     assert "omitted_field" not in event_payload
+
+
+def test_raw_telemetry_payload_builders_are_not_exported() -> None:
+    assert not hasattr(_core, "build_current_telemetry_event_payload")
+    assert not hasattr(_core, "build_empty_telemetry_writer_counters_payload")
+    assert not hasattr(_core, "build_telemetry_event_payload")
+    assert not hasattr(_core, "format_telemetry_timestamp_value")
+    assert not hasattr(_core, "generate_telemetry_run_id_value")
+    assert not hasattr(_core, "paths_refer_to_same_file_value")
+    assert not hasattr(_core, "resolve_telemetry_session_policy_payload")
+    assert not hasattr(_core, "resolve_telemetry_stream_file_value")
 
 
 def test_telemetry_session_serializes_payloads_without_python_json_dumps(tmp_path: Path) -> None:
@@ -431,16 +442,6 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
         should_emit_progress=True,
     )
 
-    assert dict(_core.resolve_telemetry_session_policy_payload("trace", 10)) == {
-        "enabled": True,
-        "profile_enabled": True,
-        "event_cap": 10,
-    }
-    assert dict(_core.resolve_telemetry_session_policy_payload("trace", 0)) == {
-        "enabled": True,
-        "profile_enabled": True,
-        "event_cap": None,
-    }
     assert trace_policy.enabled
     assert trace_policy.profile_enabled
     assert trace_policy.event_cap == 10

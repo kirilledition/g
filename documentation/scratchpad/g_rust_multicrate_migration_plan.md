@@ -1415,6 +1415,10 @@ Remove Python as the chunk-level scheduler.
   payload builder, or per-file writer methods; Python timing tests and
   production code use typed snapshots, native diagnostic recorders, and the
   combined native final-output writer.
+- JAX runtime setup diagnostics now come from `NativeJaxRuntimeSetupSession`;
+  the root PyO3 module no longer exposes the direct setup diagnostic payload
+  builder, and Python no longer adapts diagnostics from a detached setup
+  report.
 - Native output lifecycle PyO3 helpers now release the GIL around Rust
   filesystem and manifest I/O for output preparation, initialization,
   finalization, manifest load/write, fingerprinting, committed-chunk scanning,
@@ -1541,9 +1545,9 @@ Move to Rust:
 
 Python/JAX should emit typed diagnostic events through a native handle.
 
-- JAX runtime diagnostic record planning now returns a typed native PyO3 plan
-  on the production runner path, while the legacy dict payload helper remains
-  for compatibility tests and older adapters.
+- JAX runtime diagnostic event recording now returns the typed native PyO3
+  record plan; standalone diagnostic plan/log helper exports and the legacy
+  dict payload helper are no longer exported from the root PyO3 module.
 - JAX runtime diagnostic logging now routes through one native PyO3 boundary
   that builds the diagnostic fields and returns the native record plan for
   telemetry emission.
@@ -1711,6 +1715,19 @@ Python/JAX should emit typed diagnostic events through a native handle.
   boundary: direct diagnostic payload builders are allowed only in
   compatibility adapters, raw diagnostic emitters are rejected in production
   Python, and calls to the old Python telemetry fallback methods are rejected.
+- Raw diagnostic emitters are no longer exported from the root PyO3 module;
+  diagnostics must flow through typed native recorder helpers.
+- Raw telemetry event and writer-counter payload builders are no longer exported
+  from the root PyO3 module; telemetry payload construction remains behind native
+  telemetry session handles and typed native dispatch helpers.
+- Run lifecycle telemetry-field builders are no longer exported through the
+  root PyO3 module; native telemetry dispatch builds those fields inside the
+  logging adapter.
+- The raw telemetry session policy payload helper has also been removed; direct
+  native tests use `NativeTelemetrySessionPolicy`.
+- Unused telemetry utility helpers for timestamp formatting, stream-file
+  resolution, path comparison, and explicit run-ID generation are no longer root
+  PyO3 exports.
 - The Python architecture checker now also rejects direct production telemetry
   event emission through `TelemetrySession` compatibility wrappers or native
   telemetry-session handles outside the telemetry adapter; production callers
@@ -1726,6 +1743,37 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Native CLI stdout/stderr and rendered completion/interruption/failure line
   production paths now call native diagnostic recorders directly, leaving
   Python payload dict materialization only for compatibility helpers and tests.
+- Native CLI stdout/stderr and rendered completion/interruption/failure line
+  diagnostics now expose only native recorder functions through the root PyO3
+  module; direct payload builders remain inside `g-runtime` and are no longer
+  Python exports.
+- Native runtime-knob diagnostics now expose only the native recorder through
+  the root PyO3 module; the direct payload builder remains inside `g-runtime`.
+- Runner metadata artifact-finalization diagnostics now expose only the native
+  recorder through the root PyO3 module; the direct payload builder remains
+  inside `g-runtime`.
+- Preflight warning and legacy output-run resume committed-chunk diagnostics
+  now expose only native recorder functions through the root PyO3 module; their
+  direct payload builders remain inside `g-runtime`.
+- Pipeline output lifecycle diagnostics for BGEN engine open/reuse, resume
+  chunk counts, and writer-session creation now expose only native recorder
+  functions through the root PyO3 module; their direct payload builders remain
+  inside `g-runtime`.
+- GPU genotype-format resolution, callback null-logistic nonconvergence
+  warning, and multi-phenotype sample-summary diagnostics now expose only
+  native recorder functions through the root PyO3 module; their direct payload
+  builders remain inside `g-runtime`.
+- Pipeline phase diagnostics for complete-case multi-trait, grouped
+  per-phenotype, multi-group preflight, and single-trait execution now expose
+  only native recorder functions through the root PyO3 module; their direct
+  payload builders remain inside `g-runtime`.
+- Native-dispatch BGEN construction, trusted-validation, callback-drain,
+  delivery, pipeline-finished, and writer lifecycle diagnostics now expose
+  only native recorder functions through the root PyO3 module; their direct
+  payload builders remain inside `g-runtime`.
+- Runner lifecycle, execution-plan, and dispatch diagnostics now expose only
+  native recorder functions through the root PyO3 module; their direct payload
+  builders remain inside `g-runtime`.
 - Native CLI run lifecycle state now owns the runner-started marker and
   run-failed telemetry duplicate-suppression decision for top-level CLI
   failures.
@@ -1756,6 +1804,11 @@ Python/JAX should emit typed diagnostic events through a native handle.
   serialization, and atomic cache writes now live in native runtime/engine
   boundaries instead of Python probing cache files, creating directories,
   serializing JSON, or replacing cache files itself.
+- Production trusted BGEN cache validation now resolves the default cache
+  directory inside the `Regenie2RunEngine` PyO3 boundary; standalone root PyO3
+  cache helper exports for fingerprinting, cache-path construction, lookup
+  planning, default-directory lookup, cache writes, and the explicit
+  cache-directory engine method have been removed.
 - JAX persistent-cache directory creation now runs through the native JAX
   runtime setup session; Python still triggers JAX setup, but no longer calls
   `Path.mkdir` for that setup side effect.
@@ -1787,6 +1840,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   consumes typed native setup-session properties instead of side-effect-plan
   dictionaries, and the Python architecture checker rejects reintroduced
   production calls to the dict payload helper.
+- JAX setup-resolution/config-update/side-effect, GPU-validation, and
+  validation-completion payloads now come through `NativeRuntimeState` and
+  `NativeJaxRuntimeSetupSession` methods; the root PyO3 module no longer
+  exports detached setup helper payload functions for those paths.
 - The Python architecture checker also rejects direct production calls to
   `jax.config.update` and `jax.devices`, keeping JAX setup side effects behind
   native setup sessions.
@@ -1921,8 +1978,9 @@ Current implementation notes:
 - The `Regenie2RunEngine` PyO3 adapter now lives in `run_engine.rs`, leaving
   the root Python module as composition-only registration.
 - Trusted BGEN validation cache helper logic moved out of the root crate and
-  into `g-runtime`; the root now keeps only the PyO3 adapter/export surface for
-  those helpers.
+  into `g-runtime`; production Python now enters that logic through
+  `Regenie2RunEngine`, and the standalone trusted-validation helper export
+  module has been removed.
 - Python-facing preflight variant-count validation now lives in `g-engine`;
   the root PyO3 preflight adapter only translates native errors.
 - The root `g` crate no longer re-exports the internal domain crates as public
@@ -1957,6 +2015,15 @@ Current implementation notes:
   telemetry emission through compatibility wrappers or native telemetry-session
   handles outside the telemetry adapter, so production telemetry side effects
   stay behind typed native PyO3 dispatch helpers.
+- Unused direct payload-builder exports for manifest fingerprint mappings,
+  lower-level run artifacts, run-manifest metadata extensions, and trusted BGEN
+  validation cache entries have been removed from the root PyO3 module.
+- Run lifecycle telemetry-field builders have also been removed from the
+  Python-visible root PyO3 surface; native logging keeps the internal
+  conversion helpers used by typed telemetry dispatch.
+- The old top-level runtime-knob functions for BGEN tile sizing and Rayon thread
+  pool setup have been removed from the root PyO3 module; production setup goes
+  through `NativeRuntimeState`.
 
 ### Tests
 

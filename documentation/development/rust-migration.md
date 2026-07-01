@@ -72,6 +72,32 @@ now closes enabled native telemetry sessions, no-ops disabled native sessions,
 and no longer falls back to Python `close_with_event` objects.
 JAX runtime diagnostic telemetry dispatch also resolves the native telemetry
 session handle directly instead of calling Python fallback logging methods.
+JAX runtime diagnostic event recording is the single root PyO3 boundary for
+that path and returns the typed native record plan; standalone diagnostic
+plan/log helper exports are no longer exposed.
+Native CLI stdout/stderr and rendered line diagnostics now expose only native
+recording functions at the root PyO3 boundary; direct payload builders are kept
+inside `g-runtime` and are no longer Python exports.
+Native runtime-knob diagnostics follow the same recorder-only root PyO3 export
+pattern.
+Runner metadata artifact-finalization diagnostics also expose only the native
+recorder at the root PyO3 boundary.
+Preflight warning and legacy output-run resume committed-chunk diagnostics also
+expose only native recorder functions at the root PyO3 boundary.
+Pipeline output lifecycle diagnostics for BGEN engine open/reuse, resume chunk
+counts, and writer-session creation follow the same recorder-only root PyO3
+export pattern.
+GPU genotype-format resolution, callback null-logistic nonconvergence warning,
+and multi-phenotype sample-summary diagnostics now also expose only native
+recorder functions at the root PyO3 boundary.
+Pipeline phase diagnostics for complete-case multi-trait, grouped
+per-phenotype, multi-group preflight, and single-trait execution now follow the
+same recorder-only root PyO3 export pattern.
+Native-dispatch BGEN construction, trusted-validation, callback-drain,
+delivery, pipeline-finished, and writer lifecycle diagnostics now also expose
+only native recorder functions at the root PyO3 boundary.
+Runner lifecycle, execution-plan, and dispatch diagnostics now also expose only
+native recorder functions at the root PyO3 boundary.
 Callback progress telemetry dispatch follows the same native-handle rule for
 progress events and progress records.
 Binary correction summary telemetry dispatch also uses the native telemetry
@@ -84,6 +110,16 @@ The Python architecture checker also guards production-side runtime diagnostics:
 direct native diagnostic payload builders are limited to compatibility adapters,
 raw diagnostic emitters are rejected, and old Python telemetry fallback method
 calls cannot reappear in production modules.
+The root PyO3 module no longer exports raw diagnostic emitters; diagnostics
+must flow through typed native recorder helpers.
+The root PyO3 module also no longer exports raw telemetry event or writer
+counter payload builders; telemetry payloads are built through native telemetry
+session handles or typed native dispatch helpers.
+The raw telemetry session policy payload helper has also been removed; direct
+native tests use `NativeTelemetrySessionPolicy`.
+Unused telemetry utility helpers for timestamp formatting, stream-file
+resolution, path comparison, and explicit run-ID generation are no longer root
+PyO3 exports.
 It also rejects direct production event emission through `TelemetrySession`
 compatibility wrappers or `native_session_handle`/`native_telemetry_session`
 handles outside the telemetry adapter; production callers must use typed native
@@ -95,6 +131,20 @@ checker rejects reintroduced production definitions of those methods.
 Production JAX setup now validates GPU availability through the native
 setup-session default-probe method; the old Python explicit-path validation
 wrapper has been removed.
+Unused direct payload-builder exports for manifest fingerprint mappings,
+lower-level run artifacts, run-manifest metadata extensions, and trusted BGEN
+validation cache entries have also been removed from the root PyO3 module.
+Run lifecycle telemetry-field builders are no longer Python-visible root
+exports; native telemetry dispatch builds those fields inside the logging
+adapter before emitting events.
+Trusted BGEN validation cache default-directory resolution now enters through
+the `Regenie2RunEngine` cache-validation method, so Python no longer calls a
+standalone root helper and passes the cache directory back into the engine.
+The explicit cache-directory engine method has also been removed from the
+Python-visible `_core` surface.
+The old top-level runtime-knob functions for BGEN tile sizing and Rayon thread
+pool setup have also been removed; production setup goes through
+`NativeRuntimeState`.
 Standalone `require_gpu_device()` validation now also builds a native setup
 session and uses the native default-probe method.
 Default local JAX cache-directory resolution now comes from `g-runtime`; the
@@ -110,8 +160,12 @@ production Python; setup sessions must come from native runtime state.
 JAX backend initialization now takes only the native setup session from the
 caller, so the production setup path cannot fall back to Python-side
 setup-session construction or duplicate requested policy arguments. Production
-setup also reads typed native setup-session properties instead of unpacking
-side-effect-plan dictionaries, and the architecture checker rejects
+JAX setup-resolution/config-update/side-effect, GPU-validation, and
+validation-completion payloads now come through `NativeRuntimeState` and
+`NativeJaxRuntimeSetupSession` methods, and the root PyO3 module no longer
+exports detached setup helper payload functions for those paths.
+The setup path also reads typed native setup-session properties instead of
+unpacking side-effect-plan dictionaries, and the architecture checker rejects
 reintroduced production calls to those dict payload helpers.
 It also rejects direct production calls to `jax.config.update` and
 `jax.devices`, keeping JAX setup side effects behind native setup sessions.
@@ -171,6 +225,9 @@ stage-timing/profile payload builders, the final timing write-started payload
 builder, or per-file writer methods; Python callers use typed snapshots,
 native diagnostic recorders, and the combined native final-timing output
 writer.
+JAX runtime setup diagnostics now come from `NativeJaxRuntimeSetupSession`;
+the root PyO3 module no longer exports the direct setup diagnostic payload
+builder, and Python no longer adapts diagnostics from a detached setup report.
 
 Phase 10 queue migration also has a native callback scheduler state handle that
 consolidates queue limits, worker-start state, result in-flight accounting, and

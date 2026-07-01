@@ -3,6 +3,8 @@ from __future__ import annotations
 import concurrent.futures
 import contextlib
 import dataclasses
+import hashlib
+import os
 import queue
 import threading
 import time
@@ -2336,6 +2338,14 @@ class FakeRunEngine:
     def mark_trusted_no_missing_diploid_validated(self) -> None:
         self.trusted_validation_mark_count += 1
 
+    def validate_trusted_no_missing_diploid_with_default_cache(
+        self,
+        bgen_path: str,
+        validation_mode: str,
+    ) -> None:
+        cache_directory = self.default_trusted_bgen_validation_cache_directory()
+        self.validate_trusted_no_missing_diploid_with_cache(bgen_path, validation_mode, str(cache_directory))
+
     def validate_trusted_no_missing_diploid_with_cache(
         self,
         bgen_path: str,
@@ -2354,28 +2364,32 @@ class FakeRunEngine:
         }:
             message = f"Unsupported trusted BGEN validation mode: {validation_mode}"
             raise ValueError(message)
-        trusted_no_missing_diploid = True
-        fingerprint = _core.build_trusted_bgen_validation_fingerprint_value(
-            bgen_path,
-            self.sample_count,
-            self.variant_count,
-            trusted_no_missing_diploid,
-        )
-        cache_path = _core.build_trusted_bgen_validation_cache_path_value(cache_directory, fingerprint)
-        cache_lookup_plan = _core.plan_trusted_bgen_validation_cache_lookup(validation_mode, cache_path)
-        if cache_lookup_plan.should_mark_validated:
+        cache_path = self.trusted_bgen_validation_cache_path(bgen_path, Path(cache_directory))
+        if validation_mode == types.TrustedBgenValidationMode.CACHE_ON_MISS.value and cache_path.exists():
             self.mark_trusted_no_missing_diploid_validated()
-        if not cache_lookup_plan.should_validate:
             return
         self.validate_trusted_no_missing_diploid()
-        if cache_lookup_plan.should_write_cache:
-            _core.write_trusted_bgen_validation_cache_payload(
-                cache_path,
-                fingerprint,
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text("{}", encoding="utf-8")
+
+    @staticmethod
+    def default_trusted_bgen_validation_cache_directory() -> Path:
+        xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+        if xdg_cache_home is not None:
+            return Path(xdg_cache_home) / "g" / "bgen_validation"
+        return Path.home() / ".cache" / "g" / "bgen_validation"
+
+    def trusted_bgen_validation_cache_path(self, bgen_path: str, cache_directory: Path) -> Path:
+        fingerprint_input = "\0".join(
+            (
                 bgen_path,
-                self.sample_count,
-                self.variant_count,
+                str(self.sample_count),
+                str(self.variant_count),
+                "true",
             )
+        )
+        fingerprint = hashlib.sha256(fingerprint_input.encode("utf-8")).hexdigest()
+        return cache_directory / f"{fingerprint}.json"
 
     def variant_metadata_slice(
         self,

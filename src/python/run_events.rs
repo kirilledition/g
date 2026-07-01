@@ -61,36 +61,6 @@ pub fn build_run_failed_event_payload<'py>(py: Python<'py>, error: &Bound<'py, P
 }
 
 #[pyfunction]
-pub fn build_run_completed_telemetry_fields<'py>(
-    py: Python<'py>,
-    event: &Bound<'py, PyAny>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let event_payload = run_completed_event_from_py(event)?;
-    let fields = native_run_events::build_run_completed_telemetry_fields(&event_payload);
-    run_completed_telemetry_fields_to_py_dict(py, &fields)
-}
-
-#[pyfunction]
-pub fn build_run_interrupted_telemetry_fields<'py>(
-    py: Python<'py>,
-    event: &Bound<'py, PyAny>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let event_payload = run_interrupted_event_from_py(event)?;
-    let fields = native_run_events::build_run_interrupted_telemetry_fields(&event_payload);
-    run_interrupted_telemetry_fields_to_py_dict(py, &fields)
-}
-
-#[pyfunction]
-pub fn build_run_failed_telemetry_fields<'py>(
-    py: Python<'py>,
-    event: &Bound<'py, PyAny>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let event_payload = run_failed_event_from_py(event)?;
-    let fields = native_run_events::build_run_failed_telemetry_fields(&event_payload);
-    run_failed_telemetry_fields_to_py_dict(py, &fields)
-}
-
-#[pyfunction]
 pub fn record_runner_run_started_telemetry_event(
     telemetry_session: &Bound<'_, PyAny>,
     association_mode: &str,
@@ -376,18 +346,6 @@ pub fn record_bgen_engine_opened_telemetry_event(
 }
 
 #[pyfunction]
-pub fn build_runner_run_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    association_mode: &str,
-    trait_type: &str,
-    phenotype_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload =
-        native_run_events::build_runner_run_started_diagnostic_payload(association_mode, trait_type, phenotype_count);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_runner_run_started_diagnostic_event(
     association_mode: &str,
     trait_type: &str,
@@ -399,30 +357,10 @@ pub fn record_runner_run_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_runner_run_interrupted_diagnostic_payload<'py>(
-    py: Python<'py>,
-    event: &Bound<'py, PyAny>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let event_payload = run_interrupted_event_from_py(event)?;
-    let payload = native_run_events::build_runner_run_interrupted_diagnostic_payload(&event_payload);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_runner_run_interrupted_diagnostic_event(event: &Bound<'_, PyAny>) -> PyResult<()> {
     let event_payload = run_interrupted_event_from_py(event)?;
     let payload = native_run_events::build_runner_run_interrupted_diagnostic_payload(&event_payload);
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_runner_run_failed_diagnostic_payload<'py>(
-    py: Python<'py>,
-    event: &Bound<'py, PyAny>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let event_payload = run_failed_event_from_py(event)?;
-    let payload = native_run_events::build_runner_run_failed_diagnostic_payload(&event_payload);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -433,28 +371,10 @@ pub fn record_runner_run_failed_diagnostic_event(event: &Bound<'_, PyAny>) -> Py
 }
 
 #[pyfunction]
-pub fn build_runner_run_completed_diagnostic_payload<'py>(
-    py: Python<'py>,
-    event: &Bound<'py, PyAny>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let event_payload = run_completed_event_from_py(event)?;
-    let payload = native_run_events::build_runner_run_completed_diagnostic_payload(&event_payload);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_runner_run_completed_diagnostic_event(event: &Bound<'_, PyAny>) -> PyResult<()> {
     let event_payload = run_completed_event_from_py(event)?;
     let payload = native_run_events::build_runner_run_completed_diagnostic_payload(&event_payload);
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_runner_jax_runtime_configuration_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_jax_runtime_configuration_started_diagnostic_payload();
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -464,36 +384,9 @@ pub fn record_runner_jax_runtime_configuration_started_diagnostic_event() -> PyR
 }
 
 #[pyfunction]
-pub fn build_runner_execution_plan_build_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_execution_plan_build_started_diagnostic_payload();
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_runner_execution_plan_build_started_diagnostic_event() -> PyResult<()> {
     let payload = native_run_events::build_runner_execution_plan_build_started_diagnostic_payload();
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_runner_execution_plan_prepared_diagnostic_payload<'py>(
-    py: Python<'py>,
-    association_mode: &str,
-    phenotype_count: i64,
-    chunk_size: i64,
-    variant_limit: Option<i64>,
-    device: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_execution_plan_prepared_diagnostic_payload(
-        association_mode,
-        phenotype_count,
-        chunk_size,
-        variant_limit,
-        device,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -515,19 +408,6 @@ pub fn record_runner_execution_plan_prepared_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_runner_execution_plan_dispatch_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-    association_mode: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_execution_plan_dispatch_started_diagnostic_payload(
-        phenotype_count,
-        association_mode,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_runner_execution_plan_dispatch_started_diagnostic_event(
     phenotype_count: i64,
     association_mode: &str,
@@ -537,19 +417,6 @@ pub fn record_runner_execution_plan_dispatch_started_diagnostic_event(
         association_mode,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_runner_execution_plan_finalization_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-    association_mode: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_execution_plan_finalization_started_diagnostic_payload(
-        phenotype_count,
-        association_mode,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -565,19 +432,6 @@ pub fn record_runner_execution_plan_finalization_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_runner_multi_phenotype_dispatch_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-    association_mode: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_multi_phenotype_dispatch_started_diagnostic_payload(
-        phenotype_count,
-        association_mode,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_runner_multi_phenotype_dispatch_started_diagnostic_event(
     phenotype_count: i64,
     association_mode: &str,
@@ -587,19 +441,6 @@ pub fn record_runner_multi_phenotype_dispatch_started_diagnostic_event(
         association_mode,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_runner_single_phenotype_dispatch_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    association_mode: &str,
-    phenotype: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_single_phenotype_dispatch_started_diagnostic_payload(
-        association_mode,
-        phenotype,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -615,44 +456,15 @@ pub fn record_runner_single_phenotype_dispatch_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_runner_binary_engine_dispatch_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_binary_engine_dispatch_started_diagnostic_payload(phenotype);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_runner_binary_engine_dispatch_started_diagnostic_event(phenotype: &str) -> PyResult<()> {
     let payload = native_run_events::build_runner_binary_engine_dispatch_started_diagnostic_payload(phenotype);
     emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
-pub fn build_runner_linear_engine_dispatch_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_linear_engine_dispatch_started_diagnostic_payload(phenotype);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_runner_linear_engine_dispatch_started_diagnostic_event(phenotype: &str) -> PyResult<()> {
     let payload = native_run_events::build_runner_linear_engine_dispatch_started_diagnostic_payload(phenotype);
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload(
-        phenotype_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -666,17 +478,6 @@ pub fn record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_e
 }
 
 #[pyfunction]
-pub fn build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(
-        phenotype_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
     phenotype_count: i64,
 ) -> PyResult<()> {
@@ -687,29 +488,9 @@ pub fn record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_e
 }
 
 #[pyfunction]
-pub fn build_native_cli_stdout_diagnostic_payload<'py>(
-    py: Python<'py>,
-    output_text: &str,
-    max_payload_chars: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_cli_stdout_diagnostic_payload(output_text, max_payload_chars);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_native_cli_stdout_diagnostic_event(output_text: &str, max_payload_chars: i64) -> PyResult<()> {
     let payload = native_run_events::build_native_cli_stdout_diagnostic_payload(output_text, max_payload_chars);
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_native_cli_stderr_diagnostic_payload<'py>(
-    py: Python<'py>,
-    output_text: &str,
-    max_payload_chars: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_cli_stderr_diagnostic_payload(output_text, max_payload_chars);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -719,27 +500,9 @@ pub fn record_native_cli_stderr_diagnostic_event(output_text: &str, max_payload_
 }
 
 #[pyfunction]
-pub fn build_native_cli_interrupted_line_diagnostic_payload<'py>(
-    py: Python<'py>,
-    line: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_cli_interrupted_line_diagnostic_payload(line);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_native_cli_interrupted_line_diagnostic_event(line: &str) -> PyResult<()> {
     let payload = native_run_events::build_native_cli_interrupted_line_diagnostic_payload(line);
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_native_cli_failed_line_diagnostic_payload<'py>(
-    py: Python<'py>,
-    line: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_cli_failed_line_diagnostic_payload(line);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -749,31 +512,9 @@ pub fn record_native_cli_failed_line_diagnostic_event(line: &str) -> PyResult<()
 }
 
 #[pyfunction]
-pub fn build_native_cli_completed_line_diagnostic_payload<'py>(
-    py: Python<'py>,
-    line: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_cli_completed_line_diagnostic_payload(line);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_native_cli_completed_line_diagnostic_event(line: &str) -> PyResult<()> {
     let payload = native_run_events::build_native_cli_completed_line_diagnostic_payload(line);
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_native_runtime_knobs_configured_diagnostic_payload<'py>(
-    py: Python<'py>,
-    bgen_decode_tile_variant_count: i64,
-    threads: Option<i64>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_runtime_knobs_configured_diagnostic_payload(
-        bgen_decode_tile_variant_count,
-        threads,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -789,19 +530,6 @@ pub fn record_native_runtime_knobs_configured_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_runner_metadata_artifacts_finalized_diagnostic_payload<'py>(
-    py: Python<'py>,
-    association_mode: &str,
-    phenotype_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_runner_metadata_artifacts_finalized_diagnostic_payload(
-        association_mode,
-        phenotype_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_runner_metadata_artifacts_finalized_diagnostic_event(
     association_mode: &str,
     phenotype_count: i64,
@@ -811,30 +539,6 @@ pub fn record_runner_metadata_artifacts_finalized_diagnostic_event(
         phenotype_count,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-pub fn build_preflight_warning_diagnostic_payload<'py>(
-    py: Python<'py>,
-    message: &str,
-    chromosome_count: i64,
-    covariate_count: i64,
-    preflight_scope: &str,
-    sample_count: i64,
-    trusted_no_missing_diploid: bool,
-    warning_index: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_preflight_warning_diagnostic_payload(
-        message,
-        chromosome_count,
-        covariate_count,
-        preflight_scope,
-        sample_count,
-        trusted_no_missing_diploid,
-        warning_index,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -861,21 +565,6 @@ pub fn record_preflight_warning_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_io_output_resume_committed_chunks_diagnostic_payload<'py>(
-    py: Python<'py>,
-    chunks_directory: &str,
-    committed_chunk_count: i64,
-    run_directory: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_io_output_resume_committed_chunks_diagnostic_payload(
-        chunks_directory,
-        committed_chunk_count,
-        run_directory,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_io_output_resume_committed_chunks_diagnostic_event(
     chunks_directory: &str,
     committed_chunk_count: i64,
@@ -887,25 +576,6 @@ pub fn record_io_output_resume_committed_chunks_diagnostic_event(
         run_directory,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_bgen_engine_open_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: Option<i64>,
-    phenotype_name: Option<&str>,
-    pipeline_label: &str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: Option<i64>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_bgen_engine_open_started_diagnostic_payload(
-        phenotype_count,
-        phenotype_name,
-        pipeline_label,
-        trusted_no_missing_diploid,
-        variant_limit,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -927,25 +597,6 @@ pub fn record_pipeline_bgen_engine_open_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_pipeline_bgen_engine_opened_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: Option<i64>,
-    phenotype_name: Option<&str>,
-    pipeline_label: &str,
-    sample_count: i64,
-    variant_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_bgen_engine_opened_diagnostic_payload(
-        phenotype_count,
-        phenotype_name,
-        pipeline_label,
-        sample_count,
-        variant_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_pipeline_bgen_engine_opened_diagnostic_event(
     phenotype_count: Option<i64>,
     phenotype_name: Option<&str>,
@@ -964,21 +615,6 @@ pub fn record_pipeline_bgen_engine_opened_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: Option<i64>,
-    phenotype_name: Option<&str>,
-    pipeline_label: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
-        phenotype_count,
-        phenotype_name,
-        pipeline_label,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
     phenotype_count: Option<i64>,
     phenotype_name: Option<&str>,
@@ -990,19 +626,6 @@ pub fn record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
         pipeline_label,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_output_resume_committed_chunks_diagnostic_payload<'py>(
-    py: Python<'py>,
-    committed_chunk_count: i64,
-    output_index: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_output_resume_committed_chunks_diagnostic_payload(
-        committed_chunk_count,
-        output_index,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1018,19 +641,6 @@ pub fn record_pipeline_output_resume_committed_chunks_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_pipeline_output_writer_sessions_create_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    association_mode: &str,
-    output_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
-        association_mode,
-        output_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_pipeline_output_writer_sessions_create_started_diagnostic_event(
     association_mode: &str,
     output_count: i64,
@@ -1040,23 +650,6 @@ pub fn record_pipeline_output_writer_sessions_create_started_diagnostic_event(
         output_count,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_gpu_genotype_format_resolved_diagnostic_payload<'py>(
-    py: Python<'py>,
-    requested_gpu_genotype_format: &str,
-    resolved_gpu_genotype_format: &str,
-    resolution_reason: &str,
-    fallback_error: Option<&str>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
-        requested_gpu_genotype_format,
-        resolved_gpu_genotype_format,
-        resolution_reason,
-        fallback_error,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1073,30 +666,6 @@ pub fn record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
         fallback_error,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-pub fn build_callback_null_logistic_nonconvergence_warning_diagnostic_payload<'py>(
-    py: Python<'py>,
-    message: &str,
-    chromosome: &str,
-    nonconverged_count: i64,
-    phenotype_count: i64,
-    policy: &str,
-    scalar_convergence: bool,
-    total_fit_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
-        message,
-        chromosome,
-        nonconverged_count,
-        phenotype_count,
-        policy,
-        scalar_convergence,
-        total_fit_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1123,23 +692,6 @@ pub fn record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_pipeline_multi_phenotype_sample_summary_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-    phenotype_group_count: i64,
-    sample_counts_differ: bool,
-    sample_mode: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
-        phenotype_count,
-        phenotype_group_count,
-        sample_counts_differ,
-        sample_mode,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
     phenotype_count: i64,
     phenotype_group_count: i64,
@@ -1153,21 +705,6 @@ pub fn record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
         sample_mode,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_multi_trait_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    association_mode: &str,
-    phenotype_count: i64,
-    sample_mode: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_multi_trait_started_diagnostic_payload(
-        association_mode,
-        phenotype_count,
-        sample_mode,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1185,33 +722,9 @@ pub fn record_pipeline_multi_trait_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_pipeline_multi_trait_input_load_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_multi_trait_input_load_started_diagnostic_payload(phenotype_count);
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_pipeline_multi_trait_input_load_started_diagnostic_event(phenotype_count: i64) -> PyResult<()> {
     let payload = native_run_events::build_pipeline_multi_trait_input_load_started_diagnostic_payload(phenotype_count);
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_multi_trait_input_aligned_diagnostic_payload<'py>(
-    py: Python<'py>,
-    covariate_count: i64,
-    phenotype_count: i64,
-    sample_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_multi_trait_input_aligned_diagnostic_payload(
-        covariate_count,
-        phenotype_count,
-        sample_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1229,17 +742,6 @@ pub fn record_pipeline_multi_trait_input_aligned_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
-        phenotype_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
     phenotype_count: i64,
 ) -> PyResult<()> {
@@ -1247,21 +749,6 @@ pub fn record_pipeline_multi_trait_prediction_source_load_started_diagnostic_eve
         phenotype_count,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_grouped_per_phenotype_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    association_mode: &str,
-    phenotype_count: i64,
-    sample_mode: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
-        association_mode,
-        phenotype_count,
-        sample_mode,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1279,19 +766,6 @@ pub fn record_pipeline_grouped_per_phenotype_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-    phenotype_group_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
-        phenotype_count,
-        phenotype_group_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
     phenotype_count: i64,
     phenotype_group_count: i64,
@@ -1301,21 +775,6 @@ pub fn record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
         phenotype_group_count,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_grouped_union_delivery_selected_diagnostic_payload<'py>(
-    py: Python<'py>,
-    grouped_sample_count: i64,
-    phenotype_group_count: i64,
-    union_sample_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
-        grouped_sample_count,
-        phenotype_group_count,
-        union_sample_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1330,23 +789,6 @@ pub fn record_pipeline_grouped_union_delivery_selected_diagnostic_event(
         union_sample_count,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_multi_group_preflight_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-    sample_count: i64,
-    trusted_no_missing_diploid: bool,
-    variant_limit: Option<i64>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_multi_group_preflight_started_diagnostic_payload(
-        phenotype_count,
-        sample_count,
-        trusted_no_missing_diploid,
-        variant_limit,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1366,23 +808,6 @@ pub fn record_pipeline_multi_group_preflight_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_pipeline_multi_group_preflight_completed_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_count: i64,
-    sample_count: i64,
-    trusted_no_missing_diploid: bool,
-    variant_limit: Option<i64>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_multi_group_preflight_completed_diagnostic_payload(
-        phenotype_count,
-        sample_count,
-        trusted_no_missing_diploid,
-        variant_limit,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_pipeline_multi_group_preflight_completed_diagnostic_event(
     phenotype_count: i64,
     sample_count: i64,
@@ -1396,21 +821,6 @@ pub fn record_pipeline_multi_group_preflight_completed_diagnostic_event(
         variant_limit,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_single_trait_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    association_mode: &str,
-    phenotype_name: &str,
-    pipeline_label: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_single_trait_started_diagnostic_payload(
-        association_mode,
-        phenotype_name,
-        pipeline_label,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1428,19 +838,6 @@ pub fn record_pipeline_single_trait_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_pipeline_single_trait_input_load_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_name: &str,
-    pipeline_label: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_single_trait_input_load_started_diagnostic_payload(
-        phenotype_name,
-        pipeline_label,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_pipeline_single_trait_input_load_started_diagnostic_event(
     phenotype_name: &str,
     pipeline_label: &str,
@@ -1450,23 +847,6 @@ pub fn record_pipeline_single_trait_input_load_started_diagnostic_event(
         pipeline_label,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_single_trait_input_aligned_diagnostic_payload<'py>(
-    py: Python<'py>,
-    covariate_count: i64,
-    phenotype_name: &str,
-    pipeline_label: &str,
-    sample_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_single_trait_input_aligned_diagnostic_payload(
-        covariate_count,
-        phenotype_name,
-        pipeline_label,
-        sample_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1486,19 +866,6 @@ pub fn record_pipeline_single_trait_input_aligned_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_name: &str,
-    pipeline_label: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload(
-        phenotype_name,
-        pipeline_label,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
     phenotype_name: &str,
     pipeline_label: &str,
@@ -1508,23 +875,6 @@ pub fn record_pipeline_single_trait_prediction_source_load_started_diagnostic_ev
         pipeline_label,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_single_trait_preflight_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    phenotype_name: &str,
-    pipeline_label: &str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: Option<i64>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_single_trait_preflight_started_diagnostic_payload(
-        phenotype_name,
-        pipeline_label,
-        trusted_no_missing_diploid,
-        variant_limit,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1541,25 +891,6 @@ pub fn record_pipeline_single_trait_preflight_started_diagnostic_event(
         variant_limit,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_pipeline_single_trait_preflight_completed_diagnostic_payload<'py>(
-    py: Python<'py>,
-    chromosome_count: i64,
-    covariate_count: i64,
-    phenotype_name: &str,
-    pipeline_label: &str,
-    sample_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_pipeline_single_trait_preflight_completed_diagnostic_payload(
-        chromosome_count,
-        covariate_count,
-        phenotype_name,
-        pipeline_label,
-        sample_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1582,23 +913,6 @@ pub fn record_pipeline_single_trait_preflight_completed_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_native_dispatch_bgen_engine_constructing_diagnostic_payload<'py>(
-    py: Python<'py>,
-    chunk_size: i64,
-    source_path: &str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: Option<i64>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
-        chunk_size,
-        source_path,
-        trusted_no_missing_diploid,
-        variant_limit,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_native_dispatch_bgen_engine_constructing_diagnostic_event(
     chunk_size: i64,
     source_path: &str,
@@ -1615,19 +929,6 @@ pub fn record_native_dispatch_bgen_engine_constructing_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    source_path: &str,
-    trusted_bgen_validation_mode: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
-        source_path,
-        trusted_bgen_validation_mode,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
     source_path: &str,
     trusted_bgen_validation_mode: &str,
@@ -1640,32 +941,9 @@ pub fn record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_native_dispatch_callback_drain_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_callback_drain_started_diagnostic_payload();
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_native_dispatch_callback_drain_started_diagnostic_event() -> PyResult<()> {
     let payload = native_run_events::build_native_dispatch_callback_drain_started_diagnostic_payload();
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_native_dispatch_delivery_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    committed_chunk_count: i64,
-    pipeline_label: &str,
-    variant_major_packed8_probability_pairs: bool,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_delivery_started_diagnostic_payload(
-        committed_chunk_count,
-        pipeline_label,
-        variant_major_packed8_probability_pairs,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1683,19 +961,6 @@ pub fn record_native_dispatch_delivery_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_native_dispatch_delivery_finished_diagnostic_payload<'py>(
-    py: Python<'py>,
-    pipeline_label: &str,
-    processed_chunk_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_delivery_finished_diagnostic_payload(
-        pipeline_label,
-        processed_chunk_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_native_dispatch_delivery_finished_diagnostic_event(
     pipeline_label: &str,
     processed_chunk_count: i64,
@@ -1705,23 +970,6 @@ pub fn record_native_dispatch_delivery_finished_diagnostic_event(
         processed_chunk_count,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_native_dispatch_delivery_interrupted_diagnostic_payload<'py>(
-    py: Python<'py>,
-    pipeline_label: &str,
-    signal_exit_code: i64,
-    signal_name: &str,
-    signal_number: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_delivery_interrupted_diagnostic_payload(
-        pipeline_label,
-        signal_exit_code,
-        signal_name,
-        signal_number,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1741,21 +989,6 @@ pub fn record_native_dispatch_delivery_interrupted_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_native_dispatch_delivery_failed_diagnostic_payload<'py>(
-    py: Python<'py>,
-    exception_message: &str,
-    exception_type: &str,
-    pipeline_label: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_delivery_failed_diagnostic_payload(
-        exception_message,
-        exception_type,
-        pipeline_label,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_native_dispatch_delivery_failed_diagnostic_event(
     exception_message: &str,
     exception_type: &str,
@@ -1767,19 +1000,6 @@ pub fn record_native_dispatch_delivery_failed_diagnostic_event(
         pipeline_label,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_native_dispatch_pipeline_finished_diagnostic_payload<'py>(
-    py: Python<'py>,
-    final_parquet_path_count: i64,
-    pipeline_label: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_pipeline_finished_diagnostic_payload(
-        final_parquet_path_count,
-        pipeline_label,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1795,30 +1015,9 @@ pub fn record_native_dispatch_pipeline_finished_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_native_dispatch_writer_session_finish_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_writer_session_finish_started_diagnostic_payload();
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_native_dispatch_writer_session_finish_started_diagnostic_event() -> PyResult<()> {
     let payload = native_run_events::build_native_dispatch_writer_session_finish_started_diagnostic_payload();
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_native_dispatch_writer_sessions_finish_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    requested_thread_count: i64,
-    writer_session_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
-        requested_thread_count,
-        writer_session_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1834,21 +1033,6 @@ pub fn record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    signal_exit_code: i64,
-    signal_name: &str,
-    signal_number: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(
-        signal_exit_code,
-        signal_name,
-        signal_number,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
-}
-
-#[pyfunction]
 pub fn record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
     signal_exit_code: i64,
     signal_name: &str,
@@ -1860,25 +1044,6 @@ pub fn record_native_dispatch_writer_session_interrupted_flush_started_diagnosti
         signal_number,
     );
     emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload<'py>(
-    py: Python<'py>,
-    requested_thread_count: i64,
-    signal_exit_code: i64,
-    signal_name: &str,
-    signal_number: i64,
-    writer_session_count: i64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_run_events::build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
-        requested_thread_count,
-        signal_exit_code,
-        signal_name,
-        signal_number,
-        writer_session_count,
-    );
-    run_diagnostic_event_payload_to_py_dict(py, &payload)
 }
 
 #[pyfunction]
@@ -1933,9 +1098,6 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
     module.add_function(wrap_pyfunction!(build_run_completed_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_interrupted_event_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_failed_event_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_run_completed_telemetry_fields, module)?)?;
-    module.add_function(wrap_pyfunction!(build_run_failed_telemetry_fields, module)?)?;
-    module.add_function(wrap_pyfunction!(build_run_interrupted_telemetry_fields, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_started_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_interrupted_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_failed_telemetry_event, module)?)?;
@@ -1956,46 +1118,22 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
 }
 
 fn register_runner_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(build_runner_run_started_diagnostic_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_runner_run_interrupted_diagnostic_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_runner_run_failed_diagnostic_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_runner_run_completed_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_interrupted_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_failed_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_completed_diagnostic_event, module)?)?;
-    module
-        .add_function(wrap_pyfunction!(build_runner_jax_runtime_configuration_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_jax_runtime_configuration_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_runner_execution_plan_build_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_execution_plan_build_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_runner_execution_plan_prepared_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_execution_plan_prepared_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_runner_execution_plan_dispatch_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_execution_plan_dispatch_started_diagnostic_event, module)?)?;
     module
-        .add_function(wrap_pyfunction!(build_runner_execution_plan_finalization_started_diagnostic_payload, module)?)?;
-    module
         .add_function(wrap_pyfunction!(record_runner_execution_plan_finalization_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_runner_multi_phenotype_dispatch_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_multi_phenotype_dispatch_started_diagnostic_event, module)?)?;
-    module
-        .add_function(wrap_pyfunction!(build_runner_single_phenotype_dispatch_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_single_phenotype_dispatch_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_runner_binary_engine_dispatch_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_binary_engine_dispatch_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_runner_linear_engine_dispatch_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_linear_engine_dispatch_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(
-        build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
         record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
-        build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload,
         module
     )?)?;
     module.add_function(wrap_pyfunction!(
@@ -2006,40 +1144,23 @@ fn register_runner_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<
 }
 
 fn register_cli_and_runtime_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(build_native_cli_stdout_diagnostic_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_native_cli_stderr_diagnostic_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_native_cli_interrupted_line_diagnostic_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_native_cli_failed_line_diagnostic_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_native_cli_completed_line_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_cli_stdout_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_cli_stderr_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_cli_interrupted_line_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_cli_failed_line_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_cli_completed_line_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_native_runtime_knobs_configured_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_runtime_knobs_configured_diagnostic_event, module)?)?;
     Ok(())
 }
 
 fn register_output_and_preflight_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(build_runner_metadata_artifacts_finalized_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_metadata_artifacts_finalized_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_preflight_warning_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_preflight_warning_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_io_output_resume_committed_chunks_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_io_output_resume_committed_chunks_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_bgen_engine_open_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_bgen_engine_open_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_bgen_engine_opened_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_bgen_engine_opened_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_prevalidated_bgen_engine_used_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_output_resume_committed_chunks_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_output_resume_committed_chunks_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        build_pipeline_output_writer_sessions_create_started_diagnostic_payload,
-        module
-    )?)?;
     module.add_function(wrap_pyfunction!(
         record_pipeline_output_writer_sessions_create_started_diagnostic_event,
         module
@@ -2048,108 +1169,54 @@ fn register_output_and_preflight_diagnostic_exports(module: &Bound<'_, PyModule>
 }
 
 fn register_pipeline_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(build_pipeline_gpu_genotype_format_resolved_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_gpu_genotype_format_resolved_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_multi_phenotype_sample_summary_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_phenotype_sample_summary_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_multi_trait_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_trait_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_multi_trait_input_load_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_trait_input_load_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_multi_trait_input_aligned_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_trait_input_aligned_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload,
-        module
-    )?)?;
     module.add_function(wrap_pyfunction!(
         record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event,
         module
     )?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_grouped_per_phenotype_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_grouped_per_phenotype_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload,
-        module
-    )?)?;
     module.add_function(wrap_pyfunction!(
         record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event,
         module
     )?)?;
-    module
-        .add_function(wrap_pyfunction!(build_pipeline_grouped_union_delivery_selected_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_grouped_union_delivery_selected_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_multi_group_preflight_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_group_preflight_started_diagnostic_event, module)?)?;
-    module
-        .add_function(wrap_pyfunction!(build_pipeline_multi_group_preflight_completed_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_group_preflight_completed_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_single_trait_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_single_trait_started_diagnostic_event, module)?)?;
-    module
-        .add_function(wrap_pyfunction!(build_pipeline_single_trait_input_load_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_single_trait_input_load_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_single_trait_input_aligned_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_single_trait_input_aligned_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload,
-        module
-    )?)?;
     module.add_function(wrap_pyfunction!(
         record_pipeline_single_trait_prediction_source_load_started_diagnostic_event,
         module
     )?)?;
-    module.add_function(wrap_pyfunction!(build_pipeline_single_trait_preflight_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_single_trait_preflight_started_diagnostic_event, module)?)?;
-    module
-        .add_function(wrap_pyfunction!(build_pipeline_single_trait_preflight_completed_diagnostic_payload, module)?)?;
     module
         .add_function(wrap_pyfunction!(record_pipeline_single_trait_preflight_completed_diagnostic_event, module)?)?;
     Ok(())
 }
 
 fn register_native_dispatch_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module
-        .add_function(wrap_pyfunction!(build_native_dispatch_bgen_engine_constructing_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_bgen_engine_constructing_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(
-        build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
         record_native_dispatch_trusted_bgen_validation_started_diagnostic_event,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
-        build_callback_null_logistic_nonconvergence_warning_diagnostic_payload,
         module
     )?)?;
     module.add_function(wrap_pyfunction!(
         record_callback_null_logistic_nonconvergence_warning_diagnostic_event,
         module
     )?)?;
-    module.add_function(wrap_pyfunction!(build_native_dispatch_callback_drain_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_callback_drain_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_finished_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_finished_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_interrupted_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_interrupted_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_native_dispatch_delivery_failed_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_failed_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_native_dispatch_pipeline_finished_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_pipeline_finished_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(
-        build_native_dispatch_writer_session_finish_started_diagnostic_payload,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
         record_native_dispatch_writer_session_finish_started_diagnostic_event,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
-        build_native_dispatch_writer_sessions_finish_started_diagnostic_payload,
         module
     )?)?;
     module.add_function(wrap_pyfunction!(
@@ -2157,15 +1224,7 @@ fn register_native_dispatch_diagnostic_exports(module: &Bound<'_, PyModule>) -> 
         module
     )?)?;
     module.add_function(wrap_pyfunction!(
-        build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
         record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
-        build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload,
         module
     )?)?;
     module.add_function(wrap_pyfunction!(
@@ -2324,37 +1383,6 @@ fn run_failed_event_payload_to_py_dict<'py>(
     let payload = PyDict::new(py);
     payload.set_item("error_type", &event.error_type)?;
     payload.set_item("error_message", &event.error_message)?;
-    Ok(payload)
-}
-
-fn run_diagnostic_event_payload_to_py_dict<'py>(
-    py: Python<'py>,
-    event: &native_run_events::RunDiagnosticEventPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("level", event.level)?;
-    payload.set_item("event_name", event.event_name)?;
-    payload.set_item("message", &event.message)?;
-    payload.set_item("fields", run_diagnostic_fields_to_py_dict(py, &event.fields)?)?;
-    Ok(payload)
-}
-
-fn run_diagnostic_fields_to_py_dict<'py>(
-    py: Python<'py>,
-    fields: &[native_run_events::RunDiagnosticFieldPayload],
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    for field in fields {
-        match &field.value {
-            native_run_events::RunDiagnosticFieldValue::Boolean(value) => payload.set_item(field.name, *value)?,
-            native_run_events::RunDiagnosticFieldValue::Integer(value) => payload.set_item(field.name, *value)?,
-            native_run_events::RunDiagnosticFieldValue::OptionalInteger(value) => {
-                payload.set_item(field.name, value)?;
-            }
-            native_run_events::RunDiagnosticFieldValue::OptionalText(value) => payload.set_item(field.name, value)?,
-            native_run_events::RunDiagnosticFieldValue::Text(value) => payload.set_item(field.name, value)?,
-        }
-    }
     Ok(payload)
 }
 

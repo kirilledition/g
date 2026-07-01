@@ -60,6 +60,31 @@ def build_native_runtime_compatibility_token() -> _core.NativeRuntimeCompatibili
     )
 
 
+def build_native_jax_runtime_setup_session(
+    *,
+    requested_device: str,
+    cache_directory: str,
+    matmul_precision: str | None = None,
+    persistent_cache: bool = True,
+    persistent_cache_min_entry_size_bytes: int = 0,
+    persistent_cache_min_compile_time_seconds: int = 0,
+    xla_autotune_cache: bool = False,
+    transfer_guard: bool = False,
+) -> _core.NativeJaxRuntimeSetupSession:
+    """Build a native setup session through the runtime-state boundary."""
+    jax_policy_payload = _core.build_jax_runtime_policy_payload(
+        device=requested_device,
+        cache_directory=cache_directory,
+        matmul_precision=matmul_precision,
+        persistent_cache=persistent_cache,
+        persistent_cache_min_entry_size_bytes=persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds=persistent_cache_min_compile_time_seconds,
+        xla_autotune_cache=xla_autotune_cache,
+        transfer_guard=transfer_guard,
+    )
+    return _core.NativeRuntimeState().build_jax_runtime_setup_session(jax_policy_payload, cache_directory)
+
+
 class RecordingNativeCallbackTelemetrySession:
     """Telemetry double for native callback emission helpers."""
 
@@ -145,32 +170,26 @@ def test_initialize_logging_defaults_to_info_filter(tmp_path: Path) -> None:
     assert "logging initialized" in log_text
 
 
-def test_emit_diagnostic_event_fields_serializes_mapping(tmp_path: Path) -> None:
-    log_path = tmp_path / "g-diagnostic-fields.jsonl"
+def test_raw_diagnostic_emitters_are_not_exported() -> None:
+    assert not hasattr(_core, "emit_diagnostic_event")
+    assert not hasattr(_core, "emit_diagnostic_event_fields")
 
-    run_logging_subprocess(
-        "\n".join(
-            [
-                "from pathlib import Path",
-                "from g import _core",
-                f"log_path = {str(log_path)!r}",
-                '_core.initialize_logging(log_filter="info", log_file=log_path, log_stderr=False)',
-                "_core.emit_diagnostic_event_fields(",
-                '    "info",',
-                '    "native_fields_test",',
-                '    "Native fields diagnostic.",',
-                '    {"z_value": 3, "path_value": Path("cache")},',
-                ")",
-                "_core.shutdown_logging()",
-            ]
-        )
-    )
 
-    records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line]
-    diagnostic_record = next(record for record in records if record.get("g_event") == "native_fields_test")
-    diagnostic_fields = json.loads(typing.cast("str", diagnostic_record["g_fields"]))
-
-    assert diagnostic_fields == {"path_value": "cache", "z_value": 3}
+def test_unused_raw_payload_builders_are_not_exported() -> None:
+    assert not hasattr(_core, "configure_bgen_decode_tile_variant_count")
+    assert not hasattr(_core, "configure_rayon_global_thread_pool")
+    assert not hasattr(_core, "build_manifest_file_fingerprint_mapping_payload")
+    assert not hasattr(_core, "build_multi_run_artifacts_payload")
+    assert not hasattr(_core, "build_phenotype_run_artifacts_payload")
+    assert not hasattr(_core, "build_run_manifest_extension_payload")
+    assert not hasattr(_core, "build_trusted_bgen_validation_cache_payload")
+    assert not hasattr(_core, "build_trusted_bgen_validation_cache_path_value")
+    assert not hasattr(_core, "build_trusted_bgen_validation_fingerprint_value")
+    assert not hasattr(_core, "default_trusted_bgen_validation_cache_directory_value")
+    assert not hasattr(_core, "format_rayon_thread_pool_configuration_error_value")
+    assert not hasattr(_core, "plan_trusted_bgen_validation_cache_lookup")
+    assert not hasattr(_core, "write_trusted_bgen_validation_cache_payload")
+    assert not hasattr(_core.Regenie2RunEngine, "validate_trusted_no_missing_diploid_with_cache")
 
 
 def test_native_default_shutdown_signal_numbers() -> None:
@@ -1665,55 +1684,6 @@ def test_native_runtime_state_configures_runtime_knobs() -> None:
     assert matching_thread_plan.thread_count is None
 
 
-def test_native_trusted_bgen_validation_cache_lookup_plan(tmp_path: Path) -> None:
-    cache_path = tmp_path / "cache" / "abc123.json"
-
-    miss_plan = _core.plan_trusted_bgen_validation_cache_lookup("cache_on_miss", str(cache_path))
-    assert miss_plan.should_mark_validated is False
-    assert miss_plan.should_validate is True
-    assert miss_plan.should_write_cache is True
-
-    cache_path.parent.mkdir()
-    cache_path.write_text("{}", encoding="utf-8")
-
-    hit_plan = _core.plan_trusted_bgen_validation_cache_lookup("cache_on_miss", str(cache_path))
-    assert hit_plan.should_mark_validated is True
-    assert hit_plan.should_validate is False
-    assert hit_plan.should_write_cache is False
-
-    force_plan = _core.plan_trusted_bgen_validation_cache_lookup("force_validate", str(cache_path))
-    assert force_plan.should_mark_validated is False
-    assert force_plan.should_validate is True
-    assert force_plan.should_write_cache is True
-
-    with pytest.raises(ValueError, match="unsafe for calculation runs"):
-        _core.plan_trusted_bgen_validation_cache_lookup("assume_validated", str(cache_path))
-
-    with pytest.raises(ValueError, match="Unsupported trusted BGEN validation mode"):
-        _core.plan_trusted_bgen_validation_cache_lookup("unknown", str(cache_path))
-
-
-def test_native_default_trusted_bgen_validation_cache_directory_value(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    xdg_cache_home = tmp_path / "xdg-cache"
-    home_directory = tmp_path / "home"
-    monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_cache_home))
-    monkeypatch.setenv("HOME", str(home_directory))
-
-    assert (
-        Path(_core.default_trusted_bgen_validation_cache_directory_value()) == xdg_cache_home / "g" / "bgen_validation"
-    )
-
-    monkeypatch.delenv("XDG_CACHE_HOME")
-
-    assert (
-        Path(_core.default_trusted_bgen_validation_cache_directory_value())
-        == home_directory / ".cache" / "g" / "bgen_validation"
-    )
-
-
 def test_native_runtime_state_initializes_logging_runtime_policy_preflight() -> None:
     runtime_state = _core.NativeRuntimeState()
     configured_payload = _core.build_logging_runtime_policy_payload(
@@ -1811,17 +1781,11 @@ def test_native_runtime_state_rejects_pending_jax_setup_session_completion() -> 
 
 
 def test_native_jax_runtime_setup_session_completes_validation() -> None:
-    setup_payload = _core.resolve_jax_runtime_setup_payload(
+    native_setup_session = build_native_jax_runtime_setup_session(
         requested_device="gpu",
         cache_directory="/tmp/g-jax-cache",
-        matmul_precision=None,
         persistent_cache=True,
-        persistent_cache_min_entry_size_bytes=0,
-        persistent_cache_min_compile_time_seconds=0,
-        xla_autotune_cache=False,
-        transfer_guard=False,
     )
-    native_setup_session = _core.NativeJaxRuntimeSetupSession(setup_payload, should_configure=True)
 
     completed_payload = native_setup_session.complete_validation_payload("succeeded", "gpu ready")
     diagnostic_payloads = native_setup_session.diagnostic_event_payloads()
@@ -1834,7 +1798,7 @@ def test_native_jax_runtime_setup_session_completes_validation() -> None:
 
 
 def test_native_jax_runtime_setup_session_applies_config_updates() -> None:
-    setup_payload = _core.resolve_jax_runtime_setup_payload(
+    native_setup_session = build_native_jax_runtime_setup_session(
         requested_device="gpu",
         cache_directory="/tmp/g-jax-cache",
         matmul_precision="highest",
@@ -1844,7 +1808,6 @@ def test_native_jax_runtime_setup_session_applies_config_updates() -> None:
         xla_autotune_cache=True,
         transfer_guard=True,
     )
-    native_setup_session = _core.NativeJaxRuntimeSetupSession(setup_payload, should_configure=True)
 
     with unittest.mock.patch("jax.config.update") as config_update_mock:
         applied_count = native_setup_session.apply_config_updates()
@@ -1871,17 +1834,11 @@ def test_native_jax_runtime_setup_session_validates_gpu_devices(tmp_path: Path) 
 
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
-    setup_payload = _core.resolve_jax_runtime_setup_payload(
+    native_setup_session = build_native_jax_runtime_setup_session(
         requested_device="gpu",
         cache_directory="/tmp/g-jax-cache",
-        matmul_precision=None,
         persistent_cache=False,
-        persistent_cache_min_entry_size_bytes=0,
-        persistent_cache_min_compile_time_seconds=0,
-        xla_autotune_cache=False,
-        transfer_guard=False,
     )
-    native_setup_session = _core.NativeJaxRuntimeSetupSession(setup_payload, should_configure=True)
 
     with unittest.mock.patch("jax.devices", return_value=[FakeDevice()]) as devices_mock:
         validated_payload = native_setup_session.validate_gpu_if_configured(
@@ -1920,38 +1877,20 @@ def test_native_jax_runtime_policy_payload() -> None:
     }
 
 
-def test_native_rayon_thread_pool_rejects_zero_thread_count() -> None:
-    with pytest.raises(ValueError, match="Rayon thread count must be positive"):
-        _core.configure_rayon_global_thread_pool(0)
-
-
-def test_native_rayon_thread_pool_configuration_error_message() -> None:
-    message = _core.format_rayon_thread_pool_configuration_error_value(
-        thread_count=4,
-        source_error="global pool already initialized",
-    )
-
-    assert message == (
-        "Unable to configure Rayon global thread pool for --threads=4; "
-        "existing Rayon settings are unknown: global pool already initialized"
-    )
-
-
-def test_native_jax_runtime_setup_diagnostic_payloads() -> None:
-    diagnostic_payloads = _core.build_jax_runtime_setup_diagnostic_payloads(
+def test_native_jax_runtime_setup_session_owns_diagnostic_payloads() -> None:
+    native_setup_session = build_native_jax_runtime_setup_session(
         requested_device="gpu",
-        platform_name="cuda",
         cache_directory="/tmp/g-cache",
         matmul_precision="float32",
-        persistent_cache_enabled=True,
+        persistent_cache=True,
         persistent_cache_min_entry_size_bytes=1024,
         persistent_cache_min_compile_time_seconds=5,
-        xla_auxiliary_cache_mode="xla_gpu_per_fusion_autotune_cache_dir",
-        xla_auxiliary_cache_reason="XLA auxiliary cache was requested",
-        transfer_guard_enabled=True,
-        gpu_validation_status="failed",
-        gpu_validation_message="no gpu",
+        xla_autotune_cache=True,
+        transfer_guard=True,
     )
+    native_setup_session.complete_validation_payload("failed", "no gpu")
+
+    diagnostic_payloads = native_setup_session.diagnostic_event_payloads()
 
     assert [payload["event_name"] for payload in diagnostic_payloads] == [
         "jax_platform_selected",
@@ -1971,19 +1910,22 @@ def test_native_jax_runtime_setup_diagnostic_payloads() -> None:
         {"name": "status", "value": "failed"},
         {"name": "message", "value": "no gpu"},
     ]
+    assert not hasattr(_core, "build_jax_runtime_setup_diagnostic_payloads")
 
 
 def test_native_jax_runtime_config_update_payloads() -> None:
-    update_payloads = _core.plan_jax_runtime_config_update_payloads(
-        platform_name="cuda",
+    native_setup_session = build_native_jax_runtime_setup_session(
+        requested_device="gpu",
         cache_directory="/tmp/g-cache",
         matmul_precision="float32",
-        persistent_cache_enabled=True,
+        persistent_cache=True,
         persistent_cache_min_entry_size_bytes=1024,
         persistent_cache_min_compile_time_seconds=5,
-        xla_auxiliary_cache_mode="xla_gpu_per_fusion_autotune_cache_dir",
-        transfer_guard_enabled=True,
+        xla_autotune_cache=True,
+        transfer_guard=True,
     )
+
+    update_payloads = native_setup_session.config_update_payloads()
 
     assert list(update_payloads) == [
         {"setting_name": "jax_platforms", "value": "cuda"},
@@ -1999,33 +1941,41 @@ def test_native_jax_runtime_config_update_payloads() -> None:
         {"setting_name": "jax_transfer_guard", "value": "disallow"},
     ]
 
-    minimal_update_payloads = _core.plan_jax_runtime_config_update_payloads(
-        platform_name="cpu",
+    minimal_native_setup_session = build_native_jax_runtime_setup_session(
+        requested_device="cpu",
         cache_directory="/tmp/g-cache",
         matmul_precision="highest",
-        persistent_cache_enabled=False,
+        persistent_cache=False,
         persistent_cache_min_entry_size_bytes=0,
         persistent_cache_min_compile_time_seconds=0,
-        xla_auxiliary_cache_mode="none",
-        transfer_guard_enabled=False,
+        xla_autotune_cache=False,
+        transfer_guard=False,
     )
+
+    minimal_update_payloads = minimal_native_setup_session.config_update_payloads()
 
     assert list(minimal_update_payloads) == [
         {"setting_name": "jax_platforms", "value": "cpu"},
         {"setting_name": "jax_enable_x64", "value": True},
         {"setting_name": "jax_default_matmul_precision", "value": "highest"},
     ]
+    assert not hasattr(_core, "plan_jax_runtime_config_update_payloads")
 
 
 def test_native_jax_runtime_setup_side_effect_plan() -> None:
-    cpu_plan = _core.plan_jax_runtime_setup_side_effects_payload(
+    cpu_setup_session = build_native_jax_runtime_setup_session(
         requested_device="cpu",
-        persistent_cache_enabled=True,
+        cache_directory="/tmp/g-cache",
+        persistent_cache=True,
     )
-    gpu_plan = _core.plan_jax_runtime_setup_side_effects_payload(
+    gpu_setup_session = build_native_jax_runtime_setup_session(
         requested_device="gpu",
-        persistent_cache_enabled=False,
+        cache_directory="/tmp/g-cache",
+        persistent_cache=False,
     )
+
+    cpu_plan = cpu_setup_session.side_effect_plan_payload()
+    gpu_plan = gpu_setup_session.side_effect_plan_payload()
 
     assert cpu_plan == {
         "should_create_cache_directory": True,
@@ -2035,64 +1985,26 @@ def test_native_jax_runtime_setup_side_effect_plan() -> None:
         "should_create_cache_directory": False,
         "should_validate_gpu": True,
     }
+    assert not hasattr(_core, "plan_jax_runtime_setup_side_effects_payload")
 
 
 def test_native_jax_runtime_setup_validation_completion() -> None:
-    completed_setup = _core.complete_jax_runtime_setup_validation_payload(
+    native_setup_session = build_native_jax_runtime_setup_session(
         requested_device="gpu",
-        platform_name="cuda",
         cache_directory="cache",
         matmul_precision="float32",
-        persistent_cache_enabled=True,
-        persistent_cache_min_entry_size_bytes=0,
-        persistent_cache_min_compile_time_seconds=0,
-        xla_auxiliary_cache_mode="none",
-        xla_auxiliary_cache_reason="XLA auxiliary cache was not requested",
-        transfer_guard_enabled=False,
-        gpu_validation_status="succeeded",
-        gpu_validation_message="gpu ready",
+        persistent_cache=True,
     )
+
+    completed_setup = native_setup_session.complete_validation_payload("succeeded", "gpu ready")
 
     assert completed_setup["requested_device"] == "gpu"
     assert completed_setup["cache_directory"] == "cache"
     assert completed_setup["gpu_validation_status"] == "succeeded"
     assert completed_setup["gpu_validation_message"] == "gpu ready"
-
-
-def test_native_jax_runtime_diagnostic_record_plan() -> None:
-    typed_info_plan = _core.plan_jax_runtime_diagnostic_record(
-        diagnostic_level="info",
-        has_telemetry_session=True,
-    )
-    typed_error_plan = _core.plan_jax_runtime_diagnostic_record(
-        diagnostic_level="error",
-        has_telemetry_session=False,
-    )
-    info_plan = _core.plan_jax_runtime_diagnostic_record_payload(
-        diagnostic_level="info",
-        has_telemetry_session=True,
-    )
-    error_plan = _core.plan_jax_runtime_diagnostic_record_payload(
-        diagnostic_level="error",
-        has_telemetry_session=False,
-    )
-
-    assert typed_info_plan.logging_level_name == "INFO"
-    assert typed_info_plan.should_emit_telemetry is True
-    assert typed_info_plan.telemetry_level == "info"
-    assert typed_error_plan.logging_level_name == "ERROR"
-    assert typed_error_plan.should_emit_telemetry is False
-    assert typed_error_plan.telemetry_level == "error"
-    assert info_plan == {
-        "logging_level_name": "INFO",
-        "should_emit_telemetry": True,
-        "telemetry_level": "info",
-    }
-    assert error_plan == {
-        "logging_level_name": "ERROR",
-        "should_emit_telemetry": False,
-        "telemetry_level": "error",
-    }
+    assert not hasattr(_core, "resolve_jax_runtime_setup_payload")
+    assert not hasattr(_core, "complete_jax_runtime_setup_validation_payload")
+    assert not hasattr(_core, "plan_jax_gpu_validation_payload")
 
 
 def test_native_jax_runtime_diagnostic_event_records_telemetry() -> None:
@@ -2149,6 +2061,9 @@ def test_native_jax_runtime_diagnostic_event_records_telemetry() -> None:
     assert disabled_plan.should_emit_telemetry is False
     assert skipped_plan.should_emit_telemetry is False
     assert telemetry_session.native_telemetry_session.events == [(diagnostic_event, "info")]
+    assert not hasattr(_core, "plan_jax_runtime_diagnostic_record")
+    assert not hasattr(_core, "record_jax_runtime_diagnostic_log_event")
+    assert not hasattr(_core, "plan_jax_runtime_diagnostic_record_payload")
 
 
 def test_native_binary_correction_summary_plans_record_and_emit_policy() -> None:
@@ -2268,58 +2183,6 @@ def test_native_default_local_cache_directory_value() -> None:
         )
         == "/tmp/unknown/g-jax-cache"
     )
-
-
-def test_native_jax_gpu_validation_plan() -> None:
-    missing_driver_plan = _core.plan_jax_gpu_validation_payload(
-        nvidia_driver_visible=False,
-        backend_initialization_failed=False,
-        device_platforms=(),
-        device_descriptions=(),
-    )
-    assert missing_driver_plan["status"] == "failed"
-    assert missing_driver_plan["should_raise"] is True
-    assert "cannot see the NVIDIA driver" in typing.cast("str", missing_driver_plan["message"])
-
-    backend_failure_plan = _core.plan_jax_gpu_validation_payload(
-        nvidia_driver_visible=True,
-        backend_initialization_failed=True,
-        device_platforms=(),
-        device_descriptions=(),
-    )
-    assert backend_failure_plan["status"] == "failed"
-    assert backend_failure_plan["should_raise"] is True
-    assert "no CUDA-enabled JAX backend" in typing.cast("str", backend_failure_plan["message"])
-
-    cpu_only_plan = _core.plan_jax_gpu_validation_payload(
-        nvidia_driver_visible=True,
-        backend_initialization_failed=False,
-        device_platforms=("cpu",),
-        device_descriptions=("CpuDevice(id=0)",),
-    )
-    assert cpu_only_plan["status"] == "failed"
-    assert cpu_only_plan["should_raise"] is True
-    assert "Observed devices: CpuDevice(id=0)." in typing.cast("str", cpu_only_plan["message"])
-
-    gpu_plan = _core.plan_jax_gpu_validation_payload(
-        nvidia_driver_visible=True,
-        backend_initialization_failed=False,
-        device_platforms=("gpu",),
-        device_descriptions=("GpuDevice(id=0)",),
-    )
-    assert gpu_plan == {
-        "status": "succeeded",
-        "message": "JAX reported at least one GPU device.",
-        "should_raise": False,
-    }
-
-    with pytest.raises(ValueError, match="device platform and description counts must match"):
-        _core.plan_jax_gpu_validation_payload(
-            nvidia_driver_visible=True,
-            backend_initialization_failed=False,
-            device_platforms=("cpu", "gpu"),
-            device_descriptions=("CpuDevice(id=0)",),
-        )
 
 
 def test_native_gpu_genotype_format_resolution_policy() -> None:

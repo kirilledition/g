@@ -1174,7 +1174,6 @@ def test_pyo3_stub_checker_scans_delegated_registration_modules() -> None:
     assert Path("src/python/shutdown.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/telemetry_policy.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/timing.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/trusted_validation.rs") in check_pyo3_stub.RUST_EXPORT_FILES
 
 
 def test_tooling_entrypoint_exposes_cli_surface() -> None:

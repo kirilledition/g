@@ -204,84 +204,13 @@ impl NativeJaxRuntimeSetupSession {
 }
 
 #[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn resolve_jax_runtime_setup_payload<'py>(
-    py: Python<'py>,
-    requested_device: String,
-    cache_directory: String,
-    matmul_precision: Option<String>,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: i64,
-    persistent_cache_min_compile_time_seconds: i64,
-    xla_autotune_cache: bool,
-    transfer_guard: bool,
-) -> PyResult<Bound<'py, PyDict>> {
-    let setup = native_jax_runtime::resolve_jax_runtime_setup(
-        &requested_device,
-        &cache_directory,
-        matmul_precision.as_deref(),
-        persistent_cache,
-        persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds,
-        xla_autotune_cache,
-        transfer_guard,
-    );
-    jax_runtime_setup_payload_to_dict(py, &setup)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_jax_runtime_setup_side_effects_payload<'py>(
-    py: Python<'py>,
-    requested_device: String,
-    persistent_cache_enabled: bool,
-) -> PyResult<Bound<'py, PyDict>> {
-    let plan = native_jax_runtime::plan_jax_runtime_setup_side_effects(&requested_device, persistent_cache_enabled);
-    jax_runtime_setup_side_effect_plan_to_dict(py, &plan)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_jax_runtime_diagnostic_record_payload<'py>(
-    py: Python<'py>,
-    diagnostic_level: String,
-    has_telemetry_session: bool,
-) -> PyResult<Bound<'py, PyDict>> {
-    let plan = native_jax_runtime::plan_jax_runtime_diagnostic_record(&diagnostic_level, has_telemetry_session);
-    jax_runtime_diagnostic_record_plan_to_dict(py, &plan)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_jax_runtime_diagnostic_record(
-    diagnostic_level: String,
-    has_telemetry_session: bool,
-) -> NativeJaxRuntimeDiagnosticRecordPlan {
-    NativeJaxRuntimeDiagnosticRecordPlan::from_plan(native_jax_runtime::plan_jax_runtime_diagnostic_record(
-        &diagnostic_level,
-        has_telemetry_session,
-    ))
-}
-
-#[pyfunction]
-pub(crate) fn record_jax_runtime_diagnostic_log_event(
-    _py: Python<'_>,
-    event: &Bound<'_, PyAny>,
-    has_telemetry_session: bool,
-) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
-    record_jax_runtime_diagnostic_log_event_plan(event, has_telemetry_session)
-        .map(NativeJaxRuntimeDiagnosticRecordPlan::from_plan)
-}
-
-#[pyfunction]
 pub(crate) fn record_jax_runtime_diagnostic_event(
     py: Python<'_>,
     event: &Bound<'_, PyAny>,
     telemetry_session: &Bound<'_, PyAny>,
 ) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
     let native_telemetry_session = optional_native_telemetry_session(py, telemetry_session)?;
-    let plan = record_jax_runtime_diagnostic_log_event_plan(event, native_telemetry_session.is_some())?;
+    let plan = record_jax_runtime_diagnostic_log_plan(event, native_telemetry_session.is_some())?;
     if plan.should_emit_telemetry {
         let active_native_telemetry_session = native_telemetry_session.ok_or_else(|| {
             PyRuntimeError::new_err("Native JAX diagnostic telemetry plan selected a missing native session.")
@@ -314,7 +243,7 @@ fn optional_native_telemetry_session<'py>(
     }
 }
 
-fn record_jax_runtime_diagnostic_log_event_plan(
+fn record_jax_runtime_diagnostic_log_plan(
     event: &Bound<'_, PyAny>,
     has_telemetry_session: bool,
 ) -> PyResult<native_jax_runtime::JaxRuntimeDiagnosticRecordPlan> {
@@ -346,144 +275,6 @@ pub(crate) fn nvidia_driver_files_are_visible_value(
 #[pyfunction]
 pub(crate) fn default_nvidia_driver_probe_paths_payload<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
     nvidia_driver_probe_paths_payload_to_dict(py, &native_jax_runtime::default_nvidia_driver_probe_paths())
-}
-
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn complete_jax_runtime_setup_validation_payload<'py>(
-    py: Python<'py>,
-    requested_device: String,
-    platform_name: String,
-    cache_directory: String,
-    matmul_precision: String,
-    persistent_cache_enabled: bool,
-    persistent_cache_min_entry_size_bytes: i64,
-    persistent_cache_min_compile_time_seconds: i64,
-    xla_auxiliary_cache_mode: String,
-    xla_auxiliary_cache_reason: String,
-    transfer_guard_enabled: bool,
-    gpu_validation_status: String,
-    gpu_validation_message: Option<String>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let setup = native_jax_runtime::JaxRuntimeSetupPayload {
-        requested_device,
-        platform_name,
-        cache_directory,
-        matmul_precision,
-        persistent_cache_enabled,
-        persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds,
-        xla_auxiliary_cache_mode,
-        xla_auxiliary_cache_reason,
-        transfer_guard_enabled,
-        gpu_validation_status: String::new(),
-        gpu_validation_message: None,
-    };
-    let completed_setup = native_jax_runtime::complete_jax_runtime_setup_validation(
-        &setup,
-        &gpu_validation_status,
-        gpu_validation_message.as_deref(),
-    );
-    jax_runtime_setup_payload_to_dict(py, &completed_setup)
-}
-
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_jax_runtime_setup_diagnostic_payloads<'py>(
-    py: Python<'py>,
-    requested_device: String,
-    platform_name: String,
-    cache_directory: String,
-    matmul_precision: String,
-    persistent_cache_enabled: bool,
-    persistent_cache_min_entry_size_bytes: i64,
-    persistent_cache_min_compile_time_seconds: i64,
-    xla_auxiliary_cache_mode: String,
-    xla_auxiliary_cache_reason: String,
-    transfer_guard_enabled: bool,
-    gpu_validation_status: String,
-    gpu_validation_message: Option<String>,
-) -> PyResult<Bound<'py, PyTuple>> {
-    let setup = native_jax_runtime::JaxRuntimeSetupPayload {
-        requested_device,
-        platform_name,
-        cache_directory,
-        matmul_precision,
-        persistent_cache_enabled,
-        persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds,
-        xla_auxiliary_cache_mode,
-        xla_auxiliary_cache_reason,
-        transfer_guard_enabled,
-        gpu_validation_status,
-        gpu_validation_message,
-    };
-    let events = native_jax_runtime::build_jax_runtime_setup_diagnostic_events(&setup);
-    let event_payloads = events
-        .iter()
-        .map(|event| jax_runtime_diagnostic_event_payload_to_dict(py, event))
-        .collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &event_payloads)
-}
-
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_jax_runtime_config_update_payloads<'py>(
-    py: Python<'py>,
-    platform_name: String,
-    cache_directory: String,
-    matmul_precision: String,
-    persistent_cache_enabled: bool,
-    persistent_cache_min_entry_size_bytes: i64,
-    persistent_cache_min_compile_time_seconds: i64,
-    xla_auxiliary_cache_mode: String,
-    transfer_guard_enabled: bool,
-) -> PyResult<Bound<'py, PyTuple>> {
-    let setup = native_jax_runtime::JaxRuntimeSetupPayload {
-        requested_device: String::new(),
-        platform_name,
-        cache_directory,
-        matmul_precision,
-        persistent_cache_enabled,
-        persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds,
-        xla_auxiliary_cache_mode,
-        xla_auxiliary_cache_reason: String::new(),
-        transfer_guard_enabled,
-        gpu_validation_status: String::new(),
-        gpu_validation_message: None,
-    };
-    let updates = native_jax_runtime::plan_jax_runtime_config_updates(&setup);
-    let update_payloads = updates
-        .iter()
-        .map(|update| jax_runtime_config_update_payload_to_dict(py, update))
-        .collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &update_payloads)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_jax_gpu_validation_payload<'py>(
-    py: Python<'py>,
-    nvidia_driver_visible: bool,
-    backend_initialization_failed: bool,
-    device_platforms: Vec<String>,
-    device_descriptions: Vec<String>,
-) -> PyResult<Bound<'py, PyDict>> {
-    if device_platforms.len() != device_descriptions.len() {
-        return Err(PyValueError::new_err("JAX GPU validation device platform and description counts must match."));
-    }
-    let devices = device_platforms
-        .into_iter()
-        .zip(device_descriptions)
-        .map(|(platform, description)| native_jax_runtime::JaxDeviceObservation { platform, description })
-        .collect::<Vec<_>>();
-    let plan =
-        native_jax_runtime::plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, &devices);
-    jax_gpu_validation_plan_to_dict(py, &plan)
 }
 
 fn jax_runtime_setup_payload_to_dict<'py>(
@@ -527,17 +318,6 @@ fn parse_jax_runtime_setup_payload(payload: &Bound<'_, PyAny>) -> PyResult<nativ
     })
 }
 
-fn jax_runtime_diagnostic_record_plan_to_dict<'py>(
-    py: Python<'py>,
-    plan: &native_jax_runtime::JaxRuntimeDiagnosticRecordPlan,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("logging_level_name", &plan.logging_level_name)?;
-    payload.set_item("should_emit_telemetry", plan.should_emit_telemetry)?;
-    payload.set_item("telemetry_level", &plan.telemetry_level)?;
-    Ok(payload)
-}
-
 fn jax_runtime_setup_side_effect_plan_to_dict<'py>(
     py: Python<'py>,
     plan: &native_jax_runtime::JaxRuntimeSetupSideEffectPlan,
@@ -556,17 +336,6 @@ fn nvidia_driver_probe_paths_payload_to_dict<'py>(
     payload.set_item("control_device_path", &paths.control_device_path)?;
     payload.set_item("uvm_device_path", &paths.uvm_device_path)?;
     payload.set_item("driver_directory_path", &paths.driver_directory_path)?;
-    Ok(payload)
-}
-
-fn jax_gpu_validation_plan_to_dict<'py>(
-    py: Python<'py>,
-    plan: &native_jax_runtime::JaxGpuValidationPlan,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("status", &plan.status)?;
-    payload.set_item("message", &plan.message)?;
-    payload.set_item("should_raise", plan.should_raise)?;
     Ok(payload)
 }
 
@@ -658,18 +427,9 @@ fn jax_runtime_diagnostic_value_from_py(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeJaxRuntimeDiagnosticRecordPlan>()?;
     module.add_class::<NativeJaxRuntimeSetupSession>()?;
-    module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(complete_jax_runtime_setup_validation_payload, module)?)?;
     module.add_function(wrap_pyfunction!(nvidia_driver_files_are_visible_value, module)?)?;
     module.add_function(wrap_pyfunction!(default_nvidia_driver_probe_paths_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_jax_runtime_setup_diagnostic_payloads, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_jax_runtime_config_update_payloads, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_jax_runtime_diagnostic_record_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_log_event, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_jax_runtime_setup_side_effects_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;
     Ok(())
 }
 

@@ -986,9 +986,8 @@ fn optional_native_telemetry_session<'py>(
     }
 }
 
-#[pyfunction]
 #[allow(clippy::too_many_arguments)]
-pub fn build_telemetry_event_payload<'py>(
+fn build_telemetry_event_payload<'py>(
     py: Python<'py>,
     run_id: &str,
     event: &str,
@@ -1009,8 +1008,7 @@ pub fn build_telemetry_event_payload<'py>(
     telemetry_event_envelope_to_py_dict(py, &envelope, fields)
 }
 
-#[pyfunction]
-pub fn build_current_telemetry_event_payload<'py>(
+fn build_current_telemetry_event_payload<'py>(
     py: Python<'py>,
     run_id: &str,
     event: &str,
@@ -1043,11 +1041,6 @@ fn telemetry_event_envelope_to_py_dict<'py>(
         }
     }
     Ok(payload)
-}
-
-#[pyfunction]
-pub fn generate_telemetry_run_id_value() -> String {
-    native_telemetry_session::generate_run_id()
 }
 
 fn current_python_thread_name(py: Python<'_>) -> PyResult<String> {
@@ -1089,13 +1082,6 @@ fn telemetry_close_event_fields_to_py_dict<'py>(
     let fields = PyDict::new(py);
     fields.set_item("writer_counters", telemetry_writer_counter_snapshot_to_py_dict(py, &payload.writer_counters)?)?;
     Ok(fields)
-}
-
-fn serialize_py_field_mapping_json_text(_py: Python<'_>, fields: &Bound<'_, PyAny>) -> PyResult<String> {
-    let mapping = fields.cast::<PyMapping>()?;
-    let json_value = JsonValue::Object(telemetry_json_object_from_py_mapping(mapping)?);
-    native_telemetry_session::serialize_telemetry_payload_json_text(&json_value)
-        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 fn serialize_telemetry_payload_json_line(payload: &Bound<'_, PyDict>) -> PyResult<String> {
@@ -1191,7 +1177,6 @@ fn telemetry_path_string(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
     Err(PyValueError::new_err(format!("__fspath__ returned unsupported type '{type_name}'; expected str.")))
 }
 
-#[pyfunction]
 pub fn emit_diagnostic_event(level: &str, event: &str, message: &str, fields_json: Option<String>) -> PyResult<()> {
     let fields_json = fields_json.unwrap_or_else(|| "{}".to_string());
     match level {
@@ -1215,18 +1200,6 @@ pub fn emit_diagnostic_event(level: &str, event: &str, message: &str, fields_jso
         }
     }
     Ok(())
-}
-
-#[pyfunction]
-pub fn emit_diagnostic_event_fields(
-    py: Python<'_>,
-    level: &str,
-    event: &str,
-    message: &str,
-    fields: &Bound<'_, PyAny>,
-) -> PyResult<()> {
-    let fields_json = serialize_py_field_mapping_json_text(py, fields)?;
-    emit_diagnostic_event(level, event, message, Some(fields_json))
 }
 
 #[pyfunction]
@@ -1293,11 +1266,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_telemetry_close, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;
-    module.add_function(wrap_pyfunction!(build_current_telemetry_event_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_telemetry_event_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(generate_telemetry_run_id_value, module)?)?;
-    module.add_function(wrap_pyfunction!(emit_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(emit_diagnostic_event_fields, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
     module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
     Ok(())

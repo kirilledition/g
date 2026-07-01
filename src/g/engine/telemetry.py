@@ -101,11 +101,6 @@ class TelemetrySession:
         return typing.cast("TelemetryCloseMetadata", dict(metadata))
 
 
-def format_timestamp(timestamp_seconds: float) -> str:
-    """Format a Unix timestamp as an RFC 3339 UTC timestamp."""
-    return _core.format_telemetry_timestamp_value(timestamp_seconds)
-
-
 def resolve_output_run_root(regenie_config: config.RegenieConfig) -> Path:
     """Resolve the shared output run root for telemetry defaults."""
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
@@ -158,28 +153,6 @@ def optional_path_from_native_payload(path_payload: object) -> Path | None:
 def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
     """Adapt a native mapping payload to a mutable Python dictionary."""
     return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
-
-
-def resolve_telemetry_stream_file(
-    *,
-    telemetry_mode: types.TelemetryMode,
-    log_dir: Path | None,
-    log_file: Path | None,
-    trace_file: Path | None,
-) -> Path | None:
-    """Resolve the unified telemetry stream file."""
-    stream_file = _core.resolve_telemetry_stream_file_value(
-        telemetry_mode.value,
-        None if log_dir is None else str(log_dir),
-        None if log_file is None else str(log_file),
-        None if trace_file is None else str(trace_file),
-    )
-    return None if stream_file is None else Path(stream_file)
-
-
-def paths_refer_to_same_file(first_path: Path, second_path: Path) -> bool:
-    """Return whether two paths resolve to the same filesystem target."""
-    return _core.paths_refer_to_same_file_value(str(first_path), str(second_path))
 
 
 def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySession:

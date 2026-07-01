@@ -514,11 +514,10 @@ class Regenie2RunEngine:
     def profile_snapshot(self) -> dict[str, int]: ...
     def validate_trusted_no_missing_diploid(self) -> None: ...
     def mark_trusted_no_missing_diploid_validated(self) -> None: ...
-    def validate_trusted_no_missing_diploid_with_cache(
+    def validate_trusted_no_missing_diploid_with_default_cache(
         self,
         bgen_path: str,
         validation_mode: str,
-        cache_directory: str,
     ) -> None: ...
     def variant_metadata_slice(
         self,
@@ -2625,14 +2624,6 @@ class NativeSecondSignalExceptionPlan:
     raise_keyboard_interrupt: bool
     exit_code: int
 
-class NativeTrustedBgenValidationCacheLookupPlan:
-    @property
-    def should_mark_validated(self) -> bool: ...
-    @property
-    def should_validate(self) -> bool: ...
-    @property
-    def should_write_cache(self) -> bool: ...
-
 class NativeShutdownController:
     def __init__(self, handled_signal_numbers: typing.Sequence[int] | None = None) -> None: ...
     @property
@@ -2791,13 +2782,6 @@ def build_manifest_file_fingerprint_payload(
     path: str,
     include_content_hash: bool,
 ) -> dict[str, object]: ...
-def build_manifest_file_fingerprint_mapping_payload(
-    path: str,
-    size: int,
-    mtime_ns: int,
-    content_hash_algorithm: str,
-    content_sha256: str | None,
-) -> dict[str, object]: ...
 def build_manifest_json_sha256(manifest_json: str) -> str: ...
 def validate_run_manifest_compatibility(manifest_json: str, current_header_json: str) -> None: ...
 def read_manifest_committed_chunk_identifiers(manifest_json: str) -> list[int]: ...
@@ -2845,9 +2829,6 @@ def build_shutdown_signal_payload(signal_number: int) -> dict[str, object]: ...
 def default_shutdown_signal_numbers() -> list[int]: ...
 def plan_second_signal_exception(signal_number: int) -> NativeSecondSignalExceptionPlan: ...
 def raise_second_signal_exception(signal_number: int) -> typing.NoReturn: ...
-def configure_bgen_decode_tile_variant_count(tile_variant_count: int) -> None: ...
-def configure_rayon_global_thread_pool(thread_count: int) -> None: ...
-def format_rayon_thread_pool_configuration_error_value(thread_count: int, source_error: str) -> str: ...
 def initialize_logging(
     log_filter: str | None = None,
     log_file: str | None = None,
@@ -2861,22 +2842,6 @@ def initialize_logging(
     trace_event_cap: int | None = None,
 ) -> bool: ...
 def shutdown_logging() -> None: ...
-def build_current_telemetry_event_payload(
-    run_id: str,
-    event: str,
-    level: str,
-    fields: dict[str, object],
-) -> dict[str, object]: ...
-def build_telemetry_event_payload(
-    run_id: str,
-    event: str,
-    level: str,
-    timestamp: str,
-    process_identifier: int,
-    thread_name: str,
-    fields: dict[str, object],
-) -> dict[str, object]: ...
-def format_telemetry_timestamp_value(timestamp_seconds: float) -> str: ...
 def resolve_telemetry_output_run_root_value(
     output_path: str,
     output_run_directory: str | None,
@@ -2891,19 +2856,6 @@ def resolve_telemetry_paths_payload(
     profile_summary_json: str | None,
     stage_timings_json: str | None,
 ) -> dict[str, object]: ...
-def resolve_telemetry_stream_file_value(
-    telemetry_mode: str,
-    log_dir: str | None,
-    log_file: str | None,
-    trace_file: str | None,
-) -> str | None: ...
-def resolve_telemetry_session_policy_payload(
-    telemetry_mode: str,
-    trace_event_cap: int,
-) -> dict[str, object]: ...
-def paths_refer_to_same_file_value(first_path: str, second_path: str) -> bool: ...
-def build_empty_telemetry_writer_counters_payload() -> dict[str, object]: ...
-def generate_telemetry_run_id_value() -> str: ...
 def attach_run_metadata_payload(
     artifacts: object,
     run_id: str | None,
@@ -2913,9 +2865,6 @@ def attach_run_metadata_payload(
 def build_run_completed_event_payload(artifacts: object) -> dict[str, object]: ...
 def build_run_interrupted_event_payload(shutdown_request: object) -> dict[str, object]: ...
 def build_run_failed_event_payload(error: BaseException) -> dict[str, object]: ...
-def build_run_completed_telemetry_fields(event: object) -> dict[str, object]: ...
-def build_run_interrupted_telemetry_fields(event: object) -> dict[str, object]: ...
-def build_run_failed_telemetry_fields(event: object) -> dict[str, object]: ...
 def record_runner_run_started_telemetry_event(
     telemetry_session: object | None,
     association_mode: str,
@@ -3025,31 +2974,14 @@ def record_bgen_engine_opened_telemetry_event(
     phenotype: str | None,
     phenotype_count: int | None,
 ) -> None: ...
-def build_native_runtime_knobs_configured_diagnostic_payload(
-    bgen_decode_tile_variant_count: int,
-    threads: int | None,
-) -> dict[str, object]: ...
 def record_native_runtime_knobs_configured_diagnostic_event(
     bgen_decode_tile_variant_count: int,
     threads: int | None,
 ) -> None: ...
-def build_runner_metadata_artifacts_finalized_diagnostic_payload(
-    association_mode: str,
-    phenotype_count: int,
-) -> dict[str, object]: ...
 def record_runner_metadata_artifacts_finalized_diagnostic_event(
     association_mode: str,
     phenotype_count: int,
 ) -> None: ...
-def build_preflight_warning_diagnostic_payload(
-    message: str,
-    chromosome_count: int,
-    covariate_count: int,
-    preflight_scope: str,
-    sample_count: int,
-    trusted_no_missing_diploid: bool,
-    warning_index: int,
-) -> dict[str, object]: ...
 def record_preflight_warning_diagnostic_event(
     message: str,
     chromosome_count: int,
@@ -3059,23 +2991,11 @@ def record_preflight_warning_diagnostic_event(
     trusted_no_missing_diploid: bool,
     warning_index: int,
 ) -> None: ...
-def build_io_output_resume_committed_chunks_diagnostic_payload(
-    chunks_directory: str,
-    committed_chunk_count: int,
-    run_directory: str,
-) -> dict[str, object]: ...
 def record_io_output_resume_committed_chunks_diagnostic_event(
     chunks_directory: str,
     committed_chunk_count: int,
     run_directory: str,
 ) -> None: ...
-def build_pipeline_bgen_engine_open_started_diagnostic_payload(
-    phenotype_count: int | None,
-    phenotype_name: str | None,
-    pipeline_label: str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> dict[str, object]: ...
 def record_pipeline_bgen_engine_open_started_diagnostic_event(
     phenotype_count: int | None,
     phenotype_name: str | None,
@@ -3083,13 +3003,6 @@ def record_pipeline_bgen_engine_open_started_diagnostic_event(
     trusted_no_missing_diploid: bool,
     variant_limit: int | None,
 ) -> None: ...
-def build_pipeline_bgen_engine_opened_diagnostic_payload(
-    phenotype_count: int | None,
-    phenotype_name: str | None,
-    pipeline_label: str,
-    sample_count: int,
-    variant_count: int,
-) -> dict[str, object]: ...
 def record_pipeline_bgen_engine_opened_diagnostic_event(
     phenotype_count: int | None,
     phenotype_name: str | None,
@@ -3097,53 +3010,25 @@ def record_pipeline_bgen_engine_opened_diagnostic_event(
     sample_count: int,
     variant_count: int,
 ) -> None: ...
-def build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload(
-    phenotype_count: int | None,
-    phenotype_name: str | None,
-    pipeline_label: str,
-) -> dict[str, object]: ...
 def record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
     phenotype_count: int | None,
     phenotype_name: str | None,
     pipeline_label: str,
 ) -> None: ...
-def build_pipeline_output_resume_committed_chunks_diagnostic_payload(
-    committed_chunk_count: int,
-    output_index: int,
-) -> dict[str, object]: ...
 def record_pipeline_output_resume_committed_chunks_diagnostic_event(
     committed_chunk_count: int,
     output_index: int,
 ) -> None: ...
-def build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
-    association_mode: str,
-    output_count: int,
-) -> dict[str, object]: ...
 def record_pipeline_output_writer_sessions_create_started_diagnostic_event(
     association_mode: str,
     output_count: int,
 ) -> None: ...
-def build_pipeline_gpu_genotype_format_resolved_diagnostic_payload(
-    requested_gpu_genotype_format: str,
-    resolved_gpu_genotype_format: str,
-    resolution_reason: str,
-    fallback_error: str | None,
-) -> dict[str, object]: ...
 def record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
     requested_gpu_genotype_format: str,
     resolved_gpu_genotype_format: str,
     resolution_reason: str,
     fallback_error: str | None,
 ) -> None: ...
-def build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
-    message: str,
-    chromosome: str,
-    nonconverged_count: int,
-    phenotype_count: int,
-    policy: str,
-    scalar_convergence: bool,
-    total_fit_count: int,
-) -> dict[str, object]: ...
 def record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
     message: str,
     chromosome: str,
@@ -3153,159 +3038,79 @@ def record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
     scalar_convergence: bool,
     total_fit_count: int,
 ) -> None: ...
-def build_pipeline_multi_phenotype_sample_summary_diagnostic_payload(
-    phenotype_count: int,
-    phenotype_group_count: int,
-    sample_counts_differ: bool,
-    sample_mode: str,
-) -> dict[str, object]: ...
 def record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
     phenotype_count: int,
     phenotype_group_count: int,
     sample_counts_differ: bool,
     sample_mode: str,
 ) -> None: ...
-def build_pipeline_multi_trait_started_diagnostic_payload(
-    association_mode: str,
-    phenotype_count: int,
-    sample_mode: str,
-) -> dict[str, object]: ...
 def record_pipeline_multi_trait_started_diagnostic_event(
     association_mode: str,
     phenotype_count: int,
     sample_mode: str,
 ) -> None: ...
-def build_pipeline_multi_trait_input_load_started_diagnostic_payload(
-    phenotype_count: int,
-) -> dict[str, object]: ...
 def record_pipeline_multi_trait_input_load_started_diagnostic_event(
     phenotype_count: int,
 ) -> None: ...
-def build_pipeline_multi_trait_input_aligned_diagnostic_payload(
-    covariate_count: int,
-    phenotype_count: int,
-    sample_count: int,
-) -> dict[str, object]: ...
 def record_pipeline_multi_trait_input_aligned_diagnostic_event(
     covariate_count: int,
     phenotype_count: int,
     sample_count: int,
 ) -> None: ...
-def build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
-    phenotype_count: int,
-) -> dict[str, object]: ...
 def record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
     phenotype_count: int,
 ) -> None: ...
-def build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
-    association_mode: str,
-    phenotype_count: int,
-    sample_mode: str,
-) -> dict[str, object]: ...
 def record_pipeline_grouped_per_phenotype_started_diagnostic_event(
     association_mode: str,
     phenotype_count: int,
     sample_mode: str,
 ) -> None: ...
-def build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
-    phenotype_count: int,
-    phenotype_group_count: int,
-) -> dict[str, object]: ...
 def record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
     phenotype_count: int,
     phenotype_group_count: int,
 ) -> None: ...
-def build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
-    grouped_sample_count: int,
-    phenotype_group_count: int,
-    union_sample_count: int,
-) -> dict[str, object]: ...
 def record_pipeline_grouped_union_delivery_selected_diagnostic_event(
     grouped_sample_count: int,
     phenotype_group_count: int,
     union_sample_count: int,
 ) -> None: ...
-def build_pipeline_multi_group_preflight_started_diagnostic_payload(
-    phenotype_count: int,
-    sample_count: int,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> dict[str, object]: ...
 def record_pipeline_multi_group_preflight_started_diagnostic_event(
     phenotype_count: int,
     sample_count: int,
     trusted_no_missing_diploid: bool,
     variant_limit: int | None,
 ) -> None: ...
-def build_pipeline_multi_group_preflight_completed_diagnostic_payload(
-    phenotype_count: int,
-    sample_count: int,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> dict[str, object]: ...
 def record_pipeline_multi_group_preflight_completed_diagnostic_event(
     phenotype_count: int,
     sample_count: int,
     trusted_no_missing_diploid: bool,
     variant_limit: int | None,
 ) -> None: ...
-def build_pipeline_single_trait_started_diagnostic_payload(
-    association_mode: str,
-    phenotype_name: str,
-    pipeline_label: str,
-) -> dict[str, object]: ...
 def record_pipeline_single_trait_started_diagnostic_event(
     association_mode: str,
     phenotype_name: str,
     pipeline_label: str,
 ) -> None: ...
-def build_pipeline_single_trait_input_load_started_diagnostic_payload(
-    phenotype_name: str,
-    pipeline_label: str,
-) -> dict[str, object]: ...
 def record_pipeline_single_trait_input_load_started_diagnostic_event(
     phenotype_name: str,
     pipeline_label: str,
 ) -> None: ...
-def build_pipeline_single_trait_input_aligned_diagnostic_payload(
-    covariate_count: int,
-    phenotype_name: str,
-    pipeline_label: str,
-    sample_count: int,
-) -> dict[str, object]: ...
 def record_pipeline_single_trait_input_aligned_diagnostic_event(
     covariate_count: int,
     phenotype_name: str,
     pipeline_label: str,
     sample_count: int,
 ) -> None: ...
-def build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload(
-    phenotype_name: str,
-    pipeline_label: str,
-) -> dict[str, object]: ...
 def record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
     phenotype_name: str,
     pipeline_label: str,
 ) -> None: ...
-def build_pipeline_single_trait_preflight_started_diagnostic_payload(
-    phenotype_name: str,
-    pipeline_label: str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> dict[str, object]: ...
 def record_pipeline_single_trait_preflight_started_diagnostic_event(
     phenotype_name: str,
     pipeline_label: str,
     trusted_no_missing_diploid: bool,
     variant_limit: int | None,
 ) -> None: ...
-def build_pipeline_single_trait_preflight_completed_diagnostic_payload(
-    chromosome_count: int,
-    covariate_count: int,
-    phenotype_name: str,
-    pipeline_label: str,
-    sample_count: int,
-) -> dict[str, object]: ...
 def record_pipeline_single_trait_preflight_completed_diagnostic_event(
     chromosome_count: int,
     covariate_count: int,
@@ -3313,103 +3118,51 @@ def record_pipeline_single_trait_preflight_completed_diagnostic_event(
     pipeline_label: str,
     sample_count: int,
 ) -> None: ...
-def build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
-    chunk_size: int,
-    source_path: str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> dict[str, object]: ...
 def record_native_dispatch_bgen_engine_constructing_diagnostic_event(
     chunk_size: int,
     source_path: str,
     trusted_no_missing_diploid: bool,
     variant_limit: int | None,
 ) -> None: ...
-def build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
-    source_path: str,
-    trusted_bgen_validation_mode: str,
-) -> dict[str, object]: ...
 def record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
     source_path: str,
     trusted_bgen_validation_mode: str,
 ) -> None: ...
-def build_native_dispatch_callback_drain_started_diagnostic_payload() -> dict[str, object]: ...
-def build_native_dispatch_delivery_started_diagnostic_payload(
-    committed_chunk_count: int,
-    pipeline_label: str,
-    variant_major_packed8_probability_pairs: bool,
-) -> dict[str, object]: ...
 def record_native_dispatch_delivery_started_diagnostic_event(
     committed_chunk_count: int,
     pipeline_label: str,
     variant_major_packed8_probability_pairs: bool,
 ) -> None: ...
-def build_native_dispatch_delivery_finished_diagnostic_payload(
-    pipeline_label: str,
-    processed_chunk_count: int,
-) -> dict[str, object]: ...
 def record_native_dispatch_delivery_finished_diagnostic_event(
     pipeline_label: str,
     processed_chunk_count: int,
 ) -> None: ...
-def build_native_dispatch_delivery_interrupted_diagnostic_payload(
-    pipeline_label: str,
-    signal_exit_code: int,
-    signal_name: str,
-    signal_number: int,
-) -> dict[str, object]: ...
 def record_native_dispatch_delivery_interrupted_diagnostic_event(
     pipeline_label: str,
     signal_exit_code: int,
     signal_name: str,
     signal_number: int,
 ) -> None: ...
-def build_native_dispatch_delivery_failed_diagnostic_payload(
-    exception_message: str,
-    exception_type: str,
-    pipeline_label: str,
-) -> dict[str, object]: ...
 def record_native_dispatch_delivery_failed_diagnostic_event(
     exception_message: str,
     exception_type: str,
     pipeline_label: str,
 ) -> None: ...
-def build_native_dispatch_pipeline_finished_diagnostic_payload(
-    final_parquet_path_count: int,
-    pipeline_label: str,
-) -> dict[str, object]: ...
 def record_native_dispatch_pipeline_finished_diagnostic_event(
     final_parquet_path_count: int,
     pipeline_label: str,
 ) -> None: ...
 def record_native_dispatch_callback_drain_started_diagnostic_event() -> None: ...
-def build_native_dispatch_writer_session_finish_started_diagnostic_payload() -> dict[str, object]: ...
 def record_native_dispatch_writer_session_finish_started_diagnostic_event() -> None: ...
-def build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
-    requested_thread_count: int,
-    writer_session_count: int,
-) -> dict[str, object]: ...
 def record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
     requested_thread_count: int,
     writer_session_count: int,
 ) -> None: ...
-def build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload(
-    signal_exit_code: int,
-    signal_name: str,
-    signal_number: int,
-) -> dict[str, object]: ...
 def record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
     signal_exit_code: int,
     signal_name: str,
     signal_number: int,
 ) -> None: ...
-def build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
-    requested_thread_count: int,
-    signal_exit_code: int,
-    signal_name: str,
-    signal_number: int,
-    writer_session_count: int,
-) -> dict[str, object]: ...
 def record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
     requested_thread_count: int,
     signal_exit_code: int,
@@ -3417,33 +3170,16 @@ def record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_
     signal_number: int,
     writer_session_count: int,
 ) -> None: ...
-def build_runner_run_started_diagnostic_payload(
-    association_mode: str,
-    trait_type: str,
-    phenotype_count: int,
-) -> dict[str, object]: ...
 def record_runner_run_started_diagnostic_event(
     association_mode: str,
     trait_type: str,
     phenotype_count: int,
 ) -> None: ...
-def build_runner_run_interrupted_diagnostic_payload(event: object) -> dict[str, object]: ...
 def record_runner_run_interrupted_diagnostic_event(event: object) -> None: ...
-def build_runner_run_failed_diagnostic_payload(event: object) -> dict[str, object]: ...
 def record_runner_run_failed_diagnostic_event(event: object) -> None: ...
-def build_runner_run_completed_diagnostic_payload(event: object) -> dict[str, object]: ...
 def record_runner_run_completed_diagnostic_event(event: object) -> None: ...
-def build_runner_jax_runtime_configuration_started_diagnostic_payload() -> dict[str, object]: ...
 def record_runner_jax_runtime_configuration_started_diagnostic_event() -> None: ...
-def build_runner_execution_plan_build_started_diagnostic_payload() -> dict[str, object]: ...
 def record_runner_execution_plan_build_started_diagnostic_event() -> None: ...
-def build_runner_execution_plan_prepared_diagnostic_payload(
-    association_mode: str,
-    phenotype_count: int,
-    chunk_size: int,
-    variant_limit: int | None,
-    device: str,
-) -> dict[str, object]: ...
 def record_runner_execution_plan_prepared_diagnostic_event(
     association_mode: str,
     phenotype_count: int,
@@ -3451,93 +3187,48 @@ def record_runner_execution_plan_prepared_diagnostic_event(
     variant_limit: int | None,
     device: str,
 ) -> None: ...
-def build_runner_execution_plan_dispatch_started_diagnostic_payload(
-    phenotype_count: int,
-    association_mode: str,
-) -> dict[str, object]: ...
 def record_runner_execution_plan_dispatch_started_diagnostic_event(
     phenotype_count: int,
     association_mode: str,
 ) -> None: ...
-def build_runner_execution_plan_finalization_started_diagnostic_payload(
-    phenotype_count: int,
-    association_mode: str,
-) -> dict[str, object]: ...
 def record_runner_execution_plan_finalization_started_diagnostic_event(
     phenotype_count: int,
     association_mode: str,
 ) -> None: ...
-def build_runner_multi_phenotype_dispatch_started_diagnostic_payload(
-    phenotype_count: int,
-    association_mode: str,
-) -> dict[str, object]: ...
 def record_runner_multi_phenotype_dispatch_started_diagnostic_event(
     phenotype_count: int,
     association_mode: str,
 ) -> None: ...
-def build_runner_single_phenotype_dispatch_started_diagnostic_payload(
-    association_mode: str,
-    phenotype: str,
-) -> dict[str, object]: ...
 def record_runner_single_phenotype_dispatch_started_diagnostic_event(
     association_mode: str,
     phenotype: str,
 ) -> None: ...
-def build_runner_binary_engine_dispatch_started_diagnostic_payload(
-    phenotype: str,
-) -> dict[str, object]: ...
 def record_runner_binary_engine_dispatch_started_diagnostic_event(
     phenotype: str,
 ) -> None: ...
-def build_runner_linear_engine_dispatch_started_diagnostic_payload(
-    phenotype: str,
-) -> dict[str, object]: ...
 def record_runner_linear_engine_dispatch_started_diagnostic_event(
     phenotype: str,
 ) -> None: ...
-def build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload(
-    phenotype_count: int,
-) -> dict[str, object]: ...
 def record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
     phenotype_count: int,
 ) -> None: ...
-def build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload(
-    phenotype_count: int,
-) -> dict[str, object]: ...
 def record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
     phenotype_count: int,
 ) -> None: ...
-def build_native_cli_stdout_diagnostic_payload(
-    output_text: str,
-    max_payload_chars: int,
-) -> dict[str, object]: ...
 def record_native_cli_stdout_diagnostic_event(
     output_text: str,
     max_payload_chars: int,
 ) -> None: ...
-def build_native_cli_stderr_diagnostic_payload(
-    output_text: str,
-    max_payload_chars: int,
-) -> dict[str, object]: ...
 def record_native_cli_stderr_diagnostic_event(
     output_text: str,
     max_payload_chars: int,
 ) -> None: ...
-def build_native_cli_interrupted_line_diagnostic_payload(
-    line: str,
-) -> dict[str, object]: ...
 def record_native_cli_interrupted_line_diagnostic_event(
     line: str,
 ) -> None: ...
-def build_native_cli_failed_line_diagnostic_payload(
-    line: str,
-) -> dict[str, object]: ...
 def record_native_cli_failed_line_diagnostic_event(
     line: str,
 ) -> None: ...
-def build_native_cli_completed_line_diagnostic_payload(
-    line: str,
-) -> dict[str, object]: ...
 def record_native_cli_completed_line_diagnostic_event(
     line: str,
 ) -> None: ...
@@ -3550,38 +3241,6 @@ def build_execution_run_artifacts_payload(
     effective_configs: tuple[str, ...],
     phenotype_names: tuple[str, ...],
     final_output_paths: tuple[str | None, ...],
-) -> dict[str, object]: ...
-def build_phenotype_run_artifacts_payload(
-    output_run_directory: str,
-    chunks_directory: str,
-    effective_config: str,
-    phenotype_name: str,
-    association_mode: str,
-    phenotype_count: int,
-    output_format: str,
-    final_output_path: str | None,
-) -> dict[str, object]: ...
-def build_multi_run_artifacts_payload(
-    association_mode: str,
-    phenotype_count: int,
-) -> dict[str, object]: ...
-def build_run_manifest_extension_payload(
-    phenotype_name: str,
-    effective_config: str,
-    output_format: str,
-    device: str,
-    staging_depth: int,
-    native_callback_batch_size: int,
-    threads: int | None,
-    writer_threads: int,
-    writer_queue_depth: int,
-    chunks_per_arrow_file: int,
-    arrow_compression: str,
-    parquet_compression: str,
-    output_statistic_dtype: str,
-    bgen_decode_tile_variant_count: int,
-    trusted_no_missing_diploid: bool,
-    trusted_bgen_validation_mode: str,
 ) -> dict[str, object]: ...
 def extend_run_manifest_metadata(
     run_directory: str,
@@ -3601,34 +3260,6 @@ def extend_run_manifest_metadata(
     bgen_decode_tile_variant_count: int,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: str,
-) -> None: ...
-def build_trusted_bgen_validation_fingerprint_value(
-    bgen_path: str,
-    sample_count: int,
-    variant_count: int,
-    trusted_no_missing_diploid: bool,
-) -> str: ...
-def build_trusted_bgen_validation_cache_path_value(
-    cache_directory: str,
-    fingerprint: str,
-) -> str: ...
-def default_trusted_bgen_validation_cache_directory_value() -> str: ...
-def plan_trusted_bgen_validation_cache_lookup(
-    validation_mode: str,
-    cache_path: str,
-) -> NativeTrustedBgenValidationCacheLookupPlan: ...
-def build_trusted_bgen_validation_cache_payload(
-    fingerprint: str,
-    bgen_path: str,
-    sample_count: int,
-    variant_count: int,
-) -> dict[str, object]: ...
-def write_trusted_bgen_validation_cache_payload(
-    cache_path: str,
-    fingerprint: str,
-    bgen_path: str,
-    sample_count: int,
-    variant_count: int,
 ) -> None: ...
 def render_run_completed_lines(event: object) -> tuple[str, ...]: ...
 def render_run_interrupted_lines(event: object) -> tuple[str, ...]: ...
@@ -3677,66 +3308,6 @@ def build_default_local_cache_directory_value(
 ) -> str: ...
 def default_local_cache_directory_value(directory_name: str) -> str: ...
 def default_local_temporary_root_value() -> str: ...
-def resolve_jax_runtime_setup_payload(
-    requested_device: str,
-    cache_directory: str,
-    matmul_precision: str | None,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: int,
-    persistent_cache_min_compile_time_seconds: int,
-    xla_autotune_cache: bool,
-    transfer_guard: bool,
-) -> dict[str, object]: ...
-def complete_jax_runtime_setup_validation_payload(
-    requested_device: str,
-    platform_name: str,
-    cache_directory: str,
-    matmul_precision: str,
-    persistent_cache_enabled: bool,
-    persistent_cache_min_entry_size_bytes: int,
-    persistent_cache_min_compile_time_seconds: int,
-    xla_auxiliary_cache_mode: str,
-    xla_auxiliary_cache_reason: str,
-    transfer_guard_enabled: bool,
-    gpu_validation_status: str,
-    gpu_validation_message: str | None,
-) -> dict[str, object]: ...
-def build_jax_runtime_setup_diagnostic_payloads(
-    requested_device: str,
-    platform_name: str,
-    cache_directory: str,
-    matmul_precision: str,
-    persistent_cache_enabled: bool,
-    persistent_cache_min_entry_size_bytes: int,
-    persistent_cache_min_compile_time_seconds: int,
-    xla_auxiliary_cache_mode: str,
-    xla_auxiliary_cache_reason: str,
-    transfer_guard_enabled: bool,
-    gpu_validation_status: str,
-    gpu_validation_message: str | None,
-) -> tuple[dict[str, object], ...]: ...
-def plan_jax_runtime_config_update_payloads(
-    platform_name: str,
-    cache_directory: str,
-    matmul_precision: str,
-    persistent_cache_enabled: bool,
-    persistent_cache_min_entry_size_bytes: int,
-    persistent_cache_min_compile_time_seconds: int,
-    xla_auxiliary_cache_mode: str,
-    transfer_guard_enabled: bool,
-) -> tuple[dict[str, object], ...]: ...
-def plan_jax_runtime_diagnostic_record_payload(
-    diagnostic_level: str,
-    has_telemetry_session: bool,
-) -> dict[str, object]: ...
-def plan_jax_runtime_diagnostic_record(
-    diagnostic_level: str,
-    has_telemetry_session: bool,
-) -> NativeJaxRuntimeDiagnosticRecordPlan: ...
-def record_jax_runtime_diagnostic_log_event(
-    event: object,
-    has_telemetry_session: bool,
-) -> NativeJaxRuntimeDiagnosticRecordPlan: ...
 def record_jax_runtime_diagnostic_event(
     event: object,
     telemetry_session: object | None,
@@ -3747,16 +3318,6 @@ def nvidia_driver_files_are_visible_value(
     driver_directory_path: str,
 ) -> bool: ...
 def default_nvidia_driver_probe_paths_payload() -> dict[str, str]: ...
-def plan_jax_runtime_setup_side_effects_payload(
-    requested_device: str,
-    persistent_cache_enabled: bool,
-) -> dict[str, object]: ...
-def plan_jax_gpu_validation_payload(
-    nvidia_driver_visible: bool,
-    backend_initialization_failed: bool,
-    device_platforms: typing.Sequence[str],
-    device_descriptions: typing.Sequence[str],
-) -> dict[str, object]: ...
 def scan_committed_chunk_identifiers(chunks_directory: str) -> list[int]: ...
 def repair_strict_manifest_chunk_commits(chunks_directory: str, manifest_json: str) -> str: ...
 def validate_strict_manifest_chunks(chunks_directory: str, manifest_json: str) -> list[int]: ...
@@ -4104,13 +3665,6 @@ def validate_multi_prediction_preflight_shape(
     prediction_shape: typing.Sequence[int],
     trait_count: int,
     sample_count: int,
-) -> None: ...
-def emit_diagnostic_event(level: str, event: str, message: str, fields_json: str | None = None) -> None: ...
-def emit_diagnostic_event_fields(
-    level: str,
-    event: str,
-    message: str,
-    fields: object,
 ) -> None: ...
 def align_sample_data_from_sample_file(
     sample_path: str,

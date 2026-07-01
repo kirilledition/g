@@ -32,7 +32,6 @@ mod schedule;
 mod shutdown;
 mod telemetry_policy;
 mod timing;
-mod trusted_validation;
 
 #[allow(clippy::missing_errors_doc)]
 #[allow(clippy::too_many_lines)]
@@ -63,7 +62,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     preflight::register_module(module)?;
     host_policy::register_module(module)?;
     runtime_paths::register_module(module)?;
-    trusted_validation::register_module(module)?;
     runtime::register_module(module)?;
     Ok(())
 }

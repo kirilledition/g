@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from g import _core, runtime_paths, types
 from g.interface import config
-from g.jax_runtime import models, resolution, setup
+from g.jax_runtime import diagnostics, models, resolution, setup
 
 if typing.TYPE_CHECKING:
     import pytest
@@ -332,6 +332,8 @@ def test_configure_before_backend_init_emits_structured_diagnostics(tmp_path: Pa
     assert event_fields[2]["enabled"] is False
     assert event_fields[3]["enabled"] is True
     assert event_fields[4]["status"] == "skipped"
+    assert not hasattr(diagnostics, "diagnostic_events_from_setup_report")
+    assert not hasattr(_core, "build_jax_runtime_setup_diagnostic_payloads")
 
 
 def test_configure_before_backend_init_emits_gpu_validation_failure_before_raise(tmp_path: Path) -> None:

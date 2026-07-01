@@ -44,7 +44,6 @@ RUST_EXPORT_FILES = (
     Path("src/python/shutdown.rs"),
     Path("src/python/telemetry_policy.rs"),
     Path("src/python/timing.rs"),
-    Path("src/python/trusted_validation.rs"),
 )
 STUB_FILE = Path("src/g/_core.pyi")
 

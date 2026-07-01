@@ -1034,7 +1034,9 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
             setup_report = jax_runtime_resolution.jax_runtime_setup_report_from_native_payload(
                 native_setup_session.setup_payload()
             )
-            for diagnostic_event in jax_runtime_diagnostics.diagnostic_events_from_setup_report(setup_report):
+            for diagnostic_event in jax_runtime_diagnostics.diagnostic_events_from_native_setup_session(
+                native_setup_session
+            ):
                 diagnostic_sink(diagnostic_event)
             return setup_report
 
