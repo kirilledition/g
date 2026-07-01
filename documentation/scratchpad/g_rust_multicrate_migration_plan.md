@@ -1770,6 +1770,12 @@ Python/JAX should emit typed diagnostic events through a native handle.
   fingerprints share that handle, and Python adapts native payloads instead of
   resolving paths, statting files, or maintaining fingerprint cache keys for
   manifest input fingerprints.
+- Current-run manifest header construction now routes through the native
+  cache-backed header builder; Python passes scalar header policy into `_core`
+  and adapts the native prepared-header mapping instead of building the
+  production manifest-header dataclass itself. The temporary Python
+  manifest-header dataclasses and sub-builders have been removed; the output
+  adapter now passes native manifest-header mappings through.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

@@ -2700,6 +2700,10 @@ class NativeManifestFileFingerprintCache:
         path: str,
         include_content_hash: bool,
     ) -> dict[str, object]: ...
+    def build_current_run_manifest_header_json_from_input_json(
+        self,
+        current_header_input_json: str,
+    ) -> str: ...
     def build_prediction_loco_file_fingerprints_json(
         self,
         prediction_list_path: str,
@@ -2779,6 +2783,7 @@ def build_current_run_manifest_header_json(
     jax_device: str,
     jax_enable_x64: bool,
     jax_matmul_precision: str | None,
+    requested_gpu_genotype_format: str,
     gpu_genotype_format: str,
     score_dtype: str,
     firth_dtype: str,
@@ -2796,6 +2801,7 @@ def build_current_run_manifest_header_json(
     parquet_compression: str,
     output_statistic_dtype: str,
 ) -> str: ...
+def build_current_run_manifest_header_json_from_input_json(current_header_input_json: str) -> str: ...
 def build_prepared_run_manifest_header_json(prepared_run_plan_json: str) -> str: ...
 def build_prepared_run_manifest_header_json_from_current_header_json(current_header_json: str) -> str: ...
 def build_prepared_run_plan_json(prepared_run_plan_input_json: str) -> str: ...

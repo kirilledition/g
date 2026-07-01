@@ -12,6 +12,7 @@ use g_output::{
     NativeChunkStats as NativeOutputChunkStats, OutputFileFormat, OutputResumeMode, OutputWriterError,
     OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
     build_current_run_manifest_header_json as build_native_current_run_manifest_header_json,
+    build_current_run_manifest_header_json_with_cache as build_native_current_run_manifest_header_json_with_cache,
     build_file_content_sha256 as build_native_file_content_sha256,
     build_manifest_file_fingerprint as build_native_manifest_file_fingerprint,
     build_manifest_json_sha256 as build_native_manifest_json_sha256,
@@ -111,6 +112,25 @@ impl NativeManifestFileFingerprintCache {
             })
             .map_err(|error| output_writer_error_to_py(error, "build_cached_manifest_file_fingerprint_payload"))?;
         manifest_file_fingerprint_to_dict(py, &file_fingerprint)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn build_current_run_manifest_header_json_from_input_json(
+        &self,
+        py: Python<'_>,
+        current_header_input_json: String,
+    ) -> PyResult<String> {
+        let current_header_input = parse_json_argument::<CurrentRunManifestHeaderInput>(
+            "current_header_input_json",
+            &current_header_input_json,
+        )?;
+        py.detach(|| {
+            let mut fingerprint_cache = self.inner.lock().map_err(|_| {
+                OutputWriterError::Runtime("Manifest file fingerprint cache mutex was poisoned.".to_string())
+            })?;
+            build_native_current_run_manifest_header_json_with_cache(current_header_input, &mut fingerprint_cache)
+        })
+        .map_err(|error| output_writer_error_to_py(error, "build_cached_current_run_manifest_header_json"))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -566,6 +586,7 @@ pub(crate) fn build_current_run_manifest_header_json(
     jax_device: String,
     jax_enable_x64: bool,
     jax_matmul_precision: Option<String>,
+    requested_gpu_genotype_format: String,
     gpu_genotype_format: String,
     score_dtype: String,
     firth_dtype: String,
@@ -609,6 +630,7 @@ pub(crate) fn build_current_run_manifest_header_json(
         jax_device,
         jax_enable_x64,
         jax_matmul_precision,
+        requested_gpu_genotype_format,
         gpu_genotype_format,
         score_dtype,
         firth_dtype,
@@ -627,6 +649,18 @@ pub(crate) fn build_current_run_manifest_header_json(
         output_statistic_dtype,
     })
     .map_err(|error| output_writer_error_to_py(error, "build_current_run_manifest_header_json"))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_current_run_manifest_header_json_from_input_json(
+    py: Python<'_>,
+    current_header_input_json: String,
+) -> PyResult<String> {
+    let current_header_input =
+        parse_json_argument::<CurrentRunManifestHeaderInput>("current_header_input_json", &current_header_input_json)?;
+    py.detach(|| build_native_current_run_manifest_header_json(current_header_input))
+        .map_err(|error| output_writer_error_to_py(error, "build_current_run_manifest_header_json_from_input_json"))
 }
 
 #[pyfunction]
@@ -827,6 +861,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json_from_input_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_file_content_sha256_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_mapping_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_payload, module)?)?;
