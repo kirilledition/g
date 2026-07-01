@@ -1514,6 +1514,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   builders.
 - Output resume committed-chunk diagnostics now use native run-event
   diagnostic payload builders.
+- Legacy output resume committed-chunk production paths now call the native
+  diagnostic recorder directly, leaving Python payload dict materialization
+  only for compatibility helpers and tests.
 - Native-dispatch BGEN engine construction and trusted-validation diagnostics
   now use native run-event diagnostic payload builders.
 - Native-dispatch BGEN engine construction and trusted-validation production

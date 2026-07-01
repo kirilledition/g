@@ -33,16 +33,6 @@ class MultiPhenotypeSampleMode(enum.StrEnum):
     COMPLETE_CASE = "complete-case"
 
 
-def emit_output_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
-    """Emit one native output diagnostic payload through native tracing."""
-    _core.emit_diagnostic_event_fields(
-        str(payload["level"]),
-        str(payload["event_name"]),
-        str(payload["message"]),
-        typing.cast("typing.Mapping[str, object]", payload["fields"]),
-    )
-
-
 @dataclass(frozen=True)
 class OutputRunPaths:
     """Filesystem paths for one chunked output run."""
@@ -956,12 +946,10 @@ def initialize_output_run(
     )
     if resume:
         committed_chunk_count = len(committed_chunk_identifiers)
-        emit_output_diagnostic_event_payload(
-            _core.build_io_output_resume_committed_chunks_diagnostic_payload(
-                str(output_run_paths.chunks_directory),
-                committed_chunk_count,
-                str(output_run_paths.run_directory),
-            )
+        _core.record_io_output_resume_committed_chunks_diagnostic_event(
+            str(output_run_paths.chunks_directory),
+            committed_chunk_count,
+            str(output_run_paths.run_directory),
         )
     return InitializedOutputRun(committed_chunk_identifiers=committed_chunk_identifiers)
 

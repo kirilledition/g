@@ -398,6 +398,20 @@ pub fn build_io_output_resume_committed_chunks_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_io_output_resume_committed_chunks_diagnostic_event(
+    chunks_directory: &str,
+    committed_chunk_count: i64,
+    run_directory: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_io_output_resume_committed_chunks_diagnostic_payload(
+        chunks_directory,
+        committed_chunk_count,
+        run_directory,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_bgen_engine_open_started_diagnostic_payload<'py>(
     py: Python<'py>,
     phenotype_count: Option<i64>,

@@ -1385,7 +1385,25 @@ def test_public_multi_native_writer_preserves_float64_output_statistics(tmp_path
     np.testing.assert_array_equal(second_beta, beta[1])
 
 
-def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_path: Path) -> None:
+def test_initialize_output_run_compatible_resume_preserves_committed_chunks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    diagnostic_calls: list[tuple[str, int, str]] = []
+
+    def record_resume_committed_chunks(
+        chunks_directory: str,
+        committed_chunk_count: int,
+        run_directory: str,
+    ) -> None:
+        diagnostic_calls.append((chunks_directory, committed_chunk_count, run_directory))
+
+    monkeypatch.setattr(
+        output._core,
+        "record_io_output_resume_committed_chunks_diagnostic_event",
+        record_resume_committed_chunks,
+    )
+
     current_header = build_test_header(tmp_path)
     prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
@@ -1407,6 +1425,13 @@ def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_
     initialized_output_run = initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
     assert initialized_output_run.committed_chunk_identifiers == frozenset({0, 2})
+    assert diagnostic_calls == [
+        (
+            str(prepared_output_run.output_run_paths.chunks_directory),
+            2,
+            str(prepared_output_run.output_run_paths.run_directory),
+        )
+    ]
     manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
     assert manifest is not None
     assert [chunk["chunk_identifier"] for chunk in manifest["committed_chunks"]] == [0, 2]

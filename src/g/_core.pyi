@@ -2851,6 +2851,11 @@ def build_io_output_resume_committed_chunks_diagnostic_payload(
     committed_chunk_count: int,
     run_directory: str,
 ) -> dict[str, object]: ...
+def record_io_output_resume_committed_chunks_diagnostic_event(
+    chunks_directory: str,
+    committed_chunk_count: int,
+    run_directory: str,
+) -> None: ...
 def build_pipeline_bgen_engine_open_started_diagnostic_payload(
     phenotype_count: int | None,
     phenotype_name: str | None,
