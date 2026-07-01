@@ -151,6 +151,19 @@ impl NativeJaxRuntimeSetupSession {
         };
         self.complete_gpu_validation_or_raise(py, true, false, &devices)
     }
+
+    fn validate_gpu_if_configured_with_default_probe_paths<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let probe_paths = native_jax_runtime::default_nvidia_driver_probe_paths();
+        self.validate_gpu_if_configured(
+            py,
+            probe_paths.control_device_path,
+            probe_paths.uvm_device_path,
+            probe_paths.driver_directory_path,
+        )
+    }
 }
 
 impl NativeJaxRuntimeSetupSession {

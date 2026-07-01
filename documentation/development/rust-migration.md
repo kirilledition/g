@@ -84,6 +84,9 @@ The Python architecture checker also guards production-side runtime diagnostics:
 direct native diagnostic payload builders are limited to compatibility adapters,
 raw diagnostic emitters are rejected, and old Python telemetry fallback method
 calls cannot reappear in production modules.
+Production JAX setup now validates GPU availability through the native
+setup-session default-probe method; the Python explicit-path validation wrapper
+remains for deterministic tests and compatibility helpers.
 Run-start manifest command/runtime metadata extension now goes through a native
 `g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
 longer loads, mutates, serializes, and rewrites run manifests for that

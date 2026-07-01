@@ -57,7 +57,7 @@ def configure_before_backend_init(
                 diagnostic_sink(diagnostic_event)
         return setup_report
     try:
-        validated_payload = validate_gpu_if_configured(active_setup_session)
+        validated_payload = validate_gpu_if_configured_with_default_probe_paths(active_setup_session)
     except RuntimeError:
         if diagnostic_sink is not None:
             for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(active_setup_session):
@@ -123,13 +123,20 @@ def apply_jax_runtime_config_updates(native_setup_session: _core.NativeJaxRuntim
 
 
 def validate_gpu_if_configured(native_setup_session: _core.NativeJaxRuntimeSetupSession) -> dict[str, object]:
-    """Validate GPU setup using native-owned default probe paths."""
+    """Validate GPU setup using Python-adapted default probe paths."""
     probe_paths = default_nvidia_driver_probe_paths()
     return native_setup_session.validate_gpu_if_configured(
         str(probe_paths.control_device_path),
         str(probe_paths.uvm_device_path),
         str(probe_paths.driver_directory_path),
     )
+
+
+def validate_gpu_if_configured_with_default_probe_paths(
+    native_setup_session: _core.NativeJaxRuntimeSetupSession,
+) -> dict[str, object]:
+    """Validate GPU setup using native-owned default probe paths."""
+    return native_setup_session.validate_gpu_if_configured_with_default_probe_paths()
 
 
 def complete_jax_runtime_setup_validation_report(

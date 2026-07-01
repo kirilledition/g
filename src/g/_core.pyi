@@ -2539,6 +2539,7 @@ class NativeJaxRuntimeSetupSession:
         uvm_device_path: str,
         driver_directory_path: str,
     ) -> dict[str, object]: ...
+    def validate_gpu_if_configured_with_default_probe_paths(self) -> dict[str, object]: ...
 
 class NativeRuntimeState:
     rayon_thread_count: int | None

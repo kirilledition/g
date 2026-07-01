@@ -216,14 +216,19 @@ def test_configure_before_backend_init_validates_gpu_after_runtime(tmp_path: Pat
 
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
-    probe_paths = build_nvidia_driver_probe_paths(
-        control_device_path,
-        tmp_path / "missing-nvidia-uvm",
-        tmp_path / "missing-driver",
-    )
+
+    def validate_gpu_setup(native_setup_session: typing.Any) -> dict[str, object]:
+        return native_setup_session.validate_gpu_if_configured(
+            str(control_device_path),
+            str(tmp_path / "missing-nvidia-uvm"),
+            str(tmp_path / "missing-driver"),
+        )
 
     with (
-        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
+        patch(
+            "g.jax_runtime.setup.validate_gpu_if_configured_with_default_probe_paths",
+            side_effect=validate_gpu_setup,
+        ),
         patch("jax.config.update", side_effect=record_config_update),
         patch("jax.devices", side_effect=record_jax_devices),
     ):
@@ -306,14 +311,19 @@ def test_configure_before_backend_init_emits_gpu_validation_failure_before_raise
     diagnostic_events: list[models.JaxRuntimeDiagnosticEvent] = []
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
-    probe_paths = build_nvidia_driver_probe_paths(
-        control_device_path,
-        tmp_path / "missing-nvidia-uvm",
-        tmp_path / "missing-driver",
-    )
+
+    def validate_gpu_setup(native_setup_session: typing.Any) -> dict[str, object]:
+        return native_setup_session.validate_gpu_if_configured(
+            str(control_device_path),
+            str(tmp_path / "missing-nvidia-uvm"),
+            str(tmp_path / "missing-driver"),
+        )
 
     with (
-        patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths),
+        patch(
+            "g.jax_runtime.setup.validate_gpu_if_configured_with_default_probe_paths",
+            side_effect=validate_gpu_setup,
+        ),
         patch("jax.config.update"),
         patch("jax.devices", side_effect=RuntimeError("Unknown backend cuda")),
     ):

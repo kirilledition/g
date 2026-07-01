@@ -1723,6 +1723,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - JAX GPU validation default NVIDIA driver probe paths now come from
   `g-runtime`, leaving Python to adapt the native payload and preserving
   explicit injected paths for deterministic tests.
+- Production JAX setup now calls the native setup-session default-probe GPU
+  validation method directly; the Python explicit-path wrapper remains only for
+  deterministic tests and compatibility helpers.
 - Process-global JAX setup completion recording now consumes the native setup
   session, so `g-runtime` rejects pending or failed setup sessions before
   recording a JAX policy as configured.
