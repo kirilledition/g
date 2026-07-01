@@ -78,6 +78,47 @@ pub struct ManifestFileFingerprint {
     pub content_sha256: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ManifestFileFingerprintCacheKey {
+    path: PathBuf,
+    include_content_hash: bool,
+    size: u64,
+    mtime_ns: i64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ManifestFileFingerprintCache {
+    fingerprints_by_key: BTreeMap<ManifestFileFingerprintCacheKey, ManifestFileFingerprint>,
+}
+
+impl ManifestFileFingerprintCache {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn build_file_fingerprint(
+        &mut self,
+        file_path: &Path,
+        include_content_hash: bool,
+    ) -> Result<ManifestFileFingerprint, OutputWriterError> {
+        let canonical_path = file_path.canonicalize().map_err(OutputWriterError::runtime)?;
+        let metadata = canonical_path.metadata().map_err(OutputWriterError::runtime)?;
+        let cache_key = ManifestFileFingerprintCacheKey {
+            path: canonical_path.clone(),
+            include_content_hash,
+            size: metadata.len(),
+            mtime_ns: file_metadata_mtime_ns(&metadata)?,
+        };
+        if let Some(cached_fingerprint) = self.fingerprints_by_key.get(&cache_key) {
+            return Ok(cached_fingerprint.clone());
+        }
+        let file_fingerprint = build_manifest_file_fingerprint(&canonical_path, include_content_hash)?;
+        self.fingerprints_by_key.insert(cache_key, file_fingerprint.clone());
+        Ok(file_fingerprint)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct CurrentRunManifestHeaderInput {
@@ -744,11 +785,7 @@ pub fn build_manifest_file_fingerprint(
     let content_hash_algorithm =
         if include_content_hash { FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM } else { FILE_FINGERPRINT_METADATA_ONLY };
     let content_sha256 = if include_content_hash { Some(build_file_content_sha256(file_path)?) } else { None };
-    let mtime_ns = metadata
-        .mtime()
-        .checked_mul(1_000_000_000)
-        .and_then(|mtime_seconds_ns| mtime_seconds_ns.checked_add(metadata.mtime_nsec()))
-        .ok_or_else(|| OutputWriterError::Runtime("File modification timestamp overflowed nanoseconds.".to_string()))?;
+    let mtime_ns = file_metadata_mtime_ns(&metadata)?;
     let resolved_path = file_path.canonicalize().map_err(OutputWriterError::runtime)?;
     Ok(ManifestFileFingerprint {
         path: resolved_path.display().to_string(),
@@ -757,6 +794,14 @@ pub fn build_manifest_file_fingerprint(
         content_hash_algorithm: content_hash_algorithm.to_string(),
         content_sha256,
     })
+}
+
+fn file_metadata_mtime_ns(metadata: &std::fs::Metadata) -> Result<i64, OutputWriterError> {
+    metadata
+        .mtime()
+        .checked_mul(1_000_000_000)
+        .and_then(|mtime_seconds_ns| mtime_seconds_ns.checked_add(metadata.mtime_nsec()))
+        .ok_or_else(|| OutputWriterError::Runtime("File modification timestamp overflowed nanoseconds.".to_string()))
 }
 
 pub(crate) fn manifest_file_fingerprint_to_value(file_fingerprint: &ManifestFileFingerprint) -> Value {
@@ -1271,6 +1316,30 @@ mod tests {
             prediction_list_path,
             prediction_loco_files,
         }
+    }
+
+    #[test]
+    fn manifest_file_fingerprint_cache_reuses_native_fingerprints_by_observed_file_state() {
+        let root_directory = create_test_directory();
+        let input_path = root_directory.join("input.txt");
+        std::fs::write(&input_path, "fingerprint").expect("input fixture should be written");
+
+        let mut fingerprint_cache = ManifestFileFingerprintCache::new();
+        let first_fingerprint =
+            fingerprint_cache.build_file_fingerprint(&input_path, true).expect("content fingerprint should build");
+        let second_fingerprint =
+            fingerprint_cache.build_file_fingerprint(&input_path, true).expect("content fingerprint should be cached");
+
+        assert_eq!(first_fingerprint, second_fingerprint);
+        assert_eq!(fingerprint_cache.fingerprints_by_key.len(), 1);
+
+        let metadata_only_fingerprint =
+            fingerprint_cache.build_file_fingerprint(&input_path, false).expect("metadata fingerprint should build");
+        assert_eq!(metadata_only_fingerprint.content_hash_algorithm, FILE_FINGERPRINT_METADATA_ONLY);
+        assert_eq!(metadata_only_fingerprint.content_sha256, None);
+        assert_eq!(fingerprint_cache.fingerprints_by_key.len(), 2);
+
+        std::fs::remove_dir_all(root_directory).expect("test directory should be removed");
     }
 
     fn build_test_current_header_json(test_files: &TestManifestFiles) -> String {

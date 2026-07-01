@@ -2,13 +2,14 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use arrow::array::{ArrayRef, PrimitiveArray};
 use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64Type, Int32Type};
 use g_input::regenie::{PredictionError, resolve_prediction_loco_paths as resolve_native_prediction_loco_paths};
 use g_output::{
-    CurrentRunManifestHeaderInput, ManifestFileFingerprint as NativeManifestFileFingerprint, NativeChunkHandle,
+    CurrentRunManifestHeaderInput, ManifestFileFingerprint as NativeManifestFileFingerprint,
+    ManifestFileFingerprintCache as NativeManifestFileFingerprintCacheState, NativeChunkHandle,
     NativeChunkStats as NativeOutputChunkStats, OutputFileFormat, OutputResumeMode, OutputWriterError,
     OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
     build_current_run_manifest_header_json as build_native_current_run_manifest_header_json,
@@ -70,6 +71,11 @@ pub(crate) struct NativeInitializedOutputRun {
     committed_chunk_identifiers: Vec<i64>,
 }
 
+#[pyclass]
+pub(crate) struct NativeManifestFileFingerprintCache {
+    inner: Mutex<NativeManifestFileFingerprintCacheState>,
+}
+
 struct Regenie2StatisticArrays {
     beta: ArrayRef,
     standard_error: ArrayRef,
@@ -81,6 +87,32 @@ struct Regenie2StatisticArrays {
 enum PredictionLocoFingerprintBuildError {
     Prediction(PredictionError),
     Output(OutputWriterError),
+}
+
+#[pymethods]
+impl NativeManifestFileFingerprintCache {
+    #[new]
+    fn new() -> Self {
+        Self { inner: Mutex::new(NativeManifestFileFingerprintCacheState::new()) }
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn build_file_fingerprint_payload<'py>(
+        &self,
+        py: Python<'py>,
+        path: String,
+        include_content_hash: bool,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let file_fingerprint = py
+            .detach(|| {
+                let mut fingerprint_cache = self.inner.lock().map_err(|_| {
+                    OutputWriterError::Runtime("Manifest file fingerprint cache mutex was poisoned.".to_string())
+                })?;
+                fingerprint_cache.build_file_fingerprint(Path::new(&path), include_content_hash)
+            })
+            .map_err(|error| output_writer_error_to_py(error, "build_cached_manifest_file_fingerprint_payload"))?;
+        manifest_file_fingerprint_to_dict(py, &file_fingerprint)
+    }
 }
 
 #[pymethods]
@@ -769,6 +801,7 @@ pub(crate) fn repair_strict_manifest_chunk_commits(
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeInitializedOutputRun>()?;
+    module.add_class::<NativeManifestFileFingerprintCache>()?;
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<OutputWriterSession>()?;

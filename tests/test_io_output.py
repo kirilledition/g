@@ -641,6 +641,34 @@ def test_prediction_loco_fingerprints_use_native_payload(
     assert [loco_file.path for loco_file in loco_files] == [str(loco_path.resolve()), str(loco_path.resolve())]
 
 
+def test_manifest_file_fingerprint_cache_uses_native_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "control.txt"
+    input_path.write_text("control", encoding="utf-8")
+
+    def fail_python_file_fingerprint(
+        path: Path | None,
+        *,
+        include_content_hash: bool,
+    ) -> output.ManifestFileFingerprint | None:
+        del path, include_content_hash
+        raise AssertionError("Cached control-file fingerprints should be built by the native output cache")
+
+    monkeypatch.setattr(output, "build_file_fingerprint", fail_python_file_fingerprint)
+
+    fingerprint_cache = output.ManifestFileFingerprintCache()
+    first_fingerprint = fingerprint_cache.build_file_fingerprint(input_path, include_content_hash=True)
+    second_fingerprint = fingerprint_cache.build_file_fingerprint(input_path, include_content_hash=True)
+
+    assert first_fingerprint == second_fingerprint
+    assert first_fingerprint is not None
+    assert first_fingerprint.path == str(input_path.resolve())
+    assert first_fingerprint.content_hash_algorithm == "sha256"
+    assert first_fingerprint.content_sha256 == hashlib.sha256(input_path.read_bytes()).hexdigest()
+
+
 def test_prediction_loco_fingerprints_are_stable_for_relative_and_absolute_paths(tmp_path: Path) -> None:
     loco_path = tmp_path / "trait.loco"
     loco_path.write_text("FID_IID F1_I1\n22 0.1\n", encoding="utf-8")

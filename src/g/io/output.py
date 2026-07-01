@@ -102,30 +102,12 @@ class ManifestFileFingerprint:
     content_sha256: str | None
 
 
-@dataclass(frozen=True)
-class ManifestFileFingerprintCacheKey:
-    """Cache key for one observed file fingerprint request.
-
-    Attributes:
-        path: Canonical input file path.
-        include_content_hash: Whether the request includes a content hash.
-        size: File size observed before hashing.
-        mtime_ns: File modification timestamp observed before hashing.
-
-    """
-
-    path: str
-    include_content_hash: bool
-    size: int
-    mtime_ns: int
-
-
 class ManifestFileFingerprintCache:
-    """Run-scoped cache for immutable input file fingerprints."""
+    """Native run-scoped cache for immutable input file fingerprints."""
 
     def __init__(self) -> None:
-        """Initialize an empty fingerprint cache."""
-        self._fingerprints_by_key: dict[ManifestFileFingerprintCacheKey, ManifestFileFingerprint] = {}
+        """Initialize an empty native fingerprint cache."""
+        self.native_cache: _core.NativeManifestFileFingerprintCache = _core.NativeManifestFileFingerprintCache()
 
     def build_file_fingerprint(
         self,
@@ -136,23 +118,9 @@ class ManifestFileFingerprintCache:
         """Build or reuse a fingerprint for the observed input file state."""
         if path is None:
             return None
-        canonical_path = path.resolve(strict=True)
-        metadata = canonical_path.stat()
-        cache_key = ManifestFileFingerprintCacheKey(
-            path=str(canonical_path),
-            include_content_hash=include_content_hash,
-            size=metadata.st_size,
-            mtime_ns=metadata.st_mtime_ns,
+        return manifest_file_fingerprint_from_native_payload(
+            self.native_cache.build_file_fingerprint_payload(str(path), include_content_hash)
         )
-        cached_fingerprint = self._fingerprints_by_key.get(cache_key)
-        if cached_fingerprint is not None:
-            return cached_fingerprint
-        file_fingerprint = require_manifest_file_fingerprint(
-            build_file_fingerprint(canonical_path, include_content_hash=include_content_hash),
-            "input file",
-        )
-        self._fingerprints_by_key[cache_key] = file_fingerprint
-        return file_fingerprint
 
 
 @dataclass(frozen=True)

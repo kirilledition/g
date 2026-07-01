@@ -1739,6 +1739,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   Python adapts the native JSON payload instead of resolving and hashing LOCO
   files in its manifest-header loop, and the old Python-facing raw LOCO path
   resolver is no longer exported from `_core`.
+- Run-scoped manifest file fingerprint caching now lives in `g-output` behind
+  a native PyO3 cache handle; Python adapts native payloads instead of
+  resolving paths, statting files, or maintaining fingerprint cache keys for
+  control-file manifest inputs.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

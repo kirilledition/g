@@ -2687,6 +2687,14 @@ class NativeInitializedOutputRun:
     @property
     def committed_chunk_identifiers(self) -> list[int]: ...
 
+class NativeManifestFileFingerprintCache:
+    def __init__(self) -> None: ...
+    def build_file_fingerprint_payload(
+        self,
+        path: str,
+        include_content_hash: bool,
+    ) -> dict[str, object]: ...
+
 def write_regenie2_multi_native_chunk(
     *,
     writer_sessions: list[OutputWriterSession],

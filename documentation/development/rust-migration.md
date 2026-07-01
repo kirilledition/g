@@ -96,6 +96,9 @@ helper that composes `g-input` LOCO path resolution with `g-output` file
 fingerprinting, leaving Python to adapt the native JSON payload for the
 transitional manifest-header dataclass; the old Python-facing raw LOCO path
 resolver is no longer exported from `_core`.
+Run-scoped manifest file fingerprint caching now lives in `g-output` behind a
+native PyO3 cache handle; Python no longer resolves paths, stats files, or
+maintains cache keys for control-file fingerprints.
 Run-start manifest command/runtime metadata extension now goes through a native
 `g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
 longer loads, mutates, serializes, and rewrites run manifests for that
