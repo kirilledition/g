@@ -94,6 +94,13 @@ remains for deterministic tests and compatibility helpers.
 Default local JAX cache-directory resolution now comes from `g-runtime`; the
 Python runtime-path adapter no longer reads the platform temporary directory or
 current user name itself.
+Production process-runtime JAX setup sessions now resolve default cache
+directories inside `g-runtime`; the Python cache-directory resolver remains for
+compatibility helpers and pure setup-report tests.
+The Python architecture checker now rejects production calls to the explicit
+JAX cache-directory resolver outside the compatibility adapter.
+It also rejects direct production calls to `jax.config.update` and
+`jax.devices`, keeping JAX setup side effects behind native setup sessions.
 Prediction-input LOCO manifest fingerprints now route through a root PyO3
 helper that composes `g-input` LOCO path resolution with `g-output` file
 fingerprinting, leaving Python to adapt the native JSON payload for the

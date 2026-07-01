@@ -389,6 +389,18 @@ impl NativeRuntimeState {
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(NativeJaxRuntimeSetupSession::from_session(session))
     }
+
+    fn build_jax_runtime_setup_session_resolving_cache_directory(
+        &self,
+        payload: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeJaxRuntimeSetupSession> {
+        let jax_policy = parse_jax_runtime_policy_payload(payload)?;
+        let session = self
+            .lock_state()?
+            .build_jax_runtime_setup_session_resolving_cache_directory(&jax_policy)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(NativeJaxRuntimeSetupSession::from_session(session))
+    }
 }
 
 impl NativeRuntimeCompatibilityToken {

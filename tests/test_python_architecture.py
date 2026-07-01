@@ -366,6 +366,76 @@ def test_telemetry_dispatch_policy_rejects_fallback_method_calls(tmp_path: Path)
     ]
 
 
+def test_jax_cache_resolution_policy_rejects_production_python_resolver_calls(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    jax_runtime_directory = package_root / "jax_runtime"
+    runner_directory.mkdir(parents=True)
+    jax_runtime_directory.mkdir(parents=True)
+    (runner_directory / "runtime.py").write_text(
+        "\n".join(
+            (
+                "from g.jax_runtime import resolution as jax_runtime_resolution",
+                "def configure(policy):",
+                "    jax_runtime_resolution.resolve_jax_runtime_cache_directory(policy)",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (jax_runtime_directory / "resolution.py").write_text(
+        "\n".join(
+            (
+                "def resolve_jax_runtime_cache_directory(policy):",
+                "    return policy.cache_directory",
+                "def resolve_jax_runtime_setup(policy):",
+                "    return resolve_jax_runtime_cache_directory(policy)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/runtime.py"),
+            3,
+            "jax_runtime_resolution.resolve_jax_runtime_cache_directory",
+            "resolve_jax_runtime_cache_directory",
+        )
+    ]
+
+
+def test_jax_setup_side_effect_policy_rejects_direct_jax_calls(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    jax_runtime_directory = package_root / "jax_runtime"
+    jax_runtime_directory.mkdir(parents=True)
+    (jax_runtime_directory / "setup.py").write_text(
+        "\n".join(
+            (
+                "import jax",
+                "def configure():",
+                "    jax.config.update('jax_platforms', 'cpu')",
+                "    jax.devices()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/jax_runtime/setup.py"), 3, "jax.config.update", "jax.config.update"),
+        (Path("g/jax_runtime/setup.py"), 4, "jax.devices", "jax.devices"),
+    ]
+
+
 def test_telemetry_definition_policy_rejects_fallback_methods(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     telemetry_directory = package_root / "engine"

@@ -171,9 +171,8 @@ def configure_runtime_before_jax_import(
 ) -> jax_runtime_models.JaxRuntimeSetupReport | None:
     """Configure JAX platform and runtime before compute modules are imported."""
     requested_policy = jax_runtime_resolution.resolve_jax_runtime_policy(compute_config)
-    native_setup_session = PROCESS_RUNTIME_STATE.build_jax_runtime_setup_session(
+    native_setup_session = PROCESS_RUNTIME_STATE.build_jax_runtime_setup_session_resolving_cache_directory(
         jax_runtime_policy_to_native_payload(requested_policy),
-        str(jax_runtime_resolution.resolve_jax_runtime_cache_directory(requested_policy)),
     )
     if not native_setup_session.should_configure:
         return None

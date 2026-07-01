@@ -2591,6 +2591,10 @@ class NativeRuntimeState:
         payload: dict[str, object],
         resolved_cache_directory: str,
     ) -> NativeJaxRuntimeSetupSession: ...
+    def build_jax_runtime_setup_session_resolving_cache_directory(
+        self,
+        payload: dict[str, object],
+    ) -> NativeJaxRuntimeSetupSession: ...
 
 def global_process_runtime_state() -> NativeRuntimeState: ...
 def build_process_runtime_state_handle(

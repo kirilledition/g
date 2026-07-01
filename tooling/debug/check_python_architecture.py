@@ -256,6 +256,20 @@ PYTHON_CALL_POLICIES = (
         message="production Python must dispatch telemetry through native PyO3 helpers, not fallback methods",
     ),
     PythonCallPolicy(
+        name="native_jax_cache_resolution_isolation",
+        source_directory=Path(),
+        forbidden_calls=("resolve_jax_runtime_cache_directory",),
+        allowed_paths=(Path("jax_runtime/resolution.py"),),
+        message="production Python must resolve JAX setup cache directories through native runtime state",
+    ),
+    PythonCallPolicy(
+        name="native_jax_setup_side_effect_isolation",
+        source_directory=Path(),
+        forbidden_calls=("jax.config.update", "jax.devices"),
+        allowed_paths=(),
+        message="production Python must execute JAX setup side effects through native setup sessions",
+    ),
+    PythonCallPolicy(
         name="compute_kernel_file_io_isolation",
         source_directory=Path("compute"),
         forbidden_calls=(

@@ -1715,6 +1715,9 @@ def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
 
     configure_plan = runtime_state.plan_jax_runtime_setup_lifecycle(jax_policy_payload)
     configure_session = runtime_state.build_jax_runtime_setup_session(jax_policy_payload, "/tmp/g-jax-cache")
+    resolving_session = _core.NativeRuntimeState().build_jax_runtime_setup_session_resolving_cache_directory(
+        {**jax_policy_payload, "cache_directory": None}
+    )
     runtime_state.complete_jax_runtime_setup_session(jax_policy_payload, configure_session)
     skip_plan = runtime_state.plan_jax_runtime_setup_lifecycle(jax_policy_payload)
     skip_session = runtime_state.build_jax_runtime_setup_session(jax_policy_payload, "/tmp/g-jax-cache")
@@ -1724,6 +1727,9 @@ def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
     assert isinstance(configure_session, _core.NativeJaxRuntimeSetupSession)
     assert configure_session.should_configure is True
     assert configure_session.setup_payload()["cache_directory"] == "/tmp/g-jax-cache"
+    resolving_cache_directory = resolving_session.setup_payload()["cache_directory"]
+    assert isinstance(resolving_cache_directory, str)
+    assert resolving_cache_directory.endswith("/g-jax-cache")
     assert configure_session.side_effect_plan_payload() == {
         "should_create_cache_directory": True,
         "should_validate_gpu": False,

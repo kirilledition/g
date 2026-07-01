@@ -190,6 +190,7 @@ pub use runtime_state::{
     JaxRuntimePolicyPayload, JaxRuntimeSetupLifecyclePlan, ProcessRuntimeState, RayonThreadPoolConfigurationError,
     RayonThreadPoolConfigurationPlan, RunRuntime, RuntimeCompatibilityError, RuntimeCompatibilityToken,
     RuntimePolicyPayload, RuntimeStateSnapshotPayload, build_jax_runtime_policy_payload, describe_jax_runtime_policy,
+    resolve_jax_runtime_cache_directory,
 };
 pub use shutdown::{
     SecondSignalExceptionPlan, ShutdownControllerState, ShutdownHandlerSession, ShutdownRequestAction,

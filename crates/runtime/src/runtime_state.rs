@@ -5,7 +5,10 @@ use std::fmt;
 
 use crate::jax_runtime;
 use crate::rayon_runtime;
+use crate::runtime_paths;
 use crate::runtime_policy::{LoggingRuntimePolicyPayload, describe_logging_runtime_policy};
+
+const DEFAULT_JAX_CACHE_DIRECTORY_NAME: &str = "g-jax-cache";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JaxRuntimePolicyPayload {
@@ -417,6 +420,27 @@ impl ProcessRuntimeState {
         );
         Ok(jax_runtime::JaxRuntimeSetupSession::new(lifecycle_plan.should_configure, setup))
     }
+
+    /// Build a run-scoped JAX setup session and resolve default cache paths natively.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a previous run configured incompatible
+    /// process-global JAX runtime settings.
+    pub fn build_jax_runtime_setup_session_resolving_cache_directory(
+        &self,
+        requested_policy: &JaxRuntimePolicyPayload,
+    ) -> Result<jax_runtime::JaxRuntimeSetupSession, RuntimeCompatibilityError> {
+        let resolved_cache_directory = resolve_jax_runtime_cache_directory(requested_policy);
+        self.build_jax_runtime_setup_session(requested_policy, &resolved_cache_directory)
+    }
+}
+
+#[must_use]
+pub fn resolve_jax_runtime_cache_directory(requested_policy: &JaxRuntimePolicyPayload) -> String {
+    requested_policy.cache_directory.clone().unwrap_or_else(|| {
+        runtime_paths::default_local_cache_directory(DEFAULT_JAX_CACHE_DIRECTORY_NAME).to_string_lossy().into_owned()
+    })
 }
 
 #[must_use]
@@ -697,6 +721,24 @@ mod tests {
                 .to_string()
                 .contains("JAX runtime is already configured")
         );
+    }
+
+    #[test]
+    fn builds_jax_runtime_setup_session_with_native_cache_directory_resolution() {
+        let state = ProcessRuntimeState::default();
+        let default_policy = build_jax_policy(None);
+        let explicit_policy = build_jax_policy(Some("/tmp/cache"));
+
+        let default_session = state
+            .build_jax_runtime_setup_session_resolving_cache_directory(&default_policy)
+            .expect("default-cache JAX policy should build a setup session");
+        let explicit_session = state
+            .build_jax_runtime_setup_session_resolving_cache_directory(&explicit_policy)
+            .expect("explicit-cache JAX policy should build a setup session");
+
+        assert!(default_session.setup().cache_directory.ends_with("/g-jax-cache"));
+        assert_eq!(explicit_session.setup().cache_directory, "/tmp/cache");
+        assert_eq!(resolve_jax_runtime_cache_directory(&explicit_policy), "/tmp/cache");
     }
 
     #[test]

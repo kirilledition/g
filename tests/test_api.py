@@ -1004,6 +1004,11 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", process_runtime_state),
         patch("g.runner.runtime.importlib.import_module", side_effect=import_module),
+        patch.object(
+            jax_runtime_resolution,
+            "resolve_jax_runtime_cache_directory",
+            side_effect=AssertionError("JAX setup cache directory should be resolved by native runtime state"),
+        ),
     ):
         runner_runtime.configure_runtime_before_jax_import(
             build_compute_config(device=types.Device.GPU),

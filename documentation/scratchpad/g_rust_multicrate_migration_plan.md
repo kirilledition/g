@@ -1731,6 +1731,14 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Default local JAX cache-directory resolution now comes from `g-runtime`;
   Python no longer reads the platform temporary directory or current user name
   for that runtime-path policy.
+- Production process-runtime JAX setup sessions now resolve default cache
+  directories inside `g-runtime`; the explicit Python cache-directory resolver
+  remains only for compatibility helpers and pure setup-report tests.
+- The Python architecture checker now rejects production calls to the explicit
+  JAX cache-directory resolver outside the compatibility adapter.
+- The Python architecture checker also rejects direct production calls to
+  `jax.config.update` and `jax.devices`, keeping JAX setup side effects behind
+  native setup sessions.
 - Production JAX setup now calls the native setup-session default-probe GPU
   validation method directly; the Python explicit-path wrapper remains only for
   deterministic tests and compatibility helpers.
