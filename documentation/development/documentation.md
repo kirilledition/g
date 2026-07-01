@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 documentation build and publishing | Documentation maintainers |
+| Pre-release draft | main branch as of 2026-07-01 documentation build and publishing | Documentation maintainers |
 
 This repository keeps documentation in three directories:
 
@@ -22,9 +22,12 @@ Documentation dependencies live in the `docs` dependency group.
 uv sync --group docs
 just docs-serve
 just docs-build
+just docs-check
 ```
 
 `just docs-serve` runs `uv run --group docs zensical serve` for a local preview. `just docs-build` runs `uv run --group docs zensical build --clean` and writes generated HTML to `documentation_rendered_website/`. Do not commit `documentation_rendered_website/`.
+`just docs-check` builds the site and runs repository-specific rendering
+guardrails for dynamic documentation assets such as Mermaid diagrams.
 
 ## Zensical Configuration
 
@@ -90,9 +93,10 @@ On pushes to `main`, it:
 2. installs Python and `uv`;
 3. installs documentation dependencies;
 4. builds the Zensical site into `documentation_rendered_website/`;
-5. runs `actions/configure-pages`;
-6. uploads `documentation_rendered_website/` with `actions/upload-pages-artifact`;
-7. deploys with `actions/deploy-pages`.
+5. checks repository-specific rendering hooks;
+6. runs `actions/configure-pages`;
+7. uploads `documentation_rendered_website/` with `actions/upload-pages-artifact`;
+8. deploys with `actions/deploy-pages`.
 
 The workflow has `contents: read`, `pages: write`, and `id-token: write` permissions because Pages deployment uses GitHub's Pages artifact and OIDC flow.
 
@@ -111,7 +115,7 @@ It excludes `documentation/scratchpad/**`, so scratchpad-only updates do not reb
 
 If the `Documentation` workflow fails:
 
-- Run `just docs-build` locally first. Most failures are broken links, moved files missing from `zensical.toml`, or dependency lock mismatches.
+- Run `just docs-check` locally first. Most failures are broken links, moved files missing from `zensical.toml`, rendering-hook regressions, or dependency lock mismatches.
 - Check that the GitHub repository Pages source is set to `GitHub Actions`.
 - Check that the workflow still grants `pages: write` and `id-token: write`.
 - Check that the build output path in `.github/workflows/docs.yml` matches `site_dir` in `zensical.toml`.

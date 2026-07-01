@@ -2,47 +2,66 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 public quick orientation | Public user docs |
+| Pre-release draft | main branch as of 2026-07-01 public quick orientation | Public user docs |
 
-This page is a short orientation for a first local run. The project is still pre-release, so prefer the repository README and these docs over assumptions from older branches or external examples.
+Use this page to choose the shortest path through the user guide. The project is
+still pre-release, so prefer the repository README and these docs over
+assumptions from older branches or external examples.
 
-## Install First
+## If You Are New To `g`
 
-Install `g` from source with the consumer flow in [Installation](installation.md). That page keeps
-the Python environment inside the checkout's `.venv/` and separates runtime setup from development
-setup.
-
-After installation, the basic command checks are:
+Start with [Installation](installation.md), then run the command checks from the
+same checkout and environment that will run your scan:
 
 ```bash
 uv run g --help
 uv run g regenie --help
 ```
 
-## What You Can Run
+Then use [Quickstart](quickstart.md) for concrete quantitative, binary,
+approximate-Firth, GPU, and REGENIE-text command shapes.
+
+## If You Have A REGENIE Workflow
 
 The active user workflow is REGENIE Step 2 over BGEN input:
 
 1. Generate Step 1 prediction lists with upstream `regenie`.
-2. Run `g regenie --step 2` with quantitative (`--qt`) or binary (`--bt`) trait mode.
-3. Inspect the run directory, manifest, chunks, logs, and optional Parquet output.
+2. Run `g regenie --step 2` with quantitative (`--qt`) or binary (`--bt`) trait
+   mode.
+3. Inspect the run directory, manifest, chunks, logs, and optional Parquet
+   output.
 
-`g` currently recognizes some REGENIE flags that are not implemented, including BED/PGEN inputs, SPA, and exact Firth without `--approx`. These fail explicitly rather than being silently ignored.
+Use [Compatibility](compatibility.md) to check whether the workflow is currently
+supported. `g` does not implement Step 1, BED/PGEN inputs, SPA, categorical
+covariates, or exact Firth without `--approx`.
 
-## First Data-backed Run
+## If You Need Exact Contracts
 
-Prepare or locate the files that a REGENIE Step 2 run needs:
+Read the reference page for the contract you are touching:
 
-- BGEN genotype file and Oxford `.sample` file unless the BGEN embeds usable sample IDs.
-- Phenotype table.
-- Optional covariate table.
-- REGENIE Step 1 prediction list from upstream `regenie`.
+| Need | Page |
+| --- | --- |
+| Required input files and sample alignment | [Input Files](input-files.md) |
+| Output directories, formats, and schema | [Output Files](output-files.md) |
+| Resume behavior and manifests | [Resume and Manifest](resume-and-manifest.md) |
+| CLI flags and exit behavior | [CLI](cli.md) |
+| TOML merge order and effective config | [Configuration](configuration.md) |
+| Statistical model and output interpretation | [Algorithm](algorithm.md) |
 
-Then follow [Quickstart](quickstart.md) for concrete CPU and GPU command shapes.
-Use [Input Files](input-files.md), [Output Files](output-files.md), and
-[Resume and Manifest](resume-and-manifest.md) when you need exact contracts.
+## If You Are Debugging
+
+First confirm the command surface:
+
+```bash
+uv run g --help
+uv run g regenie --help
+```
+
+Then use [Troubleshooting](troubleshooting.md) for symptom-specific checks. For
+GPU jobs, also verify the target node with [GPU and Clusters](gpu-and-clusters.md).
 
 ## Development Setup
 
-If you are changing code, building documentation, or using repository fixture-data recipes, use the
-separate [Development Installation](installation.md#development-installation) section.
+If you are changing code, building documentation, or using repository fixture
+data recipes, use the separate
+[Development Installation](installation.md#development-installation) section.

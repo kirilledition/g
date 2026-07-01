@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 public docs | Public user docs |
+| Pre-release draft | main branch as of 2026-07-01 public docs | Public user docs |
 
 `g` is a pre-release GWAS engine focused on BGEN-backed REGENIE Step 2
 association scans. It exposes a REGENIE-style CLI, TOML configuration, and a
@@ -12,25 +12,20 @@ and binary association kernels.
 `g` does not implement REGENIE Step 1. Use upstream `regenie` to produce Step 1
 prediction lists, then use `g` for Step 2 scans.
 
-## Start Here
+## Choose Your Path
 
-- I have upstream REGENIE Step 1 predictions and want a first Step 2 run:
-  [Quickstart](quickstart.md).
-- I need to install on a workstation or cluster: [Installation](installation.md)
-  and [GPU and Clusters](gpu-and-clusters.md).
-- I need exact file contracts: [Input Files](input-files.md),
-  [Output Files](output-files.md), and
-  [Resume and Manifest](resume-and-manifest.md).
-- I need to understand statistics or output fields: [Algorithm](algorithm.md).
-
-- [Getting Started](getting-started.md) gives the shortest orientation from
-  install to first run.
-- [Installation](installation.md) covers CPU, GPU, cluster, and development
-  setup paths.
-- [Quickstart](quickstart.md) shows quantitative, binary, approximate-Firth,
-  GPU, and REGENIE-text command examples.
-- [Compatibility](compatibility.md) lists supported and recognized-but-unsupported
-  REGENIE behavior.
+| I want to... | Read |
+| --- | --- |
+| understand what `g` can run | [Getting Started](getting-started.md) |
+| install on a workstation or cluster | [Installation](installation.md) |
+| run a first Step 2 scan | [Quickstart](quickstart.md) |
+| port an existing REGENIE Step 2 workflow | [Compatibility](compatibility.md), then [CLI](cli.md) |
+| understand required input files | [Input Files](input-files.md) |
+| find and interpret output files | [Output Files](output-files.md), then [Algorithm](algorithm.md) |
+| resume or inspect an interrupted run | [Resume and Manifest](resume-and-manifest.md) |
+| run on GPU or SLURM | [GPU and Clusters](gpu-and-clusters.md) |
+| tune or measure performance | [Performance Guide](performance-guide.md) |
+| fix an error | [Troubleshooting](troubleshooting.md) |
 
 ## Reference Pages
 

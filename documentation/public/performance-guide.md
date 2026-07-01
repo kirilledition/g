@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; guidance, not a benchmark guarantee | main branch as of 2026-06-30 CPU and GPU Step 2 runs | Public user docs |
+| Pre-release draft; guidance, not a benchmark guarantee | main branch as of 2026-07-01 CPU and GPU Step 2 runs | Public user docs |
 
 Performance depends on genotype format, trait mode, phenotype count, BGEN
 decode cost, host-device transfer, JAX compilation, output format, storage, and
@@ -34,6 +34,19 @@ portable guarantee.
 | Approximate Firth much slower than binary score test | Candidate density from `--pThresh` and Firth solver work dominate. |
 | Output stage slow | Storage throughput, writer threads, queue depth, output format, compression, and finalization. |
 | Resume startup slow | Manifest validation mode and strict chunk reconciliation. |
+
+## Cold, Warm, And Hot Runs
+
+Do not compare timing modes as if they measured the same thing:
+
+| Mode | Includes |
+| --- | --- |
+| Cold process | Python process startup, JAX backend initialization, first compilation, BGEN decode, compute, and output. |
+| Warm JAX cache | New process startup plus cache lookup/reuse when persistent cache entries match. |
+| Hot same process | Already-live Python process, JAX backend, and compiled functions for compatible shapes. |
+
+Use cold-process timing for batch-job wall-clock expectations. Use warm-cache
+or hot same-process timing only when that is the workflow being measured.
 
 ## Runtime Knobs
 

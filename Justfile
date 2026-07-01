@@ -267,6 +267,10 @@ docs-build:
     uv sync --group docs --frozen --no-install-project
     uv run --no-sync zensical build --clean
 
+# Build documentation and verify dynamic rendering guardrails
+docs-check: docs-build
+    uv run --no-sync python -m tooling.debug.check_docs_rendering
+
 # --- Symphony ---
 
 # Run Symphony against the repo workflow template

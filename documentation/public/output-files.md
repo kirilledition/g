@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 output file contracts | Public user docs |
+| Pre-release draft | main branch as of 2026-07-01 output file contracts | Public user docs |
 
 This page is the canonical user-facing output contract for `g regenie`.
 
@@ -129,11 +129,12 @@ Current correction method/status pairs are:
 | --- | --- | --- |
 | `score` | `success` | Score-test row with no fallback correction applied. |
 | `firth_approximate` | `success` | Successful approximate-Firth fallback row. |
-| `spa` | `success` | Successful SPA-corrected row when that diagnostic path is present. |
 | `firth_approximate` | `failed` | Approximate-Firth fallback failed; `EXTRA` is `TEST_FAIL`. |
 
 The `firth_approximate` label describes the current experimental correction
 diagnostic path. It does not imply exact Firth support.
+SPA correction labels are reserved for future support and are not emitted by
+current `g` runs.
 
 Current schema properties:
 

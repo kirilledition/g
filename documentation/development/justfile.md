@@ -47,6 +47,7 @@ just rust-check
 just workspace-check
 just test-local
 just docs-build
+just docs-check
 ```
 
 Use SLURM for CPU-heavy validation:
