@@ -1819,6 +1819,9 @@ Current implementation notes:
   handle directly, no-ops disabled or Python-only telemetry objects under the
   existing suppress-telemetry-errors policy, and no longer calls Python
   `log_run_failed` fallback methods.
+- The Rust architecture checker now guards the native telemetry dispatch
+  boundary by rejecting root PyO3 adapter calls to the old Python telemetry
+  fallback methods.
 
 ### Tests
 

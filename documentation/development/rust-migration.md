@@ -34,7 +34,8 @@ No internal crate may depend on `pyo3` or `numpy`. The root `g` crate may depend
 on all internal crates and remains the only native Python binding crate.
 `check_rust_architecture` enforces this split and also rejects root-crate public
 Rust re-exports of internal domain crates, a public root `python` adapter
-module, or public root PyO3 registration.
+module, public root PyO3 registration, and root PyO3 adapter calls back into
+legacy Python telemetry fallback methods.
 
 ## Non-Negotiable Invariants
 
@@ -77,6 +78,8 @@ Binary correction summary telemetry dispatch also uses the native telemetry
 handle directly instead of Python fallback methods.
 CLI run-failed telemetry dispatch resolves the native telemetry handle directly
 and preserves its existing suppress-telemetry-errors policy.
+The Rust architecture checker guards this telemetry boundary by rejecting root
+PyO3 adapter calls to the old Python fallback method names.
 
 Phase 10 queue migration also has a native callback scheduler state handle that
 consolidates queue limits, worker-start state, result in-flight accounting, and

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import typing
@@ -14,7 +15,24 @@ ROOT_PACKAGE_NAME = "g"
 RESTRICTED_PYTHON_NATIVE_DEPENDENCIES = {"numpy", "pyo3"}
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ROOT_CRATE_LIB_PATH = Path("src/lib.rs")
+ROOT_CRATE_PYTHON_SOURCE_DIRECTORY = Path("src/python")
 ROOT_CRATE_PYTHON_MODULE_PATH = Path("src/python/mod.rs")
+PYTHON_TELEMETRY_FALLBACK_METHOD_NAMES = (
+    "close_with_event",
+    "log_binary_correction_summary",
+    "log_callback_progress_event",
+    "log_jax_runtime_diagnostic_event",
+    "log_progress",
+    "log_run_failed",
+)
+PYTHON_TELEMETRY_FALLBACK_MESSAGE = (
+    "root PyO3 telemetry dispatch must use native telemetry handles, not Python fallback methods"
+)
+PYTHON_TELEMETRY_FALLBACK_CALL_PATTERN = re.compile(
+    r"call_method(?:0|1)?\s*\(\s*\"(?P<method_name>"
+    + "|".join(re.escape(method_name) for method_name in PYTHON_TELEMETRY_FALLBACK_METHOD_NAMES)
+    + r")\""
+)
 
 ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-plan": set(),
@@ -56,6 +74,24 @@ class RootCrateBoundaryViolation:
 
     source_path: Path
     marker: str
+    message: str
+
+
+@dataclass(frozen=True)
+class PythonTelemetryFallbackViolation:
+    """A root PyO3 adapter call back into Python telemetry fallback methods.
+
+    Attributes:
+        source_path: Source file containing the violation.
+        method_name: Python telemetry fallback method called from Rust.
+        line_number: One-based source line number containing the call.
+        message: Human-readable violation description.
+
+    """
+
+    source_path: Path
+    method_name: str
+    line_number: int
     message: str
 
 
@@ -200,6 +236,31 @@ def collect_root_crate_boundary_violations(repository_root: Path) -> tuple[RootC
     return tuple(violations)
 
 
+def collect_python_telemetry_fallback_violations(repository_root: Path) -> tuple[PythonTelemetryFallbackViolation, ...]:
+    """Collect root PyO3 adapter telemetry fallback dispatch violations."""
+    root_python_source_directory = repository_root / ROOT_CRATE_PYTHON_SOURCE_DIRECTORY
+    if not root_python_source_directory.exists():
+        return ()
+
+    violations: list[PythonTelemetryFallbackViolation] = []
+    for rust_source_path in sorted(root_python_source_directory.rglob("*.rs")):
+        source_text = rust_source_path.read_text(encoding="utf-8")
+        relative_source_path = rust_source_path.relative_to(repository_root)
+        for fallback_call_match in PYTHON_TELEMETRY_FALLBACK_CALL_PATTERN.finditer(source_text):
+            line_number = source_text.count("\n", 0, fallback_call_match.start()) + 1
+            method_name = fallback_call_match.group("method_name")
+            violations.append(
+                PythonTelemetryFallbackViolation(
+                    source_path=relative_source_path,
+                    method_name=method_name,
+                    line_number=line_number,
+                    message=PYTHON_TELEMETRY_FALLBACK_MESSAGE,
+                )
+            )
+
+    return tuple(violations)
+
+
 def load_cargo_metadata(repository_root: Path) -> dict[str, typing.Any]:
     """Load workspace Cargo metadata from the repository root."""
     completed_process = subprocess.run(
@@ -232,6 +293,14 @@ def format_root_crate_boundary_violations(violations: tuple[RootCrateBoundaryVio
     return "\n".join(f"- {violation.source_path} [{violation.marker}]: {violation.message}" for violation in violations)
 
 
+def format_python_telemetry_fallback_violations(violations: tuple[PythonTelemetryFallbackViolation, ...]) -> str:
+    """Format root PyO3 telemetry fallback violations for command-line output."""
+    return "\n".join(
+        f"- {violation.source_path}:{violation.line_number} [{violation.method_name}]: {violation.message}"
+        for violation in violations
+    )
+
+
 def run_tool(repository_root: Path) -> int:
     """Verify Rust workspace architecture policy."""
     try:
@@ -242,12 +311,15 @@ def run_tool(repository_root: Path) -> int:
 
     dependency_violations = collect_rust_architecture_violations(metadata_payload)
     root_crate_violations = collect_root_crate_boundary_violations(repository_root)
-    if dependency_violations or root_crate_violations:
+    telemetry_fallback_violations = collect_python_telemetry_fallback_violations(repository_root)
+    if dependency_violations or root_crate_violations or telemetry_fallback_violations:
         print("Rust workspace architecture violations:")
         if dependency_violations:
             print(format_violations(dependency_violations))
         if root_crate_violations:
             print(format_root_crate_boundary_violations(root_crate_violations))
+        if telemetry_fallback_violations:
+            print(format_python_telemetry_fallback_violations(telemetry_fallback_violations))
         return 1
 
     print("Rust workspace architecture policy passed.")
