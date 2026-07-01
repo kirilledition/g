@@ -425,6 +425,61 @@ def test_telemetry_dispatch_policy_rejects_fallback_method_calls(tmp_path: Path)
     ]
 
 
+def test_telemetry_dispatch_policy_rejects_direct_handle_and_wrapper_calls(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "telemetry.py").write_text(
+        "\n".join(
+            (
+                "def emit(session):",
+                "    session.native_session_handle.emit_current_event('run_started', 'info', {})",
+                "    session.native_telemetry_session.emit_progress(1, {})",
+                "    handle = session.native_session_handle",
+                "    handle.emit_run_failed_event(None)",
+                "    writer = session.native_telemetry_session",
+                "    writer.emit_payload({})",
+                "    session.log_event('run_started', level='info')",
+                "    session.build_event_payload(event='run_started', level='info')",
+                "    session.write_json_line({})",
+                "    session.writer_counters()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/telemetry.py"),
+            2,
+            "session.native_session_handle.emit_current_event",
+            "native_session_handle.emit_*",
+        ),
+        (
+            Path("g/runner/telemetry.py"),
+            3,
+            "session.native_telemetry_session.emit_progress",
+            "native_telemetry_session.emit_*",
+        ),
+        (Path("g/runner/telemetry.py"), 5, "handle.emit_run_failed_event", "emit_run_failed_event"),
+        (Path("g/runner/telemetry.py"), 7, "writer.emit_payload", "emit_payload"),
+        (Path("g/runner/telemetry.py"), 8, "session.log_event", "log_event"),
+        (
+            Path("g/runner/telemetry.py"),
+            9,
+            "session.build_event_payload",
+            "build_event_payload",
+        ),
+        (Path("g/runner/telemetry.py"), 10, "session.write_json_line", "write_json_line"),
+        (Path("g/runner/telemetry.py"), 11, "session.writer_counters", "writer_counters"),
+    ]
+
+
 def test_jax_cache_resolution_policy_rejects_production_python_resolver_calls(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"
@@ -595,6 +650,33 @@ def test_preflight_numeric_scan_policy_rejects_old_numpy_reductions(tmp_path: Pa
     ]
 
 
+def test_covariate_rank_scan_policy_rejects_matrix_rank_outside_preflight_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    engine_directory = package_root / "engine"
+    engine_directory.mkdir(parents=True)
+    (engine_directory / "pipeline.py").write_text(
+        "\n".join(
+            (
+                "import numpy as np",
+                "def validate_rank(values):",
+                "    np.linalg.matrix_rank(values)",
+                "    matrix_rank(values)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/pipeline.py"), 3, "np.linalg.matrix_rank", "np.linalg.matrix_rank"),
+        (Path("g/engine/pipeline.py"), 4, "matrix_rank", "matrix_rank"),
+    ]
+
+
 def test_callback_convergence_scan_policy_rejects_old_numpy_reductions(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     callback_directory = package_root / "engine" / "callbacks"
@@ -631,6 +713,33 @@ def test_callback_convergence_scan_policy_rejects_old_numpy_reductions(tmp_path:
     assert observed_violations == [
         (Path("g/engine/callbacks/diagnostics.py"), 3, "np.ravel", "np.ravel"),
         (Path("g/engine/callbacks/diagnostics.py"), 4, "np.count_nonzero", "np.count_nonzero"),
+    ]
+
+
+def test_jax_host_materialization_policy_rejects_device_get_outside_adapters(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    engine_directory = package_root / "engine"
+    engine_directory.mkdir(parents=True)
+    (engine_directory / "pipeline.py").write_text(
+        "\n".join(
+            (
+                "import jax",
+                "def materialize(values):",
+                "    jax.device_get(values)",
+                "    device_get(values)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/pipeline.py"), 3, "jax.device_get", "jax.device_get"),
+        (Path("g/engine/pipeline.py"), 4, "device_get", "device_get"),
     ]
 
 

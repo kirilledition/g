@@ -84,6 +84,10 @@ The Python architecture checker also guards production-side runtime diagnostics:
 direct native diagnostic payload builders are limited to compatibility adapters,
 raw diagnostic emitters are rejected, and old Python telemetry fallback method
 calls cannot reappear in production modules.
+It also rejects direct production event emission through `TelemetrySession`
+compatibility wrappers or `native_session_handle`/`native_telemetry_session`
+handles outside the telemetry adapter; production callers must use typed native
+PyO3 dispatch helpers.
 The real Python `TelemetrySession` no longer exposes those old fallback methods;
 focused telemetry tests call the native telemetry session handle directly, and
 the Python architecture checker rejects reintroduced production definitions of
@@ -124,7 +128,9 @@ now execute in the root PyO3 adapter over NumPy buffers before calling
 `np.unique`, or `np.count_nonzero` for those production checks, and the Python
 architecture checker guards against reintroducing them in `g.engine.preflight`.
 Covariate-rank validation still uses NumPy `matrix_rank` until a native rank or
-SVD-backed implementation can preserve the existing tolerance semantics.
+SVD-backed implementation can preserve the existing tolerance semantics; the
+architecture checker keeps that transitional scan isolated to the preflight
+adapter.
 Callback null-logistic nonconvergence planning now has a PyO3 bool-array entry
 point that owns scalar detection, flattening, total-fit counts, and
 nonconverged counts before calling `g-engine` policy helpers. The callback
@@ -133,7 +139,8 @@ host-transfer request and passes bool/int arrays into native timing-recorder
 methods for scalar and multi-trait null-logistic rows. Python no longer builds
 those timing dictionaries or rescans convergence counts with NumPy; the Python
 architecture checker guards against reintroducing those reductions in
-`g.engine.callbacks.diagnostics`.
+`g.engine.callbacks.diagnostics`, and it keeps production `jax.device_get`
+host materialization isolated to callback diagnostic and writer adapters.
 Run-scoped manifest file fingerprint caching now lives in `g-output` behind a
 native PyO3 cache handle; control-file and prediction-input LOCO fingerprints
 share that handle, and Python no longer resolves paths, stats files, or

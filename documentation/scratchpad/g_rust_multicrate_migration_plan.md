@@ -1696,6 +1696,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   boundary: direct diagnostic payload builders are allowed only in
   compatibility adapters, raw diagnostic emitters are rejected in production
   Python, and calls to the old Python telemetry fallback methods are rejected.
+- The Python architecture checker now also rejects direct production telemetry
+  event emission through `TelemetrySession` compatibility wrappers or native
+  telemetry-session handles outside the telemetry adapter; production callers
+  must route telemetry through typed native PyO3 dispatch helpers.
 - The real Python `TelemetrySession` no longer exposes the old fallback
   methods for run-failed, JAX diagnostic, callback progress, binary summary,
   throttled progress, or close-with-event dispatch; focused tests now exercise
@@ -1802,15 +1806,18 @@ Python/JAX should emit typed diagnostic events through a native handle.
   through `np.isfinite`, `np.unique`, or `np.count_nonzero`, and a focused
   Python architecture policy guards that boundary. Covariate-rank validation
   remains a Python NumPy `matrix_rank` scan until a native rank or SVD-backed
-  implementation can preserve the current tolerance semantics.
+  implementation can preserve the current tolerance semantics; a focused
+  Python architecture policy keeps that transitional scan isolated to the
+  preflight adapter.
 - Callback null-logistic nonconvergence planning now has a PyO3 bool-array
   entry point that owns scalar detection, flattening, total-fit counts, and
   nonconverged counts before calling the `g-engine` policy helpers. Python
   callback diagnostics still materialize JAX chromosome diagnostic values, but
   now does so once per new chromosome and routes null-logistic failure counts
   and timing-row construction through native helpers instead of Python sums,
-  loops, or dictionaries. A focused Python architecture policy guards the
-  old NumPy reduction boundary.
+  loops, or dictionaries. Focused Python architecture policies guard the old
+  NumPy reduction boundary and keep production `jax.device_get` host
+  materialization isolated to callback diagnostic and writer adapters.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 
@@ -1930,6 +1937,10 @@ Current implementation notes:
 - The Rust architecture checker now guards the native telemetry dispatch
   boundary by rejecting root PyO3 adapter calls to the old Python telemetry
   fallback methods.
+- The Python architecture checker additionally rejects direct production
+  telemetry emission through compatibility wrappers or native telemetry-session
+  handles outside the telemetry adapter, so production telemetry side effects
+  stay behind typed native PyO3 dispatch helpers.
 
 ### Tests
 
