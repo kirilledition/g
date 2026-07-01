@@ -1583,6 +1583,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   compatibility helpers and tests.
 - Native CLI stdout/stderr and rendered completion/interruption/failure line
   diagnostics now use native run-event diagnostic payload builders.
+- Native CLI stdout/stderr and rendered completion/interruption/failure line
+  production paths now call native diagnostic recorders directly, leaving
+  Python payload dict materialization only for compatibility helpers and tests.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

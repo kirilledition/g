@@ -3262,19 +3262,36 @@ def build_native_cli_stdout_diagnostic_payload(
     output_text: str,
     max_payload_chars: int,
 ) -> dict[str, object]: ...
+def record_native_cli_stdout_diagnostic_event(
+    output_text: str,
+    max_payload_chars: int,
+) -> None: ...
 def build_native_cli_stderr_diagnostic_payload(
     output_text: str,
     max_payload_chars: int,
 ) -> dict[str, object]: ...
+def record_native_cli_stderr_diagnostic_event(
+    output_text: str,
+    max_payload_chars: int,
+) -> None: ...
 def build_native_cli_interrupted_line_diagnostic_payload(
     line: str,
 ) -> dict[str, object]: ...
+def record_native_cli_interrupted_line_diagnostic_event(
+    line: str,
+) -> None: ...
 def build_native_cli_failed_line_diagnostic_payload(
     line: str,
 ) -> dict[str, object]: ...
+def record_native_cli_failed_line_diagnostic_event(
+    line: str,
+) -> None: ...
 def build_native_cli_completed_line_diagnostic_payload(
     line: str,
 ) -> dict[str, object]: ...
+def record_native_cli_completed_line_diagnostic_event(
+    line: str,
+) -> None: ...
 def build_execution_run_artifacts_payload(
     association_mode: str,
     phenotype_count: int,

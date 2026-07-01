@@ -272,6 +272,12 @@ pub fn build_native_cli_stdout_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_native_cli_stdout_diagnostic_event(output_text: &str, max_payload_chars: i64) -> PyResult<()> {
+    let payload = native_run_events::build_native_cli_stdout_diagnostic_payload(output_text, max_payload_chars);
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_native_cli_stderr_diagnostic_payload<'py>(
     py: Python<'py>,
     output_text: &str,
@@ -279,6 +285,12 @@ pub fn build_native_cli_stderr_diagnostic_payload<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let payload = native_run_events::build_native_cli_stderr_diagnostic_payload(output_text, max_payload_chars);
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_native_cli_stderr_diagnostic_event(output_text: &str, max_payload_chars: i64) -> PyResult<()> {
+    let payload = native_run_events::build_native_cli_stderr_diagnostic_payload(output_text, max_payload_chars);
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
@@ -291,6 +303,12 @@ pub fn build_native_cli_interrupted_line_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_native_cli_interrupted_line_diagnostic_event(line: &str) -> PyResult<()> {
+    let payload = native_run_events::build_native_cli_interrupted_line_diagnostic_payload(line);
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_native_cli_failed_line_diagnostic_payload<'py>(
     py: Python<'py>,
     line: &str,
@@ -300,12 +318,24 @@ pub fn build_native_cli_failed_line_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_native_cli_failed_line_diagnostic_event(line: &str) -> PyResult<()> {
+    let payload = native_run_events::build_native_cli_failed_line_diagnostic_payload(line);
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_native_cli_completed_line_diagnostic_payload<'py>(
     py: Python<'py>,
     line: &str,
 ) -> PyResult<Bound<'py, PyDict>> {
     let payload = native_run_events::build_native_cli_completed_line_diagnostic_payload(line);
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_native_cli_completed_line_diagnostic_event(line: &str) -> PyResult<()> {
+    let payload = native_run_events::build_native_cli_completed_line_diagnostic_payload(line);
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]

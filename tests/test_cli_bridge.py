@@ -101,7 +101,8 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
             stderr_buffer = io.StringIO()
             with (
                 unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
-                unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
+                unittest.mock.patch("g.cli.g._core.record_native_cli_stdout_diagnostic_event") as stdout_record_mock,
+                unittest.mock.patch("g.cli.g._core.record_native_cli_stderr_diagnostic_event") as stderr_record_mock,
                 contextlib.redirect_stdout(stdout_buffer),
                 contextlib.redirect_stderr(stderr_buffer),
             ):
@@ -112,7 +113,8 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
                 raise AssertionError((stdout_buffer.getvalue(), expected_stdout))
             if stderr_buffer.getvalue() != expected_stderr:
                 raise AssertionError((stderr_buffer.getvalue(), expected_stderr))
-            diagnostic_event_mock.assert_not_called()
+            stdout_record_mock.assert_not_called()
+            stderr_record_mock.assert_not_called()
 
         imported_modules = [module_name for module_name in forbidden_modules if module_name in sys.modules]
         if imported_modules:
@@ -130,25 +132,25 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
     assert completed_process.returncode == 0, completed_process.stderr
 
 
-def test_log_native_cli_output_bounds_payloads() -> None:
-    """Ensure native output diagnostics carry bounded previews, not full payloads."""
+def test_log_native_cli_output_uses_native_recorders() -> None:
+    """Ensure native output diagnostics are recorded by native adapters."""
     long_stdout = "x" * (cli.NATIVE_CLI_OUTPUT_LOG_LIMIT + 3)
     outcome = typing.cast(
         "g._core.CliOutcome",
         python_types.SimpleNamespace(stdout=long_stdout, stderr="", exit_code=0, config=None),
     )
 
-    with unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock:
+    with (
+        unittest.mock.patch("g.cli.g._core.record_native_cli_stdout_diagnostic_event") as stdout_record_mock,
+        unittest.mock.patch("g.cli.g._core.record_native_cli_stderr_diagnostic_event") as stderr_record_mock,
+    ):
         cli.log_native_cli_output(outcome, max_payload_chars=cli.NATIVE_CLI_OUTPUT_LOG_LIMIT)
 
-    diagnostic_event_mock.assert_called_once()
-    payload = diagnostic_event_mock.call_args.args[3]
-    assert payload["stdout_character_count"] == len(long_stdout)
-    assert payload["stdout_preview"] == long_stdout[: cli.NATIVE_CLI_OUTPUT_LOG_LIMIT]
-    assert payload["stdout_preview"] != long_stdout
-    assert payload["stdout_truncated"] is True
-    assert payload["stdout_omitted_character_count"] == 3
-    assert "outcome_stdout" not in payload
+    stdout_record_mock.assert_called_once_with(
+        output_text=long_stdout,
+        max_payload_chars=cli.NATIVE_CLI_OUTPUT_LOG_LIMIT,
+    )
+    stderr_record_mock.assert_not_called()
 
 
 def test_run_args_bridges_completion_events(
@@ -188,7 +190,7 @@ def test_run_args_bridges_completion_events(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts) as regenie_mock,
-        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
+        unittest.mock.patch("g.cli.g._core.record_native_cli_completed_line_diagnostic_event") as completed_record_mock,
     ):
         exit_code = cli.run_args(["regenie"])
 
@@ -205,8 +207,8 @@ def test_run_args_bridges_completion_events(
         initialize_logging_on_entry=False,
     )
     assert telemetry_session.closed is True
-    event_names = {call.args[1] for call in diagnostic_event_mock.call_args_list}
-    assert "native_cli_completed_line" in event_names
+    completed_lines = [call.kwargs["line"] for call in completed_record_mock.call_args_list]
+    assert "Success. Chunked run saved to output.run" in completed_lines
 
 
 def test_run_args_bridges_interruption_events(
@@ -237,7 +239,9 @@ def test_run_args_bridges_interruption_events(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=shutdown_request) as regenie_mock,
-        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
+        unittest.mock.patch(
+            "g.cli.g._core.record_native_cli_interrupted_line_diagnostic_event"
+        ) as interrupted_record_mock,
     ):
         exit_code = cli.run_args(["regenie"])
 
@@ -254,8 +258,8 @@ def test_run_args_bridges_interruption_events(
         initialize_logging_on_entry=False,
     )
     assert telemetry_session.closed is True
-    event_names = {call.args[1] for call in diagnostic_event_mock.call_args_list}
-    assert "native_cli_interrupted_line" in event_names
+    interrupted_lines = [call.kwargs["line"] for call in interrupted_record_mock.call_args_list]
+    assert "Interrupted by SIGINT. Flushed queued chunks and saved committed output for --resume." in interrupted_lines
 
 
 def test_run_args_reports_runtime_initialization_failure(
@@ -280,7 +284,7 @@ def test_run_args_reports_runtime_initialization_failure(
         unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy") as runtime_preflight_mock,
         unittest.mock.patch.object(runner_runtime, "initialize_logging", side_effect=RuntimeError("logging failed")),
         unittest.mock.patch.object(runner_execution, "regenie") as regenie_mock,
-        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
+        unittest.mock.patch("g.cli.g._core.record_native_cli_failed_line_diagnostic_event") as failed_record_mock,
     ):
         exit_code = cli.run_args(["regenie"])
 
@@ -296,8 +300,8 @@ def test_run_args_reports_runtime_initialization_failure(
     assert telemetry_session.logged_payloads[0]["error_type"] == "RuntimeError"
     assert telemetry_session.logged_payloads[0]["error_message"] == "logging failed"
     assert telemetry_session.closed is True
-    event_names = {call.args[1] for call in diagnostic_event_mock.call_args_list}
-    assert "native_cli_failed_line" in event_names
+    failed_lines = [call.kwargs["line"] for call in failed_record_mock.call_args_list]
+    assert "Error: logging failed" in failed_lines
 
 
 def test_run_args_reports_runner_failure_without_traceback(
@@ -323,7 +327,7 @@ def test_run_args_reports_runner_failure_without_traceback(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=RuntimeError("pipeline failed")),
-        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
+        unittest.mock.patch("g.cli.g._core.record_native_cli_failed_line_diagnostic_event") as failed_record_mock,
     ):
         exit_code = cli.run_args(["regenie"])
 
@@ -334,8 +338,8 @@ def test_run_args_reports_runner_failure_without_traceback(
     assert "Traceback" not in output.err
     assert telemetry_session.logged_events == ["telemetry_session_closed"]
     assert telemetry_session.closed is True
-    event_names = {call.args[1] for call in diagnostic_event_mock.call_args_list}
-    assert "native_cli_failed_line" in event_names
+    failed_lines = [call.kwargs["line"] for call in failed_record_mock.call_args_list]
+    assert "Error: pipeline failed" in failed_lines
 
 
 def test_run_args_reports_telemetry_close_failure(
@@ -373,7 +377,8 @@ def test_run_args_reports_telemetry_close_failure(
             shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts),
-        unittest.mock.patch("g.cli.g._core.emit_diagnostic_event_fields") as diagnostic_event_mock,
+        unittest.mock.patch("g.cli.g._core.record_native_cli_completed_line_diagnostic_event") as completed_record_mock,
+        unittest.mock.patch("g.cli.g._core.record_native_cli_failed_line_diagnostic_event") as failed_record_mock,
     ):
         exit_code = cli.run_args(["regenie"])
 
@@ -384,6 +389,7 @@ def test_run_args_reports_telemetry_close_failure(
     assert "Traceback" not in output.err
     assert telemetry_session.logged_events == ["telemetry_session_closed"]
     assert telemetry_session.closed is False
-    event_names = {call.args[1] for call in diagnostic_event_mock.call_args_list}
-    assert "native_cli_completed_line" in event_names
-    assert "native_cli_failed_line" in event_names
+    completed_lines = [call.kwargs["line"] for call in completed_record_mock.call_args_list]
+    failed_lines = [call.kwargs["line"] for call in failed_record_mock.call_args_list]
+    assert "Success. Chunked run saved to output.run" in completed_lines
+    assert "Error: telemetry close failed" in failed_lines

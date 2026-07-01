@@ -176,7 +176,9 @@ use run_events::{
     build_runner_run_interrupted_diagnostic_payload, build_runner_run_started_diagnostic_payload,
     build_runner_single_phenotype_dispatch_started_diagnostic_payload,
     record_callback_null_logistic_nonconvergence_warning_diagnostic_event,
-    record_io_output_resume_committed_chunks_diagnostic_event,
+    record_io_output_resume_committed_chunks_diagnostic_event, record_native_cli_completed_line_diagnostic_event,
+    record_native_cli_failed_line_diagnostic_event, record_native_cli_interrupted_line_diagnostic_event,
+    record_native_cli_stderr_diagnostic_event, record_native_cli_stdout_diagnostic_event,
     record_native_dispatch_bgen_engine_constructing_diagnostic_event,
     record_native_dispatch_callback_drain_started_diagnostic_event,
     record_native_dispatch_delivery_failed_diagnostic_event, record_native_dispatch_delivery_finished_diagnostic_event,
@@ -2101,6 +2103,11 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_native_cli_interrupted_line_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_native_cli_failed_line_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_native_cli_completed_line_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_stdout_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_stderr_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_interrupted_line_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_failed_line_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_completed_line_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_native_runtime_knobs_configured_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_runtime_knobs_configured_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_runner_metadata_artifacts_finalized_diagnostic_payload, module)?)?;
