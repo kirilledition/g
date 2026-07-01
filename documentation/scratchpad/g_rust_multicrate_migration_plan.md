@@ -1197,6 +1197,10 @@ Remove Python as the chunk-level scheduler.
   manual scheduler/resource state, Python queue/thread ownership, and native
   runtime-resource probing are confined to test fixtures instead of production
   runner code.
+- The production callback runtime source guard also rejects direct construction
+  of lower-level native callback queues, wait signals, worker handles,
+  scheduler/progress/summary state, and buffer/slot state in production
+  callback modules.
 - Native telemetry run sessions now own production run completed, interrupted,
   and failed lifecycle event emission names, levels, and field construction.
 - CLI runtime-initialization failures now route run-failed telemetry through
@@ -1400,6 +1404,13 @@ Remove Python as the chunk-level scheduler.
   filesystem and manifest I/O for output preparation, initialization,
   finalization, manifest load/write, fingerprinting, committed-chunk scanning,
   and strict manifest validation/repair.
+- Native output lifecycle PyO3 helpers are now guarded behind the `g.io.output`
+  Python adapter; production callers outside that adapter cannot call the
+  lower-level `_core` output lifecycle, resume, or finalization helpers
+  directly.
+- Native pipeline output-preparation batch construction now also routes through
+  the `g.io.output` adapter, so pipeline orchestration does not construct the
+  lower-level native output lifecycle batch directly.
 - Run-start manifest command/runtime metadata extension now goes through a
   native `g-output` manifest upsert via the root PyO3 adapter, so Python no
   longer loads, mutates, serializes, and rewrites run manifests for that
@@ -2184,9 +2195,11 @@ Add an import-policy check for Python:
 ```text
 g.compute must not import CLI, output, or file parsers.
 g.jax_runtime must not import runner orchestration.
+g.runner must not import JAX-facing pipeline, callback, or compute modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
 Production Python must not reconstruct canonical prepared-run plans.
+Production Python must route native output lifecycle calls through `g.io.output`.
 ```
 
 `just check-python-architecture` now enforces these Python import and call
@@ -2194,7 +2207,13 @@ boundaries through an AST-based checker. The production manifest-write rule
 allows the `g.io.output` adapter helper itself, but rejects production callers
 outside that helper; the compute-kernel rule rejects direct file I/O and common
 NumPy/pandas file loaders under `g.compute`; the prepared-plan rule rejects
-production calls that rebuild canonical plan payloads in Python.
+production calls that rebuild canonical plan payloads in Python; the callback
+worker-queue rule rejects direct Python queue/thread primitives and lower-level
+native callback resource constructors under `g.engine.callbacks`; the output
+lifecycle rule rejects direct `_core` output lifecycle calls outside the
+`g.io.output` adapter, including pipeline output-preparation batch
+construction. The runner import rule preserves the delayed import boundary
+that keeps JAX-facing pipeline modules behind runtime setup.
 
 ---
 

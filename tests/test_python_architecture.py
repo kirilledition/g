@@ -89,6 +89,49 @@ def test_manifest_write_policy_rejects_production_python_manifest_writes(tmp_pat
     ]
 
 
+def test_output_lifecycle_policy_rejects_direct_native_output_calls(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "outputs.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def initialize_output(token):",
+                "    _core.prepare_output_run('root', 'regenie2_linear', 'parquet', False)",
+                "    _core.initialize_output_run('run', 'chunks', None, '{}', False, 'fast', token)",
+                "    _core.validate_strict_manifest_chunks('chunks', '{}')",
+                "    _core.finalize_output_run_chunks('run', 'chunks', 'parquet', 'zstd')",
+                "    _core.NativePipelineOutputPreparationBatch((), (), (), (), False, 'fast')",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/runner/outputs.py"), 3, "_core.prepare_output_run", "_core.prepare_output_run"),
+        (Path("g/runner/outputs.py"), 4, "_core.initialize_output_run", "_core.initialize_output_run"),
+        (
+            Path("g/runner/outputs.py"),
+            5,
+            "_core.validate_strict_manifest_chunks",
+            "_core.validate_strict_manifest_chunks",
+        ),
+        (Path("g/runner/outputs.py"), 6, "_core.finalize_output_run_chunks", "_core.finalize_output_run_chunks"),
+        (
+            Path("g/runner/outputs.py"),
+            7,
+            "_core.NativePipelineOutputPreparationBatch",
+            "_core.NativePipelineOutputPreparationBatch",
+        ),
+    ]
+
+
 def test_callback_worker_queue_policy_rejects_python_queue_and_thread_primitives(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     callback_directory = package_root / "engine" / "callbacks"
@@ -116,6 +159,70 @@ def test_callback_worker_queue_policy_rejects_python_queue_and_thread_primitives
         (Path("g/engine/callbacks/runtime.py"), 4, "queue.Queue", "queue.Queue"),
         (Path("g/engine/callbacks/runtime.py"), 5, "threading.Thread", "threading.Thread"),
         (Path("g/engine/callbacks/runtime.py"), 6, "threading.BoundedSemaphore", "threading.BoundedSemaphore"),
+    ]
+
+
+def test_callback_worker_queue_policy_rejects_direct_native_resource_construction(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "runtime.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build_worker_state():",
+                "    _core.NativeCallbackObjectQueue(1)",
+                "    _core.NativeCallbackWaitSignal()",
+                "    _core.NativeCallbackWorkerThread(target=lambda: None, name='worker')",
+                "    _core.NativeCallbackSchedulerState(1, 1, None, None)",
+                "    _core.NativeCallbackProgressState(1)",
+                "    _core.NativeBinaryCorrectionSummary()",
+                "    _core.NativeDosageBufferPoolState(1)",
+                "    _core.NativeResultInFlightSlotState(1)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/callbacks/runtime.py"), 3, "_core.NativeCallbackObjectQueue", "NativeCallbackObjectQueue"),
+        (Path("g/engine/callbacks/runtime.py"), 4, "_core.NativeCallbackWaitSignal", "NativeCallbackWaitSignal"),
+        (Path("g/engine/callbacks/runtime.py"), 5, "_core.NativeCallbackWorkerThread", "NativeCallbackWorkerThread"),
+        (
+            Path("g/engine/callbacks/runtime.py"),
+            6,
+            "_core.NativeCallbackSchedulerState",
+            "NativeCallbackSchedulerState",
+        ),
+        (
+            Path("g/engine/callbacks/runtime.py"),
+            7,
+            "_core.NativeCallbackProgressState",
+            "NativeCallbackProgressState",
+        ),
+        (
+            Path("g/engine/callbacks/runtime.py"),
+            8,
+            "_core.NativeBinaryCorrectionSummary",
+            "NativeBinaryCorrectionSummary",
+        ),
+        (
+            Path("g/engine/callbacks/runtime.py"),
+            9,
+            "_core.NativeDosageBufferPoolState",
+            "NativeDosageBufferPoolState",
+        ),
+        (
+            Path("g/engine/callbacks/runtime.py"),
+            10,
+            "_core.NativeResultInFlightSlotState",
+            "NativeResultInFlightSlotState",
+        ),
     ]
 
 
@@ -206,4 +313,43 @@ def test_jax_runtime_import_policy_rejects_runner_orchestration_imports(tmp_path
     ] == [
         (Path("g/jax_runtime/setup.py"), 1, "g.runner.runtime", "g.runner"),
         (Path("g/jax_runtime/setup.py"), 2, "g.runner.cli", "g.runner"),
+    ]
+
+
+def test_runner_import_policy_rejects_jax_facing_pipeline_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "execution.py").write_text(
+        "\n".join(
+            (
+                "import g.engine.regenie2_pipeline.single_trait",
+                "from g.engine.callbacks import linear",
+                "from g.compute.regenie2_binary import api",
+                "from ..engine.regenie2_pipeline import multi_trait",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/execution.py"),
+            1,
+            "g.engine.regenie2_pipeline.single_trait",
+            "g.engine.regenie2_pipeline",
+        ),
+        (Path("g/runner/execution.py"), 2, "g.engine.callbacks.linear", "g.engine.callbacks"),
+        (Path("g/runner/execution.py"), 3, "g.compute.regenie2_binary.api", "g.compute"),
+        (
+            Path("g/runner/execution.py"),
+            4,
+            "g.engine.regenie2_pipeline.multi_trait",
+            "g.engine.regenie2_pipeline",
+        ),
     ]

@@ -814,6 +814,31 @@ def repair_strict_manifest_chunk_commits(
     return repaired_commits
 
 
+def build_native_pipeline_output_preparation_batch(
+    *,
+    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
+    existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
+    current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
+    resume: bool,
+    resume_mode: types.ResumeMode,
+) -> _core.NativePipelineOutputPreparationBatch:
+    """Build a native output-preparation batch from output adapter inputs."""
+    return _core.NativePipelineOutputPreparationBatch(
+        tuple(str(output_run_paths.run_directory) for output_run_paths in output_run_paths_by_trait),
+        tuple(str(output_run_paths.chunks_directory) for output_run_paths in output_run_paths_by_trait),
+        tuple(
+            None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True)
+            for existing_manifest in existing_manifests_by_trait
+        ),
+        tuple(
+            json.dumps(run_manifest_header_input_to_mapping(current_header), sort_keys=True)
+            for current_header in current_headers_by_trait
+        ),
+        resume,
+        resume_mode.value,
+    )
+
+
 def initialize_output_run(
     *,
     output_run_paths: OutputRunPaths,

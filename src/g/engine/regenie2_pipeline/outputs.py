@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 import typing
 from dataclasses import dataclass
@@ -299,19 +298,12 @@ def build_pipeline_output_preparation_batch(
         Native output preparation batch handle.
 
     """
-    return _core.NativePipelineOutputPreparationBatch(
-        tuple(str(output_run_paths.run_directory) for output_run_paths in output_run_paths_by_trait),
-        tuple(str(output_run_paths.chunks_directory) for output_run_paths in output_run_paths_by_trait),
-        tuple(
-            None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True)
-            for existing_manifest in existing_manifests_by_trait
-        ),
-        tuple(
-            json.dumps(output.run_manifest_header_input_to_mapping(current_header), sort_keys=True)
-            for current_header in current_headers_by_trait
-        ),
-        resume,
-        resume_mode.value,
+    return output.build_native_pipeline_output_preparation_batch(
+        output_run_paths_by_trait=output_run_paths_by_trait,
+        existing_manifests_by_trait=existing_manifests_by_trait,
+        current_headers_by_trait=current_headers_by_trait,
+        resume=resume,
+        resume_mode=resume_mode,
     )
 
 
