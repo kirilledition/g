@@ -11,7 +11,7 @@ import numpy.typing as npt
 import g.engine.callbacks.grouped as callback_grouped
 import g.engine.callbacks.shared as callback_shared
 from g import _core, types
-from g.engine import run_events, timing
+from g.engine import timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
@@ -21,16 +21,6 @@ from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
-
-
-def emit_grouped_diagnostic_event_payload(payload: typing.Mapping[str, object]) -> None:
-    """Emit one grouped pipeline diagnostic payload through native tracing."""
-    _core.emit_diagnostic_event_fields(
-        str(payload["level"]),
-        str(payload["event_name"]),
-        str(payload["message"]),
-        typing.cast("typing.Mapping[str, object]", payload["fields"]),
-    )
 
 
 def run_regenie2_grouped_per_phenotype_bgen_pipeline(
@@ -49,12 +39,10 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
 ) -> tuple[Path | None, ...]:
     """Group independently aligned phenotypes and run one BGEN pass per compatible group."""
-    emit_grouped_diagnostic_event_payload(
-        run_events.build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
-            association_mode=context.association_mode,
-            phenotype_count=len(phenotype_names),
-            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
-        )
+    _core.record_pipeline_grouped_per_phenotype_started_diagnostic_event(
+        association_mode=context.association_mode.value,
+        phenotype_count=len(phenotype_names),
+        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE.value,
     )
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     engine = outputs.open_pipeline_bgen_engine(
@@ -79,11 +67,9 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     timing.record_stage_duration(
         context.stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time
     )
-    emit_grouped_diagnostic_event_payload(
-        run_events.build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
-            phenotype_count=len(phenotype_names),
-            phenotype_group_count=len(grouped_run_inputs),
-        )
+    _core.record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
+        phenotype_count=len(phenotype_names),
+        phenotype_group_count=len(grouped_run_inputs),
     )
     telemetry_events.log_sample_alignment_completed(
         context=context,
@@ -294,12 +280,10 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         int(grouped_run_input.run_input.sample_indices.shape[0]) for grouped_run_input in grouped_run_inputs
     )
     union_sample_count = int(union_sample_indices.shape[0])
-    emit_grouped_diagnostic_event_payload(
-        run_events.build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
-            grouped_sample_count=grouped_sample_count,
-            phenotype_group_count=len(grouped_run_inputs),
-            union_sample_count=union_sample_count,
-        )
+    _core.record_pipeline_grouped_union_delivery_selected_diagnostic_event(
+        grouped_sample_count=grouped_sample_count,
+        phenotype_group_count=len(grouped_run_inputs),
+        union_sample_count=union_sample_count,
     )
     prepared_deliveries = tuple(
         multi_group.prepare_multi_phenotype_bgen_group_delivery(

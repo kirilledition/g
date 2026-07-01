@@ -736,6 +736,20 @@ pub fn build_pipeline_grouped_per_phenotype_started_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_grouped_per_phenotype_started_diagnostic_event(
+    association_mode: &str,
+    phenotype_count: i64,
+    sample_mode: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
+        association_mode,
+        phenotype_count,
+        sample_mode,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload<'py>(
     py: Python<'py>,
     phenotype_count: i64,
@@ -746,6 +760,18 @@ pub fn build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload<'
         phenotype_group_count,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
+    phenotype_count: i64,
+    phenotype_group_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
+        phenotype_count,
+        phenotype_group_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
@@ -761,6 +787,20 @@ pub fn build_pipeline_grouped_union_delivery_selected_diagnostic_payload<'py>(
         union_sample_count,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_pipeline_grouped_union_delivery_selected_diagnostic_event(
+    grouped_sample_count: i64,
+    phenotype_group_count: i64,
+    union_sample_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
+        grouped_sample_count,
+        phenotype_group_count,
+        union_sample_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]

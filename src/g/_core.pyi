@@ -2971,15 +2971,29 @@ def build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
     phenotype_count: int,
     sample_mode: str,
 ) -> dict[str, object]: ...
+def record_pipeline_grouped_per_phenotype_started_diagnostic_event(
+    association_mode: str,
+    phenotype_count: int,
+    sample_mode: str,
+) -> None: ...
 def build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload(
     phenotype_count: int,
     phenotype_group_count: int,
 ) -> dict[str, object]: ...
+def record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
+    phenotype_count: int,
+    phenotype_group_count: int,
+) -> None: ...
 def build_pipeline_grouped_union_delivery_selected_diagnostic_payload(
     grouped_sample_count: int,
     phenotype_group_count: int,
     union_sample_count: int,
 ) -> dict[str, object]: ...
+def record_pipeline_grouped_union_delivery_selected_diagnostic_event(
+    grouped_sample_count: int,
+    phenotype_group_count: int,
+    union_sample_count: int,
+) -> None: ...
 def build_pipeline_multi_group_preflight_started_diagnostic_payload(
     phenotype_count: int,
     sample_count: int,

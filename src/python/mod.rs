@@ -190,6 +190,9 @@ use run_events::{
     record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event,
     record_native_runtime_knobs_configured_diagnostic_event,
     record_pipeline_gpu_genotype_format_resolved_diagnostic_event,
+    record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event,
+    record_pipeline_grouped_per_phenotype_started_diagnostic_event,
+    record_pipeline_grouped_union_delivery_selected_diagnostic_event,
     record_pipeline_multi_group_preflight_completed_diagnostic_event,
     record_pipeline_multi_group_preflight_started_diagnostic_event,
     record_pipeline_multi_phenotype_sample_summary_diagnostic_event,
@@ -2148,12 +2151,18 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(build_pipeline_grouped_per_phenotype_started_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_grouped_per_phenotype_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(
         build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event,
+        module
+    )?)?;
     module
         .add_function(wrap_pyfunction!(build_pipeline_grouped_union_delivery_selected_diagnostic_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(record_pipeline_grouped_union_delivery_selected_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_pipeline_multi_group_preflight_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_group_preflight_started_diagnostic_event, module)?)?;
     module

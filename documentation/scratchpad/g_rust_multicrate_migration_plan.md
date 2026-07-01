@@ -1570,6 +1570,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   compatibility helpers and tests.
 - Grouped per-phenotype pipeline start, group-preparation, and union-delivery
   selection diagnostics now use native run-event diagnostic payload builders.
+- Grouped per-phenotype pipeline start, group-preparation, and union-delivery
+  selection production paths now call native diagnostic recorders directly,
+  leaving Python payload dict materialization only for compatibility helpers
+  and tests.
 - Pipeline output lifecycle diagnostics for BGEN engine open/reuse, resume chunk
   counts, and writer-session creation now use native run-event diagnostic
   payload builders.

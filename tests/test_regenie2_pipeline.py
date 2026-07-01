@@ -11507,6 +11507,12 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
             return_value=grouped_run_inputs,
         ) as mock_load_grouped_run_inputs,
         patch(
+            "g.engine.regenie2_pipeline.grouped._core.record_pipeline_grouped_per_phenotype_started_diagnostic_event",
+        ) as record_grouped_started_mock,
+        patch(
+            "g.engine.regenie2_pipeline.grouped._core.record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event",
+        ) as record_groups_prepared_mock,
+        patch(
             "g.engine.regenie2_pipeline.multi_group._core.record_pipeline_multi_group_preflight_started_diagnostic_event",
         ) as record_preflight_started_mock,
         patch(
@@ -11567,6 +11573,15 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
     assert grouped_run_inputs[0].compute_group.covariate_design_fingerprint is not None
     assert grouped_run_inputs[0].compute_group.prediction_alignment_fingerprint is not None
     assert committed_chunk_identifiers == []
+    record_grouped_started_mock.assert_called_once_with(
+        association_mode="regenie2_linear",
+        phenotype_count=2,
+        sample_mode="per-phenotype",
+    )
+    record_groups_prepared_mock.assert_called_once_with(
+        phenotype_count=2,
+        phenotype_group_count=1,
+    )
     record_preflight_started_mock.assert_called_once_with(
         phenotype_count=2,
         sample_count=2,
@@ -11848,6 +11863,9 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
             "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
             return_value=grouped_run_inputs,
         ),
+        patch(
+            "g.engine.regenie2_pipeline.grouped._core.record_pipeline_grouped_union_delivery_selected_diagnostic_event",
+        ) as record_union_delivery_selected_mock,
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
         patch(
             "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
@@ -11899,6 +11917,11 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
     np.testing.assert_array_equal(callback.group_fanouts[1].sample_position_array, np.asarray([1, 2]))
     assert committed_chunk_identifiers == []
     assert mock_run_multi_preflight.call_count == 2
+    record_union_delivery_selected_mock.assert_called_once_with(
+        grouped_sample_count=5,
+        phenotype_group_count=2,
+        union_sample_count=3,
+    )
     assert tuple(call.kwargs["sample_count"] for call in mock_build_header.call_args_list) == (3, 2)
     assert tuple(call.kwargs["sample_set_fingerprint"] for call in mock_build_header.call_args_list) == (
         grouped_run_inputs[0].compute_group.sample_set_fingerprint,
