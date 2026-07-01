@@ -80,6 +80,10 @@ CLI run-failed telemetry dispatch resolves the native telemetry handle directly
 and preserves its existing suppress-telemetry-errors policy.
 The Rust architecture checker guards this telemetry boundary by rejecting root
 PyO3 adapter calls to the old Python fallback method names.
+The Python architecture checker also guards production-side runtime diagnostics:
+direct native diagnostic payload builders are limited to compatibility adapters,
+raw diagnostic emitters are rejected, and old Python telemetry fallback method
+calls cannot reappear in production modules.
 Run-start manifest command/runtime metadata extension now goes through a native
 `g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
 longer loads, mutates, serializes, and rewrites run manifests for that

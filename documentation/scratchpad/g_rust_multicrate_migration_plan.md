@@ -1672,6 +1672,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   chunk counts, and writer-session creation now call native diagnostic
   recorders directly, leaving Python payload dict materialization only for
   compatibility helpers and tests.
+- The Python architecture checker now guards the Phase 11 native diagnostic
+  boundary: direct diagnostic payload builders are allowed only in
+  compatibility adapters, raw diagnostic emitters are rejected in production
+  Python, and calls to the old Python telemetry fallback methods are rejected.
 - Native CLI stdout/stderr and rendered completion/interruption/failure line
   diagnostics now use native run-event diagnostic payload builders.
 - Native CLI stdout/stderr and rendered completion/interruption/failure line
@@ -2200,6 +2204,8 @@ Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
 Production Python must not reconstruct canonical prepared-run plans.
 Production Python must route native output lifecycle calls through `g.io.output`.
+Production Python must use native diagnostic recorders instead of payload builders outside compatibility adapters.
+Production Python must not call legacy telemetry fallback methods.
 ```
 
 `just check-python-architecture` now enforces these Python import and call
@@ -2212,8 +2218,11 @@ worker-queue rule rejects direct Python queue/thread primitives and lower-level
 native callback resource constructors under `g.engine.callbacks`; the output
 lifecycle rule rejects direct `_core` output lifecycle calls outside the
 `g.io.output` adapter, including pipeline output-preparation batch
-construction. The runner import rule preserves the delayed import boundary
-that keeps JAX-facing pipeline modules behind runtime setup.
+construction; the native diagnostic rules reject direct payload builders
+outside compatibility adapters, raw diagnostic emitters, and old telemetry
+fallback method calls in production Python. The runner import rule preserves
+the delayed import boundary that keeps JAX-facing pipeline modules behind
+runtime setup.
 
 ---
 

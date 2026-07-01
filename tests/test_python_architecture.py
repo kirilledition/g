@@ -258,6 +258,114 @@ def test_prepared_plan_policy_rejects_python_plan_reconstruction(tmp_path: Path)
     ]
 
 
+def test_diagnostic_payload_policy_rejects_direct_payload_builders(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    run_events_directory = package_root / "engine"
+    runner_directory.mkdir(parents=True)
+    run_events_directory.mkdir(parents=True)
+    (runner_directory / "execution.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "import g",
+                "def log_diagnostic(event):",
+                "    _core.build_runner_run_started_diagnostic_payload('linear', 'qt', 1)",
+                "    g._core.build_jax_runtime_setup_diagnostic_payloads({}, True)",
+                "    _core.emit_diagnostic_event('info', 'runner.event', 'message')",
+                "    _core.emit_diagnostic_event_fields('info', 'runner.event', 'message', {})",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (run_events_directory / "run_events.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build_compatibility_payload():",
+                "    _core.build_runner_run_started_diagnostic_payload('linear', 'qt', 1)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/execution.py"),
+            4,
+            "_core.build_runner_run_started_diagnostic_payload",
+            "_core.build_*_diagnostic_payload",
+        ),
+        (
+            Path("g/runner/execution.py"),
+            5,
+            "g._core.build_jax_runtime_setup_diagnostic_payloads",
+            "_core.build_*_diagnostic_payloads",
+        ),
+        (Path("g/runner/execution.py"), 6, "_core.emit_diagnostic_event", "_core.emit_diagnostic_event"),
+        (
+            Path("g/runner/execution.py"),
+            7,
+            "_core.emit_diagnostic_event_fields",
+            "_core.emit_diagnostic_event_fields",
+        ),
+    ]
+
+
+def test_telemetry_dispatch_policy_rejects_fallback_method_calls(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "telemetry.py").write_text(
+        "\n".join(
+            (
+                "def emit(session, event, progress_event):",
+                "    session.log_run_failed(event)",
+                "    session.close_with_event()",
+                "    session.log_jax_runtime_diagnostic_event(event, telemetry_level='trace')",
+                "    session.log_callback_progress_event(progress_event)",
+                "    session.log_binary_correction_summary({})",
+                "    session.log_progress(processed_chunk_count=1)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/runner/telemetry.py"), 2, "session.log_run_failed", "log_run_failed"),
+        (Path("g/runner/telemetry.py"), 3, "session.close_with_event", "close_with_event"),
+        (
+            Path("g/runner/telemetry.py"),
+            4,
+            "session.log_jax_runtime_diagnostic_event",
+            "log_jax_runtime_diagnostic_event",
+        ),
+        (
+            Path("g/runner/telemetry.py"),
+            5,
+            "session.log_callback_progress_event",
+            "log_callback_progress_event",
+        ),
+        (
+            Path("g/runner/telemetry.py"),
+            6,
+            "session.log_binary_correction_summary",
+            "log_binary_correction_summary",
+        ),
+        (Path("g/runner/telemetry.py"), 7, "session.log_progress", "log_progress"),
+    ]
+
+
 def test_compute_file_io_policy_rejects_direct_file_access(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     compute_directory = package_root / "compute"

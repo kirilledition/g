@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import fnmatch
 import sys
 import typing
 from pathlib import Path
@@ -183,6 +184,36 @@ PYTHON_CALL_POLICIES = (
         message="production Python must not reconstruct canonical prepared-run plans",
     ),
     PythonCallPolicy(
+        name="native_diagnostic_payload_adapter_isolation",
+        source_directory=Path(),
+        forbidden_calls=("_core.build_*_diagnostic_payload", "_core.build_*_diagnostic_payloads"),
+        allowed_paths=(Path("engine/run_events.py"), Path("engine/timing.py"), Path("jax_runtime/diagnostics.py")),
+        message=(
+            "production Python must use native diagnostic recorders; payload builders are compatibility adapters only"
+        ),
+    ),
+    PythonCallPolicy(
+        name="native_diagnostic_emitter_isolation",
+        source_directory=Path(),
+        forbidden_calls=("_core.emit_diagnostic_event", "_core.emit_diagnostic_event_fields"),
+        allowed_paths=(),
+        message="production Python must route diagnostics through typed native recorder helpers",
+    ),
+    PythonCallPolicy(
+        name="native_telemetry_dispatch_isolation",
+        source_directory=Path(),
+        forbidden_calls=(
+            "close_with_event",
+            "log_jax_runtime_diagnostic_event",
+            "log_callback_progress_event",
+            "log_binary_correction_summary",
+            "log_run_failed",
+            "log_progress",
+        ),
+        allowed_paths=(),
+        message="production Python must dispatch telemetry through native PyO3 helpers, not fallback methods",
+    ),
+    PythonCallPolicy(
         name="compute_kernel_file_io_isolation",
         source_directory=Path("compute"),
         forbidden_calls=(
@@ -276,6 +307,11 @@ def call_name_from_expression(expression: ast.expr) -> str | None:
 
 def call_matches_forbidden_name(call_name: str, forbidden_call: str) -> bool:
     """Return whether a call name violates a forbidden call pattern."""
+    if "*" in forbidden_call:
+        return fnmatch.fnmatchcase(call_name, forbidden_call) or fnmatch.fnmatchcase(
+            call_name,
+            f"*.{forbidden_call}",
+        )
     return call_name == forbidden_call or call_name.endswith(f".{forbidden_call}")
 
 
