@@ -16,10 +16,15 @@ if typing.TYPE_CHECKING:
     import omegaconf
 
 RUST_EXPORT_FILES = (
+    Path("src/python/callback_diagnostics.rs"),
     Path("src/python/mod.rs"),
     Path("src/python/config/mod.rs"),
+    Path("src/python/host_policy.rs"),
     Path("src/python/output.rs"),
+    Path("src/python/preflight.rs"),
+    Path("src/python/preparation.rs"),
     Path("src/python/run_events.rs"),
+    Path("src/python/run_metadata.rs"),
     Path("src/python/runtime.rs"),
     Path("src/python/runtime_paths.rs"),
     Path("src/python/runtime_policy.rs"),

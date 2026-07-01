@@ -2,6 +2,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 use g_engine::callback_diagnostics as native_callback_diagnostics;
 
@@ -57,6 +58,12 @@ pub(crate) fn plan_null_logistic_nonconvergence(
     )
     .map(Into::into)
     .map_err(|error| callback_diagnostics_error_to_py(&error))
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeNullLogisticNonconvergencePlan>()?;
+    module.add_function(wrap_pyfunction!(plan_null_logistic_nonconvergence, module)?)?;
+    Ok(())
 }
 
 fn callback_diagnostics_error_to_py(error: &native_callback_diagnostics::CallbackDiagnosticsError) -> PyErr {

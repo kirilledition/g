@@ -1662,6 +1662,9 @@ Current implementation notes:
 - Runtime-support PyO3 export registration for shutdown, runtime knobs, runtime
   paths, runtime policy, telemetry policy, timing, and trusted-validation cache
   helpers now lives with the corresponding adapter modules.
+- Host-policy, preflight, preparation, run-metadata, and callback diagnostic
+  PyO3 export registration now lives with the corresponding adapter modules,
+  leaving the root Python composition module to delegate those export groups.
 
 ### Tests
 

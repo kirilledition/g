@@ -2,7 +2,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyModule, PyTuple};
 
 use g_runtime::run_metadata as native_run_metadata;
 
@@ -122,6 +122,14 @@ pub(crate) fn build_run_manifest_extension_payload<'py>(
     payload.set_item("command", run_manifest_command_to_dict(py, &extension.command)?)?;
     payload.set_item("runtime", run_manifest_runtime_to_dict(py, &extension.runtime)?)?;
     Ok(payload)
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(build_execution_run_artifacts_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_multi_run_artifacts_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_phenotype_run_artifacts_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_run_manifest_extension_payload, module)?)?;
+    Ok(())
 }
 
 fn run_artifacts_payload_to_dict<'py>(

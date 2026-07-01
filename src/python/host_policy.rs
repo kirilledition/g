@@ -2,7 +2,7 @@
 
 use pyo3::exceptions::{PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyModule, PyTuple};
 
 use g_plan as native_host_policy;
 
@@ -90,6 +90,16 @@ pub(crate) fn build_phenotype_compute_group_id_value(
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_phenotype_output_directory_name(phenotype_index: i64, phenotype_name: String) -> String {
     native_host_policy::build_phenotype_output_directory_name(phenotype_index, &phenotype_name)
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(build_phenotype_compute_group_id_value, module)?)?;
+    module.add_function(wrap_pyfunction!(build_phenotype_compute_groups_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_phenotype_output_directory_name, module)?)?;
+    module.add_function(wrap_pyfunction!(normalize_binary_correction_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_association_backend_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;
+    Ok(())
 }
 
 fn phenotype_compute_group_payload_to_dict<'py>(

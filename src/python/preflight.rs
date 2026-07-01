@@ -2,7 +2,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyModule, PyTuple};
 
 use g_engine::preflight as native_preflight;
 
@@ -141,6 +141,20 @@ pub(crate) fn validate_multi_prediction_preflight_shape(
         sample_count,
     )
     .map_err(|error| preflight_error_to_py(&error))
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(build_preflight_report_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_binary_phenotype_case_control_counts, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_binary_phenotype_coding, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_covariate_matrix_rank, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_finite_array, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_multi_prediction_preflight_shape, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_multi_trait_preflight_shape_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_single_prediction_preflight_shape, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_single_trait_preflight_shape_payload, module)?)?;
+    Ok(())
 }
 
 fn usize_count(label: &str, count: i64) -> PyResult<usize> {

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 use super::runtime_state::NativeRuntimeCompatibilityToken;
 
@@ -153,6 +154,15 @@ pub(crate) fn initialize_pipeline_output_runs(
         native_resume_mode,
     )
     .map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativePipelineOutputInitialization>()?;
+    module.add_class::<NativePipelineOutputPreparationBatch>()?;
+    module.add_function(wrap_pyfunction!(initialize_pipeline_output_run_batch, module)?)?;
+    module.add_function(wrap_pyfunction!(initialize_pipeline_output_runs, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_pipeline_resume_compatibility, module)?)?;
+    Ok(())
 }
 
 fn parse_pipeline_output_preparation_batch(

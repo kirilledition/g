@@ -58,7 +58,6 @@ use association_backend::{
     NativeAssociationEngineRunReport, NativeAssociationGroupRunReport, NativeGenotypeBatchView, NativePredictionView,
     NativePreparedGroupInput, NativePythonAssociationBackend, NativePythonEngineRunEffects,
 };
-use callback_diagnostics::{NativeNullLogisticNonconvergencePlan, plan_null_logistic_nonconvergence};
 use callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
     NativeCallbackProgressTelemetryEvent, NativeCallbackProgressTelemetryPlan, NativeCallbackProgressTelemetryRecord,
@@ -80,11 +79,6 @@ use callback_summary::{
 };
 use errors::{convert_bgen_error, convert_genotype_error, convert_prediction_error};
 use g_engine::Regenie2RunEngineCore;
-use host_policy::{
-    build_phenotype_compute_group_id_value, build_phenotype_compute_groups_payload,
-    build_phenotype_output_directory_name, normalize_binary_correction_payload, plan_association_backend_payload,
-    resolve_association_mode_value,
-};
 use jax_runtime::{
     NativeJaxRuntimeDiagnosticRecordPlan, NativeJaxRuntimeSetupSession, build_jax_runtime_setup_diagnostic_payloads,
     complete_jax_runtime_setup_validation_payload, nvidia_driver_files_are_visible_value,
@@ -99,21 +93,7 @@ use logging::{
     emit_diagnostic_event_fields, generate_telemetry_run_id_value, initialize_logging, plan_telemetry_close,
     plan_telemetry_event_emission, plan_telemetry_progress_emission, shutdown_logging,
 };
-use preflight::{
-    build_preflight_report_payload, resolve_preflight_variant_count, validate_binary_phenotype_case_control_counts,
-    validate_binary_phenotype_coding, validate_covariate_matrix_rank, validate_finite_array,
-    validate_multi_prediction_preflight_shape, validate_multi_trait_preflight_shape_payload,
-    validate_single_prediction_preflight_shape, validate_single_trait_preflight_shape_payload,
-};
-use preparation::{
-    NativePipelineOutputInitialization, NativePipelineOutputPreparationBatch, initialize_pipeline_output_run_batch,
-    initialize_pipeline_output_runs, validate_pipeline_resume_compatibility,
-};
 use profile::build_profile_snapshot_dict;
-use run_metadata::{
-    build_execution_run_artifacts_payload, build_multi_run_artifacts_payload, build_phenotype_run_artifacts_payload,
-    build_run_manifest_extension_payload,
-};
 use runtime_state::{
     NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRunRuntime,
     NativeRuntimeCompatibilityToken, NativeRuntimePolicy, NativeRuntimeState, build_jax_runtime_policy_payload,
@@ -1796,6 +1776,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackProgressTelemetryPlan>()?;
     module.add_class::<NativeCallbackProgressTelemetryRecord>()?;
     module.add_class::<NativeCallbackProgressUpdate>()?;
+    callback_diagnostics::register_module(module)?;
     schedule::register_module(module)?;
     module.add_class::<NativeCallbackWorkerFinishLifecycleResult>()?;
     module.add_class::<NativeCallbackQueuePutResult>()?;
@@ -1810,11 +1791,9 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeResultWorkItemResourceReleaseResult>()?;
     module.add_class::<NativeResultWriteItemDrainResult>()?;
     module.add_class::<NativeResultWriteItemGetResult>()?;
-    module.add_class::<NativeNullLogisticNonconvergencePlan>()?;
     module.add_class::<NativeGroupedAlignedSampleData>()?;
     module.add_class::<NativeMultiAlignedSampleData>()?;
-    module.add_class::<NativePipelineOutputInitialization>()?;
-    module.add_class::<NativePipelineOutputPreparationBatch>()?;
+    preparation::register_module(module)?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
     module.add_class::<NativeJaxRuntimeDiagnosticRecordPlan>()?;
     module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
@@ -1842,29 +1821,10 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(resolve_prediction_loco_paths, module)?)?;
     run_events::register_module(module)?;
     runtime_policy::register_module(module)?;
-    module.add_function(wrap_pyfunction!(build_execution_run_artifacts_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_multi_run_artifacts_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_phenotype_compute_group_id_value, module)?)?;
-    module.add_function(wrap_pyfunction!(build_phenotype_compute_groups_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_phenotype_output_directory_name, module)?)?;
-    module.add_function(wrap_pyfunction!(build_phenotype_run_artifacts_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_run_manifest_extension_payload, module)?)?;
+    run_metadata::register_module(module)?;
     module.add_function(wrap_pyfunction!(build_runtime_policy_handle, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_pipeline_resume_compatibility, module)?)?;
-    module.add_function(wrap_pyfunction!(initialize_pipeline_output_run_batch, module)?)?;
-    module.add_function(wrap_pyfunction!(initialize_pipeline_output_runs, module)?)?;
-    module.add_function(wrap_pyfunction!(build_preflight_report_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_single_trait_preflight_shape_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_multi_trait_preflight_shape_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_binary_phenotype_case_control_counts, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_finite_array, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_covariate_matrix_rank, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_binary_phenotype_coding, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_single_prediction_preflight_shape, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_multi_prediction_preflight_shape, module)?)?;
-    module.add_function(wrap_pyfunction!(normalize_binary_correction_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_association_backend_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;
+    preflight::register_module(module)?;
+    host_policy::register_module(module)?;
     module.add_function(wrap_pyfunction!(resolve_jax_runtime_setup_payload, module)?)?;
     runtime_paths::register_module(module)?;
     module.add_function(wrap_pyfunction!(complete_jax_runtime_setup_validation_payload, module)?)?;
@@ -1877,9 +1837,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_log_event, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_runtime_setup_side_effects_payload, module)?)?;
     module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_null_logistic_nonconvergence, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_close, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;
