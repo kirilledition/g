@@ -1206,6 +1206,22 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
         )
 
 
+def test_native_cli_run_lifecycle_state_plans_failed_telemetry() -> None:
+    cli_lifecycle_state = _core.NativeCliRunLifecycleState()
+
+    initial_plan = cli_lifecycle_state.plan_run_failed_telemetry()
+
+    assert cli_lifecycle_state.runner_started is False
+    assert isinstance(initial_plan, _core.NativeCliRunFailureTelemetryPlan)
+    assert initial_plan.should_log_run_failed_to_telemetry is True
+
+    cli_lifecycle_state.mark_runner_started()
+    started_plan = cli_lifecycle_state.plan_run_failed_telemetry()
+
+    assert cli_lifecycle_state.runner_started is True
+    assert started_plan.should_log_run_failed_to_telemetry is False
+
+
 def test_native_runtime_state_returns_snapshot_payload() -> None:
     runtime_state = _core.NativeRuntimeState()
     logging_policy_payload = _core.build_logging_runtime_policy_payload(

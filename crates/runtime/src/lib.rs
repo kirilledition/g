@@ -1,5 +1,6 @@
 #![warn(clippy::pedantic)]
 
+pub mod cli_runtime;
 pub mod jax_runtime;
 pub mod rayon_runtime;
 pub mod run_events;
@@ -13,6 +14,7 @@ pub mod telemetry_session;
 pub mod timing;
 pub mod trusted_validation;
 
+pub use cli_runtime::{CliRunFailureTelemetryPlan, CliRunLifecycleState};
 pub use jax_runtime::{
     JaxDeviceObservation, JaxGpuValidationPlan, JaxRuntimeConfigUpdatePayload, JaxRuntimeConfigValue,
     JaxRuntimeDiagnosticEventPayload, JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticRecordPlan,

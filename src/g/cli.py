@@ -29,9 +29,9 @@ def run_args(arguments: typing.Sequence[str]) -> int:
     from g.runner import execution as runner_execution
     from g.runner import runtime as runner_runtime
 
+    cli_lifecycle_state = g._core.NativeCliRunLifecycleState()
     run_telemetry_session = None
     exit_code = RUNTIME_FAILURE_EXIT_CODE
-    runner_started = False
     try:
         run_telemetry_session = telemetry.build_telemetry_session(outcome.config)
         runtime_policy = runner_runtime.build_runtime_policy(outcome.config, run_telemetry_session.paths)
@@ -41,7 +41,7 @@ def run_args(arguments: typing.Sequence[str]) -> int:
         log_native_cli_output(outcome, max_payload_chars=NATIVE_CLI_OUTPUT_LOG_LIMIT)
         try:
             with shutdown.install_graceful_shutdown_handlers():
-                runner_started = True
+                cli_lifecycle_state.mark_runner_started()
                 artifacts = runner_execution.regenie(
                     outcome.config,
                     run_telemetry_session=run_telemetry_session,
@@ -59,11 +59,12 @@ def run_args(arguments: typing.Sequence[str]) -> int:
             log_completed_lines(run_events, completed_event)
             exit_code = 0
     except Exception as error:  # noqa: BLE001
+        failure_telemetry_plan = cli_lifecycle_state.plan_run_failed_telemetry()
         exit_code = print_and_log_failed_event(
             run_events,
             error,
             telemetry_session=run_telemetry_session,
-            log_run_failed_to_telemetry=not runner_started,
+            log_run_failed_to_telemetry=failure_telemetry_plan.should_log_run_failed_to_telemetry,
         )
     finally:
         if run_telemetry_session is not None:

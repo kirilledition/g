@@ -4,10 +4,50 @@ use pyo3::types::PyModule;
 
 use g_genotype::bgen::set_bgen_decode_tile_variant_count;
 use g_runtime::{
-    RayonRuntimeError, configure_global_rayon_thread_pool, format_global_rayon_thread_pool_configuration_error,
+    CliRunFailureTelemetryPlan, CliRunLifecycleState, RayonRuntimeError, configure_global_rayon_thread_pool,
+    format_global_rayon_thread_pool_configuration_error,
 };
 
 use super::errors;
+
+#[pyclass]
+pub(super) struct NativeCliRunLifecycleState {
+    state: CliRunLifecycleState,
+}
+
+#[pyclass]
+pub(super) struct NativeCliRunFailureTelemetryPlan {
+    plan: CliRunFailureTelemetryPlan,
+}
+
+#[pymethods]
+impl NativeCliRunFailureTelemetryPlan {
+    #[getter]
+    fn should_log_run_failed_to_telemetry(&self) -> bool {
+        self.plan.should_log_run_failed_to_telemetry
+    }
+}
+
+#[pymethods]
+impl NativeCliRunLifecycleState {
+    #[new]
+    fn new() -> Self {
+        Self { state: CliRunLifecycleState::default() }
+    }
+
+    #[getter]
+    fn runner_started(&self) -> bool {
+        self.state.runner_started()
+    }
+
+    fn mark_runner_started(&mut self) {
+        self.state.mark_runner_started();
+    }
+
+    fn plan_run_failed_telemetry(&self) -> NativeCliRunFailureTelemetryPlan {
+        NativeCliRunFailureTelemetryPlan { plan: self.state.plan_run_failed_telemetry() }
+    }
+}
 
 #[pyfunction]
 #[allow(clippy::missing_errors_doc)]
@@ -29,6 +69,8 @@ pub(super) fn format_rayon_thread_pool_configuration_error_value(thread_count: i
 }
 
 pub(super) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeCliRunFailureTelemetryPlan>()?;
+    module.add_class::<NativeCliRunLifecycleState>()?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
     module.add_function(wrap_pyfunction!(format_rayon_thread_pool_configuration_error_value, module)?)?;
