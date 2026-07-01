@@ -302,6 +302,38 @@ impl OutputWriterSession {
 }
 
 #[pyfunction]
+pub(crate) fn finish_output_writer_session(
+    py: Python<'_>,
+    writer_session: PyRef<'_, OutputWriterSession>,
+) -> PyResult<Option<String>> {
+    let native_writer_session = &writer_session.inner;
+    py.detach(|| native_writer_session.finish())
+        .map(|maybe_path| maybe_path.map(|path| path.display().to_string()))
+        .map_err(|error| output_writer_error_to_py(error, "finish_output_writer"))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn finish_output_writer_session_interrupted(
+    py: Python<'_>,
+    writer_session: PyRef<'_, OutputWriterSession>,
+    signal_name: String,
+) -> PyResult<()> {
+    let native_writer_session = &writer_session.inner;
+    py.detach(|| native_writer_session.finish_interrupted(&signal_name))
+        .map_err(|error| output_writer_error_to_py(error, "finish_interrupted"))
+}
+
+#[pyfunction]
+pub(crate) fn abort_output_writer_session(
+    py: Python<'_>,
+    writer_session: PyRef<'_, OutputWriterSession>,
+) -> PyResult<()> {
+    let native_writer_session = &writer_session.inner;
+    py.detach(|| native_writer_session.abort()).map_err(|error| output_writer_error_to_py(error, "abort_output_writer"))
+}
+
+#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
 #[pyo3(signature = (
@@ -766,6 +798,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<OutputWriterSession>()?;
+    module.add_function(wrap_pyfunction!(abort_output_writer_session, module)?)?;
     module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json_from_input_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_file_content_sha256_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_mapping_payload, module)?)?;
@@ -777,6 +810,8 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_prepared_run_plan_json_from_current_header_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_prediction_loco_file_fingerprints_json, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
+    module.add_function(wrap_pyfunction!(finish_output_writer_session, module)?)?;
+    module.add_function(wrap_pyfunction!(finish_output_writer_session_interrupted, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
     module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;
     module.add_function(wrap_pyfunction!(prepare_output_run, module)?)?;

@@ -1432,13 +1432,18 @@ Remove Python as the chunk-level scheduler.
   registration for scheduler, progress, summary, queue, wait-signal, or worker
   handles; remaining manual scheduler fixtures define their own test-only
   accessors outside the production runner.
+- Real native output writer finish, interrupted flush, and abort lifecycle calls
+  now route through root PyO3 helper functions before entering `g-output`. The
+  native-dispatch writer adapter keeps the direct method fallback only for fake
+  and transitional test writer sessions.
 
 ### Phase 10 punch list
 
 - Remaining production fallback audit: complete for the callback runner; no
   production `uses_native_callback_runtime_resources()` branches or direct
   scheduler-state fallback calls remain in `src/g/engine/callbacks/runtime.py`,
-  and a source guard keeps manual scheduler/resource state test-only.
+  real native writer lifecycle calls use root PyO3 helpers, and source guards
+  keep manual scheduler/resource state test-only.
 - Focused scheduler/buffer validation: complete for the callback runner via
   targeted scheduler, queue, result-slot, lifecycle, dosage-buffer, and native
   runtime-resource tests; full `tests/test_regenie2_pipeline.py` coverage

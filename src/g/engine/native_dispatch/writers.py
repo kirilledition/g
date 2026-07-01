@@ -39,11 +39,11 @@ def finish_writer_session(
     """Finish the writer session and optionally finalize Parquet output."""
     writer_finish_start_time = time.perf_counter()
     _core.record_native_dispatch_writer_session_finish_started_diagnostic_event()
-    final_parquet_path = writer_session.finish()
+    final_parquet_path = finish_writer_session_to_path(writer_session)
     timing.record_stage_duration(
         stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
     )
-    return typing.cast("str | None", final_parquet_path)
+    return None if final_parquet_path is None else str(final_parquet_path)
 
 
 def resolve_writer_finish_thread_count(writer_session_count: int, requested_thread_count: int) -> int:
@@ -61,8 +61,19 @@ def plan_writer_finish_execution(
 
 def finish_writer_session_to_path(writer_session: typing.Any) -> Path | None:
     """Finish one writer session and normalize its optional final Parquet path."""
-    final_parquet_path = typing.cast("str | None", writer_session.finish())
+    if isinstance(writer_session, _core.OutputWriterSession):
+        final_parquet_path = _core.finish_output_writer_session(writer_session)
+    else:
+        final_parquet_path = typing.cast("str | None", writer_session.finish())
     return None if final_parquet_path is None else Path(final_parquet_path)
+
+
+def finish_writer_session_interrupted_by_signal(writer_session: typing.Any, signal_name: str) -> None:
+    """Flush one interrupted writer session."""
+    if isinstance(writer_session, _core.OutputWriterSession):
+        _core.finish_output_writer_session_interrupted(writer_session, signal_name)
+    else:
+        writer_session.finish_interrupted(signal_name)
 
 
 def finish_writer_sessions(
@@ -108,7 +119,7 @@ def finish_writer_session_interrupted(
         signal_name=shutdown_request.signal_name,
         signal_number=shutdown_request.shutdown_signal.number,
     )
-    writer_session.finish_interrupted(shutdown_request.signal_name)
+    finish_writer_session_interrupted_by_signal(writer_session, shutdown_request.signal_name)
     timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
 
 
@@ -131,14 +142,16 @@ def finish_writer_sessions_interrupted(
     finish_plan = plan_writer_finish_execution(len(writer_sessions), writer_finish_thread_count)
     if not finish_plan.uses_parallel_finish:
         for writer_session in writer_sessions:
-            writer_session.finish_interrupted(shutdown_request.signal_name)
+            finish_writer_session_interrupted_by_signal(writer_session, shutdown_request.signal_name)
     else:
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=finish_plan.thread_count,
             thread_name_prefix="g-writer-finish",
         ) as executor:
             futures = tuple(
-                executor.submit(writer_session.finish_interrupted, shutdown_request.signal_name)
+                executor.submit(
+                    finish_writer_session_interrupted_by_signal, writer_session, shutdown_request.signal_name
+                )
                 for writer_session in writer_sessions
             )
             for future in futures:
@@ -157,7 +170,10 @@ def abort_callback(callback: object) -> None:
 def abort_writer_session(writer_session: typing.Any) -> None:
     """Abort one writer session."""
     with contextlib.suppress(Exception):
-        writer_session.abort()
+        if isinstance(writer_session, _core.OutputWriterSession):
+            _core.abort_output_writer_session(writer_session)
+        else:
+            writer_session.abort()
 
 
 def abort_writer_sessions(writer_sessions: tuple[typing.Any, ...]) -> None:

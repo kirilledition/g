@@ -1338,6 +1338,102 @@ def test_finish_writer_sessions_records_native_lifecycle_diagnostic(monkeypatch:
     assert diagnostic_calls == [{"requested_thread_count": 4, "writer_session_count": 1}]
 
 
+def create_native_writer_session_for_lifecycle_test(tmp_path: Path) -> _core.OutputWriterSession:
+    """Create a minimal native writer session for lifecycle dispatch tests."""
+    run_directory = tmp_path / "run"
+    chunks_directory = run_directory / "chunks"
+    run_directory.mkdir()
+    chunks_directory.mkdir()
+    return _core.OutputWriterSession(
+        run_directory=str(run_directory),
+        chunks_directory=str(chunks_directory),
+        association_mode=types.AssociationMode.REGENIE2_LINEAR.value,
+        writer_thread_count=1,
+        writer_queue_depth=1,
+        output_format=types.OutputFormat.ARROW.value,
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT32.value,
+        finalize_parquet=False,
+        chunks_per_arrow_file=1,
+        arrow_compression=types.ArrowCompression.NONE.value,
+        parquet_compression=types.ParquetCompression.NONE.value,
+        collect_stage_timings=False,
+    )
+
+
+def test_finish_writer_session_to_path_routes_native_session_through_core(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer_session = create_native_writer_session_for_lifecycle_test(tmp_path)
+    finish_calls: list[_core.OutputWriterSession] = []
+
+    def finish_output_writer_session(session: _core.OutputWriterSession) -> str:
+        finish_calls.append(session)
+        return "results/native.parquet"
+
+    monkeypatch.setattr(native_dispatch_writers._core, "finish_output_writer_session", finish_output_writer_session)
+
+    try:
+        final_path = native_dispatch_writers.finish_writer_session_to_path(writer_session)
+    finally:
+        _core.abort_output_writer_session(writer_session)
+
+    assert final_path == Path("results/native.parquet")
+    assert len(finish_calls) == 1
+    assert finish_calls[0] is writer_session
+
+
+def test_finish_writer_session_interrupted_routes_native_session_through_core(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer_session = create_native_writer_session_for_lifecycle_test(tmp_path)
+    original_finish_interrupted = _core.finish_output_writer_session_interrupted
+    finish_calls: list[tuple[_core.OutputWriterSession, str]] = []
+    session_closed = False
+
+    def finish_output_writer_session_interrupted(session: _core.OutputWriterSession, signal_name: str) -> None:
+        nonlocal session_closed
+        finish_calls.append((session, signal_name))
+        original_finish_interrupted(session, signal_name)
+        session_closed = True
+
+    monkeypatch.setattr(
+        native_dispatch_writers._core,
+        "finish_output_writer_session_interrupted",
+        finish_output_writer_session_interrupted,
+    )
+
+    try:
+        native_dispatch_writers.finish_writer_session_interrupted_by_signal(writer_session, "SIGTERM")
+    finally:
+        if not session_closed:
+            _core.abort_output_writer_session(writer_session)
+
+    assert len(finish_calls) == 1
+    assert finish_calls[0] == (writer_session, "SIGTERM")
+
+
+def test_abort_writer_session_routes_native_session_through_core(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer_session = create_native_writer_session_for_lifecycle_test(tmp_path)
+    original_abort = _core.abort_output_writer_session
+    abort_calls: list[_core.OutputWriterSession] = []
+
+    def abort_output_writer_session(session: _core.OutputWriterSession) -> None:
+        abort_calls.append(session)
+        original_abort(session)
+
+    monkeypatch.setattr(native_dispatch_writers._core, "abort_output_writer_session", abort_output_writer_session)
+
+    native_dispatch_writers.abort_writer_session(writer_session)
+
+    assert len(abort_calls) == 1
+    assert abort_calls[0] is writer_session
+
+
 def test_resolve_writer_finish_thread_count_uses_native_cleanup_policy() -> None:
     assert native_dispatch_writers.resolve_writer_finish_thread_count(0, 0) == 0
     assert native_dispatch_writers.resolve_writer_finish_thread_count(3, 2) == 2
