@@ -1,5 +1,9 @@
 # SIMD Optimization Reference
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Historical reference | BGEN SIMD benchmark work through 2026-06-08 | Native runtime maintainers |
+
 Date: 2026-06-08
 Latest benchmark host: `landau`
 Original AVX2 selection host: `cantor`

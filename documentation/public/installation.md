@@ -1,5 +1,9 @@
 # Installation
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 source checkout installs | Public user docs |
+
 `g` is pre-release and is not published on PyPI. Install it from a Git checkout and run it through
 the checkout's `uv` environment. This keeps `g` in a repository-local `.venv/` and does not install
 packages into your system Python, Conda base environment, or other projects.
@@ -22,6 +26,33 @@ Install or load these tools before syncing the Python environment:
 | SLURM | Cluster job submission | [SLURM `sbatch`](https://slurm.schedmd.com/sbatch.html) |
 
 `just` is not required to run `g`; it is a development task runner for this repository.
+
+## Supported Platforms
+
+| Platform | Status |
+| --- | --- |
+| Linux source checkout | Primary supported install path. |
+| Linux GPU node with compatible NVIDIA driver | Supported through the GPU dependency group and JAX CUDA wheels. |
+| Shared Linux cluster without root | Supported when the checkout, `.venv/`, and caches are user-writable. |
+| macOS | Untested for production scans; CPU-only development may work if the native extension builds locally. |
+| Windows | Unsupported and untested. |
+
+Known unsupported distribution modes:
+
+- PyPI package: not published.
+- Conda package: not published.
+- System Python or shared Conda base install: not recommended.
+
+## Verify The Install
+
+After any install flow, verify the command surface from the same checkout and
+environment that will run the scan:
+
+```bash
+uv run g --help
+uv run g regenie --help
+uv run python -c "from g import api; print(api.__name__)"
+```
 
 ## CPU Install From Source
 
@@ -172,7 +203,7 @@ repository's SLURM wrappers. Start with the development documentation instead of
 Common development setup:
 
 ```bash
-just bootstrap
+just dev-bootstrap
 just doctor
 just check-local
 ```
@@ -180,7 +211,7 @@ just check-local
 GPU-capable development setup:
 
 ```bash
-just bootstrap-gpu
+just dev-bootstrap-gpu
 just doctor-jax
 ```
 

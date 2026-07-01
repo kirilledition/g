@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Development contract | JAX quantitative, binary score, and binary approximate-Firth kernels | Compute maintainers |
+| Pre-release draft; development contract | main branch as of 2026-06-30 JAX association kernels | Compute maintainers |
 
 JAX kernels own statistical computation after native I/O has aligned samples and
 decoded genotype chunks. Public mathematical behavior is documented in

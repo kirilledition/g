@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Durable implementation map | `src/g`, Rust native modules, and public execution flow | Development maintainers |
+| Pre-release draft; durable implementation map | main branch as of 2026-06-30 runtime architecture | Development maintainers |
 
 `g` separates the user interface, execution plan, native I/O, JAX kernels, and output writer so performance-sensitive behavior is explicit.
 

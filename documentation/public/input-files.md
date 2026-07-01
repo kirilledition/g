@@ -1,5 +1,9 @@
 # Input Files
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 input file contracts | Public user docs |
+
 This page is the canonical user-facing input contract for `g regenie`.
 
 For the statistical use of each input, see [Algorithm](algorithm.md). For the

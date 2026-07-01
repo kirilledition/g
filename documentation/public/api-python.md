@@ -1,5 +1,9 @@
 # Python API
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 Python wrapper API | Public user docs |
+
 The Python API is a small execution wrapper around the same normalized
 configuration path used by the CLI.
 

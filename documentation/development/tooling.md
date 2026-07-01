@@ -1,5 +1,9 @@
 # Development Tooling Guide
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 repository-local tooling | Development tooling maintainers |
+
 This guide documents the repository-local `tooling/` package: what it contains,
 how to run the tools, which Hydra profiles are saved, and how to extend the
 tooling system.

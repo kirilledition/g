@@ -1,5 +1,9 @@
 # Justfile Command Reference
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 Justfile command surface | Development maintainers |
+
 The repository `Justfile` is a thin, stable entrypoint layer. It names common
 workflows and delegates workflow truth to saved Hydra configs under
 `tooling/configs/`.

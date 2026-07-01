@@ -1,5 +1,9 @@
 # Troubleshooting
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 common user failures | Public user docs |
+
 This page lists common failures and the first checks to run.
 
 ## Check First
@@ -40,6 +44,17 @@ Common absent flags include `--bed`, `--pgen`, `--keep`, `--remove`,
 
 See [Compatibility](compatibility.md) for the supported and unsupported surface.
 
+## TOML Config Fails To Parse Or Validate
+
+Check that the file is valid TOML and that option names use the current
+sectioned config surface. The current Rust frontend validates config as part of
+constructing the `g regenie` run; it does not provide a separate config-only
+validation command.
+
+`g` rejects unknown sections, unknown keys, empty selected column names, and
+binary-only options in quantitative mode. For CLI-to-TOML spelling, see
+[Configuration](configuration.md#cli-to-toml-mapping).
+
 ## `g regenie` Prints `Error: ...`
 
 Runtime failures are reported as a concise stderr line and exit code `1`, not a
@@ -57,6 +72,19 @@ uv run g regenie ... --telemetry profile --log_dir /path/to/logs
 
 For repository fixture-data examples, use the development recipes listed in
 [Quickstart](quickstart.md#repository-fixture-data).
+
+## Binary Phenotype Coding Fails
+
+Binary traits must use REGENIE-style coding in the phenotype file:
+
+| Value | Meaning |
+| --- | --- |
+| `1` | Control. |
+| `2` | Case. |
+
+Other non-missing values are rejected rather than silently recoded. Confirm the
+selected phenotype column, missing-value tokens, and delimiter before debugging
+the binary kernel.
 
 ## Sample Alignment Fails
 
@@ -111,6 +139,20 @@ If the accelerator is visible but performance does not improve, check whether
 BGEN decode, transfer, or output dominate. See [GPU and Clusters](gpu-and-clusters.md)
 and [Performance Guide](performance-guide.md).
 
+## Out Of Memory
+
+Reduce the largest shape-driving knobs first:
+
+```bash
+--bsize 4096
+--firth_batch_size 256
+--writer_queue_depth 1
+```
+
+For GPU runs, also check whether the command is repeatedly recompiling with
+different shapes or keeping too many results in flight. Use `--telemetry
+profile` on a representative bounded run before changing production settings.
+
 ## Resume Does Not Reuse Existing Output
 
 Every resumable run writes `run_manifest.json` and `effective_config.toml`.
@@ -149,6 +191,30 @@ trait_0001_phenotype.regenie2_binary.run/
 
 Parquet output uses `parts/`; Arrow output uses `chunks/`; REGENIE text output
 uses `regenie/` plus `final.regenie`. See [Output Files](output-files.md).
+
+## Finalization Fails But Chunks Exist
+
+Chunked output is the resumable authority. If `final.parquet` or
+`final.regenie` is missing after an interruption or storage failure, rerun the
+same command with:
+
+```bash
+--resume --resume_mode strict
+```
+
+If finalization continues to fail, inspect free space and permissions for the
+run directory and destination filesystem.
+
+## Approximate Firth Reports `TEST_FAIL`
+
+`TEST_FAIL` on approximate-Firth rows means score testing completed but the
+fallback correction did not produce a valid corrected statistic for that
+variant. First checks:
+
+- confirm `--bt --firth --approx` was intended;
+- compare candidate density by changing `--pThresh` on a small subset;
+- inspect profile logs for Firth solver iteration or line-search failures;
+- compare against upstream REGENIE only with equivalent Firth settings.
 
 ## Documentation Build Fails
 

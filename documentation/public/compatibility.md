@@ -1,5 +1,9 @@
 # Compatibility
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 REGENIE Step 2 compatibility | Public user docs |
+
 This page is the canonical public compatibility and scope reference.
 
 `g` is pre-release. Backward compatibility is not guaranteed until a stable
@@ -61,7 +65,7 @@ Important migration limits:
 Until the project declares a stable release:
 
 - CLI and TOML behavior in the current checkout is authoritative.
-- Defaults can change; use `src/interface/config.default.toml` for the exact
+- Defaults can change; use `crates/interface/src/config.default.toml` for the exact
   current values.
 - Output schema changes are guarded by manifest/schema versions but may still
   evolve.

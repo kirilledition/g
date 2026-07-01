@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Development contract | Run telemetry, logging, trace streams, profile summaries, and terminal lifecycle rendering | Runtime maintainers |
+| Pre-release draft; development contract | main branch as of 2026-06-30 telemetry and logging runtime | Runtime maintainers |
 
 `g` has one run-level diagnostics surface. Python builds lifecycle, progress,
 and profile payloads, while Rust owns the physical JSONL writer queue used by

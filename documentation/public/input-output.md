@@ -1,5 +1,9 @@
 # Input And Output
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Compatibility bridge | main branch as of 2026-06-30 old public links | Public user docs |
+
 This page is kept as a compatibility bridge for older links. The canonical
 public pages are now split by topic:
 

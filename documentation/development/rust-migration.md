@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Active migration contract | Cargo workspace split and Python-to-Rust host ownership migration | Development maintainers |
+| Pre-release draft; active migration contract | main branch as of 2026-06-30 Cargo workspace migration | Development maintainers |
 
 This page is the durable migration contract for moving `g` from a single Rust
 package embedded in a Python-owned application into a Cargo workspace where Rust

@@ -1,5 +1,9 @@
 # Getting Started
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 public quick orientation | Public user docs |
+
 This page is a short orientation for a first local run. The project is still pre-release, so prefer the repository README and these docs over assumptions from older branches or external examples.
 
 ## Install First

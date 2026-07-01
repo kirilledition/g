@@ -1,5 +1,9 @@
 # Symphony
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 Symphony automation workflow | Development automation maintainers |
+
 This repo can be driven by the experimental
 [openai/symphony](https://github.com/openai/symphony) orchestrator with Linear as
 the work queue.

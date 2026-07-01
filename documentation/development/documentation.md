@@ -1,5 +1,9 @@
 # Documentation Operations
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 documentation build and publishing | Documentation maintainers |
+
 This repository keeps documentation in three directories:
 
 - `documentation/public/` contains user-facing guidance for installation, quick starts, CLI usage, configuration, inputs, outputs, GPU/SLURM use, and troubleshooting.
@@ -35,6 +39,28 @@ The site is configured in `zensical.toml`.
 - `[project.plugins.mkdocstrings.handlers.python]` points API documentation rendering at `src/` and keeps Google-style docstrings aligned with the project style guide.
 
 When moving a page between sections, update `zensical.toml`, local Markdown links, and any repository references to the old path.
+
+## Page Contracts
+
+Public pages describe user-visible behavior. Development pages describe
+implementation contracts and maintainer workflows. Scratchpad pages preserve
+historical work products and are not authoritative unless promoted into public
+or development docs.
+
+Every maintained public or development page should declare freshness near the
+top with:
+
+```md
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of YYYY-MM-DD topic scope | Public user docs |
+```
+
+When changing user-facing CLI behavior, configuration, input/output contracts,
+runtime behavior, performance assumptions, or deployment workflow, update the
+relevant page under `documentation/public/` in the same branch. When changing
+implementation architecture, maintainer tooling, or validation workflows, update
+the relevant page under `documentation/development/`.
 
 ## GitHub Pages Setup
 

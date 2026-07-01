@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Current Rust frontend CLI reference | `g` and `g regenie` in this checkout | Public interface |
+| Pre-release draft; current Rust frontend CLI reference | main branch as of 2026-06-30 `g` and `g regenie` | Public user docs |
 
 The Rust frontend owns CLI parsing for this branch. Use this page for behavior
 and compatibility rules, then use live command help for the exact option list in

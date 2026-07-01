@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Development protocol | Benchmark recipes, profiling campaigns, performance comparisons, and artifact handling | Performance maintainers |
+| Pre-release draft; development protocol | main branch as of 2026-06-30 benchmark and profiling workflows | Performance maintainers |
 
 This page defines development benchmark categories and evidence expectations.
 Public tuning guidance lives in [Performance Guide](../public/performance-guide.md).

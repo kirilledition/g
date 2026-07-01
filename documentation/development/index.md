@@ -1,19 +1,23 @@
 # Development
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 development workflow index | Development maintainers |
+
 Use `uv` for dependency management and `just` for project commands. Run
 `just help` before choosing a task-specific recipe.
 
 ## Start Here
 
 ```bash
-just bootstrap
+just dev-bootstrap
 just doctor
 ```
 
 For GPU-capable development:
 
 ```bash
-just bootstrap-gpu
+just dev-bootstrap-gpu
 just doctor-jax
 ```
 

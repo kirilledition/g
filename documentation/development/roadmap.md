@@ -1,5 +1,9 @@
 # Roadmap
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 project direction | Development maintainers |
+
 ## Product Goal
 
 Build a REGENIE-compatible, BGEN-backed Step 2 engine with Rust I/O, JAX

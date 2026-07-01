@@ -1,5 +1,9 @@
 # REGENIE Parity Suite
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 Step 2 parity gate | Correctness maintainers |
+
 The pre-release parity suite is the release gate for Step 2 behavior that claims
 REGENIE compatibility. It combines external upstream REGENIE golden outputs with
 small internal contracts for sample semantics, resume behavior, and native BGEN

@@ -1,5 +1,9 @@
 # GPU And Clusters
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Pre-release draft | main branch as of 2026-06-30 GPU and cluster operation | Public user docs |
+
 `g` executes statistical kernels through JAX. Choose the target device with:
 
 ```bash
@@ -13,6 +17,35 @@ node.
 
 GPU acceleration is workload-dependent. Single-trait runs can be limited by BGEN decode, host-device
 transfer, or output writing rather than JAX compute.
+
+## Cold, Warm, And Steady-State Runs
+
+The first process on a node may pay for Python import, JAX backend
+initialization, and JAX compilation. A later run with the same shapes and cache
+policy can be faster. Treat these as different measurements:
+
+| Run class | What it measures |
+| --- | --- |
+| Cold process | Startup, JAX initialization, compilation, decode, compute, and output. |
+| Warm cache | Reused compilation artifacts when the persistent cache is configured and valid. |
+| Steady state | Chunk decode, transfer, compute, and writer throughput after startup effects. |
+
+Use `--jax_persistent_cache` and `--jax_cache_dir /path/to/cache` when you want
+compatible runs to reuse JAX compilation artifacts. Put the cache on local or
+fast user-writable storage, and do not share CPU cache artifacts across nodes
+with different CPU features.
+
+## When GPU May Not Help
+
+GPU execution is not automatically faster. CPU can match or beat GPU for small
+or I/O-bound runs when:
+
+- the scan has one phenotype and few variants;
+- BGEN decode or sample alignment dominates;
+- host-to-device transfer dominates compute;
+- output finalization dominates runtime;
+- approximate-Firth candidate density is low enough that GPU work is sparse;
+- the command repeatedly changes shapes and recompiles.
 
 ## What To Check First
 
