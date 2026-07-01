@@ -1673,6 +1673,8 @@ Current implementation notes:
   backend adapter module.
 - Genotype chunk, metadata, stats, sample-alignment, compute-group, and
   prediction-source PyO3 adapters now live in focused adapter modules.
+- The `Regenie2RunEngine` PyO3 adapter now lives in `run_engine.rs`, leaving
+  the root Python module as composition-only registration.
 
 ### Tests
 

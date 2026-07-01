@@ -33,6 +33,7 @@ RUST_EXPORT_FILES = (
     Path("src/python/preparation.rs"),
     Path("src/python/prediction_sources.rs"),
     Path("src/python/run_events.rs"),
+    Path("src/python/run_engine.rs"),
     Path("src/python/run_metadata.rs"),
     Path("src/python/runtime.rs"),
     Path("src/python/runtime_paths.rs"),
