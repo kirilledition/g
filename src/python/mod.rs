@@ -99,16 +99,6 @@ use logging::{
     emit_diagnostic_event_fields, generate_telemetry_run_id_value, initialize_logging, plan_telemetry_close,
     plan_telemetry_event_emission, plan_telemetry_progress_emission, shutdown_logging,
 };
-use output::{
-    NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
-    build_current_run_manifest_header_json, build_file_content_sha256_value,
-    build_manifest_file_fingerprint_mapping_payload, build_manifest_file_fingerprint_payload,
-    build_manifest_json_sha256, build_prepared_run_manifest_header_json, build_prepared_run_plan_json,
-    finalize_output_run_chunks, initialize_output_run, load_run_manifest_json, prepare_output_run,
-    read_manifest_committed_chunk_identifiers, repair_strict_manifest_chunk_commits, resolve_output_run_paths,
-    scan_committed_chunk_identifiers, validate_run_manifest_compatibility, validate_strict_manifest_chunks,
-    write_regenie2_multi_native_chunk, write_regenie2_multi_native_chunk_f64, write_run_manifest_json,
-};
 use preflight::{
     build_preflight_report_payload, resolve_preflight_variant_count, validate_binary_phenotype_case_control_counts,
     validate_binary_phenotype_coding, validate_covariate_matrix_rank, validate_finite_array,
@@ -134,43 +124,6 @@ use runtime_state::{
     NativeJaxRuntimeSetupLifecyclePlan, NativeRayonThreadPoolConfigurationPlan, NativeRunRuntime,
     NativeRuntimeCompatibilityToken, NativeRuntimePolicy, NativeRuntimeState, build_jax_runtime_policy_payload,
     build_runtime_policy_handle, global_process_runtime_state,
-};
-use schedule::{
-    NativeBgenDeliveryCleanupPlan, NativeBgenDeliveryInvocationPlan, NativeCallbackQueueBackpressureObservation,
-    NativeCallbackQueueGetAttemptPlan, NativeCallbackQueueGetObservationPlan, NativeCallbackQueueLimits,
-    NativeCallbackQueueOperationObservationPlan, NativeCallbackQueuePutAttemptPlan,
-    NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
-    NativeCallbackQueueStageObservationPlan, NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan,
-    NativeCallbackWorkerErrorRaisePlan, NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerFinishPlan,
-    NativeCallbackWorkerJoinPlan, NativeCallbackWorkerLifecycleState, NativeCallbackWorkerShutdownTimeouts,
-    NativeCallbackWorkerStartAttemptPlan, NativeCallbackWorkerStartPlan, NativeCallbackWorkerStopPlan,
-    NativeCallbackWorkerStopPollPlan, NativeDosageBufferAcquireAttemptPlan, NativeDosageBufferDiscardAttemptPlan,
-    NativeDosageBufferPoolObservationPlan, NativeDosageBufferPoolState, NativeDosageBufferRegisterAttemptPlan,
-    NativeDosageBufferReturnAttemptPlan, NativeDosageBufferReusePlan, NativeDosageWorkDrainCompletionPlan,
-    NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan,
-    NativeGpuGenotypeFormatResolutionPlan, NativeMultiTraitChunkWritePlan, NativeMultiTraitOutputWritePlan,
-    NativeResultInFlightAcquireAttemptPlan, NativeResultInFlightAcquireObservationPlan,
-    NativeResultInFlightReleaseAttemptPlan, NativeResultInFlightReleaseObservationPlan, NativeResultInFlightSlotState,
-    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
-    NativeResultWriteItemResourceReleasePlan, NativeSingleTraitOutputWritePlan,
-    NativeVariantMajorDosageBatchHandoffPlan, NativeWriterFinishExecutionPlan,
-    format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
-    intersect_committed_chunk_identifier_sets, plan_auto_gpu_genotype_format_after_trusted_validation,
-    plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation, plan_callback_queue_backpressure_observation,
-    plan_callback_queue_operation_observation, plan_callback_queue_stage_backpressure_observation,
-    plan_callback_queue_stage_observation, plan_callback_worker_abort, plan_callback_worker_finish,
-    plan_callback_worker_start, plan_callback_worker_stop_poll, plan_dosage_buffer_reuse,
-    plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop, plan_dosage_work_handoff,
-    plan_dosage_work_item_dispatch, plan_dosage_work_item_stage_duration, plan_gpu_genotype_format_auto_to_dosage,
-    plan_multi_trait_chunk_write, plan_multi_trait_output_write, plan_result_callback_worker_join,
-    plan_result_callback_worker_stop, plan_result_write_handoff, plan_result_write_item_dispatch,
-    plan_single_trait_binary_gpu_genotype_format_resolution, plan_single_trait_output_write,
-    plan_variant_major_dosage_batch_handoff, plan_writer_finish_execution, resolve_bgen_delivery_method_value,
-    resolve_callback_worker_backpressure_poll_timeout_seconds, resolve_callback_worker_stop_poll_timeout_seconds,
-    resolve_delivery_callback_batch_size, resolve_effective_trusted_no_missing_diploid,
-    resolve_grouped_union_callback_batch_size, resolve_manifest_gpu_genotype_format,
-    resolve_native_callback_queue_limits, resolve_native_callback_worker_shutdown_timeouts,
-    resolve_writer_finish_thread_count, should_attempt_callback_worker_stop,
 };
 use shutdown::{
     NativeSecondSignalExceptionPlan, NativeShutdownController, build_shutdown_signal_payload,
@@ -1867,29 +1820,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackProgressTelemetryPlan>()?;
     module.add_class::<NativeCallbackProgressTelemetryRecord>()?;
     module.add_class::<NativeCallbackProgressUpdate>()?;
-    module.add_class::<NativeCallbackQueueLimits>()?;
-    module.add_class::<NativeCallbackQueueBackpressureObservation>()?;
-    module.add_class::<NativeCallbackQueueGetAttemptPlan>()?;
-    module.add_class::<NativeCallbackQueueGetObservationPlan>()?;
-    module.add_class::<NativeCallbackQueueOperationObservationPlan>()?;
-    module.add_class::<NativeCallbackQueuePutAttemptPlan>()?;
-    module.add_class::<NativeCallbackQueuePutObservationPlan>()?;
-    module.add_class::<NativeCallbackQueueStageBackpressureObservation>()?;
-    module.add_class::<NativeCallbackQueueStageObservationPlan>()?;
-    module.add_class::<NativeCallbackSchedulerState>()?;
-    module.add_class::<NativeCallbackWorkerAbortPlan>()?;
-    module.add_class::<NativeCallbackWorkerErrorRaisePlan>()?;
-    module.add_class::<NativeCallbackWorkerErrorUpdatePlan>()?;
-    module.add_class::<NativeCallbackWorkerFinishPlan>()?;
-    module.add_class::<NativeCallbackWorkerJoinPlan>()?;
-    module.add_class::<NativeCallbackWorkerStartPlan>()?;
-    module.add_class::<NativeCallbackWorkerStartAttemptPlan>()?;
-    module.add_class::<NativeBgenDeliveryCleanupPlan>()?;
-    module.add_class::<NativeBgenDeliveryInvocationPlan>()?;
-    module.add_class::<NativeCallbackWorkerLifecycleState>()?;
-    module.add_class::<NativeCallbackWorkerShutdownTimeouts>()?;
-    module.add_class::<NativeCallbackWorkerStopPlan>()?;
-    module.add_class::<NativeCallbackWorkerStopPollPlan>()?;
+    schedule::register_module(module)?;
     module.add_class::<NativeCallbackWorkerFinishLifecycleResult>()?;
     module.add_class::<NativeCallbackQueuePutResult>()?;
     module.add_class::<NativeDosageBufferAcquireResult>()?;
@@ -1903,38 +1834,9 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeResultWorkItemResourceReleaseResult>()?;
     module.add_class::<NativeResultWriteItemDrainResult>()?;
     module.add_class::<NativeResultWriteItemGetResult>()?;
-    module.add_class::<NativeDosageBufferAcquireAttemptPlan>()?;
-    module.add_class::<NativeDosageBufferDiscardAttemptPlan>()?;
-    module.add_class::<NativeDosageBufferPoolObservationPlan>()?;
-    module.add_class::<NativeDosageBufferPoolState>()?;
-    module.add_class::<NativeDosageBufferRegisterAttemptPlan>()?;
-    module.add_class::<NativeDosageBufferReturnAttemptPlan>()?;
-    module.add_class::<NativeDosageBufferReusePlan>()?;
-    module.add_class::<NativeDosageWorkDrainCompletionPlan>()?;
-    module.add_class::<NativeDosageWorkHandoffPlan>()?;
-    module.add_class::<NativeDosageWorkItemDispatchPlan>()?;
-    module.add_class::<NativeDosageWorkItemStageDurationPlan>()?;
-    module.add_class::<NativeGpuGenotypeFormatResolutionPlan>()?;
-    module.add_class::<NativeMultiTraitChunkWritePlan>()?;
-    module.add_class::<NativeMultiTraitOutputWritePlan>()?;
     module.add_class::<NativeNullLogisticNonconvergencePlan>()?;
-    module.add_class::<NativeResultInFlightAcquireAttemptPlan>()?;
-    module.add_class::<NativeResultInFlightAcquireObservationPlan>()?;
-    module.add_class::<NativeResultInFlightReleaseAttemptPlan>()?;
-    module.add_class::<NativeResultInFlightReleaseObservationPlan>()?;
-    module.add_class::<NativeResultInFlightSlotState>()?;
-    module.add_class::<NativeResultWriteDrainCompletionPlan>()?;
-    module.add_class::<NativeResultWriteHandoffPlan>()?;
-    module.add_class::<NativeResultWriteItemDispatchPlan>()?;
-    module.add_class::<NativeResultWriteItemResourceReleasePlan>()?;
-    module.add_class::<NativeSingleTraitOutputWritePlan>()?;
-    module.add_class::<NativeVariantMajorDosageBatchHandoffPlan>()?;
-    module.add_class::<NativeWriterFinishExecutionPlan>()?;
     module.add_class::<NativeGroupedAlignedSampleData>()?;
-    module.add_class::<NativeInitializedOutputRun>()?;
     module.add_class::<NativeMultiAlignedSampleData>()?;
-    module.add_class::<NativeOutputRunPaths>()?;
-    module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<NativePipelineOutputInitialization>()?;
     module.add_class::<NativePipelineOutputPreparationBatch>()?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
@@ -1954,7 +1856,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeTimingFileWritePlan>()?;
     module.add_function(wrap_pyfunction!(build_final_timing_outputs_write_started_diagnostic_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;
-    module.add_class::<OutputWriterSession>()?;
+    output::register_module(module)?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
     module.add_class::<MultiRegeniePredictionSource>()?;
@@ -1967,13 +1869,6 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeTelemetrySession>()?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(resolve_prediction_loco_paths, module)?)?;
-    module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json, module)?)?;
-    module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json, module)?)?;
-    module.add_function(wrap_pyfunction!(build_prepared_run_plan_json, module)?)?;
-    module.add_function(wrap_pyfunction!(build_file_content_sha256_value, module)?)?;
-    module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_mapping_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_manifest_json_sha256, module)?)?;
     module.add_function(wrap_pyfunction!(build_empty_telemetry_writer_counters_payload, module)?)?;
     run_events::register_module(module)?;
     module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;
@@ -2022,49 +1917,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(plan_jax_gpu_validation_payload, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
-    module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
     module.add_function(wrap_pyfunction!(plan_null_logistic_nonconvergence, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_manifest_gpu_genotype_format, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_effective_trusted_no_missing_diploid, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_bgen_delivery_method_value, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_callback_worker_backpressure_poll_timeout_seconds, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_callback_worker_stop_poll_timeout_seconds, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_delivery_callback_batch_size, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_grouped_union_callback_batch_size, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_native_callback_queue_limits, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_native_callback_worker_shutdown_timeouts, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_writer_finish_thread_count, module)?)?;
-    module.add_function(wrap_pyfunction!(should_attempt_callback_worker_stop, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_queue_backpressure_observation, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_queue_operation_observation, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_queue_stage_backpressure_observation, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_queue_stage_observation, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_worker_abort, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_worker_finish, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_worker_start, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_worker_stop_poll, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_auto_gpu_genotype_format_after_trusted_validation, module)?)?;
-    module.add_function(wrap_pyfunction!(format_dosage_callback_worker_error_message, module)?)?;
-    module.add_function(wrap_pyfunction!(format_result_callback_worker_error_message, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_buffer_reuse, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_join, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_stop, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_gpu_genotype_format_auto_to_dosage, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_multi_trait_output_write, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_result_callback_worker_join, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_result_callback_worker_stop, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_result_write_handoff, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_result_write_item_dispatch, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_single_trait_binary_gpu_genotype_format_resolution, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_work_handoff, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_work_item_dispatch, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_work_item_stage_duration, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_variant_major_dosage_batch_handoff, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_bgen_delivery_invocation, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_close, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
     module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;
@@ -2077,21 +1930,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_path_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_cache_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_trusted_bgen_validation_fingerprint_value, module)?)?;
-    module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
-    module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
-    module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;
-    module.add_function(wrap_pyfunction!(prepare_output_run, module)?)?;
-    module.add_function(wrap_pyfunction!(read_manifest_committed_chunk_identifiers, module)?)?;
-    module.add_function(wrap_pyfunction!(repair_strict_manifest_chunk_commits, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_output_run_paths, module)?)?;
-    module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(summarize_variant_major_dosage_chunk_stats, module)?)?;
     module.add_function(wrap_pyfunction!(paths_refer_to_same_file_value, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_run_manifest_compatibility, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
-    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
-    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_f64, module)?)?;
-    module.add_function(wrap_pyfunction!(write_run_manifest_json, module)?)?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
     module.add_function(wrap_pyfunction!(format_rayon_thread_pool_configuration_error_value, module)?)?;

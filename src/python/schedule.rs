@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 use g_engine::schedule as native_schedule;
 
@@ -3437,6 +3438,141 @@ pub(crate) fn plan_callback_queue_stage_backpressure_observation(
     )
     .map(Into::into)
     .map_err(|error| schedule_error_to_py(&error))
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_callback_queue_exports(module)?;
+    register_callback_worker_exports(module)?;
+    register_dosage_buffer_exports(module)?;
+    register_dosage_work_exports(module)?;
+    register_result_write_exports(module)?;
+    register_output_and_delivery_exports(module)?;
+    register_gpu_format_exports(module)?;
+    register_schedule_function_exports(module)?;
+    Ok(())
+}
+
+fn register_callback_queue_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeCallbackQueueLimits>()?;
+    module.add_class::<NativeCallbackQueueBackpressureObservation>()?;
+    module.add_class::<NativeCallbackQueueGetAttemptPlan>()?;
+    module.add_class::<NativeCallbackQueueGetObservationPlan>()?;
+    module.add_class::<NativeCallbackQueueOperationObservationPlan>()?;
+    module.add_class::<NativeCallbackQueuePutAttemptPlan>()?;
+    module.add_class::<NativeCallbackQueuePutObservationPlan>()?;
+    module.add_class::<NativeCallbackQueueStageBackpressureObservation>()?;
+    module.add_class::<NativeCallbackQueueStageObservationPlan>()?;
+    module.add_class::<NativeCallbackSchedulerState>()?;
+    Ok(())
+}
+
+fn register_callback_worker_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeCallbackWorkerAbortPlan>()?;
+    module.add_class::<NativeCallbackWorkerErrorRaisePlan>()?;
+    module.add_class::<NativeCallbackWorkerErrorUpdatePlan>()?;
+    module.add_class::<NativeCallbackWorkerFinishPlan>()?;
+    module.add_class::<NativeCallbackWorkerJoinPlan>()?;
+    module.add_class::<NativeCallbackWorkerStartPlan>()?;
+    module.add_class::<NativeCallbackWorkerStartAttemptPlan>()?;
+    module.add_class::<NativeCallbackWorkerLifecycleState>()?;
+    module.add_class::<NativeCallbackWorkerShutdownTimeouts>()?;
+    module.add_class::<NativeCallbackWorkerStopPlan>()?;
+    module.add_class::<NativeCallbackWorkerStopPollPlan>()?;
+    Ok(())
+}
+
+fn register_dosage_buffer_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeDosageBufferAcquireAttemptPlan>()?;
+    module.add_class::<NativeDosageBufferDiscardAttemptPlan>()?;
+    module.add_class::<NativeDosageBufferPoolObservationPlan>()?;
+    module.add_class::<NativeDosageBufferPoolState>()?;
+    module.add_class::<NativeDosageBufferRegisterAttemptPlan>()?;
+    module.add_class::<NativeDosageBufferReturnAttemptPlan>()?;
+    module.add_class::<NativeDosageBufferReusePlan>()?;
+    Ok(())
+}
+
+fn register_dosage_work_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeDosageWorkDrainCompletionPlan>()?;
+    module.add_class::<NativeDosageWorkHandoffPlan>()?;
+    module.add_class::<NativeDosageWorkItemDispatchPlan>()?;
+    module.add_class::<NativeDosageWorkItemStageDurationPlan>()?;
+    module.add_class::<NativeVariantMajorDosageBatchHandoffPlan>()?;
+    Ok(())
+}
+
+fn register_result_write_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeResultInFlightAcquireAttemptPlan>()?;
+    module.add_class::<NativeResultInFlightAcquireObservationPlan>()?;
+    module.add_class::<NativeResultInFlightReleaseAttemptPlan>()?;
+    module.add_class::<NativeResultInFlightReleaseObservationPlan>()?;
+    module.add_class::<NativeResultInFlightSlotState>()?;
+    module.add_class::<NativeResultWriteDrainCompletionPlan>()?;
+    module.add_class::<NativeResultWriteHandoffPlan>()?;
+    module.add_class::<NativeResultWriteItemDispatchPlan>()?;
+    module.add_class::<NativeResultWriteItemResourceReleasePlan>()?;
+    Ok(())
+}
+
+fn register_output_and_delivery_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeBgenDeliveryCleanupPlan>()?;
+    module.add_class::<NativeBgenDeliveryInvocationPlan>()?;
+    module.add_class::<NativeMultiTraitChunkWritePlan>()?;
+    module.add_class::<NativeMultiTraitOutputWritePlan>()?;
+    module.add_class::<NativeSingleTraitOutputWritePlan>()?;
+    module.add_class::<NativeWriterFinishExecutionPlan>()?;
+    Ok(())
+}
+
+fn register_gpu_format_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeGpuGenotypeFormatResolutionPlan>()?;
+    module.add_function(wrap_pyfunction!(plan_auto_gpu_genotype_format_after_trusted_validation, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_gpu_genotype_format_auto_to_dosage, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_single_trait_binary_gpu_genotype_format_resolution, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_effective_trusted_no_missing_diploid, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_manifest_gpu_genotype_format, module)?)?;
+    Ok(())
+}
+
+fn register_schedule_function_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_bgen_delivery_method_value, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_callback_worker_backpressure_poll_timeout_seconds, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_callback_worker_stop_poll_timeout_seconds, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_delivery_callback_batch_size, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_grouped_union_callback_batch_size, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_native_callback_queue_limits, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_native_callback_worker_shutdown_timeouts, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_writer_finish_thread_count, module)?)?;
+    module.add_function(wrap_pyfunction!(should_attempt_callback_worker_stop, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_queue_backpressure_observation, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_queue_operation_observation, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_queue_stage_backpressure_observation, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_queue_stage_observation, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_worker_abort, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_worker_finish, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_worker_start, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_callback_worker_stop_poll, module)?)?;
+    module.add_function(wrap_pyfunction!(format_dosage_callback_worker_error_message, module)?)?;
+    module.add_function(wrap_pyfunction!(format_result_callback_worker_error_message, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_dosage_buffer_reuse, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_join, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_stop, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_multi_trait_output_write, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_result_callback_worker_join, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_result_callback_worker_stop, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_result_write_handoff, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_result_write_item_dispatch, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_dosage_work_handoff, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_dosage_work_item_dispatch, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_dosage_work_item_stage_duration, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_variant_major_dosage_batch_handoff, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_bgen_delivery_invocation, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
+    Ok(())
 }
 
 fn schedule_error_to_py(error: &native_schedule::ScheduleError) -> PyErr {

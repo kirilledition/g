@@ -1148,7 +1148,9 @@ def test_pyo3_stub_checker_reads_rustfmt_wrapped_pyfunction_registration() -> No
 
 
 def test_pyo3_stub_checker_scans_delegated_registration_modules() -> None:
+    assert Path("src/python/output.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/run_events.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/python/schedule.rs") in check_pyo3_stub.RUST_EXPORT_FILES
 
 
 def test_tooling_entrypoint_exposes_cli_surface() -> None:

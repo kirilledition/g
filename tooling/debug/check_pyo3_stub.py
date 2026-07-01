@@ -18,7 +18,9 @@ if typing.TYPE_CHECKING:
 RUST_EXPORT_FILES = (
     Path("src/python/mod.rs"),
     Path("src/python/config/mod.rs"),
+    Path("src/python/output.rs"),
     Path("src/python/run_events.rs"),
+    Path("src/python/schedule.rs"),
 )
 STUB_FILE = Path("src/g/_core.pyi")
 

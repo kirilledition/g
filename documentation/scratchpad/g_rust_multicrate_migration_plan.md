@@ -1653,6 +1653,12 @@ Current implementation notes:
 - Run-event PyO3 export registration now lives in the run-event adapter module,
   so the root Python composition module delegates that export group instead of
   importing and registering every run-event symbol directly.
+- Schedule PyO3 export registration now lives in the schedule adapter module,
+  keeping scheduling policy exports grouped with their adapter types while the
+  root Python composition module delegates that export group.
+- Output PyO3 export registration now lives in the output adapter module,
+  keeping manifest, writer-session, and output-run exports grouped with their
+  adapter code while the root Python composition module delegates that group.
 
 ### Tests
 

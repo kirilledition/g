@@ -28,7 +28,7 @@ use g_output::{
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyModule};
 use serde::de::DeserializeOwned;
 
 use super::{
@@ -726,6 +726,34 @@ pub(crate) fn repair_strict_manifest_chunk_commits(
             .collect::<Vec<_>>(),
     )
     .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeInitializedOutputRun>()?;
+    module.add_class::<NativeOutputRunPaths>()?;
+    module.add_class::<NativePreparedOutputRun>()?;
+    module.add_class::<OutputWriterSession>()?;
+    module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_file_content_sha256_value, module)?)?;
+    module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_mapping_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(build_manifest_json_sha256, module)?)?;
+    module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_prepared_run_plan_json, module)?)?;
+    module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
+    module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
+    module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;
+    module.add_function(wrap_pyfunction!(prepare_output_run, module)?)?;
+    module.add_function(wrap_pyfunction!(read_manifest_committed_chunk_identifiers, module)?)?;
+    module.add_function(wrap_pyfunction!(repair_strict_manifest_chunk_commits, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_output_run_paths, module)?)?;
+    module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_run_manifest_compatibility, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
+    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
+    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_f64, module)?)?;
+    module.add_function(wrap_pyfunction!(write_run_manifest_json, module)?)?;
+    Ok(())
 }
 
 fn write_regenie2_chunk_arrays_detached(
