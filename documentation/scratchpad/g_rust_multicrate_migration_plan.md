@@ -1564,6 +1564,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Complete-case multi-trait pipeline start, input alignment, and
   prediction-source loading diagnostics now use native run-event diagnostic
   payload builders.
+- Complete-case multi-trait pipeline start, input alignment, and
+  prediction-source loading production paths now call native diagnostic
+  recorders directly, leaving Python payload dict materialization only for
+  compatibility helpers and tests.
 - Grouped per-phenotype pipeline start, group-preparation, and union-delivery
   selection diagnostics now use native run-event diagnostic payload builders.
 - Pipeline output lifecycle diagnostics for BGEN engine open/reuse, resume chunk

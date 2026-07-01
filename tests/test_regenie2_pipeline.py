@@ -11037,6 +11037,18 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             return_value=FakePredictionSource(),
         ),
         patch(
+            "g.engine.regenie2_pipeline.multi_trait._core.record_pipeline_multi_trait_started_diagnostic_event",
+        ) as record_pipeline_started_mock,
+        patch(
+            "g.engine.regenie2_pipeline.multi_trait._core.record_pipeline_multi_trait_input_load_started_diagnostic_event",
+        ) as record_input_load_started_mock,
+        patch(
+            "g.engine.regenie2_pipeline.multi_trait._core.record_pipeline_multi_trait_input_aligned_diagnostic_event",
+        ) as record_input_aligned_mock,
+        patch(
+            "g.engine.regenie2_pipeline.multi_trait._core.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event",
+        ) as record_prediction_source_load_started_mock,
+        patch(
             "g.engine.regenie2_pipeline.multi_group.run_multi_preflight",
             side_effect=record_preflight,
         ) as mock_run_multi_preflight,
@@ -11100,6 +11112,18 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
     assert mock_run_multi_preflight.call_args.kwargs["variant_limit"] == 100
+    record_pipeline_started_mock.assert_called_once_with(
+        association_mode="regenie2_linear",
+        phenotype_count=2,
+        sample_mode="complete-case",
+    )
+    record_input_load_started_mock.assert_called_once_with(phenotype_count=2)
+    record_input_aligned_mock.assert_called_once_with(
+        covariate_count=2,
+        phenotype_count=2,
+        sample_count=2,
+    )
+    record_prediction_source_load_started_mock.assert_called_once_with(phenotype_count=2)
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
 
 

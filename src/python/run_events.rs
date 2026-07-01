@@ -642,12 +642,32 @@ pub fn build_pipeline_multi_trait_started_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_multi_trait_started_diagnostic_event(
+    association_mode: &str,
+    phenotype_count: i64,
+    sample_mode: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_multi_trait_started_diagnostic_payload(
+        association_mode,
+        phenotype_count,
+        sample_mode,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_multi_trait_input_load_started_diagnostic_payload<'py>(
     py: Python<'py>,
     phenotype_count: i64,
 ) -> PyResult<Bound<'py, PyDict>> {
     let payload = native_run_events::build_pipeline_multi_trait_input_load_started_diagnostic_payload(phenotype_count);
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_pipeline_multi_trait_input_load_started_diagnostic_event(phenotype_count: i64) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_multi_trait_input_load_started_diagnostic_payload(phenotype_count);
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]
@@ -666,6 +686,20 @@ pub fn build_pipeline_multi_trait_input_aligned_diagnostic_payload<'py>(
 }
 
 #[pyfunction]
+pub fn record_pipeline_multi_trait_input_aligned_diagnostic_event(
+    covariate_count: i64,
+    phenotype_count: i64,
+    sample_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_multi_trait_input_aligned_diagnostic_payload(
+        covariate_count,
+        phenotype_count,
+        sample_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
+}
+
+#[pyfunction]
 pub fn build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload<'py>(
     py: Python<'py>,
     phenotype_count: i64,
@@ -674,6 +708,16 @@ pub fn build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payl
         phenotype_count,
     );
     run_diagnostic_event_payload_to_py_dict(py, &payload)
+}
+
+#[pyfunction]
+pub fn record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
+    phenotype_count: i64,
+) -> PyResult<()> {
+    let payload = native_run_events::build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
+        phenotype_count,
+    );
+    emit_run_diagnostic_event_payload(&payload)
 }
 
 #[pyfunction]

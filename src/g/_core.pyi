@@ -2939,17 +2939,33 @@ def build_pipeline_multi_trait_started_diagnostic_payload(
     phenotype_count: int,
     sample_mode: str,
 ) -> dict[str, object]: ...
+def record_pipeline_multi_trait_started_diagnostic_event(
+    association_mode: str,
+    phenotype_count: int,
+    sample_mode: str,
+) -> None: ...
 def build_pipeline_multi_trait_input_load_started_diagnostic_payload(
     phenotype_count: int,
 ) -> dict[str, object]: ...
+def record_pipeline_multi_trait_input_load_started_diagnostic_event(
+    phenotype_count: int,
+) -> None: ...
 def build_pipeline_multi_trait_input_aligned_diagnostic_payload(
     covariate_count: int,
     phenotype_count: int,
     sample_count: int,
 ) -> dict[str, object]: ...
+def record_pipeline_multi_trait_input_aligned_diagnostic_event(
+    covariate_count: int,
+    phenotype_count: int,
+    sample_count: int,
+) -> None: ...
 def build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload(
     phenotype_count: int,
 ) -> dict[str, object]: ...
+def record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
+    phenotype_count: int,
+) -> None: ...
 def build_pipeline_grouped_per_phenotype_started_diagnostic_payload(
     association_mode: str,
     phenotype_count: int,
