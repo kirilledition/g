@@ -119,7 +119,7 @@ impl ManifestFileFingerprintCache {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct CurrentRunManifestHeaderInput {
     pub association_mode: String,
@@ -147,6 +147,7 @@ pub struct CurrentRunManifestHeaderInput {
     pub jax_device: String,
     pub jax_enable_x64: bool,
     pub jax_matmul_precision: Option<String>,
+    pub requested_gpu_genotype_format: String,
     pub gpu_genotype_format: String,
     pub score_dtype: String,
     pub firth_dtype: String,
@@ -310,12 +311,29 @@ fn parse_current_header_matmul_precision(
 pub fn build_current_run_manifest_header_json(
     input: CurrentRunManifestHeaderInput,
 ) -> Result<String, OutputWriterError> {
-    let bgen_fingerprint = build_required_file_fingerprint(&input.bgen_path, false, "BGEN")?;
-    let sample_fingerprint = build_optional_file_fingerprint(input.sample_path.as_deref(), true)?;
-    let phenotype_file_fingerprint = build_required_file_fingerprint(&input.phenotype_path, true, "phenotype file")?;
-    let covariate_file_fingerprint = build_optional_file_fingerprint(input.covariate_path.as_deref(), true)?;
-    let prediction_list_fingerprint =
-        build_required_file_fingerprint(&input.prediction_list_path, true, "prediction list")?;
+    let mut fingerprint_cache = ManifestFileFingerprintCache::new();
+    build_current_run_manifest_header_json_with_cache(input, &mut fingerprint_cache)
+}
+
+#[allow(clippy::too_many_lines)]
+pub fn build_current_run_manifest_header_json_with_cache(
+    input: CurrentRunManifestHeaderInput,
+    fingerprint_cache: &mut ManifestFileFingerprintCache,
+) -> Result<String, OutputWriterError> {
+    let bgen_fingerprint =
+        build_required_file_fingerprint_with_cache(fingerprint_cache, &input.bgen_path, false, "BGEN")?;
+    let sample_fingerprint =
+        build_optional_file_fingerprint_with_cache(fingerprint_cache, input.sample_path.as_deref(), true)?;
+    let phenotype_file_fingerprint =
+        build_required_file_fingerprint_with_cache(fingerprint_cache, &input.phenotype_path, true, "phenotype file")?;
+    let covariate_file_fingerprint =
+        build_optional_file_fingerprint_with_cache(fingerprint_cache, input.covariate_path.as_deref(), true)?;
+    let prediction_list_fingerprint = build_required_file_fingerprint_with_cache(
+        fingerprint_cache,
+        &input.prediction_list_path,
+        true,
+        "prediction list",
+    )?;
     let prediction_loco_files = serde_json::from_str::<Value>(&input.prediction_loco_files_json)
         .map_err(|error| OutputWriterError::InvalidInput(error.to_string()))?;
     if !prediction_loco_files.is_array() {
@@ -382,6 +400,7 @@ pub fn build_current_run_manifest_header_json(
         "sample_key_mode": input.sample_key_mode,
         "bgen_decode_tile_variant_count": input.bgen_decode_tile_variant_count,
         "jax_policy": jax_policy,
+        "requested_gpu_genotype_format": input.requested_gpu_genotype_format,
         "gpu_genotype_format": input.gpu_genotype_format,
         "score_dtype": input.score_dtype,
         "firth_dtype": input.firth_dtype,
@@ -418,6 +437,7 @@ pub fn build_current_run_manifest_header_json(
         "sample_key_mode": input.sample_key_mode,
         "bgen_decode_tile_variant_count": input.bgen_decode_tile_variant_count,
         "jax_policy": execution_plan["jax_policy"].clone(),
+        "requested_gpu_genotype_format": execution_plan["requested_gpu_genotype_format"].clone(),
         "gpu_genotype_format": input.gpu_genotype_format,
         "score_dtype": input.score_dtype,
         "firth_dtype": input.firth_dtype,
@@ -500,6 +520,7 @@ fn build_prepared_run_execution_plan(prepared_run_plan: &g_plan::PreparedRunPlan
         "sample_key_mode": prepared_run_plan.compute.sample_key_mode.as_str(),
         "bgen_decode_tile_variant_count": prepared_run_plan.compute.bgen_decode_tile_variant_count,
         "jax_policy": build_prepared_jax_policy(prepared_run_plan),
+        "requested_gpu_genotype_format": prepared_run_plan.compute.requested_gpu_genotype_format.as_str(),
         "gpu_genotype_format": prepared_run_plan.compute.resolved_gpu_genotype_format.as_str(),
         "score_dtype": prepared_run_plan.compute.score_dtype.as_str(),
         "firth_dtype": prepared_run_plan.compute.firth_dtype.as_str(),
@@ -545,6 +566,7 @@ fn build_prepared_run_manifest_header(
         "sample_key_mode": prepared_run_plan.compute.sample_key_mode.as_str(),
         "bgen_decode_tile_variant_count": prepared_run_plan.compute.bgen_decode_tile_variant_count,
         "jax_policy": execution_plan["jax_policy"].clone(),
+        "requested_gpu_genotype_format": execution_plan["requested_gpu_genotype_format"].clone(),
         "gpu_genotype_format": prepared_run_plan.compute.resolved_gpu_genotype_format.as_str(),
         "score_dtype": prepared_run_plan.compute.score_dtype.as_str(),
         "firth_dtype": prepared_run_plan.compute.firth_dtype.as_str(),
@@ -757,23 +779,26 @@ pub(crate) fn read_run_manifest_chunk_commits_from_text(
     Ok(committed_chunks_by_identifier.into_values().collect())
 }
 
-fn build_required_file_fingerprint(
+fn build_required_file_fingerprint_with_cache(
+    fingerprint_cache: &mut ManifestFileFingerprintCache,
     path: &Path,
     include_content_hash: bool,
     role_name: &str,
 ) -> Result<Value, OutputWriterError> {
-    build_optional_file_fingerprint(Some(path), include_content_hash)?
+    build_optional_file_fingerprint_with_cache(fingerprint_cache, Some(path), include_content_hash)?
         .ok_or_else(|| OutputWriterError::InvalidInput(format!("{role_name} fingerprint is required.")))
 }
 
-fn build_optional_file_fingerprint(
+fn build_optional_file_fingerprint_with_cache(
+    fingerprint_cache: &mut ManifestFileFingerprintCache,
     path: Option<&Path>,
     include_content_hash: bool,
 ) -> Result<Option<Value>, OutputWriterError> {
     let Some(file_path) = path else {
         return Ok(None);
     };
-    build_manifest_file_fingerprint(file_path, include_content_hash)
+    fingerprint_cache
+        .build_file_fingerprint(file_path, include_content_hash)
         .map(|fingerprint| Some(manifest_file_fingerprint_to_value(&fingerprint)))
 }
 
@@ -1369,6 +1394,7 @@ mod tests {
             jax_device: "gpu".to_string(),
             jax_enable_x64: true,
             jax_matmul_precision: Some("highest".to_string()),
+            requested_gpu_genotype_format: "packed8".to_string(),
             gpu_genotype_format: "packed8".to_string(),
             score_dtype: "float32".to_string(),
             firth_dtype: "float64".to_string(),

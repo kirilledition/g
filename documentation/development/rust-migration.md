@@ -122,6 +122,14 @@ Run-scoped manifest file fingerprint caching now lives in `g-output` behind a
 native PyO3 cache handle; control-file and prediction-input LOCO fingerprints
 share that handle, and Python no longer resolves paths, stats files, or
 maintains cache keys for manifest input fingerprints.
+Current-run manifest header construction also routes through that native cache
+handle; Python now passes the scalar header policy to `_core`, adapts the
+native prepared-header mapping, and no longer builds the production
+manifest-header dataclass itself. The temporary Python manifest-header
+dataclasses and sub-builders have been removed; the output adapter now passes
+native manifest-header mappings through, and the old many-argument PyO3
+manifest-header export has been removed in favor of the JSON-input native
+builder.
 Run-start manifest command/runtime metadata extension now goes through a native
 `g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
 longer loads, mutates, serializes, and rewrites run manifests for that

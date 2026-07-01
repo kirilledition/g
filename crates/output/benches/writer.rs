@@ -88,6 +88,7 @@ fn prepare_manifested_run(
         jax_device: "cpu".to_string(),
         jax_enable_x64: false,
         jax_matmul_precision: None,
+        requested_gpu_genotype_format: "dosage".to_string(),
         gpu_genotype_format: "dosage".to_string(),
         score_dtype: "float32".to_string(),
         firth_dtype: "float32".to_string(),

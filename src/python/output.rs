@@ -12,6 +12,7 @@ use g_output::{
     NativeChunkStats as NativeOutputChunkStats, OutputFileFormat, OutputResumeMode, OutputWriterError,
     OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
     build_current_run_manifest_header_json as build_native_current_run_manifest_header_json,
+    build_current_run_manifest_header_json_with_cache as build_native_current_run_manifest_header_json_with_cache,
     build_file_content_sha256 as build_native_file_content_sha256,
     build_manifest_file_fingerprint as build_native_manifest_file_fingerprint,
     build_manifest_json_sha256 as build_native_manifest_json_sha256,
@@ -111,6 +112,25 @@ impl NativeManifestFileFingerprintCache {
             })
             .map_err(|error| output_writer_error_to_py(error, "build_cached_manifest_file_fingerprint_payload"))?;
         manifest_file_fingerprint_to_dict(py, &file_fingerprint)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn build_current_run_manifest_header_json_from_input_json(
+        &self,
+        py: Python<'_>,
+        current_header_input_json: String,
+    ) -> PyResult<String> {
+        let current_header_input = parse_json_argument::<CurrentRunManifestHeaderInput>(
+            "current_header_input_json",
+            &current_header_input_json,
+        )?;
+        py.detach(|| {
+            let mut fingerprint_cache = self.inner.lock().map_err(|_| {
+                OutputWriterError::Runtime("Manifest file fingerprint cache mutex was poisoned.".to_string())
+            })?;
+            build_native_current_run_manifest_header_json_with_cache(current_header_input, &mut fingerprint_cache)
+        })
+        .map_err(|error| output_writer_error_to_py(error, "build_cached_current_run_manifest_header_json"))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -538,95 +558,15 @@ pub(crate) fn write_run_manifest_json(py: Python<'_>, run_directory: String, man
 }
 
 #[pyfunction]
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_current_run_manifest_header_json(
-    association_mode: String,
-    association_backend_kind: String,
-    bgen_path: String,
-    sample_path: Option<String>,
-    phenotype_path: String,
-    phenotype_name: String,
-    covariate_path: Option<String>,
-    covariate_names: Vec<String>,
-    prediction_list_path: String,
-    prediction_loco_files_json: String,
-    sample_count: i64,
-    variant_count: i64,
-    chunk_size: i64,
-    variant_limit: Option<i64>,
-    binary_correction_plan_method: String,
-    binary_correction_plan_p_threshold: f64,
-    binary_correction_plan_firth_se: bool,
-    trusted_no_missing_diploid: bool,
-    sample_key_mode: String,
-    binary_kernel_config_json: Option<String>,
-    bgen_decode_tile_variant_count: i64,
-    trusted_bgen_validation_mode: String,
-    jax_device: String,
-    jax_enable_x64: bool,
-    jax_matmul_precision: Option<String>,
-    gpu_genotype_format: String,
-    score_dtype: String,
-    firth_dtype: String,
-    multi_phenotype_sample_mode: String,
-    phenotype_compute_group_id: Option<String>,
-    sample_set_fingerprint: Option<String>,
-    covariate_design_fingerprint: Option<String>,
-    prediction_alignment_fingerprint: Option<String>,
-    output_format: String,
-    finalize_parquet: bool,
-    writer_thread_count: i64,
-    writer_queue_depth: i64,
-    chunks_per_arrow_file: i64,
-    arrow_compression: String,
-    parquet_compression: String,
-    output_statistic_dtype: String,
+pub(crate) fn build_current_run_manifest_header_json_from_input_json(
+    py: Python<'_>,
+    current_header_input_json: String,
 ) -> PyResult<String> {
-    build_native_current_run_manifest_header_json(CurrentRunManifestHeaderInput {
-        association_mode,
-        association_backend_kind,
-        bgen_path: bgen_path.into(),
-        sample_path: sample_path.map(Into::into),
-        phenotype_path: phenotype_path.into(),
-        phenotype_name,
-        covariate_path: covariate_path.map(Into::into),
-        covariate_names,
-        prediction_list_path: prediction_list_path.into(),
-        prediction_loco_files_json,
-        sample_count,
-        variant_count,
-        chunk_size,
-        variant_limit,
-        binary_correction_plan_method,
-        binary_correction_plan_p_threshold,
-        binary_correction_plan_firth_se,
-        trusted_no_missing_diploid,
-        sample_key_mode,
-        binary_kernel_config_json,
-        bgen_decode_tile_variant_count,
-        trusted_bgen_validation_mode,
-        jax_device,
-        jax_enable_x64,
-        jax_matmul_precision,
-        gpu_genotype_format,
-        score_dtype,
-        firth_dtype,
-        multi_phenotype_sample_mode,
-        phenotype_compute_group_id,
-        sample_set_fingerprint,
-        covariate_design_fingerprint,
-        prediction_alignment_fingerprint,
-        output_format,
-        finalize_parquet,
-        writer_thread_count,
-        writer_queue_depth,
-        chunks_per_arrow_file,
-        arrow_compression,
-        parquet_compression,
-        output_statistic_dtype,
-    })
-    .map_err(|error| output_writer_error_to_py(error, "build_current_run_manifest_header_json"))
+    let current_header_input =
+        parse_json_argument::<CurrentRunManifestHeaderInput>("current_header_input_json", &current_header_input_json)?;
+    py.detach(|| build_native_current_run_manifest_header_json(current_header_input))
+        .map_err(|error| output_writer_error_to_py(error, "build_current_run_manifest_header_json_from_input_json"))
 }
 
 #[pyfunction]
@@ -826,7 +766,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<OutputWriterSession>()?;
-    module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json_from_input_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_file_content_sha256_value, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_mapping_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_payload, module)?)?;

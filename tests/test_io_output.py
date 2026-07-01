@@ -325,8 +325,9 @@ def build_test_header_object(
     sample_set_fingerprint: str | None = None,
     covariate_design_fingerprint: str | None = None,
     prediction_alignment_fingerprint: str | None = None,
+    fingerprint_cache: output.ManifestFileFingerprintCache | None = None,
     write_input_files: bool = True,
-) -> output.CurrentRunManifestHeader:
+) -> dict[str, typing.Any]:
     bgen_path = tmp_path / "study.bgen"
     selected_sample_path = (
         tmp_path / "study.sample" if sample_path is DEFAULT_TEST_INPUT_PATH else typing.cast("Path | None", sample_path)
@@ -354,7 +355,6 @@ def build_test_header_object(
             input_path.write_text(input_path.name, encoding="utf-8")
         loco_path.write_text("FID_IID F1_I1\n22 0.1\n", encoding="utf-8")
         prediction_list_path.write_text("trait  trait.loco\n", encoding="utf-8")
-    fingerprint_cache = output.ManifestFileFingerprintCache()
     effective_requested_gpu_genotype_format = (
         gpu_genotype_format if requested_gpu_genotype_format is None else requested_gpu_genotype_format
     )
@@ -703,6 +703,31 @@ def test_manifest_file_fingerprint_cache_uses_native_payload(
     assert first_fingerprint.path == str(input_path.resolve())
     assert first_fingerprint.content_hash_algorithm == "sha256"
     assert first_fingerprint.content_sha256 == hashlib.sha256(input_path.read_bytes()).hexdigest()
+
+
+def test_current_run_manifest_header_reuses_native_fingerprint_cache(tmp_path: Path) -> None:
+    build_test_header_object(tmp_path)
+    phenotype_path = tmp_path / "phenotypes.tsv"
+    fingerprint_cache = output.ManifestFileFingerprintCache()
+    cached_fingerprint = fingerprint_cache.build_file_fingerprint(phenotype_path, include_content_hash=True)
+    assert cached_fingerprint is not None
+
+    replace_file_text_preserving_size_and_mtime(phenotype_path, "PHENOTYPES.tsv")
+
+    cached_header = build_test_header_object(
+        tmp_path,
+        fingerprint_cache=fingerprint_cache,
+        write_input_files=False,
+    )
+    uncached_header = build_test_header_object(
+        tmp_path,
+        fingerprint_cache=None,
+        write_input_files=False,
+    )
+
+    expected_mutated_hash = hashlib.sha256(phenotype_path.read_bytes()).hexdigest()
+    assert cached_header["phenotype_file"]["content_sha256"] == cached_fingerprint.content_sha256
+    assert uncached_header["phenotype_file"]["content_sha256"] == expected_mutated_hash
 
 
 def test_prediction_loco_fingerprints_are_stable_for_relative_and_absolute_paths(tmp_path: Path) -> None:

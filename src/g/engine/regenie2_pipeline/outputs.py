@@ -170,7 +170,7 @@ def build_pipeline_manifest_header(
     variant_count: int,
     multi_phenotype_sample_mode: output.MultiPhenotypeSampleMode,
     phenotype_compute_group: execution_plan.PhenotypeComputeGroup | None,
-) -> output.CurrentRunManifestHeader:
+) -> output.RunManifestHeaderInput:
     """Build the current manifest header for one output run."""
     phenotype_compute_group_id = (
         None

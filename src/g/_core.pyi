@@ -2700,6 +2700,10 @@ class NativeManifestFileFingerprintCache:
         path: str,
         include_content_hash: bool,
     ) -> dict[str, object]: ...
+    def build_current_run_manifest_header_json_from_input_json(
+        self,
+        current_header_input_json: str,
+    ) -> str: ...
     def build_prediction_loco_file_fingerprints_json(
         self,
         prediction_list_path: str,
@@ -2753,49 +2757,7 @@ def prepare_output_run(
 ) -> NativePreparedOutputRun: ...
 def load_run_manifest_json(run_directory: str) -> str | None: ...
 def write_run_manifest_json(run_directory: str, manifest_json: str) -> None: ...
-def build_current_run_manifest_header_json(
-    association_mode: str,
-    association_backend_kind: str,
-    bgen_path: str,
-    sample_path: str | None,
-    phenotype_path: str,
-    phenotype_name: str,
-    covariate_path: str | None,
-    covariate_names: list[str],
-    prediction_list_path: str,
-    prediction_loco_files_json: str,
-    sample_count: int,
-    variant_count: int,
-    chunk_size: int,
-    variant_limit: int | None,
-    binary_correction_plan_method: str,
-    binary_correction_plan_p_threshold: float,
-    binary_correction_plan_firth_se: bool,
-    trusted_no_missing_diploid: bool,
-    sample_key_mode: str,
-    binary_kernel_config_json: str | None,
-    bgen_decode_tile_variant_count: int,
-    trusted_bgen_validation_mode: str,
-    jax_device: str,
-    jax_enable_x64: bool,
-    jax_matmul_precision: str | None,
-    gpu_genotype_format: str,
-    score_dtype: str,
-    firth_dtype: str,
-    multi_phenotype_sample_mode: str,
-    phenotype_compute_group_id: str | None,
-    sample_set_fingerprint: str | None,
-    covariate_design_fingerprint: str | None,
-    prediction_alignment_fingerprint: str | None,
-    output_format: str,
-    finalize_parquet: bool,
-    writer_thread_count: int,
-    writer_queue_depth: int,
-    chunks_per_arrow_file: int,
-    arrow_compression: str,
-    parquet_compression: str,
-    output_statistic_dtype: str,
-) -> str: ...
+def build_current_run_manifest_header_json_from_input_json(current_header_input_json: str) -> str: ...
 def build_prepared_run_manifest_header_json(prepared_run_plan_json: str) -> str: ...
 def build_prepared_run_manifest_header_json_from_current_header_json(current_header_json: str) -> str: ...
 def build_prepared_run_plan_json(prepared_run_plan_input_json: str) -> str: ...
