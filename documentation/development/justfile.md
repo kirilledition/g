@@ -101,8 +101,12 @@ just bench-binary-hot-gpu
 just bench-binary-hot-gpu-smoke
 just bench-output-stages-gpu
 just rust-bench
+just bench-torchgwas-chr22
+just bench-tensorqtl-chr22
 just bench-rust-build-profiles
 just slurm-gpu-bench-binary-hot
+just slurm-gpu-bench-torchgwas-chr22
+just slurm-gpu-bench-tensorqtl-chr22
 ```
 
 `rust-bench` runs Criterion benchmarks through `cargo bench --workspace` so
@@ -120,6 +124,41 @@ just legacy-regenie-comparison-gpu
 just legacy-profile-regenie-comparison-cpu
 just legacy-profile-regenie-comparison-gpu
 ```
+
+Use the TorchGWAS chr22 competitor benchmark through SLURM for real GPU
+evidence:
+
+```bash
+just slurm-gpu-bench-torchgwas-chr22
+just slurm-gpu-bench-torchgwas-chr22 tool.variant_limit=1000
+```
+
+The benchmark records cold and warm-style repeated runs for single-trait
+quantitative chr22. It is a workflow/runtime comparison, not strict statistical
+parity with REGENIE Step 2 LOCO output. `g` reads the chr22 BGEN plus sample
+file; full TorchGWAS runs read the existing PLINK `.bed/.bim/.fam` triplet
+because the pinned TorchGWAS BGEN path stalls in PLINK2 raw-table parsing at
+chr22 scale. TorchGWAS PLINK runs do not emit a persistent genotype cache, so
+their warm cases reflect repeated process/filesystem-cache behavior.
+Variant-limited smoke runs still use a generated NPY subset.
+
+Use the tensorQTL chr22 competitor benchmark through SLURM for real GPU
+evidence:
+
+```bash
+just slurm-gpu-bench-tensorqtl-chr22
+just slurm-gpu-bench-tensorqtl-chr22 tool.variant_limit=1000
+```
+
+The benchmark records cold and warm-style repeated runs for single-trait
+quantitative chr22, but the comparison boundary is QTL-shaped: `g` runs REGENIE
+Step 2 with LOCO predictions on BGEN input, while tensorQTL runs dense `trans`
+nominal linear association on generated phenotype/covariate matrices and local
+PLINK `.bed/.bim/.fam` input. Full runs expose the PLINK files through a
+BED-only symlink prefix under the benchmark output directory because tensorQTL
+auto-selects PGEN when PGEN and BED files share the same prefix, and its PGEN
+reader fails on the local chr22 multiallelic records. Do not treat the result as
+statistical parity.
 
 ## Performance
 

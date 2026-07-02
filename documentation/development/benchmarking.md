@@ -19,6 +19,7 @@ Public tuning guidance lives in [Performance Guide](../public/performance-guide.
 | Matrix comparisons | Compare CPU/GPU/cache combinations for standard workloads. | `tooling.cli.run_regenie2_matrix`. |
 | Deep profiling | Run multi-tool profiling campaigns with JAX and native evidence. | `tooling.cli.profile_regenie2_deep`. |
 | External comparison | Compare `g` with upstream or patched REGENIE under equivalent modes. | `-m tooling.cli.benchmark tool.name=regenie_comparison`. |
+| Competitor comparison | Compare `g` against a published competing implementation with explicit model caveats. | `tooling.cli.benchmark_torchgwas_chr22`, `tooling.cli.benchmark_tensorqtl_chr22`, `just slurm-gpu-bench-torchgwas-chr22`, `just slurm-gpu-bench-tensorqtl-chr22`. |
 
 See [Tooling](tooling.md) and [Justfile Command Reference](justfile.md) for
 the current command surface.
@@ -39,6 +40,27 @@ Every benchmark result should record:
 - summary metric and confidence signal.
 
 Do not report a speedup without naming the baseline command.
+
+For competitor comparisons, state the semantic and input-format boundary in the
+artifact. For example, the TorchGWAS chr22 benchmark is a single-trait
+quantitative workflow/runtime comparison: `g` runs REGENIE Step 2 with LOCO
+predictions on BGEN input, while TorchGWAS runs covariate-adjusted linear GWAS.
+Full TorchGWAS runs use the local PLINK triplet because the pinned TorchGWAS
+BGEN path stalls while parsing the intermediate PLINK2 raw table at chr22
+scale; bounded smoke runs use a generated NPY subset. TorchGWAS PLINK runs do
+not emit a persistent genotype cache, so warm cases are repeated-process
+measurements with possible filesystem cache effects rather than explicit
+genotype-cache reuse.
+
+The tensorQTL chr22 benchmark has a different boundary: `g` runs REGENIE Step 2
+with LOCO predictions on BGEN input, while tensorQTL runs dense `trans` nominal
+linear association on generated QTL-style phenotype and covariate matrices from
+the same samples and reads the local PLINK `.bed/.bim/.fam` triplet. The PLINK
+path is exposed to tensorQTL through a BED-only symlink prefix under the
+benchmark output directory because tensorQTL auto-selects PGEN when PGEN and
+BED files share the same prefix, and its PGEN reader fails on the local chr22
+multiallelic records. It is suitable for workflow/runtime comparison, not for
+claiming statistical parity with REGENIE Step 2.
 
 Durable JSON artifacts used for comparison or migration decisions must include
 `schema_version` and should be written through `tooling.common.reports` so
