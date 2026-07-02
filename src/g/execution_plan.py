@@ -121,7 +121,8 @@ class PhenotypeComputeGroup:
 
 def build_phenotype_compute_group_id(phenotype_compute_group: PhenotypeComputeGroup) -> str:
     """Build a deterministic identifier for a resolved phenotype compute group."""
-    return _core.build_phenotype_compute_group_id_value(
+    native_host_planning_policy = _core.NativeHostPlanningPolicy()
+    return native_host_planning_policy.build_phenotype_compute_group_id_value(
         phenotype_compute_group.group_mode.value,
         phenotype_compute_group.phenotype_indices,
         phenotype_compute_group.phenotype_names,
@@ -168,7 +169,8 @@ class RegenieExecutionPlan:
 
 def normalize_binary_correction_config(binary_config: config.BinaryConfig) -> types.BinaryCorrectionPlan:
     """Normalize REGENIE-style binary correction flags into an internal plan."""
-    correction_payload = _core.normalize_binary_correction_payload(
+    native_host_planning_policy = _core.NativeHostPlanningPolicy()
+    correction_payload = native_host_planning_policy.normalize_binary_correction_payload(
         binary_config.firth,
         binary_config.approx,
         binary_config.spa,
@@ -384,9 +386,10 @@ def build_phenotype_compute_groups(
     multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode,
 ) -> tuple[PhenotypeComputeGroup, ...]:
     """Build config-time phenotype compute groups."""
+    native_host_planning_policy = _core.NativeHostPlanningPolicy()
     return tuple(
         adapt_phenotype_compute_group_payload(group_payload)
-        for group_payload in _core.build_phenotype_compute_groups_payload(
+        for group_payload in native_host_planning_policy.build_phenotype_compute_groups_payload(
             phenotype_names,
             multi_phenotype_sample_mode.value,
         )
@@ -395,7 +398,8 @@ def build_phenotype_compute_groups(
 
 def resolve_association_mode(trait_type: types.RegenieTraitType) -> types.AssociationMode:
     """Resolve a trait family to the native association mode."""
-    return types.AssociationMode(_core.resolve_association_mode_value(trait_type.value))
+    native_host_planning_policy = _core.NativeHostPlanningPolicy()
+    return types.AssociationMode(native_host_planning_policy.resolve_association_mode_value(trait_type.value))
 
 
 def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
@@ -459,7 +463,8 @@ def build_phenotype_run_plan(
 
 def build_phenotype_output_directory_name(phenotype_index: int, phenotype_name: str) -> str:
     """Build a deterministic safe directory name for one phenotype output."""
-    return _core.build_phenotype_output_directory_name(phenotype_index, phenotype_name)
+    native_host_planning_policy = _core.NativeHostPlanningPolicy()
+    return native_host_planning_policy.build_phenotype_output_directory_name(phenotype_index, phenotype_name)
 
 
 def adapt_phenotype_compute_group_payload(group_payload: dict[str, object]) -> PhenotypeComputeGroup:

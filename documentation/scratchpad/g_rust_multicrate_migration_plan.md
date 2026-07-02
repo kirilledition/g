@@ -2037,6 +2037,10 @@ Current implementation notes:
 - Host-policy, preflight, preparation, run-metadata, and callback diagnostic
   PyO3 export registration now lives with the corresponding adapter modules,
   leaving the root Python composition module to delegate those export groups.
+- Detached host-policy helper functions for association mode, backend
+  selection, binary correction normalization, phenotype grouping, and phenotype
+  output directory names were removed from the Python-visible root surface;
+  production now enters those policies through `NativeHostPlanningPolicy`.
 - Callback queue, progress, summary, and runtime-resource PyO3 export
   registration now lives with the corresponding callback adapter modules.
 - Logging, JAX runtime, and runtime-state PyO3 export registration now lives

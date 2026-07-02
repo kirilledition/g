@@ -3233,33 +3233,39 @@ class NativeRunMetadataBuilder:
 def render_run_completed_lines(event: object) -> tuple[str, ...]: ...
 def render_run_interrupted_lines(event: object) -> tuple[str, ...]: ...
 def render_run_failed_lines(event: object) -> tuple[str, ...]: ...
-def plan_association_backend_payload(
-    association_mode: str,
-    jax_device: str,
-    gpu_genotype_format: str,
-) -> dict[str, object]: ...
-def resolve_association_mode_value(trait_type: str) -> str: ...
-def normalize_binary_correction_payload(
-    firth: bool,
-    approx: bool,
-    spa: bool,
-    p_threshold: float,
-    firth_se: bool,
-) -> dict[str, object]: ...
-def build_phenotype_compute_groups_payload(
-    phenotype_names: typing.Sequence[str],
-    multi_phenotype_sample_mode: str,
-) -> tuple[dict[str, object], ...]: ...
-def build_phenotype_compute_group_id_value(
-    group_mode: str,
-    phenotype_indices: typing.Sequence[int],
-    phenotype_names: typing.Sequence[str],
-    sample_mode: str,
-    sample_set_fingerprint: str | None,
-    covariate_design_fingerprint: str | None,
-    prediction_alignment_fingerprint: str | None,
-) -> str: ...
-def build_phenotype_output_directory_name(phenotype_index: int, phenotype_name: str) -> str: ...
+class NativeHostPlanningPolicy:
+    def __init__(self) -> None: ...
+    def plan_association_backend_payload(
+        self,
+        association_mode: str,
+        jax_device: str,
+        gpu_genotype_format: str,
+    ) -> dict[str, object]: ...
+    def resolve_association_mode_value(self, trait_type: str) -> str: ...
+    def normalize_binary_correction_payload(
+        self,
+        firth: bool,
+        approx: bool,
+        spa: bool,
+        p_threshold: float,
+        firth_se: bool,
+    ) -> dict[str, object]: ...
+    def build_phenotype_compute_groups_payload(
+        self,
+        phenotype_names: typing.Sequence[str],
+        multi_phenotype_sample_mode: str,
+    ) -> tuple[dict[str, object], ...]: ...
+    def build_phenotype_compute_group_id_value(
+        self,
+        group_mode: str,
+        phenotype_indices: typing.Sequence[int],
+        phenotype_names: typing.Sequence[str],
+        sample_mode: str,
+        sample_set_fingerprint: str | None,
+        covariate_design_fingerprint: str | None,
+        prediction_alignment_fingerprint: str | None,
+    ) -> str: ...
+    def build_phenotype_output_directory_name(self, phenotype_index: int, phenotype_name: str) -> str: ...
 def record_jax_runtime_diagnostic_event(
     event: object,
     telemetry_session: object | None,

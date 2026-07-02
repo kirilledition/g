@@ -4,7 +4,7 @@ import enum
 
 import pytest
 
-from g import types
+from g import _core, types
 from g.engine import backend_planner
 
 
@@ -84,6 +84,12 @@ def test_plan_association_backend_resolves_current_jax_paths(
         device=jax_device.value,
         genotype_format=gpu_genotype_format.value,
     )
+    assert not hasattr(_core, "plan_association_backend_payload")
+    assert not hasattr(_core, "resolve_association_mode_value")
+    assert not hasattr(_core, "normalize_binary_correction_payload")
+    assert not hasattr(_core, "build_phenotype_compute_groups_payload")
+    assert not hasattr(_core, "build_phenotype_compute_group_id_value")
+    assert not hasattr(_core, "build_phenotype_output_directory_name")
 
 
 def test_plan_association_backend_rejects_unresolved_auto_format() -> None:
