@@ -1904,6 +1904,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   loops, or dictionaries. Focused Python architecture policies guard the old
   NumPy reduction boundary and keep production `jax.device_get` host
   materialization isolated to callback diagnostic and writer adapters.
+- Binary chunk diagnostics now normalize score-only result dataclasses through
+  typed empty-Firth expansion helpers and read Firth diagnostic arrays
+  directly. The Python architecture checker rejects optional `getattr`
+  result-field fallback probes in `g.compute.regenie2_binary.diagnostics`.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

@@ -10,11 +10,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from g import types
+from g.compute.regenie2_binary import result as regenie2_binary_result
 
 if typing.TYPE_CHECKING:
     import collections.abc
-
-    from g.compute.regenie2_binary import result as regenie2_binary_result
 
 
 @jax.tree_util.register_dataclass
@@ -115,24 +114,18 @@ class BinaryCorrectionSummaryCounts:
 
 
 def count_binary_chunk_diagnostics(
-    result: (
-        regenie2_binary_result.Regenie2BinaryScoreChunkResult
-        | regenie2_binary_result.Regenie2BinaryChunkResult
-        | regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult
-        | regenie2_binary_result.Regenie2MultiBinaryChunkResult
-    ),
+    result: regenie2_binary_result.Regenie2AnyBinaryChunkResult,
 ) -> BinaryChunkDiagnostics:
     """Count diagnostic categories for one binary result chunk."""
-    empty_integer_array = jnp.zeros_like(result.extra_code, dtype=jnp.int32)
-    empty_boolean_array = jnp.zeros_like(result.extra_code, dtype=jnp.bool_)
-    extra_code = jnp.ravel(result.extra_code)
-    firth_iteration_count = jnp.ravel(getattr(result, "firth_iteration_count", empty_integer_array))
-    firth_failure_code = jnp.ravel(getattr(result, "firth_failure_code", empty_integer_array))
-    firth_correction_code = jnp.ravel(getattr(result, "firth_correction_code", empty_integer_array))
-    firth_sparse_correction_mask = jnp.ravel(getattr(result, "firth_sparse_correction_mask", empty_boolean_array))
-    pseudo_firth_iteration_count = jnp.ravel(getattr(result, "pseudo_firth_iteration_count", empty_integer_array))
-    nr_zero_start_iteration_count = jnp.ravel(getattr(result, "nr_zero_start_iteration_count", empty_integer_array))
-    nr_warm_start_iteration_count = jnp.ravel(getattr(result, "nr_warm_start_iteration_count", empty_integer_array))
+    diagnostic_result = regenie2_binary_result.expand_binary_result_with_empty_firth_diagnostics(result)
+    extra_code = jnp.ravel(diagnostic_result.extra_code)
+    firth_iteration_count = jnp.ravel(diagnostic_result.firth_iteration_count)
+    firth_failure_code = jnp.ravel(diagnostic_result.firth_failure_code)
+    firth_correction_code = jnp.ravel(diagnostic_result.firth_correction_code)
+    firth_sparse_correction_mask = jnp.ravel(diagnostic_result.firth_sparse_correction_mask)
+    pseudo_firth_iteration_count = jnp.ravel(diagnostic_result.pseudo_firth_iteration_count)
+    nr_zero_start_iteration_count = jnp.ravel(diagnostic_result.nr_zero_start_iteration_count)
+    nr_warm_start_iteration_count = jnp.ravel(diagnostic_result.nr_warm_start_iteration_count)
     firth_attempt_mask = firth_iteration_count > 0
     firth_candidate_count = jnp.sum(firth_attempt_mask, dtype=jnp.int32)
     finite_iteration_count = jnp.where(firth_attempt_mask, firth_iteration_count, jnp.asarray(0, dtype=jnp.int32))

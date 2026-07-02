@@ -869,6 +869,30 @@ def test_callback_convergence_scan_policy_rejects_old_numpy_reductions(tmp_path:
     ]
 
 
+def test_binary_diagnostics_result_contract_policy_rejects_getattr_probe(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    diagnostics_directory = package_root / "compute" / "regenie2_binary"
+    diagnostics_directory.mkdir(parents=True)
+    (diagnostics_directory / "diagnostics.py").write_text(
+        "\n".join(
+            (
+                "def count(result):",
+                "    return getattr(result, 'firth_iteration_count', None)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/compute/regenie2_binary/diagnostics.py"), 2, "getattr", "getattr"),
+    ]
+
+
 def test_callback_readiness_blocker_policy_rejects_optional_method_probe(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     callback_directory = package_root / "engine" / "callbacks"

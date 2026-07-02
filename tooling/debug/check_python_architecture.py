@@ -400,6 +400,13 @@ PYTHON_CALL_POLICIES = (
         message="production callback diagnostics must use native PyO3 array checks for convergence scans",
     ),
     PythonCallPolicy(
+        name="binary_diagnostics_result_contract_isolation",
+        source_directory=Path("compute/regenie2_binary/diagnostics.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production binary diagnostics must normalize typed results instead of probing optional fields",
+    ),
+    PythonCallPolicy(
         name="callback_readiness_blocker_contract_isolation",
         source_directory=Path("engine/callbacks/diagnostics.py"),
         forbidden_calls=("getattr",),
