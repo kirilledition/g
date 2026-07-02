@@ -16,6 +16,9 @@ pub(crate) struct NativeJaxRuntimeDiagnosticRecordPlan {
     plan: native_jax_runtime::JaxRuntimeDiagnosticRecordPlan,
 }
 
+#[pyclass]
+pub(crate) struct NativeJaxRuntimeDiagnosticPolicy;
+
 #[pymethods]
 impl NativeJaxRuntimeDiagnosticRecordPlan {
     #[getter]
@@ -31,6 +34,24 @@ impl NativeJaxRuntimeDiagnosticRecordPlan {
     #[getter]
     fn telemetry_level(&self) -> &str {
         &self.plan.telemetry_level
+    }
+}
+
+#[pymethods]
+#[allow(clippy::unused_self)]
+impl NativeJaxRuntimeDiagnosticPolicy {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    fn record_jax_runtime_diagnostic_event(
+        &self,
+        py: Python<'_>,
+        event: &Bound<'_, PyAny>,
+        telemetry_session: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
+        record_jax_runtime_diagnostic_event(py, event, telemetry_session)
     }
 }
 
@@ -210,7 +231,6 @@ impl NativeJaxRuntimeSetupSession {
     }
 }
 
-#[pyfunction]
 pub(crate) fn record_jax_runtime_diagnostic_event(
     py: Python<'_>,
     event: &Bound<'_, PyAny>,
@@ -368,9 +388,9 @@ fn jax_runtime_diagnostic_value_from_py(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeJaxRuntimeDiagnosticPolicy>()?;
     module.add_class::<NativeJaxRuntimeDiagnosticRecordPlan>()?;
     module.add_class::<NativeJaxRuntimeSetupSession>()?;
-    module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_event, module)?)?;
     Ok(())
 }
 

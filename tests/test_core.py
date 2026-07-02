@@ -208,6 +208,7 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "plan_telemetry_close")
     assert not hasattr(_core, "plan_telemetry_event_emission")
     assert not hasattr(_core, "plan_telemetry_progress_emission")
+    assert not hasattr(_core, "build_pipeline_output_preparation_batch_from_values")
     for removed_runner_diagnostic_export_name in (
         "record_runner_binary_engine_dispatch_started_diagnostic_event",
         "record_runner_execution_plan_build_started_diagnostic_event",
@@ -227,6 +228,12 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "record_runner_single_phenotype_dispatch_started_diagnostic_event",
     ):
         assert not hasattr(_core, removed_runner_diagnostic_export_name)
+    for removed_runtime_timing_export_name in (
+        "record_final_timing_outputs_write_started_diagnostic_event",
+        "record_jax_runtime_diagnostic_event",
+        "resolve_final_timing_output_context",
+    ):
+        assert not hasattr(_core, removed_runtime_timing_export_name)
     for removed_run_event_diagnostic_export_name in (
         "record_callback_null_logistic_nonconvergence_warning_diagnostic_event",
         "record_io_output_resume_committed_chunks_diagnostic_event",
@@ -1229,13 +1236,15 @@ def test_native_pipeline_resume_compatibility_validates_all_manifests(tmp_path: 
         current_header_values: tuple[dict[str, object], ...],
         resume_mode: str,
     ) -> None:
-        preparation_batch = _core.build_pipeline_output_preparation_batch_from_values(
-            run_directories=(str(run_directory),),
-            chunks_directories=(str(chunks_directory),),
-            existing_manifest_values=existing_manifest_values,
-            current_header_values=current_header_values,
-            resume=True,
-            resume_mode=resume_mode,
+        preparation_batch = (
+            _core.NativePipelineOutputPreparationPolicy().build_pipeline_output_preparation_batch_from_values(
+                run_directories=(str(run_directory),),
+                chunks_directories=(str(chunks_directory),),
+                existing_manifest_values=existing_manifest_values,
+                current_header_values=current_header_values,
+                resume=True,
+                resume_mode=resume_mode,
+            )
         )
         preparation_batch.validate_resume_compatibility()
 
@@ -1292,13 +1301,15 @@ def test_native_pipeline_output_initialization_returns_committed_sets(tmp_path: 
     }
     current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
 
-    preparation_batch = _core.build_pipeline_output_preparation_batch_from_values(
-        run_directories=(str(run_directory),),
-        chunks_directories=(str(chunks_directory),),
-        existing_manifest_values=(existing_manifest,),
-        current_header_values=(current_header,),
-        resume=True,
-        resume_mode="fast",
+    preparation_batch = (
+        _core.NativePipelineOutputPreparationPolicy().build_pipeline_output_preparation_batch_from_values(
+            run_directories=(str(run_directory),),
+            chunks_directories=(str(chunks_directory),),
+            existing_manifest_values=(existing_manifest,),
+            current_header_values=(current_header,),
+            resume=True,
+            resume_mode="fast",
+        )
     )
     native_initialization = preparation_batch.initialize(build_native_runtime_compatibility_token())
     committed_chunk_identifier_sets = native_initialization.committed_chunk_identifier_sets()
@@ -1327,13 +1338,15 @@ def test_native_pipeline_output_initialization_handle_returns_committed_sets(tmp
     }
     current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
 
-    preparation_batch = _core.build_pipeline_output_preparation_batch_from_values(
-        run_directories=(str(run_directory),),
-        chunks_directories=(str(chunks_directory),),
-        existing_manifest_values=(existing_manifest,),
-        current_header_values=(current_header,),
-        resume=True,
-        resume_mode="fast",
+    preparation_batch = (
+        _core.NativePipelineOutputPreparationPolicy().build_pipeline_output_preparation_batch_from_values(
+            run_directories=(str(run_directory),),
+            chunks_directories=(str(chunks_directory),),
+            existing_manifest_values=(existing_manifest,),
+            current_header_values=(current_header,),
+            resume=True,
+            resume_mode="fast",
+        )
     )
     native_initialization = preparation_batch.initialize(build_native_runtime_compatibility_token())
 
@@ -1363,13 +1376,15 @@ def test_native_pipeline_output_preparation_batch_initializes_outputs(tmp_path: 
         ],
     }
     current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
-    native_preparation_batch = _core.build_pipeline_output_preparation_batch_from_values(
-        run_directories=(str(run_directory),),
-        chunks_directories=(str(chunks_directory),),
-        existing_manifest_values=(existing_manifest,),
-        current_header_values=(current_header,),
-        resume=True,
-        resume_mode="fast",
+    native_preparation_batch = (
+        _core.NativePipelineOutputPreparationPolicy().build_pipeline_output_preparation_batch_from_values(
+            run_directories=(str(run_directory),),
+            chunks_directories=(str(chunks_directory),),
+            existing_manifest_values=(existing_manifest,),
+            current_header_values=(current_header,),
+            resume=True,
+            resume_mode="fast",
+        )
     )
 
     native_preparation_batch.validate_resume_compatibility()
@@ -2449,18 +2464,29 @@ def test_native_jax_runtime_diagnostic_event_records_telemetry() -> None:
 
     diagnostic_event = DiagnosticEvent()
     telemetry_session = RecordingTelemetrySession()
+    native_jax_runtime_diagnostic_policy = _core.NativeJaxRuntimeDiagnosticPolicy()
 
-    emitted_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session)
-    disabled_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, DisabledTelemetrySession())
-    skipped_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, None)
+    emitted_plan = native_jax_runtime_diagnostic_policy.record_jax_runtime_diagnostic_event(
+        diagnostic_event,
+        telemetry_session,
+    )
+    disabled_plan = native_jax_runtime_diagnostic_policy.record_jax_runtime_diagnostic_event(
+        diagnostic_event,
+        DisabledTelemetrySession(),
+    )
+    skipped_plan = native_jax_runtime_diagnostic_policy.record_jax_runtime_diagnostic_event(diagnostic_event, None)
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        _core.record_jax_runtime_diagnostic_event(diagnostic_event, LegacyTelemetrySession())
+        native_jax_runtime_diagnostic_policy.record_jax_runtime_diagnostic_event(
+            diagnostic_event,
+            LegacyTelemetrySession(),
+        )
 
     assert emitted_plan.should_emit_telemetry is True
     assert emitted_plan.telemetry_level == "info"
     assert disabled_plan.should_emit_telemetry is False
     assert skipped_plan.should_emit_telemetry is False
     assert telemetry_session.native_telemetry_session.events == [(diagnostic_event, "info")]
+    assert not hasattr(_core, "record_jax_runtime_diagnostic_event")
     assert not hasattr(_core, "plan_jax_runtime_diagnostic_record")
     assert not hasattr(_core, "record_jax_runtime_diagnostic_log_event")
     assert not hasattr(_core, "plan_jax_runtime_diagnostic_record_payload")

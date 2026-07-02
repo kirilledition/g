@@ -14,8 +14,42 @@ pub(crate) struct NativePipelineOutputPreparationBatch {
 }
 
 #[pyclass]
+pub(crate) struct NativePipelineOutputPreparationPolicy;
+
+#[pyclass]
 pub(crate) struct NativePipelineOutputInitialization {
     initialization: g_engine::PipelineOutputInitialization,
+}
+
+#[pymethods]
+#[allow(clippy::unused_self)]
+impl NativePipelineOutputPreparationPolicy {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn build_pipeline_output_preparation_batch_from_values(
+        &self,
+        py: Python<'_>,
+        run_directories: Vec<String>,
+        chunks_directories: Vec<String>,
+        existing_manifest_values: Vec<Py<PyAny>>,
+        current_header_values: Vec<Py<PyAny>>,
+        resume: bool,
+        resume_mode: &str,
+    ) -> PyResult<NativePipelineOutputPreparationBatch> {
+        build_pipeline_output_preparation_batch_from_values(
+            py,
+            run_directories,
+            chunks_directories,
+            existing_manifest_values,
+            current_header_values,
+            resume,
+            resume_mode,
+        )
+    }
 }
 
 #[pymethods]
@@ -64,7 +98,6 @@ impl NativePipelineOutputInitialization {
     }
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_pipeline_output_preparation_batch_from_values(
     py: Python<'_>,
@@ -105,7 +138,7 @@ pub(crate) fn build_pipeline_output_preparation_batch_from_values(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePipelineOutputInitialization>()?;
     module.add_class::<NativePipelineOutputPreparationBatch>()?;
-    module.add_function(wrap_pyfunction!(build_pipeline_output_preparation_batch_from_values, module)?)?;
+    module.add_class::<NativePipelineOutputPreparationPolicy>()?;
     Ok(())
 }
 

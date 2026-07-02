@@ -219,11 +219,9 @@ def run_validated_regenie_config(
     finally:
         if stage_timing_recorder is not None:
             timing.record_stage_duration(stage_timing_recorder, "python_api_entry", api_entry_start_time)
-            _core.record_final_timing_outputs_write_started_diagnostic_event(
-                None if final_timing_context.stage_timing_path is None else str(final_timing_context.stage_timing_path),
-                None
-                if final_timing_context.profile_summary_path is None
-                else str(final_timing_context.profile_summary_path),
+            timing.record_final_timing_outputs_write_started_diagnostic_event(
+                final_timing_context.stage_timing_path,
+                final_timing_context.profile_summary_path,
                 final_timing_context.run_id,
             )
             timing.write_final_timing_outputs(

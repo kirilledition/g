@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import typing
+import unittest.mock
 
 import numpy as np
 import pytest
@@ -396,7 +397,8 @@ def test_stage_timing_recorder_exposes_only_combined_timing_file_writer() -> Non
 def test_timing_module_does_not_expose_payload_builder() -> None:
     assert not hasattr(timing, "build_final_timing_outputs_write_started_diagnostic_payload")
     assert not hasattr(_core, "build_final_timing_outputs_write_started_diagnostic_payload")
-    assert hasattr(_core, "record_final_timing_outputs_write_started_diagnostic_event")
+    assert not hasattr(_core, "record_final_timing_outputs_write_started_diagnostic_event")
+    assert hasattr(_core.NativeFinalTimingOutputPolicy(), "record_final_timing_outputs_write_started_diagnostic_event")
 
 
 def test_resolve_final_timing_output_context_uses_native_policy(tmp_path: Path) -> None:
@@ -432,6 +434,35 @@ def test_resolve_final_timing_output_context_uses_native_policy(tmp_path: Path) 
         run_id="run-1",
         force_stage_timing_recorder=True,
     )
+
+
+def test_record_final_timing_outputs_write_started_uses_native_policy(tmp_path: Path) -> None:
+    class FakeNativeFinalTimingOutputPolicy:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str | None, str | None, str | None]] = []
+
+        def record_final_timing_outputs_write_started_diagnostic_event(
+            self,
+            stage_timing_path: str | None,
+            profile_summary_path: str | None,
+            run_id: str | None,
+        ) -> None:
+            self.calls.append((stage_timing_path, profile_summary_path, run_id))
+
+    native_final_timing_output_policy = FakeNativeFinalTimingOutputPolicy()
+    stage_timing_path = tmp_path / "diagnostics" / "stage.json"
+
+    with unittest.mock.patch(
+        "g.engine.timing.native_final_timing_output_policy",
+        return_value=native_final_timing_output_policy,
+    ):
+        timing.record_final_timing_outputs_write_started_diagnostic_event(
+            stage_timing_path,
+            None,
+            "run-1",
+        )
+
+    assert native_final_timing_output_policy.calls == [(str(stage_timing_path), None, "run-1")]
 
 
 def test_final_timing_outputs_persists_stage_snapshot_payload_and_derived_metrics(tmp_path: Path) -> None:

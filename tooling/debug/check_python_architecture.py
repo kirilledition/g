@@ -204,6 +204,7 @@ PYTHON_CALL_POLICIES = (
             "_core.resolve_output_run_paths",
             "_core.build_pipeline_output_preparation_batch_from_values",
             "_core.NativePipelineOutputPreparationBatch",
+            "_core.NativePipelineOutputPreparationPolicy",
             "_core.initialize_pipeline_output_run_batch",
             "_core.initialize_pipeline_output_runs",
         ),

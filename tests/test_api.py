@@ -1128,6 +1128,14 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
             telemetry_level="trace",
         )
 
+    class FakeNativeJaxRuntimeDiagnosticPolicy:
+        def record_jax_runtime_diagnostic_event(
+            self,
+            event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
+            telemetry_session: telemetry_module.TelemetrySession | None,
+        ) -> NativeDiagnosticRecordPlan:
+            return record_jax_runtime_diagnostic_event(event, telemetry_session)
+
     diagnostic_event = jax_runtime_models.JaxRuntimeDiagnosticEvent(
         event_name="jax_native_plan_test",
         level=jax_runtime_models.JaxRuntimeDiagnosticLevel.INFO,
@@ -1137,8 +1145,8 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
     active_telemetry_session = typing.cast("telemetry_module.TelemetrySession", RecordingTelemetrySession())
 
     with patch(
-        "g.runner.runtime._core.record_jax_runtime_diagnostic_event",
-        side_effect=record_jax_runtime_diagnostic_event,
+        "g.runner.runtime.native_jax_runtime_diagnostic_policy",
+        return_value=FakeNativeJaxRuntimeDiagnosticPolicy(),
     ):
         runner_runtime.record_jax_runtime_diagnostic_event(
             diagnostic_event,

@@ -2243,6 +2243,13 @@ Current implementation notes:
   diagnostic helper exports were removed from the Python-visible root surface;
   production enters those policies through `NativeOutputPreflightDiagnosticPolicy`,
   `NativePipelineDiagnosticPolicy`, and `NativeDispatchDiagnosticPolicy`.
+- Detached JAX runtime diagnostic recording and final timing output
+  context/diagnostic helper exports were removed from the Python-visible root
+  surface; production enters those policies through
+  `NativeJaxRuntimeDiagnosticPolicy` and `NativeFinalTimingOutputPolicy`.
+- Detached pipeline output-preparation batch construction was removed from the
+  Python-visible root surface; production enters that policy through
+  `NativePipelineOutputPreparationPolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

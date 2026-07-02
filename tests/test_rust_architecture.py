@@ -201,6 +201,13 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
                     "module.add_function("
                     "wrap_pyfunction!(record_native_dispatch_delivery_started_diagnostic_event, module)?)?;"
                 ),
+                "module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_event, module)?)?;",
+                (
+                    "module.add_function("
+                    "wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;"
+                ),
+                "module.add_function(wrap_pyfunction!(resolve_final_timing_output_context, module)?)?;",
+                "module.add_function(wrap_pyfunction!(build_pipeline_output_preparation_batch_from_values, module)?)?;",
             )
         ),
         encoding="utf-8",
@@ -471,6 +478,30 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
             source_path=Path("src/python/shutdown.rs"),
             export_name="record_native_dispatch_delivery_started_diagnostic_event",
             line_number=44,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="record_jax_runtime_diagnostic_event",
+            line_number=45,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="record_final_timing_outputs_write_started_diagnostic_event",
+            line_number=46,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="resolve_final_timing_output_context",
+            line_number=47,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="build_pipeline_output_preparation_batch_from_values",
+            line_number=48,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

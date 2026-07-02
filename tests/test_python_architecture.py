@@ -113,6 +113,7 @@ def test_output_lifecycle_policy_rejects_direct_native_output_calls(tmp_path: Pa
                 "    _core.finalize_output_run_chunks('run', 'chunks', 'parquet', 'zstd')",
                 "    _core.build_pipeline_output_preparation_batch_from_values((), (), (), (), False, 'fast')",
                 "    _core.NativePipelineOutputPreparationBatch((), (), (), (), False, 'fast')",
+                "    _core.NativePipelineOutputPreparationPolicy()",
             )
         ),
         encoding="utf-8",
@@ -175,6 +176,12 @@ def test_output_lifecycle_policy_rejects_direct_native_output_calls(tmp_path: Pa
             14,
             "_core.NativePipelineOutputPreparationBatch",
             "_core.NativePipelineOutputPreparationBatch",
+        ),
+        (
+            Path("g/runner/outputs.py"),
+            15,
+            "_core.NativePipelineOutputPreparationPolicy",
+            "_core.NativePipelineOutputPreparationPolicy",
         ),
     ]
 

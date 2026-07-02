@@ -2553,6 +2553,20 @@ class NativeFinalTimingOutputContext:
     run_id: str | None
     force_stage_timing_recorder: bool
 
+class NativeFinalTimingOutputPolicy:
+    def __init__(self) -> None: ...
+    def resolve_final_timing_output_context(
+        self,
+        diagnostics_stage_timing_path: str | None,
+        telemetry_session: object | None,
+    ) -> NativeFinalTimingOutputContext: ...
+    def record_final_timing_outputs_write_started_diagnostic_event(
+        self,
+        stage_timing_path: str | None,
+        profile_summary_path: str | None,
+        run_id: str | None,
+    ) -> None: ...
+
 class NativeCliTelemetryCloseFailurePlan:
     should_report_failure: bool
     exit_code: int
@@ -2572,10 +2586,6 @@ class NativeCliRunLifecycleState:
         current_exit_code: int,
         runtime_failure_exit_code: int,
     ) -> NativeCliTelemetryCloseFailurePlan: ...
-def resolve_final_timing_output_context(
-    diagnostics_stage_timing_path: str | None,
-    telemetry_session: object | None,
-) -> NativeFinalTimingOutputContext: ...
 
 class NativeRuntimeCompatibilityToken:
     pass
@@ -2602,6 +2612,14 @@ class NativeJaxRuntimeDiagnosticRecordPlan:
     logging_level_name: str
     should_emit_telemetry: bool
     telemetry_level: str
+
+class NativeJaxRuntimeDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_jax_runtime_diagnostic_event(
+        self,
+        event: object,
+        telemetry_session: object | None,
+    ) -> NativeJaxRuntimeDiagnosticRecordPlan: ...
 
 class NativeJaxRuntimeSetupSession:
     @property
@@ -2911,6 +2929,7 @@ def initialize_logging(
     trace_event_cap: int | None = None,
 ) -> bool: ...
 def shutdown_logging() -> None: ...
+
 class NativeRunEventPayloadPolicy:
     def __init__(self) -> None: ...
     def attach_run_metadata_payload(
@@ -2926,6 +2945,7 @@ class NativeRunEventPayloadPolicy:
     def render_run_completed_lines(self, event: object) -> tuple[str, ...]: ...
     def render_run_interrupted_lines(self, event: object) -> tuple[str, ...]: ...
     def render_run_failed_lines(self, event: object) -> tuple[str, ...]: ...
+
 class NativeRunEventTelemetryPolicy:
     def __init__(self) -> None: ...
     def record_runner_run_started_telemetry_event(
@@ -3053,6 +3073,7 @@ class NativeRunEventTelemetryPolicy:
         phenotype: str | None,
         phenotype_count: int | None,
     ) -> None: ...
+
 class NativeCliDiagnosticPolicy:
     def __init__(self) -> None: ...
     def record_native_cli_stdout_diagnostic_event(
@@ -3082,6 +3103,7 @@ class NativeCliDiagnosticPolicy:
         bgen_decode_tile_variant_count: int,
         threads: int | None,
     ) -> None: ...
+
 class NativeRunnerDiagnosticPolicy:
     def __init__(self) -> None: ...
     def record_runner_run_started_diagnostic_event(
@@ -3144,6 +3166,7 @@ class NativeRunnerDiagnosticPolicy:
         association_mode: str,
         phenotype_count: int,
     ) -> None: ...
+
 class NativeOutputPreflightDiagnosticPolicy:
     def __init__(self) -> None: ...
     def record_preflight_warning_diagnostic_event(
@@ -3162,6 +3185,7 @@ class NativeOutputPreflightDiagnosticPolicy:
         committed_chunk_count: int,
         run_directory: str,
     ) -> None: ...
+
 class NativePipelineDiagnosticPolicy:
     def __init__(self) -> None: ...
     def record_pipeline_bgen_engine_open_started_diagnostic_event(
@@ -3309,6 +3333,7 @@ class NativePipelineDiagnosticPolicy:
         pipeline_label: str,
         sample_count: int,
     ) -> None: ...
+
 class NativeDispatchDiagnosticPolicy:
     def __init__(self) -> None: ...
     def record_native_dispatch_bgen_engine_constructing_diagnostic_event(
@@ -3373,6 +3398,7 @@ class NativeDispatchDiagnosticPolicy:
         signal_number: int,
         writer_session_count: int,
     ) -> None: ...
+
 class NativeRunMetadataBuilder:
     def __init__(self) -> None: ...
     def build_execution_run_artifacts_payload(
@@ -3406,6 +3432,7 @@ class NativeRunMetadataBuilder:
         trusted_no_missing_diploid: bool,
         trusted_bgen_validation_mode: str,
     ) -> None: ...
+
 class NativeHostPlanningPolicy:
     def __init__(self) -> None: ...
     def plan_association_backend_payload(
@@ -3439,10 +3466,7 @@ class NativeHostPlanningPolicy:
         prediction_alignment_fingerprint: str | None,
     ) -> str: ...
     def build_phenotype_output_directory_name(self, phenotype_index: int, phenotype_name: str) -> str: ...
-def record_jax_runtime_diagnostic_event(
-    event: object,
-    telemetry_session: object | None,
-) -> NativeJaxRuntimeDiagnosticRecordPlan: ...
+
 def scan_committed_chunk_identifiers(chunks_directory: str) -> list[int]: ...
 def repair_strict_manifest_chunk_commits_from_value(
     chunks_directory: str,
@@ -3499,6 +3523,7 @@ def validate_regenie_config(config: RegenieConfig) -> None: ...
 def validate_regenie_config_for_run(config: RegenieConfig) -> None: ...
 def compile_run_request_payload(config: RegenieConfig) -> dict[str, object]: ...
 def dispatch_cli(args: list[str]) -> CliOutcome: ...
+
 class NativePreflightValidator:
     def __init__(self) -> None: ...
     def resolve_preflight_variant_count(self, variant_count: int, variant_limit: int | None = None) -> int: ...
@@ -3542,6 +3567,7 @@ class NativePreflightValidator:
         trait_count: int,
         sample_count: int,
     ) -> None: ...
+
 class NativeCallbackDiagnosticsPolicy:
     def __init__(self) -> None: ...
     def plan_null_logistic_nonconvergence_from_array(
@@ -3551,12 +3577,9 @@ class NativeCallbackDiagnosticsPolicy:
         phenotype_names: typing.Sequence[str] | None,
         policy: str,
     ) -> NativeNullLogisticNonconvergencePlan: ...
+
 def close_telemetry_session_with_event(telemetry_session: object | None) -> None: ...
-def record_final_timing_outputs_write_started_diagnostic_event(
-    stage_timing_path: str | None,
-    profile_summary_path: str | None,
-    run_id: str | None,
-) -> None: ...
+
 class NativePipelineOutputInitialization:
     @property
     def output_count(self) -> int: ...
@@ -3574,14 +3597,18 @@ class NativePipelineOutputPreparationBatch:
         runtime_compatibility_token: NativeRuntimeCompatibilityToken,
     ) -> NativePipelineOutputInitialization: ...
 
-def build_pipeline_output_preparation_batch_from_values(
-    run_directories: typing.Sequence[str],
-    chunks_directories: typing.Sequence[str],
-    existing_manifest_values: typing.Sequence[object | None],
-    current_header_values: typing.Sequence[object],
-    resume: bool,
-    resume_mode: str,
-) -> NativePipelineOutputPreparationBatch: ...
+class NativePipelineOutputPreparationPolicy:
+    def __init__(self) -> None: ...
+    def build_pipeline_output_preparation_batch_from_values(
+        self,
+        run_directories: typing.Sequence[str],
+        chunks_directories: typing.Sequence[str],
+        existing_manifest_values: typing.Sequence[object | None],
+        current_header_values: typing.Sequence[object],
+        resume: bool,
+        resume_mode: str,
+    ) -> NativePipelineOutputPreparationBatch: ...
+
 def align_sample_data_from_sample_file(
     sample_path: str,
     expected_sample_count: int,

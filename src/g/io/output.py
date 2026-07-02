@@ -445,6 +445,11 @@ def repair_strict_manifest_chunk_commits(
     return list(repaired_commits)
 
 
+def native_pipeline_output_preparation_policy() -> _core.NativePipelineOutputPreparationPolicy:
+    """Build the native pipeline output-preparation policy handle."""
+    return _core.NativePipelineOutputPreparationPolicy()
+
+
 def build_native_pipeline_output_preparation_batch(
     *,
     output_run_paths_by_trait: tuple[OutputRunPaths, ...],
@@ -454,7 +459,7 @@ def build_native_pipeline_output_preparation_batch(
     resume_mode: types.ResumeMode,
 ) -> _core.NativePipelineOutputPreparationBatch:
     """Build a native output-preparation batch from output adapter inputs."""
-    return _core.build_pipeline_output_preparation_batch_from_values(
+    return native_pipeline_output_preparation_policy().build_pipeline_output_preparation_batch_from_values(
         tuple(str(output_run_paths.run_directory) for output_run_paths in output_run_paths_by_trait),
         tuple(str(output_run_paths.chunks_directory) for output_run_paths in output_run_paths_by_trait),
         tuple(existing_manifest for existing_manifest in existing_manifests_by_trait),

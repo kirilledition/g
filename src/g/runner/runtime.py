@@ -147,6 +147,11 @@ def build_process_runtime_state(
 PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.global_process_runtime_state()
 
 
+def native_jax_runtime_diagnostic_policy() -> _core.NativeJaxRuntimeDiagnosticPolicy:
+    """Build the native JAX runtime diagnostic policy handle."""
+    return _core.NativeJaxRuntimeDiagnosticPolicy()
+
+
 def record_jax_runtime_diagnostic_event(
     diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
     *,
@@ -159,7 +164,7 @@ def record_jax_runtime_diagnostic_event(
         telemetry_session: Optional run telemetry session.
 
     """
-    _core.record_jax_runtime_diagnostic_event(
+    native_jax_runtime_diagnostic_policy().record_jax_runtime_diagnostic_event(
         diagnostic_event,
         telemetry_session,
     )

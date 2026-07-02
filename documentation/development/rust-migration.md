@@ -233,6 +233,13 @@ Preflight/output, pipeline/callback-warning, and native-dispatch diagnostic
 recording now enter through typed `NativeOutputPreflightDiagnosticPolicy`,
 `NativePipelineDiagnosticPolicy`, and `NativeDispatchDiagnosticPolicy` handles
 instead of detached root `_core` functions.
+JAX runtime diagnostic recording and final timing output context/diagnostic
+policy now enter through typed `NativeJaxRuntimeDiagnosticPolicy` and
+`NativeFinalTimingOutputPolicy` handles instead of detached root `_core`
+functions.
+Pipeline output-preparation batch construction now enters through
+`NativePipelineOutputPreparationPolicy` instead of a detached root `_core`
+function.
 Preflight chromosome collection now requires the native engine
 `required_chromosomes` API directly; the old Python metadata-slice collection
 fallback has been removed.
