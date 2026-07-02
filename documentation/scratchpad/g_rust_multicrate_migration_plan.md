@@ -2375,6 +2375,16 @@ Current implementation notes:
   reach into `g-engine` or runtime internals prematurely.
 - The Python package entry point remains the production full-run CLI while this
   native process-owner prototype proves the frontend and packaging boundary.
+- The native frontend now has a Criterion dispatch benchmark covering root
+  help, `regenie --help`, parse errors, and valid-config validation before
+  execution refusal. This is a Rust-side frontend baseline; process startup and
+  Python/JAX environment discovery still need separate packaging benchmarks.
+- Phase 13 packaging validation on 2026-07-03 used `maturin develop -j 30
+  --profile dev-fast --uv` and `maturin build -j 30 --profile dev-fast` with
+  `sccache` plus the `wild` linker. The editable install completed in 1:07.64
+  wall time with Cargo reporting 57.34s; the wheel build completed in 0:41.70
+  wall time with Cargo reporting 29.97s. This verifies that adding the
+  workspace native CLI package does not disrupt the root PyO3 package build.
 
 ### Tests
 

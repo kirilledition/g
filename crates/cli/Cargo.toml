@@ -8,9 +8,16 @@ publish.workspace = true
 [dependencies]
 g-interface = { workspace = true }
 
+[dev-dependencies]
+criterion = { workspace = true }
+
 [[bin]]
 name = "g"
 path = "src/main.rs"
+
+[[bench]]
+name = "frontend"
+harness = false
 
 [lints]
 workspace = true
