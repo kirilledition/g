@@ -3882,12 +3882,7 @@ def run_deep_profiles(
     if arguments.enable_rust_criterion and profiler_tool_status["rust_criterion"].available:
         for benchmark_name in parse_string_list(arguments.rust_benchmarks):
             logger.info("Running Rust Criterion benchmark %s", benchmark_name)
-            results["rust_criterion"].append(
-                command_output(
-                    ["cargo", "bench", "--bench", benchmark_name],
-                    environment_overrides={"RUSTFLAGS": "-C target-cpu=native"},
-                )
-            )
+            results["rust_criterion"].append(command_output(["cargo", "bench", "--bench", benchmark_name]))
     elif arguments.enable_rust_criterion:
         results["rust_criterion"].append(dataclasses.asdict(profiler_tool_status["rust_criterion"]))
     for winner_key, winner in sorted(winners.items()):

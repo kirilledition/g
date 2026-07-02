@@ -1,2 +1,8 @@
 [env]
 PYO3_PYTHON = "python3.14"
+
+[target.'cfg(target_os = "linux")']
+rustflags = [
+    "--allow=non-local-definitions",
+    "-Ctarget-cpu=native",
+]

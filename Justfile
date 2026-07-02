@@ -155,11 +155,11 @@ dev-install-opt:
 
 # Install the native extension using the native performance profile
 dev-install-perf:
-    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf --uv
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop --profile perf --uv
 
 # Install the native extension using explicit native feature flags
 dev-install-perf-max:
-    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf-max --uv
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop --profile perf-max --uv
 
 # Install optional user-local profiler CLIs used by deep app profiling
 dev-install-profiling-tools:
@@ -846,7 +846,7 @@ rust-test:
 
 # Run Rust Criterion benchmarks with native performance flags
 rust-bench:
-    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" cargo bench
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo bench
 
 # Run non-mutating Rust format, lint, build, tests, and architecture checks
 rust-check: rust-format-check rust-lint-check rust-build rust-test check-rust-architecture

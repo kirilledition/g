@@ -31,13 +31,9 @@ class BuildProfileLabel(enum.StrEnum):
     """Build profile labels accepted by the benchmark harness."""
 
     DEV_FAST = "dev-fast"
-    DEV_FAST_LLD = "dev-fast-lld"
-    DEV_FAST_MOLD = "dev-fast-mold"
     DEV_OPT = "dev-opt"
     RELEASE = "release"
     PERF_THIN_CGU8 = "perf-thin-cgu8"
-    PERF_THIN_CGU8_LLD = "perf-thin-cgu8-lld"
-    PERF_THIN_CGU8_MOLD = "perf-thin-cgu8-mold"
     PERF_THIN_CGU1 = "perf-thin-cgu1"
     PERF_FAT_CGU1 = "perf-fat-cgu1"
     PERF_O2_THIN_CGU8 = "perf-o2-thin-cgu8"
@@ -226,16 +222,6 @@ PROFILE_SPECS: dict[BuildProfileLabel, BuildProfileSpec] = {
         cargo_profile="dev-fast",
         rustflags="",
     ),
-    BuildProfileLabel.DEV_FAST_LLD: BuildProfileSpec(
-        label=BuildProfileLabel.DEV_FAST_LLD,
-        cargo_profile="dev-fast",
-        rustflags="-C link-arg=-fuse-ld=lld",
-    ),
-    BuildProfileLabel.DEV_FAST_MOLD: BuildProfileSpec(
-        label=BuildProfileLabel.DEV_FAST_MOLD,
-        cargo_profile="dev-fast",
-        rustflags="-C link-arg=-fuse-ld=mold",
-    ),
     BuildProfileLabel.DEV_OPT: BuildProfileSpec(
         label=BuildProfileLabel.DEV_OPT,
         cargo_profile="dev-opt",
@@ -249,37 +235,27 @@ PROFILE_SPECS: dict[BuildProfileLabel, BuildProfileSpec] = {
     BuildProfileLabel.PERF_THIN_CGU8: BuildProfileSpec(
         label=BuildProfileLabel.PERF_THIN_CGU8,
         cargo_profile="perf",
-        rustflags="-C target-cpu=native",
-    ),
-    BuildProfileLabel.PERF_THIN_CGU8_LLD: BuildProfileSpec(
-        label=BuildProfileLabel.PERF_THIN_CGU8_LLD,
-        cargo_profile="perf",
-        rustflags="-C target-cpu=native -C link-arg=-fuse-ld=lld",
-    ),
-    BuildProfileLabel.PERF_THIN_CGU8_MOLD: BuildProfileSpec(
-        label=BuildProfileLabel.PERF_THIN_CGU8_MOLD,
-        cargo_profile="perf",
-        rustflags="-C target-cpu=native -C link-arg=-fuse-ld=mold",
+        rustflags="",
     ),
     BuildProfileLabel.PERF_THIN_CGU1: BuildProfileSpec(
         label=BuildProfileLabel.PERF_THIN_CGU1,
         cargo_profile="perf-thin-cgu1",
-        rustflags="-C target-cpu=native",
+        rustflags="",
     ),
     BuildProfileLabel.PERF_FAT_CGU1: BuildProfileSpec(
         label=BuildProfileLabel.PERF_FAT_CGU1,
         cargo_profile="perf-max",
-        rustflags="-C target-cpu=native",
+        rustflags="",
     ),
     BuildProfileLabel.PERF_O2_THIN_CGU8: BuildProfileSpec(
         label=BuildProfileLabel.PERF_O2_THIN_CGU8,
         cargo_profile="perf-o2",
-        rustflags="-C target-cpu=native",
+        rustflags="",
     ),
     BuildProfileLabel.PERF_O3_THIN_CGU8: BuildProfileSpec(
         label=BuildProfileLabel.PERF_O3_THIN_CGU8,
         cargo_profile="perf",
-        rustflags="-C target-cpu=native",
+        rustflags="",
     ),
 }
 IMPORT_TIMING_PROGRAM = (

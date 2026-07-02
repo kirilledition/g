@@ -108,8 +108,10 @@ just slurm-gpu-bench-torchgwas-chr22
 just slurm-gpu-bench-tensorqtl-chr22
 ```
 
-`bench-rust-build-profiles` includes linker comparison labels for `dev-fast`
-and the routine `perf` profile when the requested linker tooling is available.
+`bench-rust-build-profiles` uses the repo Cargo configuration by default, so
+Linux Rust builds enable `target-cpu=native` without per-recipe `RUSTFLAGS`.
+Linker and rustc-wrapper choices stay outside the repo and should be supplied
+through environment variables when needed.
 
 Historical external baseline comparisons remain available under `legacy-*`:
 
