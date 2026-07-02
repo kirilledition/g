@@ -128,6 +128,7 @@ def test_default_local_cache_directory_uses_native_policy(
     cache_directory = runtime_paths.default_local_cache_directory("g-jax-cache")
 
     assert cache_directory == tmp_path / "unknown" / "g-jax-cache"
+    assert not hasattr(_core, "default_local_cache_directory_value")
 
 
 def test_resolve_jax_runtime_setup_defaults_xla_auxiliary_cache_to_disabled() -> None:

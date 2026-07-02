@@ -2155,11 +2155,12 @@ Current implementation notes:
   build that payload through `NativeRuntimeState`.
 - Detached logging policy payload, runtime policy handle, and seeded process
   runtime-state builders were removed from the Python-visible root surface;
-  production now enters those constructors through `NativeRuntimeState`.
+  production now enters those constructors and concise logging policy
+  formatting through `NativeRuntimeState`.
 - The standalone Python-visible default temporary-root helper was removed from
   the root PyO3 surface; tests now exercise native default cache-directory
-  resolution by setting environment inputs, and Python keeps only the concrete
-  default cache-directory adapter.
+  resolution by setting environment inputs, and Python enters the concrete
+  default cache-directory adapter through `NativeRuntimeState`.
 - Detached telemetry dispatch and timing-recorder plan helpers were removed
   from the Python-visible root surface; production now enters those policies
   through native telemetry sessions, telemetry close dispatch, stage timing

@@ -179,6 +179,7 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "configure_bgen_decode_tile_variant_count")
     assert not hasattr(_core, "configure_rayon_global_thread_pool")
     assert not hasattr(_core, "build_default_local_cache_directory_value")
+    assert not hasattr(_core, "default_local_cache_directory_value")
     assert not hasattr(_core, "build_file_content_sha256_value")
     assert not hasattr(_core, "build_current_run_manifest_header_json_from_input_json")
     assert not hasattr(_core, "build_manifest_file_fingerprint_payload")
@@ -1378,6 +1379,7 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
     assert run_runtime.logging_runtime_policy_payload() == logging_policy_payload
     assert run_runtime.jax_runtime_policy_payload() == jax_policy_payload
     assert not hasattr(_core, "build_runtime_policy_handle")
+    assert not hasattr(_core, "describe_logging_runtime_policy_value")
 
     runtime_state.record_jax_runtime_policy({**jax_policy_payload, "cache_directory": "/tmp/first-cache"})
     with pytest.raises(RuntimeError, match="JAX runtime is already configured"):

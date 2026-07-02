@@ -158,6 +158,8 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
                 "module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;",
                 "module.add_function(wrap_pyfunction!(build_process_runtime_state_handle, module)?)?;",
                 "module.add_function(wrap_pyfunction!(build_runtime_policy_handle, module)?)?;",
+                "module.add_function(wrap_pyfunction!(default_local_cache_directory_value, module)?)?;",
+                "module.add_function(wrap_pyfunction!(describe_logging_runtime_policy_value, module)?)?;",
             )
         ),
         encoding="utf-8",
@@ -230,6 +232,18 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
             source_path=Path("src/python/shutdown.rs"),
             export_name="build_runtime_policy_handle",
             line_number=11,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="default_local_cache_directory_value",
+            line_number=12,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="describe_logging_runtime_policy_value",
+            line_number=13,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

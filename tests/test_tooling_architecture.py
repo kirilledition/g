@@ -1485,8 +1485,6 @@ def test_pyo3_stub_checker_scans_delegated_registration_modules() -> None:
     assert Path("src/python/run_engine.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/run_metadata.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/runtime.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/runtime_paths.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/runtime_policy.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/runtime_state.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/sample_alignment.rs") in check_pyo3_stub.RUST_EXPORT_FILES
     assert Path("src/python/schedule.rs") in check_pyo3_stub.RUST_EXPORT_FILES

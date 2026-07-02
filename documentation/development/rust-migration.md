@@ -158,10 +158,10 @@ The detached JAX runtime policy payload builder was also removed from the root
 module; payload construction now goes through `NativeRuntimeState`.
 Detached logging policy payload, runtime policy handle, and seeded process
 runtime-state builders were also removed; those builder calls now go through
-`NativeRuntimeState`.
+`NativeRuntimeState`, as does concise logging policy formatting.
 Default local JAX cache-directory resolution now comes from `g-runtime`; the
 Python runtime-path adapter no longer reads the platform temporary directory or
-current user name itself.
+current user name itself, and enters the policy through `NativeRuntimeState`.
 The injected default local cache-directory builder is no longer a root PyO3
 export; deterministic construction remains covered inside `g-runtime`, and
 Python keeps only the production default-path adapter.

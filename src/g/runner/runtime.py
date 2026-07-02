@@ -296,7 +296,7 @@ def build_runtime_policy(
 def describe_logging_runtime_policy(policy: LoggingRuntimePolicy) -> str:
     """Format a logging runtime policy for concise errors."""
     return str(
-        _core.describe_logging_runtime_policy_value(
+        PROCESS_RUNTIME_STATE.describe_logging_runtime_policy_value(
             policy.log_filter,
             None if policy.log_file is None else str(policy.log_file),
             policy.log_stderr,

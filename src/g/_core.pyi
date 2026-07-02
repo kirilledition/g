@@ -2537,6 +2537,20 @@ class NativeRuntimeState:
     def __init__(self) -> None: ...
     def logging_runtime_policy_payload(self) -> dict[str, object] | None: ...
     def jax_runtime_policy_payload(self) -> dict[str, object] | None: ...
+    def default_local_cache_directory_value(self, directory_name: str) -> str: ...
+    def describe_logging_runtime_policy_value(
+        self,
+        log_filter: str,
+        log_file: str | None,
+        log_stderr: bool,
+        log_queue_size: int,
+        log_lossy: bool,
+        include_source_location: bool,
+        include_span_events: bool,
+        trace_file: str | None,
+        trace_filter: str,
+        trace_event_cap: int | None,
+    ) -> str: ...
     def build_logging_runtime_policy_payload(
         self,
         log_filter: str,
@@ -2783,18 +2797,6 @@ def initialize_output_run_from_values(
     resume_mode: g.types.ResumeMode | str,
     runtime_compatibility_token: NativeRuntimeCompatibilityToken,
 ) -> NativeInitializedOutputRun: ...
-def describe_logging_runtime_policy_value(
-    log_filter: str,
-    log_file: str | None,
-    log_stderr: bool,
-    log_queue_size: int,
-    log_lossy: bool,
-    include_source_location: bool,
-    include_span_events: bool,
-    trace_file: str | None,
-    trace_filter: str,
-    trace_event_cap: int | None,
-) -> str: ...
 def initialize_logging(
     log_filter: str | None = None,
     log_file: str | None = None,
@@ -3257,7 +3259,6 @@ def build_phenotype_compute_group_id_value(
     prediction_alignment_fingerprint: str | None,
 ) -> str: ...
 def build_phenotype_output_directory_name(phenotype_index: int, phenotype_name: str) -> str: ...
-def default_local_cache_directory_value(directory_name: str) -> str: ...
 def record_jax_runtime_diagnostic_event(
     event: object,
     telemetry_session: object | None,

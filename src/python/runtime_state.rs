@@ -8,6 +8,7 @@ use pyo3::types::{PyAny, PyDict, PyModule};
 
 use g_genotype::bgen::set_bgen_decode_tile_variant_count;
 use g_runtime::rayon_runtime as native_rayon_runtime;
+use g_runtime::runtime_paths as native_runtime_paths;
 use g_runtime::runtime_policy as native_runtime_policy;
 use g_runtime::runtime_state as native_runtime_state;
 
@@ -135,6 +136,44 @@ impl NativeRuntimeState {
     fn jax_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         let state = self.lock_state()?;
         state.jax_policy.as_ref().map(|policy| jax_runtime_policy_payload_to_dict(py, policy)).transpose()
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn default_local_cache_directory_value(&self, directory_name: String) -> PyResult<String> {
+        let _state = self.lock_state()?;
+        Ok(native_runtime_paths::default_local_cache_directory(&directory_name).to_string_lossy().into_owned())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn describe_logging_runtime_policy_value(
+        &self,
+        log_filter: String,
+        log_file: Option<String>,
+        log_stderr: bool,
+        log_queue_size: i64,
+        log_lossy: bool,
+        include_source_location: bool,
+        include_span_events: bool,
+        trace_file: Option<String>,
+        trace_filter: String,
+        trace_event_cap: Option<i64>,
+    ) -> PyResult<String> {
+        let _state = self.lock_state()?;
+        Ok(native_runtime_policy::describe_logging_runtime_policy(
+            &native_runtime_policy::LoggingRuntimePolicyPayload {
+                log_filter,
+                log_file,
+                log_stderr,
+                log_queue_size,
+                log_lossy,
+                include_source_location,
+                include_span_events,
+                trace_file,
+                trace_filter,
+                trace_event_cap,
+            },
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]

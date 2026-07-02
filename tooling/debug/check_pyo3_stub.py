@@ -36,8 +36,6 @@ RUST_EXPORT_FILES = (
     Path("src/python/run_engine.rs"),
     Path("src/python/run_metadata.rs"),
     Path("src/python/runtime.rs"),
-    Path("src/python/runtime_paths.rs"),
-    Path("src/python/runtime_policy.rs"),
     Path("src/python/runtime_state.rs"),
     Path("src/python/sample_alignment.rs"),
     Path("src/python/schedule.rs"),
