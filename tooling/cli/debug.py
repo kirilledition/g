@@ -14,6 +14,7 @@ from tooling.debug import (
     check_internal_defaults,
     check_internal_init_exports,
     check_justfile,
+    check_native_cli_frontend,
     check_pyo3_stub,
     check_python_architecture,
     check_rust_architecture,
@@ -32,6 +33,7 @@ class DebugToolName(enum.StrEnum):
     CHECK_INTERNAL_DEFAULTS = "check_internal_defaults"
     CHECK_INTERNAL_INIT_EXPORTS = "check_internal_init_exports"
     CHECK_JUSTFILE = "check_justfile"
+    CHECK_NATIVE_CLI_FRONTEND = "check_native_cli_frontend"
     CHECK_PYTHON_ARCHITECTURE = "check_python_architecture"
     CHECK_PYO3_STUB = "check_pyo3_stub"
     CHECK_RUST_ARCHITECTURE = "check_rust_architecture"
@@ -117,6 +119,13 @@ def run_check_justfile(arguments: check_justfile.JustfileCheckArguments) -> None
         raise SystemExit(exit_code)
 
 
+def run_check_native_cli_frontend(arguments: check_native_cli_frontend.NativeCliFrontendCheckArguments) -> None:
+    """Run the native CLI frontend parity and startup guardrail."""
+    exit_code = check_native_cli_frontend.run_tool(arguments)
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
 def run_check_rust_architecture(arguments: None) -> None:
     """Run the Rust workspace architecture guardrail."""
     del arguments
@@ -175,6 +184,12 @@ TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
         config_name="debug_check_justfile",
         build_arguments=check_justfile.build_arguments_from_config,
         run=run_check_justfile,
+    ),
+    DebugToolName.CHECK_NATIVE_CLI_FRONTEND.value: tooling_registry.ToolSpec(
+        name=DebugToolName.CHECK_NATIVE_CLI_FRONTEND.value,
+        config_name="debug_check_native_cli_frontend",
+        build_arguments=check_native_cli_frontend.build_arguments_from_config,
+        run=run_check_native_cli_frontend,
     ),
     DebugToolName.CHECK_RUST_ARCHITECTURE.value: tooling_registry.ToolSpec(
         name=DebugToolName.CHECK_RUST_ARCHITECTURE.value,

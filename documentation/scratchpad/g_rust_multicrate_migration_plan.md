@@ -2385,6 +2385,9 @@ Current implementation notes:
   wall time with Cargo reporting 57.34s; the wheel build completed in 0:41.70
   wall time with Cargo reporting 29.97s. This verifies that adding the
   workspace native CLI package does not disrupt the root PyO3 package build.
+- A lightweight debug checkpoint, `check_native_cli_frontend`, compares the
+  compiled native binary against the Python console bridge for configless help
+  and parse-error paths while recording process startup/help latency medians.
 
 ### Tests
 

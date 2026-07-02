@@ -481,6 +481,7 @@ def test_named_justfile_workflow_configs_compose() -> None:
         "debug_check_internal_init_exports",
         "debug_check_pyo3_stub",
         "debug_check_justfile",
+        "debug_check_native_cli_frontend",
         "debug_schema_check",
     ]
 

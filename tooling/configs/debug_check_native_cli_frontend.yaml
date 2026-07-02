@@ -1,0 +1,10 @@
+tool:
+  name: check_native_cli_frontend
+  native_binary_path: target/dev-fast/g
+  python_executable_path: null
+  trial_count: 5
+  warmup_count: 1
+
+hydra:
+  job:
+    chdir: false
