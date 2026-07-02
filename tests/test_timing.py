@@ -277,38 +277,7 @@ def test_build_stage_timing_recorder_is_opt_in(tmp_path: Path) -> None:
     assert timing.should_collect_exact_stage_timings(exact_recorder)
 
 
-def test_native_stage_timing_recorder_and_file_write_plans() -> None:
-    disabled_recorder_plan = _core.plan_stage_timing_recorder(
-        stage_timing_path_configured=False,
-        force=False,
-    )
-    aggregate_recorder_plan = _core.plan_stage_timing_recorder(
-        stage_timing_path_configured=False,
-        force=True,
-    )
-    exact_recorder_plan = _core.plan_stage_timing_recorder(
-        stage_timing_path_configured=True,
-        force=False,
-    )
-    write_plan = _core.plan_timing_file_write(
-        has_stage_timing_recorder=True,
-        path_configured=True,
-    )
-    disabled_write_plan = _core.plan_timing_file_write(
-        has_stage_timing_recorder=True,
-        path_configured=False,
-    )
-
-    assert isinstance(disabled_recorder_plan, _core.NativeStageTimingRecorderPlan)
-    assert disabled_recorder_plan.should_create is False
-    assert disabled_recorder_plan.exact_stage_timings is False
-    assert aggregate_recorder_plan.should_create is True
-    assert aggregate_recorder_plan.exact_stage_timings is False
-    assert exact_recorder_plan.should_create is True
-    assert exact_recorder_plan.exact_stage_timings is True
-    assert isinstance(write_plan, _core.NativeTimingFileWritePlan)
-    assert write_plan.should_write is True
-    assert disabled_write_plan.should_write is False
+def test_native_stage_timing_recorder_from_config_uses_native_policy() -> None:
     assert (
         _core.NativeStageTimingRecorder.from_config(
             stage_timing_path_configured=False,

@@ -31,21 +31,6 @@ pub struct NativeTelemetryProgressThrottle {
 }
 
 #[pyclass]
-pub struct NativeTelemetryEventEmissionPlan {
-    inner: native_telemetry_session::TelemetryEventEmissionPlan,
-}
-
-#[pyclass]
-pub struct NativeTelemetryProgressEmissionPlan {
-    inner: native_telemetry_session::TelemetryProgressEmissionPlan,
-}
-
-#[pyclass]
-pub struct NativeTelemetryClosePlan {
-    inner: native_telemetry_session::TelemetryClosePlan,
-}
-
-#[pyclass]
 pub struct NativeTelemetryRunSession {
     progress_start_time: Instant,
     state: Mutex<native_telemetry_session::TelemetryRunSessionState>,
@@ -70,60 +55,6 @@ impl NativeTelemetryProgressThrottle {
         let mut state =
             self.state.lock().map_err(|_| PyRuntimeError::new_err("Telemetry progress mutex was poisoned."))?;
         Ok(state.should_emit_progress_at(processed_chunk_count, current_time_seconds))
-    }
-}
-
-#[pymethods]
-impl NativeTelemetryEventEmissionPlan {
-    #[getter]
-    fn should_emit(&self) -> bool {
-        self.inner.should_emit
-    }
-}
-
-#[pymethods]
-impl NativeTelemetryProgressEmissionPlan {
-    #[getter]
-    fn should_emit(&self) -> bool {
-        self.inner.should_emit
-    }
-
-    #[getter]
-    fn event_name(&self) -> &str {
-        &self.inner.event_name
-    }
-
-    #[getter]
-    fn level(&self) -> &str {
-        &self.inner.level
-    }
-}
-
-#[pymethods]
-impl NativeTelemetryClosePlan {
-    #[getter]
-    fn should_close(&self) -> bool {
-        self.inner.should_close
-    }
-
-    #[getter]
-    fn use_native_close_with_event(&self) -> bool {
-        self.inner.use_native_close_with_event
-    }
-
-    #[getter]
-    fn should_emit_legacy_close_event(&self) -> bool {
-        self.inner.should_emit_legacy_close_event
-    }
-
-    #[getter]
-    fn legacy_close_event_name(&self) -> &str {
-        &self.inner.legacy_close_event_name
-    }
-
-    #[getter]
-    fn legacy_close_event_level(&self) -> &str {
-        &self.inner.legacy_close_event_level
     }
 }
 
@@ -903,54 +834,6 @@ impl NativeTelemetryRunSession {
     }
 }
 
-impl From<native_telemetry_session::TelemetryEventEmissionPlan> for NativeTelemetryEventEmissionPlan {
-    fn from(emission_plan: native_telemetry_session::TelemetryEventEmissionPlan) -> Self {
-        Self { inner: emission_plan }
-    }
-}
-
-impl From<native_telemetry_session::TelemetryProgressEmissionPlan> for NativeTelemetryProgressEmissionPlan {
-    fn from(emission_plan: native_telemetry_session::TelemetryProgressEmissionPlan) -> Self {
-        Self { inner: emission_plan }
-    }
-}
-
-impl From<native_telemetry_session::TelemetryClosePlan> for NativeTelemetryClosePlan {
-    fn from(close_plan: native_telemetry_session::TelemetryClosePlan) -> Self {
-        Self { inner: close_plan }
-    }
-}
-
-#[pyfunction]
-pub fn plan_telemetry_event_emission(
-    telemetry_enabled: bool,
-    has_native_telemetry_session: bool,
-) -> NativeTelemetryEventEmissionPlan {
-    native_telemetry_session::plan_telemetry_event_emission(telemetry_enabled, has_native_telemetry_session).into()
-}
-
-#[pyfunction]
-pub fn plan_telemetry_progress_emission(
-    telemetry_enabled: bool,
-    has_native_telemetry_session: bool,
-    should_emit_progress: bool,
-) -> NativeTelemetryProgressEmissionPlan {
-    native_telemetry_session::plan_telemetry_progress_emission(
-        telemetry_enabled,
-        has_native_telemetry_session,
-        should_emit_progress,
-    )
-    .into()
-}
-
-#[pyfunction]
-pub fn plan_telemetry_close(
-    has_telemetry_session: bool,
-    is_native_telemetry_session: bool,
-) -> NativeTelemetryClosePlan {
-    native_telemetry_session::plan_telemetry_close(has_telemetry_session, is_native_telemetry_session).into()
-}
-
 #[pyfunction]
 pub fn close_telemetry_session_with_event(py: Python<'_>, telemetry_session: &Bound<'_, PyAny>) -> PyResult<()> {
     if telemetry_session.is_none() {
@@ -1256,16 +1139,10 @@ pub fn shutdown_logging() -> PyResult<()> {
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeTelemetryClosePlan>()?;
-    module.add_class::<NativeTelemetryEventEmissionPlan>()?;
-    module.add_class::<NativeTelemetryProgressEmissionPlan>()?;
     module.add_class::<NativeTelemetryProgressThrottle>()?;
     module.add_class::<NativeTelemetryRunSession>()?;
     module.add_class::<NativeTelemetrySession>()?;
     module.add_function(wrap_pyfunction!(close_telemetry_session_with_event, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_telemetry_close, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_telemetry_event_emission, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_telemetry_progress_emission, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
     module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
     Ok(())

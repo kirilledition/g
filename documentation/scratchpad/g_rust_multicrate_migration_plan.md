@@ -2071,6 +2071,14 @@ Current implementation notes:
   and setup side-effect payloads were removed from the Python-visible handle;
   production now uses the typed setup execution, GPU validation, and diagnostic
   methods on the native session.
+- The standalone Python-visible default temporary-root helper was removed from
+  the root PyO3 surface; tests now exercise native default cache-directory
+  resolution by setting environment inputs, and Python keeps only the concrete
+  default cache-directory adapter.
+- Detached telemetry dispatch and timing-recorder plan helpers were removed
+  from the Python-visible root surface; production now enters those policies
+  through native telemetry sessions, telemetry close dispatch, stage timing
+  recorder construction, and final timing output methods.
 
 ### Tests
 

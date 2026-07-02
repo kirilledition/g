@@ -20,39 +20,8 @@ pub(crate) struct NativeStageTimingRecorder {
 }
 
 #[pyclass]
-pub(crate) struct NativeStageTimingRecorderPlan {
-    inner: native_timing::StageTimingRecorderPlan,
-}
-
-#[pyclass]
-pub(crate) struct NativeTimingFileWritePlan {
-    inner: native_timing::TimingFileWritePlan,
-}
-
-#[pyclass]
 pub(crate) struct NativeFinalTimingOutputContext {
     inner: native_timing::FinalTimingOutputContext,
-}
-
-#[pymethods]
-impl NativeStageTimingRecorderPlan {
-    #[getter]
-    fn should_create(&self) -> bool {
-        self.inner.should_create
-    }
-
-    #[getter]
-    fn exact_stage_timings(&self) -> bool {
-        self.inner.exact_stage_timings
-    }
-}
-
-#[pymethods]
-impl NativeTimingFileWritePlan {
-    #[getter]
-    fn should_write(&self) -> bool {
-        self.inner.should_write
-    }
 }
 
 #[pymethods]
@@ -293,26 +262,6 @@ impl NativeStageTimingRecorder {
 }
 
 #[pyfunction]
-pub(crate) fn plan_stage_timing_recorder(
-    stage_timing_path_configured: bool,
-    force: bool,
-) -> NativeStageTimingRecorderPlan {
-    NativeStageTimingRecorderPlan {
-        inner: native_timing::plan_stage_timing_recorder(stage_timing_path_configured, force),
-    }
-}
-
-#[pyfunction]
-pub(crate) fn plan_timing_file_write(
-    has_stage_timing_recorder: bool,
-    path_configured: bool,
-) -> NativeTimingFileWritePlan {
-    NativeTimingFileWritePlan {
-        inner: native_timing::plan_timing_file_write(has_stage_timing_recorder, path_configured),
-    }
-}
-
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn resolve_final_timing_output_context(
     diagnostics_stage_timing_path: Option<String>,
@@ -360,11 +309,7 @@ pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeFinalTimingOutputContext>()?;
     module.add_class::<NativeStageTimingRecorder>()?;
-    module.add_class::<NativeStageTimingRecorderPlan>()?;
-    module.add_class::<NativeTimingFileWritePlan>()?;
     module.add_function(wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_stage_timing_recorder, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_timing_file_write, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_final_timing_output_context, module)?)?;
     Ok(())
 }

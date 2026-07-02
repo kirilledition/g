@@ -103,12 +103,18 @@ def test_resolve_jax_cache_uses_explicit_config_path(monkeypatch: pytest.MonkeyP
     assert report.cache_directory == Path("~/custom/g/cache").expanduser()
 
 
-def test_resolve_jax_cache_uses_fallback() -> None:
+def test_resolve_jax_cache_uses_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Ensure fallback uses a local temporary cache path when no config path is set."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("LOGNAME", raising=False)
+
     report = resolution.resolve_jax_runtime_setup(build_runtime_policy())
 
-    assert report.cache_directory.parent.parent == runtime_paths.DEFAULT_LOCAL_TEMPORARY_ROOT
-    assert report.cache_directory.name == "g-jax-cache"
+    assert report.cache_directory == tmp_path / "unknown" / "g-jax-cache"
 
 
 def test_default_local_cache_directory_uses_native_policy(
@@ -127,7 +133,7 @@ def test_default_local_cache_directory_uses_native_policy(
 def test_resolve_jax_runtime_setup_defaults_xla_auxiliary_cache_to_disabled() -> None:
     """Ensure XLA auxiliary caches are opt-in."""
     report = resolution.resolve_jax_runtime_setup(
-        build_runtime_policy(cache_directory=runtime_paths.DEFAULT_LOCAL_TEMPORARY_ROOT / "mockuser" / "g-jax-cache")
+        build_runtime_policy(cache_directory=Path("/tmp/mockuser/g-jax-cache"))
     )
 
     assert report.xla_auxiliary_cache_mode == models.XlaAuxiliaryCacheMode.DISABLED
@@ -138,7 +144,7 @@ def test_resolve_jax_runtime_setup_disables_xla_auxiliary_cache_without_persiste
     """Ensure XLA auxiliary caches require the persistent compilation cache."""
     report = resolution.resolve_jax_runtime_setup(
         build_runtime_policy(
-            cache_directory=runtime_paths.DEFAULT_LOCAL_TEMPORARY_ROOT / "mockuser" / "g-jax-cache",
+            cache_directory=Path("/tmp/mockuser/g-jax-cache"),
             persistent_cache=False,
             xla_autotune_cache=True,
         )

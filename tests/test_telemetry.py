@@ -428,19 +428,6 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     profile_session.close()
     trace_policy = _core.NativeTelemetrySessionPolicy("trace", 10)
     disabled_trace_cap_policy = _core.NativeTelemetrySessionPolicy("trace", 0)
-    event_emission_plan = _core.plan_telemetry_event_emission(
-        telemetry_enabled=True,
-        has_native_telemetry_session=True,
-    )
-    disabled_event_emission_plan = _core.plan_telemetry_event_emission(
-        telemetry_enabled=True,
-        has_native_telemetry_session=False,
-    )
-    progress_emission_plan = _core.plan_telemetry_progress_emission(
-        telemetry_enabled=True,
-        has_native_telemetry_session=True,
-        should_emit_progress=True,
-    )
 
     assert trace_policy.enabled
     assert trace_policy.profile_enabled
@@ -448,33 +435,6 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     assert disabled_trace_cap_policy.enabled
     assert disabled_trace_cap_policy.profile_enabled
     assert disabled_trace_cap_policy.event_cap is None
-    assert event_emission_plan.should_emit is True
-    assert disabled_event_emission_plan.should_emit is False
-    assert progress_emission_plan.should_emit is True
-    assert progress_emission_plan.event_name == "progress_tick"
-    assert progress_emission_plan.level == "info"
-    native_close_plan = _core.plan_telemetry_close(
-        has_telemetry_session=True,
-        is_native_telemetry_session=True,
-    )
-    non_native_close_plan = _core.plan_telemetry_close(
-        has_telemetry_session=True,
-        is_native_telemetry_session=False,
-    )
-    disabled_close_plan = _core.plan_telemetry_close(
-        has_telemetry_session=False,
-        is_native_telemetry_session=False,
-    )
-    assert isinstance(native_close_plan, _core.NativeTelemetryClosePlan)
-    assert native_close_plan.should_close is True
-    assert native_close_plan.use_native_close_with_event is True
-    assert native_close_plan.should_emit_legacy_close_event is False
-    assert native_close_plan.legacy_close_event_name == "telemetry_session_closed"
-    assert native_close_plan.legacy_close_event_level == "debug"
-    assert non_native_close_plan.should_close is False
-    assert non_native_close_plan.use_native_close_with_event is False
-    assert non_native_close_plan.should_emit_legacy_close_event is False
-    assert disabled_close_plan.should_close is False
     assert isinstance(off_session.native_session_handle, _core.NativeTelemetryRunSession)
     assert not off_session.enabled
     assert not off_session.profile_enabled

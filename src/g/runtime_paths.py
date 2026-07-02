@@ -6,8 +6,6 @@ from pathlib import Path
 
 from g import _core
 
-DEFAULT_LOCAL_TEMPORARY_ROOT = Path(_core.default_local_temporary_root_value())
-
 
 def default_local_cache_directory(directory_name: str) -> Path:
     """Build a default cache directory under the platform temporary directory.

@@ -768,30 +768,6 @@ class NativeTelemetryRunSession:
     def finish_close_metadata(self) -> dict[str, object] | None: ...
     def finish_with_current_close_event_metadata(self) -> dict[str, object] | None: ...
 
-class NativeTelemetryEventEmissionPlan:
-    @property
-    def should_emit(self) -> bool: ...
-
-class NativeTelemetryProgressEmissionPlan:
-    @property
-    def should_emit(self) -> bool: ...
-    @property
-    def event_name(self) -> str: ...
-    @property
-    def level(self) -> str: ...
-
-class NativeTelemetryClosePlan:
-    @property
-    def should_close(self) -> bool: ...
-    @property
-    def use_native_close_with_event(self) -> bool: ...
-    @property
-    def should_emit_legacy_close_event(self) -> bool: ...
-    @property
-    def legacy_close_event_name(self) -> str: ...
-    @property
-    def legacy_close_event_level(self) -> str: ...
-
 class NativeTelemetrySessionPolicy:
     def __init__(self, telemetry_mode: str, trace_event_cap: int) -> None: ...
     @property
@@ -2466,13 +2442,6 @@ class NativeStageTimingRecorder:
         run_id: str | None,
     ) -> dict[str, bool]: ...
 
-class NativeStageTimingRecorderPlan:
-    should_create: bool
-    exact_stage_timings: bool
-
-class NativeTimingFileWritePlan:
-    should_write: bool
-
 class NativeFinalTimingOutputContext:
     stage_timing_path: str | None
     profile_summary_path: str | None
@@ -3279,7 +3248,6 @@ def build_jax_runtime_policy_payload(
     transfer_guard: bool,
 ) -> dict[str, object]: ...
 def default_local_cache_directory_value(directory_name: str) -> str: ...
-def default_local_temporary_root_value() -> str: ...
 def record_jax_runtime_diagnostic_event(
     event: object,
     telemetry_session: object | None,
@@ -3498,28 +3466,7 @@ def plan_bgen_delivery_cleanup(
     cleanup_outcome: str,
     callback_finished: bool,
 ) -> NativeBgenDeliveryCleanupPlan: ...
-def plan_telemetry_close(
-    has_telemetry_session: bool,
-    is_native_telemetry_session: bool,
-) -> NativeTelemetryClosePlan: ...
 def close_telemetry_session_with_event(telemetry_session: object | None) -> None: ...
-def plan_telemetry_event_emission(
-    telemetry_enabled: bool,
-    has_native_telemetry_session: bool,
-) -> NativeTelemetryEventEmissionPlan: ...
-def plan_telemetry_progress_emission(
-    telemetry_enabled: bool,
-    has_native_telemetry_session: bool,
-    should_emit_progress: bool,
-) -> NativeTelemetryProgressEmissionPlan: ...
-def plan_stage_timing_recorder(
-    stage_timing_path_configured: bool,
-    force: bool,
-) -> NativeStageTimingRecorderPlan: ...
-def plan_timing_file_write(
-    has_stage_timing_recorder: bool,
-    path_configured: bool,
-) -> NativeTimingFileWritePlan: ...
 def record_final_timing_outputs_write_started_diagnostic_event(
     stage_timing_path: str | None,
     profile_summary_path: str | None,
