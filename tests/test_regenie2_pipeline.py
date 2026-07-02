@@ -1235,7 +1235,7 @@ def test_write_regenie2_native_chunk_uses_native_output_write_plan(monkeypatch: 
         write_plan_calls.append(kwargs)
         return SimpleNamespace(method_name="write_regenie2_native_chunk", uses_float64_native_writer=False)
 
-    monkeypatch.setattr(callback_writers._core, "plan_single_trait_output_write", plan_single_trait_output_write)
+    monkeypatch.setattr(callback_writers, "plan_single_trait_output_write", plan_single_trait_output_write)
 
     callback_writers.write_regenie2_native_chunk_with_optional_timing(
         writer_session=writer_session,
@@ -1250,7 +1250,12 @@ def test_write_regenie2_native_chunk_uses_native_output_write_plan(monkeypatch: 
         output_statistic_dtype=types.FloatingPointDtype.FLOAT64,
     )
 
-    assert write_plan_calls == [{"is_native_writer_session": False, "output_statistic_dtype": "float64"}]
+    assert write_plan_calls == [
+        {
+            "is_native_writer_session": False,
+            "output_statistic_dtype": types.FloatingPointDtype.FLOAT64,
+        }
+    ]
     assert len(writer_session.native_chunks) == 1
 
 
@@ -1668,17 +1673,17 @@ def test_run_bgen_engine_with_writer_sessions_records_native_delivery_diagnostic
 
 
 def test_plan_output_write_methods_use_native_cleanup_policy() -> None:
-    single_write_plan = callback_writers._core.plan_single_trait_output_write(
+    single_write_plan = callback_writers.plan_single_trait_output_write(
         is_native_writer_session=True,
-        output_statistic_dtype="float64",
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT64,
     )
     assert single_write_plan.method_name == "write_regenie2_native_chunk_f64"
     assert single_write_plan.uses_float64_native_writer is True
 
-    multi_write_plan = callback_writers._core.plan_multi_trait_output_write(
+    multi_write_plan = callback_writers.plan_multi_trait_output_write(
         active_trait_count=2,
         all_writer_sessions_native=True,
-        output_statistic_dtype="float64",
+        output_statistic_dtype=types.FloatingPointDtype.FLOAT64,
     )
     assert multi_write_plan.active_trait_count == 2
     assert multi_write_plan.use_native_multi_writer is True
@@ -1765,7 +1770,7 @@ def test_write_regenie2_multi_native_chunk_uses_native_output_write_plan(monkeyp
             uses_float64_native_writer=False,
         )
 
-    monkeypatch.setattr(callback_writers._core, "plan_multi_trait_output_write", plan_multi_trait_output_write)
+    monkeypatch.setattr(callback_writers, "plan_multi_trait_output_write", plan_multi_trait_output_write)
 
     callback_writers.write_regenie2_multi_native_chunk_with_optional_timing(
         writer_sessions=writer_sessions,
@@ -1785,7 +1790,7 @@ def test_write_regenie2_multi_native_chunk_uses_native_output_write_plan(monkeyp
         {
             "active_trait_count": 2,
             "all_writer_sessions_native": False,
-            "output_statistic_dtype": "float32",
+            "output_statistic_dtype": types.FloatingPointDtype.FLOAT32,
         }
     ]
     assert tuple(len(writer_session.native_chunks) for writer_session in writer_sessions) == (1, 1)
@@ -13430,11 +13435,18 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
 
 
 def test_grouped_union_delivery_uses_native_callback_batch_size_policy() -> None:
+    resolver_calls: list[dict[str, int]] = []
+
+    class FailingSchedulePolicy:
+        def resolve_grouped_union_callback_batch_size(self, *, native_callback_batch_size: int) -> int:
+            resolver_calls.append({"native_callback_batch_size": native_callback_batch_size})
+            raise ValueError("native grouped union policy")
+
     with (
         patch(
-            "g.engine.regenie2_pipeline.grouped._core.resolve_grouped_union_callback_batch_size",
-            side_effect=ValueError("native grouped union policy"),
-        ) as mock_resolver,
+            "g.engine.regenie2_pipeline.grouped.native_schedule_policy",
+            return_value=FailingSchedulePolicy(),
+        ) as mock_policy_factory,
         pytest.raises(ValueError, match="native grouped union policy"),
     ):
         pipeline_grouped.run_prepared_grouped_per_phenotype_union_bgen_pipeline(
@@ -13453,7 +13465,8 @@ def test_grouped_union_delivery_uses_native_callback_batch_size_policy() -> None
             null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.FAIL,
         )
 
-    mock_resolver.assert_called_once_with(native_callback_batch_size=2)
+    mock_policy_factory.assert_called_once_with()
+    assert resolver_calls == [{"native_callback_batch_size": 2}]
 
 
 def test_grouped_per_phenotype_packed8_forces_trusted_delivery_and_manifests() -> None:

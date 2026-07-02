@@ -2279,6 +2279,82 @@ class NativeMultiTraitOutputWritePlan:
     @property
     def uses_float64_native_writer(self) -> bool: ...
 
+class NativeSchedulePolicy:
+    def __init__(self) -> None: ...
+    def intersect_committed_chunk_identifier_sets(
+        self,
+        committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
+    ) -> list[int]: ...
+    def resolve_delivery_callback_batch_size(
+        self,
+        callback_batch_size: int | None,
+        variant_major_packed8_probability_pairs: bool,
+    ) -> int: ...
+    def resolve_grouped_union_callback_batch_size(self, native_callback_batch_size: int) -> int: ...
+    def resolve_manifest_gpu_genotype_format(
+        self,
+        resume: bool,
+        manifest_gpu_genotype_format: str | None,
+        association_backend_genotype_format: str | None,
+    ) -> str | None: ...
+    def resolve_effective_trusted_no_missing_diploid(
+        self,
+        requested_trusted_no_missing_diploid: bool,
+        variant_major_packed8_probability_pairs: bool,
+    ) -> bool: ...
+    def plan_gpu_genotype_format_auto_to_dosage(
+        self,
+        requested_gpu_genotype_format: str,
+        resolution_reason: str,
+    ) -> NativeGpuGenotypeFormatResolutionPlan: ...
+    def plan_single_trait_binary_gpu_genotype_format_resolution(
+        self,
+        requested_gpu_genotype_format: str,
+        manifest_gpu_genotype_format: str | None,
+        association_backend_genotype_format: str | None,
+        resume: bool,
+        jax_device: str,
+    ) -> NativeGpuGenotypeFormatResolutionPlan: ...
+    def plan_auto_gpu_genotype_format_after_trusted_validation(
+        self,
+        fallback_error: str | None,
+    ) -> NativeGpuGenotypeFormatResolutionPlan: ...
+    def plan_multi_trait_chunk_write(
+        self,
+        writer_session_count: int,
+        chunk_identifier: int,
+        committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
+    ) -> NativeMultiTraitChunkWritePlan: ...
+    def resolve_writer_finish_thread_count(self, writer_session_count: int, requested_thread_count: int) -> int: ...
+    def plan_writer_finish_execution(
+        self,
+        writer_session_count: int,
+        requested_thread_count: int,
+    ) -> NativeWriterFinishExecutionPlan: ...
+    def plan_bgen_delivery_cleanup(
+        self,
+        cleanup_outcome: str,
+        callback_finished: bool,
+    ) -> NativeBgenDeliveryCleanupPlan: ...
+    def plan_bgen_delivery_invocation(
+        self,
+        callback_batch_size: int | None,
+        variant_major_packed8_probability_pairs: bool,
+        has_native_multi_aligned_sample_data: bool,
+        has_native_aligned_sample_data: bool,
+    ) -> NativeBgenDeliveryInvocationPlan: ...
+    def plan_single_trait_output_write(
+        self,
+        is_native_writer_session: bool,
+        output_statistic_dtype: str,
+    ) -> NativeSingleTraitOutputWritePlan: ...
+    def plan_multi_trait_output_write(
+        self,
+        active_trait_count: int,
+        all_writer_sessions_native: bool,
+        output_statistic_dtype: str,
+    ) -> NativeMultiTraitOutputWritePlan: ...
+
 class NativeCallbackWorkerLifecycleState:
     def __init__(self) -> None: ...
     @property
@@ -3369,83 +3445,23 @@ class NativePreflightValidator:
         trait_count: int,
         sample_count: int,
     ) -> None: ...
-def intersect_committed_chunk_identifier_sets(
-    committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
-) -> list[int]: ...
 def build_callback_chunk_identity(
     chromosome: str,
     variant_start_index: int,
     variant_stop_index: int,
 ) -> NativeCallbackChunkIdentity: ...
-def resolve_delivery_callback_batch_size(
-    callback_batch_size: int | None,
-    variant_major_packed8_probability_pairs: bool,
-) -> int: ...
-def resolve_grouped_union_callback_batch_size(native_callback_batch_size: int) -> int: ...
 def plan_null_logistic_nonconvergence_from_array(
     chromosome: str,
     convergence_values: object,
     phenotype_names: typing.Sequence[str] | None,
     policy: str,
 ) -> NativeNullLogisticNonconvergencePlan: ...
-def resolve_manifest_gpu_genotype_format(
-    resume: bool,
-    manifest_gpu_genotype_format: str | None,
-    association_backend_genotype_format: str | None,
-) -> str | None: ...
-def resolve_effective_trusted_no_missing_diploid(
-    requested_trusted_no_missing_diploid: bool,
-    variant_major_packed8_probability_pairs: bool,
-) -> bool: ...
-def plan_gpu_genotype_format_auto_to_dosage(
-    requested_gpu_genotype_format: str,
-    resolution_reason: str,
-) -> NativeGpuGenotypeFormatResolutionPlan: ...
-def plan_single_trait_binary_gpu_genotype_format_resolution(
-    requested_gpu_genotype_format: str,
-    manifest_gpu_genotype_format: str | None,
-    association_backend_genotype_format: str | None,
-    resume: bool,
-    jax_device: str,
-) -> NativeGpuGenotypeFormatResolutionPlan: ...
-def plan_auto_gpu_genotype_format_after_trusted_validation(
-    fallback_error: str | None,
-) -> NativeGpuGenotypeFormatResolutionPlan: ...
-def plan_multi_trait_chunk_write(
-    writer_session_count: int,
-    chunk_identifier: int,
-    committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
-) -> NativeMultiTraitChunkWritePlan: ...
-def resolve_writer_finish_thread_count(writer_session_count: int, requested_thread_count: int) -> int: ...
-def plan_writer_finish_execution(
-    writer_session_count: int,
-    requested_thread_count: int,
-) -> NativeWriterFinishExecutionPlan: ...
-def plan_bgen_delivery_cleanup(
-    cleanup_outcome: str,
-    callback_finished: bool,
-) -> NativeBgenDeliveryCleanupPlan: ...
 def close_telemetry_session_with_event(telemetry_session: object | None) -> None: ...
 def record_final_timing_outputs_write_started_diagnostic_event(
     stage_timing_path: str | None,
     profile_summary_path: str | None,
     run_id: str | None,
 ) -> None: ...
-def plan_bgen_delivery_invocation(
-    callback_batch_size: int | None,
-    variant_major_packed8_probability_pairs: bool,
-    has_native_multi_aligned_sample_data: bool,
-    has_native_aligned_sample_data: bool,
-) -> NativeBgenDeliveryInvocationPlan: ...
-def plan_single_trait_output_write(
-    is_native_writer_session: bool,
-    output_statistic_dtype: str,
-) -> NativeSingleTraitOutputWritePlan: ...
-def plan_multi_trait_output_write(
-    active_trait_count: int,
-    all_writer_sessions_native: bool,
-    output_statistic_dtype: str,
-) -> NativeMultiTraitOutputWritePlan: ...
 class NativePipelineOutputInitialization:
     @property
     def output_count(self) -> int: ...

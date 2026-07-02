@@ -49,7 +49,9 @@ def finish_writer_session(
 
 def resolve_writer_finish_thread_count(writer_session_count: int, requested_thread_count: int) -> int:
     """Return the bounded number of threads used to finish writer sessions."""
-    return int(_core.resolve_writer_finish_thread_count(writer_session_count, requested_thread_count))
+    return int(
+        native_schedule_policy().resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)
+    )
 
 
 def plan_writer_finish_execution(
@@ -57,7 +59,12 @@ def plan_writer_finish_execution(
     requested_thread_count: int,
 ) -> _core.NativeWriterFinishExecutionPlan:
     """Return the native writer-finish execution plan."""
-    return _core.plan_writer_finish_execution(writer_session_count, requested_thread_count)
+    return native_schedule_policy().plan_writer_finish_execution(writer_session_count, requested_thread_count)
+
+
+def native_schedule_policy() -> _core.NativeSchedulePolicy:
+    """Build the native schedule policy handle."""
+    return _core.NativeSchedulePolicy()
 
 
 def finish_writer_session_to_path(writer_session: typing.Any) -> Path | None:

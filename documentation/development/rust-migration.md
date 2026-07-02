@@ -206,6 +206,11 @@ adapter over NumPy buffers before calling `g-engine` policy helpers. Python
 preflight no longer uses `np.isfinite`, `np.linalg.matrix_rank`, `np.unique`,
 or `np.count_nonzero` for those production checks, and the Python architecture
 checker guards against reintroducing them in `g.engine.preflight`.
+Schedule policy helpers for GPU genotype-format resolution, effective trusted
+BGEN mode, delivery callback batch sizes, grouped-union validation,
+committed-chunk intersection, writer-finish planning, BGEN delivery
+invocation/cleanup, and output-write method selection now enter through the
+typed `NativeSchedulePolicy` handle instead of detached root `_core` functions.
 Preflight chromosome collection now requires the native engine
 `required_chromosomes` API directly; the old Python metadata-slice collection
 fallback has been removed.

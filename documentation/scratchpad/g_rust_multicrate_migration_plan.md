@@ -2212,6 +2212,12 @@ Current implementation notes:
   worker shutdown defaults, stop-attempt policy, and BGEN delivery-method
   selection were also removed from the Python-visible root surface; equivalent
   behavior is covered through typed native scheduler state and delivery plans.
+- Remaining detached schedule policy helpers for GPU genotype-format
+  resolution, effective trusted BGEN mode, delivery callback sizing,
+  grouped-union validation, committed-chunk intersection, writer-finish
+  planning, BGEN delivery invocation/cleanup, and output-write method selection
+  were removed from the Python-visible root surface; production enters those
+  policies through `NativeSchedulePolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

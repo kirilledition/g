@@ -257,9 +257,24 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "resolve_bgen_delivery_method_value",
         "resolve_callback_worker_backpressure_poll_timeout_seconds",
         "resolve_callback_worker_stop_poll_timeout_seconds",
+        "resolve_delivery_callback_batch_size",
+        "resolve_effective_trusted_no_missing_diploid",
+        "resolve_grouped_union_callback_batch_size",
+        "resolve_manifest_gpu_genotype_format",
         "resolve_native_callback_queue_limits",
         "resolve_native_callback_worker_shutdown_timeouts",
+        "resolve_writer_finish_thread_count",
         "should_attempt_callback_worker_stop",
+        "intersect_committed_chunk_identifier_sets",
+        "plan_auto_gpu_genotype_format_after_trusted_validation",
+        "plan_bgen_delivery_cleanup",
+        "plan_bgen_delivery_invocation",
+        "plan_gpu_genotype_format_auto_to_dosage",
+        "plan_multi_trait_chunk_write",
+        "plan_multi_trait_output_write",
+        "plan_single_trait_binary_gpu_genotype_format_resolution",
+        "plan_single_trait_output_write",
+        "plan_writer_finish_execution",
         "validate_pipeline_resume_compatibility",
     ):
         assert not hasattr(_core, removed_scheduler_export_name)
@@ -289,14 +304,18 @@ def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:
 
 
 def test_intersect_committed_chunk_identifier_sets_returns_sorted_shared_identifiers() -> None:
-    shared_chunk_identifiers = _core.intersect_committed_chunk_identifier_sets(((64, 0, 32), (32, 64, 96), (32, 128)))
+    native_schedule_policy = _core.NativeSchedulePolicy()
+    shared_chunk_identifiers = native_schedule_policy.intersect_committed_chunk_identifier_sets(
+        ((64, 0, 32), (32, 64, 96), (32, 128))
+    )
 
     assert shared_chunk_identifiers == [32]
-    assert _core.intersect_committed_chunk_identifier_sets(()) == []
+    assert native_schedule_policy.intersect_committed_chunk_identifier_sets(()) == []
 
 
 def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> None:
-    write_plan = _core.plan_multi_trait_chunk_write(
+    native_schedule_policy = _core.NativeSchedulePolicy()
+    write_plan = native_schedule_policy.plan_multi_trait_chunk_write(
         writer_session_count=3,
         chunk_identifier=32,
         committed_chunk_identifier_sets=((0,), (32,), (64,)),
@@ -306,7 +325,7 @@ def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> No
     assert write_plan.active_trait_count == 2
     assert write_plan.all_traits_committed is False
 
-    committed_write_plan = _core.plan_multi_trait_chunk_write(
+    committed_write_plan = native_schedule_policy.plan_multi_trait_chunk_write(
         writer_session_count=2,
         chunk_identifier=32,
         committed_chunk_identifier_sets=((32,), (0, 32)),
@@ -316,7 +335,7 @@ def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> No
     assert committed_write_plan.all_traits_committed is True
 
     with pytest.raises(ValueError, match="Committed chunk identifier set count"):
-        _core.plan_multi_trait_chunk_write(
+        native_schedule_policy.plan_multi_trait_chunk_write(
             writer_session_count=2,
             chunk_identifier=32,
             committed_chunk_identifier_sets=((32,),),
@@ -1269,15 +1288,17 @@ def test_native_pipeline_output_preparation_batch_initializes_outputs(tmp_path: 
 
 
 def test_native_effective_trusted_no_missing_diploid_policy() -> None:
-    assert not _core.resolve_effective_trusted_no_missing_diploid(
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    assert not native_schedule_policy.resolve_effective_trusted_no_missing_diploid(
         requested_trusted_no_missing_diploid=False,
         variant_major_packed8_probability_pairs=False,
     )
-    assert _core.resolve_effective_trusted_no_missing_diploid(
+    assert native_schedule_policy.resolve_effective_trusted_no_missing_diploid(
         requested_trusted_no_missing_diploid=True,
         variant_major_packed8_probability_pairs=False,
     )
-    assert _core.resolve_effective_trusted_no_missing_diploid(
+    assert native_schedule_policy.resolve_effective_trusted_no_missing_diploid(
         requested_trusted_no_missing_diploid=False,
         variant_major_packed8_probability_pairs=True,
     )
@@ -2247,8 +2268,10 @@ def test_native_default_nvidia_driver_probe_paths_payload() -> None:
 
 
 def test_native_gpu_genotype_format_resolution_policy() -> None:
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
     assert (
-        _core.resolve_manifest_gpu_genotype_format(
+        native_schedule_policy.resolve_manifest_gpu_genotype_format(
             resume=True,
             manifest_gpu_genotype_format="packed8",
             association_backend_genotype_format="dosage",
@@ -2256,7 +2279,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
         == "packed8"
     )
     assert (
-        _core.resolve_manifest_gpu_genotype_format(
+        native_schedule_policy.resolve_manifest_gpu_genotype_format(
             resume=True,
             manifest_gpu_genotype_format=None,
             association_backend_genotype_format="dosage",
@@ -2264,7 +2287,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
         == "dosage"
     )
     assert (
-        _core.resolve_manifest_gpu_genotype_format(
+        native_schedule_policy.resolve_manifest_gpu_genotype_format(
             resume=False,
             manifest_gpu_genotype_format="packed8",
             association_backend_genotype_format=None,
@@ -2272,7 +2295,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
         is None
     )
 
-    auto_to_dosage_plan = _core.plan_gpu_genotype_format_auto_to_dosage(
+    auto_to_dosage_plan = native_schedule_policy.plan_gpu_genotype_format_auto_to_dosage(
         requested_gpu_genotype_format="auto",
         resolution_reason="multi_trait_or_linear_pipeline",
     )
@@ -2284,7 +2307,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert auto_to_dosage_plan.is_resolved is True
     assert auto_to_dosage_plan.should_log_auto_resolution is True
 
-    explicit_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+    explicit_plan = native_schedule_policy.plan_single_trait_binary_gpu_genotype_format_resolution(
         requested_gpu_genotype_format="packed8",
         manifest_gpu_genotype_format=None,
         association_backend_genotype_format=None,
@@ -2295,7 +2318,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert explicit_plan.resolution_reason == "explicit"
     assert explicit_plan.should_log_auto_resolution is False
 
-    manifest_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+    manifest_plan = native_schedule_policy.plan_single_trait_binary_gpu_genotype_format_resolution(
         requested_gpu_genotype_format="auto",
         manifest_gpu_genotype_format=None,
         association_backend_genotype_format="dosage",
@@ -2306,7 +2329,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert manifest_plan.resolution_reason == "resume_manifest"
     assert manifest_plan.requires_trusted_validation is False
 
-    validation_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+    validation_plan = native_schedule_policy.plan_single_trait_binary_gpu_genotype_format_resolution(
         requested_gpu_genotype_format="auto",
         manifest_gpu_genotype_format=None,
         association_backend_genotype_format=None,
@@ -2317,11 +2340,11 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert validation_plan.resolution_reason is None
     assert validation_plan.requires_trusted_validation is True
 
-    passed_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(fallback_error=None)
+    passed_plan = native_schedule_policy.plan_auto_gpu_genotype_format_after_trusted_validation(fallback_error=None)
     assert passed_plan.resolved_gpu_genotype_format == "packed8"
     assert passed_plan.resolution_reason == "trusted_validation_passed"
 
-    failed_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(
+    failed_plan = native_schedule_policy.plan_auto_gpu_genotype_format_after_trusted_validation(
         fallback_error="packed8 incompatible",
     )
     assert failed_plan.resolved_gpu_genotype_format == "dosage"
@@ -2329,48 +2352,52 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert failed_plan.fallback_error == "packed8 incompatible"
 
     with pytest.raises(ValueError, match="Unsupported GPU genotype format"):
-        _core.plan_gpu_genotype_format_auto_to_dosage(
+        native_schedule_policy.plan_gpu_genotype_format_auto_to_dosage(
             requested_gpu_genotype_format="unknown",
             resolution_reason="unused",
         )
 
 
 def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() -> None:
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
     assert (
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy.resolve_delivery_callback_batch_size(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
         )
         == 1
     )
     assert (
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy.resolve_delivery_callback_batch_size(
             callback_batch_size=2,
             variant_major_packed8_probability_pairs=False,
         )
         == 2
     )
     assert (
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy.resolve_delivery_callback_batch_size(
             callback_batch_size=1,
             variant_major_packed8_probability_pairs=True,
         )
         == 1
     )
     with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy.resolve_delivery_callback_batch_size(
             callback_batch_size=0,
             variant_major_packed8_probability_pairs=False,
         )
     with pytest.raises(ValueError, match="packed8 BGEN delivery"):
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy.resolve_delivery_callback_batch_size(
             callback_batch_size=2,
             variant_major_packed8_probability_pairs=True,
         )
 
 
 def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
-    dosage_plan = _core.plan_bgen_delivery_invocation(
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    dosage_plan = native_schedule_policy.plan_bgen_delivery_invocation(
         callback_batch_size=2,
         variant_major_packed8_probability_pairs=False,
         has_native_multi_aligned_sample_data=True,
@@ -2379,7 +2406,7 @@ def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
     assert dosage_plan.delivery_method == "dosage_native_multi_aligned_samples"
     assert dosage_plan.callback_batch_size == 2
 
-    fallback_dosage_plan = _core.plan_bgen_delivery_invocation(
+    fallback_dosage_plan = native_schedule_policy.plan_bgen_delivery_invocation(
         callback_batch_size=None,
         variant_major_packed8_probability_pairs=False,
         has_native_multi_aligned_sample_data=False,
@@ -2388,7 +2415,7 @@ def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
     assert fallback_dosage_plan.delivery_method == "dosage_sample_indices"
     assert fallback_dosage_plan.callback_batch_size == 1
 
-    packed8_plan = _core.plan_bgen_delivery_invocation(
+    packed8_plan = native_schedule_policy.plan_bgen_delivery_invocation(
         callback_batch_size=1,
         variant_major_packed8_probability_pairs=True,
         has_native_multi_aligned_sample_data=False,
@@ -2398,7 +2425,7 @@ def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
     assert packed8_plan.callback_batch_size == 1
 
     with pytest.raises(ValueError, match="packed8 BGEN delivery"):
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=2,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=False,
@@ -2407,11 +2434,13 @@ def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
 
 
 def test_resolve_grouped_union_callback_batch_size_enforces_native_delivery_policy() -> None:
-    assert _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=1) == 1
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    assert native_schedule_policy.resolve_grouped_union_callback_batch_size(native_callback_batch_size=1) == 1
     with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):
-        _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=0)
+        native_schedule_policy.resolve_grouped_union_callback_batch_size(native_callback_batch_size=0)
     with pytest.raises(ValueError, match="grouped union BGEN delivery"):
-        _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=2)
+        native_schedule_policy.resolve_grouped_union_callback_batch_size(native_callback_batch_size=2)
 
 
 def test_native_callback_worker_lifecycle_state_tracks_start() -> None:
@@ -3796,8 +3825,10 @@ def test_native_result_in_flight_slot_state_tracks_capacity() -> None:
 
 
 def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None:
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
             has_native_multi_aligned_sample_data=True,
@@ -3806,7 +3837,7 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
         == "dosage_native_multi_aligned_samples"
     )
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
             has_native_multi_aligned_sample_data=False,
@@ -3815,7 +3846,7 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
         == "dosage_native_aligned_samples"
     )
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
             has_native_multi_aligned_sample_data=False,
@@ -3824,7 +3855,7 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
         == "dosage_sample_indices"
     )
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=True,
@@ -3833,7 +3864,7 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
         == "packed8_native_multi_aligned_samples"
     )
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=False,
@@ -3842,7 +3873,7 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
         == "packed8_native_aligned_samples"
     )
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=False,
@@ -3853,38 +3884,51 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
 
 
 def test_resolve_writer_finish_thread_count_enforces_native_cleanup_policy() -> None:
-    assert _core.resolve_writer_finish_thread_count(0, 0) == 0
-    assert _core.resolve_writer_finish_thread_count(3, 2) == 2
-    assert _core.resolve_writer_finish_thread_count(3, 5) == 3
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    assert native_schedule_policy.resolve_writer_finish_thread_count(0, 0) == 0
+    assert native_schedule_policy.resolve_writer_finish_thread_count(3, 2) == 2
+    assert native_schedule_policy.resolve_writer_finish_thread_count(3, 5) == 3
     with pytest.raises(ValueError, match="Writer finish thread count must be positive"):
-        _core.resolve_writer_finish_thread_count(1, 0)
+        native_schedule_policy.resolve_writer_finish_thread_count(1, 0)
 
 
 def test_plan_writer_finish_execution_uses_native_cleanup_policy() -> None:
-    empty_finish_plan = _core.plan_writer_finish_execution(writer_session_count=0, requested_thread_count=0)
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    empty_finish_plan = native_schedule_policy.plan_writer_finish_execution(
+        writer_session_count=0, requested_thread_count=0
+    )
     assert empty_finish_plan.writer_session_count == 0
     assert empty_finish_plan.thread_count == 0
     assert empty_finish_plan.has_writer_sessions is False
     assert empty_finish_plan.uses_parallel_finish is False
 
-    serial_finish_plan = _core.plan_writer_finish_execution(writer_session_count=1, requested_thread_count=1)
+    serial_finish_plan = native_schedule_policy.plan_writer_finish_execution(
+        writer_session_count=1, requested_thread_count=1
+    )
     assert serial_finish_plan.writer_session_count == 1
     assert serial_finish_plan.thread_count == 1
     assert serial_finish_plan.has_writer_sessions is True
     assert serial_finish_plan.uses_parallel_finish is False
 
-    parallel_finish_plan = _core.plan_writer_finish_execution(writer_session_count=3, requested_thread_count=2)
+    parallel_finish_plan = native_schedule_policy.plan_writer_finish_execution(
+        writer_session_count=3,
+        requested_thread_count=2,
+    )
     assert parallel_finish_plan.writer_session_count == 3
     assert parallel_finish_plan.thread_count == 2
     assert parallel_finish_plan.has_writer_sessions is True
     assert parallel_finish_plan.uses_parallel_finish is True
 
     with pytest.raises(ValueError, match="Writer finish thread count must be positive"):
-        _core.plan_writer_finish_execution(writer_session_count=1, requested_thread_count=0)
+        native_schedule_policy.plan_writer_finish_execution(writer_session_count=1, requested_thread_count=0)
 
 
 def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
-    success_plan = _core.plan_bgen_delivery_cleanup(cleanup_outcome="success", callback_finished=False)
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    success_plan = native_schedule_policy.plan_bgen_delivery_cleanup(cleanup_outcome="success", callback_finished=False)
     assert success_plan.cleanup_actions == [
         "drain_callback",
         "finish_writer_sessions",
@@ -3897,7 +3941,7 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
     assert success_plan.abort_writer_sessions is False
     assert success_plan.write_stage_timing_snapshot is True
 
-    interrupted_pending_callback_plan = _core.plan_bgen_delivery_cleanup(
+    interrupted_pending_callback_plan = native_schedule_policy.plan_bgen_delivery_cleanup(
         cleanup_outcome="interrupted",
         callback_finished=False,
     )
@@ -3912,7 +3956,7 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
         "write_stage_timing_snapshot",
     ]
 
-    interrupted_finished_callback_plan = _core.plan_bgen_delivery_cleanup(
+    interrupted_finished_callback_plan = native_schedule_policy.plan_bgen_delivery_cleanup(
         cleanup_outcome="interrupted",
         callback_finished=True,
     )
@@ -3923,7 +3967,7 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
         "write_stage_timing_snapshot",
     ]
 
-    failure_plan = _core.plan_bgen_delivery_cleanup(cleanup_outcome="failure", callback_finished=False)
+    failure_plan = native_schedule_policy.plan_bgen_delivery_cleanup(cleanup_outcome="failure", callback_finished=False)
     assert failure_plan.drain_callback is False
     assert failure_plan.finish_writer_sessions is False
     assert failure_plan.finish_interrupted_writer_sessions is False
@@ -3936,7 +3980,7 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
         "write_stage_timing_snapshot",
     ]
 
-    cleanup_failure_plan = _core.plan_bgen_delivery_cleanup(
+    cleanup_failure_plan = native_schedule_policy.plan_bgen_delivery_cleanup(
         cleanup_outcome="interrupted_cleanup_failure",
         callback_finished=False,
     )
@@ -3944,25 +3988,27 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
     assert cleanup_failure_plan.abort_writer_sessions is True
 
     with pytest.raises(ValueError, match="Unsupported BGEN delivery cleanup outcome"):
-        _core.plan_bgen_delivery_cleanup(cleanup_outcome="unknown", callback_finished=False)
+        native_schedule_policy.plan_bgen_delivery_cleanup(cleanup_outcome="unknown", callback_finished=False)
 
 
 def test_plan_output_write_methods_use_native_dtype_policy() -> None:
-    native_float64_write_plan = _core.plan_single_trait_output_write(
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    native_float64_write_plan = native_schedule_policy.plan_single_trait_output_write(
         is_native_writer_session=True,
         output_statistic_dtype="float64",
     )
     assert native_float64_write_plan.method_name == "write_regenie2_native_chunk_f64"
     assert native_float64_write_plan.uses_float64_native_writer is True
 
-    fallback_float64_write_plan = _core.plan_single_trait_output_write(
+    fallback_float64_write_plan = native_schedule_policy.plan_single_trait_output_write(
         is_native_writer_session=False,
         output_statistic_dtype="float64",
     )
     assert fallback_float64_write_plan.method_name == "write_regenie2_native_chunk"
     assert fallback_float64_write_plan.uses_float64_native_writer is False
 
-    native_multi_write_plan = _core.plan_multi_trait_output_write(
+    native_multi_write_plan = native_schedule_policy.plan_multi_trait_output_write(
         active_trait_count=2,
         all_writer_sessions_native=True,
         output_statistic_dtype="float64",
@@ -3971,7 +4017,7 @@ def test_plan_output_write_methods_use_native_dtype_policy() -> None:
     assert native_multi_write_plan.use_native_multi_writer is True
     assert native_multi_write_plan.uses_float64_native_writer is True
 
-    fallback_multi_write_plan = _core.plan_multi_trait_output_write(
+    fallback_multi_write_plan = native_schedule_policy.plan_multi_trait_output_write(
         active_trait_count=2,
         all_writer_sessions_native=False,
         output_statistic_dtype="float64",
@@ -3980,9 +4026,12 @@ def test_plan_output_write_methods_use_native_dtype_policy() -> None:
     assert fallback_multi_write_plan.uses_float64_native_writer is False
 
     with pytest.raises(ValueError, match="Unsupported public statistic output dtype"):
-        _core.plan_single_trait_output_write(is_native_writer_session=True, output_statistic_dtype="float16")
+        native_schedule_policy.plan_single_trait_output_write(
+            is_native_writer_session=True,
+            output_statistic_dtype="float16",
+        )
     with pytest.raises(ValueError, match="Unsupported public statistic output dtype"):
-        _core.plan_multi_trait_output_write(
+        native_schedule_policy.plan_multi_trait_output_write(
             active_trait_count=1,
             all_writer_sessions_native=True,
             output_statistic_dtype="float16",

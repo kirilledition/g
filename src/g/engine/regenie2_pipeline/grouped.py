@@ -274,7 +274,9 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
 ) -> tuple[Path | None, ...]:
     """Run overlapping per-phenotype groups through one union-sample BGEN delivery."""
-    _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=native_callback_batch_size)
+    native_schedule_policy().resolve_grouped_union_callback_batch_size(
+        native_callback_batch_size=native_callback_batch_size
+    )
     union_sample_indices = build_union_sample_indices(grouped_run_inputs)
     grouped_sample_count = sum(
         int(grouped_run_input.run_input.sample_indices.shape[0]) for grouped_run_input in grouped_run_inputs
@@ -365,3 +367,8 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         ):
             final_parquet_paths_by_index[phenotype_index] = final_parquet_path
     return tuple(final_parquet_paths_by_index)
+
+
+def native_schedule_policy() -> _core.NativeSchedulePolicy:
+    """Build the native schedule policy handle."""
+    return _core.NativeSchedulePolicy()

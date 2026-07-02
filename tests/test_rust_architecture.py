@@ -173,6 +173,8 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
                 "module.add_function(wrap_pyfunction!(normalize_binary_correction_payload, module)?)?;",
                 "module.add_function(wrap_pyfunction!(plan_association_backend_payload, module)?)?;",
                 "module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;",
+                "module.add_function(wrap_pyfunction!(plan_bgen_delivery_invocation, module)?)?;",
+                "module.add_function(wrap_pyfunction!(resolve_manifest_gpu_genotype_format, module)?)?;",
                 "module.add_function(wrap_pyfunction!(build_preflight_report_payload, module)?)?;",
                 "module.add_function(wrap_pyfunction!(validate_finite_array_values, module)?)?;",
             )
@@ -341,14 +343,26 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
         ),
         check_rust_architecture.RootPyO3ExportViolation(
             source_path=Path("src/python/shutdown.rs"),
-            export_name="build_preflight_report_payload",
+            export_name="plan_bgen_delivery_invocation",
             line_number=27,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
             source_path=Path("src/python/shutdown.rs"),
-            export_name="validate_finite_array_values",
+            export_name="resolve_manifest_gpu_genotype_format",
             line_number=28,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="build_preflight_report_payload",
+            line_number=29,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="validate_finite_array_values",
+            line_number=30,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

@@ -27,7 +27,14 @@ def intersect_committed_chunk_identifier_sets(
     native_committed_chunk_identifier_sets = tuple(
         tuple(committed_chunk_identifier_set) for committed_chunk_identifier_set in committed_chunk_identifier_sets
     )
-    return set(_core.intersect_committed_chunk_identifier_sets(native_committed_chunk_identifier_sets))
+    return set(
+        native_schedule_policy().intersect_committed_chunk_identifier_sets(native_committed_chunk_identifier_sets)
+    )
+
+
+def native_schedule_policy() -> _core.NativeSchedulePolicy:
+    """Build the native schedule policy handle."""
+    return _core.NativeSchedulePolicy()
 
 
 def prepare_multi_phenotype_bgen_group_delivery(

@@ -111,7 +111,7 @@ class Regenie2PipelineContext:
     def effective_trusted_no_missing_diploid(self) -> bool:
         """Return trusted BGEN mode after packed8 requirements are applied."""
         return bool(
-            _core.resolve_effective_trusted_no_missing_diploid(
+            native_schedule_policy().resolve_effective_trusted_no_missing_diploid(
                 self.trusted_no_missing_diploid,
                 self.uses_packed8_genotypes,
             )
@@ -121,6 +121,11 @@ class Regenie2PipelineContext:
     def is_binary_trait(self) -> bool:
         """Return whether this context is for binary trait association."""
         return self.association_mode == types.AssociationMode.REGENIE2_BINARY
+
+
+def native_schedule_policy() -> _core.NativeSchedulePolicy:
+    """Build the native schedule policy handle."""
+    return _core.NativeSchedulePolicy()
 
 
 @dataclass(frozen=True)
