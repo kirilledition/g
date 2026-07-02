@@ -179,8 +179,9 @@ pub use run_events::{
     serialize_run_diagnostic_fields_json,
 };
 pub use run_metadata::{
-    ExecutionRunArtifactsInput, PhenotypeRunArtifactsInput, RunArtifactsPayload, RunManifestCommandPayload,
-    RunManifestExtensionInput, RunManifestExtensionPayload, RunManifestRuntimePayload, build_execution_run_artifacts,
+    ExecutionRunArtifactsInput, ExecutionRunArtifactsSequenceInput, PhenotypeRunArtifactsInput, RunArtifactsPayload,
+    RunManifestCommandPayload, RunManifestExtensionInput, RunManifestExtensionPayload, RunManifestRuntimePayload,
+    RunMetadataError, build_execution_run_artifacts, build_execution_run_artifacts_from_sequences,
     build_multi_run_artifacts, build_phenotype_run_artifacts, build_run_manifest_extension,
 };
 pub use runtime_paths::{

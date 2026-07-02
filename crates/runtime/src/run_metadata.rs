@@ -1,5 +1,7 @@
 //! Deterministic run metadata and artifact payload construction.
 
+use std::fmt;
+
 use serde::Serialize;
 
 pub use crate::run_events::RunArtifactsPayload;
@@ -26,6 +28,41 @@ pub struct ExecutionRunArtifactsInput {
     pub phenotype_count: i64,
     pub phenotype_artifacts: Vec<PhenotypeRunArtifactsInput>,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionRunArtifactsSequenceInput {
+    pub association_mode: String,
+    pub phenotype_count: i64,
+    pub output_format: String,
+    pub output_run_directories: Vec<String>,
+    pub chunks_directories: Vec<String>,
+    pub effective_configs: Vec<String>,
+    pub phenotype_names: Vec<String>,
+    pub final_output_paths: Vec<Option<String>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RunMetadataError {
+    ArtifactSequenceLengthMismatch {
+        output_run_directory_count: usize,
+        chunks_directory_count: usize,
+        effective_config_count: usize,
+        phenotype_name_count: usize,
+        final_output_path_count: usize,
+    },
+}
+
+impl fmt::Display for RunMetadataError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ArtifactSequenceLengthMismatch { .. } => {
+                formatter.write_str("execution artifact sequence lengths must match")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RunMetadataError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunManifestExtensionInput {
@@ -129,6 +166,67 @@ pub fn build_execution_run_artifacts(input: ExecutionRunArtifactsInput) -> RunAr
         phenotype_count: Some(phenotype_count),
         run_id: None,
     }
+}
+
+/// Build execution artifacts from parallel per-phenotype sequences.
+///
+/// # Errors
+///
+/// Returns an error when the supplied per-phenotype sequences have different lengths.
+pub fn build_execution_run_artifacts_from_sequences(
+    input: ExecutionRunArtifactsSequenceInput,
+) -> Result<RunArtifactsPayload, RunMetadataError> {
+    let ExecutionRunArtifactsSequenceInput {
+        association_mode,
+        phenotype_count,
+        output_format,
+        output_run_directories,
+        chunks_directories,
+        effective_configs,
+        phenotype_names,
+        final_output_paths,
+    } = input;
+    let phenotype_name_count = phenotype_names.len();
+    let sequence_lengths = [
+        output_run_directories.len(),
+        chunks_directories.len(),
+        effective_configs.len(),
+        phenotype_name_count,
+        final_output_paths.len(),
+    ];
+    if sequence_lengths.iter().any(|sequence_length| *sequence_length != phenotype_name_count) {
+        return Err(RunMetadataError::ArtifactSequenceLengthMismatch {
+            output_run_directory_count: output_run_directories.len(),
+            chunks_directory_count: chunks_directories.len(),
+            effective_config_count: effective_configs.len(),
+            phenotype_name_count,
+            final_output_path_count: final_output_paths.len(),
+        });
+    }
+    let phenotype_artifacts = output_run_directories
+        .into_iter()
+        .zip(chunks_directories)
+        .zip(effective_configs)
+        .zip(phenotype_names)
+        .zip(final_output_paths)
+        .map(|((((output_run_directory, chunks_directory), effective_config), phenotype_name), final_output_path)| {
+            PhenotypeRunArtifactsInput {
+                output_run_directory,
+                chunks_directory,
+                effective_config,
+                phenotype_name,
+                association_mode: association_mode.clone(),
+                phenotype_count,
+                output_format: output_format.clone(),
+                final_output_path,
+            }
+        })
+        .collect();
+    Ok(build_execution_run_artifacts(ExecutionRunArtifactsInput {
+        association_mode,
+        phenotype_count,
+        phenotype_artifacts,
+    }))
 }
 
 #[must_use]
@@ -251,6 +349,58 @@ mod tests {
         assert_eq!(artifacts.phenotype_artifacts.len(), 2);
         assert_eq!(artifacts.phenotype_artifacts[1].phenotype_name.as_deref(), Some("weight"));
         assert_eq!(artifacts.phenotype_artifacts[1].final_parquet.as_deref(), Some("run/weight/final.parquet"));
+    }
+
+    #[test]
+    fn builds_execution_artifact_tree_from_sequences() {
+        let artifacts = build_execution_run_artifacts_from_sequences(ExecutionRunArtifactsSequenceInput {
+            association_mode: "regenie2_linear".to_string(),
+            phenotype_count: 2,
+            output_format: OUTPUT_FORMAT_PARQUET.to_string(),
+            output_run_directories: vec!["run/height".to_string(), "run/weight".to_string()],
+            chunks_directories: vec!["run/height/chunks".to_string(), "run/weight/chunks".to_string()],
+            effective_configs: vec![
+                "run/height/effective_config.toml".to_string(),
+                "run/weight/effective_config.toml".to_string(),
+            ],
+            phenotype_names: vec!["height".to_string(), "weight".to_string()],
+            final_output_paths: vec![
+                Some("run/height/final.parquet".to_string()),
+                Some("run/weight/final.parquet".to_string()),
+            ],
+        })
+        .unwrap();
+
+        assert_eq!(artifacts.phenotype_artifacts.len(), 2);
+        assert_eq!(artifacts.phenotype_artifacts[0].phenotype_name.as_deref(), Some("height"));
+        assert_eq!(artifacts.phenotype_artifacts[1].final_parquet.as_deref(), Some("run/weight/final.parquet"));
+    }
+
+    #[test]
+    fn rejects_mismatched_execution_artifact_sequences() {
+        let error = build_execution_run_artifacts_from_sequences(ExecutionRunArtifactsSequenceInput {
+            association_mode: "regenie2_linear".to_string(),
+            phenotype_count: 2,
+            output_format: OUTPUT_FORMAT_PARQUET.to_string(),
+            output_run_directories: vec!["run/height".to_string()],
+            chunks_directories: vec!["run/height/chunks".to_string(), "run/weight/chunks".to_string()],
+            effective_configs: vec!["run/height/effective_config.toml".to_string()],
+            phenotype_names: vec!["height".to_string(), "weight".to_string()],
+            final_output_paths: vec![Some("run/height/final.parquet".to_string())],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            RunMetadataError::ArtifactSequenceLengthMismatch {
+                output_run_directory_count: 1,
+                chunks_directory_count: 2,
+                effective_config_count: 1,
+                phenotype_name_count: 2,
+                final_output_path_count: 1,
+            },
+        );
+        assert_eq!(error.to_string(), "execution artifact sequence lengths must match");
     }
 
     #[test]

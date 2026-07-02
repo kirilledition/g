@@ -23,22 +23,19 @@ pub(crate) fn build_execution_run_artifacts_payload<'py>(
     phenotype_names: Vec<String>,
     final_output_paths: Vec<Option<String>>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let phenotype_artifacts = phenotype_run_artifact_inputs_from_sequences(
-        &association_mode,
-        phenotype_count,
-        &output_format,
-        output_run_directories,
-        chunks_directories,
-        effective_configs,
-        phenotype_names,
-        final_output_paths,
-    )?;
-    let artifacts =
-        native_run_metadata::build_execution_run_artifacts(native_run_metadata::ExecutionRunArtifactsInput {
+    let artifacts = native_run_metadata::build_execution_run_artifacts_from_sequences(
+        native_run_metadata::ExecutionRunArtifactsSequenceInput {
             association_mode,
             phenotype_count,
-            phenotype_artifacts,
-        });
+            output_format,
+            output_run_directories,
+            chunks_directories,
+            effective_configs,
+            phenotype_names,
+            final_output_paths,
+        },
+    )
+    .map_err(|error| run_metadata_error_to_py(&error))?;
     run_artifacts_payload_to_dict(py, &artifacts)
 }
 
@@ -118,49 +115,6 @@ fn run_artifacts_payload_to_dict<'py>(
     Ok(payload)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn phenotype_run_artifact_inputs_from_sequences(
-    association_mode: &str,
-    phenotype_count: i64,
-    output_format: &str,
-    output_run_directories: Vec<String>,
-    chunks_directories: Vec<String>,
-    effective_configs: Vec<String>,
-    phenotype_names: Vec<String>,
-    final_output_paths: Vec<Option<String>>,
-) -> PyResult<Vec<native_run_metadata::PhenotypeRunArtifactsInput>> {
-    let artifact_count = phenotype_names.len();
-    let sequence_lengths = [
-        output_run_directories.len(),
-        chunks_directories.len(),
-        effective_configs.len(),
-        artifact_count,
-        final_output_paths.len(),
-    ];
-    if sequence_lengths.iter().any(|sequence_length| *sequence_length != artifact_count) {
-        return Err(PyValueError::new_err("execution artifact sequence lengths must match"));
-    }
-    Ok(output_run_directories
-        .into_iter()
-        .zip(chunks_directories)
-        .zip(effective_configs)
-        .zip(phenotype_names)
-        .zip(final_output_paths)
-        .map(|((((output_run_directory, chunks_directory), effective_config), phenotype_name), final_output_path)| {
-            native_run_metadata::PhenotypeRunArtifactsInput {
-                output_run_directory,
-                chunks_directory,
-                effective_config,
-                phenotype_name,
-                association_mode: association_mode.to_string(),
-                phenotype_count,
-                output_format: output_format.to_string(),
-                final_output_path,
-            }
-        })
-        .collect())
-}
-
 fn set_optional_string(py: Python<'_>, payload: &Bound<'_, PyDict>, key: &str, value: Option<&str>) -> PyResult<()> {
     match value {
         Some(text) => payload.set_item(key, text),
@@ -173,6 +127,10 @@ fn set_optional_i64(py: Python<'_>, payload: &Bound<'_, PyDict>, key: &str, valu
         Some(integer) => payload.set_item(key, integer),
         None => payload.set_item(key, py.None()),
     }
+}
+
+fn run_metadata_error_to_py(error: &native_run_metadata::RunMetadataError) -> PyErr {
+    PyValueError::new_err(error.to_string())
 }
 
 fn output_writer_error_to_py(error: OutputWriterError) -> PyErr {

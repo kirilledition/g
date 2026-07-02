@@ -2061,6 +2061,9 @@ Current implementation notes:
 - The Python architecture checker now guards native run-metadata helper calls
   outside `g.runner.metadata`, keeping execution artifact construction and
   manifest metadata upserts behind the runner metadata adapter.
+- Run artifact sequence validation and per-phenotype artifact input assembly
+  moved from the root PyO3 adapter into `g-runtime`; the root adapter now only
+  translates Python arguments and serializes native artifact payloads.
 
 ### Tests
 
