@@ -2389,6 +2389,17 @@ Current implementation notes:
   wall time with Cargo reporting 57.34s; the wheel build completed in 0:41.70
   wall time with Cargo reporting 29.97s. This verifies that adding the
   workspace native CLI package does not disrupt the root PyO3 package build.
+- After the Python console script was moved onto the coarse native PyO3 runner,
+  a fresh editable install in a new Phase 13 worktree completed with
+  `maturin develop -j 30 --profile dev-fast --uv` in `1:05.13` wall time with
+  Cargo reporting `54.44s` using `sccache` plus `wild`; a same-worktree native
+  `g-cli` binary build completed in `18.84s`.
+- The same worktree built a wheel with `maturin build -j 30 --profile dev-fast`
+  in `0:41.53` wall time with Cargo reporting `29.23s`. Installing that wheel
+  into a temporary Python 3.14 virtual environment succeeded, `import g,
+  g._core` loaded the installed package and extension from the wheel
+  environment, and the installed `g --help` console script rendered native
+  frontend help through the Python compatibility shim.
 - After the native execution adapter gained the Python/JAX environment probe,
   panic boundary, and SIGINT/SIGTERM shutdown context, a follow-up packaging and
   benchmark checkpoint used the same `sccache` plus `wild` development workflow.
@@ -2423,6 +2434,14 @@ Current implementation notes:
   probe through the configured Python executable, reporting Python/JAX versions
   and visible JAX device platforms. The default probe sets `JAX_PLATFORMS=cpu`;
   GPU discovery remains an explicit Slurm/GPU-node override.
+- A GPU/cluster discovery checkpoint on 2026-07-03 ran
+  `check_native_cli_frontend` through `just slurm-gpu-run` on `landau` after
+  installing the locked `jax[cuda12]==0.10.1` extra into the shared development
+  environment. With `tool.expected_jax_device=gpu` and `tool.jax_platforms=null`,
+  the probe reported Python `3.14.3`, JAX `0.10.1`, and `devices=('gpu',)`.
+  The same run kept native/Python configless frontend parity and the
+  Python-backend bridge smoke passed with matching native/direct exit code 1
+  runtime-failure output.
 - A deliberate subprocess backend prototype is available through
   `PythonBridgeExecutionAdapter`. Setting `G_NATIVE_CLI_PYTHON=/path/to/python`
   lets the native binary validate the run config and then delegate the original

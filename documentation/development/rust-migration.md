@@ -367,6 +367,15 @@ target time), while wild `0.9.0` via the GCC driver `-B` linker path took
 `21.17s` wall time (`14.46s` Cargo target time). Use the local
 `/mnt/beegfs/kirill/Projects/g/.tools/bin/wild` binary for subsequent
 interactive development builds when available.
+Phase 13 GPU environment discovery has been exercised on `landau`: after
+installing the locked `jax[cuda12]==0.10.1` extra into the shared development
+environment, `check_native_cli_frontend` passed through `just slurm-gpu-run`
+with `tool.expected_jax_device=gpu` and no `JAX_PLATFORMS` override, reporting
+Python `3.14.3`, JAX `0.10.1`, and a visible GPU JAX device.
+Phase 13 wheel installation has also been smoke-tested: a `dev-fast` wheel
+built in `0:41.53` wall time (`29.23s` Cargo target time), installed into a
+temporary Python 3.14 environment, imported `g` and `g._core`, and rendered
+installed `g --help` output through the Python compatibility shim.
 The root PyO3 timing recorder binding no longer exports direct
 stage-timing/profile payload builders, the final timing write-started payload
 builder, or per-file writer methods; Python callers use typed snapshots,
