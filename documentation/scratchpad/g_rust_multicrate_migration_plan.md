@@ -2394,6 +2394,10 @@ Current implementation notes:
 - The native frontend Criterion benchmark now includes a
   `valid_toml_config_refusal` case alongside help, parse-error, and CLI-only
   valid-config dispatch baselines.
+- Validated native CLI configs now cross an explicit `NativeExecutionAdapter`
+  boundary. The default adapter preserves the temporary unsupported-execution
+  error, and unit coverage verifies adapter success/failure propagation plus
+  validation errors stopping before the execution adapter is called.
 
 ### Tests
 

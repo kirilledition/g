@@ -7,6 +7,37 @@ pub const NATIVE_EXECUTION_UNAVAILABLE_MESSAGE: &str = concat!(
 );
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeExecutionOutcome {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl NativeExecutionOutcome {
+    #[must_use]
+    pub fn new(exit_code: i32, stdout: String, stderr: String) -> Self {
+        Self { exit_code, stdout, stderr }
+    }
+}
+
+pub trait NativeExecutionAdapter {
+    fn execute(&self, config: &g_interface::RegenieConfigData) -> NativeExecutionOutcome;
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct UnsupportedNativeExecutionAdapter;
+
+impl NativeExecutionAdapter for UnsupportedNativeExecutionAdapter {
+    fn execute(&self, _config: &g_interface::RegenieConfigData) -> NativeExecutionOutcome {
+        NativeExecutionOutcome::new(
+            NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE,
+            String::new(),
+            NATIVE_EXECUTION_UNAVAILABLE_MESSAGE.to_string(),
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeCliOutcome {
     pub exit_code: i32,
     pub stdout: String,
@@ -23,13 +54,23 @@ impl NativeCliOutcome {
 
 #[must_use]
 pub fn dispatch_native_cli(arguments: &[String]) -> NativeCliOutcome {
-    let g_interface::CliOutcomeData { exit_code, stdout, mut stderr, config } = g_interface::dispatch_cli(arguments);
-    let validated_run_config = config.is_some();
-    if validated_run_config {
-        stderr.push_str(NATIVE_EXECUTION_UNAVAILABLE_MESSAGE);
-        return NativeCliOutcome::new(NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE, stdout, stderr, validated_run_config);
+    dispatch_native_cli_with_adapter(arguments, &UnsupportedNativeExecutionAdapter)
+}
+
+#[must_use]
+pub fn dispatch_native_cli_with_adapter(
+    arguments: &[String],
+    execution_adapter: &dyn NativeExecutionAdapter,
+) -> NativeCliOutcome {
+    let g_interface::CliOutcomeData { exit_code, mut stdout, mut stderr, config } =
+        g_interface::dispatch_cli(arguments);
+    if let Some(run_config) = config {
+        let execution_outcome = execution_adapter.execute(&run_config);
+        stdout.push_str(&execution_outcome.stdout);
+        stderr.push_str(&execution_outcome.stderr);
+        return NativeCliOutcome::new(execution_outcome.exit_code, stdout, stderr, true);
     }
-    NativeCliOutcome::new(exit_code, stdout, stderr, validated_run_config)
+    NativeCliOutcome::new(exit_code, stdout, stderr, false)
 }
 
 #[cfg(test)]
@@ -39,6 +80,32 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    struct SuccessfulAdapter;
+
+    impl NativeExecutionAdapter for SuccessfulAdapter {
+        fn execute(&self, config: &g_interface::RegenieConfigData) -> NativeExecutionOutcome {
+            assert_eq!(config.input.pheno_columns, vec!["trait".to_string()]);
+            NativeExecutionOutcome::new(0, "native run succeeded\n".to_string(), String::new())
+        }
+    }
+
+    struct FailingAdapter;
+
+    impl NativeExecutionAdapter for FailingAdapter {
+        fn execute(&self, config: &g_interface::RegenieConfigData) -> NativeExecutionOutcome {
+            assert_eq!(config.input.pheno_columns, vec!["trait".to_string()]);
+            NativeExecutionOutcome::new(73, String::new(), "native backend failed\n".to_string())
+        }
+    }
+
+    struct PanicAdapter;
+
+    impl NativeExecutionAdapter for PanicAdapter {
+        fn execute(&self, _config: &g_interface::RegenieConfigData) -> NativeExecutionOutcome {
+            panic!("native execution adapter should not be called for invalid config")
+        }
+    }
 
     fn string_arguments(arguments: &[&str]) -> Vec<String> {
         arguments.iter().map(|argument| (*argument).to_string()).collect()
@@ -131,6 +198,46 @@ mod tests {
     }
 
     #[test]
+    fn native_cli_frontend_routes_validated_config_to_execution_adapter() {
+        let fixture_directory = unique_fixture_directory();
+        fs::create_dir_all(&fixture_directory).expect("fixture directory should be created");
+        fs::write(fixture_directory.join("dataset.bgen"), b"").expect("BGEN fixture should be written");
+        fs::write(fixture_directory.join("phenotype.tsv"), "FID IID trait\n")
+            .expect("phenotype fixture should be written");
+        fs::write(fixture_directory.join("predictions.list"), "").expect("prediction fixture should be written");
+
+        let arguments = valid_regenie_arguments(&fixture_directory);
+        let native_outcome = dispatch_native_cli_with_adapter(&arguments, &SuccessfulAdapter);
+
+        assert_eq!(native_outcome.exit_code, 0);
+        assert_eq!(native_outcome.stdout, "native run succeeded\n");
+        assert_eq!(native_outcome.stderr, "");
+        assert!(native_outcome.validated_run_config);
+
+        fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
+    }
+
+    #[test]
+    fn native_cli_frontend_preserves_execution_adapter_failures() {
+        let fixture_directory = unique_fixture_directory();
+        fs::create_dir_all(&fixture_directory).expect("fixture directory should be created");
+        fs::write(fixture_directory.join("dataset.bgen"), b"").expect("BGEN fixture should be written");
+        fs::write(fixture_directory.join("phenotype.tsv"), "FID IID trait\n")
+            .expect("phenotype fixture should be written");
+        fs::write(fixture_directory.join("predictions.list"), "").expect("prediction fixture should be written");
+
+        let arguments = valid_regenie_arguments(&fixture_directory);
+        let native_outcome = dispatch_native_cli_with_adapter(&arguments, &FailingAdapter);
+
+        assert_eq!(native_outcome.exit_code, 73);
+        assert_eq!(native_outcome.stdout, "");
+        assert_eq!(native_outcome.stderr, "native backend failed\n");
+        assert!(native_outcome.validated_run_config);
+
+        fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
+    }
+
+    #[test]
     fn native_cli_frontend_keeps_validation_errors_before_execution_boundary() {
         let arguments = string_arguments(&[
             "regenie",
@@ -150,6 +257,33 @@ mod tests {
         ]);
 
         let native_outcome = dispatch_native_cli(&arguments);
+
+        assert_eq!(native_outcome.exit_code, 1);
+        assert_eq!(native_outcome.stdout, "");
+        assert!(native_outcome.stderr.contains("--bgen path does not exist"));
+        assert!(!native_outcome.validated_run_config);
+    }
+
+    #[test]
+    fn native_cli_frontend_does_not_call_execution_adapter_for_validation_errors() {
+        let arguments = string_arguments(&[
+            "regenie",
+            "--step",
+            "2",
+            "--qt",
+            "--bgen",
+            "missing.bgen",
+            "--phenoFile",
+            "missing.tsv",
+            "--phenoCol",
+            "trait",
+            "--pred",
+            "missing.list",
+            "--out",
+            "results/output",
+        ]);
+
+        let native_outcome = dispatch_native_cli_with_adapter(&arguments, &PanicAdapter);
 
         assert_eq!(native_outcome.exit_code, 1);
         assert_eq!(native_outcome.stdout, "");
