@@ -102,6 +102,7 @@ def test_output_lifecycle_policy_rejects_direct_native_output_calls(tmp_path: Pa
                 "from g import _core",
                 "def initialize_output(token):",
                 "    _core.prepare_output_run('root', 'regenie2_linear', 'parquet', False)",
+                "    _core.load_run_manifest_payload('run')",
                 "    _core.initialize_output_run('run', 'chunks', None, '{}', False, 'fast', token)",
                 "    _core.initialize_output_run_from_values('run', 'chunks', None, {}, False, 'fast', token)",
                 "    _core.validate_strict_manifest_chunks('chunks', '{}')",
@@ -124,53 +125,54 @@ def test_output_lifecycle_policy_rejects_direct_native_output_calls(tmp_path: Pa
         for violation in violations
     ] == [
         (Path("g/runner/outputs.py"), 3, "_core.prepare_output_run", "_core.prepare_output_run"),
-        (Path("g/runner/outputs.py"), 4, "_core.initialize_output_run", "_core.initialize_output_run"),
-        (
-            Path("g/runner/outputs.py"),
-            5,
-            "_core.initialize_output_run_from_values",
-            "_core.initialize_output_run_from_values",
-        ),
+        (Path("g/runner/outputs.py"), 4, "_core.load_run_manifest_payload", "_core.load_run_manifest_payload"),
+        (Path("g/runner/outputs.py"), 5, "_core.initialize_output_run", "_core.initialize_output_run"),
         (
             Path("g/runner/outputs.py"),
             6,
-            "_core.validate_strict_manifest_chunks",
-            "_core.validate_strict_manifest_chunks",
+            "_core.initialize_output_run_from_values",
+            "_core.initialize_output_run_from_values",
         ),
         (
             Path("g/runner/outputs.py"),
             7,
-            "_core.validate_strict_manifest_chunks_from_value",
-            "_core.validate_strict_manifest_chunks_from_value",
+            "_core.validate_strict_manifest_chunks",
+            "_core.validate_strict_manifest_chunks",
         ),
         (
             Path("g/runner/outputs.py"),
             8,
-            "_core.repair_strict_manifest_chunk_commits_from_value",
-            "_core.repair_strict_manifest_chunk_commits_from_value",
+            "_core.validate_strict_manifest_chunks_from_value",
+            "_core.validate_strict_manifest_chunks_from_value",
         ),
         (
             Path("g/runner/outputs.py"),
             9,
-            "_core.read_manifest_committed_chunk_identifiers_from_value",
-            "_core.read_manifest_committed_chunk_identifiers_from_value",
+            "_core.repair_strict_manifest_chunk_commits_from_value",
+            "_core.repair_strict_manifest_chunk_commits_from_value",
         ),
         (
             Path("g/runner/outputs.py"),
             10,
-            "_core.validate_run_manifest_compatibility_from_values",
-            "_core.validate_run_manifest_compatibility_from_values",
+            "_core.read_manifest_committed_chunk_identifiers_from_value",
+            "_core.read_manifest_committed_chunk_identifiers_from_value",
         ),
-        (Path("g/runner/outputs.py"), 11, "_core.finalize_output_run_chunks", "_core.finalize_output_run_chunks"),
         (
             Path("g/runner/outputs.py"),
-            12,
-            "_core.build_pipeline_output_preparation_batch_from_values",
-            "_core.build_pipeline_output_preparation_batch_from_values",
+            11,
+            "_core.validate_run_manifest_compatibility_from_values",
+            "_core.validate_run_manifest_compatibility_from_values",
         ),
+        (Path("g/runner/outputs.py"), 12, "_core.finalize_output_run_chunks", "_core.finalize_output_run_chunks"),
         (
             Path("g/runner/outputs.py"),
             13,
+            "_core.build_pipeline_output_preparation_batch_from_values",
+            "_core.build_pipeline_output_preparation_batch_from_values",
+        ),
+        (
+            Path("g/runner/outputs.py"),
+            14,
             "_core.NativePipelineOutputPreparationBatch",
             "_core.NativePipelineOutputPreparationBatch",
         ),
@@ -505,6 +507,44 @@ def test_prepared_plan_policy_rejects_python_plan_reconstruction(tmp_path: Path)
             "build_native_prepared_run_plan_input_mapping",
         ),
         (Path("g/io/output.py"), 4, "_core.build_prepared_run_plan_json", "_core.build_prepared_run_plan_json"),
+    ]
+
+
+def test_run_request_policy_routes_native_compile_through_execution_plan(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    execution_plan_path = package_root / "execution_plan.py"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "execution.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build(config):",
+                "    _core.compile_run_request_json(config)",
+                "    _core.compile_run_request_payload(config)",
+            )
+        ),
+        encoding="utf-8",
+    )
+    execution_plan_path.write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build(config):",
+                "    _core.compile_run_request_payload(config)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/runner/execution.py"), 3, "_core.compile_run_request_json", "_core.compile_run_request_json"),
+        (Path("g/runner/execution.py"), 4, "_core.compile_run_request_payload", "_core.compile_run_request_payload"),
     ]
 
 

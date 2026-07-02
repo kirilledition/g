@@ -58,7 +58,7 @@ legacy Python telemetry fallback methods.
 | Area | Current Python owner | Current Rust helper | Target crate | Target owner | Removal status | Primary tests and benchmarks |
 | --- | --- | --- | --- | --- | --- | --- |
 | CLI/TOML/config frontend | `src/g/cli.py`, `src/g/interface/config.py` | `crates/interface/src/` | `g-interface` | Rust | Extracted as native crate; Python remains adapter | `tests/test_interface.py`, CLI help/package smoke |
-| Execution planning | `src/g/execution_plan.py`, `src/g/engine/backend_planner.py` | `crates/plan/src/`, `crates/interface/src/plan_request.rs`, native metadata helpers | `g-plan`, then `g-engine` | Rust | Started: `g-interface` compiles resolved config into `g-plan::RunRequest`; manifest headers now serialize through a Rust-built `g-plan::PreparedRunPlan` consumed by `g-output`, with backend validation, prepared-plan assembly, and backend-kind derivation owned by `g-plan`; Python still supplies other transitional header fields from legacy dataclasses until dynamic preparation moves to Rust | `tests/test_backend_planner.py`, `tests/test_regenie2_pipeline.py`, `tests/test_io_output.py`, `cargo test -p g-plan`, `cargo test -p g-interface`, `cargo test -p g-output` |
+| Execution planning | `src/g/execution_plan.py`, `src/g/engine/backend_planner.py` | `crates/plan/src/`, `crates/interface/src/plan_request.rs`, native metadata helpers | `g-plan`, then `g-engine` | Rust | Started: `g-interface` compiles resolved config into `g-plan::RunRequest`; Python consumes the native run-request payload through a PyO3 value wrapper instead of parsing JSON; manifest headers now serialize through a Rust-built `g-plan::PreparedRunPlan` consumed by `g-output`, with backend validation, prepared-plan assembly, and backend-kind derivation owned by `g-plan`; Python still supplies other transitional header fields from legacy dataclasses until dynamic preparation moves to Rust | `tests/test_backend_planner.py`, `tests/test_regenie2_pipeline.py`, `tests/test_io_output.py`, `cargo test -p g-plan`, `cargo test -p g-interface`, `cargo test -p g-output` |
 | BGEN and genotype preprocessing | Python native-dispatch wrappers | `crates/genotype/src/` | `g-genotype` | Rust | Extracted as leaf crate | Rust genotype tests, `just benchmark-bgen-reader`, `cargo bench -p g-genotype` |
 | Sample and phenotype alignment | `src/g/io/source.py`, pipeline wrappers | `crates/input/src/sample/` | `g-input` | Rust | Extracted as native crate; Python remains adapter | `tests/test_io_sample.py`, `tests/test_tabular.py`, `cargo test -p g-input` |
 | Prediction and LOCO input | `src/g/engine/native_dispatch/loaders.py` | `crates/input/src/regenie/` | `g-input` | Rust | Extracted as native crate; Python remains adapter | pipeline, parity, and LOCO alignment tests |
@@ -251,6 +251,9 @@ Manifest writes, execution-plan hashing, prepared-plan construction, strict
 resume validation/repair, and pipeline output-preparation batch construction
 now use value-based PyO3 wrappers. The output adapter no longer calls
 `json.dumps` for those manifest/preparation contracts before entering Rust.
+Run manifest loading and prepared-output existing-manifest loading also return
+native PyO3 value payloads, so production output code no longer parses those
+native JSON strings with Python `json.loads`.
 Run-start manifest command/runtime metadata extension now goes through a native
 `g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
 longer loads, mutates, serializes, and rewrites run manifests for that

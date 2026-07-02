@@ -190,6 +190,7 @@ PYTHON_CALL_POLICIES = (
             "_core.initialize_output_run",
             "_core.initialize_output_run_from_values",
             "_core.load_run_manifest_json",
+            "_core.load_run_manifest_payload",
             "_core.validate_run_manifest_compatibility",
             "_core.validate_run_manifest_compatibility_from_values",
             "_core.read_manifest_committed_chunk_identifiers",
@@ -284,6 +285,13 @@ PYTHON_CALL_POLICIES = (
         forbidden_calls=("_core.build_prepared_run_plan_json", "build_native_prepared_run_plan_input_mapping"),
         allowed_paths=(),
         message="production Python must not reconstruct canonical prepared-run plans",
+    ),
+    PythonCallPolicy(
+        name="native_run_request_adapter_isolation",
+        source_directory=Path(),
+        forbidden_calls=("_core.compile_run_request_json", "_core.compile_run_request_payload"),
+        allowed_paths=(Path("execution_plan.py"),),
+        message="production Python must route native run-request compilation through the execution-plan adapter",
     ),
     PythonCallPolicy(
         name="native_diagnostic_payload_adapter_isolation",

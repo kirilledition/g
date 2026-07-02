@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -271,7 +270,7 @@ def build_regenie_execution_plan(
 
 def compile_run_request_payload(regenie_config: config.RegenieConfig) -> dict[str, typing.Any]:
     """Compile a resolved config into the native requested-run payload."""
-    payload = json.loads(_core.compile_run_request_json(regenie_config))
+    payload = _core.compile_run_request_payload(regenie_config)
     if not isinstance(payload, dict):
         message = "Native run request payload must be a JSON object."
         raise TypeError(message)

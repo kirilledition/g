@@ -1438,6 +1438,9 @@ Remove Python as the chunk-level scheduler.
   construction now pass Python values through PyO3 value wrappers before Rust
   serialization. The output adapter no longer serializes those
   manifest/preparation contracts with `json.dumps`.
+- Run manifest loading and prepared-output existing-manifest loading now return
+  native PyO3 value payloads, so production output code no longer parses those
+  native JSON strings with Python `json.loads`.
 - Run-start manifest command/runtime metadata extension now goes through a
   native `g-output` manifest upsert via the root PyO3 adapter, so Python no
   longer loads, mutates, serializes, and rewrites run manifests for that
@@ -1863,6 +1866,11 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Production JAX setup now calls the native setup-session default-probe GPU
   validation method directly; the old Python explicit-path validation wrapper
   has been removed.
+- Resolved config to `g-plan::RunRequest` compilation now returns a native
+  payload through a PyO3 value wrapper for `g.execution_plan`; production
+  execution planning no longer parses the run-request JSON string in Python,
+  and the architecture checker rejects direct compile-helper calls outside the
+  execution-plan adapter.
 - Standalone `require_gpu_device()` validation now also builds a native setup
   session and uses the native default-probe method.
 - Process-global JAX setup completion recording now consumes the native setup
@@ -1898,6 +1906,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
   strict resume validation/repair, and pipeline output-preparation batch
   construction now use PyO3 value wrappers, so production output code no
   longer calls Python `json.dumps` for those manifest/preparation contracts.
+- Run manifest loading and prepared-output existing-manifest loading now use
+  PyO3 value wrappers, so production output code no longer calls Python
+  `json.loads` for those native JSON payloads.
 - Preflight finite-array checks, SVD-backed covariate-rank validation, and
   binary phenotype coding/case-control scans now execute in the root PyO3
   adapter over NumPy buffers and then call the `g-engine` policy helpers.

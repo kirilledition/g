@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import json
 import re
 import typing
 from dataclasses import dataclass
@@ -152,19 +151,6 @@ def get_run_manifest_path(output_run_paths: OutputRunPaths) -> Path:
     return output_run_paths.run_directory / RUN_MANIFEST_FILENAME
 
 
-def parse_run_manifest_json(manifest_json: str, manifest_path: Path | None) -> dict[str, typing.Any]:
-    """Parse a native run manifest JSON payload for Python callers."""
-    manifest: typing.Any = json.loads(manifest_json)
-    if not isinstance(manifest, dict):
-        message = (
-            "Run manifest must contain a JSON object."
-            if manifest_path is None
-            else f"Run manifest '{manifest_path}' must contain a JSON object."
-        )
-        raise ValueError(message)
-    return manifest
-
-
 def resolve_output_run_paths(
     output_root: Path,
     association_mode: types.AssociationMode,
@@ -191,11 +177,13 @@ def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
 
 def load_run_manifest(output_run_paths: OutputRunPaths) -> dict[str, typing.Any] | None:
     """Load a run manifest when present."""
-    manifest_path = get_run_manifest_path(output_run_paths)
-    manifest_json = _core.load_run_manifest_json(str(output_run_paths.run_directory))
-    if manifest_json is None:
+    manifest_payload = _core.load_run_manifest_payload(str(output_run_paths.run_directory))
+    if manifest_payload is None:
         return None
-    return parse_run_manifest_json(manifest_json, manifest_path)
+    return require_native_mapping_payload(
+        manifest_payload,
+        f"Run manifest '{get_run_manifest_path(output_run_paths)}' must contain a JSON object.",
+    )
 
 
 def write_run_manifest(output_run_paths: OutputRunPaths, manifest: dict[str, typing.Any]) -> None:
@@ -226,6 +214,27 @@ def manifest_file_fingerprint_from_native_payload(payload: object) -> ManifestFi
 def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
     """Adapt a native mapping payload to a mutable Python dictionary."""
     return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
+
+
+def native_json_payload(payload: object) -> typing.Any:
+    """Normalize native JSON payload containers to mutable Python containers."""
+    if isinstance(payload, dict):
+        mapping_payload = typing.cast("dict[object, object]", payload)
+        return {
+            str(payload_key): native_json_payload(payload_value)
+            for payload_key, payload_value in mapping_payload.items()
+        }
+    if isinstance(payload, tuple | list):
+        sequence_payload = typing.cast("typing.Iterable[object]", payload)
+        return [native_json_payload(payload_value) for payload_value in sequence_payload]
+    return payload
+
+
+def require_native_mapping_payload(payload: object, message: str) -> dict[str, typing.Any]:
+    """Adapt a native mapping payload and reject non-object JSON payloads."""
+    if not isinstance(payload, dict):
+        raise ValueError(message)
+    return typing.cast("dict[str, typing.Any]", native_json_payload(payload))
 
 
 def build_prediction_loco_file_fingerprints(
@@ -389,15 +398,6 @@ def build_current_run_manifest_header(
     return native_mapping_payload(prepared_header)
 
 
-def parse_current_run_manifest_header_json(manifest_header_json: str) -> dict[str, typing.Any]:
-    """Parse a native current-run manifest header JSON payload."""
-    manifest_header: typing.Any = json.loads(manifest_header_json)
-    if not isinstance(manifest_header, dict):
-        message = "Native current-run manifest header must contain a JSON object."
-        raise ValueError(message)
-    return manifest_header
-
-
 def build_native_prepared_run_plan_json(current_header: RunManifestHeaderInput) -> str:
     """Build the native prepared-run contract from the transitional header."""
     return _core.build_prepared_run_plan_json_from_current_header(current_header)
@@ -517,14 +517,13 @@ def prepare_output_run(
         run_directory=Path(native_prepared_output_run.run_directory),
         chunks_directory=Path(native_prepared_output_run.chunks_directory),
     )
-    manifest = (
-        None
-        if native_prepared_output_run.existing_manifest_json is None
-        else parse_run_manifest_json(
-            native_prepared_output_run.existing_manifest_json,
-            get_run_manifest_path(output_run_paths),
+    existing_manifest_payload = native_prepared_output_run.existing_manifest_payload()
+    manifest = None
+    if existing_manifest_payload is not None:
+        manifest = require_native_mapping_payload(
+            existing_manifest_payload,
+            f"Run manifest '{get_run_manifest_path(output_run_paths)}' must contain a JSON object.",
         )
-    )
     return PreparedOutputRun(
         output_run_paths=output_run_paths,
         existing_manifest=manifest,

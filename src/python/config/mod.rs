@@ -13,6 +13,7 @@ use g_interface::{
 
 mod conversion;
 
+use super::json_bridge;
 use conversion::{
     enum_value, normalized_toml_table_from_py_options, optional_enum_value, optional_path, path_to_string, string_tuple,
 };
@@ -811,6 +812,15 @@ fn compile_run_request_json(config: &RegenieConfig) -> PyResult<String> {
 }
 
 #[pyfunction]
+fn compile_run_request_payload(py: Python<'_>, config: &RegenieConfig) -> PyResult<Py<PyAny>> {
+    let run_request = interface::compile_run_request(config.data())
+        .map_err(|error| config_error_to_py("compile_run_request", error))?;
+    let run_request_value = serde_json::to_value(&run_request)
+        .map_err(|error| PyValueError::new_err(format!("Failed to serialize run request: {error}.")))?;
+    json_bridge::json_value_to_py_object(py, &run_request_value)
+}
+
+#[pyfunction]
 #[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python list arguments into owned Vec values.")]
 fn dispatch_cli(args: Vec<String>) -> CliOutcome {
     CliOutcome::new(interface::dispatch_cli(&args))
@@ -834,6 +844,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_regenie_config, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
     module.add_function(wrap_pyfunction!(compile_run_request_json, module)?)?;
+    module.add_function(wrap_pyfunction!(compile_run_request_payload, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
     Ok(())
 }

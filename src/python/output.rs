@@ -63,6 +63,18 @@ pub(crate) struct NativePreparedOutputRun {
     existing_manifest_json: Option<String>,
 }
 
+#[pymethods]
+impl NativePreparedOutputRun {
+    fn existing_manifest_payload(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match self.existing_manifest_json.as_deref() {
+            Some(existing_manifest_json) => {
+                json_bridge::json_text_to_py_object(py, existing_manifest_json, "existing run manifest")
+            }
+            None => Ok(py.None()),
+        }
+    }
+}
+
 #[pyclass]
 pub(crate) struct NativeInitializedOutputRun {
     #[pyo3(get)]
@@ -611,6 +623,18 @@ pub(crate) fn load_run_manifest_json(py: Python<'_>, run_directory: String) -> P
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
+pub(crate) fn load_run_manifest_payload(py: Python<'_>, run_directory: String) -> PyResult<Py<PyAny>> {
+    let manifest_json = py
+        .detach(|| load_native_run_manifest_json(Path::new(&run_directory)))
+        .map_err(|error| output_writer_error_to_py(error, "load_run_manifest_payload"))?;
+    match manifest_json {
+        Some(manifest_json) => json_bridge::json_text_to_py_object(py, &manifest_json, "run manifest"),
+        None => Ok(py.None()),
+    }
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn write_run_manifest_json(py: Python<'_>, run_directory: String, manifest_json: String) -> PyResult<()> {
     py.detach(|| write_native_run_manifest_json(Path::new(&run_directory), &manifest_json))
         .map_err(|error| output_writer_error_to_py(error, "write_run_manifest_json"))
@@ -871,6 +895,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_output_run_from_values, module)?)?;
     module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;
+    module.add_function(wrap_pyfunction!(load_run_manifest_payload, module)?)?;
     module.add_function(wrap_pyfunction!(prepare_output_run, module)?)?;
     module.add_function(wrap_pyfunction!(read_manifest_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(read_manifest_committed_chunk_identifiers_from_value, module)?)?;
