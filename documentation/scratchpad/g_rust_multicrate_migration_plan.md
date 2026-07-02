@@ -2398,6 +2398,10 @@ Current implementation notes:
   boundary. The default adapter preserves the temporary unsupported-execution
   error, and unit coverage verifies adapter success/failure propagation plus
   validation errors stopping before the execution adapter is called.
+- `check_native_cli_frontend` now also runs a CPU-safe Python/JAX environment
+  probe through the configured Python executable, reporting Python/JAX versions
+  and visible JAX device platforms. The default probe sets `JAX_PLATFORMS=cpu`;
+  GPU discovery remains an explicit Slurm/GPU-node override.
 
 ### Tests
 

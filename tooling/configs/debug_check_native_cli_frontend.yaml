@@ -4,6 +4,8 @@ tool:
   python_executable_path: null
   trial_count: 5
   warmup_count: 1
+  expected_jax_device: cpu
+  jax_platforms: cpu
 
 hydra:
   job:
