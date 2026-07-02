@@ -174,6 +174,7 @@ class ChunkMetadata:
 
     def __init__(self, chromosome: str, variant_start: int, variant_stop: int) -> None:
         """Initialize small metadata tuple fields."""
+        self.chromosome_label = chromosome
         self.chromosome = (chromosome,)
         self.variant_start_index = variant_start
         self.variant_stop_index = variant_stop

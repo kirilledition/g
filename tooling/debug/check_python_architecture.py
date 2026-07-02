@@ -379,6 +379,13 @@ PYTHON_CALL_POLICIES = (
         message="production preflight must use native PyO3 array checks for finite and binary scans",
     ),
     PythonCallPolicy(
+        name="native_preflight_required_chromosome_isolation",
+        source_directory=Path("engine/preflight.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production preflight must call the typed native required-chromosome API directly",
+    ),
+    PythonCallPolicy(
         name="transitional_covariate_rank_scan_isolation",
         source_directory=Path("engine"),
         forbidden_calls=("np.linalg.matrix_rank", "numpy.linalg.matrix_rank", "matrix_rank"),
@@ -419,6 +426,13 @@ PYTHON_CALL_POLICIES = (
         forbidden_calls=("getattr",),
         allowed_paths=(),
         message="production grouped callback fanout must use typed callback lifecycle contracts",
+    ),
+    PythonCallPolicy(
+        name="callback_metadata_chromosome_contract_isolation",
+        source_directory=Path("engine/callbacks/shared.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production callback metadata helpers must use native scalar chromosome labels directly",
     ),
     PythonCallPolicy(
         name="jax_host_materialization_isolation",

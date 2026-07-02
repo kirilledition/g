@@ -226,16 +226,20 @@ class MultiRegeniePredictionSourceProtocol(typing.Protocol):
         ...
 
 
-def get_metadata_chromosome(metadata: typing.Any) -> str:
-    """Return the first chromosome label from native or Python metadata."""
-    chromosome_label = getattr(metadata, "chromosome_label", None)
-    if chromosome_label is not None:
-        return str(chromosome_label)
-    return str(metadata.chromosome[0])
+class CallbackChunkMetadataProtocol(typing.Protocol):
+    """Chunk metadata contract required by callback timing and chromosome state."""
+
+    chromosome_label: str
+
+
+def get_metadata_chromosome(metadata: CallbackChunkMetadataProtocol) -> str:
+    """Return the native scalar chromosome label for one chunk."""
+    return str(metadata.chromosome_label)
 
 
 __all__ = [
     "BinaryChunkStatsArrays",
+    "CallbackChunkMetadataProtocol",
     "HostGenotypeBuffer",
     "HostOrDeviceFloatArray",
     "LinearChunkStatsArrays",

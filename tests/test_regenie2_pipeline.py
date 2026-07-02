@@ -2400,6 +2400,12 @@ class FakeRunEngine:
         fingerprint = hashlib.sha256(fingerprint_input.encode("utf-8")).hexdigest()
         return cache_directory / f"{fingerprint}.json"
 
+    def required_chromosomes(self, variant_limit: int | None = None) -> list[str]:
+        scanned_variant_count = self.variant_count if variant_limit is None else min(self.variant_count, variant_limit)
+        if scanned_variant_count == 0:
+            return []
+        return ["22"]
+
     def variant_metadata_slice(
         self,
         variant_start: int,
@@ -2893,6 +2899,7 @@ def build_native_metadata_for_chunk(*, chunk_identifier: int) -> typing.Any:
     return SimpleNamespace(
         variant_start_index=chunk_identifier,
         variant_stop_index=chunk_identifier + 2,
+        chromosome_label="22",
         chromosome=["22", "22"],
         variant_identifiers=[f"variant{chunk_identifier}", f"variant{chunk_identifier + 1}"],
         position=np.asarray([chunk_identifier * 100, (chunk_identifier + 1) * 100], dtype=np.int64),
@@ -4284,6 +4291,7 @@ def test_native_callback_runner_records_chromosome_progress_transitions() -> Non
         SimpleNamespace(
             variant_start_index=7,
             variant_stop_index=9,
+            chromosome_label="23",
             chromosome=["23", "23"],
         )
     )
@@ -10638,6 +10646,7 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
     variant_metadata = SimpleNamespace(
         variant_start_index=5,
         variant_stop_index=8,
+        chromosome_label="22",
         chromosome=["22", "22", "22"],
         variant_identifiers=["variant5", "variant6", "variant7"],
         position=np.asarray([100, 200, 300], dtype=np.int64),

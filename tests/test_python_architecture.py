@@ -778,6 +778,31 @@ def test_preflight_numeric_scan_policy_rejects_old_numpy_reductions(tmp_path: Pa
     ]
 
 
+def test_preflight_required_chromosome_policy_rejects_engine_probe(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    engine_directory = package_root / "engine"
+    engine_directory.mkdir(parents=True)
+    (engine_directory / "preflight.py").write_text(
+        "\n".join(
+            (
+                "def collect(engine):",
+                "    required_chromosomes = getattr(engine, 'required_chromosomes', None)",
+                "    return required_chromosomes",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/preflight.py"), 2, "getattr", "getattr"),
+    ]
+
+
 def test_covariate_rank_scan_policy_rejects_matrix_rank_outside_preflight_adapter(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     engine_directory = package_root / "engine"
@@ -917,6 +942,31 @@ def test_grouped_callback_fanout_policy_rejects_optional_lifecycle_probe(tmp_pat
         for violation in violations
     ] == [
         (Path("g/engine/callbacks/grouped.py"), 2, "getattr", "getattr"),
+    ]
+
+
+def test_callback_metadata_chromosome_policy_rejects_optional_metadata_probe(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "shared.py").write_text(
+        "\n".join(
+            (
+                "def chromosome(metadata):",
+                "    chromosome_label = getattr(metadata, 'chromosome_label', None)",
+                "    return chromosome_label",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/callbacks/shared.py"), 2, "getattr", "getattr"),
     ]
 
 

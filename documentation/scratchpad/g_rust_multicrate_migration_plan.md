@@ -2083,10 +2083,16 @@ Current implementation notes:
   Python-visible root surface; production preflight keeps the typed finite-array
   and binary-phenotype array entry points that execute the native scans before
   applying `g-engine` validation policy.
+- Production preflight now requires the native engine required-chromosome API
+  directly instead of probing engines with optional `getattr` and falling back
+  to Python metadata-slice chromosome collection.
 - The detached null-logistic nonconvergence tuple planner was removed from the
   Python-visible root surface; production callback diagnostics use the bool-array
   entry point that owns scalar detection, flattening, and native policy
   dispatch.
+- Callback chunk metadata now uses the native scalar `chromosome_label`
+  contract directly; Python no longer falls back to reading the full chromosome
+  column from metadata objects.
 - Detached scheduler, queue-observation, dosage-buffer, work-handoff, and
   worker-lifecycle planner aliases were removed from the Python-visible root
   surface; production and tests now enter those policies through typed native

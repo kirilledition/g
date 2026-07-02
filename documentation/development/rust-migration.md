@@ -190,10 +190,16 @@ now execute in the root PyO3 adapter over NumPy buffers before calling
 `g-engine` policy helpers. Python preflight no longer uses `np.isfinite`,
 `np.unique`, or `np.count_nonzero` for those production checks, and the Python
 architecture checker guards against reintroducing them in `g.engine.preflight`.
+Preflight chromosome collection now requires the native engine
+`required_chromosomes` API directly; the old Python metadata-slice collection
+fallback has been removed.
 Covariate-rank validation still uses NumPy `matrix_rank` until a native rank or
 SVD-backed implementation can preserve the existing tolerance semantics; the
 architecture checker keeps that transitional scan isolated to the preflight
 adapter.
+Callback chunk metadata now uses the native scalar `chromosome_label` contract
+directly; Python no longer falls back to reading a full chromosome column from
+metadata objects.
 Callback null-logistic nonconvergence planning now has a PyO3 bool-array entry
 point that owns scalar detection, flattening, total-fit counts, and
 nonconverged counts before calling `g-engine` policy helpers. The callback

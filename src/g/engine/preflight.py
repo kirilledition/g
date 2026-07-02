@@ -77,11 +77,21 @@ class MultiTraitPreflightShape:
     covariate_count: int
 
 
+class BgenPreflightEngineProtocol(typing.Protocol):
+    """Native BGEN engine contract required by preflight validation."""
+
+    variant_count: int
+
+    def required_chromosomes(self, variant_limit: int | None) -> list[str]:
+        """Return chromosome labels represented in the preflight scan window."""
+        ...
+
+
 def run_regenie2_preflight(
     *,
     run_input: typing.Any,
     prediction_source: typing.Any,
-    engine: typing.Any,
+    engine: BgenPreflightEngineProtocol,
     variant_limit: int | None,
     is_binary_trait: bool,
     trusted_no_missing_diploid: bool,
@@ -131,7 +141,7 @@ def run_regenie2_multi_preflight(
     *,
     run_input: typing.Any,
     prediction_source: typing.Any,
-    engine: typing.Any,
+    engine: BgenPreflightEngineProtocol,
     variant_limit: int | None,
     is_binary_trait: bool,
     trusted_no_missing_diploid: bool,
@@ -251,23 +261,11 @@ def array_shape_counts(values: np.ndarray) -> tuple[int, ...]:
     return tuple(int(dimension_count) for dimension_count in values.shape)
 
 
-def collect_required_chromosomes(engine: typing.Any, variant_limit: int | None) -> tuple[str, ...]:
+def collect_required_chromosomes(engine: BgenPreflightEngineProtocol, variant_limit: int | None) -> tuple[str, ...]:
     """Collect chromosome labels represented in the native BGEN engine."""
     variant_count = int(engine.variant_count)
-    scanned_variant_count = int(g._core.resolve_preflight_variant_count(variant_count, variant_limit))
-    native_required_chromosomes = getattr(engine, "required_chromosomes", None)
-    if callable(native_required_chromosomes):
-        return tuple(str(chromosome) for chromosome in native_required_chromosomes(variant_limit))
-    chromosome_values, _, _, _, _ = engine.variant_metadata_slice(0, scanned_variant_count)
-    required_chromosomes: list[str] = []
-    seen_chromosomes: set[str] = set()
-    for chromosome_value in chromosome_values:
-        chromosome = str(chromosome_value)
-        if chromosome in seen_chromosomes:
-            continue
-        seen_chromosomes.add(chromosome)
-        required_chromosomes.append(chromosome)
-    return tuple(required_chromosomes)
+    g._core.resolve_preflight_variant_count(variant_count, variant_limit)
+    return tuple(str(chromosome) for chromosome in engine.required_chromosomes(variant_limit))
 
 
 def build_preflight_report(
