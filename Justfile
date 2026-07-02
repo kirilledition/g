@@ -589,6 +589,10 @@ bench-output-stages-gpu *overrides: dev-install-perf
 bench-torchgwas-chr22 *overrides: dev-install-gpu-dependencies dev-install-perf
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_torchgwas_chr22 --config-name benchmark_torchgwas_chr22 {{ overrides }}
 
+# Benchmark single-trait chr22 nominal dense association against tensorQTL
+bench-tensorqtl-chr22 *overrides: dev-install-gpu-dependencies dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_tensorqtl_chr22 --config-name benchmark_tensorqtl_chr22 {{ overrides }}
+
 # Submit binary hot benchmark to the configured GPU node
 slurm-gpu-bench-binary-hot *overrides:
     {{ server_env }} && just slurm-gpu-just bench-binary-hot-gpu {{ overrides }}
@@ -596,6 +600,10 @@ slurm-gpu-bench-binary-hot *overrides:
 # Submit the TorchGWAS chr22 benchmark to the configured GPU node
 slurm-gpu-bench-torchgwas-chr22 *overrides:
     {{ server_env }} && just slurm-gpu-just bench-torchgwas-chr22 {{ overrides }}
+
+# Submit the tensorQTL chr22 benchmark to the configured GPU node
+slurm-gpu-bench-tensorqtl-chr22 *overrides:
+    {{ server_env }} && just slurm-gpu-just bench-tensorqtl-chr22 {{ overrides }}
 
 # Submit callback overhead microbenchmark to the configured CPU node
 slurm-cpu-bench-callback-overhead *overrides:

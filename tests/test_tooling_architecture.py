@@ -14,6 +14,7 @@ import numpy as np
 import tooling.cli.benchmark as grouped_benchmark
 import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
 import tooling.cli.benchmark_regenie2_binary_hot as binary_hot_benchmark
+import tooling.cli.benchmark_tensorqtl_chr22 as tensorqtl_benchmark
 import tooling.cli.benchmark_torchgwas_chr22 as torchgwas_benchmark
 import tooling.cli.data as grouped_data
 import tooling.cli.debug as grouped_debug
@@ -282,6 +283,169 @@ def test_torchgwas_converts_tab_separated_plink2_raw(tmp_path: Path) -> None:
     assert marker_ids_path.read_text(encoding="utf-8").splitlines() == ["rs1_A", "rs2_G"]
 
 
+def test_hydra_tensorqtl_chr22_config_converts_to_arguments(tmp_path: Path) -> None:
+    arguments = tensorqtl_benchmark.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'tensorqtl'}",
+            "tool.dry_run=true",
+            "tool.variant_limit=1000",
+        ]
+    )
+
+    assert arguments.bgen_path.name == "1kg_chr22_full.bgen"
+    assert arguments.sample_path.name == "1kg_chr22_full.sample"
+    assert arguments.plink_prefix_path.name == "1kg_chr22_full"
+    assert arguments.bed_path.name == "1kg_chr22_full.bed"
+    assert arguments.bim_path.name == "1kg_chr22_full.bim"
+    assert arguments.fam_path.name == "1kg_chr22_full.fam"
+    assert arguments.phenotype_column == "phenotype_continuous"
+    assert arguments.covariate_columns == ("age", "sex")
+    assert arguments.prediction_list_path == arguments.data_directory / "baselines" / "regenie_step1_qt_pred.list"
+    assert arguments.chunk_size == 16384
+    assert arguments.variant_limit == 1000
+    assert arguments.tensorqtl_batch_size == 20000
+    assert arguments.tensorqtl_commit == tensorqtl_benchmark.TENSORQTL_MAIN_COMMIT
+    assert arguments.tensorqtl_python == "3.12"
+    assert arguments.torch_package == "torch==2.5.1+cu121"
+    assert arguments.torch_package_index_url == "https://download.pytorch.org/whl/cu121"
+    assert tensorqtl_benchmark.tensorqtl_venv_directory(arguments).name == "venv-plink-3_12"
+    assert arguments.output_directory == tmp_path / "tensorqtl"
+
+
+def test_tensorqtl_prepares_sample_ordered_matrices(tmp_path: Path) -> None:
+    data_directory = tmp_path / "data"
+    data_directory.mkdir()
+    (data_directory / "genotypes.fam").write_text(
+        "0\tHG00097\t0\t0\t2\t-9\n0\tHG00096\t0\t0\t1\t-9\n",
+        encoding="utf-8",
+    )
+    (data_directory / "pheno_cont.txt").write_text(
+        "FID\tIID\tphenotype_continuous\n0\tHG00096\t1.5\n0\tHG00097\t2.5\n",
+        encoding="utf-8",
+    )
+    (data_directory / "covariates.txt").write_text(
+        "FID\tIID\tage\tsex\n0\tHG00096\t42\t1\n0\tHG00097\t48\t2\n",
+        encoding="utf-8",
+    )
+    arguments = tensorqtl_benchmark.build_arguments_from_overrides(
+        [
+            f"tool.data_dir={data_directory}",
+            "tool.plink_prefix=genotypes",
+            "tool.bgen=missing.bgen",
+            "tool.sample=missing.sample",
+            "tool.prediction_list=missing.list",
+            f"tool.output_dir={tmp_path / 'tensorqtl'}",
+            "tool.dry_run=true",
+            "tool.validate_inputs=false",
+            "tool.variant_limit=null",
+        ]
+    )
+
+    input_spec = tensorqtl_benchmark.prepare_tensorqtl_matrices(arguments=arguments, command_results=[])
+
+    assert input_spec.genotype_prefix_path == tmp_path / "tensorqtl" / "tensorqtl_inputs" / "plink_genotypes"
+    assert input_spec.phenotype_matrix_path.read_text(encoding="utf-8").splitlines() == [
+        "phenotype_id\tHG00097\tHG00096",
+        "phenotype_continuous\t2.5\t1.5",
+    ]
+    assert input_spec.covariate_matrix_path.read_text(encoding="utf-8").splitlines() == [
+        "covariate_id\tHG00097\tHG00096",
+        "age\t48\t42",
+        "sex\t2\t1",
+    ]
+
+
+def test_tensorqtl_chr22_cases_render_g_and_competitor_commands(tmp_path: Path) -> None:
+    arguments = tensorqtl_benchmark.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'tensorqtl'}",
+            "tool.dry_run=true",
+            "tool.variant_limit=null",
+        ]
+    )
+    input_spec = tensorqtl_benchmark.TensorqtlInputSpec(
+        genotype_prefix_path=arguments.plink_prefix_path,
+        phenotype_matrix_path=tmp_path / "phenotypes.tsv",
+        covariate_matrix_path=tmp_path / "covariates.tsv",
+    )
+
+    cases = tensorqtl_benchmark.build_cases(arguments, input_spec)
+    case_by_identifier = {benchmark_case.case_id: benchmark_case for benchmark_case in cases}
+    g_command = list(case_by_identifier["g_linear_gpu_cold"].command_arguments)
+    tensorqtl_command = list(case_by_identifier["tensorqtl_trans_dense_gpu_cold"].command_arguments)
+
+    assert [benchmark_case.case_id for benchmark_case in cases] == [
+        "g_linear_gpu_cold",
+        "tensorqtl_trans_dense_gpu_cold",
+        "g_linear_gpu_warm",
+        "tensorqtl_trans_dense_gpu_warm",
+    ]
+    assert "--qt" in g_command
+    assert g_command[g_command.index("--bgen") + 1] == str(arguments.bgen_path)
+    assert g_command[g_command.index("--phenoCol") + 1] == "phenotype_continuous"
+    assert g_command[g_command.index("--pred") + 1] == str(arguments.prediction_list_path)
+    assert g_command[g_command.index("--device") + 1] == "gpu"
+
+    assert Path(tensorqtl_command[0]).name == "python"
+    assert tensorqtl_command[1:3] == ["-m", "tensorqtl"]
+    assert tensorqtl_command[3] == str(arguments.plink_prefix_path)
+    assert tensorqtl_command[4] == str(input_spec.phenotype_matrix_path)
+    assert tensorqtl_command[tensorqtl_command.index("--covariates") + 1] == str(input_spec.covariate_matrix_path)
+    assert tensorqtl_command[tensorqtl_command.index("--mode") + 1] == "trans"
+    assert "--return_dense" in tensorqtl_command
+    assert tensorqtl_command[tensorqtl_command.index("--batch_size") + 1] == "20000"
+
+
+def test_tensorqtl_chr22_dry_run_writes_standard_artifacts(tmp_path: Path) -> None:
+    data_directory = tmp_path / "data"
+    data_directory.mkdir()
+    (data_directory / "genotypes.fam").write_text(
+        "0\tHG00096\t0\t0\t1\t-9\n",
+        encoding="utf-8",
+    )
+    (data_directory / "pheno_cont.txt").write_text(
+        "FID\tIID\tphenotype_continuous\n0\tHG00096\t1.5\n",
+        encoding="utf-8",
+    )
+    (data_directory / "covariates.txt").write_text(
+        "FID\tIID\tage\tsex\n0\tHG00096\t42\t1\n",
+        encoding="utf-8",
+    )
+    arguments = tensorqtl_benchmark.build_arguments_from_overrides(
+        [
+            f"tool.data_dir={data_directory}",
+            "tool.plink_prefix=genotypes",
+            "tool.bgen=missing.bgen",
+            "tool.sample=missing.sample",
+            "tool.prediction_list=missing.list",
+            f"tool.output_dir={tmp_path / 'tensorqtl'}",
+            "tool.dry_run=true",
+            "tool.validate_inputs=false",
+            "tool.variant_limit=null",
+        ]
+    )
+
+    case_results = tensorqtl_benchmark.run_benchmark(arguments)
+
+    assert {case_result.status for case_result in case_results} == {tensorqtl_benchmark.RunStatus.DRY_RUN}
+    assert (arguments.output_directory / "report.json").is_file()
+    assert (arguments.output_directory / "summary.md").is_file()
+    assert (arguments.output_directory / "metrics.jsonl").is_file()
+    assert (arguments.output_directory / "commands" / "commands.jsonl").is_file()
+    assert (arguments.output_directory / "artifact_manifest.json").is_file()
+    report_payload = tooling_reports.read_json_report(arguments.output_directory / "report.json")
+    assert report_payload["run"]["status"] == "dry_run"
+    assert len(report_payload["trials"]) == 4
+    tensorqtl_trial = next(
+        trial
+        for trial in typing.cast("list[dict[str, object]]", report_payload["trials"])
+        if trial["case_id"] == "tensorqtl_trans_dense_gpu_cold"
+    )
+    command_arguments = typing.cast("list[str]", tensorqtl_trial["command_arguments"])
+    assert command_arguments[command_arguments.index("--mode") + 1] == "trans"
+    assert "--return_dense" in command_arguments
+
+
 def test_named_justfile_workflow_configs_compose() -> None:
     config_names = [
         "data_baseline_binary",
@@ -293,6 +457,7 @@ def test_named_justfile_workflow_configs_compose() -> None:
         "bench_binary_hot_gpu",
         "bench_binary_hot_gpu_smoke",
         "bench_output_stages_gpu",
+        "benchmark_tensorqtl_chr22",
         "benchmark_torchgwas_chr22",
         "bench_linear_startup_gpu",
         "bench_linear_startup_gpu_parquet",
