@@ -2532,6 +2532,11 @@ Current guardrail notes:
   public API wrappers, host orchestration, execution-plan, runner, JAX runtime
   setup, CLI/config, output, and file-parser packages. This keeps Python/JAX
   compute modules on the backend side of the Phase 14 ownership line.
+- The kept Python adapters now have explicit import-boundary guards:
+  `g.interface.config` stays a thin Rust config binding adapter, `g.jax_runtime`
+  stays isolated from host orchestration/config/output/compute packages, and
+  `g.api` cannot bypass the public runner/config/run-event surfaces into native
+  bindings, compute kernels, output, JAX setup, or internal engine pipelines.
 
 ### Exit criteria
 
@@ -2766,10 +2771,15 @@ Adjust only when a concrete domain requirement justifies it.
 Add an import-policy check for Python:
 
 ```text
+g.api must not import native bindings, CLI, compute, output, JAX runtime setup,
+execution plans, or internal engine callback/native-dispatch/pipeline modules.
+g.interface.config must not import public API, CLI, compute, engine,
+execution-plan, output, JAX runtime, or runner packages.
 g.compute must not import native bindings, public API wrappers, host
 orchestration, execution plans, runner, JAX runtime setup, CLI/config, output,
 or file parsers.
-g.jax_runtime must not import runner orchestration.
+g.jax_runtime must not import public API, CLI, compute, engine, execution-plan,
+interface/config, output, or runner orchestration packages.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
@@ -2785,6 +2795,8 @@ boundaries through an AST-based checker. The production manifest-write rule
 allows the `g.io.output` adapter helper itself, but rejects production callers
 outside that helper; the compute-kernel rules reject host-orchestration imports,
 direct file I/O, and common NumPy/pandas file loaders under `g.compute`; the
+kept-adapter import rules keep `g.api`, `g.interface.config`, and
+`g.jax_runtime` from reaching across their Phase 14 ownership boundaries; the
 prepared-plan rule rejects
 production calls that rebuild canonical plan payloads in Python; the callback
 worker-queue rule rejects direct Python queue/thread primitives and lower-level

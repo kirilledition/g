@@ -8,11 +8,8 @@ from pathlib import Path
 from g import _core, types
 from g.jax_runtime import models
 
-if typing.TYPE_CHECKING:
-    from g.interface import config
 
-
-def resolve_jax_runtime_policy(compute_config: config.GComputeConfig) -> models.JaxRuntimePolicy:
+def resolve_jax_runtime_policy(compute_config: _core.GComputeConfig) -> models.JaxRuntimePolicy:
     """Resolve the process-global JAX runtime policy requested by a run.
 
     Args:

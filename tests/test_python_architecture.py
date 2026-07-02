@@ -22,6 +22,81 @@ def test_python_cli_shim_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_cli_shim_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
 
+def test_public_api_import_policy_rejects_backend_bypass_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    package_root.mkdir()
+    (package_root / "api.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "from g import cli",
+                "from g.compute import regenie2_linear",
+                "from g.engine.callbacks import binary",
+                "from g.engine.native_dispatch import delivery",
+                "from g.engine.regenie2_pipeline import single_trait",
+                "from g import execution_plan",
+                "from g.io import output",
+                "from g import jax_runtime",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/api.py"), 1, "g._core", "g._core"),
+        (Path("g/api.py"), 2, "g.cli", "g.cli"),
+        (Path("g/api.py"), 3, "g.compute.regenie2_linear", "g.compute"),
+        (Path("g/api.py"), 4, "g.engine.callbacks.binary", "g.engine.callbacks"),
+        (Path("g/api.py"), 5, "g.engine.native_dispatch.delivery", "g.engine.native_dispatch"),
+        (Path("g/api.py"), 6, "g.engine.regenie2_pipeline.single_trait", "g.engine.regenie2_pipeline"),
+        (Path("g/api.py"), 7, "g.execution_plan", "g.execution_plan"),
+        (Path("g/api.py"), 8, "g.io.output", "g.io"),
+        (Path("g/api.py"), 9, "g.jax_runtime", "g.jax_runtime"),
+    ]
+
+
+def test_interface_config_import_policy_rejects_host_runtime_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    interface_directory = package_root / "interface"
+    interface_directory.mkdir(parents=True)
+    (interface_directory / "config.py").write_text(
+        "\n".join(
+            (
+                "from g import api",
+                "from g import cli",
+                "from g.compute import common",
+                "from g.engine import run_events",
+                "from g import execution_plan",
+                "from g.io import output",
+                "from g import jax_runtime",
+                "from g.runner import execution",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/interface/config.py"), 1, "g.api", "g.api"),
+        (Path("g/interface/config.py"), 2, "g.cli", "g.cli"),
+        (Path("g/interface/config.py"), 3, "g.compute.common", "g.compute"),
+        (Path("g/interface/config.py"), 4, "g.engine.run_events", "g.engine"),
+        (Path("g/interface/config.py"), 5, "g.execution_plan", "g.execution_plan"),
+        (Path("g/interface/config.py"), 6, "g.io.output", "g.io"),
+        (Path("g/interface/config.py"), 7, "g.jax_runtime", "g.jax_runtime"),
+        (Path("g/interface/config.py"), 8, "g.runner.execution", "g.runner"),
+    ]
+
+
 def test_compute_import_policy_rejects_host_orchestration_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     compute_directory = package_root / "compute"
@@ -1504,13 +1579,20 @@ def test_compute_file_io_policy_rejects_direct_file_access(tmp_path: Path) -> No
     ]
 
 
-def test_jax_runtime_import_policy_rejects_runner_orchestration_imports(tmp_path: Path) -> None:
+def test_jax_runtime_import_policy_rejects_host_orchestration_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     jax_runtime_directory = package_root / "jax_runtime"
     jax_runtime_directory.mkdir(parents=True)
     (jax_runtime_directory / "setup.py").write_text(
         "\n".join(
             (
+                "from g import api",
+                "from g import cli",
+                "from g.compute import common",
+                "from g.engine import run_events",
+                "from g import execution_plan",
+                "from g.interface import config",
+                "from g.io import output",
                 "from g.runner import runtime",
                 "import g.runner.cli",
             )
@@ -1524,8 +1606,15 @@ def test_jax_runtime_import_policy_rejects_runner_orchestration_imports(tmp_path
         (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
         for violation in violations
     ] == [
-        (Path("g/jax_runtime/setup.py"), 1, "g.runner.runtime", "g.runner"),
-        (Path("g/jax_runtime/setup.py"), 2, "g.runner.cli", "g.runner"),
+        (Path("g/jax_runtime/setup.py"), 1, "g.api", "g.api"),
+        (Path("g/jax_runtime/setup.py"), 2, "g.cli", "g.cli"),
+        (Path("g/jax_runtime/setup.py"), 3, "g.compute.common", "g.compute"),
+        (Path("g/jax_runtime/setup.py"), 4, "g.engine.run_events", "g.engine"),
+        (Path("g/jax_runtime/setup.py"), 5, "g.execution_plan", "g.execution_plan"),
+        (Path("g/jax_runtime/setup.py"), 6, "g.interface.config", "g.interface"),
+        (Path("g/jax_runtime/setup.py"), 7, "g.io.output", "g.io"),
+        (Path("g/jax_runtime/setup.py"), 8, "g.runner.runtime", "g.runner"),
+        (Path("g/jax_runtime/setup.py"), 9, "g.runner.cli", "g.runner"),
     ]
 
 

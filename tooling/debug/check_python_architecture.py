@@ -197,6 +197,37 @@ CLI_SHIM_MESSAGE = (
 
 PYTHON_IMPORT_POLICIES = (
     PythonImportPolicy(
+        name="public_api_convenience_layer_isolation",
+        source_directory=Path("api.py"),
+        forbidden_imports=(
+            "g._core",
+            "g.cli",
+            "g.compute",
+            "g.engine.callbacks",
+            "g.engine.native_dispatch",
+            "g.engine.regenie2_pipeline",
+            "g.execution_plan",
+            "g.io",
+            "g.jax_runtime",
+        ),
+        message="public Python API must stay a convenience layer over config, runner, and public run events",
+    ),
+    PythonImportPolicy(
+        name="interface_config_adapter_isolation",
+        source_directory=Path("interface/config.py"),
+        forbidden_imports=(
+            "g.api",
+            "g.cli",
+            "g.compute",
+            "g.engine",
+            "g.execution_plan",
+            "g.io",
+            "g.jax_runtime",
+            "g.runner",
+        ),
+        message="Python config adapter must stay a thin boundary over Rust-owned config bindings",
+    ),
+    PythonImportPolicy(
         name="compute_kernel_isolation",
         source_directory=Path("compute"),
         forbidden_imports=(
@@ -218,8 +249,17 @@ PYTHON_IMPORT_POLICIES = (
     PythonImportPolicy(
         name="jax_runtime_orchestration_isolation",
         source_directory=Path("jax_runtime"),
-        forbidden_imports=("g.runner",),
-        message="JAX runtime helpers must not import runner orchestration packages",
+        forbidden_imports=(
+            "g.api",
+            "g.cli",
+            "g.compute",
+            "g.engine",
+            "g.execution_plan",
+            "g.interface",
+            "g.io",
+            "g.runner",
+        ),
+        message="JAX runtime helpers must not import public API, config, compute, output, or orchestration packages",
     ),
     PythonImportPolicy(
         name="runner_jax_import_boundary",
