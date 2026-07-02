@@ -2115,6 +2115,9 @@ Current implementation notes:
     `6.99s`.
   - Static production Python/Rust boundary count: `191` `_core` call sites
     across `184` distinct `_core` callable names in `src/g`.
+- Production BGEN delivery invocation no longer probes typed run inputs with
+  optional `getattr` native-alignment fallbacks; no-native-alignment delivery
+  tests now use the typed union run-input model.
 
 ### Tests
 

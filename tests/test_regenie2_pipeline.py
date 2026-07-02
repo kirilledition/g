@@ -1616,10 +1616,7 @@ def test_run_bgen_engine_with_writer_sessions_records_native_delivery_diagnostic
     writer_session = FakeWriterSession()
     final_parquet_paths = native_dispatch_delivery.run_bgen_engine_with_writer_sessions(
         engine=typing.cast("_core.Regenie2RunEngine", FakeRunEngine("study.bgen", chunk_size=32)),
-        run_input=typing.cast(
-            "native_dispatch_models.BgenDeliveryRunInputProtocol",
-            SimpleNamespace(sample_indices=np.asarray([0, 1])),
-        ),
+        run_input=native_dispatch_models.NativeBgenUnionRunInput(sample_indices=np.asarray([0, 1])),
         committed_chunk_identifiers={5, 3},
         writer_sessions=(writer_session,),
         callback=callback,
@@ -7208,7 +7205,7 @@ def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
 def test_native_dosage_delivery_forwards_callback_batch_size() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32)
     callback = SimpleNamespace(native_callback_batch_size=2)
-    run_input = SimpleNamespace(sample_indices=np.asarray([0, 1], dtype=np.int64))
+    run_input = native_dispatch_models.NativeBgenUnionRunInput(sample_indices=np.asarray([0, 1], dtype=np.int64))
 
     processed_chunk_count = native_dispatch_delivery.run_variant_major_dosage_delivery(
         engine=typing.cast("typing.Any", engine),
@@ -7224,7 +7221,7 @@ def test_native_dosage_delivery_forwards_callback_batch_size() -> None:
 def test_native_dosage_delivery_defaults_callback_batch_size_in_native_policy() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32)
     callback = SimpleNamespace()
-    run_input = SimpleNamespace(sample_indices=np.asarray([0, 1], dtype=np.int64))
+    run_input = native_dispatch_models.NativeBgenUnionRunInput(sample_indices=np.asarray([0, 1], dtype=np.int64))
 
     processed_chunk_count = native_dispatch_delivery.run_variant_major_dosage_delivery(
         engine=typing.cast("typing.Any", engine),
@@ -7291,7 +7288,7 @@ def test_native_dosage_delivery_prefers_native_multi_alignment() -> None:
 def test_native_packed8_delivery_rejects_callback_batch_size_above_one() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32)
     callback = SimpleNamespace(native_callback_batch_size=2)
-    run_input = SimpleNamespace(sample_indices=np.asarray([0, 1], dtype=np.int64))
+    run_input = native_dispatch_models.NativeBgenUnionRunInput(sample_indices=np.asarray([0, 1], dtype=np.int64))
 
     with pytest.raises(ValueError, match="packed8 BGEN delivery"):
         native_dispatch_delivery.run_variant_major_packed8_delivery(
