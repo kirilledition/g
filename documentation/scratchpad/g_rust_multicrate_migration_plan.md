@@ -2228,6 +2228,9 @@ Current implementation notes:
   GPU-format, association-backend, and BGEN-open events were removed from the
   Python-visible root surface; production enters those policies through
   `NativeRunEventTelemetryPolicy`.
+- Detached run-event lifecycle payload and terminal-render helper exports were
+  removed from the Python-visible root surface; production enters those
+  policies through `NativeRunEventPayloadPolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

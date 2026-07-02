@@ -124,7 +124,7 @@ def attach_run_metadata(
 ) -> RunArtifacts:
     """Attach lifecycle metadata to returned run artifacts."""
     return run_artifacts_from_native_payload(
-        g._core.attach_run_metadata_payload(
+        native_run_event_payload_policy().attach_run_metadata_payload(
             artifacts,
             run_id,
             association_mode.value,
@@ -135,17 +135,26 @@ def attach_run_metadata(
 
 def build_run_completed_event(artifacts: RunArtifacts) -> RunCompletedEvent:
     """Build a structured completion event from run artifacts."""
-    return run_completed_event_from_native_payload(g._core.build_run_completed_event_payload(artifacts))
+    return run_completed_event_from_native_payload(
+        native_run_event_payload_policy().build_run_completed_event_payload(artifacts)
+    )
 
 
 def build_run_interrupted_event(shutdown_request: shutdown.GracefulShutdownRequested) -> RunInterruptedEvent:
     """Build a structured interruption event from a graceful shutdown request."""
-    return run_interrupted_event_from_native_payload(g._core.build_run_interrupted_event_payload(shutdown_request))
+    return run_interrupted_event_from_native_payload(
+        native_run_event_payload_policy().build_run_interrupted_event_payload(shutdown_request)
+    )
 
 
 def build_run_failed_event(error: Exception) -> RunFailedEvent:
     """Build a structured failure event from an exception."""
-    return run_failed_event_from_native_payload(g._core.build_run_failed_event_payload(error))
+    return run_failed_event_from_native_payload(native_run_event_payload_policy().build_run_failed_event_payload(error))
+
+
+def native_run_event_payload_policy() -> g._core.NativeRunEventPayloadPolicy:
+    """Build the native run-event payload policy handle."""
+    return g._core.NativeRunEventPayloadPolicy()
 
 
 def native_run_event_telemetry_policy() -> g._core.NativeRunEventTelemetryPolicy:
@@ -239,14 +248,14 @@ def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
 
 def render_run_completed_lines(event: RunCompletedEvent) -> tuple[str, ...]:
     """Render concise terminal lines for a completed run."""
-    return tuple(g._core.render_run_completed_lines(event))
+    return tuple(native_run_event_payload_policy().render_run_completed_lines(event))
 
 
 def render_run_interrupted_lines(event: RunInterruptedEvent) -> tuple[str, ...]:
     """Render concise terminal lines for a gracefully interrupted run."""
-    return tuple(g._core.render_run_interrupted_lines(event))
+    return tuple(native_run_event_payload_policy().render_run_interrupted_lines(event))
 
 
 def render_run_failed_lines(event: RunFailedEvent) -> tuple[str, ...]:
     """Render concise terminal lines for a failed run."""
-    return tuple(g._core.render_run_failed_lines(event))
+    return tuple(native_run_event_payload_policy().render_run_failed_lines(event))

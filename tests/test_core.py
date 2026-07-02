@@ -281,6 +281,10 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "plan_single_trait_binary_gpu_genotype_format_resolution",
         "plan_single_trait_output_write",
         "plan_writer_finish_execution",
+        "attach_run_metadata_payload",
+        "build_run_completed_event_payload",
+        "build_run_failed_event_payload",
+        "build_run_interrupted_event_payload",
         "record_association_backend_selected_telemetry_event",
         "record_bgen_engine_opened_telemetry_event",
         "record_effective_config_written_telemetry_event",
@@ -297,6 +301,9 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "record_sample_alignment_completed_telemetry_event",
         "record_single_trait_preflight_completed_telemetry_event",
         "record_writer_finished_telemetry_event",
+        "render_run_completed_lines",
+        "render_run_failed_lines",
+        "render_run_interrupted_lines",
         "validate_pipeline_resume_compatibility",
     ):
         assert not hasattr(_core, removed_scheduler_export_name)

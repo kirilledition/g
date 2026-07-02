@@ -268,7 +268,78 @@ impl NativeRunEventTelemetryPolicy {
     }
 }
 
-#[pyfunction]
+#[pyclass]
+pub(crate) struct NativeRunEventPayloadPolicy;
+
+#[pymethods]
+#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::unused_self)]
+impl NativeRunEventPayloadPolicy {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    fn build_run_completed_event_payload<'py>(
+        &self,
+        py: Python<'py>,
+        artifacts: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        build_run_completed_event_payload(py, artifacts)
+    }
+
+    fn attach_run_metadata_payload<'py>(
+        &self,
+        py: Python<'py>,
+        artifacts: &Bound<'py, PyAny>,
+        run_id: Option<String>,
+        association_mode: String,
+        phenotype_count: i64,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        attach_run_metadata_payload(py, artifacts, run_id, association_mode, phenotype_count)
+    }
+
+    fn build_run_interrupted_event_payload<'py>(
+        &self,
+        py: Python<'py>,
+        shutdown_request: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        build_run_interrupted_event_payload(py, shutdown_request)
+    }
+
+    fn build_run_failed_event_payload<'py>(
+        &self,
+        py: Python<'py>,
+        error: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        build_run_failed_event_payload(py, error)
+    }
+
+    fn render_run_completed_lines<'py>(
+        &self,
+        py: Python<'py>,
+        event: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        render_run_completed_lines(py, event)
+    }
+
+    fn render_run_interrupted_lines<'py>(
+        &self,
+        py: Python<'py>,
+        event: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        render_run_interrupted_lines(py, event)
+    }
+
+    fn render_run_failed_lines<'py>(
+        &self,
+        py: Python<'py>,
+        event: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        render_run_failed_lines(py, event)
+    }
+}
+
 pub fn build_run_completed_event_payload<'py>(
     py: Python<'py>,
     artifacts: &Bound<'py, PyAny>,
@@ -278,7 +349,6 @@ pub fn build_run_completed_event_payload<'py>(
     run_completed_event_payload_to_py_dict(py, &event_payload)
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub fn attach_run_metadata_payload<'py>(
     py: Python<'py>,
@@ -297,7 +367,6 @@ pub fn attach_run_metadata_payload<'py>(
     run_artifacts_payload_to_py_dict(py, &attached_artifacts)
 }
 
-#[pyfunction]
 pub fn build_run_interrupted_event_payload<'py>(
     py: Python<'py>,
     shutdown_request: &Bound<'py, PyAny>,
@@ -313,7 +382,6 @@ pub fn build_run_interrupted_event_payload<'py>(
     run_interrupted_event_payload_to_py_dict(py, &event_payload)
 }
 
-#[pyfunction]
 pub fn build_run_failed_event_payload<'py>(py: Python<'py>, error: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
     let error_type = error.get_type().name()?.to_string_lossy().into_owned();
     let error_message = error.str()?.to_string_lossy().into_owned();
@@ -1309,19 +1377,16 @@ pub fn record_native_dispatch_writer_sessions_interrupted_flush_started_diagnost
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn render_run_completed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_completed_event_from_py(event)?;
     PyTuple::new(py, native_run_events::render_run_completed_lines(&event_payload))
 }
 
-#[pyfunction]
 pub fn render_run_interrupted_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_interrupted_event_from_py(event)?;
     PyTuple::new(py, native_run_events::render_run_interrupted_lines(&event_payload))
 }
 
-#[pyfunction]
 pub fn render_run_failed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_failed_event_from_py(event)?;
     PyTuple::new(py, native_run_events::render_run_failed_lines(&event_payload))
@@ -1334,16 +1399,12 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_output_and_preflight_diagnostic_exports(module)?;
     register_pipeline_diagnostic_exports(module)?;
     register_native_dispatch_diagnostic_exports(module)?;
-    register_rendering_exports(module)?;
     Ok(())
 }
 
 fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeRunEventPayloadPolicy>()?;
     module.add_class::<NativeRunEventTelemetryPolicy>()?;
-    module.add_function(wrap_pyfunction!(attach_run_metadata_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_run_completed_event_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_run_interrupted_event_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(build_run_failed_event_payload, module)?)?;
     Ok(())
 }
 
@@ -1461,13 +1522,6 @@ fn register_native_dispatch_diagnostic_exports(module: &Bound<'_, PyModule>) -> 
         record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event,
         module
     )?)?;
-    Ok(())
-}
-
-fn register_rendering_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(render_run_completed_lines, module)?)?;
-    module.add_function(wrap_pyfunction!(render_run_failed_lines, module)?)?;
-    module.add_function(wrap_pyfunction!(render_run_interrupted_lines, module)?)?;
     Ok(())
 }
 
