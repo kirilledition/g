@@ -421,6 +421,20 @@ PYTHON_CALL_POLICIES = (
         message="production linear callbacks must require typed chromosome-state readiness fields",
     ),
     PythonCallPolicy(
+        name="callback_transfer_contract_isolation",
+        source_directory=Path("engine/callbacks/transfers.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production callback transfer helpers must use typed array and chunk-stat contracts",
+    ),
+    PythonCallPolicy(
+        name="callback_writer_contract_isolation",
+        source_directory=Path("engine/callbacks/writers.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production callback writers must use typed writer contracts, not method-name probing",
+    ),
+    PythonCallPolicy(
         name="native_compute_group_resolution_isolation",
         source_directory=Path("engine/native_dispatch/groups.py"),
         forbidden_calls=("getattr",),

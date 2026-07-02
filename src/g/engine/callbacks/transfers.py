@@ -24,6 +24,25 @@ block_until_ready = diagnostics.block_until_ready
 get_metadata_chromosome = shared.get_metadata_chromosome
 
 
+class TransferMetadataArrayProtocol(typing.Protocol):
+    """Array contract required for transfer metadata summaries."""
+
+    shape: typing.Any
+    dtype: typing.Any
+
+
+class ChunkStatsComputeArraysProtocol(typing.Protocol):
+    """Native chunk-stat contract for compute-needed arrays."""
+
+    def compute_arrays(
+        self,
+        *,
+        include_imputed_dosage_square_sum: bool,
+        include_sparse_firth_candidate: bool,
+    ) -> typing.Mapping[str, object]:
+        """Return chunk-stat arrays needed by JAX compute paths."""
+
+
 def put_compute_array_on_device(array: HostOrDeviceFloatArray) -> jax.Array:
     """Place an aligned host/JAX input array on the active JAX device."""
     return typing.cast("jax.Array", jax.device_put(array))
@@ -34,20 +53,16 @@ def record_transfer_metadata_for_array(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     transfer_name: str,
     array_role: str,
-    array: object,
+    array: TransferMetadataArrayProtocol,
 ) -> None:
     """Record conservative transfer size metadata when diagnostics are active."""
     if stage_timing_recorder is None:
         return
-    shape = getattr(array, "shape", None)
-    dtype = getattr(array, "dtype", None)
-    if shape is None or dtype is None:
-        return
     try:
-        numpy_dtype = np.dtype(dtype)
+        numpy_dtype = np.dtype(array.dtype)
     except TypeError:
         return
-    shape_dimensions = tuple(int(dimension) for dimension in typing.cast("typing.Iterable[typing.Any]", shape))
+    shape_dimensions = tuple(int(dimension) for dimension in array.shape)
     stage_timing_recorder.add_transfer_metadata_for_shape(
         transfer_name=transfer_name,
         array_role=array_role,
@@ -242,33 +257,19 @@ def cast_statistic_array_for_native_writer_float64(array: object) -> npt.NDArray
 
 
 def get_chunk_stats_compute_arrays(
-    chunk_stats: _core.ChunkStats,
+    chunk_stats: ChunkStatsComputeArraysProtocol,
     *,
     include_imputed_dosage_square_sum: bool,
     include_sparse_firth_candidate: bool,
 ) -> typing.Mapping[str, object]:
-    """Return compute-needed native stat arrays through the bundled binding when available."""
-    compute_arrays_method = getattr(chunk_stats, "compute_arrays", None)
-    if callable(compute_arrays_method):
-        return typing.cast(
-            "typing.Mapping[str, object]",
-            compute_arrays_method(
-                include_imputed_dosage_square_sum=include_imputed_dosage_square_sum,
-                include_sparse_firth_candidate=include_sparse_firth_candidate,
-            ),
-        )
-    compute_arrays: dict[str, object] = {
-        "dosage_sum": chunk_stats.dosage_sum,
-        "observation_count": chunk_stats.observation_count,
-    }
-    if include_imputed_dosage_square_sum:
-        compute_arrays["imputed_dosage_square_sum"] = chunk_stats.imputed_dosage_square_sum
-    if include_sparse_firth_candidate:
-        compute_arrays["is_rare_sparse_firth_candidate"] = chunk_stats.is_rare_sparse_firth_candidate
-    return compute_arrays
+    """Return compute-needed native stat arrays through the bundled binding."""
+    return chunk_stats.compute_arrays(
+        include_imputed_dosage_square_sum=include_imputed_dosage_square_sum,
+        include_sparse_firth_candidate=include_sparse_firth_candidate,
+    )
 
 
-def get_linear_chunk_stats_arrays(chunk_stats: _core.ChunkStats) -> LinearChunkStatsArrays:
+def get_linear_chunk_stats_arrays(chunk_stats: ChunkStatsComputeArraysProtocol) -> LinearChunkStatsArrays:
     """Return the native stat arrays needed by linear variant-major compute."""
     compute_arrays = get_chunk_stats_compute_arrays(
         chunk_stats,

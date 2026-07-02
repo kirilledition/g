@@ -1233,7 +1233,7 @@ def test_write_regenie2_native_chunk_uses_native_output_write_plan(monkeypatch: 
 
     def plan_single_trait_output_write(**kwargs: object) -> SimpleNamespace:
         write_plan_calls.append(kwargs)
-        return SimpleNamespace(method_name="write_regenie2_native_chunk")
+        return SimpleNamespace(method_name="write_regenie2_native_chunk", uses_float64_native_writer=False)
 
     monkeypatch.setattr(callback_writers._core, "plan_single_trait_output_write", plan_single_trait_output_write)
 
@@ -2966,6 +2966,23 @@ class SparseOnlyChunkStats(ExplodingChunkStats):
     def is_rare_sparse_firth_candidate(self) -> np.ndarray:
         return np.asarray([True, False], dtype=np.bool_)
 
+    def compute_arrays(
+        self,
+        *,
+        include_imputed_dosage_square_sum: bool,
+        include_sparse_firth_candidate: bool,
+    ) -> dict[str, np.ndarray]:
+        if include_imputed_dosage_square_sum:
+            message = "Binary chunk stats should not request imputed dosage square sums."
+            raise AssertionError(message)
+        compute_arrays: dict[str, np.ndarray] = {
+            "dosage_sum": self.dosage_sum,
+            "observation_count": self.observation_count,
+        }
+        if include_sparse_firth_candidate:
+            compute_arrays["is_rare_sparse_firth_candidate"] = self.is_rare_sparse_firth_candidate
+        return compute_arrays
+
 
 class ExplodingSparseCandidateChunkStats(ExplodingChunkStats):
     @property
@@ -2981,6 +2998,23 @@ class ExplodingSparseCandidateChunkStats(ExplodingChunkStats):
         message = "Score-only callbacks must not unwrap or transfer sparse Firth candidate masks."
         raise AssertionError(message)
 
+    def compute_arrays(
+        self,
+        *,
+        include_imputed_dosage_square_sum: bool,
+        include_sparse_firth_candidate: bool,
+    ) -> dict[str, np.ndarray]:
+        if include_imputed_dosage_square_sum:
+            message = "Binary chunk stats should not request imputed dosage square sums."
+            raise AssertionError(message)
+        compute_arrays: dict[str, np.ndarray] = {
+            "dosage_sum": self.dosage_sum,
+            "observation_count": self.observation_count,
+        }
+        if include_sparse_firth_candidate:
+            compute_arrays["is_rare_sparse_firth_candidate"] = self.is_rare_sparse_firth_candidate
+        return compute_arrays
+
 
 class LinearNativeSumChunkStats(ExplodingChunkStats):
     @property
@@ -2994,6 +3028,60 @@ class LinearNativeSumChunkStats(ExplodingChunkStats):
     @property
     def imputed_dosage_square_sum(self) -> np.ndarray:
         return np.asarray([5.0, 13.0], dtype=np.float32)
+
+    def compute_arrays(
+        self,
+        *,
+        include_imputed_dosage_square_sum: bool,
+        include_sparse_firth_candidate: bool,
+    ) -> dict[str, np.ndarray]:
+        if include_sparse_firth_candidate:
+            message = "Linear chunk stats should not request sparse Firth candidate masks."
+            raise AssertionError(message)
+        compute_arrays: dict[str, np.ndarray] = {
+            "dosage_sum": self.dosage_sum,
+            "observation_count": self.observation_count,
+        }
+        if include_imputed_dosage_square_sum:
+            compute_arrays["imputed_dosage_square_sum"] = self.imputed_dosage_square_sum
+        return compute_arrays
+
+
+class NativeComputeArrayChunkStats(ExplodingChunkStats):
+    def __init__(
+        self,
+        *,
+        dosage_sum: np.ndarray,
+        observation_count: np.ndarray,
+        imputed_dosage_square_sum: np.ndarray | None = None,
+        sparse_candidate_mask: np.ndarray | None = None,
+    ) -> None:
+        self.native_dosage_sum = dosage_sum
+        self.native_observation_count = observation_count
+        self.native_imputed_dosage_square_sum = imputed_dosage_square_sum
+        self.native_sparse_candidate_mask = sparse_candidate_mask
+
+    def compute_arrays(
+        self,
+        *,
+        include_imputed_dosage_square_sum: bool,
+        include_sparse_firth_candidate: bool,
+    ) -> dict[str, np.ndarray]:
+        compute_arrays = {
+            "dosage_sum": self.native_dosage_sum,
+            "observation_count": self.native_observation_count,
+        }
+        if include_imputed_dosage_square_sum:
+            if self.native_imputed_dosage_square_sum is None:
+                message = "Native compute-array chunk stats missing imputed dosage square sums."
+                raise AssertionError(message)
+            compute_arrays["imputed_dosage_square_sum"] = self.native_imputed_dosage_square_sum
+        if include_sparse_firth_candidate:
+            if self.native_sparse_candidate_mask is None:
+                message = "Native compute-array chunk stats missing sparse candidate masks."
+                raise AssertionError(message)
+            compute_arrays["is_rare_sparse_firth_candidate"] = self.native_sparse_candidate_mask
+        return compute_arrays
 
 
 class BundledChunkStats(ExplodingChunkStats):
@@ -10657,10 +10745,10 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
         allele_one=["A", "C", "G"],
         allele_two=["G", "T", "A"],
     )
-    chunk_stats = SimpleNamespace(
+    chunk_stats = NativeComputeArrayChunkStats(
         dosage_sum=np.asarray([3.0, 7.0, 11.0], dtype=np.float32),
         observation_count=np.asarray([2, 2, 2], dtype=np.int32),
-        is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_),
+        sparse_candidate_mask=np.asarray([True, False, True], dtype=np.bool_),
     )
     chromosome_state = build_binary_chromosome_state()
 
@@ -10734,10 +10822,10 @@ def test_binary_score_only_variant_major_callback_uses_jitted_variant_major_scor
         ],
         dtype=np.float32,
     )
-    chunk_stats = SimpleNamespace(
+    chunk_stats = NativeComputeArrayChunkStats(
         dosage_sum=np.asarray([3.0, 7.0, 11.0], dtype=np.float32),
         observation_count=np.asarray([2, 2, 2], dtype=np.int32),
-        is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_),
+        sparse_candidate_mask=np.asarray([True, False, True], dtype=np.bool_),
     )
     chromosome_state = build_binary_chromosome_state()
 
@@ -10811,10 +10899,10 @@ def test_binary_score_only_packed8_callback_uses_jitted_packed_score_compute() -
         ],
         dtype=np.uint8,
     )
-    chunk_stats = SimpleNamespace(
+    chunk_stats = NativeComputeArrayChunkStats(
         dosage_sum=np.asarray([2.0, 1.0, 3.0], dtype=np.float32),
         observation_count=np.asarray([2, 2, 2], dtype=np.int32),
-        is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_),
+        sparse_candidate_mask=np.asarray([True, False, True], dtype=np.bool_),
     )
     chromosome_state = build_binary_chromosome_state()
 
@@ -11499,10 +11587,10 @@ def test_multi_binary_score_only_variant_major_callback_uses_donated_score_compu
         kernel_config=build_default_binary_kernel_config(),
     )
     variant_major_genotype_matrix = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
-    chunk_stats = SimpleNamespace(
+    chunk_stats = NativeComputeArrayChunkStats(
         dosage_sum=np.asarray([3.0, 7.0], dtype=np.float32),
         observation_count=np.asarray([2, 2], dtype=np.int32),
-        is_rare_sparse_firth_candidate=np.asarray([True, False], dtype=np.bool_),
+        sparse_candidate_mask=np.asarray([True, False], dtype=np.bool_),
     )
     chromosome_state = build_multi_binary_chromosome_state()
 
@@ -11684,10 +11772,10 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         ],
         dtype=np.float32,
     )
-    chunk_stats = SimpleNamespace(
+    chunk_stats = NativeComputeArrayChunkStats(
         dosage_sum=np.asarray([3.0, 7.0], dtype=np.float32),
         observation_count=np.asarray([2, 2], dtype=np.int32),
-        is_rare_sparse_firth_candidate=np.asarray([True, False], dtype=np.bool_),
+        sparse_candidate_mask=np.asarray([True, False], dtype=np.bool_),
     )
 
     with (
@@ -11756,10 +11844,10 @@ def test_multi_binary_approximate_firth_packed8_callback_uses_packed_chunk_compu
         "chromosome-state",
     )
     packed_probability_pairs_by_variant = build_packed_probability_pairs_by_variant()
-    chunk_stats = SimpleNamespace(
+    chunk_stats = NativeComputeArrayChunkStats(
         dosage_sum=np.asarray([3.0, 7.0], dtype=np.float32),
         observation_count=np.asarray([2, 2], dtype=np.int32),
-        is_rare_sparse_firth_candidate=np.asarray([True, False], dtype=np.bool_),
+        sparse_candidate_mask=np.asarray([True, False], dtype=np.bool_),
     )
 
     with (

@@ -931,6 +931,58 @@ def test_callback_chromosome_state_policy_rejects_single_trait_readiness_probe(t
     ]
 
 
+def test_callback_transfer_contract_policy_rejects_optional_transfer_probes(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "transfers.py").write_text(
+        "\n".join(
+            (
+                "def metadata(array, chunk_stats):",
+                "    shape = getattr(array, 'shape', None)",
+                "    compute_arrays = getattr(chunk_stats, 'compute_arrays', None)",
+                "    return shape, compute_arrays",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/callbacks/transfers.py"), 2, "getattr", "getattr"),
+        (Path("g/engine/callbacks/transfers.py"), 3, "getattr", "getattr"),
+    ]
+
+
+def test_callback_writer_contract_policy_rejects_method_name_probe(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "writers.py").write_text(
+        "\n".join(
+            (
+                "def write(writer_session, write_plan):",
+                "    write_method = getattr(writer_session, write_plan.method_name)",
+                "    write_method()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/callbacks/writers.py"), 2, "getattr", "getattr"),
+    ]
+
+
 def test_delivery_callback_contract_policy_rejects_optional_callback_probe(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     native_dispatch_directory = package_root / "engine" / "native_dispatch"

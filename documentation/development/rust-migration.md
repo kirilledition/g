@@ -204,6 +204,13 @@ Callback readiness blocking now uses JAX's direct `block_until_ready` boundary,
 and single-trait linear/binary callbacks require typed chromosome-state
 readiness arrays (`adjusted_residual` and `score_residual`) instead of probing
 prepared state objects for optional attributes.
+Callback transfer helpers now require arrays with direct `shape`/`dtype`
+metadata and native chunk stats with the `compute_arrays` contract; Python no
+longer skips transfer metadata for missing attributes or falls back to per-field
+chunk-stat property reads when native bundled arrays are absent.
+Single-trait callback output writes now branch on the native write plan's typed
+float64-native-writer flag instead of resolving writer methods from a
+method-name string at runtime.
 Callback null-logistic nonconvergence planning now has a PyO3 bool-array entry
 point that owns scalar detection, flattening, total-fit counts, and
 nonconverged counts before calling `g-engine` policy helpers. The callback
@@ -215,7 +222,9 @@ architecture checker guards against reintroducing those reductions in
 `g.engine.callbacks.diagnostics`, and it keeps production `jax.device_get`
 host materialization isolated to callback diagnostic and writer adapters. It
 also rejects readiness `getattr` probes in callback diagnostics and
-single-trait chromosome-state preparation.
+single-trait chromosome-state preparation, plus optional transfer/chunk-stat
+probing in `g.engine.callbacks.transfers` and callback writer method-name
+probing in `g.engine.callbacks.writers`.
 Run-scoped manifest file fingerprint caching now lives in `g-output` behind a
 native PyO3 cache handle; control-file and prediction-input LOCO fingerprints
 share that handle, and Python no longer resolves paths, stats files, or

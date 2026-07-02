@@ -2098,6 +2098,13 @@ Current implementation notes:
   chromosome-state readiness arrays (`adjusted_residual` and
   `score_residual`) instead of probing prepared state objects for optional
   attributes.
+- Callback transfer helpers now require arrays with direct `shape`/`dtype`
+  metadata and native chunk stats with the `compute_arrays` contract; Python no
+  longer skips transfer metadata for missing attributes or falls back to
+  per-field chunk-stat property reads when native bundled arrays are absent.
+- Single-trait callback output writes now branch on the native write plan's
+  typed float64-native-writer flag instead of resolving writer methods from a
+  method-name string at runtime.
 - Detached scheduler, queue-observation, dosage-buffer, work-handoff, and
   worker-lifecycle planner aliases were removed from the Python-visible root
   surface; production and tests now enter those policies through typed native
@@ -2148,6 +2155,12 @@ Current implementation notes:
 - The Python architecture checker also rejects callback readiness `getattr`
   probes in `g.engine.callbacks.diagnostics`, `linear`, and `binary`, keeping
   the single-trait and multi-trait readiness contracts aligned.
+- The same checker rejects optional transfer/chunk-stat probing in
+  `g.engine.callbacks.transfers`, keeping JAX transfer metadata and
+  variant-major compute-array collection on typed callback contracts.
+- It also rejects callback writer method-name probing in
+  `g.engine.callbacks.writers`; callback, native-dispatch, and preflight
+  production modules no longer contain Python `getattr` fallback probes.
 
 ### Tests
 

@@ -138,22 +138,34 @@ def write_materialized_regenie2_native_chunk_with_optional_timing(
         is_native_writer_session=isinstance(writer_session, _core.OutputWriterSession),
         output_statistic_dtype=output_statistic_dtype.value,
     )
-    write_chunk_method = getattr(writer_session, write_plan.method_name)
-    write_chunk_method(
-        metadata=metadata,
-        chunk_stats=chunk_stats,
-        beta=cast_statistic_array_for_native_writer(materialized_chunk.beta, output_statistic_dtype),
-        standard_error=cast_statistic_array_for_native_writer(
-            materialized_chunk.standard_error,
-            output_statistic_dtype,
-        ),
-        chi_squared=cast_statistic_array_for_native_writer(materialized_chunk.chi_squared, output_statistic_dtype),
-        log10_p_value=cast_statistic_array_for_native_writer(
-            materialized_chunk.log10_p_value,
-            output_statistic_dtype,
-        ),
-        extra_code=materialized_chunk.extra_code,
-    )
+    if write_plan.uses_float64_native_writer:
+        native_writer_session = typing.cast("_core.OutputWriterSession", writer_session)
+        native_extra_code = typing.cast("typing.Any", materialized_chunk.extra_code)
+        native_writer_session.write_regenie2_native_chunk_f64(
+            metadata=metadata,
+            chunk_stats=chunk_stats,
+            beta=cast_statistic_array_for_native_writer_float64(materialized_chunk.beta),
+            standard_error=cast_statistic_array_for_native_writer_float64(materialized_chunk.standard_error),
+            chi_squared=cast_statistic_array_for_native_writer_float64(materialized_chunk.chi_squared),
+            log10_p_value=cast_statistic_array_for_native_writer_float64(materialized_chunk.log10_p_value),
+            extra_code=native_extra_code,
+        )
+    else:
+        writer_session.write_regenie2_native_chunk(
+            metadata=metadata,
+            chunk_stats=chunk_stats,
+            beta=cast_statistic_array_for_native_writer(materialized_chunk.beta, output_statistic_dtype),
+            standard_error=cast_statistic_array_for_native_writer(
+                materialized_chunk.standard_error,
+                output_statistic_dtype,
+            ),
+            chi_squared=cast_statistic_array_for_native_writer(materialized_chunk.chi_squared, output_statistic_dtype),
+            log10_p_value=cast_statistic_array_for_native_writer(
+                materialized_chunk.log10_p_value,
+                output_statistic_dtype,
+            ),
+            extra_code=materialized_chunk.extra_code,
+        )
     if stage_timing_recorder is not None:
         record_stage_duration_with_optional_chunk(
             stage_timing_recorder=stage_timing_recorder,
