@@ -62,21 +62,6 @@ impl NativeJaxRuntimeSetupSession {
         jax_runtime_setup_payload_to_dict(py, session.setup())
     }
 
-    fn side_effect_plan_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let session = self.lock_session()?;
-        jax_runtime_setup_side_effect_plan_to_dict(py, &session.side_effect_plan())
-    }
-
-    fn config_update_payloads<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        let session = self.lock_session()?;
-        let update_payloads = session
-            .config_updates()
-            .iter()
-            .map(|update| jax_runtime_config_update_payload_to_dict(py, update))
-            .collect::<PyResult<Vec<_>>>()?;
-        PyTuple::new(py, &update_payloads)
-    }
-
     fn apply_config_updates(&self, py: Python<'_>) -> PyResult<usize> {
         let updates = self.lock_session()?.config_updates();
         let update_function = py.import("jax")?.getattr("config")?.getattr("update")?;
@@ -289,16 +274,6 @@ fn jax_runtime_setup_payload_to_dict<'py>(
     Ok(payload)
 }
 
-fn jax_runtime_setup_side_effect_plan_to_dict<'py>(
-    py: Python<'py>,
-    plan: &native_jax_runtime::JaxRuntimeSetupSideEffectPlan,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("should_create_cache_directory", plan.should_create_cache_directory)?;
-    payload.set_item("should_validate_gpu", plan.should_validate_gpu)?;
-    Ok(payload)
-}
-
 fn nvidia_driver_probe_paths_payload_to_dict<'py>(
     py: Python<'py>,
     paths: &native_jax_runtime::NvidiaDriverProbePathsPayload,
@@ -307,20 +282,6 @@ fn nvidia_driver_probe_paths_payload_to_dict<'py>(
     payload.set_item("control_device_path", &paths.control_device_path)?;
     payload.set_item("uvm_device_path", &paths.uvm_device_path)?;
     payload.set_item("driver_directory_path", &paths.driver_directory_path)?;
-    Ok(payload)
-}
-
-fn jax_runtime_config_update_payload_to_dict<'py>(
-    py: Python<'py>,
-    update: &native_jax_runtime::JaxRuntimeConfigUpdatePayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("setting_name", &update.setting_name)?;
-    match &update.value {
-        native_jax_runtime::JaxRuntimeConfigValue::Boolean(value) => payload.set_item("value", *value)?,
-        native_jax_runtime::JaxRuntimeConfigValue::Integer(value) => payload.set_item("value", *value)?,
-        native_jax_runtime::JaxRuntimeConfigValue::Text(value) => payload.set_item("value", value)?,
-    }
     Ok(payload)
 }
 

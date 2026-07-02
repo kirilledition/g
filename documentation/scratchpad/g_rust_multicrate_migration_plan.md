@@ -2067,6 +2067,10 @@ Current implementation notes:
 - Direct Python construction of `NativeJaxRuntimeSetupSession` has been removed;
   setup sessions are now only created through `NativeRuntimeState`, so the root
   PyO3 adapter no longer rebuilds setup sessions from raw Python payloads.
+- Raw `NativeJaxRuntimeSetupSession` introspection methods for JAX config-update
+  and setup side-effect payloads were removed from the Python-visible handle;
+  production now uses the typed setup execution, GPU validation, and diagnostic
+  methods on the native session.
 
 ### Tests
 

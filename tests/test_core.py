@@ -1745,12 +1745,9 @@ def test_native_runtime_state_plans_jax_runtime_setup_lifecycle() -> None:
     resolving_cache_directory = resolving_session.setup_payload()["cache_directory"]
     assert isinstance(resolving_cache_directory, str)
     assert resolving_cache_directory.endswith("/g-jax-cache")
-    assert configure_session.side_effect_plan_payload() == {
-        "should_create_cache_directory": True,
-        "should_validate_gpu": False,
-    }
-    assert configure_session.config_update_payloads()[0]["setting_name"] == "jax_platforms"
     assert configure_session.diagnostic_event_payloads()[0]["event_name"] == "jax_platform_selected"
+    assert not hasattr(configure_session, "side_effect_plan_payload")
+    assert not hasattr(configure_session, "config_update_payloads")
     assert skip_plan.should_configure is False
     assert skip_session.should_configure is False
     with pytest.raises(RuntimeError, match="JAX runtime is already configured"):
@@ -1915,56 +1912,17 @@ def test_native_jax_runtime_setup_session_owns_diagnostic_payloads() -> None:
     assert not hasattr(_core, "build_jax_runtime_setup_diagnostic_payloads")
 
 
-def test_native_jax_runtime_config_update_payloads() -> None:
+def test_native_jax_runtime_config_update_payloads_are_not_exported() -> None:
     native_setup_session = build_native_jax_runtime_setup_session(
-        requested_device="gpu",
-        cache_directory="/tmp/g-cache",
-        matmul_precision="float32",
-        persistent_cache=True,
-        persistent_cache_min_entry_size_bytes=1024,
-        persistent_cache_min_compile_time_seconds=5,
-        xla_autotune_cache=True,
-        transfer_guard=True,
-    )
-
-    update_payloads = native_setup_session.config_update_payloads()
-
-    assert list(update_payloads) == [
-        {"setting_name": "jax_platforms", "value": "cuda"},
-        {"setting_name": "jax_enable_x64", "value": True},
-        {"setting_name": "jax_default_matmul_precision", "value": "float32"},
-        {"setting_name": "jax_compilation_cache_dir", "value": "/tmp/g-cache"},
-        {"setting_name": "jax_persistent_cache_min_entry_size_bytes", "value": 1024},
-        {"setting_name": "jax_persistent_cache_min_compile_time_secs", "value": 5},
-        {
-            "setting_name": "jax_persistent_cache_enable_xla_caches",
-            "value": "xla_gpu_per_fusion_autotune_cache_dir",
-        },
-        {"setting_name": "jax_transfer_guard", "value": "disallow"},
-    ]
-
-    minimal_native_setup_session = build_native_jax_runtime_setup_session(
         requested_device="cpu",
         cache_directory="/tmp/g-cache",
-        matmul_precision="highest",
-        persistent_cache=False,
-        persistent_cache_min_entry_size_bytes=0,
-        persistent_cache_min_compile_time_seconds=0,
-        xla_autotune_cache=False,
-        transfer_guard=False,
     )
 
-    minimal_update_payloads = minimal_native_setup_session.config_update_payloads()
-
-    assert list(minimal_update_payloads) == [
-        {"setting_name": "jax_platforms", "value": "cpu"},
-        {"setting_name": "jax_enable_x64", "value": True},
-        {"setting_name": "jax_default_matmul_precision", "value": "highest"},
-    ]
+    assert not hasattr(native_setup_session, "config_update_payloads")
     assert not hasattr(_core, "plan_jax_runtime_config_update_payloads")
 
 
-def test_native_jax_runtime_setup_side_effect_plan() -> None:
+def test_native_jax_runtime_setup_side_effect_plan_payload_is_not_exported() -> None:
     cpu_setup_session = build_native_jax_runtime_setup_session(
         requested_device="cpu",
         cache_directory="/tmp/g-cache",
@@ -1976,17 +1934,10 @@ def test_native_jax_runtime_setup_side_effect_plan() -> None:
         persistent_cache=False,
     )
 
-    cpu_plan = cpu_setup_session.side_effect_plan_payload()
-    gpu_plan = gpu_setup_session.side_effect_plan_payload()
-
-    assert cpu_plan == {
-        "should_create_cache_directory": True,
-        "should_validate_gpu": False,
-    }
-    assert gpu_plan == {
-        "should_create_cache_directory": False,
-        "should_validate_gpu": True,
-    }
+    assert cpu_setup_session.should_validate_gpu is False
+    assert gpu_setup_session.should_validate_gpu is True
+    assert not hasattr(cpu_setup_session, "side_effect_plan_payload")
+    assert not hasattr(gpu_setup_session, "side_effect_plan_payload")
     assert not hasattr(_core, "plan_jax_runtime_setup_side_effects_payload")
 
 
