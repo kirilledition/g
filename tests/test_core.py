@@ -204,6 +204,7 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "plan_telemetry_event_emission")
     assert not hasattr(_core, "plan_telemetry_progress_emission")
     assert not hasattr(_core, "plan_timing_file_write")
+    assert not hasattr(_core, "plan_null_logistic_nonconvergence")
     assert not hasattr(_core, "plan_trusted_bgen_validation_cache_lookup")
     assert not hasattr(_core, "validate_binary_phenotype_case_control_counts")
     assert not hasattr(_core, "validate_binary_phenotype_coding")
@@ -1170,10 +1171,9 @@ def test_native_effective_trusted_no_missing_diploid_policy() -> None:
 
 
 def test_native_null_logistic_nonconvergence_policy() -> None:
-    continue_plan = _core.plan_null_logistic_nonconvergence(
+    continue_plan = _core.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
-        convergence_flags=(True,),
-        scalar_convergence=True,
+        convergence_values=np.asarray(1, dtype=np.bool_),
         phenotype_names=None,
         policy="fail",
     )
@@ -1185,10 +1185,9 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert continue_plan.scalar_convergence is True
     assert continue_plan.total_fit_count == 1
 
-    fail_plan = _core.plan_null_logistic_nonconvergence(
+    fail_plan = _core.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
-        convergence_flags=(False,),
-        scalar_convergence=True,
+        convergence_values=np.asarray(0, dtype=np.bool_),
         phenotype_names=None,
         policy="fail",
     )
@@ -1200,10 +1199,9 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert fail_plan.scalar_convergence is True
     assert fail_plan.total_fit_count == 1
 
-    warn_plan = _core.plan_null_logistic_nonconvergence(
+    warn_plan = _core.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
-        convergence_flags=(True, False),
-        scalar_convergence=False,
+        convergence_values=np.asarray([True, False], dtype=np.bool_),
         phenotype_names=("trait_a", "trait_b"),
         policy="warn",
     )
@@ -1231,10 +1229,9 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert array_plan.total_fit_count == 3
 
     with pytest.raises(ValueError, match="Unsupported null logistic nonconvergence policy"):
-        _core.plan_null_logistic_nonconvergence(
+        _core.plan_null_logistic_nonconvergence_from_array(
             chromosome="22",
-            convergence_flags=(False,),
-            scalar_convergence=True,
+            convergence_values=np.asarray(0, dtype=np.bool_),
             phenotype_names=None,
             policy="ignore",
         )

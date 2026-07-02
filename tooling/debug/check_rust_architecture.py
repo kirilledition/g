@@ -56,6 +56,7 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
         "plan_jax_runtime_diagnostic_record",
         "plan_jax_runtime_diagnostic_record_payload",
         "plan_jax_runtime_setup_side_effects_payload",
+        "plan_null_logistic_nonconvergence",
         "plan_second_signal_exception",
         "plan_stage_timing_recorder",
         "plan_telemetry_close",

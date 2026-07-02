@@ -3388,13 +3388,6 @@ def plan_callback_worker_stop_poll(
 ) -> NativeCallbackWorkerStopPollPlan: ...
 def format_dosage_callback_worker_error_message(error_message: str) -> str: ...
 def format_result_callback_worker_error_message(error_message: str) -> str: ...
-def plan_null_logistic_nonconvergence(
-    chromosome: str,
-    convergence_flags: typing.Sequence[bool],
-    scalar_convergence: bool,
-    phenotype_names: typing.Sequence[str] | None,
-    policy: str,
-) -> NativeNullLogisticNonconvergencePlan: ...
 def plan_null_logistic_nonconvergence_from_array(
     chromosome: str,
     convergence_values: object,

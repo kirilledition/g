@@ -2083,6 +2083,10 @@ Current implementation notes:
   Python-visible root surface; production preflight keeps the typed finite-array
   and binary-phenotype array entry points that execute the native scans before
   applying `g-engine` validation policy.
+- The detached null-logistic nonconvergence tuple planner was removed from the
+  Python-visible root surface; production callback diagnostics use the bool-array
+  entry point that owns scalar detection, flattening, and native policy
+  dispatch.
 
 ### Tests
 

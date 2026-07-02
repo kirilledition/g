@@ -59,26 +59,6 @@ impl From<native_callback_diagnostics::NullLogisticNonconvergencePlan> for Nativ
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_null_logistic_nonconvergence(
-    chromosome: String,
-    convergence_flags: Vec<bool>,
-    scalar_convergence: bool,
-    phenotype_names: Option<Vec<String>>,
-    policy: String,
-) -> PyResult<NativeNullLogisticNonconvergencePlan> {
-    native_callback_diagnostics::plan_null_logistic_nonconvergence(
-        &chromosome,
-        &convergence_flags,
-        scalar_convergence,
-        phenotype_names.as_deref(),
-        &policy,
-    )
-    .map(Into::into)
-    .map_err(|error| callback_diagnostics_error_to_py(&error))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn plan_null_logistic_nonconvergence_from_array(
     py: Python<'_>,
     chromosome: String,
@@ -108,7 +88,6 @@ pub(crate) fn plan_null_logistic_nonconvergence_from_array(
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeNullLogisticNonconvergencePlan>()?;
-    module.add_function(wrap_pyfunction!(plan_null_logistic_nonconvergence, module)?)?;
     module.add_function(wrap_pyfunction!(plan_null_logistic_nonconvergence_from_array, module)?)?;
     Ok(())
 }
