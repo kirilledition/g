@@ -3074,47 +3074,6 @@ pub(crate) fn resolve_grouped_union_callback_batch_size(native_callback_batch_si
 }
 
 #[pyfunction]
-pub(crate) fn resolve_native_callback_queue_limits(
-    staging_depth: i64,
-    native_callback_batch_size: i64,
-    result_in_flight_limit: Option<i64>,
-    dosage_buffer_limit: Option<i64>,
-) -> PyResult<NativeCallbackQueueLimits> {
-    native_schedule::resolve_native_callback_queue_limits(
-        staging_depth,
-        native_callback_batch_size,
-        result_in_flight_limit,
-        dosage_buffer_limit,
-    )
-    .map(Into::into)
-    .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-pub(crate) fn resolve_native_callback_worker_shutdown_timeouts() -> NativeCallbackWorkerShutdownTimeouts {
-    native_schedule::callback_worker_shutdown_timeouts().into()
-}
-
-#[pyfunction]
-pub(crate) fn resolve_callback_worker_backpressure_poll_timeout_seconds() -> f64 {
-    native_schedule::callback_worker_backpressure_poll_timeout_seconds()
-}
-
-#[pyfunction]
-pub(crate) fn resolve_callback_worker_stop_poll_timeout_seconds(remaining_timeout_seconds: f64) -> f64 {
-    native_schedule::resolve_callback_worker_stop_poll_timeout_seconds(remaining_timeout_seconds)
-}
-
-#[pyfunction]
-pub(crate) fn should_attempt_callback_worker_stop(
-    has_started: bool,
-    has_worker_error: bool,
-    is_worker_alive: bool,
-) -> bool {
-    native_schedule::should_attempt_callback_worker_stop(has_started, has_worker_error, is_worker_alive)
-}
-
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn plan_multi_trait_chunk_write(
     writer_session_count: usize,
@@ -3132,21 +3091,6 @@ pub(crate) fn plan_multi_trait_chunk_write(
     )
     .map(Into::into)
     .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-pub(crate) fn resolve_bgen_delivery_method_value(
-    variant_major_packed8_probability_pairs: bool,
-    has_native_multi_aligned_sample_data: bool,
-    has_native_aligned_sample_data: bool,
-) -> String {
-    native_schedule::resolve_bgen_delivery_method(
-        variant_major_packed8_probability_pairs,
-        has_native_multi_aligned_sample_data,
-        has_native_aligned_sample_data,
-    )
-    .as_value()
-    .to_string()
 }
 
 #[pyfunction]
@@ -3319,15 +3263,9 @@ fn register_gpu_format_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
 
 fn register_schedule_function_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_bgen_delivery_method_value, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_callback_worker_backpressure_poll_timeout_seconds, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_callback_worker_stop_poll_timeout_seconds, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_delivery_callback_batch_size, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_grouped_union_callback_batch_size, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_native_callback_queue_limits, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_native_callback_worker_shutdown_timeouts, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_writer_finish_thread_count, module)?)?;
-    module.add_function(wrap_pyfunction!(should_attempt_callback_worker_stop, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_output_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;

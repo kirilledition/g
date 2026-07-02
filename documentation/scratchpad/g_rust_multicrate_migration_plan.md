@@ -2091,6 +2091,10 @@ Current implementation notes:
   worker-lifecycle planner aliases were removed from the Python-visible root
   surface; production and tests now enter those policies through typed native
   scheduler/runtime-resource handles.
+- Detached scheduler resolver aliases for queue limits, worker stop polling,
+  worker shutdown defaults, stop-attempt policy, and BGEN delivery-method
+  selection were also removed from the Python-visible root surface; equivalent
+  behavior is covered through typed native scheduler state and delivery plans.
 
 ### Tests
 

@@ -3315,35 +3315,16 @@ def resolve_preflight_variant_count(variant_count: int, variant_limit: int | Non
 def intersect_committed_chunk_identifier_sets(
     committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
 ) -> list[int]: ...
-def resolve_bgen_delivery_method_value(
-    variant_major_packed8_probability_pairs: bool,
-    has_native_multi_aligned_sample_data: bool,
-    has_native_aligned_sample_data: bool,
-) -> str: ...
-def resolve_callback_worker_backpressure_poll_timeout_seconds() -> float: ...
-def resolve_callback_worker_stop_poll_timeout_seconds(remaining_timeout_seconds: float) -> float: ...
 def build_callback_chunk_identity(
     chromosome: str,
     variant_start_index: int,
     variant_stop_index: int,
 ) -> NativeCallbackChunkIdentity: ...
-def should_attempt_callback_worker_stop(
-    has_started: bool,
-    has_worker_error: bool,
-    is_worker_alive: bool,
-) -> bool: ...
 def resolve_delivery_callback_batch_size(
     callback_batch_size: int | None,
     variant_major_packed8_probability_pairs: bool,
 ) -> int: ...
 def resolve_grouped_union_callback_batch_size(native_callback_batch_size: int) -> int: ...
-def resolve_native_callback_queue_limits(
-    staging_depth: int,
-    native_callback_batch_size: int,
-    result_in_flight_limit: int | None,
-    dosage_buffer_limit: int | None,
-) -> NativeCallbackQueueLimits: ...
-def resolve_native_callback_worker_shutdown_timeouts() -> NativeCallbackWorkerShutdownTimeouts: ...
 def plan_null_logistic_nonconvergence_from_array(
     chromosome: str,
     convergence_values: object,

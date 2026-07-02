@@ -227,6 +227,12 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "plan_result_write_handoff",
         "plan_result_write_item_dispatch",
         "plan_variant_major_dosage_batch_handoff",
+        "resolve_bgen_delivery_method_value",
+        "resolve_callback_worker_backpressure_poll_timeout_seconds",
+        "resolve_callback_worker_stop_poll_timeout_seconds",
+        "resolve_native_callback_queue_limits",
+        "resolve_native_callback_worker_shutdown_timeouts",
+        "should_attempt_callback_worker_stop",
     ):
         assert not hasattr(_core, removed_scheduler_export_name)
     assert not hasattr(_core, "plan_trusted_bgen_validation_cache_lookup")
@@ -3126,48 +3132,78 @@ def test_emit_callback_progress_event_telemetry_uses_native_missing_session_poli
         )
 
 
-def test_resolve_native_callback_worker_shutdown_timeouts_returns_native_defaults() -> None:
-    worker_shutdown_timeouts = _core.resolve_native_callback_worker_shutdown_timeouts()
+def test_native_callback_worker_shutdown_timeouts_return_native_defaults() -> None:
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+    finish_plan = scheduler_state.plan_worker_finish()
+    abort_plan = scheduler_state.plan_worker_abort()
 
-    assert worker_shutdown_timeouts.dosage_worker_join_timeout_seconds == 60.0
-    assert worker_shutdown_timeouts.result_worker_join_timeout_seconds == 60.0
-    assert worker_shutdown_timeouts.graceful_dosage_worker_join_timeout_seconds == 300.0
-    assert worker_shutdown_timeouts.graceful_result_worker_join_timeout_seconds == 300.0
-    assert worker_shutdown_timeouts.worker_abort_stop_timeout_seconds == 1.0
+    assert finish_plan.dosage_stop_timeout_seconds == 60.0
+    assert finish_plan.result_stop_timeout_seconds == 60.0
+    assert finish_plan.dosage_join_timeout_seconds == 300.0
+    assert finish_plan.result_join_timeout_seconds == 300.0
+    assert abort_plan.dosage_stop_timeout_seconds == 1.0
+    assert abort_plan.result_stop_timeout_seconds == 1.0
 
 
 def test_resolve_callback_worker_backpressure_poll_timeout_seconds_returns_native_default() -> None:
-    assert _core.resolve_callback_worker_backpressure_poll_timeout_seconds() == 0.1
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+
+    assert scheduler_state.backpressure_poll_timeout_seconds == 0.1
 
 
 def test_resolve_callback_worker_stop_poll_timeout_seconds_caps_deadline_remaining_time() -> None:
-    assert _core.resolve_callback_worker_stop_poll_timeout_seconds(1.0) == 0.1
-    assert _core.resolve_callback_worker_stop_poll_timeout_seconds(0.05) == 0.05
-    assert _core.resolve_callback_worker_stop_poll_timeout_seconds(0.0) == 0.0
-    assert _core.resolve_callback_worker_stop_poll_timeout_seconds(-1.0) == 0.0
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+    assert scheduler_state.mark_started() is True
+
+    assert scheduler_state.plan_dosage_worker_stop_poll(1.0, is_worker_alive=True).poll_timeout_seconds == 0.1
+    assert scheduler_state.plan_dosage_worker_stop_poll(0.05, is_worker_alive=True).poll_timeout_seconds == 0.05
+    assert scheduler_state.plan_dosage_worker_stop_poll(0.0, is_worker_alive=True).poll_timeout_seconds == 0.0
+    assert scheduler_state.plan_dosage_worker_stop_poll(-1.0, is_worker_alive=True).poll_timeout_seconds == 0.0
 
 
 def test_should_attempt_callback_worker_stop_uses_native_lifecycle_policy() -> None:
-    assert _core.should_attempt_callback_worker_stop(
-        has_started=True,
-        has_worker_error=False,
-        is_worker_alive=True,
+    active_scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
     )
-    assert not _core.should_attempt_callback_worker_stop(
-        has_started=False,
-        has_worker_error=False,
-        is_worker_alive=True,
+    assert active_scheduler_state.mark_started() is True
+    assert active_scheduler_state.plan_dosage_worker_stop(None, is_worker_alive=True).should_stop is True
+
+    unstarted_scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
     )
-    assert not _core.should_attempt_callback_worker_stop(
-        has_started=True,
-        has_worker_error=True,
-        is_worker_alive=True,
+    assert unstarted_scheduler_state.plan_dosage_worker_stop(None, is_worker_alive=True).should_stop is False
+
+    failed_scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
     )
-    assert not _core.should_attempt_callback_worker_stop(
-        has_started=True,
-        has_worker_error=False,
-        is_worker_alive=False,
-    )
+    assert failed_scheduler_state.mark_started() is True
+    failed_scheduler_state.record_dosage_worker_error("dosage failed")
+    assert failed_scheduler_state.plan_dosage_worker_stop(None, is_worker_alive=True).should_stop is False
+    assert active_scheduler_state.plan_dosage_worker_stop(None, is_worker_alive=False).should_stop is False
 
 
 def test_plan_callback_worker_join_uses_native_timeout_policy() -> None:
@@ -3308,56 +3344,56 @@ def test_format_callback_worker_error_messages_uses_native_policy() -> None:
 
 
 def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
-    queue_limits = _core.resolve_native_callback_queue_limits(
+    scheduler_state = _core.NativeCallbackSchedulerState(
         staging_depth=3,
         native_callback_batch_size=1,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
     )
-    assert queue_limits.dosage_queue_depth == 3
-    assert queue_limits.result_queue_depth == 3
-    assert queue_limits.result_in_flight_limit == 4
-    assert queue_limits.dosage_buffer_limit == 4
+    assert scheduler_state.dosage_queue_depth == 3
+    assert scheduler_state.result_queue_depth == 3
+    assert scheduler_state.result_in_flight_limit == 4
+    assert scheduler_state.dosage_buffer_limit == 4
 
-    explicit_queue_limits = _core.resolve_native_callback_queue_limits(
+    explicit_scheduler_state = _core.NativeCallbackSchedulerState(
         staging_depth=3,
         native_callback_batch_size=2,
         result_in_flight_limit=7,
         dosage_buffer_limit=8,
     )
-    assert explicit_queue_limits.result_in_flight_limit == 7
-    assert explicit_queue_limits.dosage_buffer_limit == 8
+    assert explicit_scheduler_state.result_in_flight_limit == 7
+    assert explicit_scheduler_state.dosage_buffer_limit == 8
 
     with pytest.raises(ValueError, match="staging_depth must be positive"):
-        _core.resolve_native_callback_queue_limits(
+        _core.NativeCallbackSchedulerState(
             staging_depth=0,
             native_callback_batch_size=1,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
         )
     with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):
-        _core.resolve_native_callback_queue_limits(
+        _core.NativeCallbackSchedulerState(
             staging_depth=1,
             native_callback_batch_size=0,
             result_in_flight_limit=None,
             dosage_buffer_limit=None,
         )
     with pytest.raises(ValueError, match="result_in_flight_limit must be positive"):
-        _core.resolve_native_callback_queue_limits(
+        _core.NativeCallbackSchedulerState(
             staging_depth=1,
             native_callback_batch_size=1,
             result_in_flight_limit=0,
             dosage_buffer_limit=None,
         )
     with pytest.raises(ValueError, match="dosage_buffer_limit must be positive"):
-        _core.resolve_native_callback_queue_limits(
+        _core.NativeCallbackSchedulerState(
             staging_depth=1,
             native_callback_batch_size=1,
             result_in_flight_limit=None,
             dosage_buffer_limit=0,
         )
     with pytest.raises(ValueError, match="effective dosage_buffer_limit"):
-        _core.resolve_native_callback_queue_limits(
+        _core.NativeCallbackSchedulerState(
             staging_depth=1,
             native_callback_batch_size=3,
             result_in_flight_limit=None,
@@ -3669,51 +3705,57 @@ def test_native_result_in_flight_slot_state_tracks_capacity() -> None:
 
 def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None:
     assert (
-        _core.resolve_bgen_delivery_method_value(
+        _core.plan_bgen_delivery_invocation(
+            callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
             has_native_multi_aligned_sample_data=True,
             has_native_aligned_sample_data=True,
-        )
+        ).delivery_method
         == "dosage_native_multi_aligned_samples"
     )
     assert (
-        _core.resolve_bgen_delivery_method_value(
+        _core.plan_bgen_delivery_invocation(
+            callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
             has_native_multi_aligned_sample_data=False,
             has_native_aligned_sample_data=True,
-        )
+        ).delivery_method
         == "dosage_native_aligned_samples"
     )
     assert (
-        _core.resolve_bgen_delivery_method_value(
+        _core.plan_bgen_delivery_invocation(
+            callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
             has_native_multi_aligned_sample_data=False,
             has_native_aligned_sample_data=False,
-        )
+        ).delivery_method
         == "dosage_sample_indices"
     )
     assert (
-        _core.resolve_bgen_delivery_method_value(
+        _core.plan_bgen_delivery_invocation(
+            callback_batch_size=None,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=True,
             has_native_aligned_sample_data=True,
-        )
+        ).delivery_method
         == "packed8_native_multi_aligned_samples"
     )
     assert (
-        _core.resolve_bgen_delivery_method_value(
+        _core.plan_bgen_delivery_invocation(
+            callback_batch_size=None,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=False,
             has_native_aligned_sample_data=True,
-        )
+        ).delivery_method
         == "packed8_native_aligned_samples"
     )
     assert (
-        _core.resolve_bgen_delivery_method_value(
+        _core.plan_bgen_delivery_invocation(
+            callback_batch_size=None,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=False,
             has_native_aligned_sample_data=False,
-        )
+        ).delivery_method
         == "packed8_sample_indices"
     )
 
