@@ -3344,50 +3344,6 @@ def resolve_native_callback_queue_limits(
     dosage_buffer_limit: int | None,
 ) -> NativeCallbackQueueLimits: ...
 def resolve_native_callback_worker_shutdown_timeouts() -> NativeCallbackWorkerShutdownTimeouts: ...
-def plan_dosage_callback_worker_join(
-    timeout_seconds: float | None,
-    has_started: bool,
-) -> NativeCallbackWorkerJoinPlan: ...
-def plan_result_callback_worker_join(
-    timeout_seconds: float | None,
-    has_started: bool,
-) -> NativeCallbackWorkerJoinPlan: ...
-def plan_dosage_callback_worker_stop(
-    timeout_seconds: float | None,
-    has_started: bool,
-    has_worker_error: bool,
-    is_worker_alive: bool,
-) -> NativeCallbackWorkerStopPlan: ...
-def plan_result_callback_worker_stop(
-    timeout_seconds: float | None,
-    has_started: bool,
-    has_worker_error: bool,
-    is_worker_alive: bool,
-) -> NativeCallbackWorkerStopPlan: ...
-def plan_callback_worker_finish() -> NativeCallbackWorkerFinishPlan: ...
-def plan_callback_worker_abort() -> NativeCallbackWorkerAbortPlan: ...
-def plan_callback_worker_start(has_started: bool) -> NativeCallbackWorkerStartPlan: ...
-def plan_result_write_handoff(has_result_work_item: bool) -> NativeResultWriteHandoffPlan: ...
-def plan_result_write_item_dispatch(
-    result_work_item_kind: str,
-    expected_result_work_item_kind: str,
-) -> NativeResultWriteItemDispatchPlan: ...
-def plan_dosage_work_item_dispatch(
-    dosage_work_item_kind: str,
-) -> NativeDosageWorkItemDispatchPlan: ...
-def plan_dosage_work_item_stage_duration(
-    dosage_work_item_kind: str,
-    chunk_count: int,
-    elapsed_seconds: float,
-) -> NativeDosageWorkItemStageDurationPlan: ...
-def plan_callback_worker_stop_poll(
-    remaining_timeout_seconds: float,
-    has_started: bool,
-    has_worker_error: bool,
-    is_worker_alive: bool,
-) -> NativeCallbackWorkerStopPollPlan: ...
-def format_dosage_callback_worker_error_message(error_message: str) -> str: ...
-def format_result_callback_worker_error_message(error_message: str) -> str: ...
 def plan_null_logistic_nonconvergence_from_array(
     chromosome: str,
     convergence_values: object,
@@ -3417,34 +3373,6 @@ def plan_single_trait_binary_gpu_genotype_format_resolution(
 def plan_auto_gpu_genotype_format_after_trusted_validation(
     fallback_error: str | None,
 ) -> NativeGpuGenotypeFormatResolutionPlan: ...
-def plan_callback_queue_operation_observation(
-    queue_name: str,
-    operation_name: str,
-    elapsed_seconds: float,
-    blocked: bool,
-) -> NativeCallbackQueueOperationObservationPlan: ...
-def plan_callback_queue_backpressure_observation(
-    queue_name: str,
-    operation_name: str,
-    queue_depth: int,
-    queue_capacity: int,
-    elapsed_seconds: float,
-    blocked: bool,
-) -> NativeCallbackQueueBackpressureObservation: ...
-def plan_callback_queue_stage_observation(
-    queue_name: str,
-    operation_name: str,
-    elapsed_seconds: float,
-    blocked: bool,
-) -> NativeCallbackQueueStageObservationPlan: ...
-def plan_callback_queue_stage_backpressure_observation(
-    queue_name: str,
-    operation_name: str,
-    queue_depth: int,
-    queue_capacity: int,
-    elapsed_seconds: float,
-    blocked: bool,
-) -> NativeCallbackQueueStageBackpressureObservation: ...
 def plan_multi_trait_chunk_write(
     writer_session_count: int,
     chunk_identifier: int,
@@ -3480,16 +3408,6 @@ def plan_multi_trait_output_write(
     all_writer_sessions_native: bool,
     output_statistic_dtype: str,
 ) -> NativeMultiTraitOutputWritePlan: ...
-def plan_dosage_buffer_reuse(
-    buffered_shape: typing.Sequence[int],
-    expected_shape: typing.Sequence[int],
-) -> NativeDosageBufferReusePlan | None: ...
-def plan_variant_major_dosage_batch_handoff(
-    metadata_count: int,
-    genotype_matrix_by_variant_count: int,
-    chunk_stats_count: int,
-) -> NativeVariantMajorDosageBatchHandoffPlan: ...
-def plan_dosage_work_handoff(chunk_count: int) -> NativeDosageWorkHandoffPlan: ...
 def build_preflight_report_payload(
     sample_count: int,
     covariate_count: int,

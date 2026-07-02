@@ -3096,89 +3096,6 @@ pub(crate) fn resolve_native_callback_worker_shutdown_timeouts() -> NativeCallba
 }
 
 #[pyfunction]
-pub(crate) fn plan_dosage_callback_worker_join(
-    timeout_seconds: Option<f64>,
-    has_started: bool,
-) -> NativeCallbackWorkerJoinPlan {
-    native_schedule::plan_dosage_callback_worker_join(timeout_seconds, has_started).into()
-}
-
-#[pyfunction]
-pub(crate) fn plan_result_callback_worker_join(
-    timeout_seconds: Option<f64>,
-    has_started: bool,
-) -> NativeCallbackWorkerJoinPlan {
-    native_schedule::plan_result_callback_worker_join(timeout_seconds, has_started).into()
-}
-
-#[pyfunction]
-pub(crate) fn plan_dosage_callback_worker_stop(
-    timeout_seconds: Option<f64>,
-    has_started: bool,
-    has_worker_error: bool,
-    is_worker_alive: bool,
-) -> NativeCallbackWorkerStopPlan {
-    native_schedule::plan_dosage_callback_worker_stop(timeout_seconds, has_started, has_worker_error, is_worker_alive)
-        .into()
-}
-
-#[pyfunction]
-pub(crate) fn plan_result_callback_worker_stop(
-    timeout_seconds: Option<f64>,
-    has_started: bool,
-    has_worker_error: bool,
-    is_worker_alive: bool,
-) -> NativeCallbackWorkerStopPlan {
-    native_schedule::plan_result_callback_worker_stop(timeout_seconds, has_started, has_worker_error, is_worker_alive)
-        .into()
-}
-
-#[pyfunction]
-pub(crate) fn plan_callback_worker_finish() -> NativeCallbackWorkerFinishPlan {
-    native_schedule::plan_callback_worker_finish().into()
-}
-
-#[pyfunction]
-pub(crate) fn plan_callback_worker_abort() -> NativeCallbackWorkerAbortPlan {
-    native_schedule::plan_callback_worker_abort().into()
-}
-
-#[pyfunction]
-pub(crate) fn plan_callback_worker_start(has_started: bool) -> NativeCallbackWorkerStartPlan {
-    native_schedule::plan_callback_worker_start(has_started).into()
-}
-
-#[pyfunction]
-pub(crate) fn plan_callback_worker_stop_poll(
-    remaining_timeout_seconds: f64,
-    has_started: bool,
-    has_worker_error: bool,
-    is_worker_alive: bool,
-) -> NativeCallbackWorkerStopPollPlan {
-    native_schedule::plan_callback_worker_stop_poll(
-        remaining_timeout_seconds,
-        has_started,
-        has_worker_error,
-        is_worker_alive,
-    )
-    .into()
-}
-
-#[pyfunction]
-#[must_use]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn format_dosage_callback_worker_error_message(error_message: String) -> String {
-    native_schedule::format_dosage_callback_worker_error_message(&error_message)
-}
-
-#[pyfunction]
-#[must_use]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn format_result_callback_worker_error_message(error_message: String) -> String {
-    native_schedule::format_result_callback_worker_error_message(&error_message)
-}
-
-#[pyfunction]
 pub(crate) fn resolve_callback_worker_backpressure_poll_timeout_seconds() -> f64 {
     native_schedule::callback_worker_backpressure_poll_timeout_seconds()
 }
@@ -3195,30 +3112,6 @@ pub(crate) fn should_attempt_callback_worker_stop(
     is_worker_alive: bool,
 ) -> bool {
     native_schedule::should_attempt_callback_worker_stop(has_started, has_worker_error, is_worker_alive)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_dosage_buffer_reuse(
-    buffered_shape: Vec<usize>,
-    expected_shape: Vec<usize>,
-) -> Option<NativeDosageBufferReusePlan> {
-    native_schedule::plan_dosage_buffer_reuse(&buffered_shape, &expected_shape).map(Into::into)
-}
-
-#[pyfunction]
-pub(crate) fn plan_variant_major_dosage_batch_handoff(
-    metadata_count: usize,
-    genotype_matrix_by_variant_count: usize,
-    chunk_stats_count: usize,
-) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
-    native_schedule::plan_variant_major_dosage_batch_handoff(
-        metadata_count,
-        genotype_matrix_by_variant_count,
-        chunk_stats_count,
-    )
-    .map(Into::into)
-    .map_err(|error| schedule_error_to_py(&error))
 }
 
 #[pyfunction]
@@ -3304,46 +3197,6 @@ pub(crate) fn plan_bgen_delivery_invocation(
 }
 
 #[pyfunction]
-pub(crate) fn plan_dosage_work_handoff(chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
-    native_schedule::plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-pub(crate) fn plan_result_write_handoff(has_result_work_item: bool) -> NativeResultWriteHandoffPlan {
-    native_schedule::plan_result_write_handoff(has_result_work_item).into()
-}
-
-#[pyfunction]
-pub(crate) fn plan_result_write_item_dispatch(
-    result_work_item_kind: &str,
-    expected_result_work_item_kind: &str,
-) -> PyResult<NativeResultWriteItemDispatchPlan> {
-    native_schedule::plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
-        .map(Into::into)
-        .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-pub(crate) fn plan_dosage_work_item_dispatch(
-    dosage_work_item_kind: &str,
-) -> PyResult<NativeDosageWorkItemDispatchPlan> {
-    native_schedule::plan_dosage_work_item_dispatch(dosage_work_item_kind)
-        .map(Into::into)
-        .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-pub(crate) fn plan_dosage_work_item_stage_duration(
-    dosage_work_item_kind: &str,
-    chunk_count: usize,
-    elapsed_seconds: f64,
-) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
-    native_schedule::plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
-        .map(Into::into)
-        .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn plan_single_trait_output_write(
     is_native_writer_session: bool,
@@ -3365,76 +3218,6 @@ pub(crate) fn plan_multi_trait_output_write(
         active_trait_count,
         all_writer_sessions_native,
         &output_statistic_dtype,
-    )
-    .map(Into::into)
-    .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_callback_queue_operation_observation(
-    queue_name: String,
-    operation_name: String,
-    elapsed_seconds: f64,
-    blocked: bool,
-) -> PyResult<NativeCallbackQueueOperationObservationPlan> {
-    native_schedule::plan_callback_queue_operation_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
-        .map(Into::into)
-        .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_callback_queue_backpressure_observation(
-    queue_name: String,
-    operation_name: String,
-    queue_depth: usize,
-    queue_capacity: usize,
-    elapsed_seconds: f64,
-    blocked: bool,
-) -> PyResult<NativeCallbackQueueBackpressureObservation> {
-    native_schedule::plan_callback_queue_backpressure_observation(
-        &queue_name,
-        &operation_name,
-        queue_depth,
-        queue_capacity,
-        elapsed_seconds,
-        blocked,
-    )
-    .map(Into::into)
-    .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_callback_queue_stage_observation(
-    queue_name: String,
-    operation_name: String,
-    elapsed_seconds: f64,
-    blocked: bool,
-) -> PyResult<NativeCallbackQueueStageObservationPlan> {
-    native_schedule::plan_callback_queue_stage_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
-        .map(Into::into)
-        .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_callback_queue_stage_backpressure_observation(
-    queue_name: String,
-    operation_name: String,
-    queue_depth: usize,
-    queue_capacity: usize,
-    elapsed_seconds: f64,
-    blocked: bool,
-) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
-    native_schedule::plan_callback_queue_stage_backpressure_observation(
-        &queue_name,
-        &operation_name,
-        queue_depth,
-        queue_capacity,
-        elapsed_seconds,
-        blocked,
     )
     .map(Into::into)
     .map_err(|error| schedule_error_to_py(&error))
@@ -3545,30 +3328,9 @@ fn register_schedule_function_exports(module: &Bound<'_, PyModule>) -> PyResult<
     module.add_function(wrap_pyfunction!(resolve_native_callback_worker_shutdown_timeouts, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_writer_finish_thread_count, module)?)?;
     module.add_function(wrap_pyfunction!(should_attempt_callback_worker_stop, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_queue_backpressure_observation, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_queue_operation_observation, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_queue_stage_backpressure_observation, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_queue_stage_observation, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_worker_abort, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_worker_finish, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_worker_start, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_callback_worker_stop_poll, module)?)?;
-    module.add_function(wrap_pyfunction!(format_dosage_callback_worker_error_message, module)?)?;
-    module.add_function(wrap_pyfunction!(format_result_callback_worker_error_message, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_buffer_reuse, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_join, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_callback_worker_stop, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_output_write, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_result_callback_worker_join, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_result_callback_worker_stop, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_result_write_handoff, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_result_write_item_dispatch, module)?)?;
     module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_work_handoff, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_work_item_dispatch, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_dosage_work_item_stage_duration, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_variant_major_dosage_batch_handoff, module)?)?;
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup, module)?)?;
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_invocation, module)?)?;
     module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;

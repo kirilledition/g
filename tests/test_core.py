@@ -205,6 +205,30 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "plan_telemetry_progress_emission")
     assert not hasattr(_core, "plan_timing_file_write")
     assert not hasattr(_core, "plan_null_logistic_nonconvergence")
+    for removed_scheduler_export_name in (
+        "format_dosage_callback_worker_error_message",
+        "format_result_callback_worker_error_message",
+        "plan_callback_queue_backpressure_observation",
+        "plan_callback_queue_operation_observation",
+        "plan_callback_queue_stage_backpressure_observation",
+        "plan_callback_queue_stage_observation",
+        "plan_callback_worker_abort",
+        "plan_callback_worker_finish",
+        "plan_callback_worker_start",
+        "plan_callback_worker_stop_poll",
+        "plan_dosage_buffer_reuse",
+        "plan_dosage_callback_worker_join",
+        "plan_dosage_callback_worker_stop",
+        "plan_dosage_work_handoff",
+        "plan_dosage_work_item_dispatch",
+        "plan_dosage_work_item_stage_duration",
+        "plan_result_callback_worker_join",
+        "plan_result_callback_worker_stop",
+        "plan_result_write_handoff",
+        "plan_result_write_item_dispatch",
+        "plan_variant_major_dosage_batch_handoff",
+    ):
+        assert not hasattr(_core, removed_scheduler_export_name)
     assert not hasattr(_core, "plan_trusted_bgen_validation_cache_lookup")
     assert not hasattr(_core, "validate_binary_phenotype_case_control_counts")
     assert not hasattr(_core, "validate_binary_phenotype_coding")
@@ -2302,14 +2326,21 @@ def test_native_callback_worker_lifecycle_state_tracks_start() -> None:
 
 
 def test_plan_callback_worker_start_uses_native_start_policy() -> None:
-    start_plan = _core.plan_callback_worker_start(has_started=False)
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+    start_plan = scheduler_state.plan_worker_start()
 
     assert start_plan.should_start is True
     assert start_plan.start_result_worker is True
     assert start_plan.start_dosage_worker is True
     assert start_plan.start_actions == ["start_result_worker", "start_dosage_worker"]
 
-    already_started_plan = _core.plan_callback_worker_start(has_started=True)
+    assert scheduler_state.mark_started() is True
+    already_started_plan = scheduler_state.plan_worker_start()
     assert already_started_plan.should_start is False
     assert already_started_plan.start_result_worker is False
     assert already_started_plan.start_dosage_worker is False
@@ -3140,59 +3171,65 @@ def test_should_attempt_callback_worker_stop_uses_native_lifecycle_policy() -> N
 
 
 def test_plan_callback_worker_join_uses_native_timeout_policy() -> None:
-    dosage_join_plan = _core.plan_dosage_callback_worker_join(
-        timeout_seconds=None,
-        has_started=True,
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
     )
+    assert scheduler_state.mark_started() is True
+
+    dosage_join_plan = scheduler_state.plan_dosage_worker_join(timeout_seconds=None)
     assert dosage_join_plan.should_join is True
     assert dosage_join_plan.timeout_seconds == 60.0
 
-    result_join_plan = _core.plan_result_callback_worker_join(
-        timeout_seconds=0.25,
-        has_started=True,
-    )
+    result_join_plan = scheduler_state.plan_result_worker_join(timeout_seconds=0.25)
     assert result_join_plan.should_join is True
     assert result_join_plan.timeout_seconds == 0.25
 
-    unstarted_join_plan = _core.plan_result_callback_worker_join(
-        timeout_seconds=None,
-        has_started=False,
+    unstarted_scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
     )
+    unstarted_join_plan = unstarted_scheduler_state.plan_result_worker_join(timeout_seconds=None)
     assert unstarted_join_plan.should_join is False
     assert unstarted_join_plan.timeout_seconds == 60.0
 
 
 def test_plan_callback_worker_stop_uses_native_timeout_policy() -> None:
-    dosage_stop_plan = _core.plan_dosage_callback_worker_stop(
-        timeout_seconds=None,
-        has_started=True,
-        has_worker_error=False,
-        is_worker_alive=True,
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
     )
+    assert scheduler_state.mark_started() is True
+
+    dosage_stop_plan = scheduler_state.plan_dosage_worker_stop(timeout_seconds=None, is_worker_alive=True)
     assert dosage_stop_plan.should_stop is True
     assert dosage_stop_plan.timeout_seconds == 60.0
 
-    result_stop_plan = _core.plan_result_callback_worker_stop(
-        timeout_seconds=0.25,
-        has_started=True,
-        has_worker_error=False,
-        is_worker_alive=True,
-    )
+    result_stop_plan = scheduler_state.plan_result_worker_stop(timeout_seconds=0.25, is_worker_alive=True)
     assert result_stop_plan.should_stop is True
     assert result_stop_plan.timeout_seconds == 0.25
 
-    failed_worker_stop_plan = _core.plan_result_callback_worker_stop(
-        timeout_seconds=None,
-        has_started=True,
-        has_worker_error=True,
-        is_worker_alive=True,
-    )
+    scheduler_state.record_result_worker_error("writer failed")
+    failed_worker_stop_plan = scheduler_state.plan_result_worker_stop(timeout_seconds=None, is_worker_alive=True)
     assert failed_worker_stop_plan.should_stop is False
     assert failed_worker_stop_plan.timeout_seconds == 60.0
 
 
 def test_plan_callback_worker_finish_and_abort_use_native_timeout_policy() -> None:
-    finish_plan = _core.plan_callback_worker_finish()
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+
+    finish_plan = scheduler_state.plan_worker_finish()
     assert finish_plan.finish_actions == [
         "stop_dosage_worker",
         "join_dosage_worker",
@@ -3214,7 +3251,7 @@ def test_plan_callback_worker_finish_and_abort_use_native_timeout_policy() -> No
     assert finish_plan.result_stop_timeout_seconds == 60.0
     assert finish_plan.result_join_timeout_seconds == 300.0
 
-    abort_plan = _core.plan_callback_worker_abort()
+    abort_plan = scheduler_state.plan_worker_abort()
     assert abort_plan.abort_actions == ["stop_dosage_worker", "stop_result_worker"]
     assert abort_plan.stop_dosage_worker is True
     assert abort_plan.stop_result_worker is True
@@ -3223,28 +3260,32 @@ def test_plan_callback_worker_finish_and_abort_use_native_timeout_policy() -> No
 
 
 def test_plan_callback_worker_stop_poll_uses_native_loop_policy() -> None:
-    active_poll_plan = _core.plan_callback_worker_stop_poll(
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+    assert scheduler_state.mark_started() is True
+
+    active_poll_plan = scheduler_state.plan_dosage_worker_stop_poll(
         remaining_timeout_seconds=1.0,
-        has_started=True,
-        has_worker_error=False,
         is_worker_alive=True,
     )
     assert active_poll_plan.should_stop is True
     assert active_poll_plan.poll_timeout_seconds == 0.1
 
-    failed_poll_plan = _core.plan_callback_worker_stop_poll(
+    scheduler_state.record_dosage_worker_error("dosage failed")
+    failed_poll_plan = scheduler_state.plan_dosage_worker_stop_poll(
         remaining_timeout_seconds=0.05,
-        has_started=True,
-        has_worker_error=True,
         is_worker_alive=True,
     )
     assert failed_poll_plan.should_stop is False
     assert failed_poll_plan.poll_timeout_seconds == 0.05
 
-    expired_poll_plan = _core.plan_callback_worker_stop_poll(
+    scheduler_state.clear_dosage_worker_error()
+    expired_poll_plan = scheduler_state.plan_dosage_worker_stop_poll(
         remaining_timeout_seconds=-1.0,
-        has_started=True,
-        has_worker_error=False,
         is_worker_alive=True,
     )
     assert expired_poll_plan.should_stop is True
@@ -3252,14 +3293,18 @@ def test_plan_callback_worker_stop_poll_uses_native_loop_policy() -> None:
 
 
 def test_format_callback_worker_error_messages_uses_native_policy() -> None:
-    assert (
-        _core.format_dosage_callback_worker_error_message("dosage failed")
-        == "native pipeline callback worker failed: dosage failed"
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
     )
-    assert (
-        _core.format_result_callback_worker_error_message("writer failed")
-        == "native pipeline result writer worker failed: writer failed"
-    )
+
+    scheduler_state.record_dosage_worker_error("dosage failed")
+    scheduler_state.record_result_worker_error("writer failed")
+
+    assert scheduler_state.dosage_worker_error_message == "native pipeline callback worker failed: dosage failed"
+    assert scheduler_state.result_worker_error_message == "native pipeline result writer worker failed: writer failed"
 
 
 def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> None:
@@ -3321,7 +3366,14 @@ def test_resolve_native_callback_queue_limits_uses_native_capacity_policy() -> N
 
 
 def test_plan_callback_queue_stage_observation_uses_native_timing_policy() -> None:
-    queue_observation_plan = _core.plan_callback_queue_stage_observation(
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=3,
+        native_callback_batch_size=2,
+        result_in_flight_limit=7,
+        dosage_buffer_limit=8,
+    )
+
+    queue_observation_plan = scheduler_state.plan_queue_stage_observation(
         queue_name="dosage_queue",
         operation_name="put",
         elapsed_seconds=0.25,
@@ -3332,7 +3384,7 @@ def test_plan_callback_queue_stage_observation_uses_native_timing_policy() -> No
     assert queue_observation_plan.stage_name == "callback_queue_put"
     assert queue_observation_plan.blocked_seconds == 0.0
 
-    queue_backpressure_observation = _core.plan_callback_queue_stage_backpressure_observation(
+    queue_backpressure_observation = scheduler_state.plan_queue_stage_backpressure_observation(
         queue_name="dosage_queue",
         operation_name="put",
         queue_depth=2,
@@ -3348,7 +3400,7 @@ def test_plan_callback_queue_stage_observation_uses_native_timing_policy() -> No
     assert queue_backpressure_observation.elapsed_seconds == 0.25
     assert queue_backpressure_observation.blocked_seconds == 0.0
 
-    blocked_observation_plan = _core.plan_callback_queue_stage_observation(
+    blocked_observation_plan = scheduler_state.plan_queue_stage_observation(
         queue_name="result_in_flight_slots",
         operation_name="producer_blocking",
         elapsed_seconds=0.5,
@@ -3358,7 +3410,7 @@ def test_plan_callback_queue_stage_observation_uses_native_timing_policy() -> No
     assert blocked_observation_plan.blocked_seconds == 0.5
 
     with pytest.raises(ValueError, match="Unsupported callback queue stage operation"):
-        _core.plan_callback_queue_stage_observation(
+        scheduler_state.plan_queue_stage_observation(
             queue_name="unknown_queue",
             operation_name="put",
             elapsed_seconds=0.25,
@@ -3432,7 +3484,14 @@ def test_native_callback_scheduler_state_plans_current_queue_observations() -> N
 
 
 def test_plan_callback_queue_operation_observation_uses_native_timing_policy() -> None:
-    pool_observation_plan = _core.plan_callback_queue_operation_observation(
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=3,
+        native_callback_batch_size=2,
+        result_in_flight_limit=7,
+        dosage_buffer_limit=8,
+    )
+
+    pool_observation_plan = scheduler_state.plan_queue_operation_observation(
         queue_name="dosage_buffer_pool",
         operation_name="reuse",
         elapsed_seconds=0.25,
@@ -3442,7 +3501,7 @@ def test_plan_callback_queue_operation_observation_uses_native_timing_policy() -
     assert pool_observation_plan.operation_name == "reuse"
     assert pool_observation_plan.blocked_seconds == 0.0
 
-    pool_backpressure_observation = _core.plan_callback_queue_backpressure_observation(
+    pool_backpressure_observation = scheduler_state.plan_queue_backpressure_observation(
         queue_name="dosage_buffer_pool",
         operation_name="reuse",
         queue_depth=1,
@@ -3457,7 +3516,7 @@ def test_plan_callback_queue_operation_observation_uses_native_timing_policy() -
     assert pool_backpressure_observation.elapsed_seconds == 0.25
     assert pool_backpressure_observation.blocked_seconds == 0.0
 
-    blocked_observation_plan = _core.plan_callback_queue_operation_observation(
+    blocked_observation_plan = scheduler_state.plan_queue_operation_observation(
         queue_name="result_in_flight_slots",
         operation_name="release",
         elapsed_seconds=0.5,
@@ -3468,7 +3527,7 @@ def test_plan_callback_queue_operation_observation_uses_native_timing_policy() -
     assert blocked_observation_plan.blocked_seconds == 0.5
 
     with pytest.raises(ValueError, match="Unsupported callback queue operation"):
-        _core.plan_callback_queue_operation_observation(
+        scheduler_state.plan_queue_operation_observation(
             queue_name="dosage_buffer_pool",
             operation_name="unknown_operation",
             elapsed_seconds=0.25,
@@ -3477,7 +3536,14 @@ def test_plan_callback_queue_operation_observation_uses_native_timing_policy() -
 
 
 def test_plan_dosage_buffer_reuse_uses_native_shape_policy() -> None:
-    exact_reuse_plan = _core.plan_dosage_buffer_reuse(
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+
+    exact_reuse_plan = scheduler_state.plan_dosage_buffer_reuse(
         buffered_shape=(2, 3),
         expected_shape=(2, 3),
     )
@@ -3485,7 +3551,7 @@ def test_plan_dosage_buffer_reuse_uses_native_shape_policy() -> None:
     assert exact_reuse_plan.requires_slice is False
     assert exact_reuse_plan.slice_dimensions == [2, 3]
 
-    sliced_reuse_plan = _core.plan_dosage_buffer_reuse(
+    sliced_reuse_plan = scheduler_state.plan_dosage_buffer_reuse(
         buffered_shape=(4, 5),
         expected_shape=(2, 3),
     )
@@ -3493,12 +3559,19 @@ def test_plan_dosage_buffer_reuse_uses_native_shape_policy() -> None:
     assert sliced_reuse_plan.requires_slice is True
     assert sliced_reuse_plan.slice_dimensions == [2, 3]
 
-    assert _core.plan_dosage_buffer_reuse(buffered_shape=(2, 3), expected_shape=(2, 3, 1)) is None
-    assert _core.plan_dosage_buffer_reuse(buffered_shape=(2, 3), expected_shape=(3, 2)) is None
+    assert scheduler_state.plan_dosage_buffer_reuse(buffered_shape=(2, 3), expected_shape=(2, 3, 1)) is None
+    assert scheduler_state.plan_dosage_buffer_reuse(buffered_shape=(2, 3), expected_shape=(3, 2)) is None
 
 
 def test_plan_variant_major_dosage_batch_handoff_uses_native_batch_policy() -> None:
-    batch_handoff_plan = _core.plan_variant_major_dosage_batch_handoff(
+    scheduler_state = _core.NativeCallbackSchedulerState(
+        staging_depth=1,
+        native_callback_batch_size=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+    )
+
+    batch_handoff_plan = scheduler_state.plan_variant_major_dosage_batch_handoff(
         metadata_count=2,
         genotype_matrix_by_variant_count=2,
         chunk_stats_count=2,
@@ -3506,13 +3579,13 @@ def test_plan_variant_major_dosage_batch_handoff_uses_native_batch_policy() -> N
     assert batch_handoff_plan.chunk_count == 2
 
     with pytest.raises(ValueError, match="identical lengths"):
-        _core.plan_variant_major_dosage_batch_handoff(
+        scheduler_state.plan_variant_major_dosage_batch_handoff(
             metadata_count=2,
             genotype_matrix_by_variant_count=1,
             chunk_stats_count=2,
         )
     with pytest.raises(ValueError, match="at least one chunk"):
-        _core.plan_variant_major_dosage_batch_handoff(
+        scheduler_state.plan_variant_major_dosage_batch_handoff(
             metadata_count=0,
             genotype_matrix_by_variant_count=0,
             chunk_stats_count=0,
@@ -3520,34 +3593,34 @@ def test_plan_variant_major_dosage_batch_handoff_uses_native_batch_policy() -> N
 
 
 def test_plan_dosage_work_handoff_uses_native_policy() -> None:
-    handoff_plan = _core.plan_dosage_work_handoff(chunk_count=2)
-    assert handoff_plan.chunk_count == 2
-
     scheduler_state = _core.NativeCallbackSchedulerState(
         staging_depth=1,
         native_callback_batch_size=1,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
     )
+    handoff_plan = scheduler_state.plan_dosage_work_handoff(chunk_count=2)
+    assert handoff_plan.chunk_count == 2
+
     scheduler_handoff_plan = scheduler_state.plan_dosage_work_handoff(chunk_count=1)
     assert scheduler_handoff_plan.chunk_count == 1
 
     with pytest.raises(ValueError, match="at least one chunk"):
-        _core.plan_dosage_work_handoff(chunk_count=0)
+        scheduler_state.plan_dosage_work_handoff(chunk_count=0)
 
 
 def test_plan_result_write_handoff_uses_native_policy() -> None:
-    result_handoff_plan = _core.plan_result_write_handoff(has_result_work_item=True)
-    assert result_handoff_plan.should_enqueue is True
-    assert result_handoff_plan.has_result_work_item is True
-    assert result_handoff_plan.is_stop_signal is False
-
     scheduler_state = _core.NativeCallbackSchedulerState(
         staging_depth=1,
         native_callback_batch_size=1,
         result_in_flight_limit=None,
         dosage_buffer_limit=None,
     )
+    result_handoff_plan = scheduler_state.plan_result_write_handoff(has_result_work_item=True)
+    assert result_handoff_plan.should_enqueue is True
+    assert result_handoff_plan.has_result_work_item is True
+    assert result_handoff_plan.is_stop_signal is False
+
     stop_handoff_plan = scheduler_state.plan_result_write_handoff(has_result_work_item=False)
     assert stop_handoff_plan.should_enqueue is True
     assert stop_handoff_plan.has_result_work_item is False

@@ -2087,6 +2087,10 @@ Current implementation notes:
   Python-visible root surface; production callback diagnostics use the bool-array
   entry point that owns scalar detection, flattening, and native policy
   dispatch.
+- Detached scheduler, queue-observation, dosage-buffer, work-handoff, and
+  worker-lifecycle planner aliases were removed from the Python-visible root
+  surface; production and tests now enter those policies through typed native
+  scheduler/runtime-resource handles.
 
 ### Tests
 

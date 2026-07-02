@@ -6602,12 +6602,9 @@ def test_native_callback_runner_uses_native_worker_start_plan() -> None:
         start_events=start_events,
     )
 
-    with patch(
-        "g.engine.callbacks.runtime._core.plan_callback_worker_start",
-        side_effect=AssertionError("runner should use scheduler worker start planner"),
-    ):
-        callback.start()
-        callback.start()
+    assert not hasattr(callback_runtime._core, "plan_callback_worker_start")
+    callback.start()
+    callback.start()
 
     assert start_events == ["result", "dosage"]
     assert scheduler_state.start_attempt_count == 2
@@ -6733,16 +6730,11 @@ def test_native_callback_runner_batches_variant_major_dosage_queue_handoff() -> 
     second_metadata = build_native_metadata_for_chunk(chunk_identifier=2)
     callback = BatchedCallbackRunner()
     try:
-        with (
-            patch(
-                "g.engine.callbacks.runtime._core.plan_callback_queue_stage_backpressure_observation",
-                side_effect=AssertionError("runner should use scheduler queue stage backpressure planner"),
-            ),
-            patch.object(
-                callback_runtime.NativeBgenCallbackRunner,
-                "record_bounded_resource_stage_duration",
-                side_effect=AssertionError("production runner should emit native queue put stage observations"),
-            ),
+        assert not hasattr(callback_runtime._core, "plan_callback_queue_stage_backpressure_observation")
+        with patch.object(
+            callback_runtime.NativeBgenCallbackRunner,
+            "record_bounded_resource_stage_duration",
+            side_effect=AssertionError("production runner should emit native queue put stage observations"),
         ):
             callback.compute_preprocessed_variant_major_dosage_chunk_batch(
                 metadata_batch=(first_metadata, second_metadata),
@@ -6908,15 +6900,12 @@ def test_native_callback_runner_uses_scheduler_variant_major_batch_handoff_plan(
     mark_callback_workers_started(callback)
     metadata = build_native_metadata()
 
-    with patch(
-        "g.engine.callbacks.runtime._core.plan_variant_major_dosage_batch_handoff",
-        side_effect=AssertionError("runner should use scheduler variant-major batch handoff planner"),
-    ):
-        callback.compute_preprocessed_variant_major_dosage_chunk_batch(
-            metadata_batch=(metadata,),
-            genotype_matrix_by_variant_batch=(np.ones((2, 2), dtype=np.float32),),
-            chunk_stats_batch=(typing.cast("typing.Any", SimpleNamespace()),),
-        )
+    assert not hasattr(callback_runtime._core, "plan_variant_major_dosage_batch_handoff")
+    callback.compute_preprocessed_variant_major_dosage_chunk_batch(
+        metadata_batch=(metadata,),
+        genotype_matrix_by_variant_batch=(np.ones((2, 2), dtype=np.float32),),
+        chunk_stats_batch=(typing.cast("typing.Any", SimpleNamespace()),),
+    )
 
     queued_work_item = callback.get_dosage_work_item()
     assert queued_work_item is not None
@@ -7360,14 +7349,11 @@ def test_native_callback_runner_records_native_dosage_buffer_operation_observati
     stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=False)
     callback.stage_timing_recorder = stage_timing_recorder
 
-    with patch(
-        "g.engine.callbacks.runtime._core.plan_callback_queue_backpressure_observation",
-        side_effect=AssertionError("runner should use scheduler queue backpressure planner"),
-    ):
-        dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
-        callback.release_dosage_buffer(dosage_buffer)
-        reused_dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
-        callback.discard_dosage_buffer_slot(reused_dosage_buffer)
+    assert not hasattr(callback_runtime._core, "plan_callback_queue_backpressure_observation")
+    dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    callback.release_dosage_buffer(dosage_buffer)
+    reused_dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    callback.discard_dosage_buffer_slot(reused_dosage_buffer)
 
     queue_backpressure_by_operation = {
         queue_backpressure.operation_name: queue_backpressure
@@ -7406,11 +7392,8 @@ def test_native_callback_runner_uses_scheduler_dosage_buffer_reuse_plan() -> Non
     oversized_buffer = callback.allocate_dosage_buffer_with_shape((4, 5), np.float32)
     callback.release_dosage_buffer(oversized_buffer)
 
-    with patch(
-        "g.engine.callbacks.runtime._core.plan_dosage_buffer_reuse",
-        side_effect=AssertionError("runner should use scheduler dosage buffer reuse planner"),
-    ):
-        sliced_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    assert not hasattr(callback_runtime._core, "plan_dosage_buffer_reuse")
+    sliced_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
 
     assert sliced_buffer.shape == (2, 3)
     assert np.shares_memory(sliced_buffer, oversized_buffer)
