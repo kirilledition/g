@@ -200,6 +200,10 @@ adapter.
 Callback chunk metadata now uses the native scalar `chromosome_label` contract
 directly; Python no longer falls back to reading a full chromosome column from
 metadata objects.
+Callback readiness blocking now uses JAX's direct `block_until_ready` boundary,
+and single-trait linear/binary callbacks require typed chromosome-state
+readiness arrays (`adjusted_residual` and `score_residual`) instead of probing
+prepared state objects for optional attributes.
 Callback null-logistic nonconvergence planning now has a PyO3 bool-array entry
 point that owns scalar detection, flattening, total-fit counts, and
 nonconverged counts before calling `g-engine` policy helpers. The callback
@@ -209,7 +213,9 @@ methods for scalar and multi-trait null-logistic rows. Python no longer builds
 those timing dictionaries or rescans convergence counts with NumPy; the Python
 architecture checker guards against reintroducing those reductions in
 `g.engine.callbacks.diagnostics`, and it keeps production `jax.device_get`
-host materialization isolated to callback diagnostic and writer adapters.
+host materialization isolated to callback diagnostic and writer adapters. It
+also rejects readiness `getattr` probes in callback diagnostics and
+single-trait chromosome-state preparation.
 Run-scoped manifest file fingerprint caching now lives in `g-output` behind a
 native PyO3 cache handle; control-file and prediction-input LOCO fingerprints
 share that handle, and Python no longer resolves paths, stats files, or
@@ -254,6 +260,13 @@ callback lifecycle methods directly instead of probing for optional hooks.
 Grouped union-sample fanout uses the same typed callback delivery contract and
 calls child callback lifecycle methods directly instead of probing for optional
 hooks.
+For interactive `maturin develop -j 30 --profile dev-fast --uv` builds on
+gauss, the 2026-07-02 warm incremental comparison after touching the root PyO3
+crate favored wild over mold: mold took `24.43s` wall time (`18.08s` Cargo
+target time), while wild `0.9.0` via the GCC driver `-B` linker path took
+`21.17s` wall time (`14.46s` Cargo target time). Use the local
+`/mnt/beegfs/kirill/Projects/g/.tools/bin/wild` binary for subsequent
+interactive development builds when available.
 The root PyO3 timing recorder binding no longer exports direct
 stage-timing/profile payload builders, the final timing write-started payload
 builder, or per-file writer methods; Python callers use typed snapshots,

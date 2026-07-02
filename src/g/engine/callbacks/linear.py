@@ -327,12 +327,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             loco_predictions,
             self.score_dtype,
         )
-        chromosome_ready_value = getattr(
-            self.current_chromosome_state,
-            "adjusted_residual",
-            self.current_chromosome_state,
-        )
-        block_until_ready(chromosome_ready_value)
+        block_until_ready(self.current_chromosome_state.adjusted_residual)
         timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
         self.current_chromosome = chromosome
 

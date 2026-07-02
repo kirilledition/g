@@ -2929,6 +2929,10 @@ def build_binary_chromosome_state(*, converged: bool = True) -> SimpleNamespace:
     )
 
 
+def build_linear_chromosome_state() -> SimpleNamespace:
+    return SimpleNamespace(adjusted_residual=jnp.asarray([0.0, 0.0], dtype=jnp.float32))
+
+
 def build_multi_binary_chromosome_state(*, convergence_flags: tuple[bool, ...] = (True, True)) -> SimpleNamespace:
     return SimpleNamespace(
         score_residual=jnp.asarray([[0.5, 0.5], [0.5, 0.5]], dtype=jnp.float32),
@@ -10102,7 +10106,7 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
     with (
         patch(
             "g.compute.regenie2_linear.api.prepare_regenie2_linear_chromosome_state",
-            return_value="chromosome-state",
+            return_value=build_linear_chromosome_state(),
         ),
         patch(
             "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",

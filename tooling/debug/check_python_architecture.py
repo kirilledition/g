@@ -400,6 +400,27 @@ PYTHON_CALL_POLICIES = (
         message="production callback diagnostics must use native PyO3 array checks for convergence scans",
     ),
     PythonCallPolicy(
+        name="callback_readiness_blocker_contract_isolation",
+        source_directory=Path("engine/callbacks/diagnostics.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production callback readiness blocking must use the typed JAX readiness API directly",
+    ),
+    PythonCallPolicy(
+        name="binary_callback_chromosome_state_contract_isolation",
+        source_directory=Path("engine/callbacks/binary.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production binary callbacks must require typed chromosome-state readiness fields",
+    ),
+    PythonCallPolicy(
+        name="linear_callback_chromosome_state_contract_isolation",
+        source_directory=Path("engine/callbacks/linear.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production linear callbacks must require typed chromosome-state readiness fields",
+    ),
+    PythonCallPolicy(
         name="native_compute_group_resolution_isolation",
         source_directory=Path("engine/native_dispatch/groups.py"),
         forbidden_calls=("getattr",),

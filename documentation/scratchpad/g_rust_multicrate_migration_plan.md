@@ -2093,6 +2093,11 @@ Current implementation notes:
 - Callback chunk metadata now uses the native scalar `chromosome_label`
   contract directly; Python no longer falls back to reading the full chromosome
   column from metadata objects.
+- Callback readiness blocking now uses JAX's direct `block_until_ready`
+  boundary, and single-trait linear/binary callbacks require the typed
+  chromosome-state readiness arrays (`adjusted_residual` and
+  `score_residual`) instead of probing prepared state objects for optional
+  attributes.
 - Detached scheduler, queue-observation, dosage-buffer, work-handoff, and
   worker-lifecycle planner aliases were removed from the Python-visible root
   surface; production and tests now enter those policies through typed native
@@ -2115,6 +2120,13 @@ Current implementation notes:
   - `dev-fast-mold` build-profile run: build command `122.821s`, import
     command `0.305s`, inner `_core` import `0.058s`, smoke command `0.270s`,
     `_core.abi3.so` size `104949216` bytes.
+  - Interactive `maturin develop -j 30 --profile dev-fast --uv` comparison
+    after touching the root PyO3 crate: mold via
+    `-C link-arg=-fuse-ld=mold` took `24.43s` wall time (`18.08s` Cargo
+    target time), while wild `0.9.0` via the GCC driver `-B` linker path took
+    `21.17s` wall time (`14.46s` Cargo target time). Subsequent interactive
+    development builds should use wild when the local
+    `/mnt/beegfs/kirill/Projects/g/.tools/bin/wild` binary is available.
   - `maturin build -j 30 --profile dev-fast`: wall time `12.53s`, wheel size
     `21360256` bytes.
   - End-to-end CLI smoke fixture: `tests/test_cli_smoke.py -q` passed in
@@ -2133,6 +2145,9 @@ Current implementation notes:
 - Grouped union-sample fanout now exposes the same typed delivery callback
   contract and calls child callback lifecycle methods directly; the Python
   architecture checker rejects grouped fanout lifecycle probing.
+- The Python architecture checker also rejects callback readiness `getattr`
+  probes in `g.engine.callbacks.diagnostics`, `linear`, and `binary`, keeping
+  the single-trait and multi-trait readiness contracts aligned.
 
 ### Tests
 

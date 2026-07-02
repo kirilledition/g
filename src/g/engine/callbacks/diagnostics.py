@@ -14,10 +14,8 @@ from g.engine import timing
 
 
 def block_until_ready(value: typing.Any) -> None:
-    """Synchronize a JAX value when it supports readiness blocking."""
-    block_until_ready_method = getattr(value, "block_until_ready", None)
-    if callable(block_until_ready_method):
-        block_until_ready_method()
+    """Synchronize a JAX value or pytree."""
+    jax.block_until_ready(value)
 
 
 def enforce_null_logistic_nonconvergence_policy(

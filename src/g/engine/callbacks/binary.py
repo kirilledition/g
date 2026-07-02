@@ -186,12 +186,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             kernel_config=self.kernel_config,
             score_dtype=self.score_dtype,
         )
-        chromosome_ready_value = getattr(
-            self.current_chromosome_state,
-            "score_residual",
-            self.current_chromosome_state,
-        )
-        block_until_ready(chromosome_ready_value)
+        block_until_ready(self.current_chromosome_state.score_residual)
         null_logistic_failure_count = record_null_logistic_chromosome_diagnostics(
             chromosome=chromosome,
             null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
