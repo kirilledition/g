@@ -2818,10 +2818,6 @@ class OutputWriterSession:
     def finish_interrupted(self, signal_name: str) -> None: ...
     def abort(self) -> None: ...
 
-def finish_output_writer_session(writer_session: OutputWriterSession) -> str | None: ...
-def finish_output_writer_session_interrupted(writer_session: OutputWriterSession, signal_name: str) -> None: ...
-def abort_output_writer_session(writer_session: OutputWriterSession) -> None: ...
-
 class NativeOutputRunPaths:
     @property
     def run_directory(self) -> str: ...
@@ -2903,30 +2899,35 @@ class NativeManifestFileFingerprintCache:
         phenotype_names: list[str],
     ) -> tuple[dict[str, object], ...]: ...
 
-def write_regenie2_multi_native_chunk(
-    *,
-    writer_sessions: list[OutputWriterSession],
-    active_trait_indices: list[int],
-    metadata: VariantMetadata,
-    chunk_stats: ChunkStats,
-    beta: npt.NDArray[np.float32],
-    standard_error: npt.NDArray[np.float32],
-    chi_squared: npt.NDArray[np.float32],
-    log10_p_value: npt.NDArray[np.float32],
-    extra_code: npt.NDArray[np.int32] | None = None,
-) -> None: ...
-def write_regenie2_multi_native_chunk_f64(
-    *,
-    writer_sessions: list[OutputWriterSession],
-    active_trait_indices: list[int],
-    metadata: VariantMetadata,
-    chunk_stats: ChunkStats,
-    beta: npt.NDArray[np.float64],
-    standard_error: npt.NDArray[np.float64],
-    chi_squared: npt.NDArray[np.float64],
-    log10_p_value: npt.NDArray[np.float64],
-    extra_code: npt.NDArray[np.int32] | None = None,
-) -> None: ...
+class NativeOutputChunkWritePolicy:
+    def __init__(self) -> None: ...
+    def write_regenie2_multi_native_chunk(
+        self,
+        *,
+        writer_sessions: list[OutputWriterSession],
+        active_trait_indices: list[int],
+        metadata: VariantMetadata,
+        chunk_stats: ChunkStats,
+        beta: npt.NDArray[np.float32],
+        standard_error: npt.NDArray[np.float32],
+        chi_squared: npt.NDArray[np.float32],
+        log10_p_value: npt.NDArray[np.float32],
+        extra_code: npt.NDArray[np.int32] | None = None,
+    ) -> None: ...
+    def write_regenie2_multi_native_chunk_f64(
+        self,
+        *,
+        writer_sessions: list[OutputWriterSession],
+        active_trait_indices: list[int],
+        metadata: VariantMetadata,
+        chunk_stats: ChunkStats,
+        beta: npt.NDArray[np.float64],
+        standard_error: npt.NDArray[np.float64],
+        chi_squared: npt.NDArray[np.float64],
+        log10_p_value: npt.NDArray[np.float64],
+        extra_code: npt.NDArray[np.int32] | None = None,
+    ) -> None: ...
+
 def summarize_variant_major_dosage_chunk_stats(
     genotype_matrix_by_variant: npt.NDArray[np.float32],
 ) -> ChunkStats: ...

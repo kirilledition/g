@@ -243,6 +243,11 @@ function.
 Output lifecycle helpers for run-path resolution, manifest I/O, resume
 validation/repair, initialization, and final chunk compaction now enter through
 `NativeOutputLifecyclePolicy` instead of detached root `_core` functions.
+Output writer finish/interrupted-finish/abort lifecycle now uses
+`OutputWriterSession` methods directly instead of detached root `_core`
+functions.
+Multi-trait output chunk writes now enter through `NativeOutputChunkWritePolicy`
+instead of detached root `_core` functions.
 Preflight chromosome collection now requires the native engine
 `required_chromosomes` API directly; the old Python metadata-slice collection
 fallback has been removed.

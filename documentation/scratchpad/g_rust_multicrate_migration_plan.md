@@ -2254,6 +2254,12 @@ Current implementation notes:
   resume validation/repair, initialization, and final chunk compaction were
   removed from the Python-visible root surface; production enters those
   policies through `NativeOutputLifecyclePolicy`.
+- Detached output writer finish/interrupted-finish/abort helper exports were
+  removed from the Python-visible root surface; production calls the typed
+  `OutputWriterSession` methods directly.
+- Detached multi-trait output chunk writer exports were removed from the
+  Python-visible root surface; production enters that policy through
+  `NativeOutputChunkWritePolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

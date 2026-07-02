@@ -1411,78 +1411,35 @@ def create_native_writer_session_for_lifecycle_test(tmp_path: Path) -> _core.Out
     )
 
 
-def test_finish_writer_session_to_path_routes_native_session_through_core(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_finish_writer_session_to_path_uses_native_session_method(tmp_path: Path) -> None:
     writer_session = create_native_writer_session_for_lifecycle_test(tmp_path)
-    finish_calls: list[_core.OutputWriterSession] = []
-
-    def finish_output_writer_session(session: _core.OutputWriterSession) -> str:
-        finish_calls.append(session)
-        return "results/native.parquet"
-
-    monkeypatch.setattr(native_dispatch_writers._core, "finish_output_writer_session", finish_output_writer_session)
+    final_path: Path | None = None
 
     try:
         final_path = native_dispatch_writers.finish_writer_session_to_path(writer_session)
     finally:
-        _core.abort_output_writer_session(writer_session)
+        if final_path is not None:
+            writer_session.abort()
 
-    assert final_path == Path("results/native.parquet")
-    assert len(finish_calls) == 1
-    assert finish_calls[0] is writer_session
+    assert final_path is None
 
 
-def test_finish_writer_session_interrupted_routes_native_session_through_core(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_finish_writer_session_interrupted_uses_native_session_method(tmp_path: Path) -> None:
     writer_session = create_native_writer_session_for_lifecycle_test(tmp_path)
-    original_finish_interrupted = _core.finish_output_writer_session_interrupted
-    finish_calls: list[tuple[_core.OutputWriterSession, str]] = []
     session_closed = False
-
-    def finish_output_writer_session_interrupted(session: _core.OutputWriterSession, signal_name: str) -> None:
-        nonlocal session_closed
-        finish_calls.append((session, signal_name))
-        original_finish_interrupted(session, signal_name)
-        session_closed = True
-
-    monkeypatch.setattr(
-        native_dispatch_writers._core,
-        "finish_output_writer_session_interrupted",
-        finish_output_writer_session_interrupted,
-    )
 
     try:
         native_dispatch_writers.finish_writer_session_interrupted_by_signal(writer_session, "SIGTERM")
+        session_closed = True
     finally:
         if not session_closed:
-            _core.abort_output_writer_session(writer_session)
-
-    assert len(finish_calls) == 1
-    assert finish_calls[0] == (writer_session, "SIGTERM")
+            writer_session.abort()
 
 
-def test_abort_writer_session_routes_native_session_through_core(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_abort_writer_session_uses_native_session_method(tmp_path: Path) -> None:
     writer_session = create_native_writer_session_for_lifecycle_test(tmp_path)
-    original_abort = _core.abort_output_writer_session
-    abort_calls: list[_core.OutputWriterSession] = []
-
-    def abort_output_writer_session(session: _core.OutputWriterSession) -> None:
-        abort_calls.append(session)
-        original_abort(session)
-
-    monkeypatch.setattr(native_dispatch_writers._core, "abort_output_writer_session", abort_output_writer_session)
 
     native_dispatch_writers.abort_writer_session(writer_session)
-
-    assert len(abort_calls) == 1
-    assert abort_calls[0] is writer_session
 
 
 def test_resolve_writer_finish_thread_count_uses_native_cleanup_policy() -> None:

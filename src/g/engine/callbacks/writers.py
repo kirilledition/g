@@ -54,6 +54,11 @@ def native_schedule_policy() -> _core.NativeSchedulePolicy:
     return _core.NativeSchedulePolicy()
 
 
+def native_output_chunk_write_policy() -> _core.NativeOutputChunkWritePolicy:
+    """Build the native output chunk-write policy handle."""
+    return _core.NativeOutputChunkWritePolicy()
+
+
 def plan_single_trait_output_write(
     *,
     is_native_writer_session: bool,
@@ -444,8 +449,9 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
         chi_squared = materialized_chunk.chi_squared
         log10_p_value = materialized_chunk.log10_p_value
         active_trait_indices = list(range(write_plan.active_trait_count))
+        native_output_chunk_write_policy_handle = native_output_chunk_write_policy()
         if write_plan.uses_float64_native_writer:
-            _core.write_regenie2_multi_native_chunk_f64(
+            native_output_chunk_write_policy_handle.write_regenie2_multi_native_chunk_f64(
                 writer_sessions=list(native_writer_sessions),
                 active_trait_indices=active_trait_indices,
                 metadata=metadata,
@@ -457,7 +463,7 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
                 extra_code=native_extra_code,
             )
         else:
-            _core.write_regenie2_multi_native_chunk(
+            native_output_chunk_write_policy_handle.write_regenie2_multi_native_chunk(
                 writer_sessions=list(native_writer_sessions),
                 active_trait_indices=active_trait_indices,
                 metadata=metadata,

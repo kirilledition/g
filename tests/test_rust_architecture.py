@@ -224,6 +224,11 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
                 "module.add_function(wrap_pyfunction!(initialize_output_run_from_values, module)?)?;",
                 "module.add_function(wrap_pyfunction!(prepare_output_run, module)?)?;",
                 "module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;",
+                "module.add_function(wrap_pyfunction!(finish_output_writer_session, module)?)?;",
+                "module.add_function(wrap_pyfunction!(finish_output_writer_session_interrupted, module)?)?;",
+                "module.add_function(wrap_pyfunction!(abort_output_writer_session, module)?)?;",
+                "module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;",
+                "module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_f64, module)?)?;",
             )
         ),
         encoding="utf-8",
@@ -596,6 +601,36 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
             source_path=Path("src/python/shutdown.rs"),
             export_name="finalize_output_run_chunks",
             line_number=61,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="finish_output_writer_session",
+            line_number=62,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="finish_output_writer_session_interrupted",
+            line_number=63,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="abort_output_writer_session",
+            line_number=64,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="write_regenie2_multi_native_chunk",
+            line_number=65,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="write_regenie2_multi_native_chunk_f64",
+            line_number=66,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

@@ -69,19 +69,13 @@ def native_schedule_policy() -> _core.NativeSchedulePolicy:
 
 def finish_writer_session_to_path(writer_session: typing.Any) -> Path | None:
     """Finish one writer session and normalize its optional final Parquet path."""
-    if isinstance(writer_session, _core.OutputWriterSession):
-        final_parquet_path = _core.finish_output_writer_session(writer_session)
-    else:
-        final_parquet_path = typing.cast("str | None", writer_session.finish())
+    final_parquet_path = typing.cast("str | None", writer_session.finish())
     return None if final_parquet_path is None else Path(final_parquet_path)
 
 
 def finish_writer_session_interrupted_by_signal(writer_session: typing.Any, signal_name: str) -> None:
     """Flush one interrupted writer session."""
-    if isinstance(writer_session, _core.OutputWriterSession):
-        _core.finish_output_writer_session_interrupted(writer_session, signal_name)
-    else:
-        writer_session.finish_interrupted(signal_name)
+    writer_session.finish_interrupted(signal_name)
 
 
 def finish_writer_sessions(
@@ -176,10 +170,7 @@ def abort_callback(callback: models.BgenDeliveryCallbackProtocol) -> None:
 def abort_writer_session(writer_session: typing.Any) -> None:
     """Abort one writer session."""
     with contextlib.suppress(Exception):
-        if isinstance(writer_session, _core.OutputWriterSession):
-            _core.abort_output_writer_session(writer_session)
-        else:
-            writer_session.abort()
+        writer_session.abort()
 
 
 def abort_writer_sessions(writer_sessions: tuple[typing.Any, ...]) -> None:

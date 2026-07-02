@@ -1374,7 +1374,7 @@ def test_public_multi_native_writer_copies_numpy_rows_before_enqueue(tmp_path: P
         )
     )
     try:
-        _core.write_regenie2_multi_native_chunk(
+        _core.NativeOutputChunkWritePolicy().write_regenie2_multi_native_chunk(
             writer_sessions=writer_sessions,
             active_trait_indices=[0, 1],
             metadata=metadata,
@@ -1454,7 +1454,7 @@ def test_public_multi_native_writer_preserves_float64_output_statistics(tmp_path
     chi_squared = np.full((2, row_count), np.nextafter(np.float64(6.0), np.float64(7.0)), dtype=np.float64)
     log10_p_value = np.full((2, row_count), np.nextafter(np.float64(2.0), np.float64(3.0)), dtype=np.float64)
     try:
-        _core.write_regenie2_multi_native_chunk_f64(
+        _core.NativeOutputChunkWritePolicy().write_regenie2_multi_native_chunk_f64(
             writer_sessions=writer_sessions,
             active_trait_indices=[0, 1],
             metadata=metadata,

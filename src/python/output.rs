@@ -47,6 +47,9 @@ pub(crate) struct OutputWriterSession {
 pub(crate) struct NativeOutputLifecyclePolicy;
 
 #[pyclass]
+pub(crate) struct NativeOutputChunkWritePolicy;
+
+#[pyclass]
 pub(crate) struct NativeOutputRunPaths {
     #[pyo3(get)]
     run_directory: String,
@@ -220,6 +223,72 @@ impl NativeOutputLifecyclePolicy {
         manifest: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         repair_strict_manifest_chunk_commits_from_value(py, chunks_directory, manifest)
+    }
+}
+
+#[pymethods]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::unused_self)]
+impl NativeOutputChunkWritePolicy {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    #[pyo3(signature = (writer_sessions, active_trait_indices, metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
+    fn write_regenie2_multi_native_chunk(
+        &self,
+        py: Python<'_>,
+        writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
+        active_trait_indices: Vec<usize>,
+        metadata: PyRef<'_, PyVariantMetadata>,
+        chunk_stats: PyRef<'_, PyChunkStats>,
+        beta: PyReadonlyArray2<'_, f32>,
+        standard_error: PyReadonlyArray2<'_, f32>,
+        chi_squared: PyReadonlyArray2<'_, f32>,
+        log10_p_value: PyReadonlyArray2<'_, f32>,
+        extra_code: Option<PyReadonlyArray2<'_, i32>>,
+    ) -> PyResult<()> {
+        write_regenie2_multi_native_chunk(
+            py,
+            writer_sessions,
+            active_trait_indices,
+            metadata,
+            chunk_stats,
+            beta,
+            standard_error,
+            chi_squared,
+            log10_p_value,
+            extra_code,
+        )
+    }
+
+    #[pyo3(signature = (writer_sessions, active_trait_indices, metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
+    fn write_regenie2_multi_native_chunk_f64(
+        &self,
+        py: Python<'_>,
+        writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
+        active_trait_indices: Vec<usize>,
+        metadata: PyRef<'_, PyVariantMetadata>,
+        chunk_stats: PyRef<'_, PyChunkStats>,
+        beta: PyReadonlyArray2<'_, f64>,
+        standard_error: PyReadonlyArray2<'_, f64>,
+        chi_squared: PyReadonlyArray2<'_, f64>,
+        log10_p_value: PyReadonlyArray2<'_, f64>,
+        extra_code: Option<PyReadonlyArray2<'_, i32>>,
+    ) -> PyResult<()> {
+        write_regenie2_multi_native_chunk_f64(
+            py,
+            writer_sessions,
+            active_trait_indices,
+            metadata,
+            chunk_stats,
+            beta,
+            standard_error,
+            chi_squared,
+            log10_p_value,
+            extra_code,
+        )
     }
 }
 
@@ -435,52 +504,8 @@ impl OutputWriterSession {
     }
 }
 
-#[pyfunction]
-pub(crate) fn finish_output_writer_session(
-    py: Python<'_>,
-    writer_session: PyRef<'_, OutputWriterSession>,
-) -> PyResult<Option<String>> {
-    let native_writer_session = &writer_session.inner;
-    py.detach(|| native_writer_session.finish())
-        .map(|maybe_path| maybe_path.map(|path| path.display().to_string()))
-        .map_err(|error| output_writer_error_to_py(error, "finish_output_writer"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn finish_output_writer_session_interrupted(
-    py: Python<'_>,
-    writer_session: PyRef<'_, OutputWriterSession>,
-    signal_name: String,
-) -> PyResult<()> {
-    let native_writer_session = &writer_session.inner;
-    py.detach(|| native_writer_session.finish_interrupted(&signal_name))
-        .map_err(|error| output_writer_error_to_py(error, "finish_interrupted"))
-}
-
-#[pyfunction]
-pub(crate) fn abort_output_writer_session(
-    py: Python<'_>,
-    writer_session: PyRef<'_, OutputWriterSession>,
-) -> PyResult<()> {
-    let native_writer_session = &writer_session.inner;
-    py.detach(|| native_writer_session.abort()).map_err(|error| output_writer_error_to_py(error, "abort_output_writer"))
-}
-
-#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
-#[pyo3(signature = (
-    writer_sessions,
-    active_trait_indices,
-    metadata,
-    chunk_stats,
-    beta,
-    standard_error,
-    chi_squared,
-    log10_p_value,
-    extra_code=None,
-))]
 pub(crate) fn write_regenie2_multi_native_chunk(
     py: Python<'_>,
     writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
@@ -558,20 +583,8 @@ pub(crate) fn write_regenie2_multi_native_chunk(
     Ok(())
 }
 
-#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
-#[pyo3(signature = (
-    writer_sessions,
-    active_trait_indices,
-    metadata,
-    chunk_stats,
-    beta,
-    standard_error,
-    chi_squared,
-    log10_p_value,
-    extra_code=None,
-))]
 pub(crate) fn write_regenie2_multi_native_chunk_f64(
     py: Python<'_>,
     writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
@@ -833,15 +846,11 @@ pub(crate) fn repair_strict_manifest_chunk_commits_from_value(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeInitializedOutputRun>()?;
     module.add_class::<NativeManifestFileFingerprintCache>()?;
+    module.add_class::<NativeOutputChunkWritePolicy>()?;
     module.add_class::<NativeOutputLifecyclePolicy>()?;
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<OutputWriterSession>()?;
-    module.add_function(wrap_pyfunction!(abort_output_writer_session, module)?)?;
-    module.add_function(wrap_pyfunction!(finish_output_writer_session, module)?)?;
-    module.add_function(wrap_pyfunction!(finish_output_writer_session_interrupted, module)?)?;
-    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
-    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_f64, module)?)?;
     Ok(())
 }
 

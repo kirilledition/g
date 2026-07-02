@@ -252,6 +252,64 @@ def test_output_writer_lifecycle_policy_rejects_direct_native_writer_cleanup_cal
     ]
 
 
+def test_output_chunk_write_policy_rejects_direct_native_multi_writer_calls(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    writer_adapter_directory = package_root / "engine" / "callbacks"
+    runner_directory.mkdir(parents=True)
+    writer_adapter_directory.mkdir(parents=True)
+    (runner_directory / "outputs.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def write_chunks(session):",
+                "    _core.write_regenie2_multi_native_chunk(writer_sessions=[session], active_trait_indices=[0])",
+                "    _core.write_regenie2_multi_native_chunk_f64(writer_sessions=[session], active_trait_indices=[0])",
+                "    _core.NativeOutputChunkWritePolicy()",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (writer_adapter_directory / "writers.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def write_chunks(session):",
+                "    _core.write_regenie2_multi_native_chunk(writer_sessions=[session], active_trait_indices=[0])",
+                "    _core.write_regenie2_multi_native_chunk_f64(writer_sessions=[session], active_trait_indices=[0])",
+                "    _core.NativeOutputChunkWritePolicy()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/outputs.py"),
+            3,
+            "_core.write_regenie2_multi_native_chunk",
+            "_core.write_regenie2_multi_native_chunk",
+        ),
+        (
+            Path("g/runner/outputs.py"),
+            4,
+            "_core.write_regenie2_multi_native_chunk_f64",
+            "_core.write_regenie2_multi_native_chunk_f64",
+        ),
+        (
+            Path("g/runner/outputs.py"),
+            5,
+            "_core.NativeOutputChunkWritePolicy",
+            "_core.NativeOutputChunkWritePolicy",
+        ),
+    ]
+
+
 def test_output_manifest_helper_policy_rejects_direct_native_helpers(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"

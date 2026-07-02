@@ -224,6 +224,17 @@ PYTHON_CALL_POLICIES = (
         message="production Python must route native writer lifecycle calls through the native-dispatch adapter",
     ),
     PythonCallPolicy(
+        name="native_output_chunk_write_adapter_isolation",
+        source_directory=Path(),
+        forbidden_calls=(
+            "_core.write_regenie2_multi_native_chunk",
+            "_core.write_regenie2_multi_native_chunk_f64",
+            "_core.NativeOutputChunkWritePolicy",
+        ),
+        allowed_paths=(Path("engine/callbacks/writers.py"),),
+        message="production Python must route native output chunk writes through the callback writer adapter",
+    ),
+    PythonCallPolicy(
         name="native_output_manifest_helper_adapter_isolation",
         source_directory=Path(),
         forbidden_calls=(
