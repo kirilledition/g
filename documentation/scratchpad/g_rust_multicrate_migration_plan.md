@@ -2385,6 +2385,16 @@ Current implementation notes:
   wall time with Cargo reporting 57.34s; the wheel build completed in 0:41.70
   wall time with Cargo reporting 29.97s. This verifies that adding the
   workspace native CLI package does not disrupt the root PyO3 package build.
+- After the native execution adapter gained the Python/JAX environment probe,
+  panic boundary, and SIGINT/SIGTERM shutdown context, a follow-up packaging and
+  benchmark checkpoint used the same `sccache` plus `wild` development workflow.
+  Incremental `maturin develop -j 30 --profile dev-fast --uv` completed in
+  `0:12.17` wall time with Cargo reporting `3.24s`. Focused
+  `cargo bench -p g-cli --bench frontend -- --warm-up-time 1 --measurement-time
+  2 --sample-size 20` completed in `1:01.33` wall time, with Criterion reporting
+  root help around `95 ns`, parse errors around `112 us`, valid config refusal
+  around `131 us`, TOML config refusal around `108 us`, and `regenie --help`
+  around `361 us`.
 - A lightweight debug checkpoint, `check_native_cli_frontend`, compares the
   compiled native binary against the Python console bridge for configless help
   and parse-error paths while recording process startup/help latency medians.
