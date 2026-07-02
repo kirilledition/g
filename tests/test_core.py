@@ -208,6 +208,25 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "plan_telemetry_close")
     assert not hasattr(_core, "plan_telemetry_event_emission")
     assert not hasattr(_core, "plan_telemetry_progress_emission")
+    for removed_runner_diagnostic_export_name in (
+        "record_runner_binary_engine_dispatch_started_diagnostic_event",
+        "record_runner_execution_plan_build_started_diagnostic_event",
+        "record_runner_execution_plan_dispatch_started_diagnostic_event",
+        "record_runner_execution_plan_finalization_started_diagnostic_event",
+        "record_runner_execution_plan_prepared_diagnostic_event",
+        "record_runner_jax_runtime_configuration_started_diagnostic_event",
+        "record_runner_linear_engine_dispatch_started_diagnostic_event",
+        "record_runner_metadata_artifacts_finalized_diagnostic_event",
+        "record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event",
+        "record_runner_multi_phenotype_dispatch_started_diagnostic_event",
+        "record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event",
+        "record_runner_run_completed_diagnostic_event",
+        "record_runner_run_failed_diagnostic_event",
+        "record_runner_run_interrupted_diagnostic_event",
+        "record_runner_run_started_diagnostic_event",
+        "record_runner_single_phenotype_dispatch_started_diagnostic_event",
+    ):
+        assert not hasattr(_core, removed_runner_diagnostic_export_name)
     assert not hasattr(_core.NativePreparedOutputRun, "existing_manifest_json")
     assert not hasattr(
         _core.NativeManifestFileFingerprintCache,

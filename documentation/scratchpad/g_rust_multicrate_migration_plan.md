@@ -2235,6 +2235,10 @@ Current implementation notes:
   interruption, failure, and runtime-knob events were removed from the
   Python-visible root surface; production enters those policies through
   `NativeCliDiagnosticPolicy`.
+- Detached runner diagnostic helper exports for run lifecycle, execution-plan,
+  engine-dispatch, and metadata-finalized events were removed from the
+  Python-visible root surface; production enters those policies through
+  `NativeRunnerDiagnosticPolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

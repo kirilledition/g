@@ -225,6 +225,10 @@ through the typed `NativeRunEventPayloadPolicy` handle instead of detached root
 Native CLI stdout/stderr, completion, interruption, failure, and runtime-knob
 diagnostic recording now enters through the typed `NativeCliDiagnosticPolicy`
 handle instead of detached root `_core` functions.
+Runner lifecycle, execution-plan, engine-dispatch, and metadata-finalized
+diagnostic recording now enters through the typed
+`NativeRunnerDiagnosticPolicy` handle instead of detached root `_core`
+functions.
 Preflight chromosome collection now requires the native engine
 `required_chromosomes` API directly; the old Python metadata-slice collection
 fallback has been removed.

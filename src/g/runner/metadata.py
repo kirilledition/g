@@ -110,7 +110,7 @@ def finalize_execution_plan(
             ),
         )
     )
-    _core.record_runner_metadata_artifacts_finalized_diagnostic_event(
+    run_events.native_runner_diagnostic_policy().record_runner_metadata_artifacts_finalized_diagnostic_event(
         association_mode=plan.association_mode.value,
         phenotype_count=len(plan.phenotype_run_plans),
     )

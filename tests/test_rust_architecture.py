@@ -185,6 +185,11 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
                 "module.add_function(wrap_pyfunction!(render_run_failed_lines, module)?)?;",
                 "module.add_function(wrap_pyfunction!(record_native_cli_stdout_diagnostic_event, module)?)?;",
                 "module.add_function(wrap_pyfunction!(record_native_cli_completed_line_diagnostic_event, module)?)?;",
+                "module.add_function(wrap_pyfunction!(record_runner_run_started_diagnostic_event, module)?)?;",
+                (
+                    "module.add_function("
+                    "wrap_pyfunction!(record_runner_metadata_artifacts_finalized_diagnostic_event, module)?)?;"
+                ),
             )
         ),
         encoding="utf-8",
@@ -419,6 +424,18 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
             source_path=Path("src/python/shutdown.rs"),
             export_name="record_native_cli_completed_line_diagnostic_event",
             line_number=38,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="record_runner_run_started_diagnostic_event",
+            line_number=39,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="record_runner_metadata_artifacts_finalized_diagnostic_event",
+            line_number=40,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

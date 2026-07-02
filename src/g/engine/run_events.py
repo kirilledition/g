@@ -162,6 +162,11 @@ def native_run_event_telemetry_policy() -> g._core.NativeRunEventTelemetryPolicy
     return g._core.NativeRunEventTelemetryPolicy()
 
 
+def native_runner_diagnostic_policy() -> g._core.NativeRunnerDiagnosticPolicy:
+    """Build the native runner diagnostic policy handle."""
+    return g._core.NativeRunnerDiagnosticPolicy()
+
+
 def run_completed_event_from_native_payload(payload: object) -> RunCompletedEvent:
     """Adapt a native completed-run event payload to the public Python dataclass."""
     event_payload = native_mapping_payload(payload)

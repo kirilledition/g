@@ -891,17 +891,19 @@ def test_configure_runtime_propagates_native_runtime_knob_failure() -> None:
 def test_finalize_execution_plan_records_native_metadata_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
     diagnostic_calls: list[tuple[str, int]] = []
 
-    def record_metadata_artifacts_finalized(
-        *,
-        association_mode: str,
-        phenotype_count: int,
-    ) -> None:
-        diagnostic_calls.append((association_mode, phenotype_count))
+    class FakeRunnerDiagnosticPolicy:
+        def record_runner_metadata_artifacts_finalized_diagnostic_event(
+            self,
+            *,
+            association_mode: str,
+            phenotype_count: int,
+        ) -> None:
+            diagnostic_calls.append((association_mode, phenotype_count))
 
     monkeypatch.setattr(
-        runner_metadata._core,
-        "record_runner_metadata_artifacts_finalized_diagnostic_event",
-        record_metadata_artifacts_finalized,
+        runner_metadata.run_events,
+        "native_runner_diagnostic_policy",
+        FakeRunnerDiagnosticPolicy,
     )
 
     output_run_paths = output.OutputRunPaths(Path("run/trait"), Path("run/trait/chunks"))

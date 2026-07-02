@@ -91,6 +91,7 @@ def regenie(
     """Run the shared REGENIE-compatible config path."""
     active_telemetry_session = run_telemetry_session or telemetry.build_telemetry_session(regenie_config)
     native_run_event_telemetry_policy = run_events.native_run_event_telemetry_policy()
+    native_runner_diagnostic_policy = run_events.native_runner_diagnostic_policy()
     try:
         config.validate_config_for_run(regenie_config)
         runtime_policy = runtime.build_runtime_policy(regenie_config, active_telemetry_session.paths)
@@ -106,7 +107,7 @@ def regenie(
             phenotype_count,
             str(telemetry.resolve_output_run_root(regenie_config)),
         )
-        _core.record_runner_run_started_diagnostic_event(
+        native_runner_diagnostic_policy.record_runner_run_started_diagnostic_event(
             association_mode=association_mode.value,
             trait_type=regenie_config.trait.trait_type.value,
             phenotype_count=phenotype_count,
@@ -122,14 +123,14 @@ def regenie(
         native_run_event_telemetry_policy.record_runner_run_interrupted_telemetry_event(
             active_telemetry_session, interrupted_event
         )
-        _core.record_runner_run_interrupted_diagnostic_event(interrupted_event)
+        native_runner_diagnostic_policy.record_runner_run_interrupted_diagnostic_event(interrupted_event)
         raise
     except Exception as error:
         failed_event = run_events.build_run_failed_event(error)
         native_run_event_telemetry_policy.record_runner_run_failed_telemetry_event(
             active_telemetry_session, failed_event
         )
-        _core.record_runner_run_failed_diagnostic_event(failed_event)
+        native_runner_diagnostic_policy.record_runner_run_failed_diagnostic_event(failed_event)
         raise
     else:
         artifacts = run_events.attach_run_metadata(
@@ -142,7 +143,7 @@ def regenie(
         native_run_event_telemetry_policy.record_runner_run_completed_telemetry_event(
             active_telemetry_session, completed_event
         )
-        _core.record_runner_run_completed_diagnostic_event(completed_event)
+        native_runner_diagnostic_policy.record_runner_run_completed_diagnostic_event(completed_event)
         return artifacts
     finally:
         if close_telemetry_session_on_exit:
@@ -162,9 +163,10 @@ def run_validated_regenie_config(
         telemetry_session,
     )
     native_run_event_telemetry_policy = run_events.native_run_event_telemetry_policy()
+    native_runner_diagnostic_policy = run_events.native_runner_diagnostic_policy()
     try:
         device_start_time = time.perf_counter()
-        _core.record_runner_jax_runtime_configuration_started_diagnostic_event()
+        native_runner_diagnostic_policy.record_runner_jax_runtime_configuration_started_diagnostic_event()
         runtime.configure_runtime_before_jax_import(regenie_config.g_compute, telemetry_session=telemetry_session)
         stage_timing_recorder = timing.build_stage_timing_recorder(
             final_timing_context.stage_timing_path,
@@ -172,7 +174,7 @@ def run_validated_regenie_config(
         )
         timing.record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
         output_start_time = time.perf_counter()
-        _core.record_runner_execution_plan_build_started_diagnostic_event()
+        native_runner_diagnostic_policy.record_runner_execution_plan_build_started_diagnostic_event()
         plan = execution_plan.build_regenie_execution_plan(
             regenie_config,
             runtime_compatibility_token=runtime_compatibility_token,
@@ -186,7 +188,7 @@ def run_validated_regenie_config(
             plan.kernel_config.variant_limit,
             plan.kernel_config.device.value,
         )
-        _core.record_runner_execution_plan_prepared_diagnostic_event(
+        native_runner_diagnostic_policy.record_runner_execution_plan_prepared_diagnostic_event(
             association_mode=plan.association_mode.value,
             phenotype_count=len(plan.phenotype_run_plans),
             chunk_size=plan.kernel_config.chunk_size,
@@ -194,7 +196,7 @@ def run_validated_regenie_config(
             device=plan.kernel_config.device.value,
         )
         timing.record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
-        _core.record_runner_execution_plan_dispatch_started_diagnostic_event(
+        native_runner_diagnostic_policy.record_runner_execution_plan_dispatch_started_diagnostic_event(
             phenotype_count=len(plan.phenotype_run_plans),
             association_mode=plan.association_mode.value,
         )
@@ -205,7 +207,7 @@ def run_validated_regenie_config(
             telemetry_session=telemetry_session,
             runtime_compatibility_token=runtime_compatibility_token,
         )
-        _core.record_runner_execution_plan_finalization_started_diagnostic_event(
+        native_runner_diagnostic_policy.record_runner_execution_plan_finalization_started_diagnostic_event(
             phenotype_count=len(plan.phenotype_run_plans),
             association_mode=plan.association_mode.value,
         )
@@ -246,8 +248,9 @@ def dispatch_execution_plan(
         plan=plan,
         telemetry_session=telemetry_session,
     )
+    native_runner_diagnostic_policy = run_events.native_runner_diagnostic_policy()
     if len(plan.phenotype_run_plans) > 1:
-        _core.record_runner_multi_phenotype_dispatch_started_diagnostic_event(
+        native_runner_diagnostic_policy.record_runner_multi_phenotype_dispatch_started_diagnostic_event(
             phenotype_count=len(plan.phenotype_run_plans),
             association_mode=plan.association_mode.value,
         )
@@ -258,7 +261,7 @@ def dispatch_execution_plan(
             runtime_compatibility_token=runtime_compatibility_token,
             output_initialized_callback=output_initialized_callback,
         )
-    _core.record_runner_single_phenotype_dispatch_started_diagnostic_event(
+    native_runner_diagnostic_policy.record_runner_single_phenotype_dispatch_started_diagnostic_event(
         association_mode=plan.association_mode.value,
         phenotype=plan.phenotype_run_plans[0].phenotype_name,
     )
@@ -330,8 +333,11 @@ def dispatch_one_phenotype_engine_pipeline(
         runtime_compatibility_token=runtime_compatibility_token,
         output_initialized_callback=output_initialized_callback,
     )
+    native_runner_diagnostic_policy = run_events.native_runner_diagnostic_policy()
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
-        _core.record_runner_binary_engine_dispatch_started_diagnostic_event(phenotype=phenotype_run_plan.phenotype_name)
+        native_runner_diagnostic_policy.record_runner_binary_engine_dispatch_started_diagnostic_event(
+            phenotype=phenotype_run_plan.phenotype_name
+        )
         final_output_path = runtime.run_regenie2_binary_bgen_pipeline(
             genotype_source_config=common_request.genotype_source_config,
             phenotype_path=common_request.phenotype_path,
@@ -376,7 +382,9 @@ def dispatch_one_phenotype_engine_pipeline(
             final_output_path=final_output_path,
         )
         return final_output_path
-    _core.record_runner_linear_engine_dispatch_started_diagnostic_event(phenotype=phenotype_run_plan.phenotype_name)
+    native_runner_diagnostic_policy.record_runner_linear_engine_dispatch_started_diagnostic_event(
+        phenotype=phenotype_run_plan.phenotype_name
+    )
     final_output_path = runtime.run_regenie2_linear_bgen_pipeline(
         genotype_source_config=common_request.genotype_source_config,
         phenotype_path=common_request.phenotype_path,
@@ -442,8 +450,9 @@ def dispatch_multi_phenotype_engine_pipeline(
     existing_manifests_by_phenotype = tuple(
         phenotype_run_plan.existing_manifest for phenotype_run_plan in plan.phenotype_run_plans
     )
+    native_runner_diagnostic_policy = run_events.native_runner_diagnostic_policy()
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
-        _core.record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
+        native_runner_diagnostic_policy.record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
             phenotype_count=len(phenotype_names)
         )
         final_output_paths = runtime.run_regenie2_multi_phenotype_binary_bgen_pipeline(
@@ -486,7 +495,7 @@ def dispatch_multi_phenotype_engine_pipeline(
             output_initialized_callback=common_request.output_initialized_callback,
         )
     else:
-        _core.record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
+        native_runner_diagnostic_policy.record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
             phenotype_count=len(phenotype_names)
         )
         final_output_paths = runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline(

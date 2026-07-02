@@ -3082,10 +3082,68 @@ class NativeCliDiagnosticPolicy:
         bgen_decode_tile_variant_count: int,
         threads: int | None,
     ) -> None: ...
-def record_runner_metadata_artifacts_finalized_diagnostic_event(
-    association_mode: str,
-    phenotype_count: int,
-) -> None: ...
+class NativeRunnerDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_runner_run_started_diagnostic_event(
+        self,
+        association_mode: str,
+        trait_type: str,
+        phenotype_count: int,
+    ) -> None: ...
+    def record_runner_run_interrupted_diagnostic_event(self, event: object) -> None: ...
+    def record_runner_run_failed_diagnostic_event(self, event: object) -> None: ...
+    def record_runner_run_completed_diagnostic_event(self, event: object) -> None: ...
+    def record_runner_jax_runtime_configuration_started_diagnostic_event(self) -> None: ...
+    def record_runner_execution_plan_build_started_diagnostic_event(self) -> None: ...
+    def record_runner_execution_plan_prepared_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        chunk_size: int,
+        variant_limit: int | None,
+        device: str,
+    ) -> None: ...
+    def record_runner_execution_plan_dispatch_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+        association_mode: str,
+    ) -> None: ...
+    def record_runner_execution_plan_finalization_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+        association_mode: str,
+    ) -> None: ...
+    def record_runner_multi_phenotype_dispatch_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+        association_mode: str,
+    ) -> None: ...
+    def record_runner_single_phenotype_dispatch_started_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype: str,
+    ) -> None: ...
+    def record_runner_binary_engine_dispatch_started_diagnostic_event(
+        self,
+        phenotype: str,
+    ) -> None: ...
+    def record_runner_linear_engine_dispatch_started_diagnostic_event(
+        self,
+        phenotype: str,
+    ) -> None: ...
+    def record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+    ) -> None: ...
+    def record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+    ) -> None: ...
+    def record_runner_metadata_artifacts_finalized_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+    ) -> None: ...
 def record_preflight_warning_diagnostic_event(
     message: str,
     chromosome_count: int,
@@ -3273,51 +3331,6 @@ def record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_
     signal_name: str,
     signal_number: int,
     writer_session_count: int,
-) -> None: ...
-def record_runner_run_started_diagnostic_event(
-    association_mode: str,
-    trait_type: str,
-    phenotype_count: int,
-) -> None: ...
-def record_runner_run_interrupted_diagnostic_event(event: object) -> None: ...
-def record_runner_run_failed_diagnostic_event(event: object) -> None: ...
-def record_runner_run_completed_diagnostic_event(event: object) -> None: ...
-def record_runner_jax_runtime_configuration_started_diagnostic_event() -> None: ...
-def record_runner_execution_plan_build_started_diagnostic_event() -> None: ...
-def record_runner_execution_plan_prepared_diagnostic_event(
-    association_mode: str,
-    phenotype_count: int,
-    chunk_size: int,
-    variant_limit: int | None,
-    device: str,
-) -> None: ...
-def record_runner_execution_plan_dispatch_started_diagnostic_event(
-    phenotype_count: int,
-    association_mode: str,
-) -> None: ...
-def record_runner_execution_plan_finalization_started_diagnostic_event(
-    phenotype_count: int,
-    association_mode: str,
-) -> None: ...
-def record_runner_multi_phenotype_dispatch_started_diagnostic_event(
-    phenotype_count: int,
-    association_mode: str,
-) -> None: ...
-def record_runner_single_phenotype_dispatch_started_diagnostic_event(
-    association_mode: str,
-    phenotype: str,
-) -> None: ...
-def record_runner_binary_engine_dispatch_started_diagnostic_event(
-    phenotype: str,
-) -> None: ...
-def record_runner_linear_engine_dispatch_started_diagnostic_event(
-    phenotype: str,
-) -> None: ...
-def record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
-    phenotype_count: int,
-) -> None: ...
-def record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
-    phenotype_count: int,
 ) -> None: ...
 class NativeRunMetadataBuilder:
     def __init__(self) -> None: ...

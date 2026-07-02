@@ -380,6 +380,127 @@ impl NativeCliDiagnosticPolicy {
     }
 }
 
+#[pyclass]
+pub(crate) struct NativeRunnerDiagnosticPolicy;
+
+#[pymethods]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::unused_self)]
+impl NativeRunnerDiagnosticPolicy {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    fn record_runner_run_started_diagnostic_event(
+        &self,
+        association_mode: &str,
+        trait_type: &str,
+        phenotype_count: i64,
+    ) -> PyResult<()> {
+        record_runner_run_started_diagnostic_event(association_mode, trait_type, phenotype_count)
+    }
+
+    fn record_runner_run_interrupted_diagnostic_event(&self, event: &Bound<'_, PyAny>) -> PyResult<()> {
+        record_runner_run_interrupted_diagnostic_event(event)
+    }
+
+    fn record_runner_run_failed_diagnostic_event(&self, event: &Bound<'_, PyAny>) -> PyResult<()> {
+        record_runner_run_failed_diagnostic_event(event)
+    }
+
+    fn record_runner_run_completed_diagnostic_event(&self, event: &Bound<'_, PyAny>) -> PyResult<()> {
+        record_runner_run_completed_diagnostic_event(event)
+    }
+
+    fn record_runner_jax_runtime_configuration_started_diagnostic_event(&self) -> PyResult<()> {
+        record_runner_jax_runtime_configuration_started_diagnostic_event()
+    }
+
+    fn record_runner_execution_plan_build_started_diagnostic_event(&self) -> PyResult<()> {
+        record_runner_execution_plan_build_started_diagnostic_event()
+    }
+
+    fn record_runner_execution_plan_prepared_diagnostic_event(
+        &self,
+        association_mode: &str,
+        phenotype_count: i64,
+        chunk_size: i64,
+        variant_limit: Option<i64>,
+        device: &str,
+    ) -> PyResult<()> {
+        record_runner_execution_plan_prepared_diagnostic_event(
+            association_mode,
+            phenotype_count,
+            chunk_size,
+            variant_limit,
+            device,
+        )
+    }
+
+    fn record_runner_execution_plan_dispatch_started_diagnostic_event(
+        &self,
+        phenotype_count: i64,
+        association_mode: &str,
+    ) -> PyResult<()> {
+        record_runner_execution_plan_dispatch_started_diagnostic_event(phenotype_count, association_mode)
+    }
+
+    fn record_runner_execution_plan_finalization_started_diagnostic_event(
+        &self,
+        phenotype_count: i64,
+        association_mode: &str,
+    ) -> PyResult<()> {
+        record_runner_execution_plan_finalization_started_diagnostic_event(phenotype_count, association_mode)
+    }
+
+    fn record_runner_multi_phenotype_dispatch_started_diagnostic_event(
+        &self,
+        phenotype_count: i64,
+        association_mode: &str,
+    ) -> PyResult<()> {
+        record_runner_multi_phenotype_dispatch_started_diagnostic_event(phenotype_count, association_mode)
+    }
+
+    fn record_runner_single_phenotype_dispatch_started_diagnostic_event(
+        &self,
+        association_mode: &str,
+        phenotype: &str,
+    ) -> PyResult<()> {
+        record_runner_single_phenotype_dispatch_started_diagnostic_event(association_mode, phenotype)
+    }
+
+    fn record_runner_binary_engine_dispatch_started_diagnostic_event(&self, phenotype: &str) -> PyResult<()> {
+        record_runner_binary_engine_dispatch_started_diagnostic_event(phenotype)
+    }
+
+    fn record_runner_linear_engine_dispatch_started_diagnostic_event(&self, phenotype: &str) -> PyResult<()> {
+        record_runner_linear_engine_dispatch_started_diagnostic_event(phenotype)
+    }
+
+    fn record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
+        &self,
+        phenotype_count: i64,
+    ) -> PyResult<()> {
+        record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(phenotype_count)
+    }
+
+    fn record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
+        &self,
+        phenotype_count: i64,
+    ) -> PyResult<()> {
+        record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(phenotype_count)
+    }
+
+    fn record_runner_metadata_artifacts_finalized_diagnostic_event(
+        &self,
+        association_mode: &str,
+        phenotype_count: i64,
+    ) -> PyResult<()> {
+        record_runner_metadata_artifacts_finalized_diagnostic_event(association_mode, phenotype_count)
+    }
+}
+
 pub fn build_run_completed_event_payload<'py>(
     py: Python<'py>,
     artifacts: &Bound<'py, PyAny>,
@@ -698,7 +819,6 @@ pub fn record_bgen_engine_opened_telemetry_event(
         .map(|_| ())
 }
 
-#[pyfunction]
 pub fn record_runner_run_started_diagnostic_event(
     association_mode: &str,
     trait_type: &str,
@@ -709,40 +829,34 @@ pub fn record_runner_run_started_diagnostic_event(
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_run_interrupted_diagnostic_event(event: &Bound<'_, PyAny>) -> PyResult<()> {
     let event_payload = run_interrupted_event_from_py(event)?;
     let payload = native_run_events::build_runner_run_interrupted_diagnostic_payload(&event_payload);
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_run_failed_diagnostic_event(event: &Bound<'_, PyAny>) -> PyResult<()> {
     let event_payload = run_failed_event_from_py(event)?;
     let payload = native_run_events::build_runner_run_failed_diagnostic_payload(&event_payload);
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_run_completed_diagnostic_event(event: &Bound<'_, PyAny>) -> PyResult<()> {
     let event_payload = run_completed_event_from_py(event)?;
     let payload = native_run_events::build_runner_run_completed_diagnostic_payload(&event_payload);
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_jax_runtime_configuration_started_diagnostic_event() -> PyResult<()> {
     let payload = native_run_events::build_runner_jax_runtime_configuration_started_diagnostic_payload();
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_execution_plan_build_started_diagnostic_event() -> PyResult<()> {
     let payload = native_run_events::build_runner_execution_plan_build_started_diagnostic_payload();
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_execution_plan_prepared_diagnostic_event(
     association_mode: &str,
     phenotype_count: i64,
@@ -760,7 +874,6 @@ pub fn record_runner_execution_plan_prepared_diagnostic_event(
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_execution_plan_dispatch_started_diagnostic_event(
     phenotype_count: i64,
     association_mode: &str,
@@ -772,7 +885,6 @@ pub fn record_runner_execution_plan_dispatch_started_diagnostic_event(
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_execution_plan_finalization_started_diagnostic_event(
     phenotype_count: i64,
     association_mode: &str,
@@ -784,7 +896,6 @@ pub fn record_runner_execution_plan_finalization_started_diagnostic_event(
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_multi_phenotype_dispatch_started_diagnostic_event(
     phenotype_count: i64,
     association_mode: &str,
@@ -796,7 +907,6 @@ pub fn record_runner_multi_phenotype_dispatch_started_diagnostic_event(
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_single_phenotype_dispatch_started_diagnostic_event(
     association_mode: &str,
     phenotype: &str,
@@ -808,19 +918,16 @@ pub fn record_runner_single_phenotype_dispatch_started_diagnostic_event(
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_binary_engine_dispatch_started_diagnostic_event(phenotype: &str) -> PyResult<()> {
     let payload = native_run_events::build_runner_binary_engine_dispatch_started_diagnostic_payload(phenotype);
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_linear_engine_dispatch_started_diagnostic_event(phenotype: &str) -> PyResult<()> {
     let payload = native_run_events::build_runner_linear_engine_dispatch_started_diagnostic_payload(phenotype);
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
     phenotype_count: i64,
 ) -> PyResult<()> {
@@ -830,7 +937,6 @@ pub fn record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_e
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
     phenotype_count: i64,
 ) -> PyResult<()> {
@@ -876,7 +982,6 @@ pub fn record_native_runtime_knobs_configured_diagnostic_event(
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_runner_metadata_artifacts_finalized_diagnostic_event(
     association_mode: &str,
     phenotype_count: i64,
@@ -1443,28 +1548,7 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
 }
 
 fn register_runner_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(record_runner_run_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_run_interrupted_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_run_failed_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_run_completed_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_jax_runtime_configuration_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_execution_plan_build_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_execution_plan_prepared_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_execution_plan_dispatch_started_diagnostic_event, module)?)?;
-    module
-        .add_function(wrap_pyfunction!(record_runner_execution_plan_finalization_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_multi_phenotype_dispatch_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_single_phenotype_dispatch_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_binary_engine_dispatch_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_runner_linear_engine_dispatch_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
-        record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event,
-        module
-    )?)?;
+    module.add_class::<NativeRunnerDiagnosticPolicy>()?;
     Ok(())
 }
 
@@ -1474,7 +1558,6 @@ fn register_cli_and_runtime_diagnostic_exports(module: &Bound<'_, PyModule>) -> 
 }
 
 fn register_output_and_preflight_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(record_runner_metadata_artifacts_finalized_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_preflight_warning_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_io_output_resume_committed_chunks_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_bgen_engine_open_started_diagnostic_event, module)?)?;
