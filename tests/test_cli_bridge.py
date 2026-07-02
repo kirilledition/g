@@ -141,7 +141,7 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
             stdout_buffer = io.StringIO()
             stderr_buffer = io.StringIO()
             with (
-                unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
+                unittest.mock.patch("g.cli.g._core.run_native_cli_python_bridge", return_value=outcome) as bridge_mock,
                 unittest.mock.patch("g.cli.native_cli_diagnostic_policy") as diagnostic_policy_factory_mock,
                 contextlib.redirect_stdout(stdout_buffer),
                 contextlib.redirect_stderr(stderr_buffer),
@@ -153,6 +153,11 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
                 raise AssertionError((stdout_buffer.getvalue(), expected_stdout))
             if stderr_buffer.getvalue() != expected_stderr:
                 raise AssertionError((stderr_buffer.getvalue(), expected_stderr))
+            bridge_mock.assert_called_once_with(
+                list(arguments),
+                sys.executable,
+                g.cli.NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE,
+            )
             diagnostic_policy_factory_mock.assert_not_called()
 
         imported_modules = [module_name for module_name in forbidden_modules if module_name in sys.modules]
@@ -169,6 +174,57 @@ def test_run_args_configless_paths_print_without_runtime_imports() -> None:
     )
 
     assert completed_process.returncode == 0, completed_process.stderr
+
+
+def test_run_args_invokes_native_python_bridge(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure the Python entry point delegates to the coarse native bridge."""
+    monkeypatch.delenv(cli.NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE, raising=False)
+    outcome = python_types.SimpleNamespace(
+        stdout="native stdout\n",
+        stderr="native stderr\n",
+        exit_code=17,
+        config=None,
+    )
+    with (
+        unittest.mock.patch("g.cli.g._core.run_native_cli_python_bridge", return_value=outcome) as bridge_mock,
+        unittest.mock.patch("g.cli.g._core.dispatch_cli") as legacy_dispatch_mock,
+    ):
+        exit_code = cli.run_args(("regenie", "--help"))
+
+    output = capsys.readouterr()
+    assert exit_code == 17
+    assert output.out == "native stdout\n"
+    assert output.err == "native stderr\n"
+    bridge_mock.assert_called_once_with(
+        ["regenie", "--help"],
+        sys.executable,
+        cli.NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE,
+    )
+    legacy_dispatch_mock.assert_not_called()
+
+
+def test_run_args_sentinel_uses_legacy_backend(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure the subprocess bridge sentinel prevents recursive native dispatch."""
+    monkeypatch.setenv(cli.NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE, "1")
+    outcome = python_types.SimpleNamespace(stdout="legacy help\n", stderr="", exit_code=0, config=None)
+    with (
+        unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome) as legacy_dispatch_mock,
+        unittest.mock.patch("g.cli.g._core.run_native_cli_python_bridge") as bridge_mock,
+    ):
+        exit_code = cli.run_args(["--help"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert output.out == "legacy help\n"
+    assert output.err == ""
+    legacy_dispatch_mock.assert_called_once_with(["--help"])
+    bridge_mock.assert_not_called()
 
 
 def test_log_native_cli_output_uses_native_recorders() -> None:
@@ -230,7 +286,7 @@ def test_run_args_bridges_completion_events(
         unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts) as regenie_mock,
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
     ):
-        exit_code = cli.run_args(["regenie"])
+        exit_code = cli.run_args_legacy(["regenie"])
 
     output = capsys.readouterr()
     assert exit_code == 0
@@ -283,7 +339,7 @@ def test_run_args_bridges_interruption_events(
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=shutdown_request) as regenie_mock,
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
     ):
-        exit_code = cli.run_args(["regenie"])
+        exit_code = cli.run_args_legacy(["regenie"])
 
     output = capsys.readouterr()
     assert exit_code == 130
@@ -330,7 +386,7 @@ def test_run_args_reports_runtime_initialization_failure(
         unittest.mock.patch.object(runner_execution, "regenie") as regenie_mock,
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
     ):
-        exit_code = cli.run_args(["regenie"])
+        exit_code = cli.run_args_legacy(["regenie"])
 
     output = capsys.readouterr()
     assert exit_code == 1
@@ -374,7 +430,7 @@ def test_run_args_suppresses_run_failed_telemetry_failure(
         unittest.mock.patch.object(runner_execution, "regenie") as regenie_mock,
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
     ):
-        exit_code = cli.run_args(["regenie"])
+        exit_code = cli.run_args_legacy(["regenie"])
 
     output = capsys.readouterr()
     assert exit_code == 1
@@ -418,7 +474,7 @@ def test_run_args_reports_runner_failure_without_traceback(
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=RuntimeError("pipeline failed")),
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
     ):
-        exit_code = cli.run_args(["regenie"])
+        exit_code = cli.run_args_legacy(["regenie"])
 
     output = capsys.readouterr()
     assert exit_code == 1
@@ -472,7 +528,7 @@ def test_run_args_reports_telemetry_close_failure(
         unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts),
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
     ):
-        exit_code = cli.run_args(["regenie"])
+        exit_code = cli.run_args_legacy(["regenie"])
 
     output = capsys.readouterr()
     assert exit_code == 1
@@ -519,7 +575,7 @@ def test_run_args_preserves_runner_failure_when_telemetry_close_fails(
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=RuntimeError("pipeline failed")),
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
     ):
-        exit_code = cli.run_args(["regenie"])
+        exit_code = cli.run_args_legacy(["regenie"])
 
     output = capsys.readouterr()
     assert exit_code == 1

@@ -2374,8 +2374,11 @@ Current implementation notes:
   workspace dependency policy still avoids `g-engine` and runtime internals;
   `g-cli` depends on `g-interface` plus external signal handling support while
   the backend boundary is prototyped.
-- The Python package entry point remains the production full-run CLI while this
-  native process-owner prototype proves the frontend and packaging boundary.
+- The Python package entry point is now compatibility glue for installed
+  console scripts: it calls one coarse native PyO3 CLI runner, which routes
+  through `g-cli` frontend validation before delegating validated execution.
+  A sentinel-protected `g.cli.run_args_legacy` path prevents recursive native
+  dispatch when the transitional Python/JAX subprocess backend is invoked.
 - The native frontend now has a Criterion dispatch benchmark covering root
   help, `regenie --help`, parse errors, and valid-config validation before
   execution refusal. This is a Rust-side frontend baseline; process startup and
@@ -2423,9 +2426,10 @@ Current implementation notes:
 - A deliberate subprocess backend prototype is available through
   `PythonBridgeExecutionAdapter`. Setting `G_NATIVE_CLI_PYTHON=/path/to/python`
   lets the native binary validate the run config and then delegate the original
-  CLI arguments to `g.cli.run_args` through that Python executable. The default
-  native binary path still preserves the unsupported-execution refusal until
-  the embedded Python/JAX or direct `g-engine` backend boundary is selected.
+  CLI arguments to the sentinel-protected Python legacy backend through that
+  Python executable. The default native binary path still preserves the
+  unsupported-execution refusal until the embedded Python/JAX or direct
+  `g-engine` backend boundary is selected.
 - `check_native_cli_frontend` now includes a Python backend bridge smoke. It
   writes a temporary validated REGENIE fixture, runs the native binary with
   `G_NATIVE_CLI_PYTHON` pointed at the configured Python executable, and

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::PyValueError;
@@ -818,6 +818,31 @@ fn dispatch_cli(args: Vec<String>) -> CliOutcome {
     CliOutcome::new(interface::dispatch_cli(&args))
 }
 
+#[pyfunction]
+#[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python list arguments into owned Vec values.")]
+fn run_native_cli_python_bridge(
+    args: Vec<String>,
+    python_executable_path: &Bound<'_, PyAny>,
+    sentinel_environment_variable: String,
+) -> PyResult<CliOutcome> {
+    let python_executable_path_text = path_to_string(python_executable_path)?;
+    let execution_adapter = g_cli::PythonBridgeExecutionAdapter::new_with_environment_overrides(
+        PathBuf::from(python_executable_path_text),
+        vec![(sentinel_environment_variable, "1".to_string())],
+    );
+    let native_outcome = g_cli::dispatch_native_cli_with_adapter(&args, &execution_adapter);
+    Ok(CliOutcome::new(native_cli_outcome_to_cli_outcome_data(native_outcome)))
+}
+
+fn native_cli_outcome_to_cli_outcome_data(native_outcome: g_cli::NativeCliOutcome) -> CliOutcomeData {
+    CliOutcomeData {
+        exit_code: native_outcome.exit_code,
+        stdout: native_outcome.stdout,
+        stderr: native_outcome.stderr,
+        config: None,
+    }
+}
+
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<InputConfig>()?;
     module.add_class::<TraitConfig>()?;
@@ -837,6 +862,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
     module.add_function(wrap_pyfunction!(compile_run_request_payload, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
+    module.add_function(wrap_pyfunction!(run_native_cli_python_bridge, module)?)?;
     Ok(())
 }
 

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE: &str = "G_NATIVE_CLI_PYTHON";
+pub const PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE: &str = "G_NATIVE_CLI_PYTHON_BRIDGE_SENTINEL";
 pub const NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE: i32 = 1;
 pub const NATIVE_EXECUTION_UNAVAILABLE_MESSAGE: &str = concat!(
     "Error: native CLI execution is not available yet; ",
@@ -82,12 +83,21 @@ impl NativeExecutionAdapter for UnsupportedNativeExecutionAdapter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PythonBridgeExecutionAdapter {
     python_executable_path: PathBuf,
+    environment_overrides: Vec<(String, String)>,
 }
 
 impl PythonBridgeExecutionAdapter {
     #[must_use]
     pub fn new(python_executable_path: PathBuf) -> Self {
-        Self { python_executable_path }
+        Self { python_executable_path, environment_overrides: Vec::new() }
+    }
+
+    #[must_use]
+    pub fn new_with_environment_overrides(
+        python_executable_path: PathBuf,
+        environment_overrides: Vec<(String, String)>,
+    ) -> Self {
+        Self { python_executable_path, environment_overrides }
     }
 }
 
@@ -98,8 +108,12 @@ impl NativeExecutionAdapter for PythonBridgeExecutionAdapter {
         _config: &g_interface::RegenieConfigData,
         _execution_context: &NativeExecutionContext,
     ) -> NativeExecutionOutcome {
-        let output_result =
-            Command::new(&self.python_executable_path).arg("-c").arg(PYTHON_BRIDGE_SCRIPT).args(arguments).output();
+        let output_result = Command::new(&self.python_executable_path)
+            .arg("-c")
+            .arg(PYTHON_BRIDGE_SCRIPT)
+            .args(arguments)
+            .envs(self.environment_overrides.iter().map(|(name, value)| (name, value)))
+            .output();
         match output_result {
             Ok(output) => NativeExecutionOutcome::new(
                 process_exit_code(output.status),
@@ -379,6 +393,9 @@ if [ \"$1\" != \"-c\" ]; then\n\
 fi\n\
 shift 2\n\
 printf 'python bridge first-argument=%s\\n' \"$1\"\n\
+if [ -n \"$G_CLI_TEST_SENTINEL\" ]; then\n\
+  printf 'python bridge sentinel=%s\\n' \"$G_CLI_TEST_SENTINEL\"\n\
+fi\n\
 printf 'python bridge stderr\\n' >&2\n\
 exit 42\n",
         )
@@ -579,6 +596,32 @@ exit 42\n",
 
         assert_eq!(native_outcome.exit_code, 42);
         assert_eq!(native_outcome.stdout, "python bridge first-argument=regenie\n");
+        assert_eq!(native_outcome.stderr, "python bridge stderr\n");
+        assert!(native_outcome.validated_run_config);
+
+        fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn python_bridge_execution_adapter_applies_environment_overrides() {
+        let fixture_directory = unique_fixture_directory();
+        fs::create_dir_all(&fixture_directory).expect("fixture directory should be created");
+        fs::write(fixture_directory.join("dataset.bgen"), b"").expect("BGEN fixture should be written");
+        fs::write(fixture_directory.join("phenotype.tsv"), "FID IID trait\n")
+            .expect("phenotype fixture should be written");
+        fs::write(fixture_directory.join("predictions.list"), "").expect("prediction fixture should be written");
+        let fake_python_path = write_fake_python_bridge(&fixture_directory);
+        let adapter = PythonBridgeExecutionAdapter::new_with_environment_overrides(
+            fake_python_path,
+            vec![("G_CLI_TEST_SENTINEL".to_string(), "active".to_string())],
+        );
+
+        let arguments = valid_regenie_arguments(&fixture_directory);
+        let native_outcome = dispatch_native_cli_with_adapter(&arguments, &adapter);
+
+        assert_eq!(native_outcome.exit_code, 42);
+        assert_eq!(native_outcome.stdout, "python bridge first-argument=regenie\npython bridge sentinel=active\n",);
         assert_eq!(native_outcome.stderr, "python bridge stderr\n");
         assert!(native_outcome.validated_run_config);
 

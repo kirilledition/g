@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import sys
 import typing
 
@@ -13,10 +14,25 @@ if typing.TYPE_CHECKING:
 
 
 NATIVE_CLI_OUTPUT_LOG_LIMIT = 4096
+NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE = "G_NATIVE_CLI_PYTHON_BRIDGE_SENTINEL"
 RUNTIME_FAILURE_EXIT_CODE = 1
 
 
 def run_args(arguments: typing.Sequence[str]) -> int:
+    """Run CLI arguments through the native PyO3 frontend."""
+    if os.environ.get(NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE) == "1":
+        return run_args_legacy(arguments)
+
+    outcome = g._core.run_native_cli_python_bridge(
+        list(arguments),
+        sys.executable,
+        NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE,
+    )
+    print_native_cli_output(outcome)
+    return outcome.exit_code
+
+
+def run_args_legacy(arguments: typing.Sequence[str]) -> int:
     """Run CLI arguments through the Rust frontend."""
     outcome = g._core.dispatch_cli(list(arguments))
     if outcome.config is None:

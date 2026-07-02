@@ -98,6 +98,7 @@ if [ \"$1\" != \"-c\" ]; then\n\
 fi\n\
 shift 2\n\
 printf 'binary bridge first-argument=%s\\n' \"$1\"\n\
+printf 'binary bridge sentinel=%s\\n' \"$G_NATIVE_CLI_PYTHON_BRIDGE_SENTINEL\"\n\
 printf 'binary bridge stderr\\n' >&2\n\
 exit 43\n",
     )
@@ -228,7 +229,7 @@ fn native_binary_delegates_validated_config_to_python_bridge_when_enabled() {
     assert_eq!(output.status.code(), Some(43));
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout should be UTF-8"),
-        "binary bridge first-argument=regenie\n",
+        "binary bridge first-argument=regenie\nbinary bridge sentinel=1\n",
     );
     assert_eq!(String::from_utf8(output.stderr).expect("stderr should be UTF-8"), "binary bridge stderr\n",);
 
