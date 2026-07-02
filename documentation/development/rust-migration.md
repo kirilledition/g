@@ -254,6 +254,10 @@ now use value-based PyO3 wrappers. The output adapter no longer calls
 Run manifest loading and prepared-output existing-manifest loading also return
 native PyO3 value payloads, so production output code no longer parses those
 native JSON strings with Python `json.loads`.
+The root `_core` surface no longer exports the old output JSON-string helpers
+for manifest load/write, manifest checksum, compatibility, initialization,
+strict-resume validation/repair, or prepared-plan/header construction; Python
+callers use the value-based output adapter exports instead.
 Run-start manifest command/runtime metadata extension now goes through a native
 `g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
 longer loads, mutates, serializes, and rewrites run manifests for that

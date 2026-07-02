@@ -1909,6 +1909,11 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Run manifest loading and prepared-output existing-manifest loading now use
   PyO3 value wrappers, so production output code no longer calls Python
   `json.loads` for those native JSON payloads.
+- The root `_core` surface no longer exports the old output JSON-string
+  compatibility helpers for manifest load/write, checksum, compatibility,
+  initialization, strict-resume validation/repair, or prepared-plan/header
+  construction; remaining Python callers enter the value-based output adapter
+  exports.
 - Preflight finite-array checks, SVD-backed covariate-rank validation, and
   binary phenotype coding/case-control scans now execute in the root PyO3
   adapter over NumPy buffers and then call the `g-engine` policy helpers.
@@ -2063,6 +2068,11 @@ Current implementation notes:
   standalone file-content hashing, lower-level run artifacts, run-manifest
   metadata extensions, and trusted BGEN validation cache entries have been
   removed from the root PyO3 module.
+- Output JSON-string compatibility exports for run-manifest load/write,
+  manifest checksums, compatibility validation, initialization, strict-resume
+  validation/repair, and raw prepared-plan/header construction have been
+  removed from the root PyO3 module; the retained output exports are the
+  value-based adapter boundary plus filesystem lifecycle helpers.
 - Run lifecycle telemetry-field builders have also been removed from the
   Python-visible root PyO3 surface; native logging keeps the internal
   conversion helpers used by typed telemetry dispatch.

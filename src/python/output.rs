@@ -13,7 +13,6 @@ use g_output::{
     OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
     build_current_run_manifest_header_json_with_cache as build_native_current_run_manifest_header_json_with_cache,
     build_manifest_json_sha256 as build_native_manifest_json_sha256,
-    build_prepared_run_manifest_header_json_from_current_header_json as build_native_prepared_run_manifest_header_json_from_current_header_json,
     build_prepared_run_plan_json_from_current_header_json as build_native_prepared_run_plan_json_from_current_header_json,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
     initialize_output_run as initialize_native_output_run, load_run_manifest_json as load_native_run_manifest_json,
@@ -616,13 +615,6 @@ pub(crate) fn prepare_output_run(
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn load_run_manifest_json(py: Python<'_>, run_directory: String) -> PyResult<Option<String>> {
-    py.detach(|| load_native_run_manifest_json(Path::new(&run_directory)))
-        .map_err(|error| output_writer_error_to_py(error, "load_run_manifest_json"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn load_run_manifest_payload(py: Python<'_>, run_directory: String) -> PyResult<Py<PyAny>> {
     let manifest_json = py
         .detach(|| load_native_run_manifest_json(Path::new(&run_directory)))
@@ -635,34 +627,10 @@ pub(crate) fn load_run_manifest_payload(py: Python<'_>, run_directory: String) -
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn write_run_manifest_json(py: Python<'_>, run_directory: String, manifest_json: String) -> PyResult<()> {
-    py.detach(|| write_native_run_manifest_json(Path::new(&run_directory), &manifest_json))
-        .map_err(|error| output_writer_error_to_py(error, "write_run_manifest_json"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn write_run_manifest(py: Python<'_>, run_directory: String, manifest: &Bound<'_, PyAny>) -> PyResult<()> {
     let manifest_json = json_bridge::json_text_from_py_any(manifest)?;
     py.detach(|| write_native_run_manifest_json(Path::new(&run_directory), &manifest_json))
         .map_err(|error| output_writer_error_to_py(error, "write_run_manifest"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_prepared_run_manifest_header_json_from_current_header_json(
-    current_header_json: String,
-) -> PyResult<String> {
-    build_native_prepared_run_manifest_header_json_from_current_header_json(&current_header_json).map_err(|error| {
-        output_writer_error_to_py(error, "build_prepared_run_manifest_header_json_from_current_header_json")
-    })
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_prepared_run_plan_json_from_current_header_json(current_header_json: String) -> PyResult<String> {
-    build_native_prepared_run_plan_json_from_current_header_json(&current_header_json)
-        .map_err(|error| output_writer_error_to_py(error, "build_prepared_run_plan_json_from_current_header_json"))
 }
 
 #[pyfunction]
@@ -681,22 +649,9 @@ where
 }
 
 #[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_manifest_json_sha256(manifest_json: String) -> String {
-    build_native_manifest_json_sha256(&manifest_json)
-}
-
-#[pyfunction]
 pub(crate) fn build_manifest_json_sha256_from_value(value: &Bound<'_, PyAny>) -> PyResult<String> {
     let value_json = json_bridge::json_text_from_py_any(value)?;
     Ok(build_native_manifest_json_sha256(&value_json))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn validate_run_manifest_compatibility(manifest_json: String, current_header_json: String) -> PyResult<()> {
-    validate_native_run_manifest_compatibility(&manifest_json, &current_header_json)
-        .map_err(|error| output_writer_error_to_py(error, "validate_run_manifest_compatibility"))
 }
 
 #[pyfunction]
@@ -711,47 +666,10 @@ pub(crate) fn validate_run_manifest_compatibility_from_values(
 }
 
 #[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn read_manifest_committed_chunk_identifiers(manifest_json: String) -> PyResult<Vec<i64>> {
-    read_native_manifest_committed_chunk_identifiers(&manifest_json)
-        .map_err(|error| output_writer_error_to_py(error, "read_manifest_committed_chunk_identifiers"))
-}
-
-#[pyfunction]
 pub(crate) fn read_manifest_committed_chunk_identifiers_from_value(manifest: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
     let manifest_json = json_bridge::json_text_from_py_any(manifest)?;
     read_native_manifest_committed_chunk_identifiers(&manifest_json)
         .map_err(|error| output_writer_error_to_py(error, "read_manifest_committed_chunk_identifiers_from_value"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn initialize_output_run(
-    py: Python<'_>,
-    run_directory: String,
-    chunks_directory: String,
-    existing_manifest_json: Option<String>,
-    current_header_json: String,
-    resume: bool,
-    resume_mode: String,
-    runtime_compatibility_token: PyRef<'_, NativeRuntimeCompatibilityToken>,
-) -> PyResult<NativeInitializedOutputRun> {
-    let _runtime_compatibility_token = runtime_compatibility_token.native_token();
-    let native_resume_mode = OutputResumeMode::parse(&resume_mode)
-        .map_err(|error| output_writer_error_to_py(error, "parse_output_resume_mode"))?;
-    let initialized_output_run = py
-        .detach(|| {
-            initialize_native_output_run(
-                Path::new(&run_directory),
-                Path::new(&chunks_directory),
-                existing_manifest_json.as_deref(),
-                &current_header_json,
-                resume,
-                native_resume_mode,
-            )
-        })
-        .map_err(|error| output_writer_error_to_py(error, "initialize_output_run"))?;
-    Ok(NativeInitializedOutputRun { committed_chunk_identifiers: initialized_output_run.committed_chunk_identifiers })
 }
 
 #[pyfunction]
@@ -796,17 +714,6 @@ pub(crate) fn scan_committed_chunk_identifiers(py: Python<'_>, chunks_directory:
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn validate_strict_manifest_chunks(
-    py: Python<'_>,
-    chunks_directory: String,
-    manifest_json: String,
-) -> PyResult<Vec<i64>> {
-    py.detach(|| validate_native_strict_manifest_chunks(Path::new(&chunks_directory), &manifest_json))
-        .map_err(|error| output_writer_error_to_py(error, "validate_strict_manifest_chunks"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn validate_strict_manifest_chunks_from_value(
     py: Python<'_>,
     chunks_directory: String,
@@ -815,35 +722,6 @@ pub(crate) fn validate_strict_manifest_chunks_from_value(
     let manifest_json = json_bridge::json_text_from_py_any(manifest)?;
     py.detach(|| validate_native_strict_manifest_chunks(Path::new(&chunks_directory), &manifest_json))
         .map_err(|error| output_writer_error_to_py(error, "validate_strict_manifest_chunks_from_value"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn repair_strict_manifest_chunk_commits(
-    py: Python<'_>,
-    chunks_directory: String,
-    manifest_json: String,
-) -> PyResult<String> {
-    let chunk_commits = py
-        .detach(|| repair_native_strict_manifest_chunk_commits(Path::new(&chunks_directory), &manifest_json))
-        .map_err(|error| output_writer_error_to_py(error, "repair_strict_manifest_chunk_commits"))?;
-    serde_json::to_string(
-        &chunk_commits
-            .into_iter()
-            .map(|chunk_commit| {
-                serde_json::json!({
-                    "chunk_identifier": chunk_commit.chunk_identifier,
-                    "output_format": chunk_commit.output_format,
-                    "compression": chunk_commit.compression,
-                    "variant_start_index": chunk_commit.variant_start_index,
-                    "variant_stop_index": chunk_commit.variant_stop_index,
-                    "row_count": chunk_commit.row_count,
-                    "chunk_file_name": chunk_commit.chunk_file_name,
-                })
-            })
-            .collect::<Vec<_>>(),
-    )
-    .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 #[pyfunction]
@@ -884,33 +762,23 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_function(wrap_pyfunction!(abort_output_writer_session, module)?)?;
-    module.add_function(wrap_pyfunction!(build_manifest_json_sha256, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_json_sha256_from_value, module)?)?;
-    module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json_from_current_header_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_prepared_run_plan_json_from_current_header, module)?)?;
-    module.add_function(wrap_pyfunction!(build_prepared_run_plan_json_from_current_header_json, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(finish_output_writer_session, module)?)?;
     module.add_function(wrap_pyfunction!(finish_output_writer_session_interrupted, module)?)?;
-    module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_output_run_from_values, module)?)?;
-    module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;
     module.add_function(wrap_pyfunction!(load_run_manifest_payload, module)?)?;
     module.add_function(wrap_pyfunction!(prepare_output_run, module)?)?;
-    module.add_function(wrap_pyfunction!(read_manifest_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(read_manifest_committed_chunk_identifiers_from_value, module)?)?;
-    module.add_function(wrap_pyfunction!(repair_strict_manifest_chunk_commits, module)?)?;
     module.add_function(wrap_pyfunction!(repair_strict_manifest_chunk_commits_from_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_output_run_paths, module)?)?;
     module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_run_manifest_compatibility, module)?)?;
     module.add_function(wrap_pyfunction!(validate_run_manifest_compatibility_from_values, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks_from_value, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_f64, module)?)?;
     module.add_function(wrap_pyfunction!(write_run_manifest, module)?)?;
-    module.add_function(wrap_pyfunction!(write_run_manifest_json, module)?)?;
     Ok(())
 }
 
