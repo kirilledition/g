@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import signal
 import subprocess
 import sys
 import typing
@@ -178,9 +177,16 @@ def test_raw_diagnostic_emitters_are_not_exported() -> None:
 def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "configure_bgen_decode_tile_variant_count")
     assert not hasattr(_core, "configure_rayon_global_thread_pool")
+    assert not hasattr(_core, "build_default_local_cache_directory_value")
+    assert not hasattr(_core, "build_file_content_sha256_value")
+    assert not hasattr(_core, "build_current_run_manifest_header_json_from_input_json")
+    assert not hasattr(_core, "build_manifest_file_fingerprint_payload")
     assert not hasattr(_core, "build_manifest_file_fingerprint_mapping_payload")
     assert not hasattr(_core, "build_multi_run_artifacts_payload")
     assert not hasattr(_core, "build_phenotype_run_artifacts_payload")
+    assert not hasattr(_core, "build_prepared_run_manifest_header_json")
+    assert not hasattr(_core, "build_prepared_run_plan_json")
+    assert not hasattr(_core, "build_prediction_loco_file_fingerprints_json")
     assert not hasattr(_core, "build_run_manifest_extension_payload")
     assert not hasattr(_core, "build_trusted_bgen_validation_cache_payload")
     assert not hasattr(_core, "build_trusted_bgen_validation_cache_path_value")
@@ -190,10 +196,6 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "plan_trusted_bgen_validation_cache_lookup")
     assert not hasattr(_core, "write_trusted_bgen_validation_cache_payload")
     assert not hasattr(_core.Regenie2RunEngine, "validate_trusted_no_missing_diploid_with_cache")
-
-
-def test_native_default_shutdown_signal_numbers() -> None:
-    assert _core.default_shutdown_signal_numbers() == [int(signal.SIGINT), int(signal.SIGTERM)]
 
 
 def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:
@@ -2164,25 +2166,6 @@ def test_native_default_nvidia_driver_probe_paths_payload() -> None:
         "uvm_device_path": "/dev/nvidia-uvm",
         "driver_directory_path": "/proc/driver/nvidia",
     }
-
-
-def test_native_default_local_cache_directory_value() -> None:
-    assert (
-        _core.build_default_local_cache_directory_value(
-            temporary_root="/tmp",
-            user_name="alice",
-            directory_name="g-jax-cache",
-        )
-        == "/tmp/alice/g-jax-cache"
-    )
-    assert (
-        _core.build_default_local_cache_directory_value(
-            temporary_root="/tmp",
-            user_name="",
-            directory_name="g-jax-cache",
-        )
-        == "/tmp/unknown/g-jax-cache"
-    )
 
 
 def test_native_gpu_genotype_format_resolution_policy() -> None:

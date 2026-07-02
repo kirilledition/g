@@ -13,24 +13,6 @@ pub(crate) struct NativeShutdownController {
     session: Mutex<native_shutdown::ShutdownHandlerSession<Py<PyAny>>>,
 }
 
-#[pyclass]
-pub(crate) struct NativeSecondSignalExceptionPlan {
-    inner: native_shutdown::SecondSignalExceptionPlan,
-}
-
-#[pymethods]
-impl NativeSecondSignalExceptionPlan {
-    #[getter]
-    fn raise_keyboard_interrupt(&self) -> bool {
-        self.inner.raise_keyboard_interrupt
-    }
-
-    #[getter]
-    fn exit_code(&self) -> i32 {
-        self.inner.exit_code
-    }
-}
-
 #[pymethods]
 impl NativeShutdownController {
     #[new]
@@ -152,35 +134,8 @@ impl NativeShutdownController {
     }
 }
 
-#[pyfunction]
-pub(crate) fn build_shutdown_signal_payload<'py>(py: Python<'py>, signal_number: i32) -> PyResult<Bound<'py, PyDict>> {
-    let payload = native_shutdown::build_shutdown_signal(signal_number).map_err(PyValueError::new_err)?;
-    shutdown_signal_payload_to_dict(py, &payload)
-}
-
-#[pyfunction]
-pub(crate) fn default_shutdown_signal_numbers() -> Vec<i32> {
-    native_shutdown::default_shutdown_signal_numbers()
-}
-
-#[pyfunction]
-pub(crate) fn plan_second_signal_exception(signal_number: i32) -> PyResult<NativeSecondSignalExceptionPlan> {
-    let plan = native_shutdown::plan_second_signal_exception(signal_number).map_err(PyValueError::new_err)?;
-    Ok(NativeSecondSignalExceptionPlan { inner: plan })
-}
-
-#[pyfunction]
-pub(crate) fn raise_second_signal_exception(signal_number: i32) -> PyResult<()> {
-    raise_second_signal_exception_from_plan(signal_number)
-}
-
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeSecondSignalExceptionPlan>()?;
     module.add_class::<NativeShutdownController>()?;
-    module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;
-    module.add_function(wrap_pyfunction!(default_shutdown_signal_numbers, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_second_signal_exception, module)?)?;
-    module.add_function(wrap_pyfunction!(raise_second_signal_exception, module)?)?;
     Ok(())
 }
 

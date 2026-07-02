@@ -206,18 +206,9 @@ def write_run_manifest(output_run_paths: OutputRunPaths, manifest: dict[str, typ
     )
 
 
-def build_file_content_sha256(path: Path) -> str:
-    """Build a streaming SHA-256 content hash for a local input file."""
-    return _core.build_file_content_sha256_value(str(path))
-
-
 def build_file_fingerprint(path: Path | None, *, include_content_hash: bool) -> ManifestFileFingerprint | None:
     """Build a lightweight immutable fingerprint for an input file."""
-    if path is None:
-        return None
-    return manifest_file_fingerprint_from_native_payload(
-        _core.build_manifest_file_fingerprint_payload(str(path), include_content_hash)
-    )
+    return ManifestFileFingerprintCache().build_file_fingerprint(path, include_content_hash=include_content_hash)
 
 
 def manifest_file_fingerprint_from_native_payload(payload: object) -> ManifestFileFingerprint:
@@ -244,13 +235,10 @@ def build_prediction_loco_file_fingerprints(
     fingerprint_cache: ManifestFileFingerprintCache | None,
 ) -> tuple[PredictionLocoFileFingerprint, ...]:
     """Build content fingerprints for LOCO files selected from a prediction list."""
-    loco_file_payload_json = (
-        _core.build_prediction_loco_file_fingerprints_json(str(prediction_list_path), list(phenotype_names))
-        if fingerprint_cache is None
-        else fingerprint_cache.native_cache.build_prediction_loco_file_fingerprints_json(
-            str(prediction_list_path),
-            list(phenotype_names),
-        )
+    resolved_fingerprint_cache = fingerprint_cache if fingerprint_cache is not None else ManifestFileFingerprintCache()
+    loco_file_payload_json = resolved_fingerprint_cache.native_cache.build_prediction_loco_file_fingerprints_json(
+        str(prediction_list_path),
+        list(phenotype_names),
     )
     loco_file_payloads = json.loads(loco_file_payload_json)
     if not isinstance(loco_file_payloads, list):
@@ -411,10 +399,9 @@ def build_current_run_manifest_header(
         "output_statistic_dtype": output_statistic_dtype.value,
     }
     current_header_input_json = json.dumps(current_header_input, sort_keys=True)
+    resolved_fingerprint_cache = fingerprint_cache if fingerprint_cache is not None else ManifestFileFingerprintCache()
     current_header_json = (
-        _core.build_current_run_manifest_header_json_from_input_json(current_header_input_json)
-        if fingerprint_cache is None
-        else fingerprint_cache.native_cache.build_current_run_manifest_header_json_from_input_json(
+        resolved_fingerprint_cache.native_cache.build_current_run_manifest_header_json_from_input_json(
             current_header_input_json
         )
     )

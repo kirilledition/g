@@ -97,11 +97,6 @@ class GracefulShutdownController:
         self.native_controller.restore_python_signal_handlers()
 
 
-def build_shutdown_signal(signal_number: int) -> ShutdownSignal:
-    """Build shutdown metadata for a POSIX signal."""
-    return shutdown_signal_from_native_payload(g._core.build_shutdown_signal_payload(signal_number))
-
-
 def shutdown_signal_from_native_payload(payload: object) -> ShutdownSignal:
     """Adapt native shutdown signal metadata to the public Python dataclass."""
     signal_payload = native_mapping_payload(payload)
@@ -115,11 +110,6 @@ def shutdown_signal_from_native_payload(payload: object) -> ShutdownSignal:
 def native_mapping_payload(payload: object) -> typing.Mapping[str, typing.Any]:
     """Adapt a native mapping payload to a Python mapping."""
     return typing.cast("typing.Mapping[str, typing.Any]", payload)
-
-
-def raise_second_signal_exception(shutdown_signal: ShutdownSignal) -> typing.NoReturn:
-    """Raise a hard-interrupt exception for a repeated shutdown signal."""
-    g._core.raise_second_signal_exception(shutdown_signal.number)
 
 
 def install_graceful_shutdown_handlers() -> GracefulShutdownController:

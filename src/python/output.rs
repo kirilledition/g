@@ -11,12 +11,8 @@ use g_output::{
     ManifestFileFingerprintCache as NativeManifestFileFingerprintCacheState, NativeChunkHandle,
     NativeChunkStats as NativeOutputChunkStats, OutputFileFormat, OutputResumeMode, OutputWriterError,
     OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
-    build_current_run_manifest_header_json as build_native_current_run_manifest_header_json,
     build_current_run_manifest_header_json_with_cache as build_native_current_run_manifest_header_json_with_cache,
-    build_file_content_sha256 as build_native_file_content_sha256,
-    build_manifest_file_fingerprint as build_native_manifest_file_fingerprint,
     build_manifest_json_sha256 as build_native_manifest_json_sha256,
-    build_prepared_run_manifest_header_json as build_native_prepared_run_manifest_header_json,
     build_prepared_run_manifest_header_json_from_current_header_json as build_native_prepared_run_manifest_header_json_from_current_header_json,
     build_prepared_run_plan_json_from_current_header_json as build_native_prepared_run_plan_json_from_current_header_json,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
@@ -591,27 +587,6 @@ pub(crate) fn write_run_manifest_json(py: Python<'_>, run_directory: String, man
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_current_run_manifest_header_json_from_input_json(
-    py: Python<'_>,
-    current_header_input_json: String,
-) -> PyResult<String> {
-    let current_header_input =
-        parse_json_argument::<CurrentRunManifestHeaderInput>("current_header_input_json", &current_header_input_json)?;
-    py.detach(|| build_native_current_run_manifest_header_json(current_header_input))
-        .map_err(|error| output_writer_error_to_py(error, "build_current_run_manifest_header_json_from_input_json"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_prepared_run_manifest_header_json(prepared_run_plan_json: String) -> PyResult<String> {
-    let prepared_run_plan = serde_json::from_str::<g_plan::PreparedRunPlan>(&prepared_run_plan_json)
-        .map_err(|error| PyValueError::new_err(format!("Invalid prepared run plan JSON: {error}")))?;
-    build_native_prepared_run_manifest_header_json(&prepared_run_plan)
-        .map_err(|error| output_writer_error_to_py(error, "build_prepared_run_manifest_header_json"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_prepared_run_manifest_header_json_from_current_header_json(
     current_header_json: String,
 ) -> PyResult<String> {
@@ -622,40 +597,9 @@ pub(crate) fn build_prepared_run_manifest_header_json_from_current_header_json(
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_prepared_run_plan_json(prepared_run_plan_input_json: String) -> PyResult<String> {
-    let prepared_run_plan_input = parse_json_argument::<g_plan::PreparedRunPlanInput>(
-        "prepared_run_plan_input_json",
-        &prepared_run_plan_input_json,
-    )?;
-    let prepared_run_plan = g_plan::build_prepared_run_plan(prepared_run_plan_input)
-        .map_err(|error| PyValueError::new_err(format!("Invalid prepared run plan input: {error}")))?;
-    serde_json::to_string(&prepared_run_plan)
-        .map_err(|error| PyRuntimeError::new_err(format!("Could not serialize prepared run plan JSON: {error}")))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_prepared_run_plan_json_from_current_header_json(current_header_json: String) -> PyResult<String> {
     build_native_prepared_run_plan_json_from_current_header_json(&current_header_json)
         .map_err(|error| output_writer_error_to_py(error, "build_prepared_run_plan_json_from_current_header_json"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_prediction_loco_file_fingerprints_json(
-    py: Python<'_>,
-    prediction_list_path: String,
-    phenotype_names: Vec<String>,
-) -> PyResult<String> {
-    py.detach(|| build_prediction_loco_file_fingerprints_json_detached(&prediction_list_path, &phenotype_names))
-        .map_err(prediction_loco_fingerprint_build_error_to_py)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_file_content_sha256_value(py: Python<'_>, path: String) -> PyResult<String> {
-    py.detach(|| build_native_file_content_sha256(Path::new(&path)))
-        .map_err(|error| output_writer_error_to_py(error, "build_file_content_sha256_value"))
 }
 
 fn parse_json_argument<T>(argument_name: &str, argument_json: &str) -> PyResult<T>
@@ -664,19 +608,6 @@ where
 {
     serde_json::from_str(argument_json)
         .map_err(|error| PyValueError::new_err(format!("Invalid {argument_name}: {error}")))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_manifest_file_fingerprint_payload<'py>(
-    py: Python<'py>,
-    path: String,
-    include_content_hash: bool,
-) -> PyResult<Bound<'py, PyDict>> {
-    let file_fingerprint = py
-        .detach(|| build_native_manifest_file_fingerprint(Path::new(&path), include_content_hash))
-        .map_err(|error| output_writer_error_to_py(error, "build_manifest_file_fingerprint_payload"))?;
-    manifest_file_fingerprint_to_dict(py, &file_fingerprint)
 }
 
 #[pyfunction]
@@ -783,15 +714,9 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_function(wrap_pyfunction!(abort_output_writer_session, module)?)?;
-    module.add_function(wrap_pyfunction!(build_current_run_manifest_header_json_from_input_json, module)?)?;
-    module.add_function(wrap_pyfunction!(build_file_content_sha256_value, module)?)?;
-    module.add_function(wrap_pyfunction!(build_manifest_file_fingerprint_payload, module)?)?;
     module.add_function(wrap_pyfunction!(build_manifest_json_sha256, module)?)?;
-    module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json_from_current_header_json, module)?)?;
-    module.add_function(wrap_pyfunction!(build_prepared_run_plan_json, module)?)?;
     module.add_function(wrap_pyfunction!(build_prepared_run_plan_json_from_current_header_json, module)?)?;
-    module.add_function(wrap_pyfunction!(build_prediction_loco_file_fingerprints_json, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(finish_output_writer_session, module)?)?;
     module.add_function(wrap_pyfunction!(finish_output_writer_session_interrupted, module)?)?;
@@ -841,18 +766,6 @@ fn manifest_file_fingerprint_to_dict<'py>(
     payload.set_item("content_hash_algorithm", &file_fingerprint.content_hash_algorithm)?;
     payload.set_item("content_sha256", &file_fingerprint.content_sha256)?;
     Ok(payload)
-}
-
-fn build_prediction_loco_file_fingerprints_json_detached(
-    prediction_list_path: &str,
-    phenotype_names: &[String],
-) -> Result<String, PredictionLocoFingerprintBuildError> {
-    let mut fingerprint_cache = NativeManifestFileFingerprintCacheState::new();
-    build_prediction_loco_file_fingerprints_json_with_cache(
-        prediction_list_path,
-        phenotype_names,
-        &mut fingerprint_cache,
-    )
 }
 
 fn build_prediction_loco_file_fingerprints_json_with_cache(

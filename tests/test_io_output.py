@@ -629,15 +629,7 @@ def test_prediction_loco_fingerprints_use_native_payload(
         del path, include_content_hash
         raise AssertionError("LOCO fingerprints should be built by the native output helper")
 
-    def fail_uncached_native_loco_fingerprints(
-        prediction_list_path: str,
-        phenotype_names: list[str],
-    ) -> str:
-        del prediction_list_path, phenotype_names
-        raise AssertionError("Cached LOCO fingerprints should use the native output cache handle")
-
     monkeypatch.setattr(output, "build_file_fingerprint", fail_python_file_fingerprint)
-    monkeypatch.setattr(_core, "build_prediction_loco_file_fingerprints_json", fail_uncached_native_loco_fingerprints)
 
     loco_files = output.build_prediction_loco_file_fingerprints(
         prediction_list_path=prediction_list_path,
@@ -813,9 +805,14 @@ def test_output_manifest_helpers_cover_empty_paths_and_invalid_json(tmp_path: Pa
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "missing")
     manifest_path = output.get_run_manifest_path(output_run_paths)
     manifest_path.write_text("[]", encoding="utf-8")
+    input_path = tmp_path / "input.txt"
+    input_path.write_text("input", encoding="utf-8")
 
     assert output.build_chunk_file_name(7) == "chunk_000000007.arrow"
     assert output.build_file_fingerprint(None, include_content_hash=False) is None
+    input_fingerprint = output.build_file_fingerprint(input_path, include_content_hash=True)
+    assert input_fingerprint is not None
+    assert input_fingerprint.content_sha256 == hashlib.sha256(input_path.read_bytes()).hexdigest()
     assert output.normalize_execution_plan_value(Path("relative/path")) == "relative/path"
     assert output.iter_sorted_chunk_file_paths(output_run_paths.chunks_directory) == ()
     with pytest.raises(ValueError, match="must contain a JSON object"):

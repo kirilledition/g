@@ -1236,6 +1236,9 @@ Remove Python as the chunk-level scheduler.
   `SystemExit` aborts from the PyO3 boundary.
 - Shutdown signal metadata is now resolved directly from native payloads instead
   of a Python module-level cache.
+- Standalone shutdown signal payload, default-signal-list, second-signal plan,
+  and second-signal raiser exports have been removed from the root PyO3 module;
+  Python enters shutdown policy through `NativeShutdownController`.
 - Telemetry close helpers now require the native close-with-event contract
   instead of emitting legacy close events from Python.
 - JAX runtime diagnostic log records now route through the native diagnostic
@@ -1827,6 +1830,9 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Default local JAX cache-directory resolution now comes from `g-runtime`;
   Python no longer reads the platform temporary directory or current user name
   for that runtime-path policy.
+- The injected default local cache-directory builder is no longer a root PyO3
+  export; deterministic construction remains covered by `g-runtime` tests,
+  while Python keeps only the production default-path adapter.
 - Production process-runtime JAX setup sessions now resolve default cache
   directories inside `g-runtime`; the explicit Python cache-directory resolver
   and Python setup-payload helper have been removed.
@@ -1858,24 +1864,32 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Process-global JAX setup completion recording now consumes the native setup
   session, so `g-runtime` rejects pending or failed setup sessions before
   recording a JAX policy as configured.
-- Prediction-input LOCO manifest fingerprints now use a root PyO3 helper that
-  composes `g-input` LOCO path resolution with `g-output` file fingerprinting;
-  Python adapts the native JSON payload instead of resolving and hashing LOCO
-  files in its manifest-header loop, and the old Python-facing raw LOCO path
-  resolver is no longer exported from `_core`.
+- Prediction-input LOCO manifest fingerprints now use the native manifest
+  fingerprint cache handle to compose `g-input` LOCO path resolution with
+  `g-output` file fingerprinting; Python adapts the native JSON payload instead
+  of resolving and hashing LOCO files in its manifest-header loop, and the old
+  Python-facing raw LOCO path resolver and detached LOCO fingerprint function
+  are no longer exported from `_core`.
 - Run-scoped manifest file fingerprint caching now lives in `g-output` behind
   a native PyO3 cache handle; control-file and prediction-input LOCO
   fingerprints share that handle, and Python adapts native payloads instead of
   resolving paths, statting files, or maintaining fingerprint cache keys for
   manifest input fingerprints.
+- Standalone manifest file-fingerprint payload construction now also routes
+  through that native cache handle, so `_core` no longer exports a detached
+  `build_manifest_file_fingerprint_payload` function.
+- Standalone file-content hashing and raw prepared-plan/prepared-header JSON
+  construction helpers have also been removed from the root PyO3 surface;
+  production output code keeps only the current-header based prepared-plan
+  adapters.
 - Current-run manifest header construction now routes through the native
-  cache-backed header builder; Python passes scalar header policy into `_core`
-  and adapts the native prepared-header mapping instead of building the
-  production manifest-header dataclass itself. The temporary Python
-  manifest-header dataclasses and sub-builders have been removed; the output
-  adapter now passes native manifest-header mappings through, and the old
-  many-argument PyO3 manifest-header export has been removed in favor of the
-  JSON-input native builder.
+  cache-backed header builder on the manifest fingerprint cache handle; Python
+  passes scalar header policy into that handle and adapts the native
+  prepared-header mapping instead of building the production manifest-header
+  dataclass itself. The temporary Python manifest-header dataclasses and
+  sub-builders have been removed; the output adapter now passes native
+  manifest-header mappings through, and the old many-argument and detached
+  JSON-input PyO3 manifest-header exports have been removed.
 - Preflight finite-array checks and binary phenotype coding/case-control scans
   now execute in the root PyO3 adapter over NumPy buffers and then call the
   `g-engine` policy helpers. Python preflight no longer owns those reductions
@@ -2019,14 +2033,21 @@ Current implementation notes:
   handles outside the telemetry adapter, so production telemetry side effects
   stay behind typed native PyO3 dispatch helpers.
 - Unused direct payload-builder exports for manifest fingerprint mappings,
-  lower-level run artifacts, run-manifest metadata extensions, and trusted BGEN
-  validation cache entries have been removed from the root PyO3 module.
+  standalone manifest file fingerprints, prediction LOCO fingerprints,
+  current-run manifest headers, raw prepared-plan/header construction,
+  standalone file-content hashing, lower-level run artifacts, run-manifest
+  metadata extensions, and trusted BGEN validation cache entries have been
+  removed from the root PyO3 module.
 - Run lifecycle telemetry-field builders have also been removed from the
   Python-visible root PyO3 surface; native logging keeps the internal
   conversion helpers used by typed telemetry dispatch.
 - The old top-level runtime-knob functions for BGEN tile sizing and Rayon thread
   pool setup have been removed from the root PyO3 module; production setup goes
   through `NativeRuntimeState`.
+- Detached shutdown helper exports and the injected runtime cache-directory
+  builder have been removed from the Python-visible root surface; shutdown
+  policy now enters through `NativeShutdownController`, and runtime path tests
+  cover injected construction inside `g-runtime`.
 
 ### Tests
 

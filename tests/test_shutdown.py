@@ -10,46 +10,59 @@ from g import _core
 from g.engine import shutdown
 
 
-def test_build_shutdown_signal_uses_native_metadata_for_supported_linux_signals() -> None:
+def test_shutdown_controller_uses_native_metadata_for_supported_linux_signals() -> None:
     for signal_name in ("SIGSTKFLT", "SIGPWR", "SIGRTMIN", "SIGRTMAX"):
         signal_member = getattr(signal, signal_name, None)
         if signal_member is None:
             continue
 
         signal_number = int(signal_member)
-        assert shutdown.build_shutdown_signal(signal_number) == shutdown.ShutdownSignal(
+        native_controller = _core.NativeShutdownController([signal_number])
+        signal_payload = native_controller.request_shutdown_signal_or_raise_second_signal_payload(signal_number)
+
+        assert shutdown.shutdown_signal_from_native_payload(signal_payload) == shutdown.ShutdownSignal(
             number=signal_number,
             name=signal_name,
             exit_code=128 + signal_number,
         )
 
 
-def test_build_shutdown_signal_rejects_unknown_signal() -> None:
+def test_shutdown_controller_rejects_unknown_signal() -> None:
     with pytest.raises(ValueError, match="0 is not a valid Signals"):
-        shutdown.build_shutdown_signal(0)
+        _core.NativeShutdownController([0])
 
 
-def test_native_second_signal_exception_plan() -> None:
-    sigint_plan = _core.plan_second_signal_exception(int(signal.SIGINT))
-    sigterm_plan = _core.plan_second_signal_exception(int(signal.SIGTERM))
-
-    assert isinstance(sigint_plan, _core.NativeSecondSignalExceptionPlan)
-    assert sigint_plan.raise_keyboard_interrupt is True
-    assert sigint_plan.exit_code == 128 + int(signal.SIGINT)
-    assert sigterm_plan.raise_keyboard_interrupt is False
-    assert sigterm_plan.exit_code == 128 + int(signal.SIGTERM)
-    with pytest.raises(ValueError, match="0 is not a valid Signals"):
-        _core.plan_second_signal_exception(0)
+def test_detached_shutdown_helpers_are_not_exported() -> None:
+    assert not hasattr(_core, "NativeSecondSignalExceptionPlan")
+    assert not hasattr(_core, "build_shutdown_signal_payload")
+    assert not hasattr(_core, "default_shutdown_signal_numbers")
+    assert not hasattr(_core, "plan_second_signal_exception")
+    assert not hasattr(_core, "raise_second_signal_exception")
+    assert not hasattr(shutdown, "build_shutdown_signal")
+    assert not hasattr(shutdown, "raise_second_signal_exception")
 
 
-def test_native_second_signal_exception_raiser() -> None:
-    with pytest.raises(KeyboardInterrupt):
-        _core.raise_second_signal_exception(int(signal.SIGINT))
-    with pytest.raises(SystemExit) as system_exit:
-        _core.raise_second_signal_exception(int(signal.SIGTERM))
+def test_native_shutdown_controller_repeated_sigterm_raises_system_exit() -> None:
+    native_controller = _core.NativeShutdownController([int(signal.SIGTERM)])
+    previous_handler = object()
+    installed_handler = object()
+
+    with (
+        unittest.mock.patch("signal.getsignal", return_value=previous_handler),
+        unittest.mock.patch("signal.signal") as signal_mock,
+    ):
+        native_controller.install_python_signal_handlers(installed_handler)
+        first_signal_payload = dict(
+            native_controller.request_shutdown_signal_or_raise_second_signal_payload(int(signal.SIGTERM))
+        )
+        with pytest.raises(SystemExit) as system_exit:
+            native_controller.request_shutdown_signal_or_raise_second_signal_payload(int(signal.SIGTERM))
+
+    assert first_signal_payload["name"] == "SIGTERM"
     assert system_exit.value.code == 128 + int(signal.SIGTERM)
-    with pytest.raises(ValueError, match="0 is not a valid Signals"):
-        _core.raise_second_signal_exception(0)
+    assert native_controller.handlers_installed is False
+    signal_mock.assert_any_call(signal.SIGTERM, installed_handler)
+    signal_mock.assert_any_call(signal.SIGTERM, previous_handler)
 
 
 def test_native_shutdown_controller_owns_handler_lifecycle() -> None:
@@ -179,21 +192,6 @@ def test_shutdown_controller_repeated_signal_restores_handlers_and_aborts() -> N
     signal_mock.assert_any_call(signal.SIGINT, controller.handle_signal)
     signal_mock.assert_any_call(signal.SIGINT, previous_handler)
     assert not controller.handlers_installed
-
-
-def test_second_signal_exception_uses_native_raiser(monkeypatch: pytest.MonkeyPatch) -> None:
-    def raise_second_signal_exception(signal_number: int) -> typing.NoReturn:
-        assert signal_number == int(signal.SIGINT)
-        raise SystemExit(199)
-
-    monkeypatch.setattr(shutdown.g._core, "raise_second_signal_exception", raise_second_signal_exception)
-
-    with pytest.raises(SystemExit) as system_exit:
-        shutdown.raise_second_signal_exception(
-            shutdown.ShutdownSignal(number=int(signal.SIGINT), name="SIGINT", exit_code=128 + int(signal.SIGINT))
-        )
-
-    assert system_exit.value.code == 199
 
 
 def test_shutdown_controller_context_resets_native_requested_signal() -> None:
