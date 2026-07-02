@@ -128,9 +128,14 @@ def test_preflight_accepts_valid_binary_inputs() -> None:
     assert report.chromosome_count == 1
 
 
-def test_preflight_uses_native_finite_and_binary_array_checks() -> None:
+def test_preflight_uses_native_preflight_array_checks() -> None:
     with (
         unittest.mock.patch.object(preflight.np, "isfinite", side_effect=AssertionError("old finite scan used")),
+        unittest.mock.patch.object(
+            preflight.np.linalg,
+            "matrix_rank",
+            side_effect=AssertionError("old rank scan used"),
+        ),
         unittest.mock.patch.object(preflight.np, "unique", side_effect=AssertionError("old binary unique scan used")),
         unittest.mock.patch.object(
             preflight.np,

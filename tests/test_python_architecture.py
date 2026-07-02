@@ -803,11 +803,11 @@ def test_preflight_required_chromosome_policy_rejects_engine_probe(tmp_path: Pat
     ]
 
 
-def test_covariate_rank_scan_policy_rejects_matrix_rank_outside_preflight_adapter(tmp_path: Path) -> None:
+def test_covariate_rank_scan_policy_rejects_matrix_rank_in_production_python(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     engine_directory = package_root / "engine"
     engine_directory.mkdir(parents=True)
-    (engine_directory / "pipeline.py").write_text(
+    (engine_directory / "preflight.py").write_text(
         "\n".join(
             (
                 "import numpy as np",
@@ -825,8 +825,8 @@ def test_covariate_rank_scan_policy_rejects_matrix_rank_outside_preflight_adapte
         (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
         for violation in violations
     ] == [
-        (Path("g/engine/pipeline.py"), 3, "np.linalg.matrix_rank", "np.linalg.matrix_rank"),
-        (Path("g/engine/pipeline.py"), 4, "matrix_rank", "matrix_rank"),
+        (Path("g/engine/preflight.py"), 3, "np.linalg.matrix_rank", "np.linalg.matrix_rank"),
+        (Path("g/engine/preflight.py"), 4, "matrix_rank", "matrix_rank"),
     ]
 
 

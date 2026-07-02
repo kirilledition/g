@@ -386,11 +386,11 @@ PYTHON_CALL_POLICIES = (
         message="production preflight must call the typed native required-chromosome API directly",
     ),
     PythonCallPolicy(
-        name="transitional_covariate_rank_scan_isolation",
+        name="native_covariate_rank_scan_isolation",
         source_directory=Path("engine"),
         forbidden_calls=("np.linalg.matrix_rank", "numpy.linalg.matrix_rank", "matrix_rank"),
-        allowed_paths=(Path("engine/preflight.py"),),
-        message="production covariate rank scans must stay isolated to the preflight adapter until moved native",
+        allowed_paths=(),
+        message="production covariate rank scans must use the native PyO3 SVD-backed rank validator",
     ),
     PythonCallPolicy(
         name="native_callback_convergence_scan_isolation",

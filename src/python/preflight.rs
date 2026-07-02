@@ -1,5 +1,6 @@
 //! PyO3 adapters for engine-owned preflight helpers.
 
+use nalgebra::DMatrix;
 use numpy::ndarray::IxDyn;
 use numpy::{Element, PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods, dtype};
 use pyo3::exceptions::PyValueError;
@@ -14,6 +15,10 @@ trait NativePreflightNumeric: Copy + Element {
     fn is_binary_zero(self) -> bool;
 
     fn is_binary_one(self) -> bool;
+
+    fn rank_tolerance_epsilon() -> f64;
+
+    fn to_rank_f64(self) -> f64;
 }
 
 macro_rules! impl_float_preflight_numeric {
@@ -31,12 +36,20 @@ macro_rules! impl_float_preflight_numeric {
                 fn is_binary_one(self) -> bool {
                     self.to_bits() == <$numeric_type>::to_bits(1.0)
                 }
+
+                fn rank_tolerance_epsilon() -> f64 {
+                    f64::from(<$numeric_type>::EPSILON)
+                }
+
+                fn to_rank_f64(self) -> f64 {
+                    f64::from(self)
+                }
             }
         )*
     };
 }
 
-macro_rules! impl_integer_preflight_numeric {
+macro_rules! impl_lossless_integer_preflight_numeric {
     ($($numeric_type:ty),* $(,)?) => {
         $(
             impl NativePreflightNumeric for $numeric_type {
@@ -51,13 +64,51 @@ macro_rules! impl_integer_preflight_numeric {
                 fn is_binary_one(self) -> bool {
                     self == 1
                 }
+
+                fn rank_tolerance_epsilon() -> f64 {
+                    f64::EPSILON
+                }
+
+                fn to_rank_f64(self) -> f64 {
+                    f64::from(self)
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_lossy_integer_preflight_numeric {
+    ($($numeric_type:ty),* $(,)?) => {
+        $(
+            impl NativePreflightNumeric for $numeric_type {
+                fn is_finite_value(self) -> bool {
+                    true
+                }
+
+                fn is_binary_zero(self) -> bool {
+                    self == 0
+                }
+
+                fn is_binary_one(self) -> bool {
+                    self == 1
+                }
+
+                fn rank_tolerance_epsilon() -> f64 {
+                    f64::EPSILON
+                }
+
+                #[allow(clippy::cast_precision_loss)]
+                fn to_rank_f64(self) -> f64 {
+                    self as f64
+                }
             }
         )*
     };
 }
 
 impl_float_preflight_numeric!(f32, f64);
-impl_integer_preflight_numeric!(i8, i16, i32, i64, u8, u16, u32, u64);
+impl_lossless_integer_preflight_numeric!(i8, i16, i32, u8, u16, u32);
+impl_lossy_integer_preflight_numeric!(i64, u64);
 
 impl NativePreflightNumeric for bool {
     fn is_finite_value(self) -> bool {
@@ -70,6 +121,14 @@ impl NativePreflightNumeric for bool {
 
     fn is_binary_one(self) -> bool {
         self
+    }
+
+    fn rank_tolerance_epsilon() -> f64 {
+        f64::EPSILON
+    }
+
+    fn to_rank_f64(self) -> f64 {
+        if self { 1.0 } else { 0.0 }
     }
 }
 
@@ -214,6 +273,15 @@ pub(crate) fn validate_covariate_matrix_rank(covariate_rank: i64, covariate_coun
 }
 
 #[pyfunction]
+pub(crate) fn validate_covariate_matrix_rank_array(
+    py: Python<'_>,
+    covariate_matrix: &Bound<'_, PyUntypedArray>,
+    covariate_count: i64,
+) -> PyResult<()> {
+    dispatch_preflight_numeric_array!(py, covariate_matrix, validate_typed_covariate_matrix_rank, covariate_count)
+}
+
+#[pyfunction]
 pub(crate) fn validate_binary_phenotype_array(
     py: Python<'_>,
     phenotype_values: &Bound<'_, PyUntypedArray>,
@@ -254,6 +322,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_binary_phenotype_array, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(validate_covariate_matrix_rank, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_covariate_matrix_rank_array, module)?)?;
     module.add_function(wrap_pyfunction!(validate_finite_array_values, module)?)?;
     module.add_function(wrap_pyfunction!(validate_multi_prediction_preflight_shape, module)?)?;
     module.add_function(wrap_pyfunction!(validate_multi_trait_preflight_shape_payload, module)?)?;
@@ -280,6 +349,46 @@ where
         .map_err(|error| preflight_error_to_py(&error))?;
     native_preflight::validate_binary_phenotype_case_control_counts(summary.case_count, summary.control_count)
         .map_err(|error| preflight_error_to_py(&error))
+}
+
+fn validate_typed_covariate_matrix_rank<T>(
+    covariate_count: i64,
+    covariate_matrix: &Bound<'_, PyArray<T, IxDyn>>,
+) -> PyResult<()>
+where
+    T: NativePreflightNumeric,
+{
+    let covariate_rank = compute_covariate_matrix_rank(covariate_matrix)?;
+    native_preflight::validate_covariate_matrix_rank(covariate_rank, covariate_count)
+        .map_err(|error| preflight_error_to_py(&error))
+}
+
+fn compute_covariate_matrix_rank<T>(covariate_matrix: &Bound<'_, PyArray<T, IxDyn>>) -> PyResult<i64>
+where
+    T: NativePreflightNumeric,
+{
+    let readonly_matrix = covariate_matrix.readonly();
+    let matrix_values = readonly_matrix.as_array();
+    let matrix_shape = matrix_values.shape();
+    if matrix_shape.len() != 2 {
+        return Err(preflight_error_to_py(&native_preflight::PreflightError::CovariateMatrixDimension));
+    }
+
+    let row_count = matrix_shape[0];
+    let column_count = matrix_shape[1];
+    let rank_values = matrix_values.iter().copied().map(NativePreflightNumeric::to_rank_f64).collect::<Vec<_>>();
+    let rank_matrix = DMatrix::from_row_slice(row_count, column_count, &rank_values);
+    let singular_values = rank_matrix.svd(false, false).singular_values;
+    let largest_singular_value = singular_values.iter().copied().fold(0.0_f64, f64::max);
+    let tolerance =
+        largest_singular_value * dimension_count_as_f64(row_count.max(column_count)) * T::rank_tolerance_epsilon();
+    let covariate_rank = singular_values.iter().filter(|singular_value| **singular_value > tolerance).count();
+    i64::try_from(covariate_rank).map_err(|_| PyValueError::new_err("Covariate matrix rank exceeds supported count."))
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn dimension_count_as_f64(dimension_count: usize) -> f64 {
+    dimension_count as f64
 }
 
 fn summarize_binary_phenotype<T>(phenotype_values: &Bound<'_, PyArray<T, IxDyn>>) -> BinaryPhenotypeSummary

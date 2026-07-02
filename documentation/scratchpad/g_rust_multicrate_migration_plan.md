@@ -1889,15 +1889,12 @@ Python/JAX should emit typed diagnostic events through a native handle.
   sub-builders have been removed; the output adapter now passes native
   manifest-header mappings through, and the old many-argument and detached
   JSON-input PyO3 manifest-header exports have been removed.
-- Preflight finite-array checks and binary phenotype coding/case-control scans
-  now execute in the root PyO3 adapter over NumPy buffers and then call the
-  `g-engine` policy helpers. Python preflight no longer owns those reductions
-  through `np.isfinite`, `np.unique`, or `np.count_nonzero`, and a focused
-  Python architecture policy guards that boundary. Covariate-rank validation
-  remains a Python NumPy `matrix_rank` scan until a native rank or SVD-backed
-  implementation can preserve the current tolerance semantics; a focused
-  Python architecture policy keeps that transitional scan isolated to the
-  preflight adapter.
+- Preflight finite-array checks, SVD-backed covariate-rank validation, and
+  binary phenotype coding/case-control scans now execute in the root PyO3
+  adapter over NumPy buffers and then call the `g-engine` policy helpers.
+  Python preflight no longer owns those reductions through `np.isfinite`,
+  `np.linalg.matrix_rank`, `np.unique`, or `np.count_nonzero`, and focused
+  Python architecture policies guard that boundary.
 - Callback null-logistic nonconvergence planning now has a PyO3 bool-array
   entry point that owns scalar detection, flattening, total-fit counts, and
   nonconverged counts before calling the `g-engine` policy helpers. Python

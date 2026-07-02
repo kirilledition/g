@@ -197,8 +197,7 @@ def validate_finite_array(label: str, values: np.ndarray) -> None:
 
 def validate_covariate_matrix_rank(covariate_matrix: np.ndarray, covariate_count: int) -> None:
     """Validate covariate matrix rank after native shape checks."""
-    rank = int(np.linalg.matrix_rank(covariate_matrix))
-    g._core.validate_covariate_matrix_rank(rank, covariate_count)
+    g._core.validate_covariate_matrix_rank_array(covariate_matrix, covariate_count)
 
 
 def validate_binary_phenotype(phenotype_vector: np.ndarray) -> None:
