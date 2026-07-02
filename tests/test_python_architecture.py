@@ -165,6 +165,31 @@ def test_output_import_policy_rejects_jax_runtime_imports(tmp_path: Path) -> Non
     ]
 
 
+def test_output_import_policy_rejects_engine_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    output_directory = package_root / "io"
+    output_directory.mkdir(parents=True)
+    (output_directory / "output.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events",
+                "import g.engine.telemetry",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/io/output.py"), 1, "g.engine.run_events", "g.engine"),
+        (Path("g/io/output.py"), 2, "g.engine.telemetry", "g.engine"),
+    ]
+
+
 def test_python_cli_shim_policy_rejects_public_python_process_ownership(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()

@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from g import _core, types
-from g.engine import run_events
 
 OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
@@ -500,13 +499,6 @@ def initialize_output_run(
     committed_chunk_identifiers = frozenset(
         int(chunk_identifier) for chunk_identifier in native_initialized_output_run.committed_chunk_identifiers
     )
-    if resume:
-        committed_chunk_count = len(committed_chunk_identifiers)
-        run_events.native_output_preflight_diagnostic_policy().record_io_output_resume_committed_chunks_diagnostic_event(
-            str(output_run_paths.chunks_directory),
-            committed_chunk_count,
-            str(output_run_paths.run_directory),
-        )
     return InitializedOutputRun(committed_chunk_identifiers=committed_chunk_identifiers)
 
 

@@ -268,6 +268,12 @@ PYTHON_IMPORT_POLICIES = (
         message="output helpers must consume explicit JAX runtime policy values instead of importing JAX runtime setup",
     ),
     PythonImportPolicy(
+        name="output_engine_orchestration_isolation",
+        source_directory=Path("io"),
+        forbidden_imports=("g.engine",),
+        message="output helpers must not import engine orchestration or diagnostics packages",
+    ),
+    PythonImportPolicy(
         name="runner_jax_import_boundary",
         source_directory=Path("runner"),
         forbidden_imports=("g.engine.regenie2_pipeline", "g.engine.callbacks", "g.compute", "jax", "jaxlib"),

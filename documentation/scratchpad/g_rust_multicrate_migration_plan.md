@@ -2541,6 +2541,10 @@ Current guardrail notes:
   JAX x64 policy. Pipeline callers pass that runtime policy value explicitly,
   and the Python architecture checker rejects `g.io` imports of JAX runtime
   setup modules.
+- The output adapter no longer imports engine diagnostics to emit resume events.
+  Pipeline output initialization remains responsible for resume diagnostics,
+  and the Python architecture checker rejects `g.io` imports of engine
+  orchestration modules.
 
 ### Exit criteria
 
@@ -2785,6 +2789,7 @@ or file parsers.
 g.jax_runtime must not import public API, CLI, compute, engine, execution-plan,
 interface/config, output, or runner orchestration packages.
 g.io must not import JAX runtime setup packages.
+g.io must not import engine orchestration packages.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
@@ -2803,7 +2808,9 @@ direct file I/O, and common NumPy/pandas file loaders under `g.compute`; the
 kept-adapter import rules keep `g.api`, `g.interface.config`, and
 `g.jax_runtime` from reaching across their Phase 14 ownership boundaries; the
 output/JAX import rule keeps output manifest construction on explicit runtime
-policy values instead of importing JAX runtime setup; the
+policy values instead of importing JAX runtime setup; the output/engine import
+rule keeps resume diagnostics in the pipeline layer rather than the output
+adapter; the
 prepared-plan rule rejects
 production calls that rebuild canonical plan payloads in Python; the callback
 worker-queue rule rejects direct Python queue/thread primitives and lower-level
