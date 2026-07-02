@@ -2178,10 +2178,10 @@ Current implementation notes:
 - Detached telemetry output-run root and telemetry path payload helpers were
   removed from the Python-visible root surface; production now enters that
   path policy through `NativeTelemetrySessionPolicy`.
-- Detached scalar preflight validator helpers were removed from the
-  Python-visible root surface; production preflight keeps the typed finite-array
-  and binary-phenotype array entry points that execute the native scans before
-  applying `g-engine` validation policy.
+- Detached preflight validator helpers were removed from the Python-visible
+  root surface; production preflight now enters finite-array, covariate-rank,
+  binary-phenotype, shape, prediction-shape, variant-count, and report
+  validation through `NativePreflightValidator`.
 - Production preflight now requires the native engine required-chromosome API
   directly instead of probing engines with optional `getattr` and falling back
   to Python metadata-slice chromosome collection.

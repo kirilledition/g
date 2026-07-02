@@ -3326,7 +3326,49 @@ def validate_regenie_config(config: RegenieConfig) -> None: ...
 def validate_regenie_config_for_run(config: RegenieConfig) -> None: ...
 def compile_run_request_payload(config: RegenieConfig) -> dict[str, object]: ...
 def dispatch_cli(args: list[str]) -> CliOutcome: ...
-def resolve_preflight_variant_count(variant_count: int, variant_limit: int | None = None) -> int: ...
+class NativePreflightValidator:
+    def __init__(self) -> None: ...
+    def resolve_preflight_variant_count(self, variant_count: int, variant_limit: int | None = None) -> int: ...
+    def build_preflight_report_payload(
+        self,
+        sample_count: int,
+        covariate_count: int,
+        chromosome_count: int,
+        trusted_no_missing_diploid: bool,
+    ) -> dict[str, object]: ...
+    def validate_single_trait_preflight_shape_payload(
+        self,
+        phenotype_sample_count: int,
+        covariate_dimension_count: int,
+        covariate_sample_count: int,
+        covariate_count: int,
+    ) -> dict[str, object]: ...
+    def validate_multi_trait_preflight_shape_payload(
+        self,
+        phenotype_dimension_count: int,
+        phenotype_trait_count: int,
+        phenotype_sample_count: int,
+        covariate_dimension_count: int,
+        covariate_sample_count: int,
+        covariate_count: int,
+    ) -> dict[str, object]: ...
+    def validate_binary_phenotype_array(self, phenotype_values: object) -> None: ...
+    def validate_finite_array_values(self, label: str, values: object) -> None: ...
+    def validate_covariate_matrix_rank(self, covariate_rank: int, covariate_count: int) -> None: ...
+    def validate_covariate_matrix_rank_array(self, covariate_matrix: object, covariate_count: int) -> None: ...
+    def validate_single_prediction_preflight_shape(
+        self,
+        chromosome: str,
+        prediction_shape: typing.Sequence[int],
+        sample_count: int,
+    ) -> None: ...
+    def validate_multi_prediction_preflight_shape(
+        self,
+        chromosome: str,
+        prediction_shape: typing.Sequence[int],
+        trait_count: int,
+        sample_count: int,
+    ) -> None: ...
 def intersect_committed_chunk_identifier_sets(
     committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
 ) -> list[int]: ...
@@ -3404,13 +3446,6 @@ def plan_multi_trait_output_write(
     all_writer_sessions_native: bool,
     output_statistic_dtype: str,
 ) -> NativeMultiTraitOutputWritePlan: ...
-def build_preflight_report_payload(
-    sample_count: int,
-    covariate_count: int,
-    chromosome_count: int,
-    trusted_no_missing_diploid: bool,
-) -> dict[str, object]: ...
-
 class NativePipelineOutputInitialization:
     @property
     def output_count(self) -> int: ...
@@ -3436,35 +3471,6 @@ def build_pipeline_output_preparation_batch_from_values(
     resume: bool,
     resume_mode: str,
 ) -> NativePipelineOutputPreparationBatch: ...
-def validate_single_trait_preflight_shape_payload(
-    phenotype_sample_count: int,
-    covariate_dimension_count: int,
-    covariate_sample_count: int,
-    covariate_count: int,
-) -> dict[str, object]: ...
-def validate_multi_trait_preflight_shape_payload(
-    phenotype_dimension_count: int,
-    phenotype_trait_count: int,
-    phenotype_sample_count: int,
-    covariate_dimension_count: int,
-    covariate_sample_count: int,
-    covariate_count: int,
-) -> dict[str, object]: ...
-def validate_binary_phenotype_array(phenotype_values: object) -> None: ...
-def validate_finite_array_values(label: str, values: object) -> None: ...
-def validate_covariate_matrix_rank(covariate_rank: int, covariate_count: int) -> None: ...
-def validate_covariate_matrix_rank_array(covariate_matrix: object, covariate_count: int) -> None: ...
-def validate_single_prediction_preflight_shape(
-    chromosome: str,
-    prediction_shape: typing.Sequence[int],
-    sample_count: int,
-) -> None: ...
-def validate_multi_prediction_preflight_shape(
-    chromosome: str,
-    prediction_shape: typing.Sequence[int],
-    trait_count: int,
-    sample_count: int,
-) -> None: ...
 def align_sample_data_from_sample_file(
     sample_path: str,
     expected_sample_count: int,

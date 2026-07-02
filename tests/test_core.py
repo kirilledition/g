@@ -981,7 +981,9 @@ def test_native_python_association_backend_requires_native_batch_result() -> Non
 
 
 def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None:
-    single_payload = _core.validate_single_trait_preflight_shape_payload(
+    native_preflight_validator = _core.NativePreflightValidator()
+
+    single_payload = native_preflight_validator.validate_single_trait_preflight_shape_payload(
         phenotype_sample_count=3,
         covariate_dimension_count=2,
         covariate_sample_count=3,
@@ -989,7 +991,7 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
     )
     assert single_payload == {"sample_count": 3, "covariate_count": 2}
 
-    multi_payload = _core.validate_multi_trait_preflight_shape_payload(
+    multi_payload = native_preflight_validator.validate_multi_trait_preflight_shape_payload(
         phenotype_dimension_count=2,
         phenotype_trait_count=2,
         phenotype_sample_count=3,
@@ -1000,7 +1002,7 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
     assert multi_payload == {"trait_count": 2, "sample_count": 3, "covariate_count": 2}
 
     with pytest.raises(ValueError, match="Covariate matrix must be two-dimensional"):
-        _core.validate_single_trait_preflight_shape_payload(
+        native_preflight_validator.validate_single_trait_preflight_shape_payload(
             phenotype_sample_count=3,
             covariate_dimension_count=1,
             covariate_sample_count=3,
@@ -1008,7 +1010,7 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
         )
 
     with pytest.raises(ValueError, match="Phenotype matrix must contain at least one trait"):
-        _core.validate_multi_trait_preflight_shape_payload(
+        native_preflight_validator.validate_multi_trait_preflight_shape_payload(
             phenotype_dimension_count=2,
             phenotype_trait_count=0,
             phenotype_sample_count=3,
@@ -1019,47 +1021,70 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
 
 
 def test_native_preflight_binary_and_prediction_shape_policy() -> None:
-    _core.validate_finite_array_values("Phenotype", np.asarray([0.0, 1.0], dtype=np.float32))
-    _core.validate_finite_array_values("Integer phenotype", np.asarray([0, 1], dtype=np.int64))
-    _core.validate_covariate_matrix_rank(covariate_rank=2, covariate_count=2)
-    _core.validate_covariate_matrix_rank_array(
+    native_preflight_validator = _core.NativePreflightValidator()
+
+    native_preflight_validator.validate_finite_array_values("Phenotype", np.asarray([0.0, 1.0], dtype=np.float32))
+    native_preflight_validator.validate_finite_array_values("Integer phenotype", np.asarray([0, 1], dtype=np.int64))
+    native_preflight_validator.validate_covariate_matrix_rank(covariate_rank=2, covariate_count=2)
+    native_preflight_validator.validate_covariate_matrix_rank_array(
         np.asarray([[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]], dtype=np.float32),
         covariate_count=2,
     )
-    _core.validate_binary_phenotype_array(np.asarray([0.0, 1.0, 1.0], dtype=np.float64))
-    _core.validate_binary_phenotype_array(np.asarray([False, True, True], dtype=np.bool_))
-    _core.validate_single_prediction_preflight_shape("1", (3,), sample_count=3)
-    _core.validate_multi_prediction_preflight_shape("2", (2, 3), trait_count=2, sample_count=3)
+    native_preflight_validator.validate_binary_phenotype_array(np.asarray([0.0, 1.0, 1.0], dtype=np.float64))
+    native_preflight_validator.validate_binary_phenotype_array(np.asarray([False, True, True], dtype=np.bool_))
+    native_preflight_validator.validate_single_prediction_preflight_shape("1", (3,), sample_count=3)
+    native_preflight_validator.validate_multi_prediction_preflight_shape("2", (2, 3), trait_count=2, sample_count=3)
 
     with pytest.raises(ValueError, match="Phenotype contains non-finite values"):
-        _core.validate_finite_array_values("Phenotype", np.asarray([0.0, np.nan], dtype=np.float64))
+        native_preflight_validator.validate_finite_array_values(
+            "Phenotype", np.asarray([0.0, np.nan], dtype=np.float64)
+        )
 
     with pytest.raises(ValueError, match="Covariate matrix is rank deficient"):
-        _core.validate_covariate_matrix_rank(covariate_rank=1, covariate_count=2)
+        native_preflight_validator.validate_covariate_matrix_rank(covariate_rank=1, covariate_count=2)
 
     with pytest.raises(ValueError, match="Covariate matrix is rank deficient"):
-        _core.validate_covariate_matrix_rank_array(
+        native_preflight_validator.validate_covariate_matrix_rank_array(
             np.asarray([[1.0, 2.0], [1.0, 2.0], [1.0, 2.0]], dtype=np.float64),
             covariate_count=2,
         )
 
     with pytest.raises(ValueError, match="Binary phenotype must be coded as 0/1 after alignment"):
-        _core.validate_binary_phenotype_array(np.asarray([0.0, 0.5, 1.0], dtype=np.float32))
+        native_preflight_validator.validate_binary_phenotype_array(np.asarray([0.0, 0.5, 1.0], dtype=np.float32))
 
     with pytest.raises(ValueError, match="Binary phenotype must contain at least one case and one control"):
-        _core.validate_binary_phenotype_array(np.asarray([0, 0, 0], dtype=np.int32))
+        native_preflight_validator.validate_binary_phenotype_array(np.asarray([0, 0, 0], dtype=np.int32))
 
     with pytest.raises(ValueError, match="Prediction sample count for chromosome 1 is 2, expected 3"):
-        _core.validate_single_prediction_preflight_shape("1", (2,), sample_count=3)
+        native_preflight_validator.validate_single_prediction_preflight_shape("1", (2,), sample_count=3)
 
     with pytest.raises(
         ValueError,
         match=r"Prediction matrix shape for chromosome 2 is \(2, 2\), expected \(2, 3\)",
     ):
-        _core.validate_multi_prediction_preflight_shape("2", (2, 2), trait_count=2, sample_count=3)
+        native_preflight_validator.validate_multi_prediction_preflight_shape("2", (2, 2), trait_count=2, sample_count=3)
+
+
+def test_detached_native_preflight_helpers_removed_from_root_surface() -> None:
+    removed_helper_names = (
+        "build_preflight_report_payload",
+        "resolve_preflight_variant_count",
+        "validate_binary_phenotype_array",
+        "validate_covariate_matrix_rank",
+        "validate_covariate_matrix_rank_array",
+        "validate_finite_array_values",
+        "validate_multi_prediction_preflight_shape",
+        "validate_multi_trait_preflight_shape_payload",
+        "validate_single_prediction_preflight_shape",
+        "validate_single_trait_preflight_shape_payload",
+    )
+
+    for helper_name in removed_helper_names:
+        assert not hasattr(_core, helper_name)
 
 
 def test_native_preflight_covariate_rank_array_uses_numpy_default_tolerance() -> None:
+    native_preflight_validator = _core.NativePreflightValidator()
     tiny_float32_singular_value = np.finfo(np.float32).eps
     covariate_matrix = np.asarray(
         [
@@ -1071,9 +1096,11 @@ def test_native_preflight_covariate_rank_array_uses_numpy_default_tolerance() ->
     )
 
     with pytest.raises(ValueError, match="Covariate matrix is rank deficient"):
-        _core.validate_covariate_matrix_rank_array(covariate_matrix, covariate_count=2)
+        native_preflight_validator.validate_covariate_matrix_rank_array(covariate_matrix, covariate_count=2)
 
-    _core.validate_covariate_matrix_rank_array(covariate_matrix.astype(np.float64), covariate_count=2)
+    native_preflight_validator.validate_covariate_matrix_rank_array(
+        covariate_matrix.astype(np.float64), covariate_count=2
+    )
 
 
 def test_native_pipeline_resume_compatibility_validates_all_manifests(tmp_path: Path) -> None:

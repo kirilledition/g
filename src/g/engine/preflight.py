@@ -116,7 +116,7 @@ def run_regenie2_preflight(
     required_chromosomes = collect_required_chromosomes(engine, variant_limit)
     for chromosome in required_chromosomes:
         prediction_values = np.asarray(prediction_source.get_chromosome_predictions(chromosome))
-        g._core.validate_single_prediction_preflight_shape(
+        native_preflight_validator().validate_single_prediction_preflight_shape(
             chromosome,
             array_shape_counts(prediction_values),
             sample_count,
@@ -168,7 +168,7 @@ def run_regenie2_multi_preflight(
     required_chromosomes = collect_required_chromosomes(engine, variant_limit)
     for chromosome in required_chromosomes:
         prediction_matrix = np.asarray(prediction_source.get_chromosome_predictions(chromosome))
-        g._core.validate_multi_prediction_preflight_shape(
+        native_preflight_validator().validate_multi_prediction_preflight_shape(
             chromosome,
             array_shape_counts(prediction_matrix),
             trait_count,
@@ -192,17 +192,17 @@ def run_regenie2_multi_preflight(
 
 def validate_finite_array(label: str, values: np.ndarray) -> None:
     """Validate that an array contains only finite values."""
-    g._core.validate_finite_array_values(label, values)
+    native_preflight_validator().validate_finite_array_values(label, values)
 
 
 def validate_covariate_matrix_rank(covariate_matrix: np.ndarray, covariate_count: int) -> None:
     """Validate covariate matrix rank after native shape checks."""
-    g._core.validate_covariate_matrix_rank_array(covariate_matrix, covariate_count)
+    native_preflight_validator().validate_covariate_matrix_rank_array(covariate_matrix, covariate_count)
 
 
 def validate_binary_phenotype(phenotype_vector: np.ndarray) -> None:
     """Validate binary phenotype coding and case/control counts."""
-    g._core.validate_binary_phenotype_array(phenotype_vector)
+    native_preflight_validator().validate_binary_phenotype_array(phenotype_vector)
 
 
 def resolve_single_trait_preflight_shape(
@@ -212,7 +212,7 @@ def resolve_single_trait_preflight_shape(
     """Validate single-trait shape policy through the native engine crate."""
     payload = typing.cast(
         "dict[str, object]",
-        g._core.validate_single_trait_preflight_shape_payload(
+        native_preflight_validator().validate_single_trait_preflight_shape_payload(
             shape_count(phenotype_vector.shape, 0),
             int(covariate_matrix.ndim),
             shape_count(covariate_matrix.shape, 0),
@@ -232,7 +232,7 @@ def resolve_multi_trait_preflight_shape(
     """Validate multi-trait shape policy through the native engine crate."""
     payload = typing.cast(
         "dict[str, object]",
-        g._core.validate_multi_trait_preflight_shape_payload(
+        native_preflight_validator().validate_multi_trait_preflight_shape_payload(
             int(phenotype_matrix.ndim),
             shape_count(phenotype_matrix.shape, 0),
             shape_count(phenotype_matrix.shape, 1),
@@ -263,7 +263,7 @@ def array_shape_counts(values: np.ndarray) -> tuple[int, ...]:
 def collect_required_chromosomes(engine: BgenPreflightEngineProtocol, variant_limit: int | None) -> tuple[str, ...]:
     """Collect chromosome labels represented in the native BGEN engine."""
     variant_count = int(engine.variant_count)
-    g._core.resolve_preflight_variant_count(variant_count, variant_limit)
+    native_preflight_validator().resolve_preflight_variant_count(variant_count, variant_limit)
     return tuple(str(chromosome) for chromosome in engine.required_chromosomes(variant_limit))
 
 
@@ -277,7 +277,7 @@ def build_preflight_report(
     """Build the native-owned preflight report payload."""
     payload = typing.cast(
         "dict[str, object]",
-        g._core.build_preflight_report_payload(
+        native_preflight_validator().build_preflight_report_payload(
             sample_count,
             covariate_count,
             chromosome_count,
@@ -290,3 +290,8 @@ def build_preflight_report(
         chromosome_count=typing.cast("int", payload["chromosome_count"]),
         warning_messages=typing.cast("tuple[str, ...]", payload["warning_messages"]),
     )
+
+
+def native_preflight_validator() -> g._core.NativePreflightValidator:
+    """Build the native preflight validator handle."""
+    return g._core.NativePreflightValidator()
