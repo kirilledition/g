@@ -147,19 +147,19 @@ dev-install-gpu-dependencies:
 
 # Install the native extension for development
 dev-install:
-    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop --profile dev-fast --uv
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop -j "${CARGO_BUILD_JOBS}" --profile dev-fast --uv
 
 # Install the native extension using the moderately optimized development profile
 dev-install-opt:
-    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop --profile dev-opt --uv
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop -j "${CARGO_BUILD_JOBS}" --profile dev-opt --uv
 
 # Install the native extension using the native performance profile
 dev-install-perf:
-    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf --uv
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop -j "${CARGO_BUILD_JOBS}" --profile perf --uv
 
 # Install the native extension using explicit native feature flags
 dev-install-perf-max:
-    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf-max --uv
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop -j "${CARGO_BUILD_JOBS}" --profile perf-max --uv
 
 # Install optional user-local profiler CLIs used by deep app profiling
 dev-install-profiling-tools:

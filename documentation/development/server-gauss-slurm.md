@@ -146,6 +146,8 @@ Inside CPU SLURM jobs, `tooling/server/server_env.sh` derives
 already configured; and sets `GWAS_ENGINE_PYTEST_WORKERS` for pytest. Rust
 build recipes call `gwas_engine_configure_rust_build_environment`, which also
 uses `sccache` automatically when it is available and `RUSTC_WRAPPER` is unset.
+The maintained `maturin develop` entrypoints pass the resolved
+`CARGO_BUILD_JOBS` value with `-j` so the explicit compile cap reaches Cargo.
 Python tests default to at most 8 xdist workers because the suite imports JAX
 and the native extension, so one pytest worker per core can oversubscribe
 process-level JAX/native thread pools. Override after measuring:

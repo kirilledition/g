@@ -1578,18 +1578,32 @@ def test_rust_build_profile_specs_map_expected_cargo_profiles() -> None:
     )
 
 
-def test_rust_build_profile_command_environment_contains_target_dir() -> None:
+def test_rust_build_profile_command_environment_contains_target_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     spec = rust_build_profiles.PROFILE_SPECS[rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU1]
     environment = rust_build_profiles.build_environment(spec, Path("target/rust-build-profiles/perf-thin-cgu1"))
 
     assert environment["CARGO_TARGET_DIR"] == "target/rust-build-profiles/perf-thin-cgu1"
     assert environment["RUSTFLAGS"] == "-C target-cpu=native"
+    monkeypatch.delenv("CARGO_BUILD_JOBS", raising=False)
     assert rust_build_profiles.maturin_develop_command(spec) == (
         "uv",
         "run",
         "--no-sync",
         "maturin",
         "develop",
+        "--profile",
+        "perf-thin-cgu1",
+        "--uv",
+    )
+    monkeypatch.setenv("CARGO_BUILD_JOBS", "30")
+    assert rust_build_profiles.maturin_develop_command(spec) == (
+        "uv",
+        "run",
+        "--no-sync",
+        "maturin",
+        "develop",
+        "-j",
+        "30",
         "--profile",
         "perf-thin-cgu1",
         "--uv",

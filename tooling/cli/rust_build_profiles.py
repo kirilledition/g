@@ -285,6 +285,7 @@ PROFILE_SPECS: dict[BuildProfileLabel, BuildProfileSpec] = {
 IMPORT_TIMING_PROGRAM = (
     "import time; start_time = time.perf_counter(); import g._core; print(time.perf_counter() - start_time)"
 )
+CARGO_BUILD_JOBS_ENVIRONMENT_VARIABLE = "CARGO_BUILD_JOBS"
 
 
 def parse_profile_labels(raw_labels: typing.Any) -> tuple[BuildProfileLabel, ...]:
@@ -408,6 +409,14 @@ def build_environment(spec: BuildProfileSpec, target_directory: Path) -> dict[st
     return environment
 
 
+def maturin_develop_job_arguments() -> tuple[str, ...]:
+    """Return the explicit Maturin job-count arguments for the configured build."""
+    job_count = os.environ.get(CARGO_BUILD_JOBS_ENVIRONMENT_VARIABLE)
+    if job_count is None or not job_count.strip():
+        return ()
+    return ("-j", job_count.strip())
+
+
 def maturin_develop_command(spec: BuildProfileSpec) -> tuple[str, ...]:
     """Return the Maturin develop command for one profile.
 
@@ -418,7 +427,17 @@ def maturin_develop_command(spec: BuildProfileSpec) -> tuple[str, ...]:
         Command argument tuple.
 
     """
-    return ("uv", "run", "--no-sync", "maturin", "develop", "--profile", spec.cargo_profile, "--uv")
+    return (
+        "uv",
+        "run",
+        "--no-sync",
+        "maturin",
+        "develop",
+        *maturin_develop_job_arguments(),
+        "--profile",
+        spec.cargo_profile,
+        "--uv",
+    )
 
 
 def run_timed_command(

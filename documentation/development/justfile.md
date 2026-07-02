@@ -50,6 +50,11 @@ just docs-build
 just docs-check
 ```
 
+The `dev-install*` recipes configure Rust build parallelism first, then pass
+the resolved `CARGO_BUILD_JOBS` value to `maturin develop -j`. Set
+`CARGO_BUILD_JOBS` before invoking the recipe when a host needs a tighter
+compile cap.
+
 Use SLURM for CPU-heavy validation:
 
 ```bash
@@ -112,7 +117,9 @@ just slurm-gpu-bench-tensorqtl-chr22
 `rust-bench` runs Criterion benchmarks through `cargo bench --workspace` so
 workspace-owned benches are discovered from their owning crates.
 `bench-rust-build-profiles` includes linker comparison labels for `dev-fast`
-and the routine `perf` profile when the requested linker tooling is available.
+and the routine `perf` profile when the requested linker tooling is available;
+when `CARGO_BUILD_JOBS` is configured, its Maturin build commands pass that
+value with `-j`.
 
 Historical external baseline comparisons remain available under `legacy-*`:
 

@@ -2102,6 +2102,19 @@ Current implementation notes:
   sample-alignment resolvers directly; Python fallback fingerprint
   reconstruction and optional `_core` resolver probing were removed, with tests
   using real native alignment handles.
+- The maintained development Maturin entrypoints now pass an explicit `-j`
+  value from `CARGO_BUILD_JOBS`; the Phase 12 build-profile checkpoint used
+  `maturin develop -j 30 --profile dev-fast` with the `dev-fast-mold` label.
+- Phase 12 benchmark checkpoint on 2026-07-02:
+  - `dev-fast-mold` build-profile run: build command `122.821s`, import
+    command `0.305s`, inner `_core` import `0.058s`, smoke command `0.270s`,
+    `_core.abi3.so` size `104949216` bytes.
+  - `maturin build -j 30 --profile dev-fast`: wall time `12.53s`, wheel size
+    `21360256` bytes.
+  - End-to-end CLI smoke fixture: `tests/test_cli_smoke.py -q` passed in
+    `6.99s`.
+  - Static production Python/Rust boundary count: `191` `_core` call sites
+    across `184` distinct `_core` callable names in `src/g`.
 
 ### Tests
 
