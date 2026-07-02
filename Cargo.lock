@@ -755,6 +755,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "g-cli"
+version = "0.1.0"
+dependencies = [
+ "g-interface",
+]
+
+[[package]]
 name = "g-engine"
 version = "0.1.0"
 dependencies = [

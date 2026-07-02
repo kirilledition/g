@@ -298,6 +298,7 @@ PYTHON_TELEMETRY_FALLBACK_CALL_PATTERN = re.compile(
 
 ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-plan": set(),
+    "g-cli": {"g-interface"},
     "g-interface": {"g-plan"},
     "g-genotype": set(),
     "g-input": {"g-genotype", "g-plan"},

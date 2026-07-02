@@ -7,6 +7,7 @@ rust-version = "1.96.0"
 [workspace]
 members = [
     ".",
+    "crates/cli",
     "crates/engine",
     "crates/genotype",
     "crates/input",
@@ -37,6 +38,7 @@ criterion = "0.8.2"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
+g-cli = { path = "crates/cli" }
 g-engine = { path = "crates/engine" }
 g-genotype = { path = "crates/genotype" }
 g-input = { path = "crates/input" }

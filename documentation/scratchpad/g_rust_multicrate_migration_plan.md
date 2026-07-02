@@ -2364,6 +2364,18 @@ Make Rust the process owner without prematurely embedding Python around a Python
 
 A transitional option is to retain the tiny Python console entry while it calls one coarse native `run` function.
 
+Current implementation notes:
+
+- Phase 13 now has a `g-cli` Rust package with a binary named `g`. The binary
+  owns native CLI frontend parsing, help output, parse errors, and run-config
+  validation through `g-interface`.
+- The native binary deliberately refuses validated run execution with a clear
+  error until the Python/JAX backend embedding boundary is designed. Its
+  workspace dependency policy is restricted to `g-interface`, so it cannot
+  reach into `g-engine` or runtime internals prematurely.
+- The Python package entry point remains the production full-run CLI while this
+  native process-owner prototype proves the frontend and packaging boundary.
+
 ### Tests
 
 - native and Python-bridge CLI help equivalence;
