@@ -199,8 +199,21 @@ PYTHON_IMPORT_POLICIES = (
     PythonImportPolicy(
         name="compute_kernel_isolation",
         source_directory=Path("compute"),
-        forbidden_imports=("g.cli", "g.interface", "g.io"),
-        message="JAX compute kernels must not import CLI, config, output, or file-parser packages",
+        forbidden_imports=(
+            "g._core",
+            "g.api",
+            "g.cli",
+            "g.engine",
+            "g.execution_plan",
+            "g.interface",
+            "g.io",
+            "g.jax_runtime",
+            "g.runner",
+        ),
+        message=(
+            "JAX compute kernels must not import native bindings, public API wrappers, CLI/config, "
+            "orchestration, runtime setup, output, or file-parser packages"
+        ),
     ),
     PythonImportPolicy(
         name="jax_runtime_orchestration_isolation",

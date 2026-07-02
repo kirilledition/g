@@ -2528,6 +2528,10 @@ Current guardrail notes:
   public `g.cli.run_args` must call the coarse native PyO3 CLI runner, must not
   call `dispatch_cli` directly, and the legacy Python backend must remain behind
   the shared sentinel used by the native bridge.
+- The `g.compute` import-boundary guard now rejects imports of native bindings,
+  public API wrappers, host orchestration, execution-plan, runner, JAX runtime
+  setup, CLI/config, output, and file-parser packages. This keeps Python/JAX
+  compute modules on the backend side of the Phase 14 ownership line.
 
 ### Exit criteria
 
@@ -2762,7 +2766,9 @@ Adjust only when a concrete domain requirement justifies it.
 Add an import-policy check for Python:
 
 ```text
-g.compute must not import CLI, output, or file parsers.
+g.compute must not import native bindings, public API wrappers, host
+orchestration, execution plans, runner, JAX runtime setup, CLI/config, output,
+or file parsers.
 g.jax_runtime must not import runner orchestration.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
@@ -2777,8 +2783,9 @@ Production Python must not call legacy telemetry fallback methods.
 `just check-python-architecture` now enforces these Python import and call
 boundaries through an AST-based checker. The production manifest-write rule
 allows the `g.io.output` adapter helper itself, but rejects production callers
-outside that helper; the compute-kernel rule rejects direct file I/O and common
-NumPy/pandas file loaders under `g.compute`; the prepared-plan rule rejects
+outside that helper; the compute-kernel rules reject host-orchestration imports,
+direct file I/O, and common NumPy/pandas file loaders under `g.compute`; the
+prepared-plan rule rejects
 production calls that rebuild canonical plan payloads in Python; the callback
 worker-queue rule rejects direct Python queue/thread primitives and lower-level
 native callback resource constructors under `g.engine.callbacks`; the output

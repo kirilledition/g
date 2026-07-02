@@ -22,16 +22,22 @@ def test_python_cli_shim_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_cli_shim_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
 
-def test_compute_import_policy_rejects_cli_output_and_config_imports(tmp_path: Path) -> None:
+def test_compute_import_policy_rejects_host_orchestration_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     compute_directory = package_root / "compute"
     compute_directory.mkdir(parents=True)
     (compute_directory / "kernel.py").write_text(
         "\n".join(
             (
+                "from g import _core",
+                "from g import api",
                 "from g import cli",
-                "from g.io import output",
+                "import g.engine.native_dispatch",
+                "from g import execution_plan",
                 "import g.interface.config",
+                "from g.io import output",
+                "from g import jax_runtime",
+                "from g.runner import execution",
                 "from ..io import source",
                 "from g.io import *",
             )
@@ -45,11 +51,17 @@ def test_compute_import_policy_rejects_cli_output_and_config_imports(tmp_path: P
         (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
         for violation in violations
     ] == [
-        (Path("g/compute/kernel.py"), 1, "g.cli", "g.cli"),
-        (Path("g/compute/kernel.py"), 2, "g.io.output", "g.io"),
-        (Path("g/compute/kernel.py"), 3, "g.interface.config", "g.interface"),
-        (Path("g/compute/kernel.py"), 4, "g.io.source", "g.io"),
-        (Path("g/compute/kernel.py"), 5, "g.io", "g.io"),
+        (Path("g/compute/kernel.py"), 1, "g._core", "g._core"),
+        (Path("g/compute/kernel.py"), 2, "g.api", "g.api"),
+        (Path("g/compute/kernel.py"), 3, "g.cli", "g.cli"),
+        (Path("g/compute/kernel.py"), 4, "g.engine.native_dispatch", "g.engine"),
+        (Path("g/compute/kernel.py"), 5, "g.execution_plan", "g.execution_plan"),
+        (Path("g/compute/kernel.py"), 6, "g.interface.config", "g.interface"),
+        (Path("g/compute/kernel.py"), 7, "g.io.output", "g.io"),
+        (Path("g/compute/kernel.py"), 8, "g.jax_runtime", "g.jax_runtime"),
+        (Path("g/compute/kernel.py"), 9, "g.runner.execution", "g.runner"),
+        (Path("g/compute/kernel.py"), 10, "g.io.source", "g.io"),
+        (Path("g/compute/kernel.py"), 11, "g.io", "g.io"),
     ]
 
 
