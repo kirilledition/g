@@ -232,6 +232,16 @@ PYTHON_CALL_POLICIES = (
         message="production Python must route native output manifest helper calls through the output adapter helper",
     ),
     PythonCallPolicy(
+        name="native_run_metadata_adapter_isolation",
+        source_directory=Path(),
+        forbidden_calls=(
+            "_core.build_execution_run_artifacts_payload",
+            "_core.extend_run_manifest_metadata",
+        ),
+        allowed_paths=(Path("runner/metadata.py"),),
+        message="production Python must route native run-metadata helpers through the runner metadata adapter",
+    ),
+    PythonCallPolicy(
         name="callback_worker_queue_isolation",
         source_directory=Path("engine/callbacks"),
         forbidden_calls=(

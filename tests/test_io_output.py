@@ -407,7 +407,7 @@ def build_test_header_object(
 
 
 def build_test_header(tmp_path: Path, **keyword_arguments: typing.Any) -> dict[str, typing.Any]:
-    return output.current_run_manifest_header_to_mapping(build_test_header_object(tmp_path, **keyword_arguments))
+    return build_test_header_object(tmp_path, **keyword_arguments)
 
 
 def test_current_run_manifest_records_configured_x64_policy(tmp_path: Path) -> None:

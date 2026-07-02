@@ -2055,6 +2055,12 @@ Current implementation notes:
 - The Rust architecture checker now rejects re-exporting the removed detached
   root PyO3 helpers for diagnostic payloads, shutdown policy, JAX setup,
   manifest/output metadata, runtime knobs, and trusted BGEN cache internals.
+- The remaining Python prepared-run manifest-header identity helpers were
+  removed from the output adapter; active output code now serializes native
+  header mappings directly for prepared-plan and output-preparation calls.
+- The Python architecture checker now guards native run-metadata helper calls
+  outside `g.runner.metadata`, keeping execution artifact construction and
+  manifest metadata upserts behind the runner metadata adapter.
 
 ### Tests
 

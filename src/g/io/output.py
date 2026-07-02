@@ -418,33 +418,9 @@ def parse_current_run_manifest_header_json(manifest_header_json: str) -> dict[st
     return manifest_header
 
 
-def build_native_prepared_run_manifest_header_mapping(
-    current_header: RunManifestHeaderInput,
-) -> dict[str, typing.Any]:
-    """Build the manifest header from a native prepared-run plan payload."""
-    return current_header
-
-
 def build_native_prepared_run_plan_json(current_header: RunManifestHeaderInput) -> str:
     """Build the native prepared-run contract from the transitional header."""
-    return _core.build_prepared_run_plan_json_from_current_header_json(
-        current_run_manifest_header_to_json(current_header)
-    )
-
-
-def current_run_manifest_header_to_json(current_header: RunManifestHeaderInput) -> str:
-    """Serialize the cached current-run header for native prepared-plan construction."""
-    return json.dumps(current_run_manifest_header_to_mapping(current_header), sort_keys=True)
-
-
-def current_run_manifest_header_to_mapping(current_header: RunManifestHeaderInput) -> dict[str, typing.Any]:
-    """Serialize a typed current-run manifest header to native JSON fields."""
-    return current_header
-
-
-def run_manifest_header_input_to_mapping(current_header: RunManifestHeaderInput) -> dict[str, typing.Any]:
-    """Serialize typed headers while accepting raw test/native boundary mappings."""
-    return current_run_manifest_header_to_mapping(current_header)
+    return _core.build_prepared_run_plan_json_from_current_header_json(json.dumps(current_header, sort_keys=True))
 
 
 def validate_manifest_compatibility(
@@ -452,10 +428,9 @@ def validate_manifest_compatibility(
     current_header: RunManifestHeaderInput,
 ) -> None:
     """Validate immutable manifest fields against the current run header."""
-    current_header_mapping = run_manifest_header_input_to_mapping(current_header)
     _core.validate_run_manifest_compatibility(
         json.dumps(manifest, sort_keys=True),
-        json.dumps(current_header_mapping, sort_keys=True),
+        json.dumps(current_header, sort_keys=True),
     )
 
 
@@ -510,10 +485,7 @@ def build_native_pipeline_output_preparation_batch(
             None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True)
             for existing_manifest in existing_manifests_by_trait
         ),
-        tuple(
-            json.dumps(run_manifest_header_input_to_mapping(current_header), sort_keys=True)
-            for current_header in current_headers_by_trait
-        ),
+        tuple(json.dumps(current_header, sort_keys=True) for current_header in current_headers_by_trait),
         resume,
         resume_mode.value,
     )
@@ -529,12 +501,11 @@ def initialize_output_run(
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> InitializedOutputRun:
     """Validate/write the manifest header and return accepted committed chunks."""
-    current_header_mapping = run_manifest_header_input_to_mapping(current_header)
     native_initialized_output_run = _core.initialize_output_run(
         str(output_run_paths.run_directory),
         str(output_run_paths.chunks_directory),
         None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True),
-        json.dumps(current_header_mapping, sort_keys=True),
+        json.dumps(current_header, sort_keys=True),
         resume,
         resume_mode.value,
         runtime_compatibility_token,
