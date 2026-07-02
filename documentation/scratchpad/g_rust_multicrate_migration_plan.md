@@ -2098,6 +2098,10 @@ Current implementation notes:
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.
+- Production native-dispatch compute-group resolution now calls the native
+  sample-alignment resolvers directly; Python fallback fingerprint
+  reconstruction and optional `_core` resolver probing were removed, with tests
+  using real native alignment handles.
 
 ### Tests
 

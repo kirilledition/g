@@ -6,6 +6,7 @@ import dataclasses
 import hashlib
 import os
 import queue
+import tempfile
 import threading
 import time
 import typing
@@ -2510,27 +2511,124 @@ class PartialCommitDeliveringRunEngine(FakeRunEngine):
         return 2
 
 
-def build_native_aligned_sample_data() -> SimpleNamespace:
-    return SimpleNamespace(
-        sample_indices=np.asarray([1, 0], dtype=np.int64),
-        family_identifiers=["family1", "family2"],
-        individual_identifiers=["sample1", "sample2"],
+def build_native_aligned_sample_data_from_arrays(
+    *,
+    phenotype_name: str,
+    sample_indices: tuple[int, ...],
+    phenotype_values: tuple[float, ...],
+    covariate_values: tuple[tuple[float, ...], ...],
+) -> _core.NativeAlignedSampleData:
+    """Build a native aligned sample handle from in-memory test arrays."""
+    family_identifiers = [f"family{sample_index}" for sample_index in sample_indices]
+    individual_identifiers = [f"sample{sample_index}" for sample_index in sample_indices]
+    with tempfile.TemporaryDirectory() as temporary_directory_name:
+        temporary_directory = Path(temporary_directory_name)
+        phenotype_path = temporary_directory / "phenotypes.tsv"
+        phenotype_lines = [f"FID\tIID\t{phenotype_name}"]
+        for family_identifier, individual_identifier, phenotype_value in zip(
+            family_identifiers,
+            individual_identifiers,
+            phenotype_values,
+            strict=True,
+        ):
+            phenotype_lines.append(f"{family_identifier}\t{individual_identifier}\t{phenotype_value}")
+        phenotype_path.write_text("\n".join(phenotype_lines) + "\n", encoding="utf-8")
+
+        covariate_path: Path | None = None
+        covariate_names: list[str] | None = None
+        if covariate_values and len(covariate_values[0]) > 1:
+            covariate_path = temporary_directory / "covariates.tsv"
+            covariate_names = [f"covariate_{covariate_index}" for covariate_index in range(1, len(covariate_values[0]))]
+            covariate_lines = ["FID\tIID\t" + "\t".join(covariate_names)]
+            for family_identifier, individual_identifier, covariate_row in zip(
+                family_identifiers,
+                individual_identifiers,
+                covariate_values,
+                strict=True,
+            ):
+                covariate_lines.append(
+                    f"{family_identifier}\t{individual_identifier}\t"
+                    + "\t".join(str(covariate_value) for covariate_value in covariate_row[1:])
+                )
+            covariate_path.write_text("\n".join(covariate_lines) + "\n", encoding="utf-8")
+
+        return _core.align_sample_data(
+            np.asarray(sample_indices, dtype=np.int64),
+            family_identifiers,
+            individual_identifiers,
+            str(phenotype_path),
+            phenotype_name,
+            None if covariate_path is None else str(covariate_path),
+            covariate_names,
+            is_binary_trait=False,
+        )
+
+
+def build_native_multi_aligned_sample_data_from_arrays(
+    *,
+    phenotype_names: typing.Sequence[str],
+    sample_indices: tuple[int, ...],
+    phenotype_matrix: tuple[tuple[float, ...], ...],
+    covariate_values: tuple[tuple[float, ...], ...],
+) -> _core.NativeMultiAlignedSampleData:
+    """Build a native multi-phenotype aligned sample handle from test arrays."""
+    family_identifiers = [f"family{sample_index}" for sample_index in sample_indices]
+    individual_identifiers = [f"sample{sample_index}" for sample_index in sample_indices]
+    with tempfile.TemporaryDirectory() as temporary_directory_name:
+        temporary_directory = Path(temporary_directory_name)
+        phenotype_path = temporary_directory / "phenotypes.tsv"
+        phenotype_lines = ["FID\tIID\t" + "\t".join(phenotype_names)]
+        for sample_position, (family_identifier, individual_identifier) in enumerate(
+            zip(family_identifiers, individual_identifiers, strict=True)
+        ):
+            phenotype_lines.append(
+                f"{family_identifier}\t{individual_identifier}\t"
+                + "\t".join(str(phenotype_values[sample_position]) for phenotype_values in phenotype_matrix)
+            )
+        phenotype_path.write_text("\n".join(phenotype_lines) + "\n", encoding="utf-8")
+
+        covariate_path: Path | None = None
+        covariate_names: list[str] | None = None
+        if covariate_values and len(covariate_values[0]) > 1:
+            covariate_path = temporary_directory / "covariates.tsv"
+            covariate_names = [f"covariate_{covariate_index}" for covariate_index in range(1, len(covariate_values[0]))]
+            covariate_lines = ["FID\tIID\t" + "\t".join(covariate_names)]
+            for family_identifier, individual_identifier, covariate_row in zip(
+                family_identifiers,
+                individual_identifiers,
+                covariate_values,
+                strict=True,
+            ):
+                covariate_lines.append(
+                    f"{family_identifier}\t{individual_identifier}\t"
+                    + "\t".join(str(covariate_value) for covariate_value in covariate_row[1:])
+                )
+            covariate_path.write_text("\n".join(covariate_lines) + "\n", encoding="utf-8")
+
+        return _core.align_multi_sample_data(
+            np.asarray(sample_indices, dtype=np.int64),
+            family_identifiers,
+            individual_identifiers,
+            str(phenotype_path),
+            list(phenotype_names),
+            None if covariate_path is None else str(covariate_path),
+            covariate_names,
+            is_binary_trait=False,
+        )
+
+
+def build_native_aligned_sample_data() -> _core.NativeAlignedSampleData:
+    return build_native_aligned_sample_data_from_arrays(
         phenotype_name="trait",
-        phenotype_vector=np.asarray([0.0, 1.0], dtype=np.float32),
-        covariate_names=["intercept", "age"],
-        covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
-        is_binary_trait=False,
+        sample_indices=(1, 0),
+        phenotype_values=(0.0, 1.0),
+        covariate_values=((1.0,), (1.0,)),
     )
 
 
 def build_native_run_input() -> native_dispatch_models.NativeBgenRunInput:
-    return native_dispatch_models.NativeBgenRunInput(
-        native_aligned_sample_data=typing.cast("typing.Any", build_native_aligned_sample_data()),
-        sample_indices=np.asarray([1, 0], dtype=np.int64),
-        phenotype_vector=np.asarray([0.0, 1.0], dtype=np.float32),
-        covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
-        is_binary_trait=False,
-    )
+    native_aligned_sample_data = build_native_aligned_sample_data()
+    return native_dispatch_models.build_native_bgen_run_input(native_aligned_sample_data)
 
 
 def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
@@ -2681,23 +2779,13 @@ def build_native_run_input_with_alignment(
     phenotype_values: tuple[float, ...],
     covariate_values: tuple[tuple[float, ...], ...],
 ) -> native_dispatch_models.NativeBgenRunInput:
-    native_aligned_sample_data = SimpleNamespace(
-        sample_indices=np.asarray(sample_indices, dtype=np.int64),
-        family_identifiers=[f"family{sample_index}" for sample_index in sample_indices],
-        individual_identifiers=[f"sample{sample_index}" for sample_index in sample_indices],
+    native_aligned_sample_data = build_native_aligned_sample_data_from_arrays(
         phenotype_name=phenotype_name,
-        phenotype_vector=np.asarray(phenotype_values, dtype=np.float32),
-        covariate_names=["intercept", "age"],
-        covariate_matrix=np.asarray(covariate_values, dtype=np.float32),
-        is_binary_trait=False,
+        sample_indices=sample_indices,
+        phenotype_values=phenotype_values,
+        covariate_values=covariate_values,
     )
-    return native_dispatch_models.NativeBgenRunInput(
-        native_aligned_sample_data=typing.cast("typing.Any", native_aligned_sample_data),
-        sample_indices=np.asarray(sample_indices, dtype=np.int64),
-        phenotype_vector=np.asarray(phenotype_values, dtype=np.float32),
-        covariate_matrix=np.asarray(covariate_values, dtype=np.float32),
-        is_binary_trait=False,
-    )
+    return native_dispatch_models.build_native_bgen_run_input(native_aligned_sample_data)
 
 
 def build_grouped_run_input_from_single_trait_inputs(
@@ -2707,27 +2795,18 @@ def build_grouped_run_input_from_single_trait_inputs(
     run_inputs: tuple[native_dispatch_models.NativeBgenRunInput, ...],
 ) -> native_dispatch_models.NativeBgenGroupedRunInput:
     first_run_input = run_inputs[0]
-    native_multi_aligned_sample_data = SimpleNamespace(
+    native_multi_aligned_sample_data = build_native_multi_aligned_sample_data_from_arrays(
         phenotype_names=phenotype_names,
-        sample_indices=first_run_input.sample_indices,
-        family_identifiers=tuple(first_run_input.native_aligned_sample_data.family_identifiers),
-        individual_identifiers=tuple(first_run_input.native_aligned_sample_data.individual_identifiers),
-        phenotype_matrix=np.stack(
-            tuple(np.asarray(run_input.phenotype_vector, dtype=np.float32) for run_input in run_inputs),
-            axis=0,
+        sample_indices=tuple(int(sample_index) for sample_index in first_run_input.sample_indices),
+        phenotype_matrix=tuple(
+            tuple(float(phenotype_value) for phenotype_value in run_input.phenotype_vector) for run_input in run_inputs
         ),
-        covariate_names=tuple(first_run_input.native_aligned_sample_data.covariate_names),
-        covariate_matrix=np.asarray(first_run_input.covariate_matrix, dtype=np.float32),
-        is_binary_trait=first_run_input.is_binary_trait,
+        covariate_values=tuple(
+            tuple(float(covariate_value) for covariate_value in covariate_row)
+            for covariate_row in first_run_input.covariate_matrix
+        ),
     )
-    run_input = native_dispatch_models.NativeBgenMultiRunInput(
-        native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
-        phenotype_names=phenotype_names,
-        sample_indices=np.ascontiguousarray(native_multi_aligned_sample_data.sample_indices, dtype=np.int64),
-        phenotype_matrix=np.asarray(native_multi_aligned_sample_data.phenotype_matrix, dtype=np.float32),
-        covariate_matrix=np.asarray(native_multi_aligned_sample_data.covariate_matrix, dtype=np.float32),
-        is_binary_trait=native_multi_aligned_sample_data.is_binary_trait,
-    )
+    run_input = native_dispatch_models.build_native_bgen_multi_run_input(native_multi_aligned_sample_data)
     return native_dispatch_models.NativeBgenGroupedRunInput(
         compute_group=native_dispatch_groups.build_resolved_phenotype_compute_group(
             phenotype_indices=phenotype_indices,
@@ -2743,24 +2822,13 @@ def build_grouped_run_input_from_single_trait_inputs(
 
 
 def build_native_multi_run_input() -> native_dispatch_models.NativeBgenMultiRunInput:
-    native_multi_aligned_sample_data = SimpleNamespace(
+    native_multi_aligned_sample_data = build_native_multi_aligned_sample_data_from_arrays(
         phenotype_names=["trait_a", "trait_b"],
-        sample_indices=np.asarray([1, 0], dtype=np.int64),
-        family_identifiers=["f2", "f1"],
-        individual_identifiers=["i2", "i1"],
-        phenotype_matrix=np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
-        covariate_names=["intercept", "age"],
-        covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
-        is_binary_trait=False,
+        sample_indices=(1, 0),
+        phenotype_matrix=((0.0, 1.0), (1.0, 0.0)),
+        covariate_values=((1.0,), (1.0,)),
     )
-    return native_dispatch_models.NativeBgenMultiRunInput(
-        native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
-        phenotype_names=("trait_a", "trait_b"),
-        sample_indices=np.asarray([1, 0], dtype=np.int64),
-        phenotype_matrix=np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
-        covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
-        is_binary_trait=False,
-    )
+    return native_dispatch_models.build_native_bgen_multi_run_input(native_multi_aligned_sample_data)
 
 
 def test_complete_case_compute_group_resolution_adds_alignment_fingerprints() -> None:
@@ -11797,7 +11865,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert engine.run_method == "variant_major_buffered"
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_linear.LinearRegenie2PipelineCallback)
     assert callback.dosage_queue_depth == 3
     assert callback.dosage_buffer_limit == 4
@@ -11818,7 +11886,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
         pipeline_label="linear",
     )
     record_input_aligned_mock.assert_called_once_with(
-        covariate_count=2,
+        covariate_count=1,
         phenotype_name="trait",
         pipeline_label="linear",
         sample_count=2,
@@ -12027,7 +12095,7 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     assert engine.run_method == "variant_major_packed8"
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_linear.LinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [0, 64]
     assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_PACKED8
@@ -12243,7 +12311,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     assert engine.run_method == "variant_major_buffered"
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_binary.BinaryRegenie2PipelineCallback)
     assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == [0, 64]
@@ -12366,7 +12434,7 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     assert engine.run_method == "variant_major_packed8"
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_binary.BinaryRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [0, 64]
     assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_PACKED8
@@ -12734,7 +12802,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert engine.run_method == "variant_major_buffered"
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_linear.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
@@ -12746,7 +12814,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     )
     record_input_load_started_mock.assert_called_once_with(phenotype_count=2)
     record_input_aligned_mock.assert_called_once_with(
-        covariate_count=2,
+        covariate_count=1,
         phenotype_count=2,
         sample_count=2,
     )
@@ -12889,7 +12957,7 @@ def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes(
     engine = FakeRunEngine.instances[0]
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_linear.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
@@ -12981,7 +13049,7 @@ def test_multi_binary_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert engine.run_method == "variant_major_buffered"
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_binary.MultiBinaryRegenie2PipelineCallback)
     assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == [32]
@@ -13060,7 +13128,7 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
     assert engine.run_method == "variant_major_packed8"
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_linear.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == []
     assert mock_run_multi_preflight.call_args.kwargs["trusted_no_missing_diploid"] is True
@@ -13191,7 +13259,7 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
     engine = FakeRunEngine.instances[0]
     assert len(engine.run_call_arguments) == 1
     sample_indices, callback, committed_chunk_identifiers = engine.run_call_arguments[0]
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_linear.MultiLinearRegenie2PipelineCallback)
     assert callback.run_input.phenotype_names == ("trait_a", "trait_b")
     assert grouped_run_inputs[0].compute_group.phenotype_indices == (0, 1)
@@ -13349,7 +13417,7 @@ def test_grouped_per_phenotype_packed8_forces_trusted_delivery_and_manifests() -
     assert engine.run_method == "variant_major_packed8"
     assert len(engine.run_call_arguments) == 1
     sample_indices, callback, committed_chunk_identifiers = engine.run_call_arguments[0]
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_linear.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == []
     assert mock_run_multi_preflight.call_args.kwargs["trusted_no_missing_diploid"] is True
@@ -13443,7 +13511,7 @@ def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
     engine = FakeRunEngine.instances[0]
     assert len(engine.run_call_arguments) == 2
-    np.testing.assert_array_equal(engine.run_call_arguments[0][0], np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(engine.run_call_arguments[0][0], np.asarray([0, 1], dtype=np.int64))
     np.testing.assert_array_equal(engine.run_call_arguments[1][0], np.asarray([0, 1], dtype=np.int64))
 
 
@@ -13736,7 +13804,7 @@ def test_multi_binary_complete_case_packed8_preserves_kernel_config_and_manifest
     assert engine.run_method == "variant_major_packed8"
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
-    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1], dtype=np.int64))
     assert isinstance(callback, callback_binary.MultiBinaryRegenie2PipelineCallback)
     assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == []
@@ -13985,7 +14053,7 @@ def test_load_native_bgen_run_input_uses_rust_alignment_for_embedded_samples(tmp
         )
 
     assert run_input.native_aligned_sample_data is native_aligned_sample_data
-    np.testing.assert_array_equal(run_input.sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(run_input.sample_indices, np.asarray([0, 1], dtype=np.int64))
     mock_load_aligned_sample_data.assert_called_once()
     assert mock_load_aligned_sample_data.call_args.kwargs["engine"] is engine
     assert mock_load_aligned_sample_data.call_args.kwargs["sample_path"] is None

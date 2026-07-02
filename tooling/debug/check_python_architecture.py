@@ -393,6 +393,13 @@ PYTHON_CALL_POLICIES = (
         message="production callback diagnostics must use native PyO3 array checks for convergence scans",
     ),
     PythonCallPolicy(
+        name="native_compute_group_resolution_isolation",
+        source_directory=Path("engine/native_dispatch/groups.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production native-dispatch compute-group resolution must call native resolvers directly",
+    ),
+    PythonCallPolicy(
         name="jax_host_materialization_isolation",
         source_directory=Path("engine"),
         forbidden_calls=("jax.device_get", "device_get"),
@@ -470,6 +477,20 @@ PYTHON_DEFINITION_POLICIES = (
         ),
         allowed_paths=(),
         message="the real telemetry session must not define compatibility dispatch wrappers",
+    ),
+    PythonDefinitionPolicy(
+        name="native_compute_group_fallback_definition_isolation",
+        source_directory=Path("engine/native_dispatch/groups.py"),
+        forbidden_function_names=(
+            "fingerprint_sample_set",
+            "fingerprint_covariate_design",
+            "fingerprint_prediction_alignment",
+            "update_array_fingerprint",
+            "update_string_sequence_fingerprint",
+            "update_fingerprint",
+        ),
+        allowed_paths=(),
+        message="production native dispatch must not define Python compute-group fingerprint fallbacks",
     ),
 )
 
