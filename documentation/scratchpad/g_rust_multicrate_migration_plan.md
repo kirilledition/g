@@ -2397,7 +2397,14 @@ Current implementation notes:
 - Validated native CLI configs now cross an explicit `NativeExecutionAdapter`
   boundary. The default adapter preserves the temporary unsupported-execution
   error, and unit coverage verifies adapter success/failure propagation plus
-  validation errors stopping before the execution adapter is called.
+  validation errors stopping before the execution adapter is called. The
+  adapter boundary also catches backend panics and converts them into a
+  deterministic runtime-failure CLI outcome.
+- The native CLI execution boundary now installs SIGINT/SIGTERM handlers while
+  the adapter runs and passes a `NativeExecutionContext` with a shutdown flag
+  into the adapter. First signals become cooperative shutdown requests for the
+  future Python/JAX backend adapter; repeated signals fall back to the platform
+  default action through `signal-hook`.
 - `check_native_cli_frontend` now also runs a CPU-safe Python/JAX environment
   probe through the configured Python executable, reporting Python/JAX versions
   and visible JAX device platforms. The default probe sets `JAX_PLATFORMS=cpu`;
