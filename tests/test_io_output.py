@@ -320,6 +320,7 @@ def build_test_header_object(
     firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
     output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    jax_enable_x64: bool = True,
     multi_phenotype_sample_mode: output.MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
     phenotype_compute_group_id: str | None = None,
     sample_set_fingerprint: str | None = None,
@@ -394,6 +395,7 @@ def build_test_header_object(
         bgen_decode_tile_variant_count=64,
         trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
         jax_device=types.Device.CPU,
+        jax_enable_x64=jax_enable_x64,
         jax_matmul_precision=None,
         requested_gpu_genotype_format=effective_requested_gpu_genotype_format,
         finalize_parquet=False,
@@ -415,6 +417,13 @@ def test_current_run_manifest_records_configured_x64_policy(tmp_path: Path) -> N
 
     assert current_header["jax_policy"]["enable_x64"] is True
     assert current_header["execution_plan"]["jax_policy"]["enable_x64"] is True
+
+
+def test_current_run_manifest_uses_explicit_x64_policy(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, jax_enable_x64=False)
+
+    assert current_header["jax_policy"]["enable_x64"] is False
+    assert current_header["execution_plan"]["jax_policy"]["enable_x64"] is False
 
 
 def test_current_run_manifest_records_dtype_policy(tmp_path: Path) -> None:

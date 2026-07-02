@@ -140,6 +140,31 @@ def test_compute_import_policy_rejects_host_orchestration_imports(tmp_path: Path
     ]
 
 
+def test_output_import_policy_rejects_jax_runtime_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    output_directory = package_root / "io"
+    output_directory.mkdir(parents=True)
+    (output_directory / "output.py").write_text(
+        "\n".join(
+            (
+                "from g.jax_runtime import models",
+                "import g.jax_runtime.setup",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/io/output.py"), 1, "g.jax_runtime.models", "g.jax_runtime"),
+        (Path("g/io/output.py"), 2, "g.jax_runtime.setup", "g.jax_runtime"),
+    ]
+
+
 def test_python_cli_shim_policy_rejects_public_python_process_ownership(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()

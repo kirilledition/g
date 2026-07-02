@@ -11,7 +11,6 @@ from pathlib import Path
 
 from g import _core, types
 from g.engine import run_events
-from g.jax_runtime import models as jax_runtime_models
 
 OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
@@ -330,6 +329,7 @@ def build_current_run_manifest_header(
     bgen_decode_tile_variant_count: int,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     jax_device: types.Device,
+    jax_enable_x64: bool,
     jax_matmul_precision: types.JaxMatmulPrecision | None,
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
     gpu_genotype_format: types.GpuGenotypeFormat,
@@ -381,7 +381,7 @@ def build_current_run_manifest_header(
         "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
         "trusted_bgen_validation_mode": trusted_bgen_validation_mode.value,
         "jax_device": jax_device.value,
-        "jax_enable_x64": jax_runtime_models.JAX_ENABLE_X64,
+        "jax_enable_x64": jax_enable_x64,
         "jax_matmul_precision": None if jax_matmul_precision is None else jax_matmul_precision.value,
         "requested_gpu_genotype_format": requested_gpu_genotype_format.value,
         "gpu_genotype_format": gpu_genotype_format.value,
