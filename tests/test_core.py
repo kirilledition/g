@@ -189,6 +189,9 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "build_prediction_loco_file_fingerprints_json")
     assert not hasattr(_core, "build_run_manifest_extension_payload")
     assert not hasattr(_core, "build_trusted_bgen_validation_cache_payload")
+    assert not hasattr(_core, "compile_run_request_json")
+    assert not hasattr(_core, "initialize_pipeline_output_run_batch")
+    assert not hasattr(_core, "initialize_pipeline_output_runs")
     assert not hasattr(_core, "build_trusted_bgen_validation_cache_path_value")
     assert not hasattr(_core, "build_trusted_bgen_validation_fingerprint_value")
     assert not hasattr(_core, "default_trusted_bgen_validation_cache_directory_value")
@@ -203,6 +206,28 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "plan_telemetry_close")
     assert not hasattr(_core, "plan_telemetry_event_emission")
     assert not hasattr(_core, "plan_telemetry_progress_emission")
+    assert not hasattr(_core.NativePreparedOutputRun, "existing_manifest_json")
+    assert not hasattr(
+        _core.NativeManifestFileFingerprintCache,
+        "build_current_run_manifest_header_json_from_input_json",
+    )
+    assert not hasattr(
+        _core.NativeManifestFileFingerprintCache,
+        "build_prediction_loco_file_fingerprints_json",
+    )
+    native_pipeline_output_preparation_batch_type = typing.cast(
+        "typing.Any",
+        _core.NativePipelineOutputPreparationBatch,
+    )
+    with pytest.raises(TypeError):
+        native_pipeline_output_preparation_batch_type(
+            (),
+            (),
+            (),
+            (),
+            resume=False,
+            resume_mode="fast",
+        )
     assert not hasattr(_core, "plan_timing_file_write")
     assert not hasattr(_core, "plan_null_logistic_nonconvergence")
     for removed_scheduler_export_name in (
@@ -1053,58 +1078,55 @@ def test_native_pipeline_resume_compatibility_validates_all_manifests(tmp_path: 
     run_directory = tmp_path / "run"
     chunks_directory = tmp_path / "chunks"
     chunks_directory.mkdir()
-    manifest_json = json.dumps(
-        {"schema_version": 7, "chunk_size": 32, "committed_chunks": []},
-        sort_keys=True,
-    )
-    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
+    manifest: dict[str, object] = {"schema_version": 7, "chunk_size": 32, "committed_chunks": []}
+    current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
 
     def validate_resume_compatibility(
         *,
-        existing_manifest_json_values: tuple[str | None, ...],
-        current_header_json_values: tuple[str, ...],
+        existing_manifest_values: tuple[dict[str, object] | None, ...],
+        current_header_values: tuple[dict[str, object], ...],
         resume_mode: str,
     ) -> None:
-        preparation_batch = _core.NativePipelineOutputPreparationBatch(
+        preparation_batch = _core.build_pipeline_output_preparation_batch_from_values(
             run_directories=(str(run_directory),),
             chunks_directories=(str(chunks_directory),),
-            existing_manifest_json_values=existing_manifest_json_values,
-            current_header_json_values=current_header_json_values,
+            existing_manifest_values=existing_manifest_values,
+            current_header_values=current_header_values,
             resume=True,
             resume_mode=resume_mode,
         )
         preparation_batch.validate_resume_compatibility()
 
     validate_resume_compatibility(
-        existing_manifest_json_values=(manifest_json,),
-        current_header_json_values=(current_header_json,),
+        existing_manifest_values=(manifest,),
+        current_header_values=(current_header,),
         resume_mode="fast",
     )
     validate_resume_compatibility(
-        existing_manifest_json_values=(manifest_json,),
-        current_header_json_values=(current_header_json,),
+        existing_manifest_values=(manifest,),
+        current_header_values=(current_header,),
         resume_mode="strict",
     )
 
     with pytest.raises(ValueError, match=r"Resume requires run_manifest\.json"):
         validate_resume_compatibility(
-            existing_manifest_json_values=(None,),
-            current_header_json_values=(current_header_json,),
+            existing_manifest_values=(None,),
+            current_header_values=(current_header,),
             resume_mode="fast",
         )
 
     with pytest.raises(ValueError, match="input counts must match"):
         validate_resume_compatibility(
-            existing_manifest_json_values=(),
-            current_header_json_values=(current_header_json,),
+            existing_manifest_values=(),
+            current_header_values=(current_header,),
             resume_mode="fast",
         )
 
-    incompatible_header_json = json.dumps({"schema_version": 7, "chunk_size": 64}, sort_keys=True)
+    incompatible_header: dict[str, object] = {"schema_version": 7, "chunk_size": 64}
     with pytest.raises(ValueError, match="chunk_size"):
         validate_resume_compatibility(
-            existing_manifest_json_values=(manifest_json,),
-            current_header_json_values=(incompatible_header_json,),
+            existing_manifest_values=(manifest,),
+            current_header_values=(incompatible_header,),
             resume_mode="fast",
         )
 
@@ -1113,33 +1135,31 @@ def test_native_pipeline_output_initialization_returns_committed_sets(tmp_path: 
     run_directory = tmp_path / "run"
     chunks_directory = run_directory / "chunks"
     chunks_directory.mkdir(parents=True)
-    existing_manifest_json = json.dumps(
-        {
-            "schema_version": 7,
-            "chunk_size": 32,
-            "committed_chunks": [
-                {
-                    "chunk_identifier": 2,
-                    "variant_start_index": 2,
-                    "variant_stop_index": 4,
-                    "row_count": 2,
-                    "chunk_file_name": "chunk_2.arrow",
-                }
-            ],
-        },
-        sort_keys=True,
-    )
-    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
+    existing_manifest: dict[str, object] = {
+        "schema_version": 7,
+        "chunk_size": 32,
+        "committed_chunks": [
+            {
+                "chunk_identifier": 2,
+                "variant_start_index": 2,
+                "variant_stop_index": 4,
+                "row_count": 2,
+                "chunk_file_name": "chunk_2.arrow",
+            }
+        ],
+    }
+    current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
 
-    committed_chunk_identifier_sets = _core.initialize_pipeline_output_runs(
+    preparation_batch = _core.build_pipeline_output_preparation_batch_from_values(
         run_directories=(str(run_directory),),
         chunks_directories=(str(chunks_directory),),
-        existing_manifest_json_values=(existing_manifest_json,),
-        current_header_json_values=(current_header_json,),
+        existing_manifest_values=(existing_manifest,),
+        current_header_values=(current_header,),
         resume=True,
         resume_mode="fast",
-        runtime_compatibility_token=build_native_runtime_compatibility_token(),
     )
+    native_initialization = preparation_batch.initialize(build_native_runtime_compatibility_token())
+    committed_chunk_identifier_sets = native_initialization.committed_chunk_identifier_sets()
 
     assert committed_chunk_identifier_sets == [[2]]
     written_manifest = json.loads((run_directory / "run_manifest.json").read_text(encoding="utf-8"))
@@ -1150,33 +1170,30 @@ def test_native_pipeline_output_initialization_handle_returns_committed_sets(tmp
     run_directory = tmp_path / "run"
     chunks_directory = run_directory / "chunks"
     chunks_directory.mkdir(parents=True)
-    existing_manifest_json = json.dumps(
-        {
-            "schema_version": 7,
-            "chunk_size": 32,
-            "committed_chunks": [
-                {
-                    "chunk_identifier": 2,
-                    "variant_start_index": 2,
-                    "variant_stop_index": 4,
-                    "row_count": 2,
-                    "chunk_file_name": "chunk_2.arrow",
-                }
-            ],
-        },
-        sort_keys=True,
-    )
-    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
+    existing_manifest: dict[str, object] = {
+        "schema_version": 7,
+        "chunk_size": 32,
+        "committed_chunks": [
+            {
+                "chunk_identifier": 2,
+                "variant_start_index": 2,
+                "variant_stop_index": 4,
+                "row_count": 2,
+                "chunk_file_name": "chunk_2.arrow",
+            }
+        ],
+    }
+    current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
 
-    native_initialization = _core.initialize_pipeline_output_run_batch(
+    preparation_batch = _core.build_pipeline_output_preparation_batch_from_values(
         run_directories=(str(run_directory),),
         chunks_directories=(str(chunks_directory),),
-        existing_manifest_json_values=(existing_manifest_json,),
-        current_header_json_values=(current_header_json,),
+        existing_manifest_values=(existing_manifest,),
+        current_header_values=(current_header,),
         resume=True,
         resume_mode="fast",
-        runtime_compatibility_token=build_native_runtime_compatibility_token(),
     )
+    native_initialization = preparation_batch.initialize(build_native_runtime_compatibility_token())
 
     assert isinstance(native_initialization, _core.NativePipelineOutputInitialization)
     assert native_initialization.output_count == 1
@@ -1190,28 +1207,25 @@ def test_native_pipeline_output_preparation_batch_initializes_outputs(tmp_path: 
     run_directory = tmp_path / "run"
     chunks_directory = run_directory / "chunks"
     chunks_directory.mkdir(parents=True)
-    existing_manifest_json = json.dumps(
-        {
-            "schema_version": 7,
-            "chunk_size": 32,
-            "committed_chunks": [
-                {
-                    "chunk_identifier": 2,
-                    "variant_start_index": 2,
-                    "variant_stop_index": 4,
-                    "row_count": 2,
-                    "chunk_file_name": "chunk_2.arrow",
-                }
-            ],
-        },
-        sort_keys=True,
-    )
-    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
-    native_preparation_batch = _core.NativePipelineOutputPreparationBatch(
+    existing_manifest: dict[str, object] = {
+        "schema_version": 7,
+        "chunk_size": 32,
+        "committed_chunks": [
+            {
+                "chunk_identifier": 2,
+                "variant_start_index": 2,
+                "variant_stop_index": 4,
+                "row_count": 2,
+                "chunk_file_name": "chunk_2.arrow",
+            }
+        ],
+    }
+    current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
+    native_preparation_batch = _core.build_pipeline_output_preparation_batch_from_values(
         run_directories=(str(run_directory),),
         chunks_directories=(str(chunks_directory),),
-        existing_manifest_json_values=(existing_manifest_json,),
-        current_header_json_values=(current_header_json,),
+        existing_manifest_values=(existing_manifest,),
+        current_header_values=(current_header,),
         resume=True,
         resume_mode="fast",
     )

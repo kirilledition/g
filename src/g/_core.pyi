@@ -2659,8 +2659,6 @@ class NativePreparedOutputRun:
     def run_directory(self) -> str: ...
     @property
     def chunks_directory(self) -> str: ...
-    @property
-    def existing_manifest_json(self) -> str | None: ...
     def existing_manifest_payload(self) -> dict[str, object] | None: ...
 
 class NativeInitializedOutputRun:
@@ -2674,19 +2672,10 @@ class NativeManifestFileFingerprintCache:
         path: str,
         include_content_hash: bool,
     ) -> dict[str, object]: ...
-    def build_current_run_manifest_header_json_from_input_json(
-        self,
-        current_header_input_json: str,
-    ) -> str: ...
     def build_current_run_manifest_header_payload_from_input(
         self,
         current_header_input: object,
     ) -> dict[str, object]: ...
-    def build_prediction_loco_file_fingerprints_json(
-        self,
-        prediction_list_path: str,
-        phenotype_names: list[str],
-    ) -> str: ...
     def build_prediction_loco_file_fingerprints_payload(
         self,
         prediction_list_path: str,
@@ -3322,7 +3311,6 @@ def write_config_toml(config: RegenieConfig, path: str | Path) -> None: ...
 def validate_regenie_config(config: RegenieConfig) -> None: ...
 def validate_regenie_config_for_run(config: RegenieConfig) -> None: ...
 def compile_run_request_payload(config: RegenieConfig) -> dict[str, object]: ...
-def compile_run_request_json(config: RegenieConfig) -> str: ...
 def dispatch_cli(args: list[str]) -> CliOutcome: ...
 def resolve_preflight_variant_count(variant_count: int, variant_limit: int | None = None) -> int: ...
 def intersect_committed_chunk_identifier_sets(
@@ -3416,15 +3404,6 @@ class NativePipelineOutputInitialization:
     def committed_chunk_identifiers(self, output_index: int) -> list[int]: ...
 
 class NativePipelineOutputPreparationBatch:
-    def __init__(
-        self,
-        run_directories: typing.Sequence[str],
-        chunks_directories: typing.Sequence[str],
-        existing_manifest_json_values: typing.Sequence[str | None],
-        current_header_json_values: typing.Sequence[str],
-        resume: bool,
-        resume_mode: str,
-    ) -> None: ...
     @property
     def output_count(self) -> int: ...
     @property
@@ -3443,24 +3422,6 @@ def build_pipeline_output_preparation_batch_from_values(
     resume: bool,
     resume_mode: str,
 ) -> NativePipelineOutputPreparationBatch: ...
-def initialize_pipeline_output_run_batch(
-    run_directories: typing.Sequence[str],
-    chunks_directories: typing.Sequence[str],
-    existing_manifest_json_values: typing.Sequence[str | None],
-    current_header_json_values: typing.Sequence[str],
-    resume: bool,
-    resume_mode: str,
-    runtime_compatibility_token: NativeRuntimeCompatibilityToken,
-) -> NativePipelineOutputInitialization: ...
-def initialize_pipeline_output_runs(
-    run_directories: typing.Sequence[str],
-    chunks_directories: typing.Sequence[str],
-    existing_manifest_json_values: typing.Sequence[str | None],
-    current_header_json_values: typing.Sequence[str],
-    resume: bool,
-    resume_mode: str,
-    runtime_compatibility_token: NativeRuntimeCompatibilityToken,
-) -> list[list[int]]: ...
 def validate_single_trait_preflight_shape_payload(
     phenotype_sample_count: int,
     covariate_dimension_count: int,

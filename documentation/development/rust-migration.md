@@ -258,6 +258,13 @@ The root `_core` surface no longer exports the old output JSON-string helpers
 for manifest load/write, manifest checksum, compatibility, initialization,
 strict-resume validation/repair, or prepared-plan/header construction; Python
 callers use the value-based output adapter exports instead.
+JSON-string manifest cache methods and `NativePreparedOutputRun.existing_manifest_json`
+are also no longer Python-visible; callers use the payload methods.
+The resolved-config run-request JSON helper has also been removed from the
+root `_core` surface; execution planning uses the payload export.
+Pipeline output-preparation JSON batch constructors and direct JSON batch
+initializers are likewise no longer exported; callers use the value-based
+batch factory and the returned native handle.
 Run-start manifest command/runtime metadata extension now goes through a native
 `g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
 longer loads, mutates, serializes, and rewrites run manifests for that

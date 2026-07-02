@@ -1914,6 +1914,14 @@ Python/JAX should emit typed diagnostic events through a native handle.
   initialization, strict-resume validation/repair, or prepared-plan/header
   construction; remaining Python callers enter the value-based output adapter
   exports.
+- JSON-string manifest cache methods and
+  `NativePreparedOutputRun.existing_manifest_json` are also no longer
+  Python-visible; remaining callers use native payload methods.
+- The resolved-config run-request JSON helper has also been removed from the
+  root `_core` surface; execution planning uses the payload export.
+- Pipeline output-preparation JSON batch constructors and direct JSON batch
+  initializers are likewise no longer exported; callers use the value-based
+  batch factory and returned native handle.
 - Preflight finite-array checks, SVD-backed covariate-rank validation, and
   binary phenotype coding/case-control scans now execute in the root PyO3
   adapter over NumPy buffers and then call the `g-engine` policy helpers.
@@ -2073,6 +2081,16 @@ Current implementation notes:
   validation/repair, and raw prepared-plan/header construction have been
   removed from the root PyO3 module; the retained output exports are the
   value-based adapter boundary plus filesystem lifecycle helpers.
+- JSON-string manifest cache methods and
+  `NativePreparedOutputRun.existing_manifest_json` were removed from the
+  Python-visible root surface after the output adapter moved to payload
+  methods.
+- The resolved-config run-request JSON helper was removed from the root PyO3
+  surface after the execution-plan adapter moved to the payload export.
+- Pipeline output-preparation JSON batch constructors and direct JSON batch
+  initializers were removed from the root PyO3 surface after the output adapter
+  moved production initialization to the value-based batch factory and native
+  handle.
 - Run lifecycle telemetry-field builders have also been removed from the
   Python-visible root PyO3 surface; native logging keeps the internal
   conversion helpers used by typed telemetry dispatch.

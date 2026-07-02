@@ -29,7 +29,6 @@ use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule};
-use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 
 use super::{
@@ -58,7 +57,6 @@ pub(crate) struct NativePreparedOutputRun {
     run_directory: String,
     #[pyo3(get)]
     chunks_directory: String,
-    #[pyo3(get)]
     existing_manifest_json: Option<String>,
 }
 
@@ -123,25 +121,6 @@ impl NativeManifestFileFingerprintCache {
         manifest_file_fingerprint_to_dict(py, &file_fingerprint)
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn build_current_run_manifest_header_json_from_input_json(
-        &self,
-        py: Python<'_>,
-        current_header_input_json: String,
-    ) -> PyResult<String> {
-        let current_header_input = parse_json_argument::<CurrentRunManifestHeaderInput>(
-            "current_header_input_json",
-            &current_header_input_json,
-        )?;
-        py.detach(|| {
-            let mut fingerprint_cache = self.inner.lock().map_err(|_| {
-                OutputWriterError::Runtime("Manifest file fingerprint cache mutex was poisoned.".to_string())
-            })?;
-            build_native_current_run_manifest_header_json_with_cache(current_header_input, &mut fingerprint_cache)
-        })
-        .map_err(|error| output_writer_error_to_py(error, "build_cached_current_run_manifest_header_json"))
-    }
-
     fn build_current_run_manifest_header_payload_from_input(
         &self,
         py: Python<'_>,
@@ -160,36 +139,26 @@ impl NativeManifestFileFingerprintCache {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn build_prediction_loco_file_fingerprints_json(
-        &self,
-        py: Python<'_>,
-        prediction_list_path: String,
-        phenotype_names: Vec<String>,
-    ) -> PyResult<String> {
-        py.detach(|| {
-            let mut fingerprint_cache = self.inner.lock().map_err(|_| {
-                PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(
-                    "Manifest file fingerprint cache mutex was poisoned.".to_string(),
-                ))
-            })?;
-            build_prediction_loco_file_fingerprints_json_with_cache(
-                &prediction_list_path,
-                &phenotype_names,
-                &mut fingerprint_cache,
-            )
-        })
-        .map_err(prediction_loco_fingerprint_build_error_to_py)
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
     fn build_prediction_loco_file_fingerprints_payload(
         &self,
         py: Python<'_>,
         prediction_list_path: String,
         phenotype_names: Vec<String>,
     ) -> PyResult<Py<PyAny>> {
-        let loco_file_payload_json =
-            self.build_prediction_loco_file_fingerprints_json(py, prediction_list_path, phenotype_names)?;
+        let loco_file_payload_json = py
+            .detach(|| {
+                let mut fingerprint_cache = self.inner.lock().map_err(|_| {
+                    PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(
+                        "Manifest file fingerprint cache mutex was poisoned.".to_string(),
+                    ))
+                })?;
+                build_prediction_loco_file_fingerprints_json_with_cache(
+                    &prediction_list_path,
+                    &phenotype_names,
+                    &mut fingerprint_cache,
+                )
+            })
+            .map_err(prediction_loco_fingerprint_build_error_to_py)?;
         json_bridge::json_text_to_py_object(py, &loco_file_payload_json, "prediction LOCO file fingerprints")
     }
 }
@@ -638,14 +607,6 @@ pub(crate) fn build_prepared_run_plan_json_from_current_header(current_header: &
     let current_header_json = json_bridge::json_text_from_py_any(current_header)?;
     build_native_prepared_run_plan_json_from_current_header_json(&current_header_json)
         .map_err(|error| output_writer_error_to_py(error, "build_prepared_run_plan_json_from_current_header"))
-}
-
-fn parse_json_argument<T>(argument_name: &str, argument_json: &str) -> PyResult<T>
-where
-    T: DeserializeOwned,
-{
-    serde_json::from_str(argument_json)
-        .map_err(|error| PyValueError::new_err(format!("Invalid {argument_name}: {error}")))
 }
 
 #[pyfunction]
