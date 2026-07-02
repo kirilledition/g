@@ -2388,6 +2388,12 @@ Current implementation notes:
 - A lightweight debug checkpoint, `check_native_cli_frontend`, compares the
   compiled native binary against the Python console bridge for configless help
   and parse-error paths while recording process startup/help latency medians.
+- Native binary integration coverage now exercises `--config` TOML input and
+  CLI-over-TOML overrides before the temporary native execution refusal. Invalid
+  TOML-derived run configs still fail validation before the execution boundary.
+- The native frontend Criterion benchmark now includes a
+  `valid_toml_config_refusal` case alongside help, parse-error, and CLI-only
+  valid-config dispatch baselines.
 
 ### Tests
 
