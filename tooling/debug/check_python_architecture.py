@@ -210,6 +210,28 @@ PYTHON_CALL_POLICIES = (
         message="production Python must route native writer lifecycle calls through the native-dispatch adapter",
     ),
     PythonCallPolicy(
+        name="native_output_manifest_helper_adapter_isolation",
+        source_directory=Path(),
+        forbidden_calls=(
+            "_core.NativeManifestFileFingerprintCache",
+            "_core.build_current_run_manifest_header_json_from_input_json",
+            "_core.build_file_content_sha256_value",
+            "_core.build_file_fingerprint_payload",
+            "_core.build_manifest_file_fingerprint_payload",
+            "_core.build_manifest_json_sha256",
+            "_core.build_prediction_loco_file_fingerprints_json",
+            "_core.build_prepared_run_manifest_header_json",
+            "_core.build_prepared_run_manifest_header_json_from_current_header_json",
+            "_core.build_prepared_run_plan_json",
+            "_core.build_prepared_run_plan_json_from_current_header_json",
+            "build_current_run_manifest_header_json_from_input_json",
+            "build_file_fingerprint_payload",
+            "build_prediction_loco_file_fingerprints_json",
+        ),
+        allowed_paths=(Path("io/output.py"),),
+        message="production Python must route native output manifest helper calls through the output adapter helper",
+    ),
+    PythonCallPolicy(
         name="callback_worker_queue_isolation",
         source_directory=Path("engine/callbacks"),
         forbidden_calls=(

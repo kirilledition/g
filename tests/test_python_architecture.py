@@ -191,6 +191,85 @@ def test_output_writer_lifecycle_policy_rejects_direct_native_writer_cleanup_cal
     ]
 
 
+def test_output_manifest_helper_policy_rejects_direct_native_helpers(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "metadata.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build_manifest(cache):",
+                "    _core.NativeManifestFileFingerprintCache()",
+                "    cache.build_file_fingerprint_payload('input.bgen', True)",
+                "    cache.build_prediction_loco_file_fingerprints_json('pred.list', ['phenotype'])",
+                "    cache.build_current_run_manifest_header_json_from_input_json('{}')",
+                "    _core.build_manifest_json_sha256('{}')",
+                "    _core.build_prepared_run_manifest_header_json_from_current_header_json('{}')",
+                "    _core.build_prepared_run_plan_json_from_current_header_json('{}')",
+                "    _core.build_manifest_file_fingerprint_payload('input.bgen', True)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/metadata.py"),
+            3,
+            "_core.NativeManifestFileFingerprintCache",
+            "_core.NativeManifestFileFingerprintCache",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            4,
+            "cache.build_file_fingerprint_payload",
+            "build_file_fingerprint_payload",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            5,
+            "cache.build_prediction_loco_file_fingerprints_json",
+            "build_prediction_loco_file_fingerprints_json",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            6,
+            "cache.build_current_run_manifest_header_json_from_input_json",
+            "build_current_run_manifest_header_json_from_input_json",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            7,
+            "_core.build_manifest_json_sha256",
+            "_core.build_manifest_json_sha256",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            8,
+            "_core.build_prepared_run_manifest_header_json_from_current_header_json",
+            "_core.build_prepared_run_manifest_header_json_from_current_header_json",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            9,
+            "_core.build_prepared_run_plan_json_from_current_header_json",
+            "_core.build_prepared_run_plan_json_from_current_header_json",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            10,
+            "_core.build_manifest_file_fingerprint_payload",
+            "_core.build_manifest_file_fingerprint_payload",
+        ),
+    ]
+
+
 def test_callback_worker_queue_policy_rejects_python_queue_and_thread_primitives(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     callback_directory = package_root / "engine" / "callbacks"

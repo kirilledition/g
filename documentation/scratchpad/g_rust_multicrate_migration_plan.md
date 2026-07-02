@@ -2048,6 +2048,13 @@ Current implementation notes:
   builder have been removed from the Python-visible root surface; shutdown
   policy now enters through `NativeShutdownController`, and runtime path tests
   cover injected construction inside `g-runtime`.
+- The Python architecture checker now guards direct native output
+  manifest/fingerprint helper calls outside `g.io.output`, keeping the
+  remaining stable `_core` names behind the output adapter instead of letting
+  production Python rebuild manifest policy ad hoc.
+- The Rust architecture checker now rejects re-exporting the removed detached
+  root PyO3 helpers for diagnostic payloads, shutdown policy, JAX setup,
+  manifest/output metadata, runtime knobs, and trusted BGEN cache internals.
 
 ### Tests
 

@@ -17,6 +17,50 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ROOT_CRATE_LIB_PATH = Path("src/lib.rs")
 ROOT_CRATE_PYTHON_SOURCE_DIRECTORY = Path("src/python")
 ROOT_CRATE_PYTHON_MODULE_PATH = Path("src/python/mod.rs")
+DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
+    (
+        "NativeSecondSignalExceptionPlan",
+        "build_current_run_manifest_header_json_from_input_json",
+        "build_default_local_cache_directory_value",
+        "build_file_content_sha256_value",
+        "build_final_timing_outputs_write_started_diagnostic_payload",
+        "build_jax_runtime_setup_diagnostic_payloads",
+        "build_manifest_file_fingerprint_mapping_payload",
+        "build_manifest_file_fingerprint_payload",
+        "build_multi_run_artifacts_payload",
+        "build_phenotype_run_artifacts_payload",
+        "build_prediction_loco_file_fingerprints_json",
+        "build_prepared_run_manifest_header_json",
+        "build_prepared_run_plan_json",
+        "build_run_manifest_extension_payload",
+        "build_shutdown_signal_payload",
+        "build_trusted_bgen_validation_cache_path_value",
+        "build_trusted_bgen_validation_cache_payload",
+        "build_trusted_bgen_validation_fingerprint_value",
+        "complete_jax_runtime_setup_validation_payload",
+        "configure_bgen_decode_tile_variant_count",
+        "configure_rayon_global_thread_pool",
+        "default_shutdown_signal_numbers",
+        "default_trusted_bgen_validation_cache_directory_value",
+        "emit_diagnostic_event",
+        "emit_diagnostic_event_fields",
+        "format_rayon_thread_pool_configuration_error_value",
+        "plan_jax_gpu_validation_payload",
+        "plan_jax_runtime_config_update_payloads",
+        "plan_jax_runtime_diagnostic_record",
+        "plan_jax_runtime_diagnostic_record_payload",
+        "plan_jax_runtime_setup_side_effects_payload",
+        "plan_second_signal_exception",
+        "plan_trusted_bgen_validation_cache_lookup",
+        "raise_second_signal_exception",
+        "record_jax_runtime_diagnostic_log_event",
+        "resolve_jax_runtime_setup_payload",
+        "write_trusted_bgen_validation_cache_payload",
+    )
+)
+ROOT_PYO3_PYFUNCTION_EXPORT_PATTERN = re.compile(r"wrap_pyfunction!\s*\(\s*(?P<export_name>[A-Za-z0-9_]+)")
+ROOT_PYO3_PYCLASS_EXPORT_PATTERN = re.compile(r"add_class::\s*<\s*(?P<export_name>[A-Za-z0-9_]+)\s*>")
+ROOT_PYO3_REMOVED_EXPORT_MESSAGE = "root PyO3 adapter must not re-export removed raw helper surface"
 PYTHON_TELEMETRY_FALLBACK_METHOD_NAMES = (
     "close_with_event",
     "log_binary_correction_summary",
@@ -91,6 +135,24 @@ class PythonTelemetryFallbackViolation:
 
     source_path: Path
     method_name: str
+    line_number: int
+    message: str
+
+
+@dataclass(frozen=True)
+class RootPyO3ExportViolation:
+    """A removed root PyO3 export that was reintroduced.
+
+    Attributes:
+        source_path: Source file containing the violation.
+        export_name: PyO3 export name that violates the policy.
+        line_number: One-based source line number containing the export.
+        message: Human-readable violation description.
+
+    """
+
+    source_path: Path
+    export_name: str
     line_number: int
     message: str
 
@@ -261,6 +323,33 @@ def collect_python_telemetry_fallback_violations(repository_root: Path) -> tuple
     return tuple(violations)
 
 
+def collect_root_pyo3_export_violations(repository_root: Path) -> tuple[RootPyO3ExportViolation, ...]:
+    """Collect removed raw helper exports from root PyO3 adapter modules."""
+    root_python_source_directory = repository_root / ROOT_CRATE_PYTHON_SOURCE_DIRECTORY
+    if not root_python_source_directory.exists():
+        return ()
+
+    violations: list[RootPyO3ExportViolation] = []
+    for rust_source_path in sorted(root_python_source_directory.rglob("*.rs")):
+        source_text = rust_source_path.read_text(encoding="utf-8")
+        relative_source_path = rust_source_path.relative_to(repository_root)
+        for export_pattern in (ROOT_PYO3_PYFUNCTION_EXPORT_PATTERN, ROOT_PYO3_PYCLASS_EXPORT_PATTERN):
+            for export_match in export_pattern.finditer(source_text):
+                export_name = export_match.group("export_name")
+                if export_name not in DISALLOWED_ROOT_PYO3_EXPORT_NAMES:
+                    continue
+                line_number = source_text.count("\n", 0, export_match.start()) + 1
+                violations.append(
+                    RootPyO3ExportViolation(
+                        source_path=relative_source_path,
+                        export_name=export_name,
+                        line_number=line_number,
+                        message=ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+                    )
+                )
+    return tuple(sorted(violations, key=lambda violation: (violation.source_path, violation.line_number)))
+
+
 def load_cargo_metadata(repository_root: Path) -> dict[str, typing.Any]:
     """Load workspace Cargo metadata from the repository root."""
     completed_process = subprocess.run(
@@ -301,6 +390,14 @@ def format_python_telemetry_fallback_violations(violations: tuple[PythonTelemetr
     )
 
 
+def format_root_pyo3_export_violations(violations: tuple[RootPyO3ExportViolation, ...]) -> str:
+    """Format removed root PyO3 export violations for command-line output."""
+    return "\n".join(
+        f"- {violation.source_path}:{violation.line_number} [{violation.export_name}]: {violation.message}"
+        for violation in violations
+    )
+
+
 def run_tool(repository_root: Path) -> int:
     """Verify Rust workspace architecture policy."""
     try:
@@ -312,7 +409,8 @@ def run_tool(repository_root: Path) -> int:
     dependency_violations = collect_rust_architecture_violations(metadata_payload)
     root_crate_violations = collect_root_crate_boundary_violations(repository_root)
     telemetry_fallback_violations = collect_python_telemetry_fallback_violations(repository_root)
-    if dependency_violations or root_crate_violations or telemetry_fallback_violations:
+    root_pyo3_export_violations = collect_root_pyo3_export_violations(repository_root)
+    if dependency_violations or root_crate_violations or telemetry_fallback_violations or root_pyo3_export_violations:
         print("Rust workspace architecture violations:")
         if dependency_violations:
             print(format_violations(dependency_violations))
@@ -320,6 +418,8 @@ def run_tool(repository_root: Path) -> int:
             print(format_root_crate_boundary_violations(root_crate_violations))
         if telemetry_fallback_violations:
             print(format_python_telemetry_fallback_violations(telemetry_fallback_violations))
+        if root_pyo3_export_violations:
+            print(format_root_pyo3_export_violations(root_pyo3_export_violations))
         return 1
 
     print("Rust workspace architecture policy passed.")
