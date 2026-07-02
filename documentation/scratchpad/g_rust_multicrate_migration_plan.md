@@ -1433,6 +1433,11 @@ Remove Python as the chunk-level scheduler.
 - Native pipeline output-preparation batch construction now also routes through
   the `g.io.output` adapter, so pipeline orchestration does not construct the
   lower-level native output lifecycle batch directly.
+- Output manifest writes, execution-plan hashing, prepared-plan construction,
+  strict resume validation/repair, and pipeline output-preparation batch
+  construction now pass Python values through PyO3 value wrappers before Rust
+  serialization. The output adapter no longer serializes those
+  manifest/preparation contracts with `json.dumps`.
 - Run-start manifest command/runtime metadata extension now goes through a
   native `g-output` manifest upsert via the root PyO3 adapter, so Python no
   longer loads, mutates, serializes, and rewrites run manifests for that
@@ -1865,7 +1870,7 @@ Python/JAX should emit typed diagnostic events through a native handle.
   recording a JAX policy as configured.
 - Prediction-input LOCO manifest fingerprints now use the native manifest
   fingerprint cache handle to compose `g-input` LOCO path resolution with
-  `g-output` file fingerprinting; Python adapts the native JSON payload instead
+  `g-output` file fingerprinting; Python adapts the native payload instead
   of resolving and hashing LOCO files in its manifest-header loop, and the old
   Python-facing raw LOCO path resolver and detached LOCO fingerprint function
   are no longer exported from `_core`.
@@ -1889,6 +1894,10 @@ Python/JAX should emit typed diagnostic events through a native handle.
   sub-builders have been removed; the output adapter now passes native
   manifest-header mappings through, and the old many-argument and detached
   JSON-input PyO3 manifest-header exports have been removed.
+- Output manifest writes, execution-plan hashing, prepared-plan construction,
+  strict resume validation/repair, and pipeline output-preparation batch
+  construction now use PyO3 value wrappers, so production output code no
+  longer calls Python `json.dumps` for those manifest/preparation contracts.
 - Preflight finite-array checks, SVD-backed covariate-rank validation, and
   binary phenotype coding/case-control scans now execute in the root PyO3
   adapter over NumPy buffers and then call the `g-engine` policy helpers.
@@ -2061,8 +2070,9 @@ Current implementation notes:
   root PyO3 helpers for diagnostic payloads, shutdown policy, JAX setup,
   manifest/output metadata, runtime knobs, and trusted BGEN cache internals.
 - The remaining Python prepared-run manifest-header identity helpers were
-  removed from the output adapter; active output code now serializes native
-  header mappings directly for prepared-plan and output-preparation calls.
+  removed from the output adapter; active output code now passes native header
+  mappings through value-based PyO3 wrappers for prepared-plan and
+  output-preparation calls.
 - The Python architecture checker now guards native run-metadata helper calls
   outside `g.runner.metadata`, keeping execution artifact construction and
   manifest metadata upserts behind the runner metadata adapter.
@@ -2525,6 +2535,7 @@ Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
 Production Python must not reconstruct canonical prepared-run plans.
 Production Python must route native output lifecycle calls through `g.io.output`.
+Production Python must route native output value-serialization wrappers through `g.io.output`.
 Production Python must use native diagnostic recorders instead of payload builders outside compatibility adapters.
 Production Python must not call legacy telemetry fallback methods.
 ```

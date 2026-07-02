@@ -14,6 +14,7 @@ mod errors;
 mod genotype;
 mod host_policy;
 mod jax_runtime;
+mod json_bridge;
 mod logging;
 mod output;
 mod prediction_sources;

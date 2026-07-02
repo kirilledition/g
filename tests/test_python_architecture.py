@@ -63,6 +63,7 @@ def test_manifest_write_policy_rejects_production_python_manifest_writes(tmp_pat
                 "def extend(paths, manifest):",
                 "    output.write_run_manifest(paths, manifest)",
                 "    _core.write_run_manifest_json('run', '{}')",
+                "    _core.write_run_manifest('run', {})",
             )
         ),
         encoding="utf-8",
@@ -73,6 +74,7 @@ def test_manifest_write_policy_rejects_production_python_manifest_writes(tmp_pat
                 "from g import _core",
                 "def write_run_manifest(run_directory, manifest_json):",
                 "    _core.write_run_manifest_json(run_directory, manifest_json)",
+                "    _core.write_run_manifest(run_directory, {})",
             )
         ),
         encoding="utf-8",
@@ -86,6 +88,7 @@ def test_manifest_write_policy_rejects_production_python_manifest_writes(tmp_pat
     ] == [
         (Path("g/runner/metadata.py"), 4, "output.write_run_manifest", "output.write_run_manifest"),
         (Path("g/runner/metadata.py"), 5, "_core.write_run_manifest_json", "_core.write_run_manifest_json"),
+        (Path("g/runner/metadata.py"), 6, "_core.write_run_manifest", "_core.write_run_manifest"),
     ]
 
 
@@ -100,8 +103,14 @@ def test_output_lifecycle_policy_rejects_direct_native_output_calls(tmp_path: Pa
                 "def initialize_output(token):",
                 "    _core.prepare_output_run('root', 'regenie2_linear', 'parquet', False)",
                 "    _core.initialize_output_run('run', 'chunks', None, '{}', False, 'fast', token)",
+                "    _core.initialize_output_run_from_values('run', 'chunks', None, {}, False, 'fast', token)",
                 "    _core.validate_strict_manifest_chunks('chunks', '{}')",
+                "    _core.validate_strict_manifest_chunks_from_value('chunks', {})",
+                "    _core.repair_strict_manifest_chunk_commits_from_value('chunks', {})",
+                "    _core.read_manifest_committed_chunk_identifiers_from_value({})",
+                "    _core.validate_run_manifest_compatibility_from_values({}, {})",
                 "    _core.finalize_output_run_chunks('run', 'chunks', 'parquet', 'zstd')",
+                "    _core.build_pipeline_output_preparation_batch_from_values((), (), (), (), False, 'fast')",
                 "    _core.NativePipelineOutputPreparationBatch((), (), (), (), False, 'fast')",
             )
         ),
@@ -119,13 +128,49 @@ def test_output_lifecycle_policy_rejects_direct_native_output_calls(tmp_path: Pa
         (
             Path("g/runner/outputs.py"),
             5,
+            "_core.initialize_output_run_from_values",
+            "_core.initialize_output_run_from_values",
+        ),
+        (
+            Path("g/runner/outputs.py"),
+            6,
             "_core.validate_strict_manifest_chunks",
             "_core.validate_strict_manifest_chunks",
         ),
-        (Path("g/runner/outputs.py"), 6, "_core.finalize_output_run_chunks", "_core.finalize_output_run_chunks"),
         (
             Path("g/runner/outputs.py"),
             7,
+            "_core.validate_strict_manifest_chunks_from_value",
+            "_core.validate_strict_manifest_chunks_from_value",
+        ),
+        (
+            Path("g/runner/outputs.py"),
+            8,
+            "_core.repair_strict_manifest_chunk_commits_from_value",
+            "_core.repair_strict_manifest_chunk_commits_from_value",
+        ),
+        (
+            Path("g/runner/outputs.py"),
+            9,
+            "_core.read_manifest_committed_chunk_identifiers_from_value",
+            "_core.read_manifest_committed_chunk_identifiers_from_value",
+        ),
+        (
+            Path("g/runner/outputs.py"),
+            10,
+            "_core.validate_run_manifest_compatibility_from_values",
+            "_core.validate_run_manifest_compatibility_from_values",
+        ),
+        (Path("g/runner/outputs.py"), 11, "_core.finalize_output_run_chunks", "_core.finalize_output_run_chunks"),
+        (
+            Path("g/runner/outputs.py"),
+            12,
+            "_core.build_pipeline_output_preparation_batch_from_values",
+            "_core.build_pipeline_output_preparation_batch_from_values",
+        ),
+        (
+            Path("g/runner/outputs.py"),
+            13,
             "_core.NativePipelineOutputPreparationBatch",
             "_core.NativePipelineOutputPreparationBatch",
         ),
@@ -203,10 +248,14 @@ def test_output_manifest_helper_policy_rejects_direct_native_helpers(tmp_path: P
                 "    _core.NativeManifestFileFingerprintCache()",
                 "    cache.build_file_fingerprint_payload('input.bgen', True)",
                 "    cache.build_prediction_loco_file_fingerprints_json('pred.list', ['phenotype'])",
+                "    cache.build_prediction_loco_file_fingerprints_payload('pred.list', ['phenotype'])",
                 "    cache.build_current_run_manifest_header_json_from_input_json('{}')",
+                "    cache.build_current_run_manifest_header_payload_from_input({})",
                 "    _core.build_manifest_json_sha256('{}')",
+                "    _core.build_manifest_json_sha256_from_value({})",
                 "    _core.build_prepared_run_manifest_header_json_from_current_header_json('{}')",
                 "    _core.build_prepared_run_plan_json_from_current_header_json('{}')",
+                "    _core.build_prepared_run_plan_json_from_current_header({})",
                 "    _core.build_manifest_file_fingerprint_payload('input.bgen', True)",
             )
         ),
@@ -225,12 +274,7 @@ def test_output_manifest_helper_policy_rejects_direct_native_helpers(tmp_path: P
             "_core.NativeManifestFileFingerprintCache",
             "_core.NativeManifestFileFingerprintCache",
         ),
-        (
-            Path("g/runner/metadata.py"),
-            4,
-            "cache.build_file_fingerprint_payload",
-            "build_file_fingerprint_payload",
-        ),
+        (Path("g/runner/metadata.py"), 4, "cache.build_file_fingerprint_payload", "build_file_fingerprint_payload"),
         (
             Path("g/runner/metadata.py"),
             5,
@@ -240,30 +284,49 @@ def test_output_manifest_helper_policy_rejects_direct_native_helpers(tmp_path: P
         (
             Path("g/runner/metadata.py"),
             6,
+            "cache.build_prediction_loco_file_fingerprints_payload",
+            "build_prediction_loco_file_fingerprints_payload",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            7,
             "cache.build_current_run_manifest_header_json_from_input_json",
             "build_current_run_manifest_header_json_from_input_json",
         ),
         (
             Path("g/runner/metadata.py"),
-            7,
-            "_core.build_manifest_json_sha256",
-            "_core.build_manifest_json_sha256",
-        ),
-        (
-            Path("g/runner/metadata.py"),
             8,
-            "_core.build_prepared_run_manifest_header_json_from_current_header_json",
-            "_core.build_prepared_run_manifest_header_json_from_current_header_json",
+            "cache.build_current_run_manifest_header_payload_from_input",
+            "build_current_run_manifest_header_payload_from_input",
         ),
-        (
-            Path("g/runner/metadata.py"),
-            9,
-            "_core.build_prepared_run_plan_json_from_current_header_json",
-            "_core.build_prepared_run_plan_json_from_current_header_json",
-        ),
+        (Path("g/runner/metadata.py"), 9, "_core.build_manifest_json_sha256", "_core.build_manifest_json_sha256"),
         (
             Path("g/runner/metadata.py"),
             10,
+            "_core.build_manifest_json_sha256_from_value",
+            "_core.build_manifest_json_sha256_from_value",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            11,
+            "_core.build_prepared_run_manifest_header_json_from_current_header_json",
+            "_core.build_prepared_run_manifest_header_json_from_current_header_json",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            12,
+            "_core.build_prepared_run_plan_json_from_current_header_json",
+            "_core.build_prepared_run_plan_json_from_current_header_json",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            13,
+            "_core.build_prepared_run_plan_json_from_current_header",
+            "_core.build_prepared_run_plan_json_from_current_header",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            14,
             "_core.build_manifest_file_fingerprint_payload",
             "_core.build_manifest_file_fingerprint_payload",
         ),

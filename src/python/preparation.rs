@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use pyo3::types::{PyAny, PyModule};
 
-use super::runtime_state::NativeRuntimeCompatibilityToken;
+use super::{json_bridge, runtime_state::NativeRuntimeCompatibilityToken};
 
 #[pyclass]
 pub(crate) struct NativePipelineOutputPreparationBatch {
@@ -137,9 +137,48 @@ pub(crate) fn initialize_pipeline_output_runs(
     .map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_pipeline_output_preparation_batch_from_values(
+    py: Python<'_>,
+    run_directories: Vec<String>,
+    chunks_directories: Vec<String>,
+    existing_manifest_values: Vec<Py<PyAny>>,
+    current_header_values: Vec<Py<PyAny>>,
+    resume: bool,
+    resume_mode: &str,
+) -> PyResult<NativePipelineOutputPreparationBatch> {
+    let existing_manifest_json_values = existing_manifest_values
+        .into_iter()
+        .map(|existing_manifest| {
+            let existing_manifest = existing_manifest.bind(py);
+            if existing_manifest.is_none() {
+                Ok(None)
+            } else {
+                json_bridge::json_text_from_py_any(existing_manifest).map(Some)
+            }
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let current_header_json_values = current_header_values
+        .into_iter()
+        .map(|current_header| json_bridge::json_text_from_py_any(current_header.bind(py)))
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(NativePipelineOutputPreparationBatch {
+        batch: parse_pipeline_output_preparation_batch(
+            run_directories,
+            chunks_directories,
+            existing_manifest_json_values,
+            current_header_json_values,
+            resume,
+            resume_mode,
+        )?,
+    })
+}
+
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePipelineOutputInitialization>()?;
     module.add_class::<NativePipelineOutputPreparationBatch>()?;
+    module.add_function(wrap_pyfunction!(build_pipeline_output_preparation_batch_from_values, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_pipeline_output_run_batch, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_pipeline_output_runs, module)?)?;
     Ok(())

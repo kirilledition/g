@@ -862,11 +862,11 @@ def test_strict_manifest_core_wrappers_normalize_and_validate_payloads(
 ) -> None:
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
     output_run_paths.chunks_directory.mkdir()
-    monkeypatch.setattr(output._core, "validate_strict_manifest_chunks", lambda *_arguments: [0, 2])
+    monkeypatch.setattr(output._core, "validate_strict_manifest_chunks_from_value", lambda *_arguments: [0, 2])
     monkeypatch.setattr(
         output._core,
-        "repair_strict_manifest_chunk_commits",
-        lambda *_arguments: json.dumps({"bad": "shape"}),
+        "repair_strict_manifest_chunk_commits_from_value",
+        lambda *_arguments: {"bad": "shape"},
     )
 
     assert output.validate_strict_manifest_chunks(output_run_paths, {"committed_chunks": []}) == frozenset({0, 2})

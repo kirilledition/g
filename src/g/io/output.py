@@ -200,9 +200,9 @@ def load_run_manifest(output_run_paths: OutputRunPaths) -> dict[str, typing.Any]
 
 def write_run_manifest(output_run_paths: OutputRunPaths, manifest: dict[str, typing.Any]) -> None:
     """Atomically write a run manifest."""
-    _core.write_run_manifest_json(
+    _core.write_run_manifest(
         str(output_run_paths.run_directory),
-        json.dumps(manifest, sort_keys=True),
+        manifest,
     )
 
 
@@ -236,12 +236,11 @@ def build_prediction_loco_file_fingerprints(
 ) -> tuple[PredictionLocoFileFingerprint, ...]:
     """Build content fingerprints for LOCO files selected from a prediction list."""
     resolved_fingerprint_cache = fingerprint_cache if fingerprint_cache is not None else ManifestFileFingerprintCache()
-    loco_file_payload_json = resolved_fingerprint_cache.native_cache.build_prediction_loco_file_fingerprints_json(
+    loco_file_payloads = resolved_fingerprint_cache.native_cache.build_prediction_loco_file_fingerprints_payload(
         str(prediction_list_path),
         list(phenotype_names),
     )
-    loco_file_payloads = json.loads(loco_file_payload_json)
-    if not isinstance(loco_file_payloads, list):
+    if not isinstance(loco_file_payloads, tuple):
         message = "Native LOCO fingerprint payload must contain a JSON array."
         raise ValueError(message)
     return tuple(prediction_loco_file_fingerprint_from_native_payload(payload) for payload in loco_file_payloads)
@@ -285,12 +284,7 @@ def normalize_execution_plan_value(value: typing.Any) -> typing.Any:
 def build_execution_plan_hash(execution_plan: typing.Any) -> str:
     """Build a stable SHA-256 hash for compute/output-affecting run state."""
     normalized_execution_plan = normalize_execution_plan_value(execution_plan)
-    execution_plan_json = json.dumps(
-        normalized_execution_plan,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return _core.build_manifest_json_sha256(execution_plan_json)
+    return _core.build_manifest_json_sha256_from_value(normalized_execution_plan)
 
 
 def build_current_run_manifest_header(
@@ -342,18 +336,6 @@ def build_current_run_manifest_header(
         phenotype_names=prediction_input_phenotype_names,
         fingerprint_cache=fingerprint_cache,
     )
-    prediction_loco_files_json = json.dumps(
-        normalize_execution_plan_value(prediction_loco_files),
-        sort_keys=True,
-    )
-    binary_kernel_config_json = (
-        None
-        if binary_kernel_config is None
-        else json.dumps(
-            normalize_execution_plan_value(binary_kernel_config),
-            sort_keys=True,
-        )
-    )
     current_header_input = {
         "association_mode": association_mode.value,
         "association_backend_kind": association_backend_kind.value,
@@ -364,7 +346,7 @@ def build_current_run_manifest_header(
         "covariate_path": None if covariate_path is None else str(covariate_path),
         "covariate_names": list(covariate_names),
         "prediction_list_path": str(prediction_list_path),
-        "prediction_loco_files_json": prediction_loco_files_json,
+        "prediction_loco_files": normalize_execution_plan_value(prediction_loco_files),
         "sample_count": sample_count,
         "variant_count": variant_count,
         "chunk_size": chunk_size,
@@ -374,7 +356,9 @@ def build_current_run_manifest_header(
         "binary_correction_plan_firth_se": binary_correction_plan.firth_se,
         "trusted_no_missing_diploid": trusted_no_missing_diploid,
         "sample_key_mode": sample_key_mode.value,
-        "binary_kernel_config_json": binary_kernel_config_json,
+        "binary_kernel_config": None
+        if binary_kernel_config is None
+        else normalize_execution_plan_value(binary_kernel_config),
         "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
         "trusted_bgen_validation_mode": trusted_bgen_validation_mode.value,
         "jax_device": jax_device.value,
@@ -398,15 +382,11 @@ def build_current_run_manifest_header(
         "parquet_compression": parquet_compression.value,
         "output_statistic_dtype": output_statistic_dtype.value,
     }
-    current_header_input_json = json.dumps(current_header_input, sort_keys=True)
     resolved_fingerprint_cache = fingerprint_cache if fingerprint_cache is not None else ManifestFileFingerprintCache()
-    current_header_json = (
-        resolved_fingerprint_cache.native_cache.build_current_run_manifest_header_json_from_input_json(
-            current_header_input_json
-        )
+    prepared_header = resolved_fingerprint_cache.native_cache.build_current_run_manifest_header_payload_from_input(
+        current_header_input
     )
-    prepared_header_json = _core.build_prepared_run_manifest_header_json_from_current_header_json(current_header_json)
-    return parse_current_run_manifest_header_json(prepared_header_json)
+    return native_mapping_payload(prepared_header)
 
 
 def parse_current_run_manifest_header_json(manifest_header_json: str) -> dict[str, typing.Any]:
@@ -420,7 +400,7 @@ def parse_current_run_manifest_header_json(manifest_header_json: str) -> dict[st
 
 def build_native_prepared_run_plan_json(current_header: RunManifestHeaderInput) -> str:
     """Build the native prepared-run contract from the transitional header."""
-    return _core.build_prepared_run_plan_json_from_current_header_json(json.dumps(current_header, sort_keys=True))
+    return _core.build_prepared_run_plan_json_from_current_header(current_header)
 
 
 def validate_manifest_compatibility(
@@ -428,15 +408,12 @@ def validate_manifest_compatibility(
     current_header: RunManifestHeaderInput,
 ) -> None:
     """Validate immutable manifest fields against the current run header."""
-    _core.validate_run_manifest_compatibility(
-        json.dumps(manifest, sort_keys=True),
-        json.dumps(current_header, sort_keys=True),
-    )
+    _core.validate_run_manifest_compatibility_from_values(manifest, current_header)
 
 
 def read_manifest_committed_chunk_identifiers(manifest: dict[str, typing.Any]) -> frozenset[int]:
     """Read committed chunk identifiers from a run manifest."""
-    chunk_identifiers = _core.read_manifest_committed_chunk_identifiers(json.dumps(manifest, sort_keys=True))
+    chunk_identifiers = _core.read_manifest_committed_chunk_identifiers_from_value(manifest)
     return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
@@ -445,9 +422,9 @@ def validate_strict_manifest_chunks(
     manifest: dict[str, typing.Any],
 ) -> frozenset[int]:
     """Validate committed manifest chunks against output files."""
-    chunk_identifiers = _core.validate_strict_manifest_chunks(
+    chunk_identifiers = _core.validate_strict_manifest_chunks_from_value(
         str(output_run_paths.chunks_directory),
-        json.dumps(manifest),
+        manifest,
     )
     return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
@@ -457,16 +434,14 @@ def repair_strict_manifest_chunk_commits(
     manifest: dict[str, typing.Any],
 ) -> list[typing.Any]:
     """Recover committed chunk manifest records from output metadata."""
-    repaired_commits = json.loads(
-        _core.repair_strict_manifest_chunk_commits(
-            str(output_run_paths.chunks_directory),
-            json.dumps(manifest),
-        )
+    repaired_commits = _core.repair_strict_manifest_chunk_commits_from_value(
+        str(output_run_paths.chunks_directory),
+        manifest,
     )
-    if not isinstance(repaired_commits, list):
+    if not isinstance(repaired_commits, tuple):
         message = "Strict resume repaired committed chunks must be a list."
         raise ValueError(message)
-    return repaired_commits
+    return list(repaired_commits)
 
 
 def build_native_pipeline_output_preparation_batch(
@@ -478,14 +453,11 @@ def build_native_pipeline_output_preparation_batch(
     resume_mode: types.ResumeMode,
 ) -> _core.NativePipelineOutputPreparationBatch:
     """Build a native output-preparation batch from output adapter inputs."""
-    return _core.NativePipelineOutputPreparationBatch(
+    return _core.build_pipeline_output_preparation_batch_from_values(
         tuple(str(output_run_paths.run_directory) for output_run_paths in output_run_paths_by_trait),
         tuple(str(output_run_paths.chunks_directory) for output_run_paths in output_run_paths_by_trait),
-        tuple(
-            None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True)
-            for existing_manifest in existing_manifests_by_trait
-        ),
-        tuple(json.dumps(current_header, sort_keys=True) for current_header in current_headers_by_trait),
+        tuple(existing_manifest for existing_manifest in existing_manifests_by_trait),
+        tuple(current_header for current_header in current_headers_by_trait),
         resume,
         resume_mode.value,
     )
@@ -501,11 +473,11 @@ def initialize_output_run(
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> InitializedOutputRun:
     """Validate/write the manifest header and return accepted committed chunks."""
-    native_initialized_output_run = _core.initialize_output_run(
+    native_initialized_output_run = _core.initialize_output_run_from_values(
         str(output_run_paths.run_directory),
         str(output_run_paths.chunks_directory),
-        None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True),
-        json.dumps(current_header, sort_keys=True),
+        existing_manifest,
+        current_header,
         resume,
         resume_mode.value,
         runtime_compatibility_token,
