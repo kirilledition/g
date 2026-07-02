@@ -217,6 +217,11 @@ native-dispatch writer adapter keeps the direct Python method fallback only for
 fake and transitional test writer sessions, and the Python architecture checker
 rejects direct calls to those native writer lifecycle helpers outside that
 adapter.
+
+Phase 10 callback-runner fallback removal is complete on this branch:
+production scheduling, queue/resource ownership, worker lifecycle, result-slot,
+and dosage-buffer paths no longer use manual Python fallback ownership.
+Remaining Python side effects are tracked as Phase 11/12 adapter work.
 Native BGEN delivery cleanup no longer carries a Python timing snapshot writer
 callback; final timing snapshots and profile summaries are written once through
 the runner's native final-timing boundary after dispatch.

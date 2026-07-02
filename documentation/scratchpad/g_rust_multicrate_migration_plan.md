@@ -1471,9 +1471,12 @@ Remove Python as the chunk-level scheduler.
   GPU smoke, a bounded output-stage GPU writer checkpoint, and the `g-engine`
   fake-backend coordinator benchmark; the warmed coordinator rerun reported no
   detected performance change with a median around 311 ns.
-- Phase 10 callback-runner fallback removal is ready for a grouped local
-  checkpoint; merge from `origin/main` and push are deferred until the next
-  substantial remote checkpoint.
+- Phase 10 callback-runner fallback removal is complete for this branch:
+  production scheduling, queue/resource ownership, worker lifecycle,
+  result-slot, and dosage-buffer paths no longer use manual Python fallback
+  ownership. Remaining Python side effects are Phase 11/12 adapter work. Merge
+  from `origin/main` and push are deferred until the next substantial remote
+  checkpoint.
 
 ### Tests
 
