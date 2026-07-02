@@ -911,8 +911,9 @@ def test_native_telemetry_run_session_owns_callback_progress_events(tmp_path: Pa
         run_id="run-1",
     )
     progress_state = _core.NativeCallbackProgressState()
+    progress_policy = _core.NativeCallbackProgressPolicy()
 
-    progress_update = progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr1", 0, 8))
+    progress_update = progress_state.record_processed_chunk(progress_policy.build_callback_chunk_identity("chr1", 0, 8))
     telemetry_session.native_session_handle.emit_callback_progress_event(progress_update.telemetry_plan.events[0])
     progress_completion = progress_state.finish_progress()
     assert progress_completion is not None

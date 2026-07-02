@@ -164,11 +164,16 @@ def build_chunk_timing_identity(metadata: typing.Any) -> timing.ChunkTimingIdent
 
 def build_native_callback_chunk_identity(metadata: typing.Any) -> _core.NativeCallbackChunkIdentity:
     """Build the native callback chunk identity from metadata attributes."""
-    return _core.build_callback_chunk_identity(
+    return native_callback_progress_policy().build_callback_chunk_identity(
         chromosome=get_metadata_chromosome(metadata),
         variant_start_index=int(metadata.variant_start_index),
         variant_stop_index=int(metadata.variant_stop_index),
     )
+
+
+def native_callback_progress_policy() -> _core.NativeCallbackProgressPolicy:
+    """Build the native callback progress policy handle."""
+    return _core.NativeCallbackProgressPolicy()
 
 
 def record_stage_duration_with_optional_chunk(

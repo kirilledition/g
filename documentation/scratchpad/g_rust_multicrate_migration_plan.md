@@ -2218,6 +2218,11 @@ Current implementation notes:
   planning, BGEN delivery invocation/cleanup, and output-write method selection
   were removed from the Python-visible root surface; production enters those
   policies through `NativeSchedulePolicy`.
+- Detached callback helper exports for null-logistic nonconvergence array
+  planning, callback chunk identity construction, callback progress telemetry
+  dispatch, and binary correction summary telemetry dispatch were removed from
+  the Python-visible root surface; production enters those policies through
+  typed callback policy handles.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

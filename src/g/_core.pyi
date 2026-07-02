@@ -957,11 +957,14 @@ class NativeBinaryCorrectionSummary:
     ) -> NativeBinaryCorrectionSummaryEmitPlan: ...
     def summary_payload(self) -> dict[str, int]: ...
 
-def emit_binary_correction_summary_telemetry(
-    telemetry_session: object | None,
-    summary_payload: dict[str, int] | None,
-    missing_session_message: str,
-) -> None: ...
+class NativeBinaryCorrectionSummaryTelemetryPolicy:
+    def __init__(self) -> None: ...
+    def emit_binary_correction_summary_telemetry(
+        self,
+        telemetry_session: object | None,
+        summary_payload: dict[str, int] | None,
+        missing_session_message: str,
+    ) -> None: ...
 
 class NativeCallbackQueueLimits:
     @property
@@ -2163,19 +2166,30 @@ class NativeCallbackProgressState:
     def record_processed_chunk_without_progress(self) -> None: ...
     def finish_progress(self) -> NativeCallbackProgressCompletion | None: ...
 
-def emit_callback_progress_update_telemetry(
-    telemetry_session: object | None,
-    progress_update: NativeCallbackProgressUpdate | None,
-) -> None: ...
-def emit_callback_progress_event_telemetry(
-    telemetry_session: object | None,
-    progress_event: NativeCallbackProgressTelemetryEvent | None,
-    missing_session_message: str,
-) -> None: ...
-def emit_callback_progress_completion_telemetry(
-    telemetry_session: object | None,
-    progress_completion: NativeCallbackProgressCompletion | None,
-) -> None: ...
+class NativeCallbackProgressPolicy:
+    def __init__(self) -> None: ...
+    def build_callback_chunk_identity(
+        self,
+        chromosome: str,
+        variant_start_index: int,
+        variant_stop_index: int,
+    ) -> NativeCallbackChunkIdentity: ...
+    def emit_callback_progress_update_telemetry(
+        self,
+        telemetry_session: object | None,
+        progress_update: NativeCallbackProgressUpdate | None,
+    ) -> None: ...
+    def emit_callback_progress_event_telemetry(
+        self,
+        telemetry_session: object | None,
+        progress_event: NativeCallbackProgressTelemetryEvent | None,
+        missing_session_message: str,
+    ) -> None: ...
+    def emit_callback_progress_completion_telemetry(
+        self,
+        telemetry_session: object | None,
+        progress_completion: NativeCallbackProgressCompletion | None,
+    ) -> None: ...
 
 class NativeDosageBufferReusePlan:
     @property
@@ -3445,17 +3459,15 @@ class NativePreflightValidator:
         trait_count: int,
         sample_count: int,
     ) -> None: ...
-def build_callback_chunk_identity(
-    chromosome: str,
-    variant_start_index: int,
-    variant_stop_index: int,
-) -> NativeCallbackChunkIdentity: ...
-def plan_null_logistic_nonconvergence_from_array(
-    chromosome: str,
-    convergence_values: object,
-    phenotype_names: typing.Sequence[str] | None,
-    policy: str,
-) -> NativeNullLogisticNonconvergencePlan: ...
+class NativeCallbackDiagnosticsPolicy:
+    def __init__(self) -> None: ...
+    def plan_null_logistic_nonconvergence_from_array(
+        self,
+        chromosome: str,
+        convergence_values: object,
+        phenotype_names: typing.Sequence[str] | None,
+        policy: str,
+    ) -> NativeNullLogisticNonconvergencePlan: ...
 def close_telemetry_session_with_event(telemetry_session: object | None) -> None: ...
 def record_final_timing_outputs_write_started_diagnostic_event(
     stage_timing_path: str | None,

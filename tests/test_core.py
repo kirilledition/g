@@ -265,6 +265,11 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "resolve_native_callback_worker_shutdown_timeouts",
         "resolve_writer_finish_thread_count",
         "should_attempt_callback_worker_stop",
+        "build_callback_chunk_identity",
+        "emit_binary_correction_summary_telemetry",
+        "emit_callback_progress_completion_telemetry",
+        "emit_callback_progress_event_telemetry",
+        "emit_callback_progress_update_telemetry",
         "intersect_committed_chunk_identifier_sets",
         "plan_auto_gpu_genotype_format_after_trusted_validation",
         "plan_bgen_delivery_cleanup",
@@ -272,6 +277,7 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "plan_gpu_genotype_format_auto_to_dosage",
         "plan_multi_trait_chunk_write",
         "plan_multi_trait_output_write",
+        "plan_null_logistic_nonconvergence_from_array",
         "plan_single_trait_binary_gpu_genotype_format_resolution",
         "plan_single_trait_output_write",
         "plan_writer_finish_execution",
@@ -1305,7 +1311,9 @@ def test_native_effective_trusted_no_missing_diploid_policy() -> None:
 
 
 def test_native_null_logistic_nonconvergence_policy() -> None:
-    continue_plan = _core.plan_null_logistic_nonconvergence_from_array(
+    native_callback_diagnostics_policy = _core.NativeCallbackDiagnosticsPolicy()
+
+    continue_plan = native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
         convergence_values=np.asarray(1, dtype=np.bool_),
         phenotype_names=None,
@@ -1319,7 +1327,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert continue_plan.scalar_convergence is True
     assert continue_plan.total_fit_count == 1
 
-    fail_plan = _core.plan_null_logistic_nonconvergence_from_array(
+    fail_plan = native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
         convergence_values=np.asarray(0, dtype=np.bool_),
         phenotype_names=None,
@@ -1333,7 +1341,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert fail_plan.scalar_convergence is True
     assert fail_plan.total_fit_count == 1
 
-    warn_plan = _core.plan_null_logistic_nonconvergence_from_array(
+    warn_plan = native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
         convergence_values=np.asarray([True, False], dtype=np.bool_),
         phenotype_names=("trait_a", "trait_b"),
@@ -1350,7 +1358,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert warn_plan.scalar_convergence is False
     assert warn_plan.total_fit_count == 2
 
-    array_plan = _core.plan_null_logistic_nonconvergence_from_array(
+    array_plan = native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
         convergence_values=np.asarray([True, False, False], dtype=np.bool_),
         phenotype_names=("trait_a", "trait_b", "trait_c"),
@@ -1363,7 +1371,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert array_plan.total_fit_count == 3
 
     with pytest.raises(ValueError, match="Unsupported null logistic nonconvergence policy"):
-        _core.plan_null_logistic_nonconvergence_from_array(
+        native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
             chromosome="22",
             convergence_values=np.asarray(0, dtype=np.bool_),
             phenotype_names=None,
@@ -1371,7 +1379,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
         )
 
     with pytest.raises(ValueError, match="bool dtype"):
-        _core.plan_null_logistic_nonconvergence_from_array(
+        native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
             chromosome="22",
             convergence_values=np.asarray([0, 1], dtype=np.int32),
             phenotype_names=None,
@@ -2213,21 +2221,24 @@ def test_emit_binary_correction_summary_telemetry_uses_native_missing_session_po
             raise AssertionError(summary_payload)
 
     telemetry_session = RecordingNativeCallbackTelemetrySession()
+    telemetry_policy = _core.NativeBinaryCorrectionSummaryTelemetryPolicy()
     summary = _core.NativeBinaryCorrectionSummary()
     summary.add_null_model_failure_count(3)
     summary_payload = summary.summary_payload()
 
-    _core.emit_binary_correction_summary_telemetry(telemetry_session, summary_payload, "missing summary session")
-    _core.emit_binary_correction_summary_telemetry(None, None, "missing summary session")
-    _core.emit_binary_correction_summary_telemetry(
+    telemetry_policy.emit_binary_correction_summary_telemetry(
+        telemetry_session, summary_payload, "missing summary session"
+    )
+    telemetry_policy.emit_binary_correction_summary_telemetry(None, None, "missing summary session")
+    telemetry_policy.emit_binary_correction_summary_telemetry(
         DisabledTelemetrySession(), summary_payload, "missing summary session"
     )
 
     assert telemetry_session.binary_summaries == [summary_payload]
     with pytest.raises(RuntimeError, match="missing summary session"):
-        _core.emit_binary_correction_summary_telemetry(None, summary_payload, "missing summary session")
+        telemetry_policy.emit_binary_correction_summary_telemetry(None, summary_payload, "missing summary session")
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        _core.emit_binary_correction_summary_telemetry(
+        telemetry_policy.emit_binary_correction_summary_telemetry(
             LegacyTelemetrySession(),
             summary_payload,
             "missing summary session",
@@ -3102,9 +3113,10 @@ def test_native_callback_scheduler_state_plans_dosage_buffer_attempts() -> None:
 
 
 def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
+    native_callback_progress_policy = _core.NativeCallbackProgressPolicy()
     progress_state = _core.NativeCallbackProgressState()
 
-    first_identity = _core.build_callback_chunk_identity("chr1", 0, 8)
+    first_identity = native_callback_progress_policy.build_callback_chunk_identity("chr1", 0, 8)
     assert first_identity.chunk_identifier == 0
     assert first_identity.chromosome == "chr1"
     assert first_identity.variant_start_index == 0
@@ -3132,7 +3144,9 @@ def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
     assert first_telemetry_plan.progress.variant_stop_index == 8
     assert first_telemetry_plan.progress.variant_count == 8
 
-    second_update = progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr2", 8, 10))
+    second_update = progress_state.record_processed_chunk(
+        native_callback_progress_policy.build_callback_chunk_identity("chr2", 8, 10)
+    )
     assert second_update.processed_chunk_count == 2
     assert second_update.completed_chromosome == "chr1"
     assert second_update.completed_processed_chunk_count == 1
@@ -3175,12 +3189,15 @@ def test_emit_callback_progress_update_telemetry_uses_native_plan() -> None:
             raise AssertionError(fields)
 
     telemetry_session = RecordingNativeCallbackTelemetrySession()
+    native_callback_progress_policy = _core.NativeCallbackProgressPolicy()
     progress_state = _core.NativeCallbackProgressState()
-    progress_update = progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr1", 0, 8))
+    progress_update = progress_state.record_processed_chunk(
+        native_callback_progress_policy.build_callback_chunk_identity("chr1", 0, 8)
+    )
 
-    _core.emit_callback_progress_update_telemetry(telemetry_session, progress_update)
-    _core.emit_callback_progress_update_telemetry(None, None)
-    _core.emit_callback_progress_update_telemetry(DisabledTelemetrySession(), progress_update)
+    native_callback_progress_policy.emit_callback_progress_update_telemetry(telemetry_session, progress_update)
+    native_callback_progress_policy.emit_callback_progress_update_telemetry(None, None)
+    native_callback_progress_policy.emit_callback_progress_update_telemetry(DisabledTelemetrySession(), progress_update)
 
     assert telemetry_session.progress_events == [("chromosome_started", "info", "chr1", 1)]
     assert telemetry_session.progress_records == [
@@ -3194,9 +3211,11 @@ def test_emit_callback_progress_update_telemetry_uses_native_plan() -> None:
         }
     ]
     with pytest.raises(RuntimeError, match="Native callback progress plan selected a missing telemetry session"):
-        _core.emit_callback_progress_update_telemetry(None, progress_update)
+        native_callback_progress_policy.emit_callback_progress_update_telemetry(None, progress_update)
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        _core.emit_callback_progress_update_telemetry(LegacyTelemetrySession(), progress_update)
+        native_callback_progress_policy.emit_callback_progress_update_telemetry(
+            LegacyTelemetrySession(), progress_update
+        )
 
 
 def test_emit_callback_progress_completion_telemetry_preserves_optional_session_behavior() -> None:
@@ -3208,19 +3227,26 @@ def test_emit_callback_progress_completion_telemetry_preserves_optional_session_
             raise AssertionError(progress_event)
 
     telemetry_session = RecordingNativeCallbackTelemetrySession()
+    native_callback_progress_policy = _core.NativeCallbackProgressPolicy()
     progress_state = _core.NativeCallbackProgressState()
-    progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr2", 0, 4))
+    progress_state.record_processed_chunk(native_callback_progress_policy.build_callback_chunk_identity("chr2", 0, 4))
     progress_completion = progress_state.finish_progress()
     assert progress_completion is not None
 
-    _core.emit_callback_progress_completion_telemetry(None, progress_completion)
-    _core.emit_callback_progress_completion_telemetry(telemetry_session, None)
-    _core.emit_callback_progress_completion_telemetry(DisabledTelemetrySession(), progress_completion)
-    _core.emit_callback_progress_completion_telemetry(telemetry_session, progress_completion)
+    native_callback_progress_policy.emit_callback_progress_completion_telemetry(None, progress_completion)
+    native_callback_progress_policy.emit_callback_progress_completion_telemetry(telemetry_session, None)
+    native_callback_progress_policy.emit_callback_progress_completion_telemetry(
+        DisabledTelemetrySession(),
+        progress_completion,
+    )
+    native_callback_progress_policy.emit_callback_progress_completion_telemetry(telemetry_session, progress_completion)
 
     assert telemetry_session.progress_events == [("chromosome_completed", "info", "chr2", 1)]
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        _core.emit_callback_progress_completion_telemetry(LegacyTelemetrySession(), progress_completion)
+        native_callback_progress_policy.emit_callback_progress_completion_telemetry(
+            LegacyTelemetrySession(),
+            progress_completion,
+        )
 
 
 def test_emit_callback_progress_event_telemetry_uses_native_missing_session_policy() -> None:
@@ -3232,21 +3258,28 @@ def test_emit_callback_progress_event_telemetry_uses_native_missing_session_poli
             raise AssertionError(progress_event)
 
     telemetry_session = RecordingNativeCallbackTelemetrySession()
+    native_callback_progress_policy = _core.NativeCallbackProgressPolicy()
     progress_state = _core.NativeCallbackProgressState()
-    progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr3", 0, 6))
+    progress_state.record_processed_chunk(native_callback_progress_policy.build_callback_chunk_identity("chr3", 0, 6))
     progress_completion = progress_state.finish_progress()
     assert progress_completion is not None
     progress_event = progress_completion.telemetry_event
 
-    _core.emit_callback_progress_event_telemetry(telemetry_session, progress_event, "missing progress session")
-    _core.emit_callback_progress_event_telemetry(None, None, "missing progress session")
-    _core.emit_callback_progress_event_telemetry(DisabledTelemetrySession(), progress_event, "missing progress session")
+    native_callback_progress_policy.emit_callback_progress_event_telemetry(
+        telemetry_session, progress_event, "missing progress session"
+    )
+    native_callback_progress_policy.emit_callback_progress_event_telemetry(None, None, "missing progress session")
+    native_callback_progress_policy.emit_callback_progress_event_telemetry(
+        DisabledTelemetrySession(), progress_event, "missing progress session"
+    )
 
     assert telemetry_session.progress_events == [("chromosome_completed", "info", "chr3", 1)]
     with pytest.raises(RuntimeError, match="missing progress session"):
-        _core.emit_callback_progress_event_telemetry(None, progress_event, "missing progress session")
+        native_callback_progress_policy.emit_callback_progress_event_telemetry(
+            None, progress_event, "missing progress session"
+        )
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        _core.emit_callback_progress_event_telemetry(
+        native_callback_progress_policy.emit_callback_progress_event_telemetry(
             LegacyTelemetrySession(),
             progress_event,
             "missing progress session",

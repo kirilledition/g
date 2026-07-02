@@ -13,6 +13,9 @@ pub(crate) struct NativeNullLogisticNonconvergencePlan {
     inner: native_callback_diagnostics::NullLogisticNonconvergencePlan,
 }
 
+#[pyclass]
+pub(crate) struct NativeCallbackDiagnosticsPolicy;
+
 #[pymethods]
 impl NativeNullLogisticNonconvergencePlan {
     #[getter]
@@ -57,38 +60,47 @@ impl From<native_callback_diagnostics::NullLogisticNonconvergencePlan> for Nativ
     }
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_null_logistic_nonconvergence_from_array(
-    py: Python<'_>,
-    chromosome: String,
-    convergence_values: &Bound<'_, PyUntypedArray>,
-    phenotype_names: Option<Vec<String>>,
-    policy: String,
-) -> PyResult<NativeNullLogisticNonconvergencePlan> {
-    let element_type = convergence_values.dtype();
-    if !element_type.is_equiv_to(&dtype::<bool>(py)) {
-        return Err(PyValueError::new_err("Null logistic convergence values must have bool dtype."));
+#[pymethods]
+impl NativeCallbackDiagnosticsPolicy {
+    #[new]
+    fn new() -> Self {
+        Self
     }
-    let typed_values = convergence_values.cast::<PyArray<bool, IxDyn>>()?;
-    let readonly_values = typed_values.readonly();
-    let convergence_array = readonly_values.as_array();
-    let scalar_convergence = convergence_array.shape().is_empty();
-    let convergence_flags = convergence_array.iter().copied().collect::<Vec<_>>();
-    native_callback_diagnostics::plan_null_logistic_nonconvergence(
-        &chromosome,
-        &convergence_flags,
-        scalar_convergence,
-        phenotype_names.as_deref(),
-        &policy,
-    )
-    .map(Into::into)
-    .map_err(|error| callback_diagnostics_error_to_py(&error))
+
+    #[allow(clippy::unused_self)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn plan_null_logistic_nonconvergence_from_array(
+        &self,
+        py: Python<'_>,
+        chromosome: String,
+        convergence_values: &Bound<'_, PyUntypedArray>,
+        phenotype_names: Option<Vec<String>>,
+        policy: String,
+    ) -> PyResult<NativeNullLogisticNonconvergencePlan> {
+        let element_type = convergence_values.dtype();
+        if !element_type.is_equiv_to(&dtype::<bool>(py)) {
+            return Err(PyValueError::new_err("Null logistic convergence values must have bool dtype."));
+        }
+        let typed_values = convergence_values.cast::<PyArray<bool, IxDyn>>()?;
+        let readonly_values = typed_values.readonly();
+        let convergence_array = readonly_values.as_array();
+        let scalar_convergence = convergence_array.shape().is_empty();
+        let convergence_flags = convergence_array.iter().copied().collect::<Vec<_>>();
+        native_callback_diagnostics::plan_null_logistic_nonconvergence(
+            &chromosome,
+            &convergence_flags,
+            scalar_convergence,
+            phenotype_names.as_deref(),
+            &policy,
+        )
+        .map(Into::into)
+        .map_err(|error| callback_diagnostics_error_to_py(&error))
+    }
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeCallbackDiagnosticsPolicy>()?;
     module.add_class::<NativeNullLogisticNonconvergencePlan>()?;
-    module.add_function(wrap_pyfunction!(plan_null_logistic_nonconvergence_from_array, module)?)?;
     Ok(())
 }
 

@@ -177,6 +177,8 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
                 "module.add_function(wrap_pyfunction!(resolve_manifest_gpu_genotype_format, module)?)?;",
                 "module.add_function(wrap_pyfunction!(build_preflight_report_payload, module)?)?;",
                 "module.add_function(wrap_pyfunction!(validate_finite_array_values, module)?)?;",
+                "module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;",
+                "module.add_function(wrap_pyfunction!(emit_callback_progress_update_telemetry, module)?)?;",
             )
         ),
         encoding="utf-8",
@@ -363,6 +365,18 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
             source_path=Path("src/python/shutdown.rs"),
             export_name="validate_finite_array_values",
             line_number=30,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="build_callback_chunk_identity",
+            line_number=31,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="emit_callback_progress_update_telemetry",
+            line_number=32,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

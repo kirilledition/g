@@ -9,7 +9,7 @@ use pyo3::types::{PyAny, PyDict, PyModule, PySlice, PyTuple};
 
 use super::callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
-    NativeCallbackProgressTelemetryEvent, NativeCallbackProgressUpdate, build_callback_chunk_identity,
+    NativeCallbackProgressTelemetryEvent, NativeCallbackProgressUpdate, build_callback_chunk_identity_value,
 };
 use super::callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
@@ -61,7 +61,7 @@ fn callback_chunk_identity_from_metadata(metadata: &Bound<'_, PyAny>) -> PyResul
     let chromosome = metadata_chromosome_value(metadata)?;
     let variant_start_index = metadata.getattr("variant_start_index")?.extract::<i64>()?;
     let variant_stop_index = metadata.getattr("variant_stop_index")?.extract::<i64>()?;
-    Ok(build_callback_chunk_identity(chromosome, variant_start_index, variant_stop_index))
+    Ok(build_callback_chunk_identity_value(chromosome, variant_start_index, variant_stop_index))
 }
 
 #[pyclass]

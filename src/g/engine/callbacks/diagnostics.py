@@ -101,7 +101,7 @@ def enforce_host_null_logistic_nonconvergence_policy(
     phenotype_names: tuple[str, ...] | None,
 ) -> _core.NativeNullLogisticNonconvergencePlan:
     """Raise or warn using already materialized null-logistic convergence flags."""
-    native_policy_plan = _core.plan_null_logistic_nonconvergence_from_array(
+    native_policy_plan = native_callback_diagnostics_policy().plan_null_logistic_nonconvergence_from_array(
         chromosome=chromosome,
         convergence_values=convergence_flags,
         phenotype_names=phenotype_names,
@@ -127,6 +127,11 @@ def enforce_host_null_logistic_nonconvergence_policy(
         total_fit_count=native_policy_plan.total_fit_count,
     )
     return native_policy_plan
+
+
+def native_callback_diagnostics_policy() -> _core.NativeCallbackDiagnosticsPolicy:
+    """Build the native callback diagnostics policy handle."""
+    return _core.NativeCallbackDiagnosticsPolicy()
 
 
 def record_binary_chunk_diagnostics(

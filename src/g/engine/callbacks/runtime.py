@@ -53,6 +53,16 @@ record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_dia
 binary_chunk_diagnostics_to_summary_counts = diagnostics.binary_chunk_diagnostics_to_summary_counts
 
 
+def native_callback_progress_policy() -> _core.NativeCallbackProgressPolicy:
+    """Build the native callback progress telemetry policy handle."""
+    return _core.NativeCallbackProgressPolicy()
+
+
+def native_binary_correction_summary_telemetry_policy() -> _core.NativeBinaryCorrectionSummaryTelemetryPolicy:
+    """Build the native binary correction summary telemetry policy handle."""
+    return _core.NativeBinaryCorrectionSummaryTelemetryPolicy()
+
+
 class ResultWriteItemKind(enum.StrEnum):
     """Native result-write work-item kind values."""
 
@@ -1124,12 +1134,17 @@ class NativeBgenCallbackRunner(abc.ABC):
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""
         progress_update = self.callback_runtime_resources.record_progress_for_metadata(metadata)
-        _core.emit_callback_progress_update_telemetry(self.telemetry_session, progress_update)
+        native_callback_progress_policy().emit_callback_progress_update_telemetry(
+            self.telemetry_session, progress_update
+        )
 
     def complete_progress(self) -> None:
         """Emit the native final progress completion event when telemetry consumed chunks."""
         progress_completion = self.finish_progress_state()
-        _core.emit_callback_progress_completion_telemetry(self.telemetry_session, progress_completion)
+        native_callback_progress_policy().emit_callback_progress_completion_telemetry(
+            self.telemetry_session,
+            progress_completion,
+        )
 
     def record_binary_null_model_failure_count(self, failure_count: int) -> None:
         """Accumulate binary null-model failures for run-level telemetry."""
@@ -1204,7 +1219,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         if not summary_emit_plan.should_emit_summary:
             return
         summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
-        _core.emit_binary_correction_summary_telemetry(
+        native_binary_correction_summary_telemetry_policy().emit_binary_correction_summary_telemetry(
             self.telemetry_session,
             summary_payload,
             "Native binary correction summary emit plan selected a missing telemetry session.",
@@ -1446,7 +1461,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         if finish_result.raise_worker_error:
             self.raise_worker_error_if_present()
         progress_completion_event = finish_result.progress_completion_event
-        _core.emit_callback_progress_event_telemetry(
+        native_callback_progress_policy().emit_callback_progress_event_telemetry(
             self.telemetry_session,
             progress_completion_event,
             "Native callback worker finish result selected a missing telemetry session.",
@@ -1456,7 +1471,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             if summary_payload is None and finish_result.flush_binary_correction_pending_diagnostics:
                 self.materialize_binary_correction_pending_diagnostics()
                 summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
-            _core.emit_binary_correction_summary_telemetry(
+            native_binary_correction_summary_telemetry_policy().emit_binary_correction_summary_telemetry(
                 self.telemetry_session,
                 summary_payload,
                 "Native callback worker finish result selected a missing telemetry session.",
