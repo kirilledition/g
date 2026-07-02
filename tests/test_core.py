@@ -205,6 +205,9 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "plan_telemetry_progress_emission")
     assert not hasattr(_core, "plan_timing_file_write")
     assert not hasattr(_core, "plan_trusted_bgen_validation_cache_lookup")
+    assert not hasattr(_core, "validate_binary_phenotype_case_control_counts")
+    assert not hasattr(_core, "validate_binary_phenotype_coding")
+    assert not hasattr(_core, "validate_finite_array")
     assert not hasattr(_core, "write_trusted_bgen_validation_cache_payload")
     assert not hasattr(_core.Regenie2RunEngine, "validate_trusted_no_missing_diploid_with_cache")
 
@@ -957,31 +960,19 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
 
 
 def test_native_preflight_binary_and_prediction_shape_policy() -> None:
-    _core.validate_binary_phenotype_case_control_counts(case_count=1, control_count=2)
-    _core.validate_finite_array("Phenotype", all_values_finite=True)
     _core.validate_finite_array_values("Phenotype", np.asarray([0.0, 1.0], dtype=np.float32))
     _core.validate_finite_array_values("Integer phenotype", np.asarray([0, 1], dtype=np.int64))
     _core.validate_covariate_matrix_rank(covariate_rank=2, covariate_count=2)
-    _core.validate_binary_phenotype_coding(is_binary_coded=True)
     _core.validate_binary_phenotype_array(np.asarray([0.0, 1.0, 1.0], dtype=np.float64))
     _core.validate_binary_phenotype_array(np.asarray([False, True, True], dtype=np.bool_))
     _core.validate_single_prediction_preflight_shape("1", (3,), sample_count=3)
     _core.validate_multi_prediction_preflight_shape("2", (2, 3), trait_count=2, sample_count=3)
-
-    with pytest.raises(ValueError, match="Binary phenotype must contain at least one case and one control"):
-        _core.validate_binary_phenotype_case_control_counts(case_count=0, control_count=2)
-
-    with pytest.raises(ValueError, match="Phenotype contains non-finite values"):
-        _core.validate_finite_array("Phenotype", all_values_finite=False)
 
     with pytest.raises(ValueError, match="Phenotype contains non-finite values"):
         _core.validate_finite_array_values("Phenotype", np.asarray([0.0, np.nan], dtype=np.float64))
 
     with pytest.raises(ValueError, match="Covariate matrix is rank deficient"):
         _core.validate_covariate_matrix_rank(covariate_rank=1, covariate_count=2)
-
-    with pytest.raises(ValueError, match="Binary phenotype must be coded as 0/1 after alignment"):
-        _core.validate_binary_phenotype_coding(is_binary_coded=False)
 
     with pytest.raises(ValueError, match="Binary phenotype must be coded as 0/1 after alignment"):
         _core.validate_binary_phenotype_array(np.asarray([0.0, 0.5, 1.0], dtype=np.float32))

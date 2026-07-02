@@ -2079,6 +2079,10 @@ Current implementation notes:
   from the Python-visible root surface; production now enters those policies
   through native telemetry sessions, telemetry close dispatch, stage timing
   recorder construction, and final timing output methods.
+- Detached scalar preflight validator helpers were removed from the
+  Python-visible root surface; production preflight keeps the typed finite-array
+  and binary-phenotype array entry points that execute the native scans before
+  applying `g-engine` validation policy.
 
 ### Tests
 

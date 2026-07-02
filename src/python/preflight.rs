@@ -199,12 +199,6 @@ pub(crate) fn validate_multi_trait_preflight_shape_payload<'py>(
 }
 
 #[pyfunction]
-pub(crate) fn validate_binary_phenotype_case_control_counts(case_count: i64, control_count: i64) -> PyResult<()> {
-    native_preflight::validate_binary_phenotype_case_control_counts(case_count, control_count)
-        .map_err(|error| preflight_error_to_py(&error))
-}
-
-#[pyfunction]
 pub(crate) fn validate_finite_array_values(
     py: Python<'_>,
     label: &str,
@@ -214,19 +208,9 @@ pub(crate) fn validate_finite_array_values(
 }
 
 #[pyfunction]
-pub(crate) fn validate_finite_array(label: &str, all_values_finite: bool) -> PyResult<()> {
-    native_preflight::validate_finite_array(label, all_values_finite).map_err(|error| preflight_error_to_py(&error))
-}
-
-#[pyfunction]
 pub(crate) fn validate_covariate_matrix_rank(covariate_rank: i64, covariate_count: i64) -> PyResult<()> {
     native_preflight::validate_covariate_matrix_rank(covariate_rank, covariate_count)
         .map_err(|error| preflight_error_to_py(&error))
-}
-
-#[pyfunction]
-pub(crate) fn validate_binary_phenotype_coding(is_binary_coded: bool) -> PyResult<()> {
-    native_preflight::validate_binary_phenotype_coding(is_binary_coded).map_err(|error| preflight_error_to_py(&error))
 }
 
 #[pyfunction]
@@ -269,10 +253,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_preflight_report_payload, module)?)?;
     module.add_function(wrap_pyfunction!(validate_binary_phenotype_array, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_preflight_variant_count, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_binary_phenotype_case_control_counts, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_binary_phenotype_coding, module)?)?;
     module.add_function(wrap_pyfunction!(validate_covariate_matrix_rank, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_finite_array, module)?)?;
     module.add_function(wrap_pyfunction!(validate_finite_array_values, module)?)?;
     module.add_function(wrap_pyfunction!(validate_multi_prediction_preflight_shape, module)?)?;
     module.add_function(wrap_pyfunction!(validate_multi_trait_preflight_shape_payload, module)?)?;

@@ -66,6 +66,9 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
         "raise_second_signal_exception",
         "record_jax_runtime_diagnostic_log_event",
         "resolve_jax_runtime_setup_payload",
+        "validate_binary_phenotype_case_control_counts",
+        "validate_binary_phenotype_coding",
+        "validate_finite_array",
         "write_trusted_bgen_validation_cache_payload",
     )
 )
