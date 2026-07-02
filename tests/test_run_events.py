@@ -125,7 +125,8 @@ def test_attach_run_metadata_uses_native_artifact_tree_builder() -> None:
 
 
 def test_execution_run_artifacts_uses_native_artifact_tree_builder() -> None:
-    native_payload = _core.build_execution_run_artifacts_payload(
+    native_metadata_builder = _core.NativeRunMetadataBuilder()
+    native_payload = native_metadata_builder.build_execution_run_artifacts_payload(
         types.AssociationMode.REGENIE2_LINEAR.value,
         2,
         "parquet",
@@ -147,10 +148,13 @@ def test_execution_run_artifacts_uses_native_artifact_tree_builder() -> None:
     assert artifacts.phenotype_artifacts[0].phenotype_name == "height"
     assert artifacts.phenotype_artifacts[1].final_dataset == Path("out/weight/run/parts")
     assert artifacts.phenotype_artifacts[1].phenotype_count == 2
+    assert not hasattr(_core, "build_execution_run_artifacts_payload")
+    assert not hasattr(_core, "extend_run_manifest_metadata")
 
 
 def test_execution_run_artifacts_single_phenotype_has_no_wrapper() -> None:
-    native_payload = _core.build_execution_run_artifacts_payload(
+    native_metadata_builder = _core.NativeRunMetadataBuilder()
+    native_payload = native_metadata_builder.build_execution_run_artifacts_payload(
         types.AssociationMode.REGENIE2_LINEAR.value,
         1,
         "regenie",

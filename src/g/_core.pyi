@@ -776,6 +776,21 @@ class NativeTelemetrySessionPolicy:
     def profile_enabled(self) -> bool: ...
     @property
     def event_cap(self) -> int | None: ...
+    def resolve_output_run_root_value(
+        self,
+        output_path: str,
+        output_run_directory: str | None,
+    ) -> str: ...
+    def resolve_paths_payload(
+        self,
+        output_path: str,
+        output_run_directory: str | None,
+        log_dir: str | None,
+        log_file: str | None,
+        trace_file: str | None,
+        profile_summary_json: str | None,
+        stage_timings_json: str | None,
+    ) -> dict[str, object]: ...
 
 class NativeTelemetrySession:
     def __init__(
@@ -2806,20 +2821,6 @@ def initialize_logging(
     trace_event_cap: int | None = None,
 ) -> bool: ...
 def shutdown_logging() -> None: ...
-def resolve_telemetry_output_run_root_value(
-    output_path: str,
-    output_run_directory: str | None,
-) -> str: ...
-def resolve_telemetry_paths_payload(
-    output_path: str,
-    output_run_directory: str | None,
-    telemetry_mode: str,
-    log_dir: str | None,
-    log_file: str | None,
-    trace_file: str | None,
-    profile_summary_json: str | None,
-    stage_timings_json: str | None,
-) -> dict[str, object]: ...
 def attach_run_metadata_payload(
     artifacts: object,
     run_id: str | None,
@@ -3196,35 +3197,39 @@ def record_native_cli_failed_line_diagnostic_event(
 def record_native_cli_completed_line_diagnostic_event(
     line: str,
 ) -> None: ...
-def build_execution_run_artifacts_payload(
-    association_mode: str,
-    phenotype_count: int,
-    output_format: str,
-    output_run_directories: tuple[str, ...],
-    chunks_directories: tuple[str, ...],
-    effective_configs: tuple[str, ...],
-    phenotype_names: tuple[str, ...],
-    final_output_paths: tuple[str | None, ...],
-) -> dict[str, object]: ...
-def extend_run_manifest_metadata(
-    run_directory: str,
-    phenotype_name: str,
-    effective_config: str,
-    output_format: str,
-    device: str,
-    staging_depth: int,
-    native_callback_batch_size: int,
-    threads: int | None,
-    writer_threads: int,
-    writer_queue_depth: int,
-    chunks_per_arrow_file: int,
-    arrow_compression: str,
-    parquet_compression: str,
-    output_statistic_dtype: str,
-    bgen_decode_tile_variant_count: int,
-    trusted_no_missing_diploid: bool,
-    trusted_bgen_validation_mode: str,
-) -> None: ...
+class NativeRunMetadataBuilder:
+    def __init__(self) -> None: ...
+    def build_execution_run_artifacts_payload(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        output_format: str,
+        output_run_directories: tuple[str, ...],
+        chunks_directories: tuple[str, ...],
+        effective_configs: tuple[str, ...],
+        phenotype_names: tuple[str, ...],
+        final_output_paths: tuple[str | None, ...],
+    ) -> dict[str, object]: ...
+    def extend_run_manifest_metadata(
+        self,
+        run_directory: str,
+        phenotype_name: str,
+        effective_config: str,
+        output_format: str,
+        device: str,
+        staging_depth: int,
+        native_callback_batch_size: int,
+        threads: int | None,
+        writer_threads: int,
+        writer_queue_depth: int,
+        chunks_per_arrow_file: int,
+        arrow_compression: str,
+        parquet_compression: str,
+        output_statistic_dtype: str,
+        bgen_decode_tile_variant_count: int,
+        trusted_no_missing_diploid: bool,
+        trusted_bgen_validation_mode: str,
+    ) -> None: ...
 def render_run_completed_lines(event: object) -> tuple[str, ...]: ...
 def render_run_interrupted_lines(event: object) -> tuple[str, ...]: ...
 def render_run_failed_lines(event: object) -> tuple[str, ...]: ...

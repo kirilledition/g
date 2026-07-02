@@ -123,6 +123,9 @@ native tests use `NativeTelemetrySessionPolicy`.
 Unused telemetry utility helpers for timestamp formatting, stream-file
 resolution, path comparison, and explicit run-ID generation are no longer root
 PyO3 exports.
+Detached telemetry output-run root and telemetry path payload helpers are also
+no longer root PyO3 functions; production resolves those paths through
+`NativeTelemetrySessionPolicy`.
 Standalone shutdown signal/default-list/second-signal helper exports have also
 been removed; Python enters shutdown policy through `NativeShutdownController`.
 It also rejects direct production event emission through `TelemetrySession`
@@ -281,10 +284,10 @@ typed mapping boundary.
 The Rust architecture checker also rejects re-exporting the removed
 run-request JSON helper and pipeline output-preparation JSON batch initializer
 functions, plus removed JSON compatibility class methods/getters.
-Run-start manifest command/runtime metadata extension now goes through a native
-`g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
-longer loads, mutates, serializes, and rewrites run manifests for that
-metadata.
+Run-start manifest command/runtime metadata extension now goes through the
+`NativeRunMetadataBuilder` handle before the native `g-output` manifest upsert;
+Python no longer loads, mutates, serializes, and rewrites run manifests for
+that metadata.
 Real `OutputWriterSession` finish, interrupted flush, and abort cleanup now
 route through root PyO3 module functions before entering `g-output`. The
 native-dispatch writer adapter keeps the direct Python method fallback only for

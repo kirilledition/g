@@ -345,6 +345,7 @@ def test_run_metadata_policy_rejects_direct_native_metadata_helpers(tmp_path: Pa
                 "from g import _core",
                 "import g",
                 "def build_metadata():",
+                "    _core.NativeRunMetadataBuilder()",
                 "    _core.build_execution_run_artifacts_payload()",
                 "    g._core.extend_run_manifest_metadata()",
             )
@@ -356,6 +357,7 @@ def test_run_metadata_policy_rejects_direct_native_metadata_helpers(tmp_path: Pa
             (
                 "from g import _core",
                 "def build_metadata():",
+                "    _core.NativeRunMetadataBuilder()",
                 "    _core.build_execution_run_artifacts_payload()",
                 "    _core.extend_run_manifest_metadata()",
             )
@@ -372,12 +374,18 @@ def test_run_metadata_policy_rejects_direct_native_metadata_helpers(tmp_path: Pa
         (
             Path("g/runner/execution.py"),
             4,
+            "_core.NativeRunMetadataBuilder",
+            "_core.NativeRunMetadataBuilder",
+        ),
+        (
+            Path("g/runner/execution.py"),
+            5,
             "_core.build_execution_run_artifacts_payload",
             "_core.build_execution_run_artifacts_payload",
         ),
         (
             Path("g/runner/execution.py"),
-            5,
+            6,
             "g._core.extend_run_manifest_metadata",
             "_core.extend_run_manifest_metadata",
         ),

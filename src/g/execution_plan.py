@@ -490,8 +490,8 @@ def require_mapping(payload: dict[str, typing.Any], key: str) -> dict[str, typin
 def require_mapping_sequence(payload: dict[str, typing.Any], key: str) -> tuple[dict[str, typing.Any], ...]:
     """Return a tuple of nested mappings from a native JSON payload."""
     value = payload[key]
-    if not isinstance(value, list):
-        message = f"Native run request field {key!r} must be a list."
+    if not isinstance(value, list | tuple):
+        message = f"Native run request field {key!r} must be a sequence."
         raise TypeError(message)
     mappings: list[dict[str, typing.Any]] = []
     for item in value:
@@ -514,8 +514,8 @@ def optional_path_from_request(value: object) -> Path | None:
 
 def string_tuple_from_request(value: object) -> tuple[str, ...]:
     """Adapt a string list from a native JSON payload."""
-    if not isinstance(value, list):
-        message = "Native run request string sequence must be a list."
+    if not isinstance(value, list | tuple):
+        message = "Native run request string sequence must be a sequence."
         raise TypeError(message)
     strings: list[str] = []
     for item in value:

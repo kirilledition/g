@@ -2137,6 +2137,9 @@ Current implementation notes:
 - The Python architecture checker now guards native run-metadata helper calls
   outside `g.runner.metadata`, keeping execution artifact construction and
   manifest metadata upserts behind the runner metadata adapter.
+- Detached execution artifact and run-manifest metadata helper functions were
+  removed from the Python-visible root surface; production now enters both
+  through `NativeRunMetadataBuilder`.
 - Run artifact sequence validation and per-phenotype artifact input assembly
   moved from the root PyO3 adapter into `g-runtime`; the root adapter now only
   translates Python arguments and serializes native artifact payloads.
@@ -2168,6 +2171,9 @@ Current implementation notes:
 - Detached CLI run-failed plan/emission and telemetry close-failure helpers
   were removed from the Python-visible root surface; production now enters
   those policies through `NativeCliRunLifecycleState`.
+- Detached telemetry output-run root and telemetry path payload helpers were
+  removed from the Python-visible root surface; production now enters that
+  path policy through `NativeTelemetrySessionPolicy`.
 - Detached scalar preflight validator helpers were removed from the
   Python-visible root surface; production preflight keeps the typed finite-array
   and binary-phenotype array entry points that execute the native scans before

@@ -253,6 +253,7 @@ PYTHON_CALL_POLICIES = (
         name="native_run_metadata_adapter_isolation",
         source_directory=Path(),
         forbidden_calls=(
+            "_core.NativeRunMetadataBuilder",
             "_core.build_execution_run_artifacts_payload",
             "_core.extend_run_manifest_metadata",
         ),

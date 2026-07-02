@@ -163,6 +163,10 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
                 "module.add_function(wrap_pyfunction!(emit_cli_run_failed_telemetry_event, module)?)?;",
                 "module.add_function(wrap_pyfunction!(plan_cli_telemetry_close_failure, module)?)?;",
                 "module.add_class::<NativeCliRunFailureTelemetryPlan>()?;",
+                "module.add_function(wrap_pyfunction!(resolve_telemetry_output_run_root_value, module)?)?;",
+                "module.add_function(wrap_pyfunction!(resolve_telemetry_paths_payload, module)?)?;",
+                "module.add_function(wrap_pyfunction!(build_execution_run_artifacts_payload, module)?)?;",
+                "module.add_function(wrap_pyfunction!(extend_run_manifest_metadata, module)?)?;",
             )
         ),
         encoding="utf-8",
@@ -265,6 +269,30 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
             source_path=Path("src/python/shutdown.rs"),
             export_name="NativeCliRunFailureTelemetryPlan",
             line_number=16,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="resolve_telemetry_output_run_root_value",
+            line_number=17,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="resolve_telemetry_paths_payload",
+            line_number=18,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="build_execution_run_artifacts_payload",
+            line_number=19,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="extend_run_manifest_metadata",
+            line_number=20,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

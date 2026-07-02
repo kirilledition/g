@@ -88,8 +88,9 @@ def finalize_execution_plan(
 ) -> RunArtifacts:
     """Build user-facing artifacts after native execution."""
     del regenie_config
+    native_metadata_builder = _core.NativeRunMetadataBuilder()
     artifacts = run_events.run_artifacts_from_native_payload(
-        _core.build_execution_run_artifacts_payload(
+        native_metadata_builder.build_execution_run_artifacts_payload(
             plan.association_mode.value,
             len(plan.phenotype_run_plans),
             plan.output_plan.writer_settings.output_format.value,
@@ -122,7 +123,8 @@ def extend_run_manifest(
     phenotype_run_plan: execution_plan.PhenotypeRunPlan,
 ) -> None:
     """Add command and runtime metadata to a run manifest."""
-    _core.extend_run_manifest_metadata(
+    native_metadata_builder = _core.NativeRunMetadataBuilder()
+    native_metadata_builder.extend_run_manifest_metadata(
         str(phenotype_run_plan.output_run_paths.run_directory),
         phenotype_run_plan.phenotype_name,
         str(phenotype_run_plan.effective_config_path),

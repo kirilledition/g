@@ -435,6 +435,8 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     assert disabled_trace_cap_policy.enabled
     assert disabled_trace_cap_policy.profile_enabled
     assert disabled_trace_cap_policy.event_cap is None
+    assert not hasattr(_core, "resolve_telemetry_output_run_root_value")
+    assert not hasattr(_core, "resolve_telemetry_paths_payload")
     assert isinstance(off_session.native_session_handle, _core.NativeTelemetryRunSession)
     assert not off_session.enabled
     assert not off_session.profile_enabled
