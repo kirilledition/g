@@ -2448,9 +2448,6 @@ class NativeFinalTimingOutputContext:
     run_id: str | None
     force_stage_timing_recorder: bool
 
-class NativeCliRunFailureTelemetryPlan:
-    should_log_run_failed_to_telemetry: bool
-
 class NativeCliTelemetryCloseFailurePlan:
     should_report_failure: bool
     exit_code: int
@@ -2460,17 +2457,16 @@ class NativeCliRunLifecycleState:
     @property
     def runner_started(self) -> bool: ...
     def mark_runner_started(self) -> None: ...
-    def plan_run_failed_telemetry(self) -> NativeCliRunFailureTelemetryPlan: ...
-
-def emit_cli_run_failed_telemetry_event(
-    telemetry_session: object | None,
-    failed_event: object,
-    should_log_run_failed_to_telemetry: bool,
-) -> None: ...
-def plan_cli_telemetry_close_failure(
-    current_exit_code: int,
-    runtime_failure_exit_code: int,
-) -> NativeCliTelemetryCloseFailurePlan: ...
+    def emit_run_failed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        failed_event: object,
+    ) -> None: ...
+    def plan_telemetry_close_failure(
+        self,
+        current_exit_code: int,
+        runtime_failure_exit_code: int,
+    ) -> NativeCliTelemetryCloseFailurePlan: ...
 def resolve_final_timing_output_context(
     diagnostics_stage_timing_path: str | None,
     telemetry_session: object | None,

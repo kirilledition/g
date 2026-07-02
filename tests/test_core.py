@@ -1390,20 +1390,17 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
         )
 
 
-def test_native_cli_run_lifecycle_state_plans_failed_telemetry() -> None:
+def test_native_cli_run_lifecycle_state_tracks_runner_started() -> None:
     cli_lifecycle_state = _core.NativeCliRunLifecycleState()
 
-    initial_plan = cli_lifecycle_state.plan_run_failed_telemetry()
-
     assert cli_lifecycle_state.runner_started is False
-    assert isinstance(initial_plan, _core.NativeCliRunFailureTelemetryPlan)
-    assert initial_plan.should_log_run_failed_to_telemetry is True
 
     cli_lifecycle_state.mark_runner_started()
-    started_plan = cli_lifecycle_state.plan_run_failed_telemetry()
 
     assert cli_lifecycle_state.runner_started is True
-    assert started_plan.should_log_run_failed_to_telemetry is False
+    assert not hasattr(_core, "NativeCliRunFailureTelemetryPlan")
+    assert not hasattr(_core, "emit_cli_run_failed_telemetry_event")
+    assert not hasattr(_core, "plan_cli_telemetry_close_failure")
 
 
 def test_native_cli_run_failed_telemetry_emission() -> None:
@@ -1440,41 +1437,38 @@ def test_native_cli_run_failed_telemetry_emission() -> None:
     recording_session = RecordingTelemetrySession()
     failing_session = FailingTelemetrySession()
     legacy_session = LegacyTelemetrySession()
+    cli_lifecycle_state = _core.NativeCliRunLifecycleState()
+    started_cli_lifecycle_state = _core.NativeCliRunLifecycleState()
+    started_cli_lifecycle_state.mark_runner_started()
 
-    _core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         None,
         failed_event,
-        should_log_run_failed_to_telemetry=True,
     )
-    _core.emit_cli_run_failed_telemetry_event(
+    started_cli_lifecycle_state.emit_run_failed_telemetry_event(
         recording_session,
         failed_event,
-        should_log_run_failed_to_telemetry=False,
     )
     assert recording_session.events == []
-    _core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         DisabledTelemetrySession(),
         failed_event,
-        should_log_run_failed_to_telemetry=True,
     )
-    _core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         legacy_session,
         failed_event,
-        should_log_run_failed_to_telemetry=True,
     )
     assert legacy_session.call_count == 0
 
-    _core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         recording_session,
         failed_event,
-        should_log_run_failed_to_telemetry=True,
     )
     assert recording_session.events == [failed_event]
 
-    _core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         failing_session,
         failed_event,
-        should_log_run_failed_to_telemetry=True,
     )
     assert failing_session.call_count == 1
 
@@ -1621,11 +1615,12 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
 
 
 def test_native_cli_telemetry_close_failure_plan() -> None:
-    successful_run_plan = _core.plan_cli_telemetry_close_failure(
+    cli_lifecycle_state = _core.NativeCliRunLifecycleState()
+    successful_run_plan = cli_lifecycle_state.plan_telemetry_close_failure(
         current_exit_code=0,
         runtime_failure_exit_code=1,
     )
-    interrupted_run_plan = _core.plan_cli_telemetry_close_failure(
+    interrupted_run_plan = cli_lifecycle_state.plan_telemetry_close_failure(
         current_exit_code=130,
         runtime_failure_exit_code=1,
     )

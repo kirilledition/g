@@ -104,6 +104,9 @@ Binary correction summary telemetry dispatch also uses the native telemetry
 handle directly instead of Python fallback methods.
 CLI run-failed telemetry dispatch resolves the native telemetry handle directly
 and preserves its existing suppress-telemetry-errors policy.
+The detached CLI run-failed plan/emission and telemetry close-failure helper
+exports are no longer root PyO3 objects; production enters those policies
+through the `NativeCliRunLifecycleState` handle.
 The Rust architecture checker guards this telemetry boundary by rejecting root
 PyO3 adapter calls to the old Python fallback method names.
 The Python architecture checker also guards production-side runtime diagnostics:

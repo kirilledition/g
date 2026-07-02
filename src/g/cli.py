@@ -59,25 +59,27 @@ def run_args(arguments: typing.Sequence[str]) -> int:
             log_completed_lines(run_events, completed_event)
             exit_code = 0
     except Exception as error:  # noqa: BLE001
-        failure_telemetry_plan = cli_lifecycle_state.plan_run_failed_telemetry()
         exit_code = print_and_log_failed_event(
             run_events,
             error,
+            cli_lifecycle_state=cli_lifecycle_state,
             telemetry_session=run_telemetry_session,
-            log_run_failed_to_telemetry=failure_telemetry_plan.should_log_run_failed_to_telemetry,
         )
     finally:
         if run_telemetry_session is not None:
             try:
                 telemetry.close_telemetry_session(run_telemetry_session)
             except Exception as error:  # noqa: BLE001
-                close_failure_plan = g._core.plan_cli_telemetry_close_failure(exit_code, RUNTIME_FAILURE_EXIT_CODE)
+                close_failure_plan = cli_lifecycle_state.plan_telemetry_close_failure(
+                    exit_code,
+                    RUNTIME_FAILURE_EXIT_CODE,
+                )
                 if close_failure_plan.should_report_failure:
                     print_and_log_failed_event(
                         run_events,
                         error,
+                        cli_lifecycle_state=cli_lifecycle_state,
                         telemetry_session=None,
-                        log_run_failed_to_telemetry=False,
                     )
                 exit_code = close_failure_plan.exit_code
     return exit_code
@@ -126,15 +128,14 @@ def print_and_log_failed_event(
     run_events_module: typing.Any,
     error: Exception,
     *,
+    cli_lifecycle_state: g._core.NativeCliRunLifecycleState,
     telemetry_session: typing.Any,
-    log_run_failed_to_telemetry: bool,
 ) -> int:
     """Print and log a concise runtime failure."""
     failed_event = run_events_module.build_run_failed_event(error)
-    g._core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         telemetry_session,
         failed_event,
-        log_run_failed_to_telemetry,
     )
     print_failed_lines(run_events_module, failed_event)
     log_failed_lines(run_events_module, failed_event)
