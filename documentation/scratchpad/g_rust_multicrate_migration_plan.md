@@ -2250,6 +2250,10 @@ Current implementation notes:
 - Detached pipeline output-preparation batch construction was removed from the
   Python-visible root surface; production enters that policy through
   `NativePipelineOutputPreparationPolicy`.
+- Detached output lifecycle helper exports for run paths, manifest I/O,
+  resume validation/repair, initialization, and final chunk compaction were
+  removed from the Python-visible root surface; production enters those
+  policies through `NativeOutputLifecyclePolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

@@ -209,6 +209,22 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "plan_telemetry_event_emission")
     assert not hasattr(_core, "plan_telemetry_progress_emission")
     assert not hasattr(_core, "build_pipeline_output_preparation_batch_from_values")
+    for removed_output_lifecycle_export_name in (
+        "build_manifest_json_sha256_from_value",
+        "build_prepared_run_plan_json_from_current_header",
+        "finalize_output_run_chunks",
+        "initialize_output_run_from_values",
+        "load_run_manifest_payload",
+        "prepare_output_run",
+        "read_manifest_committed_chunk_identifiers_from_value",
+        "repair_strict_manifest_chunk_commits_from_value",
+        "resolve_output_run_paths",
+        "scan_committed_chunk_identifiers",
+        "validate_run_manifest_compatibility_from_values",
+        "validate_strict_manifest_chunks_from_value",
+        "write_run_manifest",
+    ):
+        assert not hasattr(_core, removed_output_lifecycle_export_name)
     for removed_runner_diagnostic_export_name in (
         "record_runner_binary_engine_dispatch_started_diagnostic_event",
         "record_runner_execution_plan_build_started_diagnostic_event",

@@ -191,6 +191,7 @@ PYTHON_CALL_POLICIES = (
             "_core.initialize_output_run_from_values",
             "_core.load_run_manifest_json",
             "_core.load_run_manifest_payload",
+            "_core.NativeOutputLifecyclePolicy",
             "_core.validate_run_manifest_compatibility",
             "_core.validate_run_manifest_compatibility_from_values",
             "_core.read_manifest_committed_chunk_identifiers",

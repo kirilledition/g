@@ -860,13 +860,29 @@ def test_strict_manifest_core_wrappers_normalize_and_validate_payloads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FakeNativeOutputLifecyclePolicy:
+        def validate_strict_manifest_chunks_from_value(
+            self,
+            chunks_directory: str,
+            manifest: dict[str, object],
+        ) -> list[int]:
+            del chunks_directory, manifest
+            return [0, 2]
+
+        def repair_strict_manifest_chunk_commits_from_value(
+            self,
+            chunks_directory: str,
+            manifest: dict[str, object],
+        ) -> dict[str, str]:
+            del chunks_directory, manifest
+            return {"bad": "shape"}
+
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
     output_run_paths.chunks_directory.mkdir()
-    monkeypatch.setattr(output._core, "validate_strict_manifest_chunks_from_value", lambda *_arguments: [0, 2])
     monkeypatch.setattr(
-        output._core,
-        "repair_strict_manifest_chunk_commits_from_value",
-        lambda *_arguments: {"bad": "shape"},
+        output,
+        "native_output_lifecycle_policy",
+        FakeNativeOutputLifecyclePolicy,
     )
 
     assert output.validate_strict_manifest_chunks(output_run_paths, {"committed_chunks": []}) == frozenset({0, 2})

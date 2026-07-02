@@ -2839,6 +2839,53 @@ class NativeInitializedOutputRun:
     @property
     def committed_chunk_identifiers(self) -> list[int]: ...
 
+class NativeOutputLifecyclePolicy:
+    def __init__(self) -> None: ...
+    def finalize_output_run_chunks(
+        self,
+        run_directory: str,
+        chunks_directory: str,
+        association_mode: g.types.AssociationMode | str,
+        output_format: g.types.OutputFormat | str,
+    ) -> str: ...
+    def resolve_output_run_paths(
+        self,
+        output_root: str,
+        association_mode: g.types.AssociationMode | str,
+        output_format: g.types.OutputFormat | str,
+    ) -> NativeOutputRunPaths: ...
+    def prepare_output_run(
+        self,
+        output_root: str,
+        association_mode: g.types.AssociationMode | str,
+        output_format: g.types.OutputFormat | str,
+        resume: bool,
+        runtime_compatibility_token: NativeRuntimeCompatibilityToken,
+    ) -> NativePreparedOutputRun: ...
+    def load_run_manifest_payload(self, run_directory: str) -> dict[str, object] | None: ...
+    def write_run_manifest(self, run_directory: str, manifest: object) -> None: ...
+    def build_prepared_run_plan_json_from_current_header(self, current_header: object) -> str: ...
+    def build_manifest_json_sha256_from_value(self, value: object) -> str: ...
+    def validate_run_manifest_compatibility_from_values(self, manifest: object, current_header: object) -> None: ...
+    def read_manifest_committed_chunk_identifiers_from_value(self, manifest: object) -> list[int]: ...
+    def initialize_output_run_from_values(
+        self,
+        run_directory: str,
+        chunks_directory: str,
+        existing_manifest: object | None,
+        current_header: object,
+        resume: bool,
+        resume_mode: g.types.ResumeMode | str,
+        runtime_compatibility_token: NativeRuntimeCompatibilityToken,
+    ) -> NativeInitializedOutputRun: ...
+    def scan_committed_chunk_identifiers(self, chunks_directory: str) -> list[int]: ...
+    def repair_strict_manifest_chunk_commits_from_value(
+        self,
+        chunks_directory: str,
+        manifest: object,
+    ) -> tuple[dict[str, object], ...]: ...
+    def validate_strict_manifest_chunks_from_value(self, chunks_directory: str, manifest: object) -> list[int]: ...
+
 class NativeManifestFileFingerprintCache:
     def __init__(self) -> None: ...
     def build_file_fingerprint_payload(
@@ -2883,39 +2930,6 @@ def write_regenie2_multi_native_chunk_f64(
 def summarize_variant_major_dosage_chunk_stats(
     genotype_matrix_by_variant: npt.NDArray[np.float32],
 ) -> ChunkStats: ...
-def finalize_output_run_chunks(
-    run_directory: str,
-    chunks_directory: str,
-    association_mode: g.types.AssociationMode | str,
-    output_format: g.types.OutputFormat | str,
-) -> str: ...
-def resolve_output_run_paths(
-    output_root: str,
-    association_mode: g.types.AssociationMode | str,
-    output_format: g.types.OutputFormat | str,
-) -> NativeOutputRunPaths: ...
-def prepare_output_run(
-    output_root: str,
-    association_mode: g.types.AssociationMode | str,
-    output_format: g.types.OutputFormat | str,
-    resume: bool,
-    runtime_compatibility_token: NativeRuntimeCompatibilityToken,
-) -> NativePreparedOutputRun: ...
-def load_run_manifest_payload(run_directory: str) -> dict[str, object] | None: ...
-def write_run_manifest(run_directory: str, manifest: object) -> None: ...
-def build_prepared_run_plan_json_from_current_header(current_header: object) -> str: ...
-def build_manifest_json_sha256_from_value(value: object) -> str: ...
-def validate_run_manifest_compatibility_from_values(manifest: object, current_header: object) -> None: ...
-def read_manifest_committed_chunk_identifiers_from_value(manifest: object) -> list[int]: ...
-def initialize_output_run_from_values(
-    run_directory: str,
-    chunks_directory: str,
-    existing_manifest: object | None,
-    current_header: object,
-    resume: bool,
-    resume_mode: g.types.ResumeMode | str,
-    runtime_compatibility_token: NativeRuntimeCompatibilityToken,
-) -> NativeInitializedOutputRun: ...
 def initialize_logging(
     log_filter: str | None = None,
     log_file: str | None = None,
@@ -3467,12 +3481,6 @@ class NativeHostPlanningPolicy:
     ) -> str: ...
     def build_phenotype_output_directory_name(self, phenotype_index: int, phenotype_name: str) -> str: ...
 
-def scan_committed_chunk_identifiers(chunks_directory: str) -> list[int]: ...
-def repair_strict_manifest_chunk_commits_from_value(
-    chunks_directory: str,
-    manifest: object,
-) -> tuple[dict[str, object], ...]: ...
-def validate_strict_manifest_chunks_from_value(chunks_directory: str, manifest: object) -> list[int]: ...
 def plan_genotype_chunks(
     variant_count: int,
     chunk_size: int,

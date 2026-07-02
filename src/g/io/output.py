@@ -147,6 +147,11 @@ class PredictionLocoFileFingerprint:
 RunManifestHeaderInput = dict[str, typing.Any]
 
 
+def native_output_lifecycle_policy() -> _core.NativeOutputLifecyclePolicy:
+    """Build the native output lifecycle policy handle."""
+    return _core.NativeOutputLifecyclePolicy()
+
+
 def get_run_manifest_path(output_run_paths: OutputRunPaths) -> Path:
     """Return the run manifest path for an output run."""
     return output_run_paths.run_directory / RUN_MANIFEST_FILENAME
@@ -158,7 +163,11 @@ def resolve_output_run_paths(
     output_format: types.OutputFormat,
 ) -> OutputRunPaths:
     """Derive run paths from an output root and association mode."""
-    native_run_paths = _core.resolve_output_run_paths(str(output_root), association_mode.value, output_format.value)
+    native_run_paths = native_output_lifecycle_policy().resolve_output_run_paths(
+        str(output_root),
+        association_mode.value,
+        output_format.value,
+    )
     return OutputRunPaths(
         run_directory=Path(native_run_paths.run_directory),
         chunks_directory=Path(native_run_paths.chunks_directory),
@@ -172,13 +181,13 @@ def build_chunk_file_name(chunk_identifier: int) -> str:
 
 def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
     """Scan a chunks directory and return identifiers of completed chunks."""
-    chunk_identifiers = _core.scan_committed_chunk_identifiers(str(chunks_directory))
+    chunk_identifiers = native_output_lifecycle_policy().scan_committed_chunk_identifiers(str(chunks_directory))
     return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
 def load_run_manifest(output_run_paths: OutputRunPaths) -> dict[str, typing.Any] | None:
     """Load a run manifest when present."""
-    manifest_payload = _core.load_run_manifest_payload(str(output_run_paths.run_directory))
+    manifest_payload = native_output_lifecycle_policy().load_run_manifest_payload(str(output_run_paths.run_directory))
     if manifest_payload is None:
         return None
     return require_native_mapping_payload(
@@ -189,7 +198,7 @@ def load_run_manifest(output_run_paths: OutputRunPaths) -> dict[str, typing.Any]
 
 def write_run_manifest(output_run_paths: OutputRunPaths, manifest: dict[str, typing.Any]) -> None:
     """Atomically write a run manifest."""
-    _core.write_run_manifest(
+    native_output_lifecycle_policy().write_run_manifest(
         str(output_run_paths.run_directory),
         manifest,
     )
@@ -294,7 +303,7 @@ def normalize_execution_plan_value(value: typing.Any) -> typing.Any:
 def build_execution_plan_hash(execution_plan: typing.Any) -> str:
     """Build a stable SHA-256 hash for compute/output-affecting run state."""
     normalized_execution_plan = normalize_execution_plan_value(execution_plan)
-    return _core.build_manifest_json_sha256_from_value(normalized_execution_plan)
+    return native_output_lifecycle_policy().build_manifest_json_sha256_from_value(normalized_execution_plan)
 
 
 def build_current_run_manifest_header(
@@ -401,7 +410,7 @@ def build_current_run_manifest_header(
 
 def build_native_prepared_run_plan_json(current_header: RunManifestHeaderInput) -> str:
     """Build the native prepared-run contract from the transitional header."""
-    return _core.build_prepared_run_plan_json_from_current_header(current_header)
+    return native_output_lifecycle_policy().build_prepared_run_plan_json_from_current_header(current_header)
 
 
 def validate_manifest_compatibility(
@@ -409,12 +418,12 @@ def validate_manifest_compatibility(
     current_header: RunManifestHeaderInput,
 ) -> None:
     """Validate immutable manifest fields against the current run header."""
-    _core.validate_run_manifest_compatibility_from_values(manifest, current_header)
+    native_output_lifecycle_policy().validate_run_manifest_compatibility_from_values(manifest, current_header)
 
 
 def read_manifest_committed_chunk_identifiers(manifest: dict[str, typing.Any]) -> frozenset[int]:
     """Read committed chunk identifiers from a run manifest."""
-    chunk_identifiers = _core.read_manifest_committed_chunk_identifiers_from_value(manifest)
+    chunk_identifiers = native_output_lifecycle_policy().read_manifest_committed_chunk_identifiers_from_value(manifest)
     return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
@@ -423,7 +432,7 @@ def validate_strict_manifest_chunks(
     manifest: dict[str, typing.Any],
 ) -> frozenset[int]:
     """Validate committed manifest chunks against output files."""
-    chunk_identifiers = _core.validate_strict_manifest_chunks_from_value(
+    chunk_identifiers = native_output_lifecycle_policy().validate_strict_manifest_chunks_from_value(
         str(output_run_paths.chunks_directory),
         manifest,
     )
@@ -435,7 +444,7 @@ def repair_strict_manifest_chunk_commits(
     manifest: dict[str, typing.Any],
 ) -> list[typing.Any]:
     """Recover committed chunk manifest records from output metadata."""
-    repaired_commits = _core.repair_strict_manifest_chunk_commits_from_value(
+    repaired_commits = native_output_lifecycle_policy().repair_strict_manifest_chunk_commits_from_value(
         str(output_run_paths.chunks_directory),
         manifest,
     )
@@ -479,7 +488,7 @@ def initialize_output_run(
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> InitializedOutputRun:
     """Validate/write the manifest header and return accepted committed chunks."""
-    native_initialized_output_run = _core.initialize_output_run_from_values(
+    native_initialized_output_run = native_output_lifecycle_policy().initialize_output_run_from_values(
         str(output_run_paths.run_directory),
         str(output_run_paths.chunks_directory),
         existing_manifest,
@@ -512,7 +521,7 @@ def prepare_output_run(
 ) -> PreparedOutputRun:
     """Prepare a chunked output run directory and load existing manifest state."""
     del resume_mode
-    native_prepared_output_run = _core.prepare_output_run(
+    native_prepared_output_run = native_output_lifecycle_policy().prepare_output_run(
         str(output_root),
         association_mode.value,
         output_format.value,
@@ -588,10 +597,10 @@ def finalize_chunks_to_parquet(
     output_format: types.OutputFormat,
 ) -> Path:
     """Compact committed chunk files into one compressed Parquet file in Rust."""
-    final_parquet_path = _core.finalize_output_run_chunks(
-        run_directory=str(output_run_paths.run_directory),
-        chunks_directory=str(output_run_paths.chunks_directory),
-        association_mode=str(association_mode),
-        output_format=output_format.value,
+    final_parquet_path = native_output_lifecycle_policy().finalize_output_run_chunks(
+        str(output_run_paths.run_directory),
+        str(output_run_paths.chunks_directory),
+        str(association_mode),
+        output_format.value,
     )
     return Path(final_parquet_path)

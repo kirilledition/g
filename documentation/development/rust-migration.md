@@ -240,6 +240,9 @@ functions.
 Pipeline output-preparation batch construction now enters through
 `NativePipelineOutputPreparationPolicy` instead of a detached root `_core`
 function.
+Output lifecycle helpers for run-path resolution, manifest I/O, resume
+validation/repair, initialization, and final chunk compaction now enter through
+`NativeOutputLifecyclePolicy` instead of detached root `_core` functions.
 Preflight chromosome collection now requires the native engine
 `required_chromosomes` API directly; the old Python metadata-slice collection
 fallback has been removed.
