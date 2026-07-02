@@ -144,7 +144,7 @@ def build_process_runtime_state(
     )
 
 
-PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.global_process_runtime_state()
+PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.NativeRuntimeState.global_process_runtime_state()
 
 
 def native_jax_runtime_diagnostic_policy() -> _core.NativeJaxRuntimeDiagnosticPolicy:

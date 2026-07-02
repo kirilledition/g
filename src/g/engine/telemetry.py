@@ -139,6 +139,11 @@ def native_telemetry_session_policy(regenie_config: config.RegenieConfig) -> _co
     return _core.NativeTelemetrySessionPolicy(diagnostics_config.telemetry.value, diagnostics_config.trace_event_cap)
 
 
+def native_telemetry_close_policy() -> _core.NativeTelemetryClosePolicy:
+    """Build the native telemetry close policy handle."""
+    return _core.NativeTelemetryClosePolicy()
+
+
 def telemetry_paths_from_native_payload(payload: object) -> TelemetryPaths:
     """Adapt a native telemetry path payload to the public Python dataclass."""
     telemetry_paths_payload = native_mapping_payload(payload)
@@ -179,4 +184,4 @@ def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySe
 
 def close_telemetry_session(telemetry_session: TelemetrySession | None) -> None:
     """Flush native telemetry teardown hooks and preserve close failures."""
-    _core.close_telemetry_session_with_event(telemetry_session)
+    native_telemetry_close_policy().close_telemetry_session_with_event(telemetry_session)

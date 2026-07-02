@@ -49,8 +49,7 @@ pub(crate) struct NativeRuntimeState {
 
 static GLOBAL_PROCESS_RUNTIME_STATE: OnceLock<Arc<Mutex<native_runtime_state::ProcessRuntimeState>>> = OnceLock::new();
 
-#[pyfunction]
-pub(crate) fn global_process_runtime_state() -> NativeRuntimeState {
+fn global_process_runtime_state() -> NativeRuntimeState {
     NativeRuntimeState {
         state: Arc::clone(
             GLOBAL_PROCESS_RUNTIME_STATE
@@ -121,6 +120,11 @@ impl NativeRuntimeState {
     #[new]
     fn new() -> Self {
         Self { state: Arc::new(Mutex::new(native_runtime_state::ProcessRuntimeState::default())) }
+    }
+
+    #[staticmethod]
+    fn global_process_runtime_state() -> Self {
+        global_process_runtime_state()
     }
 
     #[getter]
@@ -500,7 +504,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeRuntimeCompatibilityToken>()?;
     module.add_class::<NativeRuntimePolicy>()?;
     module.add_class::<NativeRuntimeState>()?;
-    module.add_function(wrap_pyfunction!(global_process_runtime_state, module)?)?;
     Ok(())
 }
 

@@ -229,6 +229,8 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
                 "module.add_function(wrap_pyfunction!(abort_output_writer_session, module)?)?;",
                 "module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;",
                 "module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_f64, module)?)?;",
+                "module.add_function(wrap_pyfunction!(global_process_runtime_state, module)?)?;",
+                "module.add_function(wrap_pyfunction!(close_telemetry_session_with_event, module)?)?;",
             )
         ),
         encoding="utf-8",
@@ -631,6 +633,18 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
             source_path=Path("src/python/shutdown.rs"),
             export_name="write_regenie2_multi_native_chunk_f64",
             line_number=66,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="global_process_runtime_state",
+            line_number=67,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="close_telemetry_session_with_event",
+            line_number=68,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

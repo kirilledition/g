@@ -2260,6 +2260,10 @@ Current implementation notes:
 - Detached multi-trait output chunk writer exports were removed from the
   Python-visible root surface; production enters that policy through
   `NativeOutputChunkWritePolicy`.
+- Detached process-runtime singleton and telemetry close helper exports were
+  removed from the Python-visible root surface; production enters those
+  policies through `NativeRuntimeState.global_process_runtime_state()` and
+  `NativeTelemetryClosePolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

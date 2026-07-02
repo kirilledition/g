@@ -39,6 +39,53 @@ def build_current_event_payload_via_native_handle(
     return dict(telemetry_session.native_session_handle.build_current_event_payload(event, level, fields))
 
 
+class RecordingLoggingProcessRuntimeState:
+    """Runtime-state test double that records initialized logging payloads."""
+
+    def __init__(self, calls: list[dict[str, object]]) -> None:
+        self.calls = calls
+
+    def build_logging_runtime_policy_payload(self, *payload_arguments: object) -> dict[str, object]:
+        """Build the logging payload through the native runtime policy helper."""
+        if len(payload_arguments) != 12:
+            raise ValueError("Logging runtime policy payload expects 12 arguments.")
+        (
+            log_filter,
+            log_file,
+            log_stderr,
+            log_queue_size,
+            log_lossy,
+            include_source_location,
+            include_span_events,
+            trace_file,
+            trace_filter,
+            trace_event_cap,
+            telemetry_mode,
+            telemetry_stream_file,
+        ) = payload_arguments
+        return dict(
+            _core.NativeRuntimeState().build_logging_runtime_policy_payload(
+                typing.cast("str", log_filter),
+                typing.cast("str | None", log_file),
+                typing.cast("bool", log_stderr),
+                typing.cast("int", log_queue_size),
+                typing.cast("bool", log_lossy),
+                typing.cast("bool", include_source_location),
+                typing.cast("bool", include_span_events),
+                typing.cast("str | None", trace_file),
+                typing.cast("str", trace_filter),
+                typing.cast("int | None", trace_event_cap),
+                typing.cast("str", telemetry_mode),
+                typing.cast("str | None", telemetry_stream_file),
+            )
+        )
+
+    def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+        """Record the initialized logging payload."""
+        self.calls.append(payload)
+        return True
+
+
 def test_resolve_telemetry_paths_defaults_to_output_run_logs() -> None:
     regenie_config = config.RegenieConfig.from_options(
         {
@@ -141,11 +188,6 @@ def test_telemetry_stream_uses_log_file_or_trace_file_alias() -> None:
 def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeProcessRuntimeState:
-        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
-            calls.append(payload)
-            return True
-
     regenie_config = config.RegenieConfig.from_options(
         {
             "step": 2,
@@ -166,7 +208,7 @@ def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path:
     with (
         unittest.mock.patch(
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
-            FakeProcessRuntimeState(),
+            RecordingLoggingProcessRuntimeState(calls),
         ),
     ):
         runner_runtime.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)
@@ -178,11 +220,6 @@ def test_initialize_logging_uses_log_filter_for_profile_unified_stream(tmp_path:
 
 def test_initialize_logging_uses_trace_filter_for_trace_unified_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
-
-    class FakeProcessRuntimeState:
-        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
-            calls.append(payload)
-            return True
 
     regenie_config = config.RegenieConfig.from_options(
         {
@@ -205,7 +242,7 @@ def test_initialize_logging_uses_trace_filter_for_trace_unified_stream(tmp_path:
     with (
         unittest.mock.patch(
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
-            FakeProcessRuntimeState(),
+            RecordingLoggingProcessRuntimeState(calls),
         ),
     ):
         runner_runtime.initialize_logging(regenie_config.g_diagnostics, telemetry_paths)

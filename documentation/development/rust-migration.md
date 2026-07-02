@@ -243,6 +243,10 @@ function.
 Output lifecycle helpers for run-path resolution, manifest I/O, resume
 validation/repair, initialization, and final chunk compaction now enter through
 `NativeOutputLifecyclePolicy` instead of detached root `_core` functions.
+Process-global runtime-state access now enters through
+`NativeRuntimeState.global_process_runtime_state()`, and telemetry close
+dispatch enters through `NativeTelemetryClosePolicy` instead of detached root
+`_core` functions.
 Output writer finish/interrupted-finish/abort lifecycle now uses
 `OutputWriterSession` methods directly instead of detached root `_core`
 functions.

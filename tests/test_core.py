@@ -230,6 +230,11 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "write_regenie2_multi_native_chunk_f64",
     ):
         assert not hasattr(_core, removed_output_lifecycle_export_name)
+    for removed_runtime_global_export_name in (
+        "close_telemetry_session_with_event",
+        "global_process_runtime_state",
+    ):
+        assert not hasattr(_core, removed_runtime_global_export_name)
     for removed_runner_diagnostic_export_name in (
         "record_runner_binary_engine_dispatch_started_diagnostic_event",
         "record_runner_execution_plan_build_started_diagnostic_event",
@@ -2116,8 +2121,8 @@ def test_global_process_runtime_state_is_native_owned_singleton() -> None:
         "\n".join(
             [
                 "from g import _core",
-                "first_state = _core.global_process_runtime_state()",
-                "second_state = _core.global_process_runtime_state()",
+                "first_state = _core.NativeRuntimeState.global_process_runtime_state()",
+                "second_state = _core.NativeRuntimeState.global_process_runtime_state()",
                 "first_state.record_rayon_thread_count(6)",
                 "print(second_state.rayon_thread_count)",
             ]
