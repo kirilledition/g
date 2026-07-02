@@ -46,8 +46,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install format dependencies without the project package
-        env:
-          RUSTFLAGS: "--allow=non-local-definitions"
         run: uv sync --group dev --frozen --no-install-project
 
       - name: Check Python formatting
@@ -82,8 +80,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install lint dependencies without the project package
-        env:
-          RUSTFLAGS: "--allow=non-local-definitions"
         run: uv sync --group dev --frozen --no-install-project
 
       - name: Run Ruff lint
@@ -115,8 +111,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install typecheck dependencies without the project package
-        env:
-          RUSTFLAGS: "--allow=non-local-definitions"
         run: uv sync --group dev --frozen --no-install-project
 
       - name: Run Python type checks
@@ -148,8 +142,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install project and test dependencies
-        env:
-          RUSTFLAGS: "--allow=non-local-definitions"
         run: uv sync --group dev --frozen
 
       - name: Run fast test suite
@@ -197,8 +189,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build wheel and source distribution
-        env:
-          RUSTFLAGS: "--allow=non-local-definitions"
         run: uv build --sdist --wheel --out-dir dist --clear
 
       - name: Install built wheel into a clean environment
@@ -253,8 +243,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install project and test dependencies
-        env:
-          RUSTFLAGS: "--allow=non-local-definitions"
         run: uv sync --group dev --frozen
 
       - name: Run installed CLI smoke test
@@ -430,8 +418,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install Python dependencies for Rust integration tests
-        env:
-          RUSTFLAGS: "--allow=non-local-definitions"
         run: uv sync --group dev --frozen
 
       - name: Run locked Rust test suite
@@ -538,8 +524,6 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Install project and coverage dependencies
-        env:
-          RUSTFLAGS: "--allow=non-local-definitions"
         run: uv sync --group dev --frozen
 
       - name: Generate Python coverage

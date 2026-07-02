@@ -20,7 +20,9 @@ Install or make available on `PATH`:
 - `srun`
 - `zstd`
 
-The repo-local dev-bootstrap installs `just`, `cargo`, `rustc`, `plink`, `plink2`, and `regenie` into `.tools/`. Python itself does not need to be preinstalled globally if `uv python install` works in your account.
+The repo-local dev-bootstrap installs `just`, `cargo`, `rustc`, `plink`,
+`plink2`, and `regenie` into `.tools/`. Python itself does not need to be
+preinstalled globally if `uv python install` works in your account.
 
 ## Bootstrap
 
@@ -144,10 +146,11 @@ Inside CPU SLURM jobs, `tooling/server/server_env.sh` derives
 `GWAS_ENGINE_ALLOCATED_CPU_COUNT` from `SLURM_CPUS_PER_TASK`,
 `SLURM_CPUS_ON_NODE`, or `nproc`; sets `CARGO_BUILD_JOBS` to that count unless
 already configured; and sets `GWAS_ENGINE_PYTEST_WORKERS` for pytest. Rust
-build recipes call `gwas_engine_configure_rust_build_environment`, which also
-uses `sccache` automatically when it is available and `RUSTC_WRAPPER` is unset.
-The maintained `maturin develop` entrypoints pass the resolved
-`CARGO_BUILD_JOBS` value with `-j` so the explicit compile cap reaches Cargo.
+build recipes call `gwas_engine_configure_rust_build_environment` for Cargo job
+parallelism only; set linker and rustc-wrapper environment variables explicitly
+when a run needs them. The maintained `maturin develop` entrypoints pass the
+resolved `CARGO_BUILD_JOBS` value with `-j` so the explicit compile cap reaches
+Cargo.
 Python tests default to at most 8 xdist workers because the suite imports JAX
 and the native extension, so one pytest worker per core can oversubscribe
 process-level JAX/native thread pools. Override after measuring:
@@ -168,10 +171,10 @@ Build-environment defaults:
   confusing invalidation during unattended branch work.
 - Do not push every focused test through SLURM; local `check-local`,
   `test-local`, and targeted `uv run pytest ...` remain faster for small edits.
-- Native `RUSTFLAGS="-C target-cpu=native"` stays limited to perf/bench recipes
-  and the build-profile benchmark labels that model perf builds.
-- Set `RUSTC_WRAPPER` explicitly to disable or replace the optional `sccache`
-  default; set `SCCACHE_DIR` to move the cache from `/tmp/g-sccache`.
+- Cargo uses the repo-local `.cargo/config.toml` for Linux Rust builds:
+  `target-cpu=native` is always enabled. The repo does not choose a linker or
+  rustc wrapper; set `RUSTFLAGS`, `CARGO_TARGET_*_LINKER`, `RUSTC_WRAPPER`, and
+  cache variables explicitly for isolated experiments.
 
 ## GPU Workflow Through SLURM
 

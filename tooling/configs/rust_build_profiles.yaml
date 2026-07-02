@@ -4,13 +4,9 @@ defaults:
 tool:
   labels:
     - dev-fast
-    - dev-fast-lld
-    - dev-fast-mold
     - dev-opt
     - release
     - perf-thin-cgu8
-    - perf-thin-cgu8-lld
-    - perf-thin-cgu8-mold
     - perf-thin-cgu1
     - perf-fat-cgu1
     - perf-o2-thin-cgu8

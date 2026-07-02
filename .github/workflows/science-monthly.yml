@@ -52,8 +52,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install project and test dependencies
-        env:
-          RUSTFLAGS: "--allow=non-local-definitions"
         run: uv sync --group dev --frozen
 
       - name: Run fast Python test suite

@@ -1477,9 +1477,8 @@ Remove Python as the chunk-level scheduler.
 - Phase 10 callback-runner fallback removal is complete for this branch:
   production scheduling, queue/resource ownership, worker lifecycle,
   result-slot, and dosage-buffer paths no longer use manual Python fallback
-  ownership. Remaining Python side effects are Phase 11/12 adapter work. Merge
-  from `origin/main` and push are deferred until the next substantial remote
-  checkpoint.
+  ownership. Remaining Python side effects are Phase 11/12 adapter work. The
+  branch was merged with `origin/main` at the Phase 10 handoff checkpoint.
 
 ### Tests
 
