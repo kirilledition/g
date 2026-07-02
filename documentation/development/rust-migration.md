@@ -152,6 +152,13 @@ pool setup have also been removed; production setup goes through
 `NativeRuntimeState`.
 Standalone `require_gpu_device()` validation now also builds a native setup
 session and uses the native default-probe method.
+The detached default NVIDIA probe-path and driver-visibility root exports were
+removed; Python convenience checks now enter through `NativeJaxRuntimeSetupSession`.
+The detached JAX runtime policy payload builder was also removed from the root
+module; payload construction now goes through `NativeRuntimeState`.
+Detached logging policy payload, runtime policy handle, and seeded process
+runtime-state builders were also removed; those builder calls now go through
+`NativeRuntimeState`.
 Default local JAX cache-directory resolution now comes from `g-runtime`; the
 Python runtime-path adapter no longer reads the platform temporary directory or
 current user name itself.
@@ -265,6 +272,12 @@ root `_core` surface; execution planning uses the payload export.
 Pipeline output-preparation JSON batch constructors and direct JSON batch
 initializers are likewise no longer exported; callers use the value-based
 batch factory and the returned native handle.
+Timing diagnostic snapshot serialization no longer reflects over dataclass
+fields with production `getattr`; the Python architecture checker guards that
+typed mapping boundary.
+The Rust architecture checker also rejects re-exporting the removed
+run-request JSON helper and pipeline output-preparation JSON batch initializer
+functions, plus removed JSON compatibility class methods/getters.
 Run-start manifest command/runtime metadata extension now goes through a native
 `g-output` manifest upsert via `_core.extend_run_manifest_metadata`; Python no
 longer loads, mutates, serializes, and rewrites run manifests for that

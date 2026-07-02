@@ -1873,6 +1873,14 @@ Python/JAX should emit typed diagnostic events through a native handle.
   execution-plan adapter.
 - Standalone `require_gpu_device()` validation now also builds a native setup
   session and uses the native default-probe method.
+- Detached default NVIDIA probe-path and driver-visibility root exports were
+  removed; Python convenience checks now enter through
+  `NativeJaxRuntimeSetupSession`.
+- The detached JAX runtime policy payload builder was also removed from the
+  root module; payload construction now goes through `NativeRuntimeState`.
+- Detached logging policy payload, runtime policy handle, and seeded process
+  runtime-state builders were also removed; those builder calls now go through
+  `NativeRuntimeState`.
 - Process-global JAX setup completion recording now consumes the native setup
   session, so `g-runtime` rejects pending or failed setup sessions before
   recording a JAX policy as configured.
@@ -1922,6 +1930,13 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Pipeline output-preparation JSON batch constructors and direct JSON batch
   initializers are likewise no longer exported; callers use the value-based
   batch factory and returned native handle.
+- Timing diagnostic snapshot serialization no longer reflects over dataclass
+  fields with production `getattr`; the Python architecture checker guards the
+  typed mapping boundary.
+- The Rust architecture checker also rejects re-exporting the removed
+  run-request JSON helper and pipeline output-preparation JSON batch
+  initializer functions, plus removed JSON compatibility class
+  methods/getters.
 - Preflight finite-array checks, SVD-backed covariate-rank validation, and
   binary phenotype coding/case-control scans now execute in the root PyO3
   adapter over NumPy buffers and then call the `g-engine` policy helpers.
@@ -2091,6 +2106,13 @@ Current implementation notes:
   initializers were removed from the root PyO3 surface after the output adapter
   moved production initialization to the value-based batch factory and native
   handle.
+- Timing diagnostic snapshot serialization now uses explicit dataclass mapping
+  conversion instead of production `getattr` reflection, and the Python
+  architecture checker rejects reintroduced reflective timing serialization.
+- The Rust architecture checker now rejects reintroducing the removed
+  run-request JSON helper and pipeline output-preparation JSON batch
+  initializer root exports, plus removed JSON compatibility class
+  methods/getters.
 - Run lifecycle telemetry-field builders have also been removed from the
   Python-visible root PyO3 surface; native logging keeps the internal
   conversion helpers used by typed telemetry dispatch.
@@ -2125,6 +2147,15 @@ Current implementation notes:
   and setup side-effect payloads were removed from the Python-visible handle;
   production now uses the typed setup execution, GPU validation, and diagnostic
   methods on the native session.
+- Detached default NVIDIA probe-path and driver-visibility helpers were removed
+  from the Python-visible root surface; Python convenience checks now route
+  through `NativeJaxRuntimeSetupSession`.
+- The detached JAX runtime policy payload builder was removed from the
+  Python-visible root surface; resolution and standalone GPU validation now
+  build that payload through `NativeRuntimeState`.
+- Detached logging policy payload, runtime policy handle, and seeded process
+  runtime-state builders were removed from the Python-visible root surface;
+  production now enters those constructors through `NativeRuntimeState`.
 - The standalone Python-visible default temporary-root helper was removed from
   the root PyO3 surface; tests now exercise native default cache-directory
   resolution by setting environment inputs, and Python keeps only the concrete

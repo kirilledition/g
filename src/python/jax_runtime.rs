@@ -146,6 +146,36 @@ impl NativeJaxRuntimeSetupSession {
             probe_paths.driver_directory_path,
         )
     }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn nvidia_driver_files_are_visible(
+        &self,
+        control_device_path: String,
+        uvm_device_path: String,
+        driver_directory_path: String,
+    ) -> PyResult<bool> {
+        let _session = self.lock_session()?;
+        Ok(native_jax_runtime::nvidia_driver_files_are_visible(
+            Path::new(&control_device_path),
+            Path::new(&uvm_device_path),
+            Path::new(&driver_directory_path),
+        ))
+    }
+
+    fn nvidia_driver_files_are_visible_with_default_probe_paths(&self) -> PyResult<bool> {
+        let _session = self.lock_session()?;
+        let probe_paths = native_jax_runtime::default_nvidia_driver_probe_paths();
+        Ok(native_jax_runtime::nvidia_driver_files_are_visible(
+            Path::new(&probe_paths.control_device_path),
+            Path::new(&probe_paths.uvm_device_path),
+            Path::new(&probe_paths.driver_directory_path),
+        ))
+    }
+
+    fn default_nvidia_driver_probe_paths_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let _session = self.lock_session()?;
+        nvidia_driver_probe_paths_payload_to_dict(py, &native_jax_runtime::default_nvidia_driver_probe_paths())
+    }
 }
 
 impl NativeJaxRuntimeSetupSession {
@@ -233,25 +263,6 @@ fn record_jax_runtime_diagnostic_log_plan(
     })?;
     logging::emit_diagnostic_event(&plan.logging_level_name.to_lowercase(), &event_name, &message, Some(fields_json))?;
     Ok(plan)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn nvidia_driver_files_are_visible_value(
-    control_device_path: String,
-    uvm_device_path: String,
-    driver_directory_path: String,
-) -> bool {
-    native_jax_runtime::nvidia_driver_files_are_visible(
-        Path::new(&control_device_path),
-        Path::new(&uvm_device_path),
-        Path::new(&driver_directory_path),
-    )
-}
-
-#[pyfunction]
-pub(crate) fn default_nvidia_driver_probe_paths_payload<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-    nvidia_driver_probe_paths_payload_to_dict(py, &native_jax_runtime::default_nvidia_driver_probe_paths())
 }
 
 fn jax_runtime_setup_payload_to_dict<'py>(
@@ -359,8 +370,6 @@ fn jax_runtime_diagnostic_value_from_py(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeJaxRuntimeDiagnosticRecordPlan>()?;
     module.add_class::<NativeJaxRuntimeSetupSession>()?;
-    module.add_function(wrap_pyfunction!(nvidia_driver_files_are_visible_value, module)?)?;
-    module.add_function(wrap_pyfunction!(default_nvidia_driver_probe_paths_payload, module)?)?;
     module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_event, module)?)?;
     Ok(())
 }

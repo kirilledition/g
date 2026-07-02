@@ -423,15 +423,12 @@ def test_require_gpu_device_accepts_gpu_platform(tmp_path: Path) -> None:
         setup.require_gpu_device()
 
 
-def test_nvidia_driver_is_visible_uses_native_probe(tmp_path: Path) -> None:
-    control_device_path = tmp_path / "nvidiactl"
-    uvm_device_path = tmp_path / "nvidia-uvm"
-    driver_directory_path = tmp_path / "driver"
-    probe_paths = build_nvidia_driver_probe_paths(control_device_path, uvm_device_path, driver_directory_path)
+def test_nvidia_driver_is_visible_uses_native_setup_session() -> None:
+    class FakeNativeSetupSession:
+        def nvidia_driver_files_are_visible_with_default_probe_paths(self) -> bool:
+            return True
 
-    with patch("g.jax_runtime.setup.default_nvidia_driver_probe_paths", return_value=probe_paths):
-        assert setup.nvidia_driver_is_visible() is False
-        control_device_path.touch()
+    with patch("g.jax_runtime.setup._build_gpu_validation_setup_session", return_value=FakeNativeSetupSession()):
         assert setup.nvidia_driver_is_visible() is True
 
 

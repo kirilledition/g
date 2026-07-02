@@ -28,7 +28,7 @@ def run_logging_subprocess(script: str) -> subprocess.CompletedProcess[str]:
 
 def build_native_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:
     runtime_state = _core.NativeRuntimeState()
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    logging_policy_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,
@@ -71,7 +71,8 @@ def build_native_jax_runtime_setup_session(
     transfer_guard: bool = False,
 ) -> _core.NativeJaxRuntimeSetupSession:
     """Build a native setup session through the runtime-state boundary."""
-    jax_policy_payload = _core.build_jax_runtime_policy_payload(
+    runtime_state = _core.NativeRuntimeState()
+    jax_policy_payload = runtime_state.build_jax_runtime_policy_payload(
         device=requested_device,
         cache_directory=cache_directory,
         matmul_precision=matmul_precision,
@@ -81,7 +82,7 @@ def build_native_jax_runtime_setup_session(
         xla_autotune_cache=xla_autotune_cache,
         transfer_guard=transfer_guard,
     )
-    return _core.NativeRuntimeState().build_jax_runtime_setup_session(jax_policy_payload, cache_directory)
+    return runtime_state.build_jax_runtime_setup_session(jax_policy_payload, cache_directory)
 
 
 class RecordingNativeCallbackTelemetrySession:
@@ -1331,7 +1332,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
 
 def test_native_runtime_state_issues_compatibility_token() -> None:
     runtime_state = _core.NativeRuntimeState()
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    logging_policy_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,
@@ -1361,7 +1362,7 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
         None,
         jax_policy_payload,
     )
-    runtime_policy = _core.build_runtime_policy_handle(logging_policy_payload, None, jax_policy_payload)
+    runtime_policy = runtime_state.build_runtime_policy_handle(logging_policy_payload, None, jax_policy_payload)
     runtime_token_from_policy_handle = runtime_state.require_compatible_runtime_policy_handle(runtime_policy)
     run_runtime = runtime_state.build_run_runtime(runtime_policy)
 
@@ -1376,6 +1377,7 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
     assert run_runtime.rayon_thread_count is None
     assert run_runtime.logging_runtime_policy_payload() == logging_policy_payload
     assert run_runtime.jax_runtime_policy_payload() == jax_policy_payload
+    assert not hasattr(_core, "build_runtime_policy_handle")
 
     runtime_state.record_jax_runtime_policy({**jax_policy_payload, "cache_directory": "/tmp/first-cache"})
     with pytest.raises(RuntimeError, match="JAX runtime is already configured"):
@@ -1635,7 +1637,7 @@ def test_native_cli_telemetry_close_failure_plan() -> None:
 
 def test_native_runtime_state_returns_snapshot_payload() -> None:
     runtime_state = _core.NativeRuntimeState()
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    logging_policy_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,
@@ -1676,10 +1678,12 @@ def test_native_runtime_state_returns_snapshot_payload() -> None:
         "rayon_thread_count": 4,
         "jax_policy": jax_policy_payload,
     }
+    assert not hasattr(_core, "build_logging_runtime_policy_payload")
 
 
 def test_native_process_runtime_state_handle_seeds_snapshot_payload() -> None:
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    runtime_state_builder = _core.NativeRuntimeState()
+    logging_policy_payload = runtime_state_builder.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,
@@ -1704,8 +1708,10 @@ def test_native_process_runtime_state_handle_seeds_snapshot_payload() -> None:
         "transfer_guard": False,
     }
 
-    runtime_state = _core.build_process_runtime_state_handle(logging_policy_payload, 4, jax_policy_payload)
-    empty_runtime_state = _core.build_process_runtime_state_handle(None, None, None)
+    runtime_state = runtime_state_builder.build_process_runtime_state_handle(
+        logging_policy_payload, 4, jax_policy_payload
+    )
+    empty_runtime_state = runtime_state_builder.build_process_runtime_state_handle(None, None, None)
 
     assert runtime_state.runtime_state_payload() == {
         "logging_policy": logging_policy_payload,
@@ -1717,6 +1723,7 @@ def test_native_process_runtime_state_handle_seeds_snapshot_payload() -> None:
         "rayon_thread_count": None,
         "jax_policy": None,
     }
+    assert not hasattr(_core, "build_process_runtime_state_handle")
 
 
 def test_global_process_runtime_state_is_native_owned_singleton() -> None:
@@ -1771,7 +1778,7 @@ def test_native_runtime_state_configures_runtime_knobs() -> None:
 
 def test_native_runtime_state_initializes_logging_runtime_policy_preflight() -> None:
     runtime_state = _core.NativeRuntimeState()
-    configured_payload = _core.build_logging_runtime_policy_payload(
+    configured_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file="/tmp/g-first.jsonl",
         log_stderr=False,
@@ -1936,7 +1943,8 @@ def test_native_jax_runtime_setup_session_validates_gpu_devices(tmp_path: Path) 
 
 
 def test_native_jax_runtime_policy_payload() -> None:
-    jax_policy_payload = _core.build_jax_runtime_policy_payload(
+    runtime_state = _core.NativeRuntimeState()
+    jax_policy_payload = runtime_state.build_jax_runtime_policy_payload(
         device="gpu",
         cache_directory="/tmp/g-jax-cache",
         matmul_precision="highest",
@@ -1957,6 +1965,7 @@ def test_native_jax_runtime_policy_payload() -> None:
         "xla_autotune_cache": True,
         "transfer_guard": True,
     }
+    assert not hasattr(_core, "build_jax_runtime_policy_payload")
 
 
 def test_native_jax_runtime_setup_session_owns_diagnostic_payloads() -> None:
@@ -2184,28 +2193,33 @@ def test_native_nvidia_driver_visibility_uses_any_driver_path(tmp_path: Path) ->
     control_device_path = tmp_path / "nvidiactl"
     uvm_device_path = tmp_path / "nvidia-uvm"
     driver_directory_path = tmp_path / "driver"
+    setup_session = build_native_jax_runtime_setup_session(requested_device="gpu", cache_directory="")
 
-    assert not _core.nvidia_driver_files_are_visible_value(
-        control_device_path=str(control_device_path),
-        uvm_device_path=str(uvm_device_path),
-        driver_directory_path=str(driver_directory_path),
+    assert not setup_session.nvidia_driver_files_are_visible(
+        str(control_device_path),
+        str(uvm_device_path),
+        str(driver_directory_path),
     )
 
     driver_directory_path.mkdir()
 
-    assert _core.nvidia_driver_files_are_visible_value(
-        control_device_path=str(control_device_path),
-        uvm_device_path=str(uvm_device_path),
-        driver_directory_path=str(driver_directory_path),
+    assert setup_session.nvidia_driver_files_are_visible(
+        str(control_device_path),
+        str(uvm_device_path),
+        str(driver_directory_path),
     )
 
 
 def test_native_default_nvidia_driver_probe_paths_payload() -> None:
-    assert _core.default_nvidia_driver_probe_paths_payload() == {
+    setup_session = build_native_jax_runtime_setup_session(requested_device="gpu", cache_directory="")
+
+    assert setup_session.default_nvidia_driver_probe_paths_payload() == {
         "control_device_path": "/dev/nvidiactl",
         "uvm_device_path": "/dev/nvidia-uvm",
         "driver_directory_path": "/proc/driver/nvidia",
     }
+    assert not hasattr(_core, "nvidia_driver_files_are_visible_value")
+    assert not hasattr(_core, "default_nvidia_driver_probe_paths_payload")
 
 
 def test_native_gpu_genotype_format_resolution_policy() -> None:

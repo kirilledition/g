@@ -22,7 +22,7 @@ def resolve_jax_runtime_policy(compute_config: config.GComputeConfig) -> models.
         Requested JAX runtime policy.
 
     """
-    policy_payload = _core.build_jax_runtime_policy_payload(
+    policy_payload = build_native_jax_runtime_policy_payload(
         device=compute_config.device.value,
         cache_directory=(
             None if compute_config.jax_cache_dir is None else str(compute_config.jax_cache_dir.expanduser())
@@ -97,7 +97,7 @@ def jax_runtime_policy_to_native_payload(policy: models.JaxRuntimePolicy) -> dic
         Native runtime policy payload.
 
     """
-    return _core.build_jax_runtime_policy_payload(
+    return build_native_jax_runtime_policy_payload(
         device=policy.device.value,
         cache_directory=None if policy.cache_directory is None else str(policy.cache_directory.expanduser()),
         matmul_precision=None if policy.matmul_precision is None else policy.matmul_precision.value,
@@ -106,6 +106,45 @@ def jax_runtime_policy_to_native_payload(policy: models.JaxRuntimePolicy) -> dic
         persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
         xla_autotune_cache=policy.xla_autotune_cache,
         transfer_guard=policy.transfer_guard,
+    )
+
+
+def build_native_jax_runtime_policy_payload(
+    *,
+    device: str,
+    cache_directory: str | None,
+    matmul_precision: str | None,
+    persistent_cache: bool,
+    persistent_cache_min_entry_size_bytes: int,
+    persistent_cache_min_compile_time_seconds: int,
+    xla_autotune_cache: bool,
+    transfer_guard: bool,
+) -> dict[str, object]:
+    """Build a native JAX runtime policy payload through runtime state.
+
+    Args:
+        device: Requested JAX device policy.
+        cache_directory: Optional requested persistent cache directory.
+        matmul_precision: Optional requested JAX matmul precision.
+        persistent_cache: Whether persistent compilation cache is enabled.
+        persistent_cache_min_entry_size_bytes: Minimum persistent-cache entry size.
+        persistent_cache_min_compile_time_seconds: Minimum compile time for persistent cache entries.
+        xla_autotune_cache: Whether XLA autotune cache policy is enabled.
+        transfer_guard: Whether JAX transfer guard policy is enabled.
+
+    Returns:
+        Native runtime policy payload.
+
+    """
+    return _core.NativeRuntimeState().build_jax_runtime_policy_payload(
+        device=device,
+        cache_directory=cache_directory,
+        matmul_precision=matmul_precision,
+        persistent_cache=persistent_cache,
+        persistent_cache_min_entry_size_bytes=persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds=persistent_cache_min_compile_time_seconds,
+        xla_autotune_cache=xla_autotune_cache,
+        transfer_guard=transfer_guard,
     )
 
 

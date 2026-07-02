@@ -1236,6 +1236,30 @@ def test_callback_metadata_chromosome_policy_rejects_optional_metadata_probe(tmp
     ]
 
 
+def test_timing_snapshot_serialization_policy_rejects_getattr_probe(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    timing_directory = package_root / "engine"
+    timing_directory.mkdir(parents=True)
+    (timing_directory / "timing.py").write_text(
+        "\n".join(
+            (
+                "def serialize(snapshot, field):",
+                "    return getattr(snapshot, field)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/timing.py"), 2, "getattr", "getattr"),
+    ]
+
+
 def test_jax_host_materialization_policy_rejects_device_get_outside_adapters(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     engine_directory = package_root / "engine"

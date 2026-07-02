@@ -29,7 +29,9 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
         "build_default_local_cache_directory_value",
         "build_file_content_sha256_value",
         "build_final_timing_outputs_write_started_diagnostic_payload",
+        "build_jax_runtime_policy_payload",
         "build_jax_runtime_setup_diagnostic_payloads",
+        "build_logging_runtime_policy_payload",
         "build_manifest_file_fingerprint_mapping_payload",
         "build_manifest_file_fingerprint_payload",
         "build_multi_run_artifacts_payload",
@@ -37,22 +39,30 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
         "build_prediction_loco_file_fingerprints_json",
         "build_prepared_run_manifest_header_json",
         "build_prepared_run_plan_json",
+        "build_process_runtime_state_handle",
         "build_run_manifest_extension_payload",
+        "build_runtime_policy_handle",
         "build_shutdown_signal_payload",
         "build_trusted_bgen_validation_cache_path_value",
         "build_trusted_bgen_validation_cache_payload",
         "build_trusted_bgen_validation_fingerprint_value",
         "complete_jax_runtime_setup_validation_payload",
+        "compile_run_request_json",
         "configure_bgen_decode_tile_variant_count",
         "configure_rayon_global_thread_pool",
         "default_local_temporary_root_value",
+        "default_nvidia_driver_probe_paths_payload",
         "default_shutdown_signal_numbers",
         "default_trusted_bgen_validation_cache_directory_value",
         "emit_diagnostic_event",
         "emit_diagnostic_event_fields",
+        "existing_manifest_json",
         "format_rayon_thread_pool_configuration_error_value",
         "format_dosage_callback_worker_error_message",
         "format_result_callback_worker_error_message",
+        "initialize_pipeline_output_run_batch",
+        "initialize_pipeline_output_runs",
+        "nvidia_driver_files_are_visible_value",
         "plan_jax_gpu_validation_payload",
         "plan_jax_runtime_config_update_payloads",
         "plan_jax_runtime_diagnostic_record",
@@ -101,8 +111,21 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
         "write_trusted_bgen_validation_cache_payload",
     )
 )
+DISALLOWED_ROOT_PYO3_CLASS_MEMBER_NAMES = frozenset(
+    (
+        "build_current_run_manifest_header_json_from_input_json",
+        "build_prediction_loco_file_fingerprints_json",
+        "existing_manifest_json",
+    )
+)
 ROOT_PYO3_PYFUNCTION_EXPORT_PATTERN = re.compile(r"wrap_pyfunction!\s*\(\s*(?P<export_name>[A-Za-z0-9_]+)")
 ROOT_PYO3_PYCLASS_EXPORT_PATTERN = re.compile(r"add_class::\s*<\s*(?P<export_name>[A-Za-z0-9_]+)\s*>")
+ROOT_PYO3_PYMETHOD_EXPORT_PATTERN = re.compile(
+    r"(?m)^\s*(?:pub(?:\(crate\))?\s+)?fn\s+(?P<export_name>[A-Za-z0-9_]+)\s*\("
+)
+ROOT_PYO3_FIELD_GETTER_EXPORT_PATTERN = re.compile(
+    r"(?m)^\s*#\[pyo3\(get\)\]\s*\n\s*(?P<export_name>[A-Za-z0-9_]+)\s*:"
+)
 ROOT_PYO3_REMOVED_EXPORT_MESSAGE = "root PyO3 adapter must not re-export removed raw helper surface"
 PYTHON_TELEMETRY_FALLBACK_METHOD_NAMES = (
     "close_with_event",
@@ -366,6 +389,52 @@ def collect_python_telemetry_fallback_violations(repository_root: Path) -> tuple
     return tuple(violations)
 
 
+def collect_root_pyo3_registered_export_violations(
+    source_text: str,
+    relative_source_path: Path,
+) -> tuple[RootPyO3ExportViolation, ...]:
+    """Collect removed free-function and class registrations from one source file."""
+    violations: list[RootPyO3ExportViolation] = []
+    for export_pattern in (ROOT_PYO3_PYFUNCTION_EXPORT_PATTERN, ROOT_PYO3_PYCLASS_EXPORT_PATTERN):
+        for export_match in export_pattern.finditer(source_text):
+            export_name = export_match.group("export_name")
+            if export_name not in DISALLOWED_ROOT_PYO3_EXPORT_NAMES:
+                continue
+            line_number = source_text.count("\n", 0, export_match.start()) + 1
+            violations.append(
+                RootPyO3ExportViolation(
+                    source_path=relative_source_path,
+                    export_name=export_name,
+                    line_number=line_number,
+                    message=ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+                )
+            )
+    return tuple(violations)
+
+
+def collect_root_pyo3_class_member_export_violations(
+    source_text: str,
+    relative_source_path: Path,
+) -> tuple[RootPyO3ExportViolation, ...]:
+    """Collect removed class methods and getters from one source file."""
+    violations: list[RootPyO3ExportViolation] = []
+    for export_pattern in (ROOT_PYO3_PYMETHOD_EXPORT_PATTERN, ROOT_PYO3_FIELD_GETTER_EXPORT_PATTERN):
+        for export_match in export_pattern.finditer(source_text):
+            export_name = export_match.group("export_name")
+            if export_name not in DISALLOWED_ROOT_PYO3_CLASS_MEMBER_NAMES:
+                continue
+            line_number = source_text.count("\n", 0, export_match.start()) + 1
+            violations.append(
+                RootPyO3ExportViolation(
+                    source_path=relative_source_path,
+                    export_name=export_name,
+                    line_number=line_number,
+                    message=ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+                )
+            )
+    return tuple(violations)
+
+
 def collect_root_pyo3_export_violations(repository_root: Path) -> tuple[RootPyO3ExportViolation, ...]:
     """Collect removed raw helper exports from root PyO3 adapter modules."""
     root_python_source_directory = repository_root / ROOT_CRATE_PYTHON_SOURCE_DIRECTORY
@@ -376,20 +445,8 @@ def collect_root_pyo3_export_violations(repository_root: Path) -> tuple[RootPyO3
     for rust_source_path in sorted(root_python_source_directory.rglob("*.rs")):
         source_text = rust_source_path.read_text(encoding="utf-8")
         relative_source_path = rust_source_path.relative_to(repository_root)
-        for export_pattern in (ROOT_PYO3_PYFUNCTION_EXPORT_PATTERN, ROOT_PYO3_PYCLASS_EXPORT_PATTERN):
-            for export_match in export_pattern.finditer(source_text):
-                export_name = export_match.group("export_name")
-                if export_name not in DISALLOWED_ROOT_PYO3_EXPORT_NAMES:
-                    continue
-                line_number = source_text.count("\n", 0, export_match.start()) + 1
-                violations.append(
-                    RootPyO3ExportViolation(
-                        source_path=relative_source_path,
-                        export_name=export_name,
-                        line_number=line_number,
-                        message=ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
-                    )
-                )
+        violations.extend(collect_root_pyo3_registered_export_violations(source_text, relative_source_path))
+        violations.extend(collect_root_pyo3_class_member_export_violations(source_text, relative_source_path))
     return tuple(sorted(violations, key=lambda violation: (violation.source_path, violation.line_number)))
 
 

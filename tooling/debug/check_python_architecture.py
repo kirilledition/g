@@ -509,6 +509,13 @@ PYTHON_CALL_POLICIES = (
         message="production callback metadata helpers must use native scalar chromosome labels directly",
     ),
     PythonCallPolicy(
+        name="timing_snapshot_serialization_contract_isolation",
+        source_directory=Path("engine/timing.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production timing snapshot serialization must use typed dataclass mappings, not reflective probing",
+    ),
+    PythonCallPolicy(
         name="jax_host_materialization_isolation",
         source_directory=Path("engine"),
         forbidden_calls=("jax.device_get", "device_get"),

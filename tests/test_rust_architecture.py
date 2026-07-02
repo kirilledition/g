@@ -150,6 +150,14 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
                 "module.add_function(wrap_pyfunction!(build_shutdown_signal_payload, module)?)?;",
                 "module.add_class::<NativeSecondSignalExceptionPlan>()?;",
                 "module.add_function(wrap_pyfunction!(emit_diagnostic_event, module)?)?;",
+                "module.add_function(wrap_pyfunction!(compile_run_request_json, module)?)?;",
+                "module.add_function(wrap_pyfunction!(initialize_pipeline_output_runs, module)?)?;",
+                "module.add_function(wrap_pyfunction!(default_nvidia_driver_probe_paths_payload, module)?)?;",
+                "module.add_function(wrap_pyfunction!(nvidia_driver_files_are_visible_value, module)?)?;",
+                "module.add_function(wrap_pyfunction!(build_jax_runtime_policy_payload, module)?)?;",
+                "module.add_function(wrap_pyfunction!(build_logging_runtime_policy_payload, module)?)?;",
+                "module.add_function(wrap_pyfunction!(build_process_runtime_state_handle, module)?)?;",
+                "module.add_function(wrap_pyfunction!(build_runtime_policy_handle, module)?)?;",
             )
         ),
         encoding="utf-8",
@@ -174,6 +182,97 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
             source_path=Path("src/python/shutdown.rs"),
             export_name="emit_diagnostic_event",
             line_number=3,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="compile_run_request_json",
+            line_number=4,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="initialize_pipeline_output_runs",
+            line_number=5,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="default_nvidia_driver_probe_paths_payload",
+            line_number=6,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="nvidia_driver_files_are_visible_value",
+            line_number=7,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="build_jax_runtime_policy_payload",
+            line_number=8,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="build_logging_runtime_policy_payload",
+            line_number=9,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="build_process_runtime_state_handle",
+            line_number=10,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="build_runtime_policy_handle",
+            line_number=11,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+    )
+
+
+def test_root_pyo3_removed_export_policy_rejects_class_method_exports(tmp_path: Path) -> None:
+    python_source_directory = tmp_path / "src" / "python"
+    python_source_directory.mkdir(parents=True)
+    (python_source_directory / "output.rs").write_text(
+        "\n".join(
+            (
+                "struct NativePreparedOutputRun {",
+                "    #[pyo3(get)]",
+                "    existing_manifest_json: Option<String>,",
+                "}",
+                "impl NativeManifestFileFingerprintCache {",
+                "    fn build_prediction_loco_file_fingerprints_json(&self) {}",
+                "    fn build_current_run_manifest_header_json_from_input_json(&self) {}",
+                "}",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_rust_architecture.collect_root_pyo3_export_violations(tmp_path)
+
+    assert violations == (
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/output.rs"),
+            export_name="existing_manifest_json",
+            line_number=2,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/output.rs"),
+            export_name="build_prediction_loco_file_fingerprints_json",
+            line_number=6,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/output.rs"),
+            export_name="build_current_run_manifest_header_json_from_input_json",
+            line_number=7,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

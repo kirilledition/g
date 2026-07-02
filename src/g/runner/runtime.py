@@ -137,7 +137,7 @@ def build_process_runtime_state(
         Native process runtime state handle.
 
     """
-    return _core.build_process_runtime_state_handle(
+    return _core.NativeRuntimeState().build_process_runtime_state_handle(
         None if logging_policy is None else logging_runtime_policy_to_native_payload(logging_policy),
         rayon_thread_count,
         None if jax_policy is None else jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),
@@ -198,7 +198,7 @@ def build_logging_runtime_policy(
 ) -> LoggingRuntimePolicy:
     """Build the process-global logging policy requested by a run."""
     telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
-    native_payload = _core.build_logging_runtime_policy_payload(
+    native_payload = PROCESS_RUNTIME_STATE.build_logging_runtime_policy_payload(
         diagnostics_config.log_filter,
         None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
         diagnostics_config.log_stderr,
@@ -285,7 +285,7 @@ def build_runtime_policy(
     logging_policy = build_logging_runtime_policy(regenie_config.g_diagnostics, telemetry_paths)
     jax_policy = jax_runtime_resolution.resolve_jax_runtime_policy(regenie_config.g_compute)
     return RuntimePolicy(
-        native_policy=_core.build_runtime_policy_handle(
+        native_policy=PROCESS_RUNTIME_STATE.build_runtime_policy_handle(
             logging_runtime_policy_to_native_payload(logging_policy),
             regenie_config.trait.threads,
             jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),

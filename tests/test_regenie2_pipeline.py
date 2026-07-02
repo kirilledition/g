@@ -91,7 +91,7 @@ def test_production_callback_runtime_has_no_manual_scheduler_fallbacks() -> None
 def build_test_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:
     """Build a native runtime compatibility token for pipeline tests."""
     runtime_state = _core.NativeRuntimeState()
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    logging_policy_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,

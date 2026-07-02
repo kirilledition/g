@@ -342,24 +342,22 @@ def binary_chunk_diagnostics_snapshot_to_mapping(
     diagnostics: BinaryChunkDiagnosticsSnapshot,
 ) -> dict[str, int | float]:
     """Serialize a binary diagnostic snapshot to JSON-ready counters."""
-    serialized_diagnostics: dict[str, int | float] = {}
-    for diagnostic_field in dataclasses.fields(diagnostics):
-        diagnostic_value = getattr(diagnostics, diagnostic_field.name)
-        if diagnostic_value is not None:
-            serialized_diagnostics[diagnostic_field.name] = diagnostic_value
-    return serialized_diagnostics
+    return {
+        field_name: typing.cast("int | float", field_value)
+        for field_name, field_value in dataclasses.asdict(diagnostics).items()
+        if field_value is not None
+    }
 
 
 def null_logistic_diagnostics_snapshot_to_mapping(
     diagnostics: NullLogisticDiagnosticsSnapshot,
 ) -> dict[str, int | str]:
     """Serialize a null logistic diagnostic snapshot to JSON-ready counters."""
-    serialized_diagnostics: dict[str, int | str] = {}
-    for diagnostic_field in dataclasses.fields(diagnostics):
-        diagnostic_value = getattr(diagnostics, diagnostic_field.name)
-        if diagnostic_value is not None:
-            serialized_diagnostics[diagnostic_field.name] = diagnostic_value
-    return serialized_diagnostics
+    return {
+        field_name: typing.cast("int | str", field_value)
+        for field_name, field_value in dataclasses.asdict(diagnostics).items()
+        if field_value is not None
+    }
 
 
 class StageTimingRecorder:

@@ -78,7 +78,7 @@ DEFAULT_TEST_INPUT_PATH: typing.Final[object] = object()
 def build_test_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:
     """Build a native runtime compatibility token for output side-effect tests."""
     runtime_state = _core.NativeRuntimeState()
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    logging_policy_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,
