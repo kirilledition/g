@@ -281,6 +281,22 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "plan_single_trait_binary_gpu_genotype_format_resolution",
         "plan_single_trait_output_write",
         "plan_writer_finish_execution",
+        "record_association_backend_selected_telemetry_event",
+        "record_bgen_engine_opened_telemetry_event",
+        "record_effective_config_written_telemetry_event",
+        "record_execution_plan_prepared_telemetry_event",
+        "record_gpu_genotype_format_resolved_telemetry_event",
+        "record_multi_phenotype_preflight_completed_telemetry_event",
+        "record_multi_phenotype_sample_summary_telemetry_event",
+        "record_multi_writer_finished_telemetry_event",
+        "record_prediction_source_loaded_telemetry_event",
+        "record_runner_run_completed_telemetry_event",
+        "record_runner_run_failed_telemetry_event",
+        "record_runner_run_interrupted_telemetry_event",
+        "record_runner_run_started_telemetry_event",
+        "record_sample_alignment_completed_telemetry_event",
+        "record_single_trait_preflight_completed_telemetry_event",
+        "record_writer_finished_telemetry_event",
         "validate_pipeline_resume_compatibility",
     ):
         assert not hasattr(_core, removed_scheduler_export_name)
@@ -1598,14 +1614,152 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
         ) -> None:
             self.calls.append(("multi_writer_finished", (association_mode, phenotype_count, tuple(final_output_paths))))
 
+        def emit_single_trait_preflight_completed_event(
+            self,
+            association_mode: str,
+            phenotype: str,
+            sample_count: int,
+            covariate_count: int,
+            chromosome_count: int,
+        ) -> None:
+            self.calls.append(
+                (
+                    "single_trait_preflight_completed",
+                    (association_mode, phenotype, sample_count, covariate_count, chromosome_count),
+                )
+            )
+
+        def emit_multi_phenotype_preflight_completed_event(
+            self,
+            association_mode: str,
+            phenotype_count: int,
+            sample_count: int,
+        ) -> None:
+            self.calls.append(
+                ("multi_phenotype_preflight_completed", (association_mode, phenotype_count, sample_count))
+            )
+
+        def emit_sample_alignment_completed_event(
+            self,
+            association_mode: str,
+            phenotype: str | None,
+            phenotype_count: int | None,
+            sample_count: int | None,
+            covariate_count: int | None,
+            phenotype_group_count: int | None,
+        ) -> None:
+            self.calls.append(
+                (
+                    "sample_alignment_completed",
+                    (
+                        association_mode,
+                        phenotype,
+                        phenotype_count,
+                        sample_count,
+                        covariate_count,
+                        phenotype_group_count,
+                    ),
+                )
+            )
+
+        def emit_prediction_source_loaded_event(
+            self,
+            association_mode: str,
+            phenotype: str | None,
+            phenotype_count: int | None,
+        ) -> None:
+            self.calls.append(("prediction_source_loaded", (association_mode, phenotype, phenotype_count)))
+
+        def emit_multi_phenotype_sample_summary_event(
+            self,
+            association_mode: str,
+            sample_mode: str,
+            sample_counts: typing.Sequence[int],
+            sample_set_fingerprints: typing.Sequence[str | None],
+            phenotype_group_count: int,
+        ) -> None:
+            self.calls.append(
+                (
+                    "multi_phenotype_sample_summary",
+                    (
+                        association_mode,
+                        sample_mode,
+                        tuple(sample_counts),
+                        tuple(sample_set_fingerprints),
+                        phenotype_group_count,
+                    ),
+                )
+            )
+
+        def emit_gpu_genotype_format_resolved_event(
+            self,
+            requested_gpu_genotype_format: str,
+            resolved_gpu_genotype_format: str,
+            resolution_reason: str,
+            fallback_error: str | None,
+        ) -> None:
+            self.calls.append(
+                (
+                    "gpu_genotype_format_resolved",
+                    (requested_gpu_genotype_format, resolved_gpu_genotype_format, resolution_reason, fallback_error),
+                )
+            )
+
+        def emit_association_backend_selected_event(
+            self,
+            association_mode: str,
+            association_backend_kind: str,
+            device: str,
+            genotype_format: str,
+            phenotype: str | None,
+            phenotype_count: int | None,
+        ) -> None:
+            self.calls.append(
+                (
+                    "association_backend_selected",
+                    (
+                        association_mode,
+                        association_backend_kind,
+                        device,
+                        genotype_format,
+                        phenotype,
+                        phenotype_count,
+                    ),
+                )
+            )
+
+        def emit_bgen_engine_opened_event(
+            self,
+            association_mode: str,
+            association_backend_kind: str,
+            sample_count: int,
+            variant_count: int,
+            phenotype: str | None,
+            phenotype_count: int | None,
+        ) -> None:
+            self.calls.append(
+                (
+                    "bgen_engine_opened",
+                    (
+                        association_mode,
+                        association_backend_kind,
+                        sample_count,
+                        variant_count,
+                        phenotype,
+                        phenotype_count,
+                    ),
+                )
+            )
+
     class RecordingTelemetrySession:
         def __init__(self, native_session_handle: RecordingNativeSessionHandle) -> None:
             self.native_session_handle = native_session_handle
 
     native_session_handle = RecordingNativeSessionHandle()
     telemetry_session = RecordingTelemetrySession(native_session_handle)
+    telemetry_policy = _core.NativeRunEventTelemetryPolicy()
 
-    _core.record_execution_plan_prepared_telemetry_event(
+    telemetry_policy.record_execution_plan_prepared_telemetry_event(
         None,
         "regenie2_linear",
         "quantitative",
@@ -1619,17 +1773,17 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
     interrupted_event = object()
     failed_event = object()
     completed_event = object()
-    _core.record_runner_run_started_telemetry_event(
+    telemetry_policy.record_runner_run_started_telemetry_event(
         telemetry_session,
         "regenie2_linear",
         "quantitative",
         2,
         "output.g",
     )
-    _core.record_runner_run_interrupted_telemetry_event(telemetry_session, interrupted_event)
-    _core.record_runner_run_failed_telemetry_event(telemetry_session, failed_event)
-    _core.record_runner_run_completed_telemetry_event(telemetry_session, completed_event)
-    _core.record_execution_plan_prepared_telemetry_event(
+    telemetry_policy.record_runner_run_interrupted_telemetry_event(telemetry_session, interrupted_event)
+    telemetry_policy.record_runner_run_failed_telemetry_event(telemetry_session, failed_event)
+    telemetry_policy.record_runner_run_completed_telemetry_event(telemetry_session, completed_event)
+    telemetry_policy.record_execution_plan_prepared_telemetry_event(
         telemetry_session,
         "regenie2_linear",
         "quantitative",
@@ -1638,24 +1792,86 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
         None,
         "gpu",
     )
-    _core.record_effective_config_written_telemetry_event(
+    telemetry_policy.record_effective_config_written_telemetry_event(
         telemetry_session,
         "regenie2_linear",
         "height",
         "height/effective_config.toml",
         "height",
     )
-    _core.record_writer_finished_telemetry_event(
+    telemetry_policy.record_writer_finished_telemetry_event(
         telemetry_session,
         "regenie2_linear",
         "height",
         "height.parquet",
     )
-    _core.record_multi_writer_finished_telemetry_event(
+    telemetry_policy.record_multi_writer_finished_telemetry_event(
         telemetry_session,
         "regenie2_binary",
         2,
         ("case_status.parquet", None),
+    )
+    telemetry_policy.record_single_trait_preflight_completed_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "height",
+        100,
+        4,
+        22,
+    )
+    telemetry_policy.record_multi_phenotype_preflight_completed_telemetry_event(
+        telemetry_session,
+        "regenie2_binary",
+        3,
+        150,
+    )
+    telemetry_policy.record_sample_alignment_completed_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "height",
+        None,
+        100,
+        4,
+        None,
+    )
+    telemetry_policy.record_prediction_source_loaded_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "height",
+        None,
+    )
+    telemetry_policy.record_multi_phenotype_sample_summary_telemetry_event(
+        telemetry_session,
+        "regenie2_binary",
+        "per_phenotype",
+        (100, 98),
+        ("abc", None),
+        2,
+    )
+    telemetry_policy.record_gpu_genotype_format_resolved_telemetry_event(
+        telemetry_session,
+        "auto",
+        "dosage",
+        "cpu-request",
+        None,
+    )
+    telemetry_policy.record_association_backend_selected_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "jax",
+        "gpu",
+        "dosage",
+        "height",
+        None,
+    )
+    telemetry_policy.record_bgen_engine_opened_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "jax",
+        100,
+        200,
+        "height",
+        None,
     )
 
     assert native_session_handle.calls == [
@@ -1667,6 +1883,14 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
         ("effective_config_written", ("regenie2_linear", "height", "height/effective_config.toml", "height")),
         ("writer_finished", ("regenie2_linear", "height", "height.parquet")),
         ("multi_writer_finished", ("regenie2_binary", 2, ("case_status.parquet", None))),
+        ("single_trait_preflight_completed", ("regenie2_linear", "height", 100, 4, 22)),
+        ("multi_phenotype_preflight_completed", ("regenie2_binary", 3, 150)),
+        ("sample_alignment_completed", ("regenie2_linear", "height", None, 100, 4, None)),
+        ("prediction_source_loaded", ("regenie2_linear", "height", None)),
+        ("multi_phenotype_sample_summary", ("regenie2_binary", "per_phenotype", (100, 98), ("abc", None), 2)),
+        ("gpu_genotype_format_resolved", ("auto", "dosage", "cpu-request", None)),
+        ("association_backend_selected", ("regenie2_linear", "jax", "gpu", "dosage", "height", None)),
+        ("bgen_engine_opened", ("regenie2_linear", "jax", 100, 200, "height", None)),
     ]
 
 

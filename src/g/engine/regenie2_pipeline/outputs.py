@@ -7,7 +7,7 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, execution_plan, types
-from g.engine import timing
+from g.engine import run_events, timing
 from g.engine.native_dispatch import engine as native_dispatch_engine
 from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.io import output
@@ -58,7 +58,7 @@ def log_association_backend_selected(
     phenotype_count: int | None,
 ) -> None:
     """Emit telemetry for the concrete association backend selection."""
-    _core.record_association_backend_selected_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_association_backend_selected_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         context.backend_plan.backend_kind.value,
@@ -77,7 +77,7 @@ def log_bgen_engine_opened(
     phenotype_count: int | None,
 ) -> None:
     """Emit telemetry for an opened BGEN engine."""
-    _core.record_bgen_engine_opened_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_bgen_engine_opened_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         context.backend_plan.backend_kind.value,

@@ -2223,6 +2223,11 @@ Current implementation notes:
   dispatch, and binary correction summary telemetry dispatch were removed from
   the Python-visible root surface; production enters those policies through
   typed callback policy handles.
+- Detached run-event telemetry dispatch helper exports for run lifecycle,
+  writer, preflight, sample-alignment, prediction-source, sample-summary,
+  GPU-format, association-backend, and BGEN-open events were removed from the
+  Python-visible root surface; production enters those policies through
+  `NativeRunEventTelemetryPolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

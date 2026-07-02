@@ -50,7 +50,7 @@ def log_writer_finished(
     final_output_path: Path | None,
 ) -> None:
     """Record output writer completion."""
-    _core.record_writer_finished_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_writer_finished_telemetry_event(
         telemetry_session,
         association_mode.value,
         phenotype,
@@ -71,7 +71,7 @@ def write_run_start_metadata(
         plan=plan,
         phenotype_run_plan=phenotype_run_plan,
     )
-    _core.record_effective_config_written_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_effective_config_written_telemetry_event(
         telemetry_session,
         plan.association_mode.value,
         phenotype_run_plan.phenotype_name,

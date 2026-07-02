@@ -179,6 +179,8 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
                 "module.add_function(wrap_pyfunction!(validate_finite_array_values, module)?)?;",
                 "module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;",
                 "module.add_function(wrap_pyfunction!(emit_callback_progress_update_telemetry, module)?)?;",
+                "module.add_function(wrap_pyfunction!(record_runner_run_started_telemetry_event, module)?)?;",
+                "module.add_function(wrap_pyfunction!(record_bgen_engine_opened_telemetry_event, module)?)?;",
             )
         ),
         encoding="utf-8",
@@ -377,6 +379,18 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
             source_path=Path("src/python/shutdown.rs"),
             export_name="emit_callback_progress_update_telemetry",
             line_number=32,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="record_runner_run_started_telemetry_event",
+            line_number=33,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/shutdown.rs"),
+            export_name="record_bgen_engine_opened_telemetry_event",
+            line_number=34,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

@@ -215,6 +215,10 @@ Callback helper entry points for null-logistic nonconvergence array planning,
 callback chunk identity construction, callback progress telemetry dispatch, and
 binary correction summary telemetry dispatch now enter through typed callback
 policy handles instead of detached root `_core` functions.
+Run lifecycle, writer, preflight, alignment, backend, BGEN-open, sample-summary,
+GPU-format, and prediction-source telemetry dispatch helpers now enter through
+the typed `NativeRunEventTelemetryPolicy` handle instead of detached root
+`_core` functions.
 Preflight chromosome collection now requires the native engine
 `required_chromosomes` API directly; the old Python metadata-slice collection
 fallback has been removed.

@@ -148,6 +148,11 @@ def build_run_failed_event(error: Exception) -> RunFailedEvent:
     return run_failed_event_from_native_payload(g._core.build_run_failed_event_payload(error))
 
 
+def native_run_event_telemetry_policy() -> g._core.NativeRunEventTelemetryPolicy:
+    """Build the native run-event telemetry policy handle."""
+    return g._core.NativeRunEventTelemetryPolicy()
+
+
 def run_completed_event_from_native_payload(payload: object) -> RunCompletedEvent:
     """Adapt a native completed-run event payload to the public Python dataclass."""
     event_payload = native_mapping_payload(payload)

@@ -90,6 +90,7 @@ def regenie(
 ) -> RunArtifacts:
     """Run the shared REGENIE-compatible config path."""
     active_telemetry_session = run_telemetry_session or telemetry.build_telemetry_session(regenie_config)
+    native_run_event_telemetry_policy = run_events.native_run_event_telemetry_policy()
     try:
         config.validate_config_for_run(regenie_config)
         runtime_policy = runtime.build_runtime_policy(regenie_config, active_telemetry_session.paths)
@@ -98,7 +99,7 @@ def regenie(
             runtime.initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
         association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
         phenotype_count = len(regenie_config.input.pheno_columns)
-        _core.record_runner_run_started_telemetry_event(
+        native_run_event_telemetry_policy.record_runner_run_started_telemetry_event(
             active_telemetry_session,
             association_mode.value,
             regenie_config.trait.trait_type.value,
@@ -118,12 +119,16 @@ def regenie(
         )
     except shutdown.GracefulShutdownRequested as shutdown_request:
         interrupted_event = run_events.build_run_interrupted_event(shutdown_request)
-        _core.record_runner_run_interrupted_telemetry_event(active_telemetry_session, interrupted_event)
+        native_run_event_telemetry_policy.record_runner_run_interrupted_telemetry_event(
+            active_telemetry_session, interrupted_event
+        )
         _core.record_runner_run_interrupted_diagnostic_event(interrupted_event)
         raise
     except Exception as error:
         failed_event = run_events.build_run_failed_event(error)
-        _core.record_runner_run_failed_telemetry_event(active_telemetry_session, failed_event)
+        native_run_event_telemetry_policy.record_runner_run_failed_telemetry_event(
+            active_telemetry_session, failed_event
+        )
         _core.record_runner_run_failed_diagnostic_event(failed_event)
         raise
     else:
@@ -134,7 +139,9 @@ def regenie(
             phenotype_count=phenotype_count,
         )
         completed_event = run_events.build_run_completed_event(artifacts)
-        _core.record_runner_run_completed_telemetry_event(active_telemetry_session, completed_event)
+        native_run_event_telemetry_policy.record_runner_run_completed_telemetry_event(
+            active_telemetry_session, completed_event
+        )
         _core.record_runner_run_completed_diagnostic_event(completed_event)
         return artifacts
     finally:
@@ -154,6 +161,7 @@ def run_validated_regenie_config(
         regenie_config.g_diagnostics.stage_timings_json,
         telemetry_session,
     )
+    native_run_event_telemetry_policy = run_events.native_run_event_telemetry_policy()
     try:
         device_start_time = time.perf_counter()
         _core.record_runner_jax_runtime_configuration_started_diagnostic_event()
@@ -169,7 +177,7 @@ def run_validated_regenie_config(
             regenie_config,
             runtime_compatibility_token=runtime_compatibility_token,
         )
-        _core.record_execution_plan_prepared_telemetry_event(
+        native_run_event_telemetry_policy.record_execution_plan_prepared_telemetry_event(
             telemetry_session,
             plan.association_mode.value,
             regenie_config.trait.trait_type.value,
@@ -516,7 +524,7 @@ def dispatch_multi_phenotype_engine_pipeline(
             phenotype_compute_groups=plan.phenotype_compute_groups,
             output_initialized_callback=common_request.output_initialized_callback,
         )
-    _core.record_multi_writer_finished_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_multi_writer_finished_telemetry_event(
         telemetry_session,
         plan.association_mode.value,
         len(plan.phenotype_run_plans),

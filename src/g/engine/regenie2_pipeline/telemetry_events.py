@@ -5,6 +5,7 @@ from __future__ import annotations
 import typing
 
 from g import _core, types
+from g.engine import run_events
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
@@ -20,7 +21,7 @@ def log_sample_alignment_completed(
     phenotype_group_count: int | None,
 ) -> None:
     """Emit sample-alignment telemetry with mode-specific fields."""
-    _core.record_sample_alignment_completed_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_sample_alignment_completed_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         phenotype_name,
@@ -47,7 +48,7 @@ def log_multi_phenotype_sample_summary(
         sample_counts_differ=sample_counts_differ,
         sample_mode=sample_mode.value,
     )
-    _core.record_multi_phenotype_sample_summary_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_multi_phenotype_sample_summary_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         sample_mode.value,
@@ -64,7 +65,7 @@ def log_prediction_source_loaded(
     phenotype_count: int | None,
 ) -> None:
     """Emit prediction-source telemetry with mode-specific fields."""
-    _core.record_prediction_source_loaded_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_prediction_source_loaded_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         phenotype_name,

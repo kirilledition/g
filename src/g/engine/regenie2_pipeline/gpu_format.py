@@ -8,7 +8,7 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, types
-from g.engine import timing
+from g.engine import run_events, timing
 from g.engine.native_dispatch import engine as native_dispatch_engine
 
 if typing.TYPE_CHECKING:
@@ -67,7 +67,7 @@ def log_auto_resolution(
         resolution_reason=resolution_reason,
         fallback_error=fallback_error,
     )
-    _core.record_gpu_genotype_format_resolved_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_gpu_genotype_format_resolved_telemetry_event(
         telemetry_session,
         requested_gpu_genotype_format.value,
         resolved_gpu_genotype_format.value,

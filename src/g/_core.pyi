@@ -2920,115 +2920,133 @@ def attach_run_metadata_payload(
 def build_run_completed_event_payload(artifacts: object) -> dict[str, object]: ...
 def build_run_interrupted_event_payload(shutdown_request: object) -> dict[str, object]: ...
 def build_run_failed_event_payload(error: BaseException) -> dict[str, object]: ...
-def record_runner_run_started_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    trait_type: str,
-    phenotype_count: int,
-    output_run_root: str,
-) -> None: ...
-def record_runner_run_interrupted_telemetry_event(
-    telemetry_session: object | None,
-    event: object,
-) -> None: ...
-def record_runner_run_failed_telemetry_event(
-    telemetry_session: object | None,
-    event: object,
-) -> None: ...
-def record_runner_run_completed_telemetry_event(
-    telemetry_session: object | None,
-    event: object,
-) -> None: ...
-def record_execution_plan_prepared_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    trait_type: str,
-    phenotype_count: int,
-    chunk_size: int,
-    variant_limit: int | None,
-    device: str,
-) -> None: ...
-def record_effective_config_written_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype: str,
-    effective_config: str,
-    output_run_directory: str,
-) -> None: ...
-def record_writer_finished_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype: str,
-    final_output_path: str | None,
-) -> None: ...
-def record_multi_writer_finished_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype_count: int,
-    final_output_paths: typing.Sequence[str | None],
-) -> None: ...
-def record_single_trait_preflight_completed_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype: str,
-    sample_count: int,
-    covariate_count: int,
-    chromosome_count: int,
-) -> None: ...
-def record_multi_phenotype_preflight_completed_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype_count: int,
-    sample_count: int,
-) -> None: ...
-def record_sample_alignment_completed_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype: str | None,
-    phenotype_count: int | None,
-    sample_count: int | None,
-    covariate_count: int | None,
-    phenotype_group_count: int | None,
-) -> None: ...
-def record_prediction_source_loaded_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype: str | None,
-    phenotype_count: int | None,
-) -> None: ...
-def record_multi_phenotype_sample_summary_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    sample_mode: str,
-    sample_counts: typing.Sequence[int],
-    sample_set_fingerprints: typing.Sequence[str | None],
-    phenotype_group_count: int,
-) -> None: ...
-def record_gpu_genotype_format_resolved_telemetry_event(
-    telemetry_session: object | None,
-    requested_gpu_genotype_format: str,
-    resolved_gpu_genotype_format: str,
-    resolution_reason: str,
-    fallback_error: str | None,
-) -> None: ...
-def record_association_backend_selected_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    association_backend_kind: str,
-    device: str,
-    genotype_format: str,
-    phenotype: str | None,
-    phenotype_count: int | None,
-) -> None: ...
-def record_bgen_engine_opened_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    association_backend_kind: str,
-    sample_count: int,
-    variant_count: int,
-    phenotype: str | None,
-    phenotype_count: int | None,
-) -> None: ...
+class NativeRunEventTelemetryPolicy:
+    def __init__(self) -> None: ...
+    def record_runner_run_started_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        trait_type: str,
+        phenotype_count: int,
+        output_run_root: str,
+    ) -> None: ...
+    def record_runner_run_interrupted_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        event: object,
+    ) -> None: ...
+    def record_runner_run_failed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        event: object,
+    ) -> None: ...
+    def record_runner_run_completed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        event: object,
+    ) -> None: ...
+    def record_execution_plan_prepared_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        trait_type: str,
+        phenotype_count: int,
+        chunk_size: int,
+        variant_limit: int | None,
+        device: str,
+    ) -> None: ...
+    def record_effective_config_written_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype: str,
+        effective_config: str,
+        output_run_directory: str,
+    ) -> None: ...
+    def record_writer_finished_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype: str,
+        final_output_path: str | None,
+    ) -> None: ...
+    def record_multi_writer_finished_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype_count: int,
+        final_output_paths: typing.Sequence[str | None],
+    ) -> None: ...
+    def record_single_trait_preflight_completed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype: str,
+        sample_count: int,
+        covariate_count: int,
+        chromosome_count: int,
+    ) -> None: ...
+    def record_multi_phenotype_preflight_completed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype_count: int,
+        sample_count: int,
+    ) -> None: ...
+    def record_sample_alignment_completed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+        sample_count: int | None,
+        covariate_count: int | None,
+        phenotype_group_count: int | None,
+    ) -> None: ...
+    def record_prediction_source_loaded_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None: ...
+    def record_multi_phenotype_sample_summary_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        sample_mode: str,
+        sample_counts: typing.Sequence[int],
+        sample_set_fingerprints: typing.Sequence[str | None],
+        phenotype_group_count: int,
+    ) -> None: ...
+    def record_gpu_genotype_format_resolved_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        requested_gpu_genotype_format: str,
+        resolved_gpu_genotype_format: str,
+        resolution_reason: str,
+        fallback_error: str | None,
+    ) -> None: ...
+    def record_association_backend_selected_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        association_backend_kind: str,
+        device: str,
+        genotype_format: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None: ...
+    def record_bgen_engine_opened_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        association_backend_kind: str,
+        sample_count: int,
+        variant_count: int,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None: ...
 def record_native_runtime_knobs_configured_diagnostic_event(
     bgen_decode_tile_variant_count: int,
     threads: int | None,

@@ -8,7 +8,7 @@ import typing
 import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 from g import _core, execution_plan, types
-from g.engine import preflight, timing
+from g.engine import preflight, run_events, timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
@@ -82,7 +82,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
         variant_limit=context.variant_limit,
     )
-    _core.record_multi_phenotype_preflight_completed_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_multi_phenotype_preflight_completed_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         len(run_input.phenotype_names),

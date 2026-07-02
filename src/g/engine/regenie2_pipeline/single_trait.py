@@ -8,7 +8,7 @@ import typing
 import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 from g import _core, execution_plan, types
-from g.engine import preflight, telemetry, timing
+from g.engine import preflight, run_events, telemetry, timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
@@ -134,7 +134,7 @@ def run_single_trait_preflight(
         pipeline_label=pipeline_label,
         sample_count=preflight_report.sample_count,
     )
-    _core.record_single_trait_preflight_completed_telemetry_event(
+    run_events.native_run_event_telemetry_policy().record_single_trait_preflight_completed_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         phenotype_name,
@@ -155,7 +155,7 @@ def build_single_trait_callback(
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
-) -> object:
+) -> native_dispatch_models.BgenDeliveryCallbackProtocol:
     """Build the association-specific single-trait callback."""
     if context.is_binary_trait:
         return callback_binary.BinaryRegenie2PipelineCallback(
