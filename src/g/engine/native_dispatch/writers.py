@@ -11,24 +11,25 @@ from pathlib import Path
 from g import _core
 from g.engine import shutdown, timing
 
+if typing.TYPE_CHECKING:
+    from g.engine.native_dispatch import models
+
 
 def finish_callback_drain(
     *,
-    callback: object,
+    callback: models.BgenDeliveryCallbackProtocol,
     stage_timing_recorder: timing.StageTimingRecorder | None,
 ) -> None:
     """Wait for queued callback work to drain."""
     callback_finish_start_time = time.perf_counter()
     _core.record_native_dispatch_callback_drain_started_diagnostic_event()
-    typing.cast("typing.Any", callback).finish()
+    callback.finish()
     timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
 
 
-def start_callback(callback: object) -> None:
-    """Start callback workers when the callback exposes an explicit lifecycle hook."""
-    start_callback_method = getattr(callback, "start", None)
-    if callable(start_callback_method):
-        start_callback_method()
+def start_callback(callback: models.BgenDeliveryCallbackProtocol) -> None:
+    """Start callback workers before native chunk delivery."""
+    callback.start()
 
 
 def finish_writer_session(
@@ -159,12 +160,10 @@ def finish_writer_sessions_interrupted(
     timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
 
 
-def abort_callback(callback: object) -> None:
-    """Request callback worker shutdown when supported."""
-    abort_callback_method = getattr(callback, "abort", None)
-    if callable(abort_callback_method):
-        with contextlib.suppress(Exception):
-            abort_callback_method()
+def abort_callback(callback: models.BgenDeliveryCallbackProtocol) -> None:
+    """Request callback worker shutdown."""
+    with contextlib.suppress(Exception):
+        callback.abort()
 
 
 def abort_writer_session(writer_session: typing.Any) -> None:

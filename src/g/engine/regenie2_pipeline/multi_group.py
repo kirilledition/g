@@ -228,7 +228,7 @@ def run_bgen_engine_with_multi_callback(
     run_input: native_dispatch_models.NativeBgenMultiRunInput,
     committed_chunk_identifiers: set[int] | None,
     writer_sessions: tuple[typing.Any, ...],
-    callback: object,
+    callback: native_dispatch_models.BgenDeliveryCallbackProtocol,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     writer_finish_thread_count: int,
     variant_major_packed8_probability_pairs: bool,

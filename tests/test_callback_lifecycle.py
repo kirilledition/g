@@ -280,6 +280,7 @@ class StartTrackingCallback:
 
     def __init__(self) -> None:
         """Initialize lifecycle state."""
+        self.native_callback_batch_size = 1
         self.events: list[str] = []
 
     def start(self) -> None:
@@ -327,6 +328,16 @@ class RunInput:
     """Minimal native dispatch run input."""
 
     sample_indices = np.asarray([0, 1], dtype=np.int64)
+
+    @property
+    def native_aligned_sample_data(self) -> None:
+        """Return no single-trait alignment handle for this test double."""
+        return None
+
+    @property
+    def native_multi_aligned_sample_data(self) -> None:
+        """Return no multi-trait alignment handle for this test double."""
+        return None
 
 
 class WriterSession:

@@ -400,6 +400,27 @@ PYTHON_CALL_POLICIES = (
         message="production native-dispatch compute-group resolution must call native resolvers directly",
     ),
     PythonCallPolicy(
+        name="native_delivery_callback_contract_isolation",
+        source_directory=Path("engine/native_dispatch/delivery.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production native BGEN delivery must use typed callback contracts, not optional callback probing",
+    ),
+    PythonCallPolicy(
+        name="native_dispatch_callback_lifecycle_isolation",
+        source_directory=Path("engine/native_dispatch/writers.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production native-dispatch callback lifecycle must call typed callback methods directly",
+    ),
+    PythonCallPolicy(
+        name="grouped_callback_fanout_contract_isolation",
+        source_directory=Path("engine/callbacks/grouped.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production grouped callback fanout must use typed callback lifecycle contracts",
+    ),
+    PythonCallPolicy(
         name="jax_host_materialization_isolation",
         source_directory=Path("engine"),
         forbidden_calls=("jax.device_get", "device_get"),

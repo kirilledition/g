@@ -844,6 +844,82 @@ def test_callback_convergence_scan_policy_rejects_old_numpy_reductions(tmp_path:
     ]
 
 
+def test_delivery_callback_contract_policy_rejects_optional_callback_probe(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    native_dispatch_directory = package_root / "engine" / "native_dispatch"
+    native_dispatch_directory.mkdir(parents=True)
+    (native_dispatch_directory / "delivery.py").write_text(
+        "\n".join(
+            (
+                "def plan(callback):",
+                "    return getattr(callback, 'native_callback_batch_size', None)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/native_dispatch/delivery.py"), 2, "getattr", "getattr"),
+    ]
+
+
+def test_native_dispatch_callback_lifecycle_policy_rejects_optional_hook_probe(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    native_dispatch_directory = package_root / "engine" / "native_dispatch"
+    native_dispatch_directory.mkdir(parents=True)
+    (native_dispatch_directory / "writers.py").write_text(
+        "\n".join(
+            (
+                "def start(callback):",
+                "    start_method = getattr(callback, 'start', None)",
+                "    if start_method is not None:",
+                "        start_method()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/native_dispatch/writers.py"), 2, "getattr", "getattr"),
+    ]
+
+
+def test_grouped_callback_fanout_policy_rejects_optional_lifecycle_probe(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "grouped.py").write_text(
+        "\n".join(
+            (
+                "def start(callback):",
+                "    start_method = getattr(callback, 'start', None)",
+                "    if start_method is not None:",
+                "        start_method()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/engine/callbacks/grouped.py"), 2, "getattr", "getattr"),
+    ]
+
+
 def test_jax_host_materialization_policy_rejects_device_get_outside_adapters(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     engine_directory = package_root / "engine"

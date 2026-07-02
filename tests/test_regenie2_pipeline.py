@@ -1476,6 +1476,13 @@ def test_execute_bgen_delivery_cleanup_plan_uses_native_action_order() -> None:
     events: list[str] = []
 
     class OrderedCallback:
+        @property
+        def native_callback_batch_size(self) -> int:
+            return 1
+
+        def start(self) -> None:
+            events.append("callback.start")
+
         def finish(self) -> None:
             events.append("callback.finish")
 
@@ -1587,6 +1594,7 @@ def test_run_bgen_engine_with_writer_sessions_records_native_delivery_diagnostic
 
     class DeliveryCallback:
         def __init__(self) -> None:
+            self.native_callback_batch_size = 1
             self.started = False
             self.finished = False
 
@@ -1595,6 +1603,9 @@ def test_run_bgen_engine_with_writer_sessions_records_native_delivery_diagnostic
 
         def finish(self) -> None:
             self.finished = True
+
+        def abort(self) -> None:
+            pass
 
     monkeypatch.setattr(
         native_dispatch_delivery._core,
@@ -2478,6 +2489,30 @@ class FakeRunEngine:
             callback,
             committed_chunk_identifiers,
         )
+
+
+class DeliveryBatchSizeCallback:
+    """Minimal delivery callback contract for native-dispatch tests."""
+
+    def __init__(self, *, native_callback_batch_size: int) -> None:
+        self.native_callback_batch_size = native_callback_batch_size
+
+
+class FinishTrackingCallback:
+    def __init__(self, *, native_callback_batch_size: int = 1) -> None:
+        self.native_callback_batch_size = native_callback_batch_size
+        self.started = False
+        self.finished = False
+        self.aborted = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def finish(self) -> None:
+        self.finished = True
+
+    def abort(self) -> None:
+        self.aborted = True
 
 
 class IncompatibleTrustedRunEngine(FakeRunEngine):
@@ -7204,7 +7239,7 @@ def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
 
 def test_native_dosage_delivery_forwards_callback_batch_size() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32)
-    callback = SimpleNamespace(native_callback_batch_size=2)
+    callback = DeliveryBatchSizeCallback(native_callback_batch_size=2)
     run_input = native_dispatch_models.NativeBgenUnionRunInput(sample_indices=np.asarray([0, 1], dtype=np.int64))
 
     processed_chunk_count = native_dispatch_delivery.run_variant_major_dosage_delivery(
@@ -7218,9 +7253,9 @@ def test_native_dosage_delivery_forwards_callback_batch_size() -> None:
     assert engine.callback_batch_size == 2
 
 
-def test_native_dosage_delivery_defaults_callback_batch_size_in_native_policy() -> None:
+def test_native_dosage_delivery_uses_typed_callback_batch_size_one() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32)
-    callback = SimpleNamespace()
+    callback = DeliveryBatchSizeCallback(native_callback_batch_size=1)
     run_input = native_dispatch_models.NativeBgenUnionRunInput(sample_indices=np.asarray([0, 1], dtype=np.int64))
 
     processed_chunk_count = native_dispatch_delivery.run_variant_major_dosage_delivery(
@@ -7240,7 +7275,7 @@ def test_plan_bgen_delivery_invocation_uses_native_selection_policy() -> None:
         native_multi_aligned_sample_data=SimpleNamespace(sample_indices=np.asarray([2, 3], dtype=np.int64)),
         native_aligned_sample_data=SimpleNamespace(sample_indices=np.asarray([4, 5], dtype=np.int64)),
     )
-    callback = SimpleNamespace(native_callback_batch_size=2)
+    callback = DeliveryBatchSizeCallback(native_callback_batch_size=2)
 
     dosage_plan = native_dispatch_delivery.plan_bgen_delivery_invocation(
         callback,
@@ -7254,7 +7289,7 @@ def test_plan_bgen_delivery_invocation_uses_native_selection_policy() -> None:
     assert dosage_plan.callback_batch_size == 2
 
     packed8_plan = native_dispatch_delivery.plan_bgen_delivery_invocation(
-        SimpleNamespace(native_callback_batch_size=1),
+        DeliveryBatchSizeCallback(native_callback_batch_size=1),
         typing.cast("typing.Any", run_input),
         variant_major_packed8_probability_pairs=True,
     )
@@ -7266,7 +7301,7 @@ def test_plan_bgen_delivery_invocation_uses_native_selection_policy() -> None:
 
 def test_native_dosage_delivery_prefers_native_multi_alignment() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32)
-    callback = SimpleNamespace()
+    callback = DeliveryBatchSizeCallback(native_callback_batch_size=1)
     run_input = SimpleNamespace(
         sample_indices=np.asarray([0, 1], dtype=np.int64),
         native_multi_aligned_sample_data=SimpleNamespace(sample_indices=np.asarray([2, 3], dtype=np.int64)),
@@ -7287,7 +7322,7 @@ def test_native_dosage_delivery_prefers_native_multi_alignment() -> None:
 
 def test_native_packed8_delivery_rejects_callback_batch_size_above_one() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32)
-    callback = SimpleNamespace(native_callback_batch_size=2)
+    callback = DeliveryBatchSizeCallback(native_callback_batch_size=2)
     run_input = native_dispatch_models.NativeBgenUnionRunInput(sample_indices=np.asarray([0, 1], dtype=np.int64))
 
     with pytest.raises(ValueError, match="packed8 BGEN delivery"):
@@ -12100,18 +12135,6 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     assert mock_manifest_header.call_args.kwargs["trusted_no_missing_diploid"] is True
 
 
-class FinishTrackingCallback:
-    def __init__(self) -> None:
-        self.finished = False
-        self.aborted = False
-
-    def finish(self) -> None:
-        self.finished = True
-
-    def abort(self) -> None:
-        self.aborted = True
-
-
 class GracefulShutdownRunEngine(FakeRunEngine):
     def run_bgen_variant_major_dosage_buffered_chunks(
         self,
@@ -13605,6 +13628,7 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
     sample_indices, callback, committed_chunk_identifiers = engine.run_call_arguments[0]
     np.testing.assert_array_equal(sample_indices, np.asarray([0, 1, 2], dtype=np.int64))
     assert isinstance(callback, callback_grouped.GroupedMultiPhenotypeFanoutCallback)
+    assert callback.native_callback_batch_size == 1
     np.testing.assert_array_equal(callback.group_fanouts[0].sample_position_array, np.asarray([0, 1, 2]))
     np.testing.assert_array_equal(callback.group_fanouts[1].sample_position_array, np.asarray([1, 2]))
     assert committed_chunk_identifiers == []

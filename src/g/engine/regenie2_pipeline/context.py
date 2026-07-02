@@ -14,6 +14,7 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g.compute.regenie2_binary import config as regenie2_binary_config
+    from g.engine.callbacks import shared as callback_shared
     from g.engine.native_dispatch import models as native_dispatch_models
     from g.io import source
 
@@ -139,7 +140,7 @@ class PreparedMultiPhenotypeGroupDelivery:
     compute_group: execution_plan.PhenotypeComputeGroup
     phenotype_indices: tuple[int, ...]
     run_input: native_dispatch_models.NativeBgenMultiRunInput
-    callback: object
+    callback: callback_shared.MultiPhenotypeGroupCallbackProtocol
     writer_sessions: tuple[typing.Any, ...]
     committed_chunk_identifier_sets: tuple[set[int], ...]
 

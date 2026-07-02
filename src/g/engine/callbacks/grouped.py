@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import typing
 
 import numpy as np
 import numpy.typing as npt
@@ -26,22 +25,22 @@ class GroupedMultiPhenotypeFanoutCallback:
             raise ValueError(message)
         self.group_fanouts = group_fanouts
 
+    @property
+    def native_callback_batch_size(self) -> int:
+        """Return the native callback batch size shared by grouped callbacks."""
+        return self.group_fanouts[0].callback.native_callback_batch_size
+
     def start(self) -> None:
         """Start all group callbacks before native chunk delivery."""
         for group_fanout in self.group_fanouts:
-            start_method = getattr(group_fanout.callback, "start", None)
-            if callable(start_method):
-                start_method()
+            group_fanout.callback.start()
 
     def finish(self) -> None:
         """Drain all group callbacks after native chunk delivery."""
         first_error: BaseException | None = None
         for group_fanout in self.group_fanouts:
-            finish_method = getattr(group_fanout.callback, "finish", None)
-            if not callable(finish_method):
-                continue
             try:
-                finish_method()
+                group_fanout.callback.finish()
             except BaseException as error:  # noqa: BLE001
                 if first_error is None:
                     first_error = error
@@ -51,10 +50,8 @@ class GroupedMultiPhenotypeFanoutCallback:
     def abort(self) -> None:
         """Abort all group callbacks after a native delivery failure."""
         for group_fanout in self.group_fanouts:
-            abort_method = getattr(group_fanout.callback, "abort", None)
-            if callable(abort_method):
-                with contextlib.suppress(Exception):
-                    abort_method()
+            with contextlib.suppress(Exception):
+                group_fanout.callback.abort()
 
     def acquire_variant_major_dosage_buffer(
         self,
@@ -82,7 +79,7 @@ class GroupedMultiPhenotypeFanoutCallback:
         del chunk_stats
         variant_count = int(genotype_matrix_by_variant.shape[0])
         for group_fanout in self.group_fanouts:
-            group_callback = typing.cast("typing.Any", group_fanout.callback)
+            group_callback = group_fanout.callback
             group_sample_count = int(group_fanout.sample_position_array.shape[0])
             group_genotype_matrix = group_callback.acquire_variant_major_dosage_buffer(
                 variant_count,

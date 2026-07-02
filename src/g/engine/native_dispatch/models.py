@@ -42,6 +42,31 @@ class BgenDeliveryRunInputProtocol(typing.Protocol):
         ...
 
 
+class BgenDeliveryBatchSizeProtocol(typing.Protocol):
+    """Callback batch-size contract accepted by native BGEN chunk delivery planning."""
+
+    @property
+    def native_callback_batch_size(self) -> int:
+        """Return the native callback batch size configured for delivery."""
+        ...
+
+
+class BgenDeliveryCallbackProtocol(BgenDeliveryBatchSizeProtocol, typing.Protocol):
+    """Callback lifecycle contract accepted by native BGEN chunk delivery."""
+
+    def start(self) -> None:
+        """Start callback worker resources."""
+        ...
+
+    def finish(self) -> None:
+        """Drain callback worker resources."""
+        ...
+
+    def abort(self) -> None:
+        """Abort callback worker resources."""
+        ...
+
+
 @dataclass(frozen=True)
 class NativeBgenRunInput:
     """Sample-aligned inputs retained in native form for BGEN REGENIE step 2.

@@ -70,27 +70,28 @@ def plan_bgen_delivery_cleanup(
 
 
 def resolve_native_callback_batch_size(
-    callback: object,
+    callback: models.BgenDeliveryBatchSizeProtocol,
     *,
     variant_major_packed8_probability_pairs: bool,
 ) -> int:
     """Return the validated native callback batch size for one callback object."""
-    raw_callback_batch_size = getattr(callback, "native_callback_batch_size", None)
-    callback_batch_size = None if raw_callback_batch_size is None else int(raw_callback_batch_size)
-    return int(_core.resolve_delivery_callback_batch_size(callback_batch_size, variant_major_packed8_probability_pairs))
+    return int(
+        _core.resolve_delivery_callback_batch_size(
+            callback.native_callback_batch_size,
+            variant_major_packed8_probability_pairs,
+        )
+    )
 
 
 def plan_bgen_delivery_invocation(
-    callback: object,
+    callback: models.BgenDeliveryBatchSizeProtocol,
     run_input: models.BgenDeliveryRunInputProtocol,
     *,
     variant_major_packed8_probability_pairs: bool,
 ) -> _core.NativeBgenDeliveryInvocationPlan:
     """Return the native delivery invocation plan for one run input."""
-    raw_callback_batch_size = getattr(callback, "native_callback_batch_size", None)
-    callback_batch_size = None if raw_callback_batch_size is None else int(raw_callback_batch_size)
     return _core.plan_bgen_delivery_invocation(
-        callback_batch_size,
+        callback.native_callback_batch_size,
         variant_major_packed8_probability_pairs,
         run_input.native_multi_aligned_sample_data is not None,
         run_input.native_aligned_sample_data is not None,
@@ -101,7 +102,7 @@ def execute_bgen_delivery_cleanup_plan(
     *,
     cleanup_plan: _core.NativeBgenDeliveryCleanupPlan,
     callback_finished: bool,
-    callback: object,
+    callback: models.BgenDeliveryCallbackProtocol,
     writer_sessions: tuple[typing.Any, ...],
     writer_finish_thread_count: int,
     stage_timing_recorder: timing.StageTimingRecorder | None,
@@ -148,7 +149,7 @@ def run_variant_major_packed8_delivery(
     *,
     engine: _core.Regenie2RunEngine,
     run_input: models.BgenDeliveryRunInputProtocol,
-    callback: object,
+    callback: models.BgenDeliveryBatchSizeProtocol,
     committed_chunk_identifier_list: list[int],
 ) -> int:
     """Run packed8 delivery using native sample alignment when available."""
@@ -192,7 +193,7 @@ def run_variant_major_dosage_delivery(
     *,
     engine: _core.Regenie2RunEngine,
     run_input: models.BgenDeliveryRunInputProtocol,
-    callback: object,
+    callback: models.BgenDeliveryBatchSizeProtocol,
     committed_chunk_identifier_list: list[int],
 ) -> int:
     """Run dosage delivery using native sample alignment when available."""
@@ -242,7 +243,7 @@ def run_bgen_engine_with_writer_sessions(
     run_input: models.BgenDeliveryRunInputProtocol,
     committed_chunk_identifiers: set[int] | None,
     writer_sessions: tuple[typing.Any, ...],
-    callback: object,
+    callback: models.BgenDeliveryCallbackProtocol,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     writer_finish_thread_count: int,
     variant_major_packed8_probability_pairs: bool,
@@ -369,7 +370,7 @@ def run_bgen_engine_with_callback(
     run_input: models.NativeBgenRunInput,
     committed_chunk_identifiers: set[int] | None,
     writer_session: typing.Any,
-    callback: object,
+    callback: models.BgenDeliveryCallbackProtocol,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     variant_major_packed8_probability_pairs: bool,
 ) -> Path | None:

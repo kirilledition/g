@@ -2118,6 +2118,15 @@ Current implementation notes:
 - Production BGEN delivery invocation no longer probes typed run inputs with
   optional `getattr` native-alignment fallbacks; no-native-alignment delivery
   tests now use the typed union run-input model.
+- Production BGEN delivery invocation now requires the typed callback
+  `native_callback_batch_size` contract instead of probing callbacks with an
+  optional `getattr` fallback. The Python architecture checker rejects
+  reintroducing delivery callback probing under `g.engine.native_dispatch`.
+- Native-dispatch callback start, drain, and abort helpers now call the typed
+  callback lifecycle methods directly instead of probing for optional hooks.
+- Grouped union-sample fanout now exposes the same typed delivery callback
+  contract and calls child callback lifecycle methods directly; the Python
+  architecture checker rejects grouped fanout lifecycle probing.
 
 ### Tests
 

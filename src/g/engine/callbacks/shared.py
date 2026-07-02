@@ -18,6 +18,44 @@ type HostGenotypeBuffer = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
 type HostOrDeviceFloatArray = jax.Array | npt.NDArray[np.float32]
 
 
+class MultiPhenotypeGroupCallbackProtocol(typing.Protocol):
+    """Callback contract required by grouped union-sample fanout delivery."""
+
+    @property
+    def native_callback_batch_size(self) -> int:
+        """Return the native callback batch size configured for delivery."""
+        ...
+
+    def start(self) -> None:
+        """Start callback worker resources."""
+        ...
+
+    def finish(self) -> None:
+        """Drain callback worker resources."""
+        ...
+
+    def abort(self) -> None:
+        """Abort callback worker resources."""
+        ...
+
+    def acquire_variant_major_dosage_buffer(
+        self,
+        variant_count: int,
+        sample_count: int,
+    ) -> npt.NDArray[np.float32]:
+        """Return a variant-major dosage buffer for native delivery."""
+        ...
+
+    def compute_preprocessed_variant_major_dosage_chunk(
+        self,
+        metadata: typing.Any,
+        genotype_matrix_by_variant: npt.NDArray[np.float32],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Consume one preprocessed variant-major dosage chunk."""
+        ...
+
+
 @dataclass(frozen=True)
 class LinearChunkStatsArrays:
     """Native statistic arrays needed by linear variant-major compute paths.
@@ -60,7 +98,7 @@ class MultiPhenotypeGroupFanout:
 
     """
 
-    callback: object
+    callback: MultiPhenotypeGroupCallbackProtocol
     sample_position_array: npt.NDArray[np.intp]
 
 
@@ -201,6 +239,7 @@ __all__ = [
     "HostGenotypeBuffer",
     "HostOrDeviceFloatArray",
     "LinearChunkStatsArrays",
+    "MultiPhenotypeGroupCallbackProtocol",
     "MultiPhenotypeGroupFanout",
     "MultiRegeniePredictionSourceProtocol",
     "NativeBgenMultiRunInputProtocol",

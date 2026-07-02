@@ -239,6 +239,15 @@ Remaining Python side effects are tracked as Phase 11/12 adapter work.
 Native BGEN delivery cleanup no longer carries a Python timing snapshot writer
 callback; final timing snapshots and profile summaries are written once through
 the runner's native final-timing boundary after dispatch.
+Native BGEN delivery invocation also requires typed run-input alignment handles
+and the callback runner's explicit `native_callback_batch_size`; production
+delivery code no longer probes those contracts through optional Python
+attribute fallbacks.
+Native-dispatch callback start, drain, and abort helpers call the typed
+callback lifecycle methods directly instead of probing for optional hooks.
+Grouped union-sample fanout uses the same typed callback delivery contract and
+calls child callback lifecycle methods directly instead of probing for optional
+hooks.
 The root PyO3 timing recorder binding no longer exports direct
 stage-timing/profile payload builders, the final timing write-started payload
 builder, or per-file writer methods; Python callers use typed snapshots,
