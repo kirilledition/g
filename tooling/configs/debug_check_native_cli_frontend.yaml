@@ -6,6 +6,7 @@ tool:
   warmup_count: 1
   expected_jax_device: cpu
   jax_platforms: cpu
+  bridge_smoke_enabled: true
 
 hydra:
   job:

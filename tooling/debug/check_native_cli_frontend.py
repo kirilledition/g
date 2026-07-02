@@ -6,9 +6,11 @@ from __future__ import annotations
 import enum
 import json
 import os
+import re
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import typing
 from dataclasses import dataclass
@@ -50,6 +52,8 @@ print(
     )
 )
 """
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
+LOG_TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z")
 TEXT_SAMPLE_LIMIT = 500
 
 
@@ -128,6 +132,22 @@ class PythonEnvironmentProbe:
 
 
 @dataclass(frozen=True)
+class PythonBridgeBackendSmoke:
+    """Opt-in native-to-Python backend bridge smoke result.
+
+    Attributes:
+        native_result: Native binary result with `G_NATIVE_CLI_PYTHON` enabled.
+        python_bridge_result: Direct Python bridge result for the same arguments.
+        mismatch_messages: Backend bridge mismatch diagnostics.
+
+    """
+
+    native_result: CommandResult
+    python_bridge_result: CommandResult
+    mismatch_messages: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class NativeCliFrontendCheckArguments:
     """Resolved arguments for the native CLI frontend check.
 
@@ -138,6 +158,7 @@ class NativeCliFrontendCheckArguments:
         warmup_count: Number of warmup subprocess trials per case.
         expected_jax_device: Required JAX device family for the environment probe.
         jax_platforms: Optional `JAX_PLATFORMS` override for the environment probe.
+        bridge_smoke_enabled: Whether to run the native Python backend bridge smoke.
 
     """
 
@@ -147,6 +168,7 @@ class NativeCliFrontendCheckArguments:
     warmup_count: int
     expected_jax_device: ExpectedJaxDevice
     jax_platforms: str | None
+    bridge_smoke_enabled: bool
 
 
 CONFIGLESS_COMMANDS = (
@@ -172,6 +194,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> NativeCliFronte
         warmup_count=int(config.tool.warmup_count),
         expected_jax_device=ExpectedJaxDevice(str(config.tool.expected_jax_device)),
         jax_platforms=jax_platforms,
+        bridge_smoke_enabled=bool(config.tool.bridge_smoke_enabled),
     )
 
 
@@ -185,6 +208,33 @@ def run_python_bridge_command(python_executable_path: Path, command: CommandSpec
     return run_subprocess(
         (str(python_executable_path), "-c", PYTHON_BRIDGE_SCRIPT, *command.arguments),
         environment=None,
+    )
+
+
+def run_native_python_bridge_command(
+    native_binary_path: Path,
+    python_executable_path: Path,
+    command_arguments: tuple[str, ...],
+    environment: dict[str, str],
+) -> CommandResult:
+    """Run the native binary with the Python backend bridge enabled."""
+    bridge_environment = environment.copy()
+    bridge_environment["G_NATIVE_CLI_PYTHON"] = str(python_executable_path)
+    return run_subprocess(
+        (str(native_binary_path), *command_arguments),
+        environment=bridge_environment,
+    )
+
+
+def run_python_bridge_arguments(
+    python_executable_path: Path,
+    command_arguments: tuple[str, ...],
+    environment: dict[str, str],
+) -> CommandResult:
+    """Run the direct Python CLI bridge for arbitrary command arguments."""
+    return run_subprocess(
+        (str(python_executable_path), "-c", PYTHON_BRIDGE_SCRIPT, *command_arguments),
+        environment=environment,
     )
 
 
@@ -205,6 +255,14 @@ def run_subprocess(command_arguments: tuple[str, ...], environment: dict[str, st
         stderr=completed_process.stderr,
         duration_seconds=duration_seconds,
     )
+
+
+def build_python_bridge_environment(arguments: NativeCliFrontendCheckArguments) -> dict[str, str]:
+    """Build the environment used for Python/JAX backend bridge subprocesses."""
+    environment = os.environ.copy()
+    if arguments.jax_platforms is not None:
+        environment["JAX_PLATFORMS"] = arguments.jax_platforms
+    return environment
 
 
 def compare_command_results(native_result: CommandResult, python_bridge_result: CommandResult) -> tuple[str, ...]:
@@ -261,11 +319,91 @@ def compare_case(arguments: NativeCliFrontendCheckArguments, command: CommandSpe
     )
 
 
+def run_python_bridge_backend_smoke(arguments: NativeCliFrontendCheckArguments) -> PythonBridgeBackendSmoke:
+    """Compare opt-in native Python backend bridge output with direct Python output."""
+    with tempfile.TemporaryDirectory(prefix="g-native-cli-bridge-") as temporary_directory_text:
+        temporary_directory = Path(temporary_directory_text)
+        native_command_arguments = write_bridge_smoke_fixture(temporary_directory / "native")
+        python_command_arguments = write_bridge_smoke_fixture(temporary_directory / "python")
+        environment = build_python_bridge_environment(arguments)
+        native_result = run_native_python_bridge_command(
+            arguments.native_binary_path,
+            arguments.python_executable_path,
+            native_command_arguments,
+            environment,
+        )
+        python_bridge_result = run_python_bridge_arguments(
+            arguments.python_executable_path,
+            python_command_arguments,
+            environment,
+        )
+    return PythonBridgeBackendSmoke(
+        native_result=native_result,
+        python_bridge_result=python_bridge_result,
+        mismatch_messages=compare_bridge_smoke_results(native_result, python_bridge_result),
+    )
+
+
+def write_bridge_smoke_fixture(fixture_directory: Path) -> tuple[str, ...]:
+    """Write a minimal validated REGENIE fixture for backend bridge smoke checks."""
+    fixture_directory.mkdir(parents=True)
+    bgen_path = fixture_directory / "dataset.bgen"
+    phenotype_path = fixture_directory / "phenotype.tsv"
+    prediction_path = fixture_directory / "predictions.list"
+    output_path = fixture_directory / "results" / "output"
+    bgen_path.write_bytes(b"")
+    phenotype_path.write_text("FID IID trait\n", encoding="utf-8")
+    prediction_path.write_text("", encoding="utf-8")
+    return (
+        "regenie",
+        "--step",
+        "2",
+        "--qt",
+        "--bgen",
+        str(bgen_path),
+        "--phenoFile",
+        str(phenotype_path),
+        "--phenoCol",
+        "trait",
+        "--pred",
+        str(prediction_path),
+        "--out",
+        str(output_path),
+    )
+
+
+def compare_bridge_smoke_results(native_result: CommandResult, python_bridge_result: CommandResult) -> tuple[str, ...]:
+    """Return mismatch messages for the real Python backend bridge smoke."""
+    mismatch_messages: list[str] = []
+    if native_result.exit_code != python_bridge_result.exit_code:
+        mismatch_messages.append(
+            f"exit code mismatch: native={native_result.exit_code}, python={python_bridge_result.exit_code}"
+        )
+    if native_result.stdout != python_bridge_result.stdout:
+        mismatch_messages.append(
+            "stdout mismatch:\n"
+            f"native={format_text_sample(native_result.stdout)}\n"
+            f"python={format_text_sample(python_bridge_result.stdout)}"
+        )
+    normalized_native_stderr = normalize_bridge_stderr(native_result.stderr)
+    normalized_python_stderr = normalize_bridge_stderr(python_bridge_result.stderr)
+    if normalized_native_stderr != normalized_python_stderr:
+        mismatch_messages.append(
+            "stderr mismatch:\n"
+            f"native={format_text_sample(normalized_native_stderr)}\n"
+            f"python={format_text_sample(normalized_python_stderr)}"
+        )
+    return tuple(mismatch_messages)
+
+
+def normalize_bridge_stderr(value: str) -> str:
+    """Normalize volatile backend bridge stderr fields before comparison."""
+    return LOG_TIMESTAMP_PATTERN.sub("<timestamp>", ANSI_ESCAPE_PATTERN.sub("", value))
+
+
 def run_python_environment_probe(arguments: NativeCliFrontendCheckArguments) -> PythonEnvironmentProbe:
     """Run the Python/JAX environment probe needed by the future backend adapter."""
-    environment = os.environ.copy()
-    if arguments.jax_platforms is not None:
-        environment["JAX_PLATFORMS"] = arguments.jax_platforms
+    environment = build_python_bridge_environment(arguments)
     command_result = run_subprocess(
         (str(arguments.python_executable_path), "-c", PYTHON_ENVIRONMENT_PROBE_SCRIPT),
         environment=environment,
@@ -392,7 +530,24 @@ def run_tool(arguments: NativeCliFrontendCheckArguments) -> int:
     for mismatch_message in environment_probe.mismatch_messages:
         print(f"    mismatch: {mismatch_message}")
 
-    if any(comparison.mismatch_messages for comparison in comparisons) or environment_probe.mismatch_messages:
+    bridge_smoke = None
+    if arguments.bridge_smoke_enabled:
+        bridge_smoke = run_python_bridge_backend_smoke(arguments)
+        print(
+            "  python_bridge_backend: "
+            f"native_exit_code={bridge_smoke.native_result.exit_code}, "
+            f"python_exit_code={bridge_smoke.python_bridge_result.exit_code}, "
+            f"native_duration={bridge_smoke.native_result.duration_seconds:.6f}s, "
+            f"python_duration={bridge_smoke.python_bridge_result.duration_seconds:.6f}s"
+        )
+        for mismatch_message in bridge_smoke.mismatch_messages:
+            print(f"    mismatch: {mismatch_message}")
+
+    if (
+        any(comparison.mismatch_messages for comparison in comparisons)
+        or environment_probe.mismatch_messages
+        or (bridge_smoke is not None and bridge_smoke.mismatch_messages)
+    ):
         return 1
     print("Native CLI frontend check passed.")
     return 0

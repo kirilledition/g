@@ -2426,6 +2426,11 @@ Current implementation notes:
   CLI arguments to `g.cli.run_args` through that Python executable. The default
   native binary path still preserves the unsupported-execution refusal until
   the embedded Python/JAX or direct `g-engine` backend boundary is selected.
+- `check_native_cli_frontend` now includes a Python backend bridge smoke. It
+  writes a temporary validated REGENIE fixture, runs the native binary with
+  `G_NATIVE_CLI_PYTHON` pointed at the configured Python executable, and
+  compares exit code/stdout/stderr against direct `g.cli.run_args` for the same
+  arguments under the same CPU-safe JAX environment.
 
 ### Tests
 
