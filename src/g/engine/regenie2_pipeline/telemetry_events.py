@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import typing
 
-from g import _core, types
 from g.engine import run_events
 
 if typing.TYPE_CHECKING:
+    from g import types
     from g.engine.regenie2_pipeline import context as pipeline_context
 
 
@@ -42,7 +42,7 @@ def log_multi_phenotype_sample_summary(
 ) -> None:
     """Emit a user-visible summary of multi-phenotype sample semantics."""
     sample_counts_differ = len(set(sample_counts)) > 1
-    _core.record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+    run_events.native_pipeline_diagnostic_policy().record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
         phenotype_count=len(sample_counts),
         phenotype_group_count=phenotype_group_count,
         sample_counts_differ=sample_counts_differ,

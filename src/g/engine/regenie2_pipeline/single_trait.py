@@ -35,7 +35,8 @@ def load_single_trait_run_input(
 ) -> native_dispatch_models.NativeBgenRunInput:
     """Load one phenotype's aligned native inputs and emit telemetry."""
     alignment_start_time = time.perf_counter()
-    _core.record_pipeline_single_trait_input_load_started_diagnostic_event(
+    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy.record_pipeline_single_trait_input_load_started_diagnostic_event(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
@@ -56,7 +57,7 @@ def load_single_trait_run_input(
     )
     sample_count = int(run_input.sample_indices.shape[0])
     covariate_count = len(run_input.native_aligned_sample_data.covariate_names)
-    _core.record_pipeline_single_trait_input_aligned_diagnostic_event(
+    native_pipeline_diagnostic_policy.record_pipeline_single_trait_input_aligned_diagnostic_event(
         covariate_count=covariate_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -82,7 +83,7 @@ def build_single_trait_prediction_source(
 ) -> typing.Any:
     """Load one phenotype's REGENIE prediction source and emit telemetry."""
     prediction_start_time = time.perf_counter()
-    _core.record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
+    run_events.native_pipeline_diagnostic_policy().record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
@@ -112,7 +113,8 @@ def run_single_trait_preflight(
 ) -> None:
     """Run preflight validation for one phenotype and emit telemetry."""
     preflight_start_time = time.perf_counter()
-    _core.record_pipeline_single_trait_preflight_started_diagnostic_event(
+    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy.record_pipeline_single_trait_preflight_started_diagnostic_event(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
@@ -127,7 +129,7 @@ def run_single_trait_preflight(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
     )
     timing.record_stage_duration(context.stage_timing_recorder, "preflight_validation", preflight_start_time)
-    _core.record_pipeline_single_trait_preflight_completed_diagnostic_event(
+    native_pipeline_diagnostic_policy.record_pipeline_single_trait_preflight_completed_diagnostic_event(
         chromosome_count=preflight_report.chromosome_count,
         covariate_count=preflight_report.covariate_count,
         phenotype_name=phenotype_name,
@@ -208,7 +210,7 @@ def run_single_trait_bgen_pipeline(
 ) -> Path | None:
     """Run a single-trait REGENIE step 2 BGEN pipeline lifecycle."""
     pipeline_label = "binary" if context.is_binary_trait else "linear"
-    _core.record_pipeline_single_trait_started_diagnostic_event(
+    run_events.native_pipeline_diagnostic_policy().record_pipeline_single_trait_started_diagnostic_event(
         association_mode=context.association_mode.value,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,

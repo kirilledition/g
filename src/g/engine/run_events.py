@@ -167,6 +167,21 @@ def native_runner_diagnostic_policy() -> g._core.NativeRunnerDiagnosticPolicy:
     return g._core.NativeRunnerDiagnosticPolicy()
 
 
+def native_output_preflight_diagnostic_policy() -> g._core.NativeOutputPreflightDiagnosticPolicy:
+    """Build the native output/preflight diagnostic policy handle."""
+    return g._core.NativeOutputPreflightDiagnosticPolicy()
+
+
+def native_pipeline_diagnostic_policy() -> g._core.NativePipelineDiagnosticPolicy:
+    """Build the native pipeline diagnostic policy handle."""
+    return g._core.NativePipelineDiagnosticPolicy()
+
+
+def native_dispatch_diagnostic_policy() -> g._core.NativeDispatchDiagnosticPolicy:
+    """Build the native dispatch diagnostic policy handle."""
+    return g._core.NativeDispatchDiagnosticPolicy()
+
+
 def run_completed_event_from_native_payload(payload: object) -> RunCompletedEvent:
     """Adapt a native completed-run event payload to the public Python dataclass."""
     event_payload = native_mapping_payload(payload)

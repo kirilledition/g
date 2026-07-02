@@ -62,7 +62,8 @@ def prepare_multi_phenotype_bgen_group_delivery(
         phenotype_count=len(run_input.phenotype_names),
     )
     preflight_start_time = time.perf_counter()
-    _core.record_pipeline_multi_group_preflight_started_diagnostic_event(
+    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy.record_pipeline_multi_group_preflight_started_diagnostic_event(
         phenotype_count=len(run_input.phenotype_names),
         sample_count=int(run_input.sample_indices.shape[0]),
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
@@ -76,7 +77,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
     )
     timing.record_stage_duration(context.stage_timing_recorder, "preflight_validation", preflight_start_time)
-    _core.record_pipeline_multi_group_preflight_completed_diagnostic_event(
+    native_pipeline_diagnostic_policy.record_pipeline_multi_group_preflight_completed_diagnostic_event(
         phenotype_count=len(run_input.phenotype_names),
         sample_count=int(run_input.sample_indices.shape[0]),
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,

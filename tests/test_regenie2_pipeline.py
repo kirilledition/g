@@ -1048,10 +1048,26 @@ def test_log_multi_phenotype_sample_summary_records_native_diagnostic(monkeypatc
             }
         )
 
+    class FakePipelineDiagnosticPolicy:
+        def record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+            self,
+            *,
+            phenotype_count: int,
+            phenotype_group_count: int,
+            sample_counts_differ: bool,
+            sample_mode: str,
+        ) -> None:
+            record_multi_phenotype_sample_summary(
+                phenotype_count=phenotype_count,
+                phenotype_group_count=phenotype_group_count,
+                sample_counts_differ=sample_counts_differ,
+                sample_mode=sample_mode,
+            )
+
     monkeypatch.setattr(
-        pipeline_telemetry_events._core,
-        "record_pipeline_multi_phenotype_sample_summary_diagnostic_event",
-        record_multi_phenotype_sample_summary,
+        pipeline_telemetry_events.run_events,
+        "native_pipeline_diagnostic_policy",
+        FakePipelineDiagnosticPolicy,
     )
 
     telemetry_session = RecordingTelemetrySession()
@@ -1111,10 +1127,26 @@ def test_log_auto_resolution_records_native_gpu_format_diagnostic(monkeypatch: p
             }
         )
 
+    class FakePipelineDiagnosticPolicy:
+        def record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
+            self,
+            *,
+            requested_gpu_genotype_format: str,
+            resolved_gpu_genotype_format: str,
+            resolution_reason: str,
+            fallback_error: str | None,
+        ) -> None:
+            record_gpu_format_resolved(
+                requested_gpu_genotype_format=requested_gpu_genotype_format,
+                resolved_gpu_genotype_format=resolved_gpu_genotype_format,
+                resolution_reason=resolution_reason,
+                fallback_error=fallback_error,
+            )
+
     monkeypatch.setattr(
-        pipeline_gpu_format._core,
-        "record_pipeline_gpu_genotype_format_resolved_diagnostic_event",
-        record_gpu_format_resolved,
+        pipeline_gpu_format.run_events,
+        "native_pipeline_diagnostic_policy",
+        FakePipelineDiagnosticPolicy,
     )
 
     telemetry_session = RecordingTelemetrySession()
@@ -1329,10 +1361,22 @@ def test_finish_writer_sessions_records_native_lifecycle_diagnostic(monkeypatch:
         def finish(self) -> str:
             return "results/trait-a.parquet"
 
+    class FakeDispatchDiagnosticPolicy:
+        def record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
+            self,
+            *,
+            requested_thread_count: int,
+            writer_session_count: int,
+        ) -> None:
+            record_writer_sessions_finish_started(
+                requested_thread_count=requested_thread_count,
+                writer_session_count=writer_session_count,
+            )
+
     monkeypatch.setattr(
-        native_dispatch_writers._core,
-        "record_native_dispatch_writer_sessions_finish_started_diagnostic_event",
-        record_writer_sessions_finish_started,
+        native_dispatch_writers.run_events,
+        "native_dispatch_diagnostic_policy",
+        FakeDispatchDiagnosticPolicy,
     )
 
     final_parquet_paths = native_dispatch_writers.finish_writer_sessions(
@@ -1612,20 +1656,63 @@ def test_run_bgen_engine_with_writer_sessions_records_native_delivery_diagnostic
         def abort(self) -> None:
             pass
 
+    class FakeDispatchDiagnosticPolicy:
+        def record_native_dispatch_delivery_started_diagnostic_event(
+            self,
+            *,
+            committed_chunk_count: int,
+            pipeline_label: str,
+            variant_major_packed8_probability_pairs: bool,
+        ) -> None:
+            record_delivery_started(
+                committed_chunk_count=committed_chunk_count,
+                pipeline_label=pipeline_label,
+                variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
+            )
+
+        def record_native_dispatch_delivery_finished_diagnostic_event(
+            self,
+            *,
+            pipeline_label: str,
+            processed_chunk_count: int,
+        ) -> None:
+            record_delivery_finished(pipeline_label=pipeline_label, processed_chunk_count=processed_chunk_count)
+
+        def record_native_dispatch_pipeline_finished_diagnostic_event(
+            self,
+            *,
+            final_parquet_path_count: int,
+            pipeline_label: str,
+        ) -> None:
+            record_pipeline_finished(
+                final_parquet_path_count=final_parquet_path_count,
+                pipeline_label=pipeline_label,
+            )
+
+        def record_native_dispatch_callback_drain_started_diagnostic_event(self) -> None:
+            pass
+
+        def record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
+            self,
+            *,
+            requested_thread_count: int,
+            writer_session_count: int,
+        ) -> None:
+            pass
+
+        def record_native_dispatch_delivery_failed_diagnostic_event(
+            self,
+            *,
+            exception_message: str,
+            exception_type: str,
+            pipeline_label: str,
+        ) -> None:
+            pass
+
     monkeypatch.setattr(
-        native_dispatch_delivery._core,
-        "record_native_dispatch_delivery_started_diagnostic_event",
-        record_delivery_started,
-    )
-    monkeypatch.setattr(
-        native_dispatch_delivery._core,
-        "record_native_dispatch_delivery_finished_diagnostic_event",
-        record_delivery_finished,
-    )
-    monkeypatch.setattr(
-        native_dispatch_delivery._core,
-        "record_native_dispatch_pipeline_finished_diagnostic_event",
-        record_pipeline_finished,
+        native_dispatch_delivery.run_events,
+        "native_dispatch_diagnostic_policy",
+        FakeDispatchDiagnosticPolicy,
     )
 
     callback = DeliveryCallback()
@@ -2715,11 +2802,8 @@ def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
     with (
         patch("g.engine.regenie2_pipeline.outputs.native_dispatch_engine.build_bgen_run_engine", return_value=engine),
         patch(
-            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_bgen_engine_open_started_diagnostic_event",
-        ) as record_engine_open_started_mock,
-        patch(
-            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_bgen_engine_opened_diagnostic_event",
-        ) as record_engine_opened_mock,
+            "g.engine.regenie2_pipeline.outputs.run_events.native_pipeline_diagnostic_policy",
+        ) as diagnostic_policy_factory_mock,
     ):
         opened_engine = open_test_pipeline_bgen_engine(
             context=context,
@@ -2728,6 +2812,9 @@ def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
         )
 
     assert opened_engine is engine
+    diagnostic_policy = diagnostic_policy_factory_mock.return_value
+    record_engine_open_started_mock = diagnostic_policy.record_pipeline_bgen_engine_open_started_diagnostic_event
+    record_engine_opened_mock = diagnostic_policy.record_pipeline_bgen_engine_opened_diagnostic_event
     record_engine_open_started_mock.assert_called_once_with(
         phenotype_count=None,
         phenotype_name="trait",
@@ -2786,11 +2873,8 @@ def test_use_prepared_pipeline_bgen_engine_records_native_diagnostics() -> None:
 
     with (
         patch(
-            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event",
-        ) as record_prevalidated_engine_mock,
-        patch(
-            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_bgen_engine_opened_diagnostic_event",
-        ) as record_engine_opened_mock,
+            "g.engine.regenie2_pipeline.outputs.run_events.native_pipeline_diagnostic_policy",
+        ) as diagnostic_policy_factory_mock,
     ):
         prepared_engine = pipeline_outputs.use_prepared_pipeline_bgen_engine(
             context=context,
@@ -2801,6 +2885,9 @@ def test_use_prepared_pipeline_bgen_engine_records_native_diagnostics() -> None:
         )
 
     assert prepared_engine is engine
+    diagnostic_policy = diagnostic_policy_factory_mock.return_value
+    record_prevalidated_engine_mock = diagnostic_policy.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event
+    record_engine_opened_mock = diagnostic_policy.record_pipeline_bgen_engine_opened_diagnostic_event
     record_prevalidated_engine_mock.assert_called_once_with(
         phenotype_count=None,
         phenotype_name="trait",
@@ -11274,8 +11361,8 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> No
     try:
         with (
             patch(
-                "g.engine.callbacks.diagnostics._core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event",
-            ) as record_warning_mock,
+                "g.engine.callbacks.diagnostics.run_events.native_pipeline_diagnostic_policy",
+            ) as diagnostic_policy_factory_mock,
             patch.object(
                 callback_diagnostics.np,
                 "ravel",
@@ -11296,6 +11383,8 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> No
         callback.finish()
 
     assert callback.current_chromosome == "22"
+    diagnostic_policy = diagnostic_policy_factory_mock.return_value
+    record_warning_mock = diagnostic_policy.record_callback_null_logistic_nonconvergence_warning_diagnostic_event
     record_warning_mock.assert_called_once()
     warning_call_arguments = dict(record_warning_mock.call_args.kwargs)
     warning_message = str(warning_call_arguments["message"])
@@ -11406,7 +11495,7 @@ def test_multi_binary_callback_records_native_null_logistic_count_and_timing() -
         with (
             patch.object(callback_diagnostics.jax, "device_get", recording_device_get),
             patch(
-                "g.engine.callbacks.diagnostics._core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event",
+                "g.engine.callbacks.diagnostics.run_events.native_pipeline_diagnostic_policy",
             ),
             patch(
                 "g.compute.regenie2_binary.api.prepare_regenie2_multi_binary_chromosome_state",
@@ -11915,23 +12004,8 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             return_value=run_input,
         ),
         patch(
-            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_started_diagnostic_event",
-        ) as record_pipeline_started_mock,
-        patch(
-            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_input_load_started_diagnostic_event",
-        ) as record_input_load_started_mock,
-        patch(
-            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_input_aligned_diagnostic_event",
-        ) as record_input_aligned_mock,
-        patch(
-            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_prediction_source_load_started_diagnostic_event",
-        ) as record_prediction_source_load_started_mock,
-        patch(
-            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_preflight_started_diagnostic_event",
-        ) as record_preflight_started_mock,
-        patch(
-            "g.engine.regenie2_pipeline.single_trait._core.record_pipeline_single_trait_preflight_completed_diagnostic_event",
-        ) as record_preflight_completed_mock,
+            "g.engine.run_events.native_pipeline_diagnostic_policy",
+        ) as diagnostic_policy_factory_mock,
         patch(
             "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
@@ -11946,12 +12020,6 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
                 preparation_order.append("manifest") or build_fake_pipeline_output_preparation_batch((64, 0))
             ),
         ),
-        patch(
-            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_output_resume_committed_chunks_diagnostic_event",
-        ) as record_resume_committed_chunks_mock,
-        patch(
-            "g.engine.regenie2_pipeline.outputs._core.record_pipeline_output_writer_sessions_create_started_diagnostic_event",
-        ) as record_writer_sessions_create_started_mock,
         patch(
             "g.engine.regenie2_pipeline.single_trait.preflight.run_regenie2_preflight",
             side_effect=record_preflight,
@@ -12014,6 +12082,23 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.phenotype_name == "trait"
     assert prediction_source.native_aligned_sample_data is run_input.native_aligned_sample_data
     assert prediction_source.sample_key_mode == "iid"
+    diagnostic_policy = diagnostic_policy_factory_mock.return_value
+    record_pipeline_started_mock = diagnostic_policy.record_pipeline_single_trait_started_diagnostic_event
+    record_input_load_started_mock = diagnostic_policy.record_pipeline_single_trait_input_load_started_diagnostic_event
+    record_input_aligned_mock = diagnostic_policy.record_pipeline_single_trait_input_aligned_diagnostic_event
+    record_prediction_source_load_started_mock = (
+        diagnostic_policy.record_pipeline_single_trait_prediction_source_load_started_diagnostic_event
+    )
+    record_preflight_started_mock = diagnostic_policy.record_pipeline_single_trait_preflight_started_diagnostic_event
+    record_preflight_completed_mock = (
+        diagnostic_policy.record_pipeline_single_trait_preflight_completed_diagnostic_event
+    )
+    record_resume_committed_chunks_mock = (
+        diagnostic_policy.record_pipeline_output_resume_committed_chunks_diagnostic_event
+    )
+    record_writer_sessions_create_started_mock = (
+        diagnostic_policy.record_pipeline_output_writer_sessions_create_started_diagnostic_event
+    )
     record_pipeline_started_mock.assert_called_once_with(
         association_mode="regenie2_linear",
         phenotype_name="trait",
@@ -12858,17 +12943,8 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             return_value=FakePredictionSource(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait._core.record_pipeline_multi_trait_started_diagnostic_event",
-        ) as record_pipeline_started_mock,
-        patch(
-            "g.engine.regenie2_pipeline.multi_trait._core.record_pipeline_multi_trait_input_load_started_diagnostic_event",
-        ) as record_input_load_started_mock,
-        patch(
-            "g.engine.regenie2_pipeline.multi_trait._core.record_pipeline_multi_trait_input_aligned_diagnostic_event",
-        ) as record_input_aligned_mock,
-        patch(
-            "g.engine.regenie2_pipeline.multi_trait._core.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event",
-        ) as record_prediction_source_load_started_mock,
+            "g.engine.run_events.native_pipeline_diagnostic_policy",
+        ) as diagnostic_policy_factory_mock,
         patch(
             "g.engine.regenie2_pipeline.multi_group.run_multi_preflight",
             side_effect=record_preflight,
@@ -12933,6 +13009,13 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
     assert mock_run_multi_preflight.call_args.kwargs["variant_limit"] == 100
+    diagnostic_policy = diagnostic_policy_factory_mock.return_value
+    record_pipeline_started_mock = diagnostic_policy.record_pipeline_multi_trait_started_diagnostic_event
+    record_input_load_started_mock = diagnostic_policy.record_pipeline_multi_trait_input_load_started_diagnostic_event
+    record_input_aligned_mock = diagnostic_policy.record_pipeline_multi_trait_input_aligned_diagnostic_event
+    record_prediction_source_load_started_mock = (
+        diagnostic_policy.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event
+    )
     record_pipeline_started_mock.assert_called_once_with(
         association_mode="regenie2_linear",
         phenotype_count=2,
@@ -13328,17 +13411,8 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
             return_value=grouped_run_inputs,
         ) as mock_load_grouped_run_inputs,
         patch(
-            "g.engine.regenie2_pipeline.grouped._core.record_pipeline_grouped_per_phenotype_started_diagnostic_event",
-        ) as record_grouped_started_mock,
-        patch(
-            "g.engine.regenie2_pipeline.grouped._core.record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event",
-        ) as record_groups_prepared_mock,
-        patch(
-            "g.engine.regenie2_pipeline.multi_group._core.record_pipeline_multi_group_preflight_started_diagnostic_event",
-        ) as record_preflight_started_mock,
-        patch(
-            "g.engine.regenie2_pipeline.multi_group._core.record_pipeline_multi_group_preflight_completed_diagnostic_event",
-        ) as record_preflight_completed_mock,
+            "g.engine.run_events.native_pipeline_diagnostic_policy",
+        ) as diagnostic_policy_factory_mock,
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
         patch(
             "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
@@ -13394,6 +13468,13 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
     assert grouped_run_inputs[0].compute_group.covariate_design_fingerprint is not None
     assert grouped_run_inputs[0].compute_group.prediction_alignment_fingerprint is not None
     assert committed_chunk_identifiers == []
+    diagnostic_policy = diagnostic_policy_factory_mock.return_value
+    record_grouped_started_mock = diagnostic_policy.record_pipeline_grouped_per_phenotype_started_diagnostic_event
+    record_groups_prepared_mock = (
+        diagnostic_policy.record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event
+    )
+    record_preflight_started_mock = diagnostic_policy.record_pipeline_multi_group_preflight_started_diagnostic_event
+    record_preflight_completed_mock = diagnostic_policy.record_pipeline_multi_group_preflight_completed_diagnostic_event
     record_grouped_started_mock.assert_called_once_with(
         association_mode="regenie2_linear",
         phenotype_count=2,
@@ -13693,8 +13774,8 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
             return_value=grouped_run_inputs,
         ),
         patch(
-            "g.engine.regenie2_pipeline.grouped._core.record_pipeline_grouped_union_delivery_selected_diagnostic_event",
-        ) as record_union_delivery_selected_mock,
+            "g.engine.run_events.native_pipeline_diagnostic_policy",
+        ) as diagnostic_policy_factory_mock,
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
         patch(
             "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
@@ -13747,6 +13828,9 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
     np.testing.assert_array_equal(callback.group_fanouts[1].sample_position_array, np.asarray([1, 2]))
     assert committed_chunk_identifiers == []
     assert mock_run_multi_preflight.call_count == 2
+    record_union_delivery_selected_mock = (
+        diagnostic_policy_factory_mock.return_value.record_pipeline_grouped_union_delivery_selected_diagnostic_event
+    )
     record_union_delivery_selected_mock.assert_called_once_with(
         grouped_sample_count=5,
         phenotype_group_count=2,
@@ -14020,6 +14104,33 @@ def test_build_bgen_run_engine_records_native_engine_diagnostics(monkeypatch: py
             )
         )
 
+    class FakeDispatchDiagnosticPolicy:
+        def record_native_dispatch_bgen_engine_constructing_diagnostic_event(
+            self,
+            *,
+            chunk_size: int,
+            source_path: str,
+            trusted_no_missing_diploid: bool,
+            variant_limit: int | None,
+        ) -> None:
+            record_bgen_engine_constructing(
+                chunk_size=chunk_size,
+                source_path=source_path,
+                trusted_no_missing_diploid=trusted_no_missing_diploid,
+                variant_limit=variant_limit,
+            )
+
+        def record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
+            self,
+            *,
+            source_path: str,
+            trusted_bgen_validation_mode: str,
+        ) -> None:
+            record_trusted_bgen_validation_started(
+                source_path=source_path,
+                trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+            )
+
     def validate_trusted_bgen(
         *,
         engine: FakeRunEngine,
@@ -14038,14 +14149,9 @@ def test_build_bgen_run_engine_records_native_engine_diagnostics(monkeypatch: py
         )
 
     monkeypatch.setattr(
-        native_dispatch_engine._core,
-        "record_native_dispatch_bgen_engine_constructing_diagnostic_event",
-        record_bgen_engine_constructing,
-    )
-    monkeypatch.setattr(
-        native_dispatch_engine._core,
-        "record_native_dispatch_trusted_bgen_validation_started_diagnostic_event",
-        record_trusted_bgen_validation_started,
+        native_dispatch_engine.run_events,
+        "native_dispatch_diagnostic_policy",
+        FakeDispatchDiagnosticPolicy,
     )
 
     FakeRunEngine.instances.clear()

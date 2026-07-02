@@ -10,7 +10,7 @@ import numpy.typing as npt
 
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
-from g.engine import timing
+from g.engine import run_events, timing
 
 if typing.TYPE_CHECKING:
     import collections.abc
@@ -117,7 +117,7 @@ def enforce_host_null_logistic_nonconvergence_policy(
     warning_message = native_policy_plan.warning_message
     if warning_message is None:
         raise RuntimeError("Native null-logistic nonconvergence warning plan did not include a warning message.")
-    _core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
+    run_events.native_pipeline_diagnostic_policy().record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
         message=warning_message,
         chromosome=chromosome,
         nonconverged_count=native_policy_plan.nonconverged_count,

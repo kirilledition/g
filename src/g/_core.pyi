@@ -3144,194 +3144,235 @@ class NativeRunnerDiagnosticPolicy:
         association_mode: str,
         phenotype_count: int,
     ) -> None: ...
-def record_preflight_warning_diagnostic_event(
-    message: str,
-    chromosome_count: int,
-    covariate_count: int,
-    preflight_scope: str,
-    sample_count: int,
-    trusted_no_missing_diploid: bool,
-    warning_index: int,
-) -> None: ...
-def record_io_output_resume_committed_chunks_diagnostic_event(
-    chunks_directory: str,
-    committed_chunk_count: int,
-    run_directory: str,
-) -> None: ...
-def record_pipeline_bgen_engine_open_started_diagnostic_event(
-    phenotype_count: int | None,
-    phenotype_name: str | None,
-    pipeline_label: str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> None: ...
-def record_pipeline_bgen_engine_opened_diagnostic_event(
-    phenotype_count: int | None,
-    phenotype_name: str | None,
-    pipeline_label: str,
-    sample_count: int,
-    variant_count: int,
-) -> None: ...
-def record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
-    phenotype_count: int | None,
-    phenotype_name: str | None,
-    pipeline_label: str,
-) -> None: ...
-def record_pipeline_output_resume_committed_chunks_diagnostic_event(
-    committed_chunk_count: int,
-    output_index: int,
-) -> None: ...
-def record_pipeline_output_writer_sessions_create_started_diagnostic_event(
-    association_mode: str,
-    output_count: int,
-) -> None: ...
-def record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
-    requested_gpu_genotype_format: str,
-    resolved_gpu_genotype_format: str,
-    resolution_reason: str,
-    fallback_error: str | None,
-) -> None: ...
-def record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
-    message: str,
-    chromosome: str,
-    nonconverged_count: int,
-    phenotype_count: int,
-    policy: str,
-    scalar_convergence: bool,
-    total_fit_count: int,
-) -> None: ...
-def record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
-    phenotype_count: int,
-    phenotype_group_count: int,
-    sample_counts_differ: bool,
-    sample_mode: str,
-) -> None: ...
-def record_pipeline_multi_trait_started_diagnostic_event(
-    association_mode: str,
-    phenotype_count: int,
-    sample_mode: str,
-) -> None: ...
-def record_pipeline_multi_trait_input_load_started_diagnostic_event(
-    phenotype_count: int,
-) -> None: ...
-def record_pipeline_multi_trait_input_aligned_diagnostic_event(
-    covariate_count: int,
-    phenotype_count: int,
-    sample_count: int,
-) -> None: ...
-def record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
-    phenotype_count: int,
-) -> None: ...
-def record_pipeline_grouped_per_phenotype_started_diagnostic_event(
-    association_mode: str,
-    phenotype_count: int,
-    sample_mode: str,
-) -> None: ...
-def record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
-    phenotype_count: int,
-    phenotype_group_count: int,
-) -> None: ...
-def record_pipeline_grouped_union_delivery_selected_diagnostic_event(
-    grouped_sample_count: int,
-    phenotype_group_count: int,
-    union_sample_count: int,
-) -> None: ...
-def record_pipeline_multi_group_preflight_started_diagnostic_event(
-    phenotype_count: int,
-    sample_count: int,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> None: ...
-def record_pipeline_multi_group_preflight_completed_diagnostic_event(
-    phenotype_count: int,
-    sample_count: int,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> None: ...
-def record_pipeline_single_trait_started_diagnostic_event(
-    association_mode: str,
-    phenotype_name: str,
-    pipeline_label: str,
-) -> None: ...
-def record_pipeline_single_trait_input_load_started_diagnostic_event(
-    phenotype_name: str,
-    pipeline_label: str,
-) -> None: ...
-def record_pipeline_single_trait_input_aligned_diagnostic_event(
-    covariate_count: int,
-    phenotype_name: str,
-    pipeline_label: str,
-    sample_count: int,
-) -> None: ...
-def record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
-    phenotype_name: str,
-    pipeline_label: str,
-) -> None: ...
-def record_pipeline_single_trait_preflight_started_diagnostic_event(
-    phenotype_name: str,
-    pipeline_label: str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> None: ...
-def record_pipeline_single_trait_preflight_completed_diagnostic_event(
-    chromosome_count: int,
-    covariate_count: int,
-    phenotype_name: str,
-    pipeline_label: str,
-    sample_count: int,
-) -> None: ...
-def record_native_dispatch_bgen_engine_constructing_diagnostic_event(
-    chunk_size: int,
-    source_path: str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> None: ...
-def record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
-    source_path: str,
-    trusted_bgen_validation_mode: str,
-) -> None: ...
-def record_native_dispatch_delivery_started_diagnostic_event(
-    committed_chunk_count: int,
-    pipeline_label: str,
-    variant_major_packed8_probability_pairs: bool,
-) -> None: ...
-def record_native_dispatch_delivery_finished_diagnostic_event(
-    pipeline_label: str,
-    processed_chunk_count: int,
-) -> None: ...
-def record_native_dispatch_delivery_interrupted_diagnostic_event(
-    pipeline_label: str,
-    signal_exit_code: int,
-    signal_name: str,
-    signal_number: int,
-) -> None: ...
-def record_native_dispatch_delivery_failed_diagnostic_event(
-    exception_message: str,
-    exception_type: str,
-    pipeline_label: str,
-) -> None: ...
-def record_native_dispatch_pipeline_finished_diagnostic_event(
-    final_parquet_path_count: int,
-    pipeline_label: str,
-) -> None: ...
-def record_native_dispatch_callback_drain_started_diagnostic_event() -> None: ...
-def record_native_dispatch_writer_session_finish_started_diagnostic_event() -> None: ...
-def record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
-    requested_thread_count: int,
-    writer_session_count: int,
-) -> None: ...
-def record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
-    signal_exit_code: int,
-    signal_name: str,
-    signal_number: int,
-) -> None: ...
-def record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
-    requested_thread_count: int,
-    signal_exit_code: int,
-    signal_name: str,
-    signal_number: int,
-    writer_session_count: int,
-) -> None: ...
+class NativeOutputPreflightDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_preflight_warning_diagnostic_event(
+        self,
+        message: str,
+        chromosome_count: int,
+        covariate_count: int,
+        preflight_scope: str,
+        sample_count: int,
+        trusted_no_missing_diploid: bool,
+        warning_index: int,
+    ) -> None: ...
+    def record_io_output_resume_committed_chunks_diagnostic_event(
+        self,
+        chunks_directory: str,
+        committed_chunk_count: int,
+        run_directory: str,
+    ) -> None: ...
+class NativePipelineDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_pipeline_bgen_engine_open_started_diagnostic_event(
+        self,
+        phenotype_count: int | None,
+        phenotype_name: str | None,
+        pipeline_label: str,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None: ...
+    def record_pipeline_bgen_engine_opened_diagnostic_event(
+        self,
+        phenotype_count: int | None,
+        phenotype_name: str | None,
+        pipeline_label: str,
+        sample_count: int,
+        variant_count: int,
+    ) -> None: ...
+    def record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
+        self,
+        phenotype_count: int | None,
+        phenotype_name: str | None,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_pipeline_output_resume_committed_chunks_diagnostic_event(
+        self,
+        committed_chunk_count: int,
+        output_index: int,
+    ) -> None: ...
+    def record_pipeline_output_writer_sessions_create_started_diagnostic_event(
+        self,
+        association_mode: str,
+        output_count: int,
+    ) -> None: ...
+    def record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
+        self,
+        requested_gpu_genotype_format: str,
+        resolved_gpu_genotype_format: str,
+        resolution_reason: str,
+        fallback_error: str | None,
+    ) -> None: ...
+    def record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
+        self,
+        message: str,
+        chromosome: str,
+        nonconverged_count: int,
+        phenotype_count: int,
+        policy: str,
+        scalar_convergence: bool,
+        total_fit_count: int,
+    ) -> None: ...
+    def record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+        self,
+        phenotype_count: int,
+        phenotype_group_count: int,
+        sample_counts_differ: bool,
+        sample_mode: str,
+    ) -> None: ...
+    def record_pipeline_multi_trait_started_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        sample_mode: str,
+    ) -> None: ...
+    def record_pipeline_multi_trait_input_load_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+    ) -> None: ...
+    def record_pipeline_multi_trait_input_aligned_diagnostic_event(
+        self,
+        covariate_count: int,
+        phenotype_count: int,
+        sample_count: int,
+    ) -> None: ...
+    def record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+    ) -> None: ...
+    def record_pipeline_grouped_per_phenotype_started_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        sample_mode: str,
+    ) -> None: ...
+    def record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
+        self,
+        phenotype_count: int,
+        phenotype_group_count: int,
+    ) -> None: ...
+    def record_pipeline_grouped_union_delivery_selected_diagnostic_event(
+        self,
+        grouped_sample_count: int,
+        phenotype_group_count: int,
+        union_sample_count: int,
+    ) -> None: ...
+    def record_pipeline_multi_group_preflight_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+        sample_count: int,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None: ...
+    def record_pipeline_multi_group_preflight_completed_diagnostic_event(
+        self,
+        phenotype_count: int,
+        sample_count: int,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None: ...
+    def record_pipeline_single_trait_started_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype_name: str,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_pipeline_single_trait_input_load_started_diagnostic_event(
+        self,
+        phenotype_name: str,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_pipeline_single_trait_input_aligned_diagnostic_event(
+        self,
+        covariate_count: int,
+        phenotype_name: str,
+        pipeline_label: str,
+        sample_count: int,
+    ) -> None: ...
+    def record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
+        self,
+        phenotype_name: str,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_pipeline_single_trait_preflight_started_diagnostic_event(
+        self,
+        phenotype_name: str,
+        pipeline_label: str,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None: ...
+    def record_pipeline_single_trait_preflight_completed_diagnostic_event(
+        self,
+        chromosome_count: int,
+        covariate_count: int,
+        phenotype_name: str,
+        pipeline_label: str,
+        sample_count: int,
+    ) -> None: ...
+class NativeDispatchDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_native_dispatch_bgen_engine_constructing_diagnostic_event(
+        self,
+        chunk_size: int,
+        source_path: str,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None: ...
+    def record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
+        self,
+        source_path: str,
+        trusted_bgen_validation_mode: str,
+    ) -> None: ...
+    def record_native_dispatch_delivery_started_diagnostic_event(
+        self,
+        committed_chunk_count: int,
+        pipeline_label: str,
+        variant_major_packed8_probability_pairs: bool,
+    ) -> None: ...
+    def record_native_dispatch_delivery_finished_diagnostic_event(
+        self,
+        pipeline_label: str,
+        processed_chunk_count: int,
+    ) -> None: ...
+    def record_native_dispatch_delivery_interrupted_diagnostic_event(
+        self,
+        pipeline_label: str,
+        signal_exit_code: int,
+        signal_name: str,
+        signal_number: int,
+    ) -> None: ...
+    def record_native_dispatch_delivery_failed_diagnostic_event(
+        self,
+        exception_message: str,
+        exception_type: str,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_native_dispatch_pipeline_finished_diagnostic_event(
+        self,
+        final_parquet_path_count: int,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_native_dispatch_callback_drain_started_diagnostic_event(self) -> None: ...
+    def record_native_dispatch_writer_session_finish_started_diagnostic_event(self) -> None: ...
+    def record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
+        self,
+        requested_thread_count: int,
+        writer_session_count: int,
+    ) -> None: ...
+    def record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
+        self,
+        signal_exit_code: int,
+        signal_name: str,
+        signal_number: int,
+    ) -> None: ...
+    def record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
+        self,
+        requested_thread_count: int,
+        signal_exit_code: int,
+        signal_name: str,
+        signal_number: int,
+        writer_session_count: int,
+    ) -> None: ...
 class NativeRunMetadataBuilder:
     def __init__(self) -> None: ...
     def build_execution_run_artifacts_payload(

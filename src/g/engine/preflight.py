@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 
 import g
+from g.engine import run_events
 
 
 @dataclass(frozen=True)
@@ -49,8 +50,9 @@ def emit_preflight_warnings(
     trusted_no_missing_diploid: bool,
 ) -> None:
     """Emit all non-fatal preflight warnings through native tracing."""
+    native_output_preflight_diagnostic_policy = run_events.native_output_preflight_diagnostic_policy()
     for warning_index, warning_message in enumerate(preflight_report.warning_messages):
-        g._core.record_preflight_warning_diagnostic_event(
+        native_output_preflight_diagnostic_policy.record_preflight_warning_diagnostic_event(
             message=warning_message,
             chromosome_count=preflight_report.chromosome_count,
             covariate_count=preflight_report.covariate_count,

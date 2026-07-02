@@ -1480,10 +1480,19 @@ def test_initialize_output_run_compatible_resume_preserves_committed_chunks(
     ) -> None:
         diagnostic_calls.append((chunks_directory, committed_chunk_count, run_directory))
 
+    class FakeOutputPreflightDiagnosticPolicy:
+        def record_io_output_resume_committed_chunks_diagnostic_event(
+            self,
+            chunks_directory: str,
+            committed_chunk_count: int,
+            run_directory: str,
+        ) -> None:
+            record_resume_committed_chunks(chunks_directory, committed_chunk_count, run_directory)
+
     monkeypatch.setattr(
-        output._core,
-        "record_io_output_resume_committed_chunks_diagnostic_event",
-        record_resume_committed_chunks,
+        output.run_events,
+        "native_output_preflight_diagnostic_policy",
+        FakeOutputPreflightDiagnosticPolicy,
     )
 
     current_header = build_test_header(tmp_path)

@@ -2239,6 +2239,10 @@ Current implementation notes:
   engine-dispatch, and metadata-finalized events were removed from the
   Python-visible root surface; production enters those policies through
   `NativeRunnerDiagnosticPolicy`.
+- Detached preflight/output, pipeline/callback-warning, and native-dispatch
+  diagnostic helper exports were removed from the Python-visible root surface;
+  production enters those policies through `NativeOutputPreflightDiagnosticPolicy`,
+  `NativePipelineDiagnosticPolicy`, and `NativeDispatchDiagnosticPolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

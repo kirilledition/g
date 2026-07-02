@@ -229,6 +229,10 @@ Runner lifecycle, execution-plan, engine-dispatch, and metadata-finalized
 diagnostic recording now enters through the typed
 `NativeRunnerDiagnosticPolicy` handle instead of detached root `_core`
 functions.
+Preflight/output, pipeline/callback-warning, and native-dispatch diagnostic
+recording now enter through typed `NativeOutputPreflightDiagnosticPolicy`,
+`NativePipelineDiagnosticPolicy`, and `NativeDispatchDiagnosticPolicy` handles
+instead of detached root `_core` functions.
 Preflight chromosome collection now requires the native engine
 `required_chromosomes` API directly; the old Python metadata-slice collection
 fallback has been removed.

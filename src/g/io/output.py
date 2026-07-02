@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from g import _core, types
+from g.engine import run_events
 from g.jax_runtime import models as jax_runtime_models
 
 OUTPUT_COMPRESSION_CODEC = "zstd"
@@ -487,7 +488,7 @@ def initialize_output_run(
     )
     if resume:
         committed_chunk_count = len(committed_chunk_identifiers)
-        _core.record_io_output_resume_committed_chunks_diagnostic_event(
+        run_events.native_output_preflight_diagnostic_policy().record_io_output_resume_committed_chunks_diagnostic_event(
             str(output_run_paths.chunks_directory),
             committed_chunk_count,
             str(output_run_paths.run_directory),

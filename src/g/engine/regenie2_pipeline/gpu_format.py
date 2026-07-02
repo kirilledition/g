@@ -61,7 +61,7 @@ def log_auto_resolution(
     fallback_error: str | None,
 ) -> None:
     """Emit logging and telemetry for an auto GPU genotype format decision."""
-    _core.record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
+    run_events.native_pipeline_diagnostic_policy().record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
         requested_gpu_genotype_format=requested_gpu_genotype_format.value,
         resolved_gpu_genotype_format=resolved_gpu_genotype_format.value,
         resolution_reason=resolution_reason,

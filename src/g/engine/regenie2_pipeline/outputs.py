@@ -97,7 +97,8 @@ def open_pipeline_bgen_engine(
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN engine and emit shared telemetry."""
     engine_start_time = time.perf_counter()
-    _core.record_pipeline_bgen_engine_open_started_diagnostic_event(
+    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy.record_pipeline_bgen_engine_open_started_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -114,7 +115,7 @@ def open_pipeline_bgen_engine(
         trusted_bgen_validator=None,
     )
     timing.record_stage_duration(context.stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
-    _core.record_pipeline_bgen_engine_opened_diagnostic_event(
+    native_pipeline_diagnostic_policy.record_pipeline_bgen_engine_opened_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -139,13 +140,14 @@ def use_prepared_pipeline_bgen_engine(
     phenotype_count: int | None,
 ) -> _core.Regenie2RunEngine:
     """Reuse a prevalidated BGEN engine and emit shared telemetry."""
-    _core.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
+    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
     log_association_backend_selected(context=context, phenotype_name=phenotype_name, phenotype_count=phenotype_count)
-    _core.record_pipeline_bgen_engine_opened_diagnostic_event(
+    native_pipeline_diagnostic_policy.record_pipeline_bgen_engine_opened_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -248,11 +250,12 @@ def initialize_pipeline_output_runs(
     )
     native_initialization = native_preparation_batch.initialize(runtime_compatibility_token)
     if resume:
+        native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
         for output_index, committed_chunk_identifier_set in enumerate(
             native_initialization.committed_chunk_identifier_sets()
         ):
             committed_chunk_count = len(committed_chunk_identifier_set)
-            _core.record_pipeline_output_resume_committed_chunks_diagnostic_event(
+            native_pipeline_diagnostic_policy.record_pipeline_output_resume_committed_chunks_diagnostic_event(
                 committed_chunk_count=committed_chunk_count,
                 output_index=output_index,
             )
@@ -325,7 +328,7 @@ def create_pipeline_writer_sessions(
 ) -> tuple[typing.Any, ...]:
     """Create output writer sessions and record preparation timing."""
     writer_start_time = time.perf_counter()
-    _core.record_pipeline_output_writer_sessions_create_started_diagnostic_event(
+    run_events.native_pipeline_diagnostic_policy().record_pipeline_output_writer_sessions_create_started_diagnostic_event(
         association_mode=context.association_mode.value,
         output_count=len(output_run_paths_by_trait),
     )
