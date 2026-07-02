@@ -2231,6 +2231,10 @@ Current implementation notes:
 - Detached run-event lifecycle payload and terminal-render helper exports were
   removed from the Python-visible root surface; production enters those
   policies through `NativeRunEventPayloadPolicy`.
+- Detached native CLI diagnostic helper exports for stdout/stderr, completion,
+  interruption, failure, and runtime-knob events were removed from the
+  Python-visible root surface; production enters those policies through
+  `NativeCliDiagnosticPolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.

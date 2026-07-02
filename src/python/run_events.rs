@@ -340,6 +340,46 @@ impl NativeRunEventPayloadPolicy {
     }
 }
 
+#[pyclass]
+pub(crate) struct NativeCliDiagnosticPolicy;
+
+#[pymethods]
+#[allow(clippy::unused_self)]
+impl NativeCliDiagnosticPolicy {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    fn record_native_cli_stdout_diagnostic_event(&self, output_text: &str, max_payload_chars: i64) -> PyResult<()> {
+        record_native_cli_stdout_diagnostic_event(output_text, max_payload_chars)
+    }
+
+    fn record_native_cli_stderr_diagnostic_event(&self, output_text: &str, max_payload_chars: i64) -> PyResult<()> {
+        record_native_cli_stderr_diagnostic_event(output_text, max_payload_chars)
+    }
+
+    fn record_native_cli_interrupted_line_diagnostic_event(&self, line: &str) -> PyResult<()> {
+        record_native_cli_interrupted_line_diagnostic_event(line)
+    }
+
+    fn record_native_cli_failed_line_diagnostic_event(&self, line: &str) -> PyResult<()> {
+        record_native_cli_failed_line_diagnostic_event(line)
+    }
+
+    fn record_native_cli_completed_line_diagnostic_event(&self, line: &str) -> PyResult<()> {
+        record_native_cli_completed_line_diagnostic_event(line)
+    }
+
+    fn record_native_runtime_knobs_configured_diagnostic_event(
+        &self,
+        bgen_decode_tile_variant_count: i64,
+        threads: Option<i64>,
+    ) -> PyResult<()> {
+        record_native_runtime_knobs_configured_diagnostic_event(bgen_decode_tile_variant_count, threads)
+    }
+}
+
 pub fn build_run_completed_event_payload<'py>(
     py: Python<'py>,
     artifacts: &Bound<'py, PyAny>,
@@ -800,37 +840,31 @@ pub fn record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_e
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_native_cli_stdout_diagnostic_event(output_text: &str, max_payload_chars: i64) -> PyResult<()> {
     let payload = native_run_events::build_native_cli_stdout_diagnostic_payload(output_text, max_payload_chars);
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_native_cli_stderr_diagnostic_event(output_text: &str, max_payload_chars: i64) -> PyResult<()> {
     let payload = native_run_events::build_native_cli_stderr_diagnostic_payload(output_text, max_payload_chars);
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_native_cli_interrupted_line_diagnostic_event(line: &str) -> PyResult<()> {
     let payload = native_run_events::build_native_cli_interrupted_line_diagnostic_payload(line);
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_native_cli_failed_line_diagnostic_event(line: &str) -> PyResult<()> {
     let payload = native_run_events::build_native_cli_failed_line_diagnostic_payload(line);
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_native_cli_completed_line_diagnostic_event(line: &str) -> PyResult<()> {
     let payload = native_run_events::build_native_cli_completed_line_diagnostic_payload(line);
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
 pub fn record_native_runtime_knobs_configured_diagnostic_event(
     bgen_decode_tile_variant_count: i64,
     threads: Option<i64>,
@@ -1435,12 +1469,7 @@ fn register_runner_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<
 }
 
 fn register_cli_and_runtime_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(record_native_cli_stdout_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_native_cli_stderr_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_native_cli_interrupted_line_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_native_cli_failed_line_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_native_cli_completed_line_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_native_runtime_knobs_configured_diagnostic_event, module)?)?;
+    module.add_class::<NativeCliDiagnosticPolicy>()?;
     Ok(())
 }
 

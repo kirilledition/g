@@ -3053,10 +3053,35 @@ class NativeRunEventTelemetryPolicy:
         phenotype: str | None,
         phenotype_count: int | None,
     ) -> None: ...
-def record_native_runtime_knobs_configured_diagnostic_event(
-    bgen_decode_tile_variant_count: int,
-    threads: int | None,
-) -> None: ...
+class NativeCliDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_native_cli_stdout_diagnostic_event(
+        self,
+        output_text: str,
+        max_payload_chars: int,
+    ) -> None: ...
+    def record_native_cli_stderr_diagnostic_event(
+        self,
+        output_text: str,
+        max_payload_chars: int,
+    ) -> None: ...
+    def record_native_cli_interrupted_line_diagnostic_event(
+        self,
+        line: str,
+    ) -> None: ...
+    def record_native_cli_failed_line_diagnostic_event(
+        self,
+        line: str,
+    ) -> None: ...
+    def record_native_cli_completed_line_diagnostic_event(
+        self,
+        line: str,
+    ) -> None: ...
+    def record_native_runtime_knobs_configured_diagnostic_event(
+        self,
+        bgen_decode_tile_variant_count: int,
+        threads: int | None,
+    ) -> None: ...
 def record_runner_metadata_artifacts_finalized_diagnostic_event(
     association_mode: str,
     phenotype_count: int,
@@ -3293,23 +3318,6 @@ def record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_even
 ) -> None: ...
 def record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
     phenotype_count: int,
-) -> None: ...
-def record_native_cli_stdout_diagnostic_event(
-    output_text: str,
-    max_payload_chars: int,
-) -> None: ...
-def record_native_cli_stderr_diagnostic_event(
-    output_text: str,
-    max_payload_chars: int,
-) -> None: ...
-def record_native_cli_interrupted_line_diagnostic_event(
-    line: str,
-) -> None: ...
-def record_native_cli_failed_line_diagnostic_event(
-    line: str,
-) -> None: ...
-def record_native_cli_completed_line_diagnostic_event(
-    line: str,
 ) -> None: ...
 class NativeRunMetadataBuilder:
     def __init__(self) -> None: ...

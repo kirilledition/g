@@ -98,16 +98,22 @@ def log_native_cli_output(outcome: g._core.CliOutcome, *, max_payload_chars: int
     if not outcome.stdout and not outcome.stderr:
         return
 
+    native_diagnostic_policy = native_cli_diagnostic_policy()
     if outcome.stdout:
-        g._core.record_native_cli_stdout_diagnostic_event(
+        native_diagnostic_policy.record_native_cli_stdout_diagnostic_event(
             output_text=outcome.stdout,
             max_payload_chars=max_payload_chars,
         )
     if outcome.stderr:
-        g._core.record_native_cli_stderr_diagnostic_event(
+        native_diagnostic_policy.record_native_cli_stderr_diagnostic_event(
             output_text=outcome.stderr,
             max_payload_chars=max_payload_chars,
         )
+
+
+def native_cli_diagnostic_policy() -> g._core.NativeCliDiagnosticPolicy:
+    """Build the native CLI diagnostic policy handle."""
+    return g._core.NativeCliDiagnosticPolicy()
 
 
 def print_interrupted_lines(run_events_module: typing.Any, interrupted_event: run_events.RunInterruptedEvent) -> None:
@@ -120,8 +126,9 @@ def print_interrupted_lines(run_events_module: typing.Any, interrupted_event: ru
 def log_interrupted_lines(run_events_module: typing.Any, interrupted_event: run_events.RunInterruptedEvent) -> None:
     """Emit graceful interruption diagnostics."""
     interrupted_lines = run_events_module.render_run_interrupted_lines(interrupted_event)
+    native_diagnostic_policy = native_cli_diagnostic_policy()
     for line in interrupted_lines:
-        g._core.record_native_cli_interrupted_line_diagnostic_event(line=line)
+        native_diagnostic_policy.record_native_cli_interrupted_line_diagnostic_event(line=line)
 
 
 def print_and_log_failed_event(
@@ -152,9 +159,10 @@ def print_failed_lines(run_events_module: typing.Any, failed_event: run_events.R
 def log_failed_lines(run_events_module: typing.Any, failed_event: run_events.RunFailedEvent) -> None:
     """Emit failure diagnostics."""
     failed_lines = run_events_module.render_run_failed_lines(failed_event)
+    native_diagnostic_policy = native_cli_diagnostic_policy()
     for line in failed_lines:
         with contextlib.suppress(Exception):
-            g._core.record_native_cli_failed_line_diagnostic_event(line=line)
+            native_diagnostic_policy.record_native_cli_failed_line_diagnostic_event(line=line)
 
 
 def print_completed_lines(run_events_module: typing.Any, completed_event: run_events.RunCompletedEvent) -> None:
@@ -167,8 +175,9 @@ def print_completed_lines(run_events_module: typing.Any, completed_event: run_ev
 def log_completed_lines(run_events_module: typing.Any, completed_event: run_events.RunCompletedEvent) -> None:
     """Emit completion diagnostics."""
     completed_lines = run_events_module.render_run_completed_lines(completed_event)
+    native_diagnostic_policy = native_cli_diagnostic_policy()
     for line in completed_lines:
-        g._core.record_native_cli_completed_line_diagnostic_event(line=line)
+        native_diagnostic_policy.record_native_cli_completed_line_diagnostic_event(line=line)
 
 
 def main() -> None:

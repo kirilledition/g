@@ -222,6 +222,9 @@ the typed `NativeRunEventTelemetryPolicy` handle instead of detached root
 Run-event lifecycle payload construction and terminal-line rendering now enter
 through the typed `NativeRunEventPayloadPolicy` handle instead of detached root
 `_core` functions.
+Native CLI stdout/stderr, completion, interruption, failure, and runtime-knob
+diagnostic recording now enters through the typed `NativeCliDiagnosticPolicy`
+handle instead of detached root `_core` functions.
 Preflight chromosome collection now requires the native engine
 `required_chromosomes` API directly; the old Python metadata-slice collection
 fallback has been removed.
