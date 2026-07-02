@@ -2522,6 +2522,13 @@ Add checks that fail when:
 - Python fallback implementations are reintroduced;
 - JAX kernels read CLI/config/files directly.
 
+Current guardrail notes:
+
+- The Python architecture checker now enforces the Phase 13 CLI shim contract:
+  public `g.cli.run_args` must call the coarse native PyO3 CLI runner, must not
+  call `dispatch_cli` directly, and the legacy Python backend must remain behind
+  the shared sentinel used by the native bridge.
+
 ### Exit criteria
 
 - Rust owns all non-kernel production behavior.

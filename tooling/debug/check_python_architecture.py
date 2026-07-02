@@ -148,6 +148,53 @@ class PythonDefinitionViolation:
     message: str
 
 
+@dataclasses.dataclass(frozen=True)
+class PythonCliShimViolation:
+    """A Python CLI shim contract violation.
+
+    Attributes:
+        path: Source file containing the violation.
+        line_number: One-based source line number for the relevant statement.
+        column_offset: Zero-based source column for the relevant statement.
+        policy_name: Stable policy name that rejected the CLI shim shape.
+        subject: Function, constant, or file subject that violated the policy.
+        message: Human-readable policy description.
+
+    """
+
+    path: Path
+    line_number: int
+    column_offset: int
+    policy_name: str
+    subject: str
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class ModuleStringAssignment:
+    """Top-level string assignment metadata.
+
+    Attributes:
+        value: Assigned string value.
+        line_number: One-based assignment line number.
+        column_offset: Zero-based assignment column offset.
+
+    """
+
+    value: str
+    line_number: int
+    column_offset: int
+
+
+CLI_SHIM_PATH = Path("cli.py")
+CLI_SHIM_POLICY_NAME = "native_cli_shim_process_owner"
+CLI_SHIM_SENTINEL_CONSTANT_NAME = "NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE"
+CLI_SHIM_SENTINEL_ENVIRONMENT_VARIABLE = "G_NATIVE_CLI_PYTHON_BRIDGE_SENTINEL"
+CLI_SHIM_MESSAGE = (
+    "the public Python CLI entry point must remain compatibility glue into the native CLI runner; "
+    "only the sentinel-protected legacy backend may call dispatch_cli"
+)
+
 PYTHON_IMPORT_POLICIES = (
     PythonImportPolicy(
         name="compute_kernel_isolation",
@@ -844,6 +891,197 @@ def collect_python_definition_policy_violations(
     return tuple(violations)
 
 
+def top_level_function_definitions(tree: ast.Module) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Return top-level function definitions by name."""
+    function_definitions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    for statement in tree.body:
+        if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
+            function_definitions[statement.name] = statement
+    return function_definitions
+
+
+def top_level_string_assignments(tree: ast.Module) -> dict[str, ModuleStringAssignment]:
+    """Return top-level string assignments by target name."""
+    assignments: dict[str, ModuleStringAssignment] = {}
+    for statement in tree.body:
+        if isinstance(statement, ast.Assign):
+            for target in statement.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and isinstance(statement.value, ast.Constant)
+                    and isinstance(statement.value.value, str)
+                ):
+                    assignments[target.id] = ModuleStringAssignment(
+                        value=statement.value.value,
+                        line_number=statement.lineno,
+                        column_offset=statement.col_offset,
+                    )
+            continue
+        if (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        ):
+            assignments[statement.target.id] = ModuleStringAssignment(
+                value=statement.value.value,
+                line_number=statement.lineno,
+                column_offset=statement.col_offset,
+            )
+    return assignments
+
+
+def call_names_under_node(node: ast.AST) -> frozenset[str]:
+    """Return dotted call names under an AST node."""
+    call_names: set[str] = set()
+    for child_node in ast.walk(node):
+        if not isinstance(child_node, ast.Call):
+            continue
+        call_name = call_name_from_expression(child_node.func)
+        if call_name is not None:
+            call_names.add(call_name)
+    return frozenset(call_names)
+
+
+def node_references_name(node: ast.AST, name: str) -> bool:
+    """Return whether an AST node references a name."""
+    return any(isinstance(child_node, ast.Name) and child_node.id == name for child_node in ast.walk(node))
+
+
+def call_names_include(call_names: frozenset[str], expected_call_name: str) -> bool:
+    """Return whether collected call names include the expected call name."""
+    return expected_call_name in call_names or any(
+        call_name.endswith(f".{expected_call_name}") for call_name in call_names
+    )
+
+
+def function_contains_call(
+    function_definition: ast.FunctionDef | ast.AsyncFunctionDef, expected_call_name: str
+) -> bool:
+    """Return whether a function contains a call."""
+    return call_names_include(call_names_under_node(function_definition), expected_call_name)
+
+
+def function_has_sentinel_legacy_branch(function_definition: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Return whether a function has a sentinel-gated legacy backend branch."""
+    for statement in function_definition.body:
+        if not isinstance(statement, ast.If):
+            continue
+        if not node_references_name(statement.test, CLI_SHIM_SENTINEL_CONSTANT_NAME):
+            continue
+        if any(
+            call_names_include(call_names_under_node(body_statement), "run_args_legacy")
+            for body_statement in statement.body
+        ):
+            return True
+    return False
+
+
+def cli_shim_violation(
+    relative_path: Path,
+    line_number: int,
+    column_offset: int,
+    subject: str,
+) -> PythonCliShimViolation:
+    """Build a CLI shim violation."""
+    return PythonCliShimViolation(
+        path=relative_path,
+        line_number=line_number,
+        column_offset=column_offset,
+        policy_name=CLI_SHIM_POLICY_NAME,
+        subject=subject,
+        message=CLI_SHIM_MESSAGE,
+    )
+
+
+def collect_python_cli_shim_violations(package_root: Path) -> tuple[PythonCliShimViolation, ...]:
+    """Collect Python CLI shim ownership violations."""
+    cli_path = package_root / CLI_SHIM_PATH
+    relative_path = cli_path.relative_to(package_root.parent)
+    if not cli_path.is_file():
+        return (cli_shim_violation(relative_path, 1, 0, str(CLI_SHIM_PATH)),)
+
+    tree = ast.parse(cli_path.read_text(encoding="utf-8"), filename=str(cli_path))
+    violations: list[PythonCliShimViolation] = []
+    string_assignments = top_level_string_assignments(tree)
+    sentinel_assignment = string_assignments.get(CLI_SHIM_SENTINEL_CONSTANT_NAME)
+    if sentinel_assignment is None:
+        violations.append(cli_shim_violation(relative_path, 1, 0, CLI_SHIM_SENTINEL_CONSTANT_NAME))
+    elif sentinel_assignment.value != CLI_SHIM_SENTINEL_ENVIRONMENT_VARIABLE:
+        violations.append(
+            cli_shim_violation(
+                relative_path,
+                sentinel_assignment.line_number,
+                sentinel_assignment.column_offset,
+                CLI_SHIM_SENTINEL_CONSTANT_NAME,
+            )
+        )
+
+    function_definitions = top_level_function_definitions(tree)
+    run_args_definition = function_definitions.get("run_args")
+    if run_args_definition is None:
+        violations.append(cli_shim_violation(relative_path, 1, 0, "run_args"))
+    else:
+        if not function_contains_call(run_args_definition, "run_native_cli_python_bridge"):
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    run_args_definition.lineno,
+                    run_args_definition.col_offset,
+                    "run_args",
+                )
+            )
+        if function_contains_call(run_args_definition, "dispatch_cli"):
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    run_args_definition.lineno,
+                    run_args_definition.col_offset,
+                    "run_args",
+                )
+            )
+        if not function_has_sentinel_legacy_branch(run_args_definition):
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    run_args_definition.lineno,
+                    run_args_definition.col_offset,
+                    "run_args",
+                )
+            )
+
+    run_args_legacy_definition = function_definitions.get("run_args_legacy")
+    if run_args_legacy_definition is None:
+        violations.append(cli_shim_violation(relative_path, 1, 0, "run_args_legacy"))
+    else:
+        if not function_contains_call(run_args_legacy_definition, "dispatch_cli"):
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    run_args_legacy_definition.lineno,
+                    run_args_legacy_definition.col_offset,
+                    "run_args_legacy",
+                )
+            )
+        if function_contains_call(run_args_legacy_definition, "run_native_cli_python_bridge"):
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    run_args_legacy_definition.lineno,
+                    run_args_legacy_definition.col_offset,
+                    "run_args_legacy",
+                )
+            )
+
+    main_definition = function_definitions.get("main")
+    if main_definition is None:
+        violations.append(cli_shim_violation(relative_path, 1, 0, "main"))
+    elif not function_contains_call(main_definition, "run_args"):
+        violations.append(cli_shim_violation(relative_path, main_definition.lineno, main_definition.col_offset, "main"))
+
+    return tuple(violations)
+
+
 def python_source_paths_for_policy(source_path: Path) -> tuple[Path, ...]:
     """Return Python source paths covered by one architecture policy."""
     if source_path.is_file():
@@ -877,12 +1115,19 @@ def render_definition_violation(violation: PythonDefinitionViolation) -> str:
     return f"{location}: {violation.policy_name} rejects definition `{violation.function_name}`: {violation.message}"
 
 
+def render_cli_shim_violation(violation: PythonCliShimViolation) -> str:
+    """Render a CLI shim-policy violation for command-line output."""
+    location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
+    return f"{location}: {violation.policy_name} rejects `{violation.subject}`: {violation.message}"
+
+
 def run_tool(package_root: Path) -> int:
     """Verify Python package ownership boundaries."""
     import_violations = collect_python_import_policy_violations(package_root)
     call_violations = collect_python_call_policy_violations(package_root)
     definition_violations = collect_python_definition_policy_violations(package_root)
-    if import_violations or call_violations or definition_violations:
+    cli_shim_violations = collect_python_cli_shim_violations(package_root)
+    if import_violations or call_violations or definition_violations or cli_shim_violations:
         print(f"Python architecture violations under `{package_root}`:")
         for violation in import_violations:
             print(f"  {render_violation(violation)}")
@@ -890,6 +1135,8 @@ def run_tool(package_root: Path) -> int:
             print(f"  {render_call_violation(violation)}")
         for violation in definition_violations:
             print(f"  {render_definition_violation(violation)}")
+        for violation in cli_shim_violations:
+            print(f"  {render_cli_shim_violation(violation)}")
         return 1
 
     print(f"Python architecture policy passed for `{package_root}`.")

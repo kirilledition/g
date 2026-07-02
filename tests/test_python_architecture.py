@@ -18,6 +18,10 @@ def test_python_call_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_call_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
 
+def test_python_cli_shim_policy_allows_current_production_tree() -> None:
+    assert check_python_architecture.collect_python_cli_shim_violations(PRODUCTION_PACKAGE_ROOT) == ()
+
+
 def test_compute_import_policy_rejects_cli_output_and_config_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     compute_directory = package_root / "compute"
@@ -46,6 +50,50 @@ def test_compute_import_policy_rejects_cli_output_and_config_imports(tmp_path: P
         (Path("g/compute/kernel.py"), 3, "g.interface.config", "g.interface"),
         (Path("g/compute/kernel.py"), 4, "g.io.source", "g.io"),
         (Path("g/compute/kernel.py"), 5, "g.io", "g.io"),
+    ]
+
+
+def test_python_cli_shim_policy_rejects_public_python_process_ownership(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    package_root.mkdir()
+    (package_root / "cli.py").write_text(
+        "\n".join(
+            (
+                'NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE = "WRONG_SENTINEL"',
+                "def run_args(arguments):",
+                "    outcome = g._core.dispatch_cli(list(arguments))",
+                "    return outcome.exit_code",
+                "def run_args_legacy(arguments):",
+                "    outcome = g._core.run_native_cli_python_bridge(list(arguments), sys.executable, 'SENTINEL')",
+                "    return outcome.exit_code",
+                "def main():",
+                "    raise SystemExit(run_args_legacy(sys.argv[1:]))",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_cli_shim_violations(package_root)
+
+    assert [(violation.path, violation.line_number, violation.subject) for violation in violations] == [
+        (Path("g/cli.py"), 1, "NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE"),
+        (Path("g/cli.py"), 2, "run_args"),
+        (Path("g/cli.py"), 2, "run_args"),
+        (Path("g/cli.py"), 2, "run_args"),
+        (Path("g/cli.py"), 5, "run_args_legacy"),
+        (Path("g/cli.py"), 5, "run_args_legacy"),
+        (Path("g/cli.py"), 8, "main"),
+    ]
+
+
+def test_python_cli_shim_policy_rejects_missing_cli_module(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    package_root.mkdir()
+
+    violations = check_python_architecture.collect_python_cli_shim_violations(package_root)
+
+    assert [(violation.path, violation.line_number, violation.subject) for violation in violations] == [
+        (Path("g/cli.py"), 1, "cli.py"),
     ]
 
 

@@ -376,6 +376,11 @@ Phase 13 wheel installation has also been smoke-tested: a `dev-fast` wheel
 built in `0:41.53` wall time (`29.23s` Cargo target time), installed into a
 temporary Python 3.14 environment, imported `g` and `g._core`, and rendered
 installed `g --help` output through the Python compatibility shim.
+The Python architecture checker now guards that CLI boundary: public
+`g.cli.run_args` must enter the coarse native PyO3 CLI runner, direct
+`dispatch_cli` calls must stay in the sentinel-protected legacy backend, and
+the Python console script cannot silently become the production process owner
+again.
 The root PyO3 timing recorder binding no longer exports direct
 stage-timing/profile payload builders, the final timing write-started payload
 builder, or per-file writer methods; Python callers use typed snapshots,
