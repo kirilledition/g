@@ -407,6 +407,13 @@ PYTHON_CALL_POLICIES = (
         message="production binary diagnostics must normalize typed results instead of probing optional fields",
     ),
     PythonCallPolicy(
+        name="binary_diagnostics_host_materialization_isolation",
+        source_directory=Path("compute/regenie2_binary/diagnostics.py"),
+        forbidden_calls=("jax.device_get", "device_get"),
+        allowed_paths=(),
+        message="production binary diagnostics must leave host materialization to callback adapters",
+    ),
+    PythonCallPolicy(
         name="callback_readiness_blocker_contract_isolation",
         source_directory=Path("engine/callbacks/diagnostics.py"),
         forbidden_calls=("getattr",),

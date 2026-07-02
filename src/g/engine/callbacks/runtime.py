@@ -15,13 +15,14 @@ import g.engine.callbacks.shared as shared
 import g.engine.callbacks.transfers as transfers
 import g.engine.callbacks.writers as writers
 from g import _core, types
-from g.compute.regenie2_binary import api as regenie2_binary
 from g.engine import telemetry, timing
 
 if typing.TYPE_CHECKING:
     import collections.abc
 
     import jax
+
+    from g.compute.regenie2_binary import api as regenie2_binary
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
 PreprocessedDosageChunkWorkItem = shared.PreprocessedDosageChunkWorkItem
@@ -49,7 +50,7 @@ write_materialized_regenie2_native_chunk_with_optional_timing = (
     writers.write_materialized_regenie2_native_chunk_with_optional_timing
 )
 record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
-binary_chunk_diagnostics_to_summary_counts = regenie2_binary.binary_chunk_diagnostics_to_summary_counts
+binary_chunk_diagnostics_to_summary_counts = diagnostics.binary_chunk_diagnostics_to_summary_counts
 
 
 class ResultWriteItemKind(enum.StrEnum):

@@ -1908,6 +1908,11 @@ Python/JAX should emit typed diagnostic events through a native handle.
   typed empty-Firth expansion helpers and read Firth diagnostic arrays
   directly. The Python architecture checker rejects optional `getattr`
   result-field fallback probes in `g.compute.regenie2_binary.diagnostics`.
+- Binary diagnostic mapping and aggregate summary host materialization now live
+  in `g.engine.callbacks.diagnostics`, leaving
+  `g.compute.regenie2_binary.diagnostics` as device-side counting only. The
+  Python architecture checker rejects `jax.device_get` in the compute
+  diagnostics module.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 

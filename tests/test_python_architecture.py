@@ -893,6 +893,31 @@ def test_binary_diagnostics_result_contract_policy_rejects_getattr_probe(tmp_pat
     ]
 
 
+def test_binary_diagnostics_host_materialization_policy_rejects_device_get(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    diagnostics_directory = package_root / "compute" / "regenie2_binary"
+    diagnostics_directory.mkdir(parents=True)
+    (diagnostics_directory / "diagnostics.py").write_text(
+        "\n".join(
+            (
+                "import jax",
+                "def materialize(values):",
+                "    return jax.device_get(values)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/compute/regenie2_binary/diagnostics.py"), 3, "jax.device_get", "jax.device_get"),
+    ]
+
+
 def test_callback_readiness_blocker_policy_rejects_optional_method_probe(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     callback_directory = package_root / "engine" / "callbacks"

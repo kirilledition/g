@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 
 import jax
@@ -11,9 +10,6 @@ import numpy as np
 
 from g import types
 from g.compute.regenie2_binary import result as regenie2_binary_result
-
-if typing.TYPE_CHECKING:
-    import collections.abc
 
 
 @jax.tree_util.register_dataclass
@@ -194,95 +190,4 @@ def count_binary_chunk_diagnostics(
         ),
         sparse_correction_count=jnp.sum(firth_sparse_correction_mask & firth_attempt_mask, dtype=jnp.int32),
         dense_correction_count=jnp.sum((~firth_sparse_correction_mask) & firth_attempt_mask, dtype=jnp.int32),
-    )
-
-
-def binary_chunk_diagnostics_to_mapping(diagnostics: BinaryChunkDiagnostics) -> dict[str, int | float]:
-    """Materialize binary chunk diagnostics as JSON-ready counters."""
-    diagnostics_on_host = jax.device_get(diagnostics)
-    return {
-        "score_only_count": int(diagnostics_on_host.score_only_count),
-        "score_test_candidate_count": int(diagnostics_on_host.score_test_candidate_count),
-        "firth_candidate_count": int(diagnostics_on_host.firth_candidate_count),
-        "firth_iteration_min": int(diagnostics_on_host.firth_iteration_min),
-        "firth_iteration_median": float(diagnostics_on_host.firth_iteration_median),
-        "firth_iteration_max": int(diagnostics_on_host.firth_iteration_max),
-        "firth_converged_count": int(diagnostics_on_host.firth_converged_count),
-        "firth_failed_count": int(diagnostics_on_host.firth_failed_count),
-        "firth_numerical_failure_count": int(diagnostics_on_host.firth_numerical_failure_count),
-        "firth_max_iteration_failure_count": int(diagnostics_on_host.firth_max_iteration_failure_count),
-        "firth_invalid_statistic_failure_count": int(diagnostics_on_host.firth_invalid_statistic_failure_count),
-        "firth_step_halving_failure_count": int(diagnostics_on_host.firth_step_halving_failure_count),
-        "pseudo_firth_attempt_count": int(diagnostics_on_host.pseudo_firth_attempt_count),
-        "pseudo_firth_success_count": int(diagnostics_on_host.pseudo_firth_success_count),
-        "nr_zero_start_attempt_count": int(diagnostics_on_host.nr_zero_start_attempt_count),
-        "nr_zero_start_success_count": int(diagnostics_on_host.nr_zero_start_success_count),
-        "nr_warm_start_attempt_count": int(diagnostics_on_host.nr_warm_start_attempt_count),
-        "nr_warm_start_success_count": int(diagnostics_on_host.nr_warm_start_success_count),
-        "sparse_correction_count": int(diagnostics_on_host.sparse_correction_count),
-        "dense_correction_count": int(diagnostics_on_host.dense_correction_count),
-    }
-
-
-def binary_chunk_diagnostics_to_summary_counts(
-    diagnostics_batch: collections.abc.Sequence[BinaryChunkDiagnostics],
-) -> BinaryCorrectionSummaryCounts:
-    """Materialize binary diagnostics as one aggregate summary counter payload."""
-    diagnostics_on_host_batch = jax.device_get(tuple(diagnostics_batch))
-    return BinaryCorrectionSummaryCounts(
-        chunk_count=len(diagnostics_on_host_batch),
-        score_only_count=sum(
-            int(diagnostics_on_host.score_only_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        score_test_candidate_count=sum(
-            int(diagnostics_on_host.score_test_candidate_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        firth_candidate_count=sum(
-            int(diagnostics_on_host.firth_candidate_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        firth_converged_count=sum(
-            int(diagnostics_on_host.firth_converged_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        firth_failed_count=sum(
-            int(diagnostics_on_host.firth_failed_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        firth_numerical_failure_count=sum(
-            int(diagnostics_on_host.firth_numerical_failure_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        firth_max_iteration_failure_count=sum(
-            int(diagnostics_on_host.firth_max_iteration_failure_count)
-            for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        firth_invalid_statistic_failure_count=sum(
-            int(diagnostics_on_host.firth_invalid_statistic_failure_count)
-            for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        firth_step_halving_failure_count=sum(
-            int(diagnostics_on_host.firth_step_halving_failure_count)
-            for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        pseudo_firth_attempt_count=sum(
-            int(diagnostics_on_host.pseudo_firth_attempt_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        pseudo_firth_success_count=sum(
-            int(diagnostics_on_host.pseudo_firth_success_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        nr_zero_start_attempt_count=sum(
-            int(diagnostics_on_host.nr_zero_start_attempt_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        nr_zero_start_success_count=sum(
-            int(diagnostics_on_host.nr_zero_start_success_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        nr_warm_start_attempt_count=sum(
-            int(diagnostics_on_host.nr_warm_start_attempt_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        nr_warm_start_success_count=sum(
-            int(diagnostics_on_host.nr_warm_start_success_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        sparse_correction_count=sum(
-            int(diagnostics_on_host.sparse_correction_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
-        dense_correction_count=sum(
-            int(diagnostics_on_host.dense_correction_count) for diagnostics_on_host in diagnostics_on_host_batch
-        ),
     )
