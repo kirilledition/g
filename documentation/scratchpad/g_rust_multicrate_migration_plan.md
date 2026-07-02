@@ -2064,6 +2064,9 @@ Current implementation notes:
 - Run artifact sequence validation and per-phenotype artifact input assembly
   moved from the root PyO3 adapter into `g-runtime`; the root adapter now only
   translates Python arguments and serializes native artifact payloads.
+- Direct Python construction of `NativeJaxRuntimeSetupSession` has been removed;
+  setup sessions are now only created through `NativeRuntimeState`, so the root
+  PyO3 adapter no longer rebuilds setup sessions from raw Python payloads.
 
 ### Tests
 

@@ -2009,6 +2009,12 @@ def test_native_jax_runtime_setup_validation_completion() -> None:
     assert not hasattr(_core, "plan_jax_gpu_validation_payload")
 
 
+def test_native_jax_runtime_setup_session_rejects_direct_construction() -> None:
+    setup_session_type = typing.cast("typing.Any", _core.NativeJaxRuntimeSetupSession)
+    with pytest.raises(TypeError, match=r"cannot create .*NativeJaxRuntimeSetupSession"):
+        setup_session_type({})
+
+
 def test_native_jax_runtime_diagnostic_event_records_telemetry() -> None:
     class DiagnosticField:
         def __init__(self, name: str, value: object) -> None:

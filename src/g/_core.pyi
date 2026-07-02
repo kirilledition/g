@@ -2534,7 +2534,6 @@ class NativeJaxRuntimeDiagnosticRecordPlan:
     telemetry_level: str
 
 class NativeJaxRuntimeSetupSession:
-    def __init__(self, setup_payload: dict[str, object], should_configure: bool) -> None: ...
     @property
     def should_configure(self) -> bool: ...
     @property
