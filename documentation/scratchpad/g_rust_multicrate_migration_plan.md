@@ -2371,8 +2371,9 @@ Current implementation notes:
   validation through `g-interface`.
 - The native binary deliberately refuses validated run execution with a clear
   error until the Python/JAX backend embedding boundary is designed. Its
-  workspace dependency policy is restricted to `g-interface`, so it cannot
-  reach into `g-engine` or runtime internals prematurely.
+  workspace dependency policy still avoids `g-engine` and runtime internals;
+  `g-cli` depends on `g-interface` plus external signal handling support while
+  the backend boundary is prototyped.
 - The Python package entry point remains the production full-run CLI while this
   native process-owner prototype proves the frontend and packaging boundary.
 - The native frontend now has a Criterion dispatch benchmark covering root
@@ -2419,6 +2420,12 @@ Current implementation notes:
   probe through the configured Python executable, reporting Python/JAX versions
   and visible JAX device platforms. The default probe sets `JAX_PLATFORMS=cpu`;
   GPU discovery remains an explicit Slurm/GPU-node override.
+- A deliberate subprocess backend prototype is available through
+  `PythonBridgeExecutionAdapter`. Setting `G_NATIVE_CLI_PYTHON=/path/to/python`
+  lets the native binary validate the run config and then delegate the original
+  CLI arguments to `g.cli.run_args` through that Python executable. The default
+  native binary path still preserves the unsupported-execution refusal until
+  the embedded Python/JAX or direct `g-engine` backend boundary is selected.
 
 ### Tests
 

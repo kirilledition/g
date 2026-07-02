@@ -9,7 +9,14 @@ fn main() {
 }
 
 fn run(arguments: &[String]) -> i32 {
-    let outcome = g_cli::dispatch_native_cli(arguments);
+    let outcome = match std::env::var_os(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE) {
+        Some(python_executable_path) => {
+            let execution_adapter =
+                g_cli::PythonBridgeExecutionAdapter::new(std::path::PathBuf::from(python_executable_path));
+            g_cli::dispatch_native_cli_with_adapter(arguments, &execution_adapter)
+        }
+        None => g_cli::dispatch_native_cli(arguments),
+    };
     if let Err(error) = write_outcome(&outcome) {
         eprintln!("Error: failed to write native CLI output: {error}");
         return g_cli::NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE;

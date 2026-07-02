@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -8,7 +10,11 @@ fn string_arguments(arguments: &[&str]) -> Vec<String> {
 }
 
 fn run_native_binary(arguments: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_g")).args(arguments).output().expect("native g binary should execute")
+    Command::new(env!("CARGO_BIN_EXE_g"))
+        .env_remove(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
+        .args(arguments)
+        .output()
+        .expect("native g binary should execute")
 }
 
 fn unique_fixture_directory() -> PathBuf {
@@ -80,6 +86,28 @@ fn toml_path_value(path: &Path) -> String {
     format!("\"{}\"", path_text.escape_default())
 }
 
+#[cfg(unix)]
+fn write_fake_python_bridge(fixture_directory: &Path) -> PathBuf {
+    let fake_python_path = fixture_directory.join("fake-python");
+    fs::write(
+        &fake_python_path,
+        "#!/bin/sh\n\
+if [ \"$1\" != \"-c\" ]; then\n\
+  printf 'missing -c bridge flag\\n' >&2\n\
+  exit 88\n\
+fi\n\
+shift 2\n\
+printf 'binary bridge first-argument=%s\\n' \"$1\"\n\
+printf 'binary bridge stderr\\n' >&2\n\
+exit 43\n",
+    )
+    .expect("fake Python bridge should be written");
+    let mut permissions = fs::metadata(&fake_python_path).expect("fake Python metadata should exist").permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&fake_python_path, permissions).expect("fake Python bridge should be executable");
+    fake_python_path
+}
+
 #[test]
 fn native_binary_help_matches_interface_frontend() {
     let output = run_native_binary(&["--help"]);
@@ -106,8 +134,11 @@ fn native_binary_validates_config_before_refusing_execution() {
     write_valid_fixture(&fixture_directory);
     let arguments = valid_regenie_arguments(&fixture_directory);
 
-    let output =
-        Command::new(env!("CARGO_BIN_EXE_g")).args(arguments).output().expect("native g binary should execute");
+    let output = Command::new(env!("CARGO_BIN_EXE_g"))
+        .env_remove(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
+        .args(arguments)
+        .output()
+        .expect("native g binary should execute");
 
     assert_eq!(output.status.code(), Some(g_cli::NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE));
     assert_eq!(String::from_utf8(output.stdout).expect("stdout should be UTF-8"), "");
@@ -127,6 +158,7 @@ fn native_binary_validates_toml_and_cli_overrides_before_refusing_execution() {
     let config_path = write_regenie_toml(&fixture_directory, &missing_bgen_path);
 
     let output = Command::new(env!("CARGO_BIN_EXE_g"))
+        .env_remove(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
         .args([
             "regenie",
             "--config",
@@ -159,6 +191,7 @@ fn native_binary_reports_toml_validation_errors_before_execution_boundary() {
     let config_path = write_regenie_toml(&fixture_directory, &missing_bgen_path);
 
     let output = Command::new(env!("CARGO_BIN_EXE_g"))
+        .env_remove(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
         .args([
             "regenie",
             "--config",
@@ -174,6 +207,30 @@ fn native_binary_reports_toml_validation_errors_before_execution_boundary() {
     assert_eq!(String::from_utf8(output.stdout).expect("stdout should be UTF-8"), "");
     assert!(stderr.contains("--bgen path does not exist"));
     assert!(!stderr.contains(g_cli::NATIVE_EXECUTION_UNAVAILABLE_MESSAGE));
+
+    fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_binary_delegates_validated_config_to_python_bridge_when_enabled() {
+    let fixture_directory = unique_fixture_directory();
+    write_valid_fixture(&fixture_directory);
+    let fake_python_path = write_fake_python_bridge(&fixture_directory);
+    let arguments = valid_regenie_arguments(&fixture_directory);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_g"))
+        .env(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE, fake_python_path)
+        .args(arguments)
+        .output()
+        .expect("native g binary should execute");
+
+    assert_eq!(output.status.code(), Some(43));
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout should be UTF-8"),
+        "binary bridge first-argument=regenie\n",
+    );
+    assert_eq!(String::from_utf8(output.stderr).expect("stderr should be UTF-8"), "binary bridge stderr\n",);
 
     fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
 }

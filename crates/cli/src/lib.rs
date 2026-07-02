@@ -1,8 +1,11 @@
 //! Native CLI frontend for the GWAS engine.
 
+use std::path::PathBuf;
+use std::process::{Command, ExitStatus};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+pub const NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE: &str = "G_NATIVE_CLI_PYTHON";
 pub const NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE: i32 = 1;
 pub const NATIVE_EXECUTION_UNAVAILABLE_MESSAGE: &str = concat!(
     "Error: native CLI execution is not available yet; ",
@@ -10,6 +13,10 @@ pub const NATIVE_EXECUTION_UNAVAILABLE_MESSAGE: &str = concat!(
 );
 pub const NATIVE_EXECUTION_PANIC_EXIT_CODE: i32 = 1;
 pub const NATIVE_SIGNAL_HANDLER_FAILURE_EXIT_CODE: i32 = 1;
+pub const PYTHON_BRIDGE_LAUNCH_FAILURE_EXIT_CODE: i32 = 1;
+const PYTHON_BRIDGE_SCRIPT: &str = "import g.cli, sys; raise SystemExit(g.cli.run_args(sys.argv[1:]))";
+const PYTHON_BRIDGE_TERMINATED_WITHOUT_STATUS_EXIT_CODE: i32 = 1;
+const PYTHON_BRIDGE_LAUNCH_FAILURE_PREFIX: &str = "Error: failed to execute Python CLI bridge";
 const NATIVE_EXECUTION_PANIC_PREFIX: &str = "Error: native CLI execution adapter panicked";
 const NATIVE_SIGNAL_HANDLER_FAILURE_PREFIX: &str = "Error: failed to install native CLI signal handlers";
 
@@ -48,6 +55,7 @@ impl NativeExecutionOutcome {
 pub trait NativeExecutionAdapter {
     fn execute(
         &self,
+        arguments: &[String],
         config: &g_interface::RegenieConfigData,
         execution_context: &NativeExecutionContext,
     ) -> NativeExecutionOutcome;
@@ -59,6 +67,7 @@ pub struct UnsupportedNativeExecutionAdapter;
 impl NativeExecutionAdapter for UnsupportedNativeExecutionAdapter {
     fn execute(
         &self,
+        _arguments: &[String],
         _config: &g_interface::RegenieConfigData,
         _execution_context: &NativeExecutionContext,
     ) -> NativeExecutionOutcome {
@@ -67,6 +76,45 @@ impl NativeExecutionAdapter for UnsupportedNativeExecutionAdapter {
             String::new(),
             NATIVE_EXECUTION_UNAVAILABLE_MESSAGE.to_string(),
         )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PythonBridgeExecutionAdapter {
+    python_executable_path: PathBuf,
+}
+
+impl PythonBridgeExecutionAdapter {
+    #[must_use]
+    pub fn new(python_executable_path: PathBuf) -> Self {
+        Self { python_executable_path }
+    }
+}
+
+impl NativeExecutionAdapter for PythonBridgeExecutionAdapter {
+    fn execute(
+        &self,
+        arguments: &[String],
+        _config: &g_interface::RegenieConfigData,
+        _execution_context: &NativeExecutionContext,
+    ) -> NativeExecutionOutcome {
+        let output_result =
+            Command::new(&self.python_executable_path).arg("-c").arg(PYTHON_BRIDGE_SCRIPT).args(arguments).output();
+        match output_result {
+            Ok(output) => NativeExecutionOutcome::new(
+                process_exit_code(output.status),
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ),
+            Err(error) => NativeExecutionOutcome::new(
+                PYTHON_BRIDGE_LAUNCH_FAILURE_EXIT_CODE,
+                String::new(),
+                format!(
+                    "{PYTHON_BRIDGE_LAUNCH_FAILURE_PREFIX} '{}': {error}.\n",
+                    self.python_executable_path.display()
+                ),
+            ),
+        }
     }
 }
 
@@ -100,7 +148,9 @@ pub fn dispatch_native_cli_with_adapter(
     if let Some(run_config) = config {
         let execution_context = NativeExecutionContext::default();
         let execution_outcome = match NativeSignalGuard::install_default(&execution_context) {
-            Ok(_signal_guard) => execute_with_panic_boundary(execution_adapter, &run_config, &execution_context),
+            Ok(_signal_guard) => {
+                execute_with_panic_boundary(execution_adapter, arguments, &run_config, &execution_context)
+            }
             Err(error) => NativeExecutionOutcome::new(
                 NATIVE_SIGNAL_HANDLER_FAILURE_EXIT_CODE,
                 String::new(),
@@ -116,11 +166,12 @@ pub fn dispatch_native_cli_with_adapter(
 
 fn execute_with_panic_boundary(
     execution_adapter: &dyn NativeExecutionAdapter,
+    arguments: &[String],
     run_config: &g_interface::RegenieConfigData,
     execution_context: &NativeExecutionContext,
 ) -> NativeExecutionOutcome {
     let execution_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        execution_adapter.execute(run_config, execution_context)
+        execution_adapter.execute(arguments, run_config, execution_context)
     }));
     match execution_result {
         Ok(execution_outcome) => execution_outcome,
@@ -186,9 +237,26 @@ fn panic_payload_message(panic_payload: &(dyn std::any::Any + Send)) -> String {
     "non-string panic payload".to_string()
 }
 
+fn process_exit_code(exit_status: ExitStatus) -> i32 {
+    if let Some(exit_code) = exit_status.code() {
+        return exit_code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        if let Some(signal_number) = exit_status.signal() {
+            return 128 + signal_number;
+        }
+    }
+    PYTHON_BRIDGE_TERMINATED_WITHOUT_STATUS_EXIT_CODE
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -202,6 +270,7 @@ mod tests {
     impl NativeExecutionAdapter for SuccessfulAdapter {
         fn execute(
             &self,
+            _arguments: &[String],
             config: &g_interface::RegenieConfigData,
             execution_context: &NativeExecutionContext,
         ) -> NativeExecutionOutcome {
@@ -216,6 +285,7 @@ mod tests {
     impl NativeExecutionAdapter for FailingAdapter {
         fn execute(
             &self,
+            _arguments: &[String],
             config: &g_interface::RegenieConfigData,
             execution_context: &NativeExecutionContext,
         ) -> NativeExecutionOutcome {
@@ -230,6 +300,7 @@ mod tests {
     impl NativeExecutionAdapter for PanicAdapter {
         fn execute(
             &self,
+            _arguments: &[String],
             _config: &g_interface::RegenieConfigData,
             _execution_context: &NativeExecutionContext,
         ) -> NativeExecutionOutcome {
@@ -242,6 +313,7 @@ mod tests {
     impl NativeExecutionAdapter for PanickingExecutionAdapter {
         fn execute(
             &self,
+            _arguments: &[String],
             config: &g_interface::RegenieConfigData,
             execution_context: &NativeExecutionContext,
         ) -> NativeExecutionOutcome {
@@ -293,6 +365,28 @@ mod tests {
             std::thread::yield_now();
         }
         panic!("native signal handler did not record shutdown request");
+    }
+
+    #[cfg(unix)]
+    fn write_fake_python_bridge(fixture_directory: &std::path::Path) -> PathBuf {
+        let fake_python_path = fixture_directory.join("fake-python");
+        fs::write(
+            &fake_python_path,
+            "#!/bin/sh\n\
+if [ \"$1\" != \"-c\" ]; then\n\
+  printf 'missing -c bridge flag\\n' >&2\n\
+  exit 88\n\
+fi\n\
+shift 2\n\
+printf 'python bridge first-argument=%s\\n' \"$1\"\n\
+printf 'python bridge stderr\\n' >&2\n\
+exit 42\n",
+        )
+        .expect("fake Python bridge should be written");
+        let mut permissions = fs::metadata(&fake_python_path).expect("fake Python metadata should exist").permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&fake_python_path, permissions).expect("fake Python bridge should be executable");
+        fake_python_path
     }
 
     #[test]
@@ -463,6 +557,51 @@ mod tests {
             native_outcome.stderr,
             "Error: native CLI execution adapter panicked: backend adapter failed after validation.\n",
         );
+        assert!(native_outcome.validated_run_config);
+
+        fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn python_bridge_execution_adapter_forwards_validated_arguments() {
+        let fixture_directory = unique_fixture_directory();
+        fs::create_dir_all(&fixture_directory).expect("fixture directory should be created");
+        fs::write(fixture_directory.join("dataset.bgen"), b"").expect("BGEN fixture should be written");
+        fs::write(fixture_directory.join("phenotype.tsv"), "FID IID trait\n")
+            .expect("phenotype fixture should be written");
+        fs::write(fixture_directory.join("predictions.list"), "").expect("prediction fixture should be written");
+        let fake_python_path = write_fake_python_bridge(&fixture_directory);
+        let adapter = PythonBridgeExecutionAdapter::new(fake_python_path);
+
+        let arguments = valid_regenie_arguments(&fixture_directory);
+        let native_outcome = dispatch_native_cli_with_adapter(&arguments, &adapter);
+
+        assert_eq!(native_outcome.exit_code, 42);
+        assert_eq!(native_outcome.stdout, "python bridge first-argument=regenie\n");
+        assert_eq!(native_outcome.stderr, "python bridge stderr\n");
+        assert!(native_outcome.validated_run_config);
+
+        fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
+    }
+
+    #[test]
+    fn python_bridge_execution_adapter_reports_launch_failures() {
+        let fixture_directory = unique_fixture_directory();
+        fs::create_dir_all(&fixture_directory).expect("fixture directory should be created");
+        fs::write(fixture_directory.join("dataset.bgen"), b"").expect("BGEN fixture should be written");
+        fs::write(fixture_directory.join("phenotype.tsv"), "FID IID trait\n")
+            .expect("phenotype fixture should be written");
+        fs::write(fixture_directory.join("predictions.list"), "").expect("prediction fixture should be written");
+        let adapter = PythonBridgeExecutionAdapter::new(fixture_directory.join("missing-python"));
+
+        let arguments = valid_regenie_arguments(&fixture_directory);
+        let native_outcome = dispatch_native_cli_with_adapter(&arguments, &adapter);
+
+        assert_eq!(native_outcome.exit_code, PYTHON_BRIDGE_LAUNCH_FAILURE_EXIT_CODE);
+        assert_eq!(native_outcome.stdout, "");
+        assert!(native_outcome.stderr.contains(PYTHON_BRIDGE_LAUNCH_FAILURE_PREFIX));
+        assert!(native_outcome.stderr.contains("missing-python"));
         assert!(native_outcome.validated_run_config);
 
         fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
