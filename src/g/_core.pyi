@@ -3395,12 +3395,6 @@ def build_preflight_report_payload(
     chromosome_count: int,
     trusted_no_missing_diploid: bool,
 ) -> dict[str, object]: ...
-def validate_pipeline_resume_compatibility(
-    chunks_directories: typing.Sequence[str],
-    existing_manifest_json_values: typing.Sequence[str | None],
-    current_header_json_values: typing.Sequence[str],
-    resume_mode: str,
-) -> None: ...
 
 class NativePipelineOutputInitialization:
     @property

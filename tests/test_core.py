@@ -233,6 +233,7 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "resolve_native_callback_queue_limits",
         "resolve_native_callback_worker_shutdown_timeouts",
         "should_attempt_callback_worker_stop",
+        "validate_pipeline_resume_compatibility",
     ):
         assert not hasattr(_core, removed_scheduler_export_name)
     assert not hasattr(_core, "plan_trusted_bgen_validation_cache_lookup")
@@ -1022,6 +1023,7 @@ def test_native_preflight_binary_and_prediction_shape_policy() -> None:
 
 
 def test_native_pipeline_resume_compatibility_validates_all_manifests(tmp_path: Path) -> None:
+    run_directory = tmp_path / "run"
     chunks_directory = tmp_path / "chunks"
     chunks_directory.mkdir()
     manifest_json = json.dumps(
@@ -1030,30 +1032,42 @@ def test_native_pipeline_resume_compatibility_validates_all_manifests(tmp_path: 
     )
     current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
 
-    _core.validate_pipeline_resume_compatibility(
-        chunks_directories=(str(chunks_directory),),
+    def validate_resume_compatibility(
+        *,
+        existing_manifest_json_values: tuple[str | None, ...],
+        current_header_json_values: tuple[str, ...],
+        resume_mode: str,
+    ) -> None:
+        preparation_batch = _core.NativePipelineOutputPreparationBatch(
+            run_directories=(str(run_directory),),
+            chunks_directories=(str(chunks_directory),),
+            existing_manifest_json_values=existing_manifest_json_values,
+            current_header_json_values=current_header_json_values,
+            resume=True,
+            resume_mode=resume_mode,
+        )
+        preparation_batch.validate_resume_compatibility()
+
+    validate_resume_compatibility(
         existing_manifest_json_values=(manifest_json,),
         current_header_json_values=(current_header_json,),
         resume_mode="fast",
     )
-    _core.validate_pipeline_resume_compatibility(
-        chunks_directories=(str(chunks_directory),),
+    validate_resume_compatibility(
         existing_manifest_json_values=(manifest_json,),
         current_header_json_values=(current_header_json,),
         resume_mode="strict",
     )
 
     with pytest.raises(ValueError, match=r"Resume requires run_manifest\.json"):
-        _core.validate_pipeline_resume_compatibility(
-            chunks_directories=(str(chunks_directory),),
+        validate_resume_compatibility(
             existing_manifest_json_values=(None,),
             current_header_json_values=(current_header_json,),
             resume_mode="fast",
         )
 
     with pytest.raises(ValueError, match="input counts must match"):
-        _core.validate_pipeline_resume_compatibility(
-            chunks_directories=(str(chunks_directory),),
+        validate_resume_compatibility(
             existing_manifest_json_values=(),
             current_header_json_values=(current_header_json,),
             resume_mode="fast",
@@ -1061,8 +1075,7 @@ def test_native_pipeline_resume_compatibility_validates_all_manifests(tmp_path: 
 
     incompatible_header_json = json.dumps({"schema_version": 7, "chunk_size": 64}, sort_keys=True)
     with pytest.raises(ValueError, match="chunk_size"):
-        _core.validate_pipeline_resume_compatibility(
-            chunks_directories=(str(chunks_directory),),
+        validate_resume_compatibility(
             existing_manifest_json_values=(manifest_json,),
             current_header_json_values=(incompatible_header_json,),
             resume_mode="fast",

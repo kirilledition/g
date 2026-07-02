@@ -97,6 +97,7 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
         "validate_binary_phenotype_case_control_counts",
         "validate_binary_phenotype_coding",
         "validate_finite_array",
+        "validate_pipeline_resume_compatibility",
         "write_trusted_bgen_validation_cache_payload",
     )
 )

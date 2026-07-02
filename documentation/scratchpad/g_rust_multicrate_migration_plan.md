@@ -2095,6 +2095,9 @@ Current implementation notes:
   worker shutdown defaults, stop-attempt policy, and BGEN delivery-method
   selection were also removed from the Python-visible root surface; equivalent
   behavior is covered through typed native scheduler state and delivery plans.
+- The detached pipeline resume-compatibility validator was removed from the
+  Python-visible root surface; production validates through
+  `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.
 
 ### Tests
 
