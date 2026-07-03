@@ -271,6 +271,36 @@ impl NativeRunEventTelemetryPolicy {
 #[pyclass]
 pub(crate) struct NativeRunEventPayloadPolicy;
 
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeRunArtifacts {
+    data: native_run_events::RunArtifactsPayload,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeRunArtifact {
+    data: native_run_events::RunArtifactPayload,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeRunCompletedEvent {
+    data: native_run_events::RunCompletedEventPayload,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeRunInterruptedEvent {
+    data: native_run_events::RunInterruptedEventPayload,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeRunFailedEvent {
+    data: native_run_events::RunFailedEventPayload,
+}
+
 #[pymethods]
 #[allow(clippy::needless_pass_by_value)]
 #[allow(clippy::unused_self)]
@@ -288,6 +318,12 @@ impl NativeRunEventPayloadPolicy {
         build_run_completed_event_payload(py, artifacts)
     }
 
+    fn build_run_completed_event(&self, artifacts: &Bound<'_, PyAny>) -> PyResult<NativeRunCompletedEvent> {
+        let artifacts_payload = run_artifacts_payload_from_py(artifacts)?;
+        let data = native_run_events::build_run_completed_event_from_artifacts(&artifacts_payload);
+        Ok(NativeRunCompletedEvent { data })
+    }
+
     fn attach_run_metadata_payload<'py>(
         &self,
         py: Python<'py>,
@@ -299,6 +335,23 @@ impl NativeRunEventPayloadPolicy {
         attach_run_metadata_payload(py, artifacts, run_id, association_mode, phenotype_count)
     }
 
+    fn attach_run_metadata(
+        &self,
+        artifacts: &Bound<'_, PyAny>,
+        run_id: Option<String>,
+        association_mode: String,
+        phenotype_count: i64,
+    ) -> PyResult<NativeRunArtifacts> {
+        let artifacts_payload = run_artifacts_payload_from_py(artifacts)?;
+        let data = native_run_events::attach_run_metadata_to_artifacts(
+            &artifacts_payload,
+            run_id.as_deref(),
+            &association_mode,
+            phenotype_count,
+        );
+        Ok(NativeRunArtifacts { data })
+    }
+
     fn build_run_interrupted_event_payload<'py>(
         &self,
         py: Python<'py>,
@@ -307,12 +360,31 @@ impl NativeRunEventPayloadPolicy {
         build_run_interrupted_event_payload(py, shutdown_request)
     }
 
+    fn build_run_interrupted_event(&self, shutdown_request: &Bound<'_, PyAny>) -> PyResult<NativeRunInterruptedEvent> {
+        let shutdown_signal = shutdown_request.getattr("shutdown_signal")?;
+        let signal_name = shutdown_signal.getattr("name")?.extract::<String>()?;
+        let data = native_run_events::build_run_interrupted_event_payload(
+            shutdown_signal.getattr("number")?.extract::<i64>()?,
+            &signal_name,
+            shutdown_signal.getattr("exit_code")?.extract::<i64>()?,
+            true,
+        );
+        Ok(NativeRunInterruptedEvent { data })
+    }
+
     fn build_run_failed_event_payload<'py>(
         &self,
         py: Python<'py>,
         error: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyDict>> {
         build_run_failed_event_payload(py, error)
+    }
+
+    fn build_run_failed_event(&self, error: &Bound<'_, PyAny>) -> PyResult<NativeRunFailedEvent> {
+        let error_type = error.get_type().name()?.to_string_lossy().into_owned();
+        let error_message = error.str()?.to_string_lossy().into_owned();
+        let data = native_run_events::build_run_failed_event_payload(&error_type, &error_message);
+        Ok(NativeRunFailedEvent { data })
     }
 
     fn render_run_completed_lines<'py>(
@@ -337,6 +409,151 @@ impl NativeRunEventPayloadPolicy {
         event: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyTuple>> {
         render_run_failed_lines(py, event)
+    }
+}
+
+#[pymethods]
+impl NativeRunArtifacts {
+    #[getter]
+    fn output_run_directory(&self) -> Option<String> {
+        self.data.output_run_directory.clone()
+    }
+
+    #[getter]
+    fn final_dataset(&self) -> Option<String> {
+        self.data.final_dataset.clone()
+    }
+
+    #[getter]
+    fn final_parquet(&self) -> Option<String> {
+        self.data.final_parquet.clone()
+    }
+
+    #[getter]
+    fn final_regenie(&self) -> Option<String> {
+        self.data.final_regenie.clone()
+    }
+
+    #[getter]
+    fn effective_config(&self) -> Option<String> {
+        self.data.effective_config.clone()
+    }
+
+    #[getter]
+    fn phenotype_artifacts(&self) -> Vec<NativeRunArtifacts> {
+        self.data.phenotype_artifacts.iter().cloned().map(|data| NativeRunArtifacts { data }).collect()
+    }
+
+    #[getter]
+    fn phenotype_name(&self) -> Option<String> {
+        self.data.phenotype_name.clone()
+    }
+
+    #[getter]
+    fn association_mode(&self) -> Option<String> {
+        self.data.association_mode.clone()
+    }
+
+    #[getter]
+    fn phenotype_count(&self) -> Option<i64> {
+        self.data.phenotype_count
+    }
+
+    #[getter]
+    fn run_id(&self) -> Option<String> {
+        self.data.run_id.clone()
+    }
+}
+
+#[pymethods]
+impl NativeRunArtifact {
+    #[getter]
+    fn phenotype_name(&self) -> Option<String> {
+        self.data.phenotype_name.clone()
+    }
+
+    #[getter]
+    fn output_run_directory(&self) -> Option<String> {
+        self.data.output_run_directory.clone()
+    }
+
+    #[getter]
+    fn final_dataset(&self) -> Option<String> {
+        self.data.final_dataset.clone()
+    }
+
+    #[getter]
+    fn final_parquet(&self) -> Option<String> {
+        self.data.final_parquet.clone()
+    }
+
+    #[getter]
+    fn final_regenie(&self) -> Option<String> {
+        self.data.final_regenie.clone()
+    }
+
+    #[getter]
+    fn effective_config(&self) -> Option<String> {
+        self.data.effective_config.clone()
+    }
+}
+
+#[pymethods]
+impl NativeRunCompletedEvent {
+    #[getter]
+    fn run_id(&self) -> Option<String> {
+        self.data.run_id.clone()
+    }
+
+    #[getter]
+    fn association_mode(&self) -> Option<String> {
+        self.data.association_mode.clone()
+    }
+
+    #[getter]
+    fn phenotype_count(&self) -> Option<i64> {
+        self.data.phenotype_count
+    }
+
+    #[getter]
+    fn artifacts(&self) -> Vec<NativeRunArtifact> {
+        self.data.artifacts.iter().cloned().map(|data| NativeRunArtifact { data }).collect()
+    }
+}
+
+#[pymethods]
+impl NativeRunInterruptedEvent {
+    #[getter]
+    fn signal_number(&self) -> i64 {
+        self.data.signal_number
+    }
+
+    #[getter]
+    fn signal_name(&self) -> &str {
+        self.data.signal_name.as_str()
+    }
+
+    #[getter]
+    fn exit_code(&self) -> i64 {
+        self.data.exit_code
+    }
+
+    #[getter]
+    fn flushed_for_resume(&self) -> bool {
+        self.data.flushed_for_resume
+    }
+}
+
+#[pymethods]
+impl NativeRunFailedEvent {
+    #[getter]
+    fn error_type(&self) -> &str {
+        self.data.error_type.as_str()
+    }
+
+    #[getter]
+    fn error_message(&self) -> &str {
+        self.data.error_message.as_str()
     }
 }
 
@@ -2015,6 +2232,11 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
 
 fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeRunEventPayloadPolicy>()?;
+    module.add_class::<NativeRunArtifacts>()?;
+    module.add_class::<NativeRunArtifact>()?;
+    module.add_class::<NativeRunCompletedEvent>()?;
+    module.add_class::<NativeRunInterruptedEvent>()?;
+    module.add_class::<NativeRunFailedEvent>()?;
     module.add_class::<NativeRunEventTelemetryPolicy>()?;
     Ok(())
 }

@@ -2683,6 +2683,62 @@ def test_runner_telemetry_path_policy_rejects_payload_methods(tmp_path: Path) ->
     ]
 
 
+def test_runner_lifecycle_event_policy_rejects_payload_methods(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "events.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build(artifacts, shutdown_request, error):",
+                "    policy = _core.NativeRunEventPayloadPolicy()",
+                "    policy.attach_run_metadata_payload(artifacts, 'run-1', 'regenie2_linear', 1)",
+                "    policy.build_run_completed_event_payload(artifacts)",
+                "    policy.build_run_interrupted_event_payload(shutdown_request)",
+                "    policy.build_run_failed_event_payload(error)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/events.py"),
+            4,
+            "runner_lifecycle_event_payload_isolation",
+            "policy.attach_run_metadata_payload",
+            "attach_run_metadata_payload",
+        ),
+        (
+            Path("g/runner/events.py"),
+            5,
+            "runner_lifecycle_event_payload_isolation",
+            "policy.build_run_completed_event_payload",
+            "build_run_completed_event_payload",
+        ),
+        (
+            Path("g/runner/events.py"),
+            6,
+            "runner_lifecycle_event_payload_isolation",
+            "policy.build_run_interrupted_event_payload",
+            "build_run_interrupted_event_payload",
+        ),
+        (
+            Path("g/runner/events.py"),
+            7,
+            "runner_lifecycle_event_payload_isolation",
+            "policy.build_run_failed_event_payload",
+            "build_run_failed_event_payload",
+        ),
+    ]
+
+
 def test_diagnostic_payload_policy_rejects_direct_payload_builders(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"

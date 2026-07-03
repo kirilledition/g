@@ -49,10 +49,15 @@ def test_run_completed_event_uses_native_artifact_tree_builder() -> None:
         run_id="run-1",
     )
 
-    native_payload = _core.NativeRunEventPayloadPolicy().build_run_completed_event_payload(artifacts)
+    native_policy = _core.NativeRunEventPayloadPolicy()
+    native_payload = native_policy.build_run_completed_event_payload(artifacts)
+    native_event = native_policy.build_run_completed_event(artifacts)
     event = run_events.build_run_completed_event(artifacts)
 
     assert native_payload["phenotype_count"] == 2
+    assert isinstance(native_event, _core.NativeRunCompletedEvent)
+    assert native_event.phenotype_count == 2
+    assert native_event.artifacts[1].phenotype_name == "weight"
     assert event.run_id == "run-1"
     assert event.association_mode == types.AssociationMode.REGENIE2_LINEAR
     assert event.phenotype_count == 2
@@ -100,7 +105,14 @@ def test_attach_run_metadata_uses_native_artifact_tree_builder() -> None:
         run_id=None,
     )
 
-    native_payload = _core.NativeRunEventPayloadPolicy().attach_run_metadata_payload(
+    native_policy = _core.NativeRunEventPayloadPolicy()
+    native_payload = native_policy.attach_run_metadata_payload(
+        artifacts,
+        "run-1",
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        2,
+    )
+    native_artifacts = native_policy.attach_run_metadata(
         artifacts,
         "run-1",
         types.AssociationMode.REGENIE2_LINEAR.value,
@@ -117,6 +129,9 @@ def test_attach_run_metadata_uses_native_artifact_tree_builder() -> None:
     assert native_payload["run_id"] == "run-1"
     assert native_payload["association_mode"] == "regenie2_linear"
     assert native_payload["phenotype_count"] == 2
+    assert isinstance(native_artifacts, _core.NativeRunArtifacts)
+    assert native_artifacts.run_id == "run-1"
+    assert native_artifacts.phenotype_artifacts[1].association_mode == "regenie2_linear"
     assert phenotype_payloads[0]["run_id"] == "run-1"
     assert phenotype_payloads[1]["association_mode"] == "regenie2_linear"
     assert attached_artifacts.run_id == "run-1"
@@ -361,7 +376,9 @@ def test_interrupted_run_event_uses_native_payload_builder_and_renderer() -> Non
     shutdown_request = shutdown.GracefulShutdownRequested(
         shutdown.ShutdownSignal(number=2, name="SIGINT", exit_code=130)
     )
-    native_payload = _core.NativeRunEventPayloadPolicy().build_run_interrupted_event_payload(shutdown_request)
+    native_policy = _core.NativeRunEventPayloadPolicy()
+    native_payload = native_policy.build_run_interrupted_event_payload(shutdown_request)
+    native_event = native_policy.build_run_interrupted_event(shutdown_request)
     event = run_events.build_run_interrupted_event(shutdown_request)
 
     assert native_payload == {
@@ -370,6 +387,8 @@ def test_interrupted_run_event_uses_native_payload_builder_and_renderer() -> Non
         "exit_code": 130,
         "flushed_for_resume": True,
     }
+    assert isinstance(native_event, _core.NativeRunInterruptedEvent)
+    assert native_event.signal_name == "SIGINT"
     assert event.signal_number == 2
     assert event.signal_name == "SIGINT"
     assert event.exit_code == 130
@@ -381,10 +400,14 @@ def test_interrupted_run_event_uses_native_payload_builder_and_renderer() -> Non
 
 def test_failed_run_event_uses_native_payload_builder_and_renderer() -> None:
     error = RuntimeError("boom")
-    native_payload = _core.NativeRunEventPayloadPolicy().build_run_failed_event_payload(error)
+    native_policy = _core.NativeRunEventPayloadPolicy()
+    native_payload = native_policy.build_run_failed_event_payload(error)
+    native_event = native_policy.build_run_failed_event(error)
     event = run_events.build_run_failed_event(error)
 
     assert native_payload == {"error_type": "RuntimeError", "error_message": "boom"}
+    assert isinstance(native_event, _core.NativeRunFailedEvent)
+    assert native_event.error_message == "boom"
     assert event.error_type == "RuntimeError"
     assert event.error_message == "boom"
     assert run_events.render_run_failed_lines(event) == ("Error: boom",)

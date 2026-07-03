@@ -2846,6 +2846,10 @@ Current guardrail notes:
   handles instead of dict payloads. The legacy telemetry path payload method
   remains for compatibility tests, while runner modules are guarded from
   calling it.
+- Runner lifecycle event construction now consumes typed native completed,
+  interrupted, failed, and metadata-attached artifact handles instead of dict
+  payloads. Legacy event payload methods remain for compatibility tests, while
+  runner modules are guarded from calling them.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture
@@ -3201,6 +3205,8 @@ The runner-shutdown rule rejects payload signal/handler methods under
 `g.runner`, keeping lifecycle code on typed native shutdown handles.
 The runner-telemetry-path rule rejects telemetry path payload methods under
 `g.runner`, keeping event helpers on typed native path handles.
+The runner-lifecycle-event rule rejects run-event lifecycle payload methods
+under `g.runner`, keeping event construction on typed native event handles.
 
 ---
 

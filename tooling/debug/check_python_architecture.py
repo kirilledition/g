@@ -765,6 +765,18 @@ PYTHON_CALL_POLICIES = (
         message="runner telemetry path resolution must consume typed native telemetry path handles",
     ),
     PythonCallPolicy(
+        name="runner_lifecycle_event_payload_isolation",
+        source_directory=Path("runner"),
+        forbidden_calls=(
+            "attach_run_metadata_payload",
+            "build_run_completed_event_payload",
+            "build_run_interrupted_event_payload",
+            "build_run_failed_event_payload",
+        ),
+        allowed_paths=(),
+        message="runner run-event lifecycle helpers must consume typed native event handles",
+    ),
+    PythonCallPolicy(
         name="callback_worker_queue_isolation",
         source_directory=Path("engine/callbacks"),
         forbidden_calls=(

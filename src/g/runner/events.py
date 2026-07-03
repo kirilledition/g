@@ -315,14 +315,14 @@ def native_run_event_payload_policy() -> _core.NativeRunEventPayloadPolicy:
 
 def build_run_interrupted_event(shutdown_request: lifecycle.GracefulShutdownRequested) -> RunInterruptedEvent:
     """Build a structured interruption event from a graceful shutdown request."""
-    return run_interrupted_event_from_native_payload(
-        native_run_event_payload_policy().build_run_interrupted_event_payload(shutdown_request)
+    return run_interrupted_event_from_native_event(
+        native_run_event_payload_policy().build_run_interrupted_event(shutdown_request)
     )
 
 
 def build_run_failed_event(error: Exception) -> RunFailedEvent:
     """Build a structured failure event from an exception."""
-    return run_failed_event_from_native_payload(native_run_event_payload_policy().build_run_failed_event_payload(error))
+    return run_failed_event_from_native_event(native_run_event_payload_policy().build_run_failed_event(error))
 
 
 def attach_run_metadata(
@@ -333,8 +333,8 @@ def attach_run_metadata(
     phenotype_count: int,
 ) -> RunArtifacts:
     """Attach lifecycle metadata to returned run artifacts."""
-    return run_artifacts_from_native_payload(
-        native_run_event_payload_policy().attach_run_metadata_payload(
+    return run_artifacts_from_native_artifacts(
+        native_run_event_payload_policy().attach_run_metadata(
             artifacts,
             run_id,
             association_mode.value,
@@ -345,9 +345,7 @@ def attach_run_metadata(
 
 def build_run_completed_event(artifacts: RunArtifacts) -> RunCompletedEvent:
     """Build a structured completion event from run artifacts."""
-    return run_completed_event_from_native_payload(
-        native_run_event_payload_policy().build_run_completed_event_payload(artifacts)
-    )
+    return run_completed_event_from_native_event(native_run_event_payload_policy().build_run_completed_event(artifacts))
 
 
 def render_run_interrupted_lines(interrupted_event: RunInterruptedEvent) -> tuple[str, ...]:
@@ -363,6 +361,26 @@ def render_run_failed_lines(failed_event: RunFailedEvent) -> tuple[str, ...]:
 def render_run_completed_lines(completed_event: RunCompletedEvent) -> tuple[str, ...]:
     """Render run completion lines for CLI output."""
     return tuple(native_run_event_payload_policy().render_run_completed_lines(completed_event))
+
+
+def run_artifacts_from_native_artifacts(native_artifacts: _core.NativeRunArtifacts) -> RunArtifacts:
+    """Adapt native run artifact metadata to the public Python dataclass."""
+    association_mode_payload = native_artifacts.association_mode
+    return RunArtifacts(
+        output_run_directory=optional_path_from_native_payload(native_artifacts.output_run_directory),
+        final_dataset=optional_path_from_native_payload(native_artifacts.final_dataset),
+        final_parquet=optional_path_from_native_payload(native_artifacts.final_parquet),
+        final_regenie=optional_path_from_native_payload(native_artifacts.final_regenie),
+        effective_config=optional_path_from_native_payload(native_artifacts.effective_config),
+        phenotype_artifacts=tuple(
+            run_artifacts_from_native_artifacts(phenotype_artifacts)
+            for phenotype_artifacts in native_artifacts.phenotype_artifacts
+        ),
+        phenotype_name=native_artifacts.phenotype_name,
+        association_mode=None if association_mode_payload is None else types.AssociationMode(association_mode_payload),
+        phenotype_count=native_artifacts.phenotype_count,
+        run_id=native_artifacts.run_id,
+    )
 
 
 def run_artifacts_from_native_payload(payload: object) -> RunArtifacts:
@@ -389,6 +407,19 @@ def run_artifacts_from_native_payload(payload: object) -> RunArtifacts:
     )
 
 
+def run_completed_event_from_native_event(native_event: _core.NativeRunCompletedEvent) -> RunCompletedEvent:
+    """Adapt native completed-run event metadata to the public Python dataclass."""
+    association_mode_payload = native_event.association_mode
+    return RunCompletedEvent(
+        run_id=native_event.run_id,
+        association_mode=None if association_mode_payload is None else types.AssociationMode(association_mode_payload),
+        phenotype_count=native_event.phenotype_count,
+        artifacts=tuple(
+            run_artifact_payload_from_native_artifact(native_artifact) for native_artifact in native_event.artifacts
+        ),
+    )
+
+
 def run_completed_event_from_native_payload(payload: object) -> RunCompletedEvent:
     """Adapt a native completed-run event payload to the public Python dataclass."""
     event_payload = native_mapping_payload(payload)
@@ -401,6 +432,18 @@ def run_completed_event_from_native_payload(payload: object) -> RunCompletedEven
             run_artifact_payload_from_native_payload(artifact_payload)
             for artifact_payload in typing.cast("typing.Sequence[object]", event_payload["artifacts"])
         ),
+    )
+
+
+def run_artifact_payload_from_native_artifact(native_artifact: _core.NativeRunArtifact) -> RunArtifactPayload:
+    """Adapt one native completed-run artifact."""
+    return RunArtifactPayload(
+        phenotype_name=native_artifact.phenotype_name,
+        output_run_directory=optional_path_from_native_payload(native_artifact.output_run_directory),
+        final_dataset=optional_path_from_native_payload(native_artifact.final_dataset),
+        final_parquet=optional_path_from_native_payload(native_artifact.final_parquet),
+        final_regenie=optional_path_from_native_payload(native_artifact.final_regenie),
+        effective_config=optional_path_from_native_payload(native_artifact.effective_config),
     )
 
 
@@ -417,6 +460,16 @@ def run_artifact_payload_from_native_payload(payload: object) -> RunArtifactPayl
     )
 
 
+def run_interrupted_event_from_native_event(native_event: _core.NativeRunInterruptedEvent) -> RunInterruptedEvent:
+    """Adapt native interrupted-run event metadata to the public Python dataclass."""
+    return RunInterruptedEvent(
+        signal_number=native_event.signal_number,
+        signal_name=native_event.signal_name,
+        exit_code=native_event.exit_code,
+        flushed_for_resume=native_event.flushed_for_resume,
+    )
+
+
 def run_interrupted_event_from_native_payload(payload: object) -> RunInterruptedEvent:
     """Adapt a native interrupted-run event payload."""
     event_payload = native_mapping_payload(payload)
@@ -425,6 +478,14 @@ def run_interrupted_event_from_native_payload(payload: object) -> RunInterrupted
         signal_name=typing.cast("str", event_payload["signal_name"]),
         exit_code=typing.cast("int", event_payload["exit_code"]),
         flushed_for_resume=typing.cast("bool", event_payload["flushed_for_resume"]),
+    )
+
+
+def run_failed_event_from_native_event(native_event: _core.NativeRunFailedEvent) -> RunFailedEvent:
+    """Adapt native failed-run event metadata to the public Python dataclass."""
+    return RunFailedEvent(
+        error_type=native_event.error_type,
+        error_message=native_event.error_message,
     )
 
 
