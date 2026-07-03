@@ -9,11 +9,8 @@ import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 from g import _core, execution_plan, types
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
-from g.engine.native_dispatch import groups as native_dispatch_groups
-from g.engine.native_dispatch import loaders as native_dispatch_loaders
-from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import gpu_format, outputs, preflight, telemetry_events, timing
+from g.engine.regenie2_pipeline import gpu_format, inputs, outputs, preflight, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -29,7 +26,7 @@ def load_single_trait_run_input(
     phenotype_name: str,
     covariate_names: tuple[str, ...] | None,
     pipeline_label: str,
-) -> native_dispatch_models.NativeBgenRunInput:
+) -> inputs.NativeBgenRunInput:
     """Load one phenotype's aligned native inputs and emit telemetry."""
     alignment_start_time = time.perf_counter()
     native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
@@ -37,7 +34,7 @@ def load_single_trait_run_input(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
-    run_input = native_dispatch_loaders.load_native_bgen_run_input(
+    run_input = inputs.load_native_bgen_run_input(
         genotype_source_config=context.genotype_source_config,
         engine=engine,
         phenotype_path=context.phenotype_path,
@@ -74,7 +71,7 @@ def load_single_trait_run_input(
 def build_single_trait_prediction_source(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    run_input: native_dispatch_models.NativeBgenRunInput,
+    run_input: inputs.NativeBgenRunInput,
     phenotype_name: str,
     pipeline_label: str,
 ) -> typing.Any:
@@ -84,7 +81,7 @@ def build_single_trait_prediction_source(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
-    prediction_source = native_dispatch_loaders.build_regenie_prediction_source(
+    prediction_source = inputs.build_regenie_prediction_source(
         prediction_list_path=context.prediction_list_path,
         phenotype_name=phenotype_name,
         run_input=run_input,
@@ -102,7 +99,7 @@ def build_single_trait_prediction_source(
 def run_single_trait_preflight(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    run_input: native_dispatch_models.NativeBgenRunInput,
+    run_input: inputs.NativeBgenRunInput,
     prediction_source: typing.Any,
     engine: _core.Regenie2RunEngine,
     phenotype_name: str,
@@ -146,7 +143,7 @@ def run_single_trait_preflight(
 def build_single_trait_callback(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    run_input: native_dispatch_models.NativeBgenRunInput,
+    run_input: inputs.NativeBgenRunInput,
     prediction_source: typing.Any,
     writer_session: typing.Any,
     staging_depth: int,
@@ -154,7 +151,7 @@ def build_single_trait_callback(
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
-) -> native_dispatch_models.BgenDeliveryCallbackProtocol:
+) -> inputs.BgenDeliveryCallbackProtocol:
     """Build the association-specific single-trait callback."""
     if context.is_binary_trait:
         return callback_binary.BinaryRegenie2PipelineCallback(
@@ -240,7 +237,7 @@ def run_single_trait_bgen_pipeline(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
-    resolved_compute_group = native_dispatch_groups.build_resolved_single_phenotype_compute_group(
+    resolved_compute_group = inputs.build_resolved_single_phenotype_compute_group(
         phenotype_name=phenotype_name,
         run_input=run_input,
         prediction_list_path=context.prediction_list_path,
@@ -329,7 +326,7 @@ def run_regenie2_linear_bgen_pipeline(
     gpu_genotype_format: types.GpuGenotypeFormat,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry_events.TelemetrySession | None,
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> Path | None:
@@ -423,7 +420,7 @@ def run_regenie2_binary_bgen_pipeline(
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry_events.TelemetrySession | None,
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> Path | None:

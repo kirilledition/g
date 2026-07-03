@@ -335,6 +335,17 @@ PYTHON_IMPORT_POLICIES = (
         message="REGENIE pipeline modules must route BGEN engine access through pipeline BGEN engine helpers",
         allowed_paths=(Path("engine/regenie2_pipeline/bgen_engine.py"),),
     ),
+    PythonImportPolicy(
+        name="pipeline_native_input_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=(
+            "g.engine.native_dispatch.loaders",
+            "g.engine.native_dispatch.groups",
+            "g.engine.native_dispatch.models",
+        ),
+        message="REGENIE pipeline modules must route native input and group access through pipeline input helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/inputs.py"),),
+    ),
 )
 
 PYTHON_CALL_POLICIES = (

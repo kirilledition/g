@@ -11957,7 +11957,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            "g.engine.regenie2_pipeline.single_trait.inputs.load_native_bgen_run_input",
             return_value=run_input,
         ),
         patch(
@@ -12110,7 +12110,7 @@ def test_single_trait_preflight_failure_does_not_initialize_output_or_writer(tmp
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            "g.engine.regenie2_pipeline.single_trait.inputs.load_native_bgen_run_input",
             return_value=run_input,
         ),
         patch(
@@ -12232,7 +12232,7 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            "g.engine.regenie2_pipeline.single_trait.inputs.load_native_bgen_run_input",
             return_value=run_input,
         ),
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
@@ -12425,7 +12425,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            "g.engine.regenie2_pipeline.single_trait.inputs.load_native_bgen_run_input",
             return_value=run_input,
         ),
         patch(
@@ -12498,7 +12498,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> No
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            "g.engine.regenie2_pipeline.single_trait.inputs.load_native_bgen_run_input",
             return_value=run_input,
         ),
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
@@ -12558,7 +12558,7 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            "g.engine.regenie2_pipeline.single_trait.inputs.load_native_bgen_run_input",
             return_value=run_input,
         ),
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
@@ -12626,7 +12626,7 @@ def test_binary_gpu_auto_uses_packed8_when_trusted_validation_succeeds() -> None
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            "g.engine.regenie2_pipeline.single_trait.inputs.load_native_bgen_run_input",
             return_value=run_input,
         ),
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
@@ -12700,7 +12700,7 @@ def test_binary_gpu_auto_falls_back_to_dosage_when_trusted_validation_fails() ->
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.single_trait.native_dispatch_loaders.load_native_bgen_run_input",
+            "g.engine.regenie2_pipeline.single_trait.inputs.load_native_bgen_run_input",
             return_value=run_input,
         ),
         patch("g.engine.regenie2_pipeline.outputs.output.create_output_writer_session", return_value=writer_session),
@@ -12892,11 +12892,11 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     with (
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.load_native_bgen_multi_run_input",
             return_value=run_input,
         ),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
         patch(
@@ -13000,11 +13000,11 @@ def test_multi_preflight_failure_does_not_initialize_outputs_or_writers(tmp_path
     with (
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.load_native_bgen_multi_run_input",
             return_value=run_input,
         ),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
         patch(
@@ -13059,11 +13059,11 @@ def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes(
     with (
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", PartialCommitDeliveringRunEngine),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.load_native_bgen_multi_run_input",
             return_value=run_input,
         ),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight"),
@@ -13156,11 +13156,11 @@ def test_multi_binary_pipeline_opens_engine_once_and_skips_only_shared_committed
     with (
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.load_native_bgen_multi_run_input",
             return_value=run_input,
         ),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
@@ -13240,11 +13240,11 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.load_native_bgen_multi_run_input",
             return_value=run_input,
         ) as mock_load_native_multi_run_input,
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
@@ -13364,7 +13364,7 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.MultiRegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
+            "g.engine.regenie2_pipeline.grouped.inputs.load_native_bgen_grouped_run_inputs",
             return_value=grouped_run_inputs,
         ) as mock_load_grouped_run_inputs,
         patch(
@@ -13541,7 +13541,7 @@ def test_grouped_per_phenotype_packed8_forces_trusted_delivery_and_manifests() -
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
+            "g.engine.regenie2_pipeline.grouped.inputs.load_native_bgen_grouped_run_inputs",
             return_value=grouped_run_inputs,
         ),
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
@@ -13638,7 +13638,7 @@ def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.MultiRegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
+            "g.engine.regenie2_pipeline.grouped.inputs.load_native_bgen_grouped_run_inputs",
             return_value=grouped_run_inputs,
         ),
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight"),
@@ -13727,7 +13727,7 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
+            "g.engine.regenie2_pipeline.grouped.inputs.load_native_bgen_grouped_run_inputs",
             return_value=grouped_run_inputs,
         ),
         patch(
@@ -13857,7 +13857,7 @@ def test_grouped_per_phenotype_pipeline_keeps_multi_pass_when_union_not_cheaper(
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.grouped.native_dispatch_loaders.load_native_bgen_grouped_run_inputs",
+            "g.engine.regenie2_pipeline.grouped.inputs.load_native_bgen_grouped_run_inputs",
             return_value=grouped_run_inputs,
         ),
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight"),
@@ -13927,11 +13927,11 @@ def test_multi_binary_complete_case_packed8_preserves_kernel_config_and_manifest
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.load_native_bgen_multi_run_input",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.load_native_bgen_multi_run_input",
             return_value=run_input,
         ),
         patch(
-            "g.engine.regenie2_pipeline.multi_trait.native_dispatch_loaders.build_multi_regenie_prediction_source",
+            "g.engine.regenie2_pipeline.multi_trait.inputs.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,

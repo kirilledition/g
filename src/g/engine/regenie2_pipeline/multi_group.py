@@ -9,9 +9,8 @@ import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 from g import _core, execution_plan, types
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
-from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import outputs, preflight, telemetry_events, timing
+from g.engine.regenie2_pipeline import inputs, outputs, preflight, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -38,7 +37,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
     *,
     context: pipeline_context.Regenie2PipelineContext,
     engine: _core.Regenie2RunEngine,
-    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    run_input: inputs.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
     compute_group: execution_plan.PhenotypeComputeGroup,
     output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
@@ -162,7 +161,7 @@ def run_prepared_multi_phenotype_bgen_group(
     *,
     context: pipeline_context.Regenie2PipelineContext,
     engine: _core.Regenie2RunEngine,
-    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    run_input: inputs.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
     compute_group: execution_plan.PhenotypeComputeGroup,
     output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
@@ -210,7 +209,7 @@ def run_prepared_multi_phenotype_bgen_group(
 
 def run_multi_preflight(
     *,
-    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    run_input: inputs.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
     engine: _core.Regenie2RunEngine,
     variant_limit: int | None,
@@ -230,10 +229,10 @@ def run_multi_preflight(
 def run_bgen_engine_with_multi_callback(
     *,
     engine: _core.Regenie2RunEngine,
-    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    run_input: inputs.NativeBgenMultiRunInput,
     committed_chunk_identifiers: set[int] | None,
     writer_sessions: tuple[typing.Any, ...],
-    callback: native_dispatch_models.BgenDeliveryCallbackProtocol,
+    callback: inputs.BgenDeliveryCallbackProtocol,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     writer_finish_thread_count: int,
     variant_major_packed8_probability_pairs: bool,

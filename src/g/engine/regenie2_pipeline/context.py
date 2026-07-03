@@ -15,7 +15,7 @@ if typing.TYPE_CHECKING:
 
     from g.compute.regenie2_binary import config as regenie2_binary_config
     from g.engine.callbacks import shared as callback_shared
-    from g.engine.native_dispatch import models as native_dispatch_models
+    from g.engine.regenie2_pipeline import inputs
 
 
 def require_binary_kernel_config(
@@ -96,7 +96,7 @@ class Regenie2PipelineContext:
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: telemetry_events.TelemetrySession | None
     input_fingerprint_cache: outputs.ManifestFileFingerprintCache
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...]
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
@@ -143,7 +143,7 @@ class PreparedMultiPhenotypeGroupDelivery:
 
     compute_group: execution_plan.PhenotypeComputeGroup
     phenotype_indices: tuple[int, ...]
-    run_input: native_dispatch_models.NativeBgenMultiRunInput
+    run_input: inputs.NativeBgenMultiRunInput
     callback: callback_shared.MultiPhenotypeGroupCallbackProtocol
     writer_sessions: tuple[typing.Any, ...]
     committed_chunk_identifier_sets: tuple[set[int], ...]
@@ -173,7 +173,7 @@ def build_regenie2_pipeline_context(
     writer_settings: outputs.OutputWriterSettings,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry_events.TelemetrySession | None,
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...],
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,

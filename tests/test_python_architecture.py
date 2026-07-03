@@ -542,6 +542,88 @@ def test_pipeline_import_policy_allows_pipeline_bgen_engine_adapter(tmp_path: Pa
     assert violations == ()
 
 
+def test_pipeline_import_policy_rejects_native_input_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "single_trait.py").write_text(
+        "\n".join(
+            (
+                "from g.engine.native_dispatch import loaders, groups, models",
+                "import g.engine.native_dispatch.loaders",
+                "import g.engine.native_dispatch.groups",
+                "import g.engine.native_dispatch.models",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/regenie2_pipeline/single_trait.py"),
+            1,
+            "g.engine.native_dispatch.loaders",
+            "g.engine.native_dispatch.loaders",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/single_trait.py"),
+            1,
+            "g.engine.native_dispatch.groups",
+            "g.engine.native_dispatch.groups",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/single_trait.py"),
+            1,
+            "g.engine.native_dispatch.models",
+            "g.engine.native_dispatch.models",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/single_trait.py"),
+            2,
+            "g.engine.native_dispatch.loaders",
+            "g.engine.native_dispatch.loaders",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/single_trait.py"),
+            3,
+            "g.engine.native_dispatch.groups",
+            "g.engine.native_dispatch.groups",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/single_trait.py"),
+            4,
+            "g.engine.native_dispatch.models",
+            "g.engine.native_dispatch.models",
+        ),
+    ]
+
+
+def test_pipeline_import_policy_allows_pipeline_input_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "inputs.py").write_text(
+        "\n".join(
+            (
+                "from g.engine.native_dispatch import loaders, groups, models",
+                "import g.engine.native_dispatch.loaders",
+                "import g.engine.native_dispatch.groups",
+                "import g.engine.native_dispatch.models",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_python_cli_shim_policy_rejects_public_python_process_ownership(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()

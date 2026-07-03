@@ -12,10 +12,8 @@ import g.engine.callbacks.grouped as callback_grouped
 import g.engine.callbacks.shared as callback_shared
 from g import _core, types
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
-from g.engine.native_dispatch import loaders as native_dispatch_loaders
-from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import multi_group, outputs, telemetry_events, timing
+from g.engine.regenie2_pipeline import inputs, multi_group, outputs, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -51,7 +49,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         phenotype_count=len(phenotype_names),
     )
     alignment_start_time = time.perf_counter()
-    grouped_run_inputs = native_dispatch_loaders.load_native_bgen_grouped_run_inputs(
+    grouped_run_inputs = inputs.load_native_bgen_grouped_run_inputs(
         genotype_source_config=context.genotype_source_config,
         engine=engine,
         phenotype_path=context.phenotype_path,
@@ -165,7 +163,7 @@ def validate_grouped_per_phenotype_resume_compatibility(
     *,
     context: pipeline_context.Regenie2PipelineContext,
     engine: _core.Regenie2RunEngine,
-    grouped_run_inputs: tuple[native_dispatch_models.NativeBgenGroupedRunInput, ...],
+    grouped_run_inputs: tuple[inputs.NativeBgenGroupedRunInput, ...],
     output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
     existing_manifests: tuple[dict[str, typing.Any] | None, ...],
     resume: bool,
@@ -207,7 +205,7 @@ def validate_grouped_per_phenotype_resume_compatibility(
 
 
 def build_union_sample_indices(
-    grouped_run_inputs: tuple[native_dispatch_models.NativeBgenGroupedRunInput, ...],
+    grouped_run_inputs: tuple[inputs.NativeBgenGroupedRunInput, ...],
 ) -> npt.NDArray[np.int64]:
     """Build an ordered union sample selection for compatible phenotype groups."""
     seen_sample_indices: set[int] = set()
@@ -240,7 +238,7 @@ def build_group_sample_position_array(
 def should_use_union_grouped_bgen_delivery(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    grouped_run_inputs: tuple[native_dispatch_models.NativeBgenGroupedRunInput, ...],
+    grouped_run_inputs: tuple[inputs.NativeBgenGroupedRunInput, ...],
 ) -> bool:
     """Return whether grouped per-phenotype delivery should use one union decode pass."""
     if len(grouped_run_inputs) <= 1:
@@ -260,7 +258,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     *,
     context: pipeline_context.Regenie2PipelineContext,
     engine: _core.Regenie2RunEngine,
-    grouped_run_inputs: tuple[native_dispatch_models.NativeBgenGroupedRunInput, ...],
+    grouped_run_inputs: tuple[inputs.NativeBgenGroupedRunInput, ...],
     phenotype_names: tuple[str, ...],
     output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
     staging_depth: int,
@@ -328,7 +326,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         )
         for prepared_delivery in prepared_deliveries
     )
-    union_run_input = native_dispatch_models.NativeBgenUnionRunInput(sample_indices=union_sample_indices)
+    union_run_input = inputs.build_native_bgen_union_run_input(sample_indices=union_sample_indices)
     writer_sessions = tuple(
         writer_session
         for prepared_delivery in prepared_deliveries

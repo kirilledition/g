@@ -6,11 +6,8 @@ import time
 import typing
 
 from g import _core, execution_plan, types
-from g.engine.native_dispatch import groups as native_dispatch_groups
-from g.engine.native_dispatch import loaders as native_dispatch_loaders
-from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import gpu_format, grouped, multi_group, outputs, telemetry_events, timing
+from g.engine.regenie2_pipeline import gpu_format, grouped, inputs, multi_group, outputs, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -49,7 +46,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     gpu_genotype_format: types.GpuGenotypeFormat,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry_events.TelemetrySession | None,
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
@@ -133,7 +130,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry_events.TelemetrySession | None,
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
@@ -214,7 +211,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry_events.TelemetrySession | None,
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
@@ -302,7 +299,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     native_pipeline_diagnostic_policy.record_pipeline_multi_trait_input_load_started_diagnostic_event(
         phenotype_count=len(planned_compute_group.phenotype_names),
     )
-    run_input = native_dispatch_loaders.load_native_bgen_multi_run_input(
+    run_input = inputs.load_native_bgen_multi_run_input(
         genotype_source_config=context.genotype_source_config,
         engine=engine,
         phenotype_path=context.phenotype_path,
@@ -312,7 +309,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         is_binary_trait=context.is_binary_trait,
         alignment_config=context.alignment_config,
     )
-    resolved_compute_group = native_dispatch_groups.build_resolved_complete_case_phenotype_compute_group(
+    resolved_compute_group = inputs.build_resolved_complete_case_phenotype_compute_group(
         run_input=run_input,
         prediction_list_path=context.prediction_list_path,
         planned_compute_groups=context.phenotype_compute_groups,
@@ -350,7 +347,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     native_pipeline_diagnostic_policy.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
         phenotype_count=phenotype_count,
     )
-    prediction_source = native_dispatch_loaders.build_multi_regenie_prediction_source(
+    prediction_source = inputs.build_multi_regenie_prediction_source(
         prediction_list_path=context.prediction_list_path,
         run_input=run_input,
         alignment_config=context.alignment_config,

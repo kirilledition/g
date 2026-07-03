@@ -7,8 +7,7 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, execution_plan, types
-from g.engine.native_dispatch import groups as native_dispatch_groups
-from g.engine.regenie2_pipeline import bgen_engine, telemetry_events, timing
+from g.engine.regenie2_pipeline import bgen_engine, inputs, telemetry_events, timing
 from g.io import output
 from g.jax_runtime import models as jax_runtime_models
 
@@ -209,7 +208,7 @@ def build_pipeline_manifest_header(
         variant_limit=context.variant_limit,
         binary_correction_plan=context.correction_plan,
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
-        sample_key_mode=native_dispatch_groups.resolve_sample_key_mode(context.alignment_config),
+        sample_key_mode=inputs.resolve_sample_key_mode(context.alignment_config),
         binary_kernel_config=context.binary_kernel_config if context.is_binary_trait else None,
         bgen_decode_tile_variant_count=context.bgen_decode_tile_variant_count,
         trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
