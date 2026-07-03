@@ -199,6 +199,10 @@ def test_python_call_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_call_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
 
+def test_python_parameter_policy_allows_current_production_tree() -> None:
+    assert check_python_architecture.collect_python_parameter_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
+
+
 def test_python_cli_shim_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_cli_shim_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
@@ -3090,6 +3094,32 @@ def test_telemetry_definition_policy_rejects_fallback_methods(tmp_path: Path) ->
         (Path("g/runner/events.py"), 10, "build_event_payload"),
         (Path("g/runner/events.py"), 12, "native_session_policy"),
         (Path("g/runner/events.py"), 14, "log_progress"),
+    ]
+
+
+def test_parameter_policy_rejects_native_loader_injection_arguments(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    loader_directory = package_root / "engine" / "native_dispatch"
+    loader_directory.mkdir(parents=True)
+    (loader_directory / "loaders.py").write_text(
+        "\n".join(
+            (
+                "def load_native_bgen_run_input(",
+                "    *,",
+                "    build_native_bgen_run_input_callable,",
+                "    load_aligned_sample_data_callable,",
+                "):",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_parameter_policy_violations(package_root)
+
+    assert [(violation.path, violation.line_number, violation.parameter_name) for violation in violations] == [
+        (Path("g/engine/native_dispatch/loaders.py"), 3, "build_native_bgen_run_input_callable"),
+        (Path("g/engine/native_dispatch/loaders.py"), 4, "load_aligned_sample_data_callable"),
     ]
 
 

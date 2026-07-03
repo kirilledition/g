@@ -306,8 +306,6 @@ def warm_regenie2_linear_bgen_cache(
         covariate_names=covariate_names,
         is_binary_trait=False,
         alignment_config=alignment_config,
-        build_native_bgen_run_input_callable=None,
-        load_aligned_sample_data_callable=None,
     )
     prediction_source = native_dispatch_loaders.build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
@@ -423,8 +421,6 @@ def warm_regenie2_binary_bgen_cache(
         covariate_names=covariate_names,
         is_binary_trait=True,
         alignment_config=alignment_config,
-        build_native_bgen_run_input_callable=None,
-        load_aligned_sample_data_callable=None,
     )
     prediction_source = native_dispatch_loaders.build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,

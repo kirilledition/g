@@ -61,6 +61,10 @@ def test_python_association_effect_fallback_policy_allows_current_adapter() -> N
     assert check_rust_architecture.collect_python_association_effect_fallback_violations(REPOSITORY_ROOT) == ()
 
 
+def test_runtime_telemetry_legacy_close_policy_allows_current_runtime() -> None:
+    assert check_rust_architecture.collect_runtime_telemetry_legacy_close_violations(REPOSITORY_ROOT) == ()
+
+
 def test_root_pyo3_removed_export_policy_allows_current_adapter() -> None:
     assert check_rust_architecture.collect_root_pyo3_export_violations(REPOSITORY_ROOT) == ()
 
@@ -179,6 +183,44 @@ def test_python_association_effect_fallback_policy_rejects_optional_effect_dispa
             marker='hasattr("write_batch_result")',
             line_number=3,
             message=check_rust_architecture.PYTHON_ASSOCIATION_EFFECT_FALLBACK_MESSAGE,
+        ),
+    )
+
+
+def test_runtime_telemetry_legacy_close_policy_rejects_legacy_close_fields(tmp_path: Path) -> None:
+    runtime_source_directory = tmp_path / "crates" / "runtime" / "src"
+    runtime_source_directory.mkdir(parents=True)
+    (runtime_source_directory / "telemetry_session.rs").write_text(
+        "\n".join(
+            (
+                "should_emit_legacy_close_event: false,",
+                'legacy_close_event_name: "telemetry_session_closed".to_string(),',
+                'legacy_close_event_level: "debug".to_string(),',
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_rust_architecture.collect_runtime_telemetry_legacy_close_violations(tmp_path)
+
+    assert violations == (
+        check_rust_architecture.RuntimeTelemetryLegacyCloseViolation(
+            source_path=Path("crates/runtime/src/telemetry_session.rs"),
+            marker="should_emit_legacy_close_event",
+            line_number=1,
+            message=check_rust_architecture.RUNTIME_TELEMETRY_LEGACY_CLOSE_MESSAGE,
+        ),
+        check_rust_architecture.RuntimeTelemetryLegacyCloseViolation(
+            source_path=Path("crates/runtime/src/telemetry_session.rs"),
+            marker="legacy_close_event_name",
+            line_number=2,
+            message=check_rust_architecture.RUNTIME_TELEMETRY_LEGACY_CLOSE_MESSAGE,
+        ),
+        check_rust_architecture.RuntimeTelemetryLegacyCloseViolation(
+            source_path=Path("crates/runtime/src/telemetry_session.rs"),
+            marker="legacy_close_event_level",
+            line_number=3,
+            message=check_rust_architecture.RUNTIME_TELEMETRY_LEGACY_CLOSE_MESSAGE,
         ),
     )
 

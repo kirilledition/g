@@ -189,6 +189,48 @@ class PythonDefinitionViolation:
 
 
 @dataclasses.dataclass(frozen=True)
+class PythonParameterPolicy:
+    """A Python function-parameter boundary policy.
+
+    Attributes:
+        name: Stable policy name for diagnostics.
+        source_directory: Package directory, relative to the production package root.
+        forbidden_parameter_names: Function parameter names rejected under the source directory.
+        allowed_paths: Source paths, relative to the production package root, excluded from this policy.
+        message: Human-readable policy description.
+
+    """
+
+    name: str
+    source_directory: Path
+    forbidden_parameter_names: tuple[str, ...]
+    allowed_paths: tuple[Path, ...]
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class PythonParameterViolation:
+    """A Python function parameter that crosses an ownership boundary.
+
+    Attributes:
+        path: Source file containing the violation.
+        line_number: One-based source line number containing the parameter.
+        column_offset: Zero-based source column containing the parameter.
+        policy_name: Parameter policy that rejected the parameter.
+        parameter_name: Function parameter name observed in source.
+        message: Human-readable policy description.
+
+    """
+
+    path: Path
+    line_number: int
+    column_offset: int
+    policy_name: str
+    parameter_name: str
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
 class PythonCliShimViolation:
     """A Python CLI shim contract violation.
 
@@ -1006,6 +1048,19 @@ PYTHON_DEFINITION_POLICIES = (
     ),
 )
 
+PYTHON_PARAMETER_POLICIES = (
+    PythonParameterPolicy(
+        name="native_bgen_loader_injection_parameter_isolation",
+        source_directory=Path("engine"),
+        forbidden_parameter_names=(
+            "build_native_bgen_run_input_callable",
+            "load_aligned_sample_data_callable",
+        ),
+        allowed_paths=(),
+        message="production native BGEN input loading must use the native loader path, not injectable callbacks",
+    ),
+)
+
 
 def module_parts_for_source_path(path: Path, package_root: Path) -> tuple[str, ...]:
     """Return absolute module parts for a Python source file under a package root."""
@@ -1230,6 +1285,39 @@ def collect_definition_violations_for_statement(
     )
 
 
+def collect_parameter_violations_for_statement(
+    relative_path: Path,
+    policy: PythonParameterPolicy,
+    statement: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[PythonParameterViolation, ...]:
+    """Collect parameter-policy violations from one AST function statement."""
+    violations: list[PythonParameterViolation] = []
+    function_arguments = (
+        *statement.args.posonlyargs,
+        *statement.args.args,
+        *statement.args.kwonlyargs,
+    )
+    if statement.args.vararg is not None:
+        function_arguments = (*function_arguments, statement.args.vararg)
+    if statement.args.kwarg is not None:
+        function_arguments = (*function_arguments, statement.args.kwarg)
+
+    for function_argument in function_arguments:
+        if function_argument.arg not in policy.forbidden_parameter_names:
+            continue
+        violations.append(
+            PythonParameterViolation(
+                path=relative_path,
+                line_number=function_argument.lineno,
+                column_offset=function_argument.col_offset,
+                policy_name=policy.name,
+                parameter_name=function_argument.arg,
+                message=policy.message,
+            )
+        )
+    return tuple(violations)
+
+
 def collect_python_definition_policy_violations(
     package_root: Path,
     policies: tuple[PythonDefinitionPolicy, ...] = PYTHON_DEFINITION_POLICIES,
@@ -1250,6 +1338,29 @@ def collect_python_definition_policy_violations(
                 if not isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
                 violations.extend(collect_definition_violations_for_statement(relative_path, policy, statement))
+    return tuple(violations)
+
+
+def collect_python_parameter_policy_violations(
+    package_root: Path,
+    policies: tuple[PythonParameterPolicy, ...] = PYTHON_PARAMETER_POLICIES,
+) -> tuple[PythonParameterViolation, ...]:
+    """Collect Python parameter-boundary violations under a production package root."""
+    violations: list[PythonParameterViolation] = []
+    for policy in policies:
+        source_directory = package_root / policy.source_directory
+        if not source_directory.exists():
+            continue
+        for path in python_source_paths_for_policy(source_directory):
+            relative_path = path.relative_to(package_root.parent)
+            package_relative_path = path.relative_to(package_root)
+            if package_relative_path in policy.allowed_paths:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for statement in ast.walk(tree):
+                if not isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                violations.extend(collect_parameter_violations_for_statement(relative_path, policy, statement))
     return tuple(violations)
 
 
@@ -1486,6 +1597,12 @@ def render_definition_violation(violation: PythonDefinitionViolation) -> str:
     return f"{location}: {violation.policy_name} rejects definition `{violation.function_name}`: {violation.message}"
 
 
+def render_parameter_violation(violation: PythonParameterViolation) -> str:
+    """Render a parameter-policy violation for command-line output."""
+    location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
+    return f"{location}: {violation.policy_name} rejects parameter `{violation.parameter_name}`: {violation.message}"
+
+
 def render_cli_shim_violation(violation: PythonCliShimViolation) -> str:
     """Render a CLI shim-policy violation for command-line output."""
     location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
@@ -1498,12 +1615,14 @@ def run_tool(package_root: Path) -> int:
     import_violations = collect_python_import_policy_violations(package_root)
     call_violations = collect_python_call_policy_violations(package_root)
     definition_violations = collect_python_definition_policy_violations(package_root)
+    parameter_violations = collect_python_parameter_policy_violations(package_root)
     cli_shim_violations = collect_python_cli_shim_violations(package_root)
     if (
         forbidden_path_violations
         or import_violations
         or call_violations
         or definition_violations
+        or parameter_violations
         or cli_shim_violations
     ):
         print(f"Python architecture violations under `{package_root}`:")
@@ -1515,6 +1634,8 @@ def run_tool(package_root: Path) -> int:
             print(f"  {render_call_violation(violation)}")
         for violation in definition_violations:
             print(f"  {render_definition_violation(violation)}")
+        for violation in parameter_violations:
+            print(f"  {render_parameter_violation(violation)}")
         for violation in cli_shim_violations:
             print(f"  {render_cli_shim_violation(violation)}")
         return 1

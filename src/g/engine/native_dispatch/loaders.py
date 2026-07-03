@@ -67,14 +67,9 @@ def load_native_bgen_run_input(
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
     alignment_config: models.SampleAlignmentConfigProtocol | None,
-    build_native_bgen_run_input_callable: typing.Callable[[_core.NativeAlignedSampleData], models.NativeBgenRunInput]
-    | None,
-    load_aligned_sample_data_callable: typing.Callable[..., _core.NativeAlignedSampleData] | None,
 ) -> models.NativeBgenRunInput:
     """Load native-aligned samples and JAX compute inputs for a native BGEN run."""
-    resolved_build_native_bgen_run_input = build_native_bgen_run_input_callable or models.build_native_bgen_run_input
-    resolved_load_aligned_sample_data = load_aligned_sample_data_callable or load_native_aligned_sample_data
-    native_aligned_sample_data = resolved_load_aligned_sample_data(
+    native_aligned_sample_data = load_native_aligned_sample_data(
         engine=engine,
         sample_path=genotype_source_config.sample_path,
         phenotype_path=phenotype_path,
@@ -84,7 +79,7 @@ def load_native_bgen_run_input(
         is_binary_trait=is_binary_trait,
         alignment_config=alignment_config,
     )
-    return resolved_build_native_bgen_run_input(native_aligned_sample_data)
+    return models.build_native_bgen_run_input(native_aligned_sample_data)
 
 
 def load_native_bgen_multi_run_input(

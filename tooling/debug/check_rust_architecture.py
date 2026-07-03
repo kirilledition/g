@@ -17,6 +17,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ROOT_CRATE_LIB_PATH = Path("src/lib.rs")
 ROOT_CRATE_PYTHON_SOURCE_DIRECTORY = Path("src/python")
 ROOT_CRATE_PYTHON_MODULE_PATH = Path("src/python/mod.rs")
+RUNTIME_TELEMETRY_SESSION_PATH = Path("crates/runtime/src/telemetry_session.rs")
 DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
     (
         "NativeSecondSignalExceptionPlan",
@@ -301,6 +302,14 @@ PYTHON_ASSOCIATION_EFFECT_FALLBACK_MESSAGE = (
 PYTHON_ASSOCIATION_EFFECT_FALLBACK_PATTERN = re.compile(
     r"(?P<marker>call_optional_effect_method[01]?|hasattr\s*\(\s*\"write_batch_result\"\s*\))"
 )
+RUNTIME_TELEMETRY_LEGACY_CLOSE_MARKERS = (
+    "should_emit_legacy_close_event",
+    "legacy_close_event_name",
+    "legacy_close_event_level",
+)
+RUNTIME_TELEMETRY_LEGACY_CLOSE_MESSAGE = (
+    "native telemetry close planning must not carry legacy Python close-event fields"
+)
 
 ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-plan": set(),
@@ -371,6 +380,24 @@ class PythonAssociationEffectFallbackViolation:
     Attributes:
         source_path: Source file containing the violation.
         marker: Optional-dispatch marker observed in source.
+        line_number: One-based source line number containing the marker.
+        message: Human-readable policy description.
+
+    """
+
+    source_path: Path
+    marker: str
+    line_number: int
+    message: str
+
+
+@dataclass(frozen=True)
+class RuntimeTelemetryLegacyCloseViolation:
+    """A removed runtime telemetry legacy close field.
+
+    Attributes:
+        source_path: Source file containing the violation.
+        marker: Legacy close-field marker observed in source.
         line_number: One-based source line number containing the marker.
         message: Human-readable policy description.
 
@@ -590,6 +617,31 @@ def collect_python_association_effect_fallback_violations(
     return tuple(violations)
 
 
+def collect_runtime_telemetry_legacy_close_violations(
+    repository_root: Path,
+) -> tuple[RuntimeTelemetryLegacyCloseViolation, ...]:
+    """Collect removed native telemetry legacy close-field violations."""
+    telemetry_session_path = repository_root / RUNTIME_TELEMETRY_SESSION_PATH
+    if not telemetry_session_path.exists():
+        return ()
+
+    violations: list[RuntimeTelemetryLegacyCloseViolation] = []
+    source_lines = telemetry_session_path.read_text(encoding="utf-8").splitlines()
+    for line_number, source_line in enumerate(source_lines, start=1):
+        for marker in RUNTIME_TELEMETRY_LEGACY_CLOSE_MARKERS:
+            if marker not in source_line:
+                continue
+            violations.append(
+                RuntimeTelemetryLegacyCloseViolation(
+                    source_path=RUNTIME_TELEMETRY_SESSION_PATH,
+                    marker=marker,
+                    line_number=line_number,
+                    message=RUNTIME_TELEMETRY_LEGACY_CLOSE_MESSAGE,
+                )
+            )
+    return tuple(violations)
+
+
 def collect_root_pyo3_registered_export_violations(
     source_text: str,
     relative_source_path: Path,
@@ -701,6 +753,16 @@ def format_python_association_effect_fallback_violations(
     )
 
 
+def format_runtime_telemetry_legacy_close_violations(
+    violations: tuple[RuntimeTelemetryLegacyCloseViolation, ...],
+) -> str:
+    """Format removed runtime telemetry legacy close-field violations."""
+    return "\n".join(
+        f"- {violation.source_path}:{violation.line_number} [{violation.marker}]: {violation.message}"
+        for violation in violations
+    )
+
+
 def format_root_pyo3_export_violations(violations: tuple[RootPyO3ExportViolation, ...]) -> str:
     """Format removed root PyO3 export violations for command-line output."""
     return "\n".join(
@@ -721,12 +783,14 @@ def run_tool(repository_root: Path) -> int:
     root_crate_violations = collect_root_crate_boundary_violations(repository_root)
     telemetry_fallback_violations = collect_python_telemetry_fallback_violations(repository_root)
     association_effect_fallback_violations = collect_python_association_effect_fallback_violations(repository_root)
+    runtime_telemetry_legacy_close_violations = collect_runtime_telemetry_legacy_close_violations(repository_root)
     root_pyo3_export_violations = collect_root_pyo3_export_violations(repository_root)
     if (
         dependency_violations
         or root_crate_violations
         or telemetry_fallback_violations
         or association_effect_fallback_violations
+        or runtime_telemetry_legacy_close_violations
         or root_pyo3_export_violations
     ):
         print("Rust workspace architecture violations:")
@@ -738,6 +802,8 @@ def run_tool(repository_root: Path) -> int:
             print(format_python_telemetry_fallback_violations(telemetry_fallback_violations))
         if association_effect_fallback_violations:
             print(format_python_association_effect_fallback_violations(association_effect_fallback_violations))
+        if runtime_telemetry_legacy_close_violations:
+            print(format_runtime_telemetry_legacy_close_violations(runtime_telemetry_legacy_close_violations))
         if root_pyo3_export_violations:
             print(format_root_pyo3_export_violations(root_pyo3_export_violations))
         return 1

@@ -47,8 +47,6 @@ def load_single_trait_run_input(
         covariate_names=covariate_names,
         is_binary_trait=context.is_binary_trait,
         alignment_config=context.alignment_config,
-        build_native_bgen_run_input_callable=None,
-        load_aligned_sample_data_callable=None,
     )
     timing.record_stage_duration(
         context.stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time

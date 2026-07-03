@@ -2692,6 +2692,13 @@ Current guardrail notes:
   calls the required hooks directly instead of probing and silently skipping
   missing Python methods. The Rust architecture checker rejects reintroduced
   optional effect dispatch helpers in the root PyO3 association-backend adapter.
+- Native telemetry close planning no longer carries legacy close-event fields.
+  The only retained close path is the native telemetry-session close metadata
+  path used by the runner event helper.
+- Native BGEN input loading no longer carries injectable Python loader
+  callbacks on production signatures. Tests patch the boundary-local loader
+  helper directly, and the Python architecture checker rejects reintroduced
+  loader-injection parameters under `g.engine`.
 
 ### Exit criteria
 

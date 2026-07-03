@@ -508,10 +508,8 @@ def build_test_bgen_run_engine(**keyword_arguments: typing.Any) -> typing.Any:
 
 
 def load_test_native_bgen_run_input(**keyword_arguments: typing.Any) -> native_dispatch_models.NativeBgenRunInput:
-    """Load native run input with explicit optional injection points."""
+    """Load native run input with explicit optional defaults."""
     keyword_arguments.setdefault("alignment_config", None)
-    keyword_arguments.setdefault("build_native_bgen_run_input_callable", None)
-    keyword_arguments.setdefault("load_aligned_sample_data_callable", None)
     return native_dispatch_loaders.load_native_bgen_run_input(**keyword_arguments)
 
 
