@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import typing
 
-from g.engine import run_events
 from g.interface import config
+from g.runner import events
 from g.runner import execution as runner_execution
 from g.runner import runtime as runner_runtime
 
-RunArtifacts = run_events.RunArtifacts
+RunArtifacts = events.RunArtifacts
 RuntimeState = runner_runtime.RuntimeState
 
 

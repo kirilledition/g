@@ -208,6 +208,7 @@ PYTHON_IMPORT_POLICIES = (
             "g.engine.callbacks",
             "g.engine.native_dispatch",
             "g.engine.regenie2_pipeline",
+            "g.engine.run_events",
             "g.execution_plan",
             "g.io",
             "g.jax_runtime",

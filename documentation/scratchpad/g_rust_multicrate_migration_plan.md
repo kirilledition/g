@@ -2542,6 +2542,10 @@ Current guardrail notes:
   stays isolated from host orchestration/config/output/compute packages, and
   `g.api` cannot bypass the public runner/config/run-event surfaces into native
   bindings, compute kernels, output, JAX setup, or internal engine pipelines.
+- The public `g.api` `RunArtifacts` export now comes from the runner event
+  helper instead of importing engine run-event modules directly; the Python
+  architecture checker rejects direct `g.engine.run_events` imports from
+  `g.api`.
 - The output adapter no longer imports `g.jax_runtime` to discover the manifest
   JAX x64 policy. Pipeline callers pass that runtime policy value explicitly,
   and the Python architecture checker rejects `g.io` imports of JAX runtime
@@ -2858,8 +2862,8 @@ Adjust only when a concrete domain requirement justifies it.
 Add an import-policy check for Python:
 
 ```text
-g.api must not import native bindings, CLI, compute, output, JAX runtime setup,
-execution plans, or internal engine callback/native-dispatch/pipeline modules.
+g.api must not import native bindings, CLI, compute, engine run-event modules,
+output, JAX runtime setup, execution plans, or internal engine callback/native-dispatch/pipeline modules.
 g.interface.config must not import public API, CLI, compute, engine,
 execution-plan, output, JAX runtime, or runner packages.
 g.compute must not import native bindings, public API wrappers, host

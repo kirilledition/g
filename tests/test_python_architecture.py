@@ -34,6 +34,7 @@ def test_public_api_import_policy_rejects_backend_bypass_imports(tmp_path: Path)
                 "from g.engine.callbacks import binary",
                 "from g.engine.native_dispatch import delivery",
                 "from g.engine.regenie2_pipeline import single_trait",
+                "from g.engine import run_events",
                 "from g import execution_plan",
                 "from g.io import output",
                 "from g import jax_runtime",
@@ -54,9 +55,10 @@ def test_public_api_import_policy_rejects_backend_bypass_imports(tmp_path: Path)
         (Path("g/api.py"), 4, "g.engine.callbacks.binary", "g.engine.callbacks"),
         (Path("g/api.py"), 5, "g.engine.native_dispatch.delivery", "g.engine.native_dispatch"),
         (Path("g/api.py"), 6, "g.engine.regenie2_pipeline.single_trait", "g.engine.regenie2_pipeline"),
-        (Path("g/api.py"), 7, "g.execution_plan", "g.execution_plan"),
-        (Path("g/api.py"), 8, "g.io.output", "g.io"),
-        (Path("g/api.py"), 9, "g.jax_runtime", "g.jax_runtime"),
+        (Path("g/api.py"), 7, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/api.py"), 8, "g.execution_plan", "g.execution_plan"),
+        (Path("g/api.py"), 9, "g.io.output", "g.io"),
+        (Path("g/api.py"), 10, "g.jax_runtime", "g.jax_runtime"),
     ]
 
 
