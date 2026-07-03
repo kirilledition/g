@@ -13,7 +13,6 @@ import pytest
 
 import g
 import g.cli as cli_module
-import g.engine.shutdown as shutdown_module
 from g import _core, api, execution_plan, types
 from g.interface import config
 from g.io import output
@@ -23,6 +22,7 @@ from g.jax_runtime import models as jax_runtime_models
 from g.jax_runtime import resolution as jax_runtime_resolution
 from g.runner import events as telemetry_module
 from g.runner import execution as runner_execution
+from g.runner import lifecycle as shutdown_module
 from g.runner import metadata as runner_metadata
 from g.runner import outputs as runner_outputs
 from g.runner import runtime as runner_runtime
@@ -435,7 +435,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=complete_pipeline) as mock_pipeline,
         patch("g.runner.metadata.extend_run_manifest") as mock_extend_run_manifest,
         patch("g.interface.config.write_toml") as mock_write_toml,
-        patch("g.engine.shutdown.install_graceful_shutdown_handlers") as mock_install_shutdown_handlers,
+        patch("g.runner.lifecycle.install_graceful_shutdown_handlers") as mock_install_shutdown_handlers,
     ):
         artifacts = api.regenie(build_minimal_config())
 

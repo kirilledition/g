@@ -49,9 +49,10 @@ from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import state as regenie2_linear_state
-from g.engine import shutdown, timing
+from g.engine import timing
 from g.interface import config as interface_config
 from g.io import output
+from g.runner import lifecycle as shutdown
 
 type NonBatchPreprocessedDosageWorkItem = (
     callback_shared.PreprocessedDosageChunkWorkItem

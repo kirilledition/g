@@ -379,6 +379,16 @@ def test_runner_import_policy_rejects_run_event_imports(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    (runner_directory / "events.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events, telemetry",
+                "import g.engine.run_events",
+                "import g.engine.telemetry",
+            )
+        ),
+        encoding="utf-8",
+    )
 
     violations = check_python_architecture.collect_python_import_policy_violations(package_root)
 
@@ -386,6 +396,10 @@ def test_runner_import_policy_rejects_run_event_imports(tmp_path: Path) -> None:
         (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
         for violation in violations
     ] == [
+        (Path("g/runner/events.py"), 1, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/runner/events.py"), 1, "g.engine.telemetry", "g.engine.telemetry"),
+        (Path("g/runner/events.py"), 2, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/runner/events.py"), 3, "g.engine.telemetry", "g.engine.telemetry"),
         (Path("g/runner/execution.py"), 1, "g.engine.run_events", "g.engine.run_events"),
         (Path("g/runner/execution.py"), 1, "g.engine.telemetry", "g.engine.telemetry"),
         (Path("g/runner/execution.py"), 2, "g.engine.run_events", "g.engine.run_events"),
@@ -400,9 +414,9 @@ def test_runner_import_policy_allows_runner_event_adapter(tmp_path: Path) -> Non
     (runner_directory / "events.py").write_text(
         "\n".join(
             (
-                "from g.engine import run_events, telemetry",
-                "import g.engine.run_events",
-                "import g.engine.telemetry",
+                "from g import _core",
+                "_core.NativeRunEventPayloadPolicy()",
+                "_core.NativeRunEventTelemetryPolicy()",
             )
         ),
         encoding="utf-8",
@@ -427,6 +441,15 @@ def test_runner_import_policy_rejects_lifecycle_timing_imports(tmp_path: Path) -
         ),
         encoding="utf-8",
     )
+    (runner_directory / "lifecycle.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import shutdown",
+                "import g.engine.shutdown",
+            )
+        ),
+        encoding="utf-8",
+    )
 
     violations = check_python_architecture.collect_python_import_policy_violations(package_root)
 
@@ -435,8 +458,10 @@ def test_runner_import_policy_rejects_lifecycle_timing_imports(tmp_path: Path) -
         for violation in violations
     ] == [
         (Path("g/runner/execution.py"), 1, "g.engine.shutdown", "g.engine.shutdown"),
-        (Path("g/runner/execution.py"), 1, "g.engine.timing", "g.engine.timing"),
         (Path("g/runner/execution.py"), 2, "g.engine.shutdown", "g.engine.shutdown"),
+        (Path("g/runner/lifecycle.py"), 1, "g.engine.shutdown", "g.engine.shutdown"),
+        (Path("g/runner/lifecycle.py"), 2, "g.engine.shutdown", "g.engine.shutdown"),
+        (Path("g/runner/execution.py"), 1, "g.engine.timing", "g.engine.timing"),
         (Path("g/runner/execution.py"), 3, "g.engine.timing", "g.engine.timing"),
     ]
 
@@ -448,8 +473,8 @@ def test_runner_import_policy_allows_runner_lifecycle_timing_adapters(tmp_path: 
     (runner_directory / "lifecycle.py").write_text(
         "\n".join(
             (
-                "from g.engine import shutdown",
-                "import g.engine.shutdown",
+                "from g import _core",
+                "_core.NativeShutdownController()",
             )
         ),
         encoding="utf-8",
@@ -493,9 +518,9 @@ def test_native_dispatch_import_policy_rejects_event_lifecycle_timing_imports(tm
     ] == [
         (Path("g/engine/native_dispatch/delivery.py"), 1, "g.engine.run_events", "g.engine.run_events"),
         (Path("g/engine/native_dispatch/delivery.py"), 1, "g.engine.shutdown", "g.engine.shutdown"),
-        (Path("g/engine/native_dispatch/delivery.py"), 1, "g.engine.timing", "g.engine.timing"),
         (Path("g/engine/native_dispatch/delivery.py"), 2, "g.engine.run_events", "g.engine.run_events"),
         (Path("g/engine/native_dispatch/delivery.py"), 3, "g.engine.shutdown", "g.engine.shutdown"),
+        (Path("g/engine/native_dispatch/delivery.py"), 1, "g.engine.timing", "g.engine.timing"),
         (Path("g/engine/native_dispatch/delivery.py"), 4, "g.engine.timing", "g.engine.timing"),
     ]
 
@@ -507,8 +532,8 @@ def test_native_dispatch_import_policy_allows_event_lifecycle_timing_adapters(tm
     (native_dispatch_directory / "events.py").write_text(
         "\n".join(
             (
-                "from g.engine import run_events",
-                "import g.engine.run_events",
+                "from g import _core",
+                "_core.NativeDispatchDiagnosticPolicy()",
             )
         ),
         encoding="utf-8",
@@ -516,8 +541,8 @@ def test_native_dispatch_import_policy_allows_event_lifecycle_timing_adapters(tm
     (native_dispatch_directory / "lifecycle.py").write_text(
         "\n".join(
             (
-                "from g.engine import shutdown",
-                "import g.engine.shutdown",
+                "from g.runner import lifecycle as runner_lifecycle",
+                "GracefulShutdownRequested = runner_lifecycle.GracefulShutdownRequested",
             )
         ),
         encoding="utf-8",
@@ -616,9 +641,9 @@ def test_pipeline_import_policy_allows_pipeline_telemetry_adapter(tmp_path: Path
     (pipeline_directory / "telemetry_events.py").write_text(
         "\n".join(
             (
-                "from g.engine import run_events, telemetry",
-                "import g.engine.run_events",
-                "import g.engine.telemetry",
+                "from g import _core",
+                "_core.NativeRunEventTelemetryPolicy()",
+                "_core.NativePipelineDiagnosticPolicy()",
             )
         ),
         encoding="utf-8",
@@ -1068,9 +1093,9 @@ def test_callback_import_policy_allows_callback_event_adapter(tmp_path: Path) ->
     (callback_directory / "events.py").write_text(
         "\n".join(
             (
-                "from g.engine import run_events, telemetry",
-                "import g.engine.run_events",
-                "import g.engine.telemetry",
+                "from g import _core",
+                "_core.NativeRunEventTelemetryPolicy()",
+                "_core.NativePipelineDiagnosticPolicy()",
             )
         ),
         encoding="utf-8",

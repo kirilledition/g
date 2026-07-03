@@ -2572,15 +2572,18 @@ Current guardrail notes:
   `g.engine.telemetry` production module was removed.
 - Runner execution now routes graceful-shutdown and final stage-timing access
   through runner-local lifecycle and timing helpers instead of importing engine
-  shutdown and timing packages directly; the Python architecture checker
-  rejects direct `g.engine.shutdown` and `g.engine.timing` imports from runner
-  modules except those helpers.
+  shutdown and timing packages directly; the concrete shutdown controller now
+  lives in `g.runner.lifecycle`, the obsolete `g.engine.shutdown` production
+  module was removed, and the Python architecture checker rejects direct
+  `g.engine.shutdown` imports from all runner modules while keeping
+  `g.engine.timing` access isolated to the timing helper.
 - Native-dispatch BGEN engine, delivery, and writer helpers now route
   diagnostic-event, graceful-shutdown, and stage-timing access through
   native-dispatch-local event, lifecycle, and timing helpers; the Python
-  architecture checker rejects direct `g.engine.run_events`,
-  `g.engine.shutdown`, and `g.engine.timing` imports from sibling
-  native-dispatch modules except those helpers.
+  architecture checker rejects direct `g.engine.run_events` and
+  `g.engine.shutdown` imports from native-dispatch modules without helper
+  exemptions, while keeping `g.engine.timing` access isolated to the timing
+  helper.
 - Callback runtime, diagnostics, transfer, writer, and trait-specific callback
   helpers now route stage-timing access through a callback-local timing helper;
   the Python architecture checker rejects direct `g.engine.timing` imports from
@@ -2659,6 +2662,10 @@ Current guardrail notes:
   rendering now live in `g.runner.events`; the obsolete `g.engine.run_events`
   production module was removed, and stale direct imports are caught by the
   existing boundary checks and type validation.
+- Shutdown signal dataclasses, graceful-shutdown exceptions, and the native
+  signal-handler controller now live in `g.runner.lifecycle`; the obsolete
+  `g.engine.shutdown` production module was removed, and native-dispatch
+  lifecycle annotations alias the runner-owned contracts.
 
 ### Exit criteria
 

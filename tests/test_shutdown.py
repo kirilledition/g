@@ -7,7 +7,7 @@ import unittest.mock
 import pytest
 
 from g import _core
-from g.engine import shutdown
+from g.runner import lifecycle as shutdown
 
 
 def test_shutdown_controller_uses_native_metadata_for_supported_linux_signals() -> None:
