@@ -1,4 +1,4 @@
-"""Runner-local run-event and telemetry helpers."""
+"""Runner-owned run-event and telemetry helpers."""
 
 from __future__ import annotations
 
@@ -286,6 +286,16 @@ def native_run_event_telemetry_policy() -> _core.NativeRunEventTelemetryPolicy:
 def native_runner_diagnostic_policy() -> _core.NativeRunnerDiagnosticPolicy:
     """Build the native runner diagnostic policy handle."""
     return _core.NativeRunnerDiagnosticPolicy()
+
+
+def native_pipeline_diagnostic_policy() -> _core.NativePipelineDiagnosticPolicy:
+    """Build the native pipeline diagnostic policy handle."""
+    return _core.NativePipelineDiagnosticPolicy()
+
+
+def native_dispatch_diagnostic_policy() -> _core.NativeDispatchDiagnosticPolicy:
+    """Build the native-dispatch diagnostic policy handle."""
+    return _core.NativeDispatchDiagnosticPolicy()
 
 
 def native_run_event_payload_policy() -> _core.NativeRunEventPayloadPolicy:

@@ -1,4 +1,4 @@
-"""Runner-local lifecycle helpers."""
+"""Runner-owned lifecycle helpers."""
 
 from __future__ import annotations
 

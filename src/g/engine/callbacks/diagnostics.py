@@ -10,7 +10,7 @@ import numpy.typing as npt
 
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
-from g.engine.callbacks import events, timing
+from g.runner import events, timing
 
 if typing.TYPE_CHECKING:
     import collections.abc

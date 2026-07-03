@@ -9,12 +9,12 @@ import pytest
 
 from g import types
 from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
-from g.engine import timing
 from g.engine.callbacks import runtime as callback_runtime
 from g.engine.callbacks import transfers as callback_transfers
 from g.engine.callbacks import writers as callback_writers
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import models as native_dispatch_models
+from g.runner import timing
 
 
 class FailingLifecycleCallbackRunner(callback_runtime.NativeBgenCallbackRunner):

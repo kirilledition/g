@@ -1426,12 +1426,12 @@ Remove Python as the chunk-level scheduler.
   filesystem and manifest I/O for output preparation, initialization,
   finalization, manifest load/write, fingerprinting, committed-chunk scanning,
   and strict manifest validation/repair.
-- Native output lifecycle PyO3 helpers are now guarded behind the `g.io.output`
+- Native output lifecycle PyO3 helpers are now guarded behind the `g.runner.outputs`
   Python adapter; production callers outside that adapter cannot call the
   lower-level `_core` output lifecycle, resume, or finalization helpers
   directly.
 - Native pipeline output-preparation batch construction now also routes through
-  the `g.io.output` adapter, so pipeline orchestration does not construct the
+  the `g.runner.outputs` adapter, so pipeline orchestration does not construct the
   lower-level native output lifecycle batch directly.
 - Output manifest writes, execution-plan hashing, prepared-plan construction,
   strict resume validation/repair, and pipeline output-preparation batch
@@ -2128,7 +2128,7 @@ Current implementation notes:
   policy now enters through `NativeShutdownController`, and runtime path tests
   cover injected construction inside `g-runtime`.
 - The Python architecture checker now guards direct native output
-  manifest/fingerprint helper calls outside `g.io.output`, keeping the
+  manifest/fingerprint helper calls outside `g.runner.outputs`, keeping the
   remaining stable `_core` names behind the output adapter instead of letting
   production Python rebuild manifest policy ad hoc.
 - The Rust architecture checker now rejects re-exporting the removed detached
@@ -2548,12 +2548,12 @@ Current guardrail notes:
   `g.api`.
 - The output adapter no longer imports `g.jax_runtime` to discover the manifest
   JAX x64 policy. Pipeline callers pass that runtime policy value explicitly,
-  and the Python architecture checker rejects `g.io` imports of JAX runtime
-  setup modules.
+  and the Python architecture checker rejects `g.runner.outputs` imports of
+  JAX runtime setup modules.
 - The output adapter no longer imports engine diagnostics to emit resume events.
   Pipeline output initialization remains responsible for resume diagnostics,
-  and the Python architecture checker rejects `g.io` imports of engine
-  orchestration modules.
+  and the Python architecture checker rejects `g.runner.outputs` imports of
+  engine orchestration modules.
 - BGEN source configuration now lives in the execution-plan contract instead
   of `g.io.source`; the obsolete source module was removed, and the Python
   architecture checker rejects imports of `g.io.source`.
@@ -2562,36 +2562,39 @@ Current guardrail notes:
   plan construction, and the Python architecture checker rejects `g.io` imports
   from `g.execution_plan`.
 - Runner execution and metadata now route output-writer settings adaptation and
-  prepared output-run state through a runner-local output helper instead of
+  prepared output-run state through a runner-owned output helper instead of
   importing the output adapter directly; the Python architecture checker
-  rejects `g.io` imports from runner modules except that helper.
+  rejects obsolete `g.io` imports from runner modules.
 - Runner execution, metadata, and runtime annotations now route run-event and
-  telemetry access through a runner-local event helper instead of importing
+  telemetry access through a runner-owned event helper instead of importing
   engine run-event and telemetry packages directly; the concrete telemetry
   session/path adapter now lives in `g.runner.events`, and the obsolete
   `g.engine.telemetry` production module was removed.
 - Runner execution now routes graceful-shutdown and final stage-timing access
-  through runner-local lifecycle and timing helpers instead of importing engine
+  through runner-owned lifecycle and timing helpers instead of importing engine
   shutdown and timing packages directly; the concrete shutdown controller now
-  lives in `g.runner.lifecycle`, the obsolete `g.engine.shutdown` production
-  module was removed, and the Python architecture checker rejects direct
-  `g.engine.shutdown` imports from all runner modules while keeping
-  `g.engine.timing` access isolated to the timing helper.
+  lives in `g.runner.lifecycle`, the concrete stage-timing recorder and final
+  timing output adapter now live in `g.runner.timing`, and the obsolete
+  `g.engine.shutdown` and `g.engine.timing` production modules were removed.
+  The Python architecture checker rejects direct imports of both obsolete
+  modules from runner modules.
 - Native-dispatch BGEN engine, delivery, and writer helpers now route
-  diagnostic-event, graceful-shutdown, and stage-timing access through
-  native-dispatch-local event, lifecycle, and timing helpers; the Python
-  architecture checker rejects direct `g.engine.run_events` and
-  `g.engine.shutdown` imports from native-dispatch modules without helper
-  exemptions, while keeping `g.engine.timing` access isolated to the timing
-  helper.
+  diagnostic-event access through `g.runner.events`, while graceful-shutdown
+  and stage-timing access use the runner-owned lifecycle and timing helpers
+  directly; the obsolete native-dispatch event, lifecycle, and timing shims
+  were removed, and the Python architecture checker rejects direct
+  `g.engine.run_events`, `g.engine.shutdown`, `g.engine.timing`, and obsolete
+  native-dispatch event/lifecycle/timing imports from native-dispatch modules.
 - Callback runtime, diagnostics, transfer, writer, and trait-specific callback
-  helpers now route stage-timing access through a callback-local timing helper;
-  the Python architecture checker rejects direct `g.engine.timing` imports from
-  callback modules except that helper.
+  helpers now route stage-timing access through `g.runner.timing`; the obsolete
+  callback-local timing shim was removed, and the Python architecture checker
+  rejects direct `g.engine.timing` and obsolete callback timing imports from
+  all callback modules.
 - Callback runtime annotations and callback diagnostics now route run-event and
-  telemetry access through a callback-local event helper; the Python
-  architecture checker rejects direct `g.engine.run_events` and
-  `g.engine.telemetry` imports from callback modules except that helper.
+  telemetry access through `g.runner.events`; the obsolete callback-local event
+  shim was removed, and the Python architecture checker rejects direct
+  `g.engine.run_events`, `g.engine.telemetry`, and obsolete callback event
+  imports from callback modules.
 - REGENIE pipeline orchestration now routes output-run path types, writer
   settings, manifest-header types, fingerprint cache construction, and
   multi-phenotype output sample-mode values through
@@ -2603,9 +2606,10 @@ Current guardrail notes:
   checker rejects direct `g.engine.run_events` and `g.engine.telemetry` imports
   from sibling pipeline modules.
 - REGENIE pipeline orchestration now routes stage-timing recorder construction,
-  exact-timing checks, and stage-duration recording through
-  `g.engine.regenie2_pipeline.timing`; the Python architecture checker rejects
-  direct `g.engine.timing` imports from sibling pipeline modules.
+  exact-timing checks, and stage-duration recording through `g.runner.timing`;
+  the obsolete pipeline-local timing shim was removed, and the Python
+  architecture checker rejects direct `g.engine.timing` and obsolete pipeline
+  timing imports from all pipeline modules.
 - REGENIE pipeline orchestration now owns single- and multi-trait preflight
   validation in `g.engine.regenie2_pipeline.preflight`; the obsolete
   `g.engine.preflight` production module was removed.
@@ -2654,10 +2658,11 @@ Current guardrail notes:
   `g.engine.warm_cache`.
 - Trusted BGEN cache validation now lives in the native-dispatch BGEN engine
   helper instead of the separate `g.engine.trusted_validation` shim.
-- Runner, pipeline, native-dispatch, callback, and preflight event helpers now
-  construct their native diagnostic/telemetry policy handles directly at their
-  local boundaries; the Python architecture checker rejects direct native event
-  policy construction outside those helpers.
+- Runner, pipeline, and preflight event helpers now construct their native
+  diagnostic/telemetry policy handles directly at their local boundaries, with
+  native-dispatch and callback diagnostics using the runner-owned factories;
+  the Python architecture checker rejects direct native event policy
+  construction outside those helpers.
 - Run-event payload dataclasses, native payload adaptation, and terminal
   rendering now live in `g.runner.events`; the obsolete `g.engine.run_events`
   production module was removed, and stale direct imports are caught by the
@@ -2665,7 +2670,17 @@ Current guardrail notes:
 - Shutdown signal dataclasses, graceful-shutdown exceptions, and the native
   signal-handler controller now live in `g.runner.lifecycle`; the obsolete
   `g.engine.shutdown` production module was removed, and native-dispatch
-  lifecycle annotations alias the runner-owned contracts.
+  lifecycle annotations import the runner-owned contracts directly.
+- Stage-timing dataclasses, snapshot adaptation, final timing-output path
+  resolution, and final timing-output writing now live in `g.runner.timing`;
+  the obsolete `g.engine.timing` production module was removed, and pipeline,
+  callback, native-dispatch, tooling, and tests import the runner-owned timing
+  contracts directly. The obsolete pipeline, callback, and native-dispatch
+  timing shim modules were removed.
+- Output-run path dataclasses, manifest/fingerprint helpers, output lifecycle
+  policy adapters, writer session construction, and runner output plan
+  preparation now live in `g.runner.outputs`; the obsolete `g.io.output`
+  production module and empty `g.io` package were removed.
 
 ### Exit criteria
 
@@ -2909,27 +2924,40 @@ orchestration, execution plans, runner, JAX runtime setup, CLI/config, output,
 or file parsers.
 g.jax_runtime must not import public API, CLI, compute, engine, execution-plan,
 interface/config, output, or runner orchestration packages.
-g.io must not import JAX runtime setup packages.
-g.io must not import engine orchestration packages.
+g.runner.outputs must not import JAX runtime setup packages.
+g.runner.outputs must not import engine orchestration packages.
 Production Python must not import the obsolete `g.io.source` module.
 Production Python must not import the obsolete `g.engine.warm_cache` module.
-g.execution_plan must not import output adapter packages.
+g.execution_plan must not import obsolete output adapter packages.
 g.cli must not import engine run-event, shutdown, or telemetry packages directly.
-g.runner modules must not import output adapter packages directly, except the runner output helper.
-g.runner modules must not import run-event or telemetry packages directly, except the runner event helper.
-g.runner modules must not import shutdown or timing packages directly, except the runner lifecycle and timing helpers.
-g.engine.native_dispatch modules must not import run-event, shutdown, or timing packages directly, except the native-dispatch event, lifecycle, and timing helpers.
-g.engine.callbacks modules must not import timing packages directly, except the callback timing helper.
-g.engine.callbacks modules must not import run-event or telemetry packages directly, except the callback event helper.
-g.engine.regenie2_pipeline modules must not import output adapter packages directly, except the pipeline output helper.
-g.engine.regenie2_pipeline modules must not import run-event or telemetry packages directly, except the pipeline telemetry helper.
-g.engine.regenie2_pipeline modules must not import timing packages directly, except the pipeline timing helper.
-g.engine.regenie2_pipeline modules must not import preflight packages directly, except the pipeline preflight helper.
-g.engine.regenie2_pipeline modules must not import native-dispatch BGEN engine helpers directly, except the pipeline BGEN engine helper.
-g.engine.regenie2_pipeline modules must not import native-dispatch input loaders, group helpers, or input models directly, except the pipeline input helper.
-g.engine.regenie2_pipeline modules must not import native-dispatch delivery helpers directly, except the pipeline delivery helper.
-g.engine.regenie2_pipeline modules must not construct native schedule policy handles directly, except the pipeline schedule helper.
-g.engine.regenie2_pipeline modules must not import callback packages directly, except the pipeline callback helper.
+g.runner modules must not import obsolete output adapter packages.
+g.runner modules must not import run-event or telemetry packages directly,
+except the runner event helper.
+g.runner modules must not import shutdown or timing packages directly, except
+the runner lifecycle and timing helpers.
+g.engine.native_dispatch modules must not import run-event, shutdown, obsolete
+native-dispatch event/lifecycle, or obsolete timing packages directly.
+g.engine.callbacks modules must not import obsolete timing packages directly.
+g.engine.callbacks modules must not import run-event, telemetry, or obsolete
+callback event packages directly.
+g.engine.regenie2_pipeline modules must not import obsolete output adapter
+packages directly.
+g.engine.regenie2_pipeline modules must not import run-event or telemetry
+packages directly, except the pipeline telemetry helper.
+g.engine.regenie2_pipeline modules must not import obsolete timing packages directly.
+g.engine.regenie2_pipeline modules must not import preflight packages directly,
+except the pipeline preflight helper.
+g.engine.regenie2_pipeline modules must not import native-dispatch BGEN engine
+helpers directly, except the pipeline BGEN engine helper.
+g.engine.regenie2_pipeline modules must not import native-dispatch input
+loaders, group helpers, or input models directly, except the pipeline input
+helper.
+g.engine.regenie2_pipeline modules must not import native-dispatch delivery
+helpers directly, except the pipeline delivery helper.
+g.engine.regenie2_pipeline modules must not construct native schedule policy
+handles directly, except the pipeline schedule helper.
+g.engine.regenie2_pipeline modules must not import callback packages directly,
+except the pipeline callback helper.
 g.engine.regenie2_pipeline modules must not import compute packages directly, except the pipeline compute-config helper.
 g.engine.regenie2_pipeline modules must not import JAX runtime packages directly, except the pipeline runtime-policy helper.
 Production Python must not import the obsolete `g.engine.backend_planner` module.
@@ -2941,15 +2969,15 @@ g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB 
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
 Production Python must not reconstruct canonical prepared-run plans.
-Production Python must route native output lifecycle calls through `g.io.output`.
-Production Python must route native output value-serialization wrappers through `g.io.output`.
+Production Python must route native output lifecycle calls through `g.runner.outputs`.
+Production Python must route native output value-serialization wrappers through `g.runner.outputs`.
 Production Python must use native diagnostic recorders instead of payload builders outside compatibility adapters.
 Production Python must not call legacy telemetry fallback methods.
 ```
 
 `just check-python-architecture` now enforces these Python import and call
 boundaries through an AST-based checker. The production manifest-write rule
-allows the `g.io.output` adapter helper itself, but rejects production callers
+allows the `g.runner.outputs` adapter helper itself, but rejects production callers
 outside that helper; the compute-kernel rules reject host-orchestration imports,
 direct file I/O, and common NumPy/pandas file loaders under `g.compute`; the
 kept-adapter import rules keep `g.api`, `g.interface.config`, and
@@ -2963,7 +2991,7 @@ production calls that rebuild canonical plan payloads in Python; the callback
 worker-queue rule rejects direct Python queue/thread primitives and lower-level
 native callback resource constructors under `g.engine.callbacks`; the output
 lifecycle rule rejects direct `_core` output lifecycle calls outside the
-`g.io.output` adapter, including pipeline output-preparation batch
+`g.runner.outputs` adapter, including pipeline output-preparation batch
 construction; the native diagnostic rules reject direct payload builders
 outside compatibility adapters, raw diagnostic emitters, and old telemetry
 fallback method calls in production Python. The runner import rule preserves

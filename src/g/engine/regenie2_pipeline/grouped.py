@@ -17,9 +17,9 @@ from g.engine.regenie2_pipeline import (
     outputs,
     schedule,
     telemetry_events,
-    timing,
 )
 from g.engine.regenie2_pipeline import context as pipeline_context
+from g.runner import timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path

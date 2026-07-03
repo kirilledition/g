@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from g import _core
-from g.engine import timing
+from g.runner import timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -453,7 +453,7 @@ def test_record_final_timing_outputs_write_started_uses_native_policy(tmp_path: 
     stage_timing_path = tmp_path / "diagnostics" / "stage.json"
 
     with unittest.mock.patch(
-        "g.engine.timing.native_final_timing_output_policy",
+        "g.runner.timing.native_final_timing_output_policy",
         return_value=native_final_timing_output_policy,
     ):
         timing.record_final_timing_outputs_write_started_diagnostic_event(

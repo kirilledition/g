@@ -174,9 +174,9 @@ def test_compute_import_policy_rejects_host_orchestration_imports(tmp_path: Path
 
 def test_output_import_policy_rejects_jax_runtime_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
-    output_directory = package_root / "io"
+    output_directory = package_root / "runner"
     output_directory.mkdir(parents=True)
-    (output_directory / "output.py").write_text(
+    (output_directory / "outputs.py").write_text(
         "\n".join(
             (
                 "from g.jax_runtime import models",
@@ -192,20 +192,20 @@ def test_output_import_policy_rejects_jax_runtime_imports(tmp_path: Path) -> Non
         (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
         for violation in violations
     ] == [
-        (Path("g/io/output.py"), 1, "g.jax_runtime.models", "g.jax_runtime"),
-        (Path("g/io/output.py"), 2, "g.jax_runtime.setup", "g.jax_runtime"),
+        (Path("g/runner/outputs.py"), 1, "g.jax_runtime.models", "g.jax_runtime"),
+        (Path("g/runner/outputs.py"), 2, "g.jax_runtime.setup", "g.jax_runtime"),
     ]
 
 
 def test_output_import_policy_rejects_engine_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
-    output_directory = package_root / "io"
+    output_directory = package_root / "runner"
     output_directory.mkdir(parents=True)
-    (output_directory / "output.py").write_text(
+    (output_directory / "outputs.py").write_text(
         "\n".join(
             (
-                "from g.engine import run_events",
-                "import g.engine.telemetry",
+                "from g.engine import orchestration",
+                "import g.engine.unowned_adapter",
             )
         ),
         encoding="utf-8",
@@ -217,8 +217,8 @@ def test_output_import_policy_rejects_engine_imports(tmp_path: Path) -> None:
         (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
         for violation in violations
     ] == [
-        (Path("g/io/output.py"), 1, "g.engine.run_events", "g.engine"),
-        (Path("g/io/output.py"), 2, "g.engine.telemetry", "g.engine"),
+        (Path("g/runner/outputs.py"), 1, "g.engine.orchestration", "g.engine"),
+        (Path("g/runner/outputs.py"), 2, "g.engine.unowned_adapter", "g.engine"),
     ]
 
 
@@ -353,8 +353,8 @@ def test_runner_output_import_policy_allows_runner_output_adapter(tmp_path: Path
     (runner_directory / "outputs.py").write_text(
         "\n".join(
             (
-                "from g.io import output",
-                "import g.io.output",
+                "from g import _core",
+                "_core.NativeOutputLifecyclePolicy()",
             )
         ),
         encoding="utf-8",
@@ -482,8 +482,8 @@ def test_runner_import_policy_allows_runner_lifecycle_timing_adapters(tmp_path: 
     (runner_directory / "timing.py").write_text(
         "\n".join(
             (
-                "from g.engine import timing",
-                "import g.engine.timing",
+                "from g import _core",
+                "_core.NativeStageTimingRecorder(False)",
             )
         ),
         encoding="utf-8",
@@ -502,9 +502,13 @@ def test_native_dispatch_import_policy_rejects_event_lifecycle_timing_imports(tm
         "\n".join(
             (
                 "from g.engine import run_events, shutdown, timing",
+                "from g.engine.native_dispatch import events, lifecycle, timing as dispatch_timing",
                 "import g.engine.run_events",
                 "import g.engine.shutdown",
                 "import g.engine.timing",
+                "import g.engine.native_dispatch.events",
+                "import g.engine.native_dispatch.lifecycle",
+                "import g.engine.native_dispatch.timing",
             )
         ),
         encoding="utf-8",
@@ -518,40 +522,60 @@ def test_native_dispatch_import_policy_rejects_event_lifecycle_timing_imports(tm
     ] == [
         (Path("g/engine/native_dispatch/delivery.py"), 1, "g.engine.run_events", "g.engine.run_events"),
         (Path("g/engine/native_dispatch/delivery.py"), 1, "g.engine.shutdown", "g.engine.shutdown"),
-        (Path("g/engine/native_dispatch/delivery.py"), 2, "g.engine.run_events", "g.engine.run_events"),
-        (Path("g/engine/native_dispatch/delivery.py"), 3, "g.engine.shutdown", "g.engine.shutdown"),
+        (
+            Path("g/engine/native_dispatch/delivery.py"),
+            2,
+            "g.engine.native_dispatch.events",
+            "g.engine.native_dispatch.events",
+        ),
+        (
+            Path("g/engine/native_dispatch/delivery.py"),
+            2,
+            "g.engine.native_dispatch.lifecycle",
+            "g.engine.native_dispatch.lifecycle",
+        ),
+        (Path("g/engine/native_dispatch/delivery.py"), 3, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/native_dispatch/delivery.py"), 4, "g.engine.shutdown", "g.engine.shutdown"),
+        (
+            Path("g/engine/native_dispatch/delivery.py"),
+            6,
+            "g.engine.native_dispatch.events",
+            "g.engine.native_dispatch.events",
+        ),
+        (
+            Path("g/engine/native_dispatch/delivery.py"),
+            7,
+            "g.engine.native_dispatch.lifecycle",
+            "g.engine.native_dispatch.lifecycle",
+        ),
         (Path("g/engine/native_dispatch/delivery.py"), 1, "g.engine.timing", "g.engine.timing"),
-        (Path("g/engine/native_dispatch/delivery.py"), 4, "g.engine.timing", "g.engine.timing"),
+        (
+            Path("g/engine/native_dispatch/delivery.py"),
+            2,
+            "g.engine.native_dispatch.timing",
+            "g.engine.native_dispatch.timing",
+        ),
+        (Path("g/engine/native_dispatch/delivery.py"), 5, "g.engine.timing", "g.engine.timing"),
+        (
+            Path("g/engine/native_dispatch/delivery.py"),
+            8,
+            "g.engine.native_dispatch.timing",
+            "g.engine.native_dispatch.timing",
+        ),
     ]
 
 
-def test_native_dispatch_import_policy_allows_event_lifecycle_timing_adapters(tmp_path: Path) -> None:
+def test_native_dispatch_import_policy_allows_runner_event_lifecycle_timing_helpers(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     native_dispatch_directory = package_root / "engine" / "native_dispatch"
     native_dispatch_directory.mkdir(parents=True)
-    (native_dispatch_directory / "events.py").write_text(
+    (native_dispatch_directory / "delivery.py").write_text(
         "\n".join(
             (
-                "from g import _core",
-                "_core.NativeDispatchDiagnosticPolicy()",
-            )
-        ),
-        encoding="utf-8",
-    )
-    (native_dispatch_directory / "lifecycle.py").write_text(
-        "\n".join(
-            (
-                "from g.runner import lifecycle as runner_lifecycle",
-                "GracefulShutdownRequested = runner_lifecycle.GracefulShutdownRequested",
-            )
-        ),
-        encoding="utf-8",
-    )
-    (native_dispatch_directory / "timing.py").write_text(
-        "\n".join(
-            (
-                "from g.engine import timing",
-                "import g.engine.timing",
+                "from g.runner import events, lifecycle, timing",
+                "events.native_dispatch_diagnostic_policy()",
+                "GracefulShutdownRequested = lifecycle.GracefulShutdownRequested",
+                "StageTimingRecorder = timing.StageTimingRecorder",
             )
         ),
         encoding="utf-8",
@@ -594,8 +618,8 @@ def test_pipeline_import_policy_allows_pipeline_output_adapter(tmp_path: Path) -
     (pipeline_directory / "outputs.py").write_text(
         "\n".join(
             (
-                "from g.io import output",
-                "import g.io.output",
+                "from g.runner import outputs as runner_outputs",
+                "OutputRunPaths = runner_outputs.OutputRunPaths",
             )
         ),
         encoding="utf-8",
@@ -662,7 +686,9 @@ def test_pipeline_import_policy_rejects_timing_imports(tmp_path: Path) -> None:
         "\n".join(
             (
                 "from g.engine import timing",
+                "from g.engine.regenie2_pipeline import timing as pipeline_timing",
                 "import g.engine.timing",
+                "import g.engine.regenie2_pipeline.timing",
             )
         ),
         encoding="utf-8",
@@ -675,19 +701,31 @@ def test_pipeline_import_policy_rejects_timing_imports(tmp_path: Path) -> None:
         for violation in violations
     ] == [
         (Path("g/engine/regenie2_pipeline/single_trait.py"), 1, "g.engine.timing", "g.engine.timing"),
-        (Path("g/engine/regenie2_pipeline/single_trait.py"), 2, "g.engine.timing", "g.engine.timing"),
+        (
+            Path("g/engine/regenie2_pipeline/single_trait.py"),
+            2,
+            "g.engine.regenie2_pipeline.timing",
+            "g.engine.regenie2_pipeline.timing",
+        ),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 3, "g.engine.timing", "g.engine.timing"),
+        (
+            Path("g/engine/regenie2_pipeline/single_trait.py"),
+            4,
+            "g.engine.regenie2_pipeline.timing",
+            "g.engine.regenie2_pipeline.timing",
+        ),
     ]
 
 
-def test_pipeline_import_policy_allows_pipeline_timing_adapter(tmp_path: Path) -> None:
+def test_pipeline_import_policy_allows_runner_timing_helper(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"
     pipeline_directory.mkdir(parents=True)
-    (pipeline_directory / "timing.py").write_text(
+    (pipeline_directory / "single_trait.py").write_text(
         "\n".join(
             (
-                "from g.engine import timing",
-                "import g.engine.timing",
+                "from g.runner import timing",
+                "StageTimingRecorder = timing.StageTimingRecorder",
             )
         ),
         encoding="utf-8",
@@ -1022,7 +1060,9 @@ def test_callback_import_policy_rejects_timing_imports(tmp_path: Path) -> None:
         "\n".join(
             (
                 "from g.engine import timing",
+                "from g.engine.callbacks import timing as callback_timing",
                 "import g.engine.timing",
+                "import g.engine.callbacks.timing",
             )
         ),
         encoding="utf-8",
@@ -1035,19 +1075,21 @@ def test_callback_import_policy_rejects_timing_imports(tmp_path: Path) -> None:
         for violation in violations
     ] == [
         (Path("g/engine/callbacks/runtime.py"), 1, "g.engine.timing", "g.engine.timing"),
-        (Path("g/engine/callbacks/runtime.py"), 2, "g.engine.timing", "g.engine.timing"),
+        (Path("g/engine/callbacks/runtime.py"), 2, "g.engine.callbacks.timing", "g.engine.callbacks.timing"),
+        (Path("g/engine/callbacks/runtime.py"), 3, "g.engine.timing", "g.engine.timing"),
+        (Path("g/engine/callbacks/runtime.py"), 4, "g.engine.callbacks.timing", "g.engine.callbacks.timing"),
     ]
 
 
-def test_callback_import_policy_allows_callback_timing_adapter(tmp_path: Path) -> None:
+def test_callback_import_policy_allows_runner_timing_helper(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     callback_directory = package_root / "engine" / "callbacks"
     callback_directory.mkdir(parents=True)
-    (callback_directory / "timing.py").write_text(
+    (callback_directory / "runtime.py").write_text(
         "\n".join(
             (
-                "from g.engine import timing",
-                "import g.engine.timing",
+                "from g.runner import timing",
+                "StageTimingRecorder = timing.StageTimingRecorder",
             )
         ),
         encoding="utf-8",
@@ -1066,8 +1108,10 @@ def test_callback_import_policy_rejects_event_and_telemetry_imports(tmp_path: Pa
         "\n".join(
             (
                 "from g.engine import run_events, telemetry",
+                "from g.engine.callbacks import events",
                 "import g.engine.run_events",
                 "import g.engine.telemetry",
+                "import g.engine.callbacks.events",
             )
         ),
         encoding="utf-8",
@@ -1081,21 +1125,22 @@ def test_callback_import_policy_rejects_event_and_telemetry_imports(tmp_path: Pa
     ] == [
         (Path("g/engine/callbacks/diagnostics.py"), 1, "g.engine.run_events", "g.engine.run_events"),
         (Path("g/engine/callbacks/diagnostics.py"), 1, "g.engine.telemetry", "g.engine.telemetry"),
-        (Path("g/engine/callbacks/diagnostics.py"), 2, "g.engine.run_events", "g.engine.run_events"),
-        (Path("g/engine/callbacks/diagnostics.py"), 3, "g.engine.telemetry", "g.engine.telemetry"),
+        (Path("g/engine/callbacks/diagnostics.py"), 2, "g.engine.callbacks.events", "g.engine.callbacks.events"),
+        (Path("g/engine/callbacks/diagnostics.py"), 3, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/callbacks/diagnostics.py"), 4, "g.engine.telemetry", "g.engine.telemetry"),
+        (Path("g/engine/callbacks/diagnostics.py"), 5, "g.engine.callbacks.events", "g.engine.callbacks.events"),
     ]
 
 
-def test_callback_import_policy_allows_callback_event_adapter(tmp_path: Path) -> None:
+def test_callback_import_policy_allows_runner_event_helper(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     callback_directory = package_root / "engine" / "callbacks"
     callback_directory.mkdir(parents=True)
-    (callback_directory / "events.py").write_text(
+    (callback_directory / "diagnostics.py").write_text(
         "\n".join(
             (
-                "from g import _core",
-                "_core.NativeRunEventTelemetryPolicy()",
-                "_core.NativePipelineDiagnosticPolicy()",
+                "from g.runner import events",
+                "events.native_pipeline_diagnostic_policy()",
             )
         ),
         encoding="utf-8",
@@ -1454,22 +1499,18 @@ def test_event_policy_factory_allows_boundary_helpers(tmp_path: Path) -> None:
     runner_directory = package_root / "runner"
     preflight_directory = package_root / "engine"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"
-    native_dispatch_directory = package_root / "engine" / "native_dispatch"
-    callback_directory = package_root / "engine" / "callbacks"
     runner_directory.mkdir(parents=True)
     preflight_directory.mkdir(parents=True, exist_ok=True)
     pipeline_directory.mkdir(parents=True)
-    native_dispatch_directory.mkdir(parents=True)
-    callback_directory.mkdir(parents=True)
     for path, call_name in (
         (runner_directory / "events.py", "_core.NativeRunEventPayloadPolicy()"),
         (runner_directory / "events.py", "_core.NativeRunEventTelemetryPolicy()"),
         (runner_directory / "events.py", "_core.NativeRunnerDiagnosticPolicy()"),
+        (runner_directory / "events.py", "_core.NativePipelineDiagnosticPolicy()"),
+        (runner_directory / "events.py", "_core.NativeDispatchDiagnosticPolicy()"),
         (pipeline_directory / "preflight.py", "_core.NativeOutputPreflightDiagnosticPolicy()"),
         (pipeline_directory / "telemetry_events.py", "_core.NativePipelineDiagnosticPolicy()"),
         (pipeline_directory / "telemetry_events.py", "_core.NativeRunEventTelemetryPolicy()"),
-        (native_dispatch_directory / "events.py", "_core.NativeDispatchDiagnosticPolicy()"),
-        (callback_directory / "events.py", "_core.NativePipelineDiagnosticPolicy()"),
     ):
         with path.open("a", encoding="utf-8") as handle:
             handle.write(f"from g import _core\ndef build_policy():\n    return {call_name}\n")
@@ -1526,29 +1567,16 @@ def test_python_cli_shim_policy_rejects_missing_cli_module(tmp_path: Path) -> No
 def test_manifest_write_policy_rejects_production_python_manifest_writes(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"
-    output_directory = package_root / "io"
     runner_directory.mkdir(parents=True)
-    output_directory.mkdir(parents=True)
     (runner_directory / "metadata.py").write_text(
         "\n".join(
             (
-                "from g.io import output",
+                "from g.runner import outputs",
                 "from g import _core",
                 "def extend(paths, manifest):",
-                "    output.write_run_manifest(paths, manifest)",
+                "    outputs.write_run_manifest(paths, manifest)",
                 "    _core.write_run_manifest_json('run', '{}')",
                 "    _core.write_run_manifest('run', {})",
-            )
-        ),
-        encoding="utf-8",
-    )
-    (output_directory / "output.py").write_text(
-        "\n".join(
-            (
-                "from g import _core",
-                "def write_run_manifest(run_directory, manifest_json):",
-                "    _core.write_run_manifest_json(run_directory, manifest_json)",
-                "    _core.write_run_manifest(run_directory, {})",
             )
         ),
         encoding="utf-8",
@@ -1560,7 +1588,7 @@ def test_manifest_write_policy_rejects_production_python_manifest_writes(tmp_pat
         (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
         for violation in violations
     ] == [
-        (Path("g/runner/metadata.py"), 4, "output.write_run_manifest", "output.write_run_manifest"),
+        (Path("g/runner/metadata.py"), 4, "outputs.write_run_manifest", "write_run_manifest"),
         (Path("g/runner/metadata.py"), 5, "_core.write_run_manifest_json", "_core.write_run_manifest_json"),
         (Path("g/runner/metadata.py"), 6, "_core.write_run_manifest", "_core.write_run_manifest"),
     ]
@@ -1570,7 +1598,7 @@ def test_output_lifecycle_policy_rejects_direct_native_output_calls(tmp_path: Pa
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"
     runner_directory.mkdir(parents=True)
-    (runner_directory / "outputs.py").write_text(
+    (runner_directory / "metadata.py").write_text(
         "\n".join(
             (
                 "from g import _core",
@@ -1600,66 +1628,66 @@ def test_output_lifecycle_policy_rejects_direct_native_output_calls(tmp_path: Pa
         (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
         for violation in violations
     ] == [
-        (Path("g/runner/outputs.py"), 3, "_core.prepare_output_run", "_core.prepare_output_run"),
-        (Path("g/runner/outputs.py"), 4, "_core.load_run_manifest_payload", "_core.load_run_manifest_payload"),
-        (Path("g/runner/outputs.py"), 5, "_core.initialize_output_run", "_core.initialize_output_run"),
+        (Path("g/runner/metadata.py"), 3, "_core.prepare_output_run", "_core.prepare_output_run"),
+        (Path("g/runner/metadata.py"), 4, "_core.load_run_manifest_payload", "_core.load_run_manifest_payload"),
+        (Path("g/runner/metadata.py"), 5, "_core.initialize_output_run", "_core.initialize_output_run"),
         (
-            Path("g/runner/outputs.py"),
+            Path("g/runner/metadata.py"),
             6,
             "_core.initialize_output_run_from_values",
             "_core.initialize_output_run_from_values",
         ),
         (
-            Path("g/runner/outputs.py"),
+            Path("g/runner/metadata.py"),
             7,
             "_core.NativeOutputLifecyclePolicy",
             "_core.NativeOutputLifecyclePolicy",
         ),
         (
-            Path("g/runner/outputs.py"),
+            Path("g/runner/metadata.py"),
             8,
             "_core.validate_strict_manifest_chunks",
             "_core.validate_strict_manifest_chunks",
         ),
         (
-            Path("g/runner/outputs.py"),
+            Path("g/runner/metadata.py"),
             9,
             "_core.validate_strict_manifest_chunks_from_value",
             "_core.validate_strict_manifest_chunks_from_value",
         ),
         (
-            Path("g/runner/outputs.py"),
+            Path("g/runner/metadata.py"),
             10,
             "_core.repair_strict_manifest_chunk_commits_from_value",
             "_core.repair_strict_manifest_chunk_commits_from_value",
         ),
         (
-            Path("g/runner/outputs.py"),
+            Path("g/runner/metadata.py"),
             11,
             "_core.read_manifest_committed_chunk_identifiers_from_value",
             "_core.read_manifest_committed_chunk_identifiers_from_value",
         ),
         (
-            Path("g/runner/outputs.py"),
+            Path("g/runner/metadata.py"),
             12,
             "_core.validate_run_manifest_compatibility_from_values",
             "_core.validate_run_manifest_compatibility_from_values",
         ),
-        (Path("g/runner/outputs.py"), 13, "_core.finalize_output_run_chunks", "_core.finalize_output_run_chunks"),
+        (Path("g/runner/metadata.py"), 13, "_core.finalize_output_run_chunks", "_core.finalize_output_run_chunks"),
         (
-            Path("g/runner/outputs.py"),
+            Path("g/runner/metadata.py"),
             14,
             "_core.build_pipeline_output_preparation_batch_from_values",
             "_core.build_pipeline_output_preparation_batch_from_values",
         ),
         (
-            Path("g/runner/outputs.py"),
+            Path("g/runner/metadata.py"),
             15,
             "_core.NativePipelineOutputPreparationBatch",
             "_core.NativePipelineOutputPreparationBatch",
         ),
         (
-            Path("g/runner/outputs.py"),
+            Path("g/runner/metadata.py"),
             16,
             "_core.NativePipelineOutputPreparationPolicy",
             "_core.NativePipelineOutputPreparationPolicy",
@@ -2034,9 +2062,9 @@ def test_callback_worker_queue_policy_rejects_direct_native_resource_constructio
 
 def test_prepared_plan_policy_rejects_python_plan_reconstruction(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
-    output_directory = package_root / "io"
+    output_directory = package_root / "runner"
     output_directory.mkdir(parents=True)
-    (output_directory / "output.py").write_text(
+    (output_directory / "outputs.py").write_text(
         "\n".join(
             (
                 "from g import _core",
@@ -2055,12 +2083,12 @@ def test_prepared_plan_policy_rejects_python_plan_reconstruction(tmp_path: Path)
         for violation in violations
     ] == [
         (
-            Path("g/io/output.py"),
+            Path("g/runner/outputs.py"),
             3,
             "build_native_prepared_run_plan_input_mapping",
             "build_native_prepared_run_plan_input_mapping",
         ),
-        (Path("g/io/output.py"), 4, "_core.build_prepared_run_plan_json", "_core.build_prepared_run_plan_json"),
+        (Path("g/runner/outputs.py"), 4, "_core.build_prepared_run_plan_json", "_core.build_prepared_run_plan_json"),
     ]
 
 
@@ -2791,7 +2819,7 @@ def test_callback_metadata_chromosome_policy_rejects_optional_metadata_probe(tmp
 
 def test_timing_snapshot_serialization_policy_rejects_getattr_probe(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
-    timing_directory = package_root / "engine"
+    timing_directory = package_root / "runner"
     timing_directory.mkdir(parents=True)
     (timing_directory / "timing.py").write_text(
         "\n".join(
@@ -2809,7 +2837,7 @@ def test_timing_snapshot_serialization_policy_rejects_getattr_probe(tmp_path: Pa
         (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
         for violation in violations
     ] == [
-        (Path("g/engine/timing.py"), 2, "getattr", "getattr"),
+        (Path("g/runner/timing.py"), 2, "getattr", "getattr"),
     ]
 
 

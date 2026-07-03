@@ -7,8 +7,9 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, execution_plan, types
-from g.engine.regenie2_pipeline import bgen_engine, inputs, runtime_policy, telemetry_events, timing
-from g.io import output
+from g.engine.regenie2_pipeline import bgen_engine, inputs, runtime_policy, telemetry_events
+from g.runner import outputs as output
+from g.runner import timing
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context

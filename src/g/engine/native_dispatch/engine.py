@@ -5,7 +5,7 @@ from __future__ import annotations
 import typing
 
 from g import _core, types
-from g.engine.native_dispatch import events
+from g.runner import events
 
 if typing.TYPE_CHECKING:
     from pathlib import Path

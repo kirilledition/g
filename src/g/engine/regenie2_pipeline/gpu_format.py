@@ -8,7 +8,8 @@ import typing
 from dataclasses import dataclass
 
 from g import types
-from g.engine.regenie2_pipeline import bgen_engine, schedule, telemetry_events, timing
+from g.engine.regenie2_pipeline import bgen_engine, schedule, telemetry_events
+from g.runner import timing
 
 if typing.TYPE_CHECKING:
     from g import _core, execution_plan

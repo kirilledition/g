@@ -9,7 +9,7 @@ import typing
 from pathlib import Path
 
 from g import _core
-from g.engine.native_dispatch import events, lifecycle, timing
+from g.runner import events, lifecycle, timing
 
 if typing.TYPE_CHECKING:
     from g.engine.native_dispatch import models

@@ -15,7 +15,7 @@ import g.engine.callbacks.shared as shared
 import g.engine.callbacks.transfers as transfers
 import g.engine.callbacks.writers as writers
 from g import _core, types
-from g.engine.callbacks import timing
+from g.runner import timing
 
 if typing.TYPE_CHECKING:
     import collections.abc
@@ -23,7 +23,7 @@ if typing.TYPE_CHECKING:
     import jax
 
     from g.compute.regenie2_binary import api as regenie2_binary
-    from g.engine.callbacks import events
+    from g.runner import events
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
 PreprocessedDosageChunkWorkItem = shared.PreprocessedDosageChunkWorkItem

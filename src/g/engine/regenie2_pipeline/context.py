@@ -6,7 +6,8 @@ import typing
 from dataclasses import dataclass
 
 from g import execution_plan, types
-from g.engine.regenie2_pipeline import backend, compute_config, outputs, schedule, telemetry_events, timing
+from g.engine.regenie2_pipeline import backend, compute_config, outputs, schedule, telemetry_events
+from g.runner import timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path

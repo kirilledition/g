@@ -18,10 +18,10 @@ import numpy.typing as npt
 
 import tooling.configuration as tooling_configuration
 from g import types
-from g.engine import timing
 from g.engine.callbacks import diagnostics as callback_diagnostics
 from g.engine.callbacks import runtime as callback_runtime
 from g.engine.callbacks import transfers as callback_transfers
+from g.runner import timing
 from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat

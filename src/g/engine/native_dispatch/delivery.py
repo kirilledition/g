@@ -8,7 +8,8 @@ import typing
 from dataclasses import dataclass
 
 from g import _core
-from g.engine.native_dispatch import events, lifecycle, models, timing, writers
+from g.engine.native_dispatch import models, writers
+from g.runner import events, lifecycle, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path

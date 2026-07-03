@@ -10,7 +10,8 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g import _core
-    from g.engine.regenie2_pipeline import inputs, timing
+    from g.engine.regenie2_pipeline import inputs
+    from g.runner import timing
 
 
 def run_bgen_engine_with_callback(

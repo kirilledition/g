@@ -19,7 +19,7 @@ import pytest
 
 from g import _core, types
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.io import output
+from g.runner import outputs as output
 from g.types import AssociationMode
 
 EXPECTED_FINAL_COLUMNS = [

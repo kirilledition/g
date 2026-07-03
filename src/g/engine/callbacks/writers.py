@@ -13,7 +13,7 @@ import g.engine.callbacks.transfers as transfers
 from g import _core, types
 
 if typing.TYPE_CHECKING:
-    from g.engine.callbacks import timing
+    from g.runner import timing
 
 cast_statistic_array_for_native_writer = transfers.cast_statistic_array_for_native_writer
 cast_statistic_array_for_native_writer_float32 = transfers.cast_statistic_array_for_native_writer_float32
