@@ -76,6 +76,7 @@ def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> 
     recorder.set_native_bgen_profile(native_profile)
     recorder.add_binary_chunk_diagnostics(binary_diagnostics)
     recorder.add_null_logistic_diagnostics(null_diagnostics)
+    native_snapshot = recorder.native_recorder.snapshot()
     snapshot = recorder.snapshot()
 
     native_profile["variant_decode_count"] = 99
@@ -83,6 +84,9 @@ def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> 
     null_diagnostics["chromosome"] = "1"
     recorder.add_stage_duration("native_engine_delivery", 3.0)
 
+    assert isinstance(native_snapshot, _core.NativeStageTimingSnapshot)
+    assert native_snapshot.stage_totals_seconds == {"native_engine_delivery": 2.0, "python_callback": 0.5}
+    assert native_snapshot.chunk_stage_timings[0].stage_name == "python_callback"
     assert snapshot.stage_totals_seconds == {"native_engine_delivery": 2.0, "python_callback": 0.5}
     assert snapshot.stage_counts == {"native_engine_delivery": 2, "python_callback": 1}
     assert snapshot.chunk_stage_timings == (

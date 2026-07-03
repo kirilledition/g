@@ -27,6 +27,30 @@ pub(crate) struct NativeFinalTimingOutputContext {
 #[pyclass]
 pub(crate) struct NativeFinalTimingOutputPolicy;
 
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeStageTimingSnapshot {
+    data: native_timing::StageTimingSnapshotPayload,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeChunkStageTimingSnapshot {
+    data: native_timing::ChunkStageTiming,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeQueueBackpressureSnapshot {
+    data: native_timing::QueueBackpressureSnapshot,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeTransferMetadataSnapshot {
+    data: native_timing::TransferMetadataSnapshot,
+}
+
 #[pymethods]
 impl NativeFinalTimingOutputContext {
     #[getter]
@@ -257,6 +281,11 @@ impl NativeStageTimingRecorder {
             .map_err(|error| transfer_metadata_error_to_py(&error))
     }
 
+    fn snapshot(&self) -> PyResult<NativeStageTimingSnapshot> {
+        let recorder = self.lock_recorder()?;
+        Ok(NativeStageTimingSnapshot { data: recorder.build_stage_timing_snapshot_payload() })
+    }
+
     fn snapshot_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let recorder = self.lock_recorder()?;
         build_stage_timing_snapshot_payload(py, &recorder.build_stage_timing_snapshot_payload())
@@ -289,6 +318,168 @@ impl NativeStageTimingRecorder {
 
     fn lock_recorder(&self) -> PyResult<MutexGuard<'_, native_timing::StageTimingRecorder>> {
         self.recorder.lock().map_err(|_| PyRuntimeError::new_err("Stage timing recorder lock was poisoned."))
+    }
+}
+
+#[pymethods]
+impl NativeStageTimingSnapshot {
+    #[getter]
+    fn stage_totals_seconds<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        build_float_mapping(py, &self.data.stage_totals_seconds)
+    }
+
+    #[getter]
+    fn stage_counts<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        build_integer_mapping(py, &self.data.stage_counts)
+    }
+
+    #[getter]
+    fn chunk_stage_timings(&self) -> Vec<NativeChunkStageTimingSnapshot> {
+        self.data.chunk_stage_timings.iter().cloned().map(|data| NativeChunkStageTimingSnapshot { data }).collect()
+    }
+
+    #[getter]
+    fn native_bgen_profile<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        build_integer_mapping(py, &self.data.native_bgen_profile)
+    }
+
+    #[getter]
+    fn binary_chunk_diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        build_binary_chunk_diagnostics_payloads(py, &self.data.binary_chunk_diagnostics)
+    }
+
+    #[getter]
+    fn null_logistic_diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        build_null_logistic_diagnostics_payloads(py, &self.data.null_logistic_diagnostics)
+    }
+
+    #[getter]
+    fn queue_backpressure(&self) -> Vec<NativeQueueBackpressureSnapshot> {
+        self.data.queue_backpressure.iter().cloned().map(|data| NativeQueueBackpressureSnapshot { data }).collect()
+    }
+
+    #[getter]
+    fn transfer_metadata(&self) -> Vec<NativeTransferMetadataSnapshot> {
+        self.data.transfer_metadata.iter().cloned().map(|data| NativeTransferMetadataSnapshot { data }).collect()
+    }
+}
+
+#[pymethods]
+impl NativeChunkStageTimingSnapshot {
+    #[getter]
+    fn chunk_identifier(&self) -> i64 {
+        self.data.chunk_identifier
+    }
+
+    #[getter]
+    fn chromosome(&self) -> &str {
+        self.data.chromosome.as_str()
+    }
+
+    #[getter]
+    fn variant_start_index(&self) -> i64 {
+        self.data.variant_start_index
+    }
+
+    #[getter]
+    fn variant_stop_index(&self) -> i64 {
+        self.data.variant_stop_index
+    }
+
+    #[getter]
+    fn variant_count(&self) -> i64 {
+        self.data.variant_count
+    }
+
+    #[getter]
+    fn stage_name(&self) -> &str {
+        self.data.stage_name.as_str()
+    }
+
+    #[getter]
+    fn duration_seconds(&self) -> f64 {
+        self.data.duration_seconds
+    }
+}
+
+#[pymethods]
+impl NativeQueueBackpressureSnapshot {
+    #[getter]
+    fn queue_name(&self) -> &str {
+        self.data.queue_name.as_str()
+    }
+
+    #[getter]
+    fn operation_name(&self) -> &str {
+        self.data.operation_name.as_str()
+    }
+
+    #[getter]
+    fn observation_count(&self) -> i64 {
+        self.data.observation_count
+    }
+
+    #[getter]
+    fn max_depth(&self) -> i64 {
+        self.data.max_depth
+    }
+
+    #[getter]
+    fn max_capacity(&self) -> i64 {
+        self.data.max_capacity
+    }
+
+    #[getter]
+    fn total_elapsed_seconds(&self) -> f64 {
+        self.data.total_elapsed_seconds
+    }
+
+    #[getter]
+    fn total_blocked_seconds(&self) -> f64 {
+        self.data.total_blocked_seconds
+    }
+}
+
+#[pymethods]
+impl NativeTransferMetadataSnapshot {
+    #[getter]
+    fn transfer_name(&self) -> &str {
+        self.data.transfer_name.as_str()
+    }
+
+    #[getter]
+    fn array_role(&self) -> &str {
+        self.data.array_role.as_str()
+    }
+
+    #[getter]
+    fn dtype_name(&self) -> &str {
+        self.data.dtype_name.as_str()
+    }
+
+    #[getter]
+    fn ndim(&self) -> i64 {
+        self.data.dimension_count
+    }
+
+    #[getter]
+    fn observation_count(&self) -> i64 {
+        self.data.observation_count
+    }
+
+    #[getter]
+    fn total_bytes(&self) -> i64 {
+        self.data.total_bytes
+    }
+
+    #[getter]
+    fn max_bytes(&self) -> i64 {
+        self.data.max_bytes
+    }
+
+    #[getter]
+    fn total_elements(&self) -> i64 {
+        self.data.total_elements
     }
 }
 
@@ -336,9 +527,13 @@ pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeChunkStageTimingSnapshot>()?;
     module.add_class::<NativeFinalTimingOutputContext>()?;
     module.add_class::<NativeFinalTimingOutputPolicy>()?;
+    module.add_class::<NativeQueueBackpressureSnapshot>()?;
     module.add_class::<NativeStageTimingRecorder>()?;
+    module.add_class::<NativeStageTimingSnapshot>()?;
+    module.add_class::<NativeTransferMetadataSnapshot>()?;
     Ok(())
 }
 

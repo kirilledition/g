@@ -460,7 +460,7 @@ class StageTimingRecorder:
 
     def snapshot(self) -> StageTimingSnapshot:
         """Return an immutable copy of the current timings."""
-        return adapt_stage_timing_snapshot_payload(self.native_recorder.snapshot_payload())
+        return adapt_stage_timing_snapshot(self.native_recorder.snapshot())
 
     def write_final_timing_outputs(
         self,
@@ -480,6 +480,35 @@ class StageTimingRecorder:
                 ),
             )
         )
+
+
+def adapt_stage_timing_snapshot(native_snapshot: _core.NativeStageTimingSnapshot) -> StageTimingSnapshot:
+    """Adapt a native timing snapshot handle to the public Python shape."""
+    return StageTimingSnapshot(
+        stage_totals_seconds=dict(native_snapshot.stage_totals_seconds),
+        stage_counts=dict(native_snapshot.stage_counts),
+        chunk_stage_timings=tuple(
+            adapt_chunk_stage_timing(native_chunk_stage_timing)
+            for native_chunk_stage_timing in native_snapshot.chunk_stage_timings
+        ),
+        native_bgen_profile=dict(native_snapshot.native_bgen_profile),
+        binary_chunk_diagnostics=tuple(
+            binary_chunk_diagnostics_snapshot_from_mapping(binary_diagnostic_payload)
+            for binary_diagnostic_payload in native_snapshot.binary_chunk_diagnostics
+        ),
+        null_logistic_diagnostics=tuple(
+            null_logistic_diagnostics_snapshot_from_mapping(null_logistic_diagnostic_payload)
+            for null_logistic_diagnostic_payload in native_snapshot.null_logistic_diagnostics
+        ),
+        queue_backpressure=tuple(
+            adapt_queue_backpressure(native_queue_backpressure)
+            for native_queue_backpressure in native_snapshot.queue_backpressure
+        ),
+        transfer_metadata=tuple(
+            adapt_transfer_metadata(native_transfer_metadata)
+            for native_transfer_metadata in native_snapshot.transfer_metadata
+        ),
+    )
 
 
 def adapt_stage_timing_snapshot_payload(snapshot_payload: dict[str, object]) -> StageTimingSnapshot:
@@ -530,6 +559,19 @@ def adapt_stage_timing_snapshot_payload(snapshot_payload: dict[str, object]) -> 
     )
 
 
+def adapt_chunk_stage_timing(native_timing: _core.NativeChunkStageTimingSnapshot) -> ChunkStageTimingSnapshot:
+    """Adapt one native chunk-stage timing handle."""
+    return ChunkStageTimingSnapshot(
+        chunk_identifier=native_timing.chunk_identifier,
+        chromosome=native_timing.chromosome,
+        variant_start_index=native_timing.variant_start_index,
+        variant_stop_index=native_timing.variant_stop_index,
+        variant_count=native_timing.variant_count,
+        stage_name=native_timing.stage_name,
+        duration_seconds=native_timing.duration_seconds,
+    )
+
+
 def adapt_chunk_stage_timing_payload(chunk_stage_timing_payload: dict[str, object]) -> ChunkStageTimingSnapshot:
     """Adapt one native chunk-stage timing payload."""
     return ChunkStageTimingSnapshot(
@@ -543,6 +585,21 @@ def adapt_chunk_stage_timing_payload(chunk_stage_timing_payload: dict[str, objec
     )
 
 
+def adapt_queue_backpressure(
+    native_queue_backpressure: _core.NativeQueueBackpressureSnapshot,
+) -> QueueBackpressureSnapshot:
+    """Adapt one native queue/backpressure handle."""
+    return QueueBackpressureSnapshot(
+        queue_name=native_queue_backpressure.queue_name,
+        operation_name=native_queue_backpressure.operation_name,
+        observation_count=native_queue_backpressure.observation_count,
+        max_depth=native_queue_backpressure.max_depth,
+        max_capacity=native_queue_backpressure.max_capacity,
+        total_elapsed_seconds=native_queue_backpressure.total_elapsed_seconds,
+        total_blocked_seconds=native_queue_backpressure.total_blocked_seconds,
+    )
+
+
 def adapt_queue_backpressure_payload(queue_backpressure_payload: dict[str, object]) -> QueueBackpressureSnapshot:
     """Adapt one native queue/backpressure payload."""
     return QueueBackpressureSnapshot(
@@ -553,6 +610,20 @@ def adapt_queue_backpressure_payload(queue_backpressure_payload: dict[str, objec
         max_capacity=typing.cast("int", queue_backpressure_payload["max_capacity"]),
         total_elapsed_seconds=typing.cast("float", queue_backpressure_payload["total_elapsed_seconds"]),
         total_blocked_seconds=typing.cast("float", queue_backpressure_payload["total_blocked_seconds"]),
+    )
+
+
+def adapt_transfer_metadata(native_transfer_metadata: _core.NativeTransferMetadataSnapshot) -> TransferMetadataSnapshot:
+    """Adapt one native transfer metadata handle."""
+    return TransferMetadataSnapshot(
+        transfer_name=native_transfer_metadata.transfer_name,
+        array_role=native_transfer_metadata.array_role,
+        dtype_name=native_transfer_metadata.dtype_name,
+        ndim=native_transfer_metadata.ndim,
+        observation_count=native_transfer_metadata.observation_count,
+        total_bytes=native_transfer_metadata.total_bytes,
+        max_bytes=native_transfer_metadata.max_bytes,
+        total_elements=native_transfer_metadata.total_elements,
     )
 
 

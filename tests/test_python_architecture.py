@@ -2252,6 +2252,36 @@ def test_runner_output_policy_rejects_fingerprint_payload_methods(tmp_path: Path
     ]
 
 
+def test_runner_timing_policy_rejects_snapshot_payload_method(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "timing.py").write_text(
+        "\n".join(
+            (
+                "def build(recorder):",
+                "    recorder.snapshot_payload()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/timing.py"),
+            2,
+            "runner_timing_snapshot_payload_isolation",
+            "recorder.snapshot_payload",
+            "snapshot_payload",
+        )
+    ]
+
+
 def test_run_metadata_policy_rejects_direct_native_metadata_helpers(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"

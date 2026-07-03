@@ -745,6 +745,13 @@ PYTHON_CALL_POLICIES = (
         message="runner output fingerprinting must consume typed native fingerprint handles",
     ),
     PythonCallPolicy(
+        name="runner_timing_snapshot_payload_isolation",
+        source_directory=Path("runner/timing.py"),
+        forbidden_calls=("snapshot_payload",),
+        allowed_paths=(),
+        message="runner timing snapshots must consume typed native snapshot handles",
+    ),
+    PythonCallPolicy(
         name="native_run_start_metadata_side_effect_isolation",
         source_directory=Path("runner"),
         forbidden_calls=("write_toml",),

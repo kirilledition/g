@@ -2858,6 +2858,11 @@ Current guardrail notes:
   prediction-LOCO fingerprint handles instead of dict payloads. Legacy
   fingerprint payload methods remain for compatibility tests, while the output
   adapter is guarded from calling them.
+- Runner stage-timing snapshots now consume typed native snapshot, chunk,
+  queue-backpressure, and transfer-metadata handles instead of the legacy
+  snapshot payload method. Binary/null diagnostic maps remain native-owned
+  snapshot fields, and the timing adapter is guarded from calling
+  `snapshot_payload()`.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture
@@ -3220,6 +3225,8 @@ The runner-metadata rule rejects execution-artifact payload methods under
 The runner-output-fingerprint rule rejects manifest and prediction-LOCO
 fingerprint payload methods in `g.runner.outputs`, keeping fingerprint
 adaptation on typed native handles.
+The runner-timing rule rejects `snapshot_payload()` in `g.runner.timing`,
+keeping stage-timing snapshot adaptation on typed native handles.
 
 ---
 
