@@ -2605,6 +2605,10 @@ Current guardrail notes:
 - REGENIE pipeline orchestration now routes manifest JAX runtime policy values
   through `g.engine.regenie2_pipeline.runtime_policy`; the Python architecture
   checker rejects direct `g.jax_runtime` imports from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes association backend planning
+  through `g.engine.regenie2_pipeline.backend`; the Python architecture checker
+  rejects direct `g.engine.backend_planner` imports from sibling pipeline
+  modules.
 
 ### Exit criteria
 
@@ -2864,6 +2868,7 @@ g.engine.regenie2_pipeline modules must not construct native schedule policy han
 g.engine.regenie2_pipeline modules must not import callback packages directly, except the pipeline callback helper.
 g.engine.regenie2_pipeline modules must not import compute packages directly, except the pipeline compute-config helper.
 g.engine.regenie2_pipeline modules must not import JAX runtime packages directly, except the pipeline runtime-policy helper.
+g.engine.regenie2_pipeline modules must not import backend planner helpers directly, except the pipeline backend helper.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.

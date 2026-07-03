@@ -822,6 +822,60 @@ def test_pipeline_import_policy_allows_pipeline_runtime_policy_adapter(tmp_path:
     assert violations == ()
 
 
+def test_pipeline_import_policy_rejects_backend_planner_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "context.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import backend_planner",
+                "import g.engine.backend_planner",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/regenie2_pipeline/context.py"),
+            1,
+            "g.engine.backend_planner",
+            "g.engine.backend_planner",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/context.py"),
+            2,
+            "g.engine.backend_planner",
+            "g.engine.backend_planner",
+        ),
+    ]
+
+
+def test_pipeline_import_policy_allows_pipeline_backend_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "backend.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import backend_planner",
+                "import g.engine.backend_planner",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_pipeline_call_policy_rejects_native_schedule_policy_construction(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"

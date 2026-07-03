@@ -374,6 +374,13 @@ PYTHON_IMPORT_POLICIES = (
         message="REGENIE pipeline modules must route JAX runtime policy access through pipeline helpers",
         allowed_paths=(Path("engine/regenie2_pipeline/runtime_policy.py"),),
     ),
+    PythonImportPolicy(
+        name="pipeline_backend_planner_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.backend_planner",),
+        message="REGENIE pipeline modules must route backend planning access through pipeline helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/backend.py"),),
+    ),
 )
 
 PYTHON_CALL_POLICIES = (

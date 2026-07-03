@@ -6,8 +6,7 @@ import typing
 from dataclasses import dataclass
 
 from g import execution_plan, types
-from g.engine import backend_planner
-from g.engine.regenie2_pipeline import compute_config, outputs, schedule, telemetry_events, timing
+from g.engine.regenie2_pipeline import backend, compute_config, outputs, schedule, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -69,7 +68,7 @@ class Regenie2PipelineContext:
     firth_dtype: types.FloatingPointDtype
     requested_gpu_genotype_format: types.GpuGenotypeFormat
     gpu_genotype_format: types.GpuGenotypeFormat
-    backend_plan: backend_planner.AssociationBackendPlan
+    backend_plan: backend.AssociationBackendPlan
     correction_plan: types.BinaryCorrectionPlan
     binary_kernel_config: compute_config.BinaryKernelConfig | None
     linear_numerical_config: compute_config.LinearNumericalConfig | None
@@ -161,7 +160,7 @@ def build_regenie2_pipeline_context(
         )
     else:
         resolved_stage_timing_recorder = stage_timing_recorder
-    backend_plan = backend_planner.plan_association_backend(
+    backend_plan = backend.plan_association_backend(
         association_mode=association_mode,
         jax_device=jax_device,
         gpu_genotype_format=gpu_genotype_format,
