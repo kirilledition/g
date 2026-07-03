@@ -279,8 +279,7 @@ def build_regenie_execution_plan(
         covariate_names=tuple(input_request.covariate_names) or None,
         phenotype_run_plans=phenotype_run_plans,
         phenotype_compute_groups=tuple(
-            adapt_phenotype_compute_group_request(group_request)
-            for group_request in run_request.phenotype_compute_groups
+            adapt_phenotype_compute_group(group_request) for group_request in run_request.phenotype_compute_groups
         ),
         binary_correction_plan=adapt_binary_correction_plan(run_request.correction),
         kernel_config=kernel_config,
@@ -371,8 +370,8 @@ def build_phenotype_compute_groups(
     """Build config-time phenotype compute groups."""
     native_host_planning_policy = _core.NativeHostPlanningPolicy()
     return tuple(
-        adapt_phenotype_compute_group_payload(group_payload)
-        for group_payload in native_host_planning_policy.build_phenotype_compute_groups_payload(
+        adapt_phenotype_compute_group(group_plan)
+        for group_plan in native_host_planning_policy.build_phenotype_compute_groups(
             phenotype_names,
             multi_phenotype_sample_mode.value,
         )
@@ -393,8 +392,10 @@ def adapt_phenotype_run_plan(phenotype_run_plan: _core.NativePhenotypeRunPlan) -
     )
 
 
-def adapt_phenotype_compute_group_request(group_request: _core.NativePhenotypeComputeGroup) -> PhenotypeComputeGroup:
-    """Adapt a native requested-run compute group to the public Python shape."""
+def adapt_phenotype_compute_group(
+    group_request: _core.NativePhenotypeComputeGroup | _core.NativeHostPhenotypeComputeGroupPlan,
+) -> PhenotypeComputeGroup:
+    """Adapt a native compute group to the public Python shape."""
     return PhenotypeComputeGroup(
         group_mode=types.PhenotypeComputeGroupMode(group_request.group_mode),
         phenotype_indices=tuple(group_request.phenotype_indices),
@@ -403,22 +404,6 @@ def adapt_phenotype_compute_group_request(group_request: _core.NativePhenotypeCo
         sample_set_fingerprint=group_request.sample_set_fingerprint,
         covariate_design_fingerprint=group_request.covariate_design_fingerprint,
         prediction_alignment_fingerprint=group_request.prediction_alignment_fingerprint,
-    )
-
-
-def adapt_phenotype_compute_group_payload(group_payload: dict[str, object]) -> PhenotypeComputeGroup:
-    """Adapt a native group payload to the public Python execution-plan shape."""
-    return PhenotypeComputeGroup(
-        group_mode=types.PhenotypeComputeGroupMode(typing.cast("str", group_payload["group_mode"])),
-        phenotype_indices=tuple(typing.cast("typing.Sequence[int]", group_payload["phenotype_indices"])),
-        phenotype_names=tuple(typing.cast("typing.Sequence[str]", group_payload["phenotype_names"])),
-        sample_mode=types.MultiPhenotypeSampleMode(typing.cast("str", group_payload["sample_mode"])),
-        sample_set_fingerprint=typing.cast("str | None", group_payload["sample_set_fingerprint"]),
-        covariate_design_fingerprint=typing.cast("str | None", group_payload["covariate_design_fingerprint"]),
-        prediction_alignment_fingerprint=typing.cast(
-            "str | None",
-            group_payload["prediction_alignment_fingerprint"],
-        ),
     )
 
 

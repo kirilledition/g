@@ -9,11 +9,72 @@ use g_plan as native_host_policy;
 #[pyclass]
 pub(crate) struct NativeHostPlanningPolicy;
 
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeHostAssociationBackendPlan {
+    backend_kind: String,
+    association_mode: String,
+    jax_device: String,
+    genotype_format: String,
+    uses_variant_major_packed8_delivery: bool,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeHostPhenotypeComputeGroupPlan {
+    group_mode: String,
+    phenotype_indices: Vec<i64>,
+    phenotype_names: Vec<String>,
+    sample_mode: String,
+    sample_set_fingerprint: Option<String>,
+    covariate_design_fingerprint: Option<String>,
+    prediction_alignment_fingerprint: Option<String>,
+}
+
+impl NativeHostAssociationBackendPlan {
+    fn from_payload(payload: native_host_policy::AssociationBackendPlanPayload) -> Self {
+        Self {
+            backend_kind: payload.backend_kind.to_string(),
+            association_mode: payload.association_mode,
+            jax_device: payload.jax_device,
+            genotype_format: payload.genotype_format,
+            uses_variant_major_packed8_delivery: payload.uses_variant_major_packed8_delivery,
+        }
+    }
+}
+
+impl NativeHostPhenotypeComputeGroupPlan {
+    fn from_payload(payload: native_host_policy::PhenotypeComputeGroupPayload) -> Self {
+        Self {
+            group_mode: payload.group_mode.to_string(),
+            phenotype_indices: payload.phenotype_indices,
+            phenotype_names: payload.phenotype_names,
+            sample_mode: payload.sample_mode.to_string(),
+            sample_set_fingerprint: payload.sample_set_fingerprint,
+            covariate_design_fingerprint: payload.covariate_design_fingerprint,
+            prediction_alignment_fingerprint: payload.prediction_alignment_fingerprint,
+        }
+    }
+}
+
 #[pymethods]
 impl NativeHostPlanningPolicy {
     #[new]
     fn new() -> Self {
         Self
+    }
+
+    #[allow(clippy::unused_self)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn plan_association_backend(
+        &self,
+        association_mode: String,
+        jax_device: String,
+        gpu_genotype_format: String,
+    ) -> PyResult<NativeHostAssociationBackendPlan> {
+        native_host_policy::plan_association_backend(&association_mode, &jax_device, &gpu_genotype_format)
+            .map(NativeHostAssociationBackendPlan::from_payload)
+            .map_err(host_policy_error_to_py)
     }
 
     #[allow(clippy::unused_self)]
@@ -59,6 +120,18 @@ impl NativeHostPlanningPolicy {
         payload.set_item("p_threshold", plan.p_threshold)?;
         payload.set_item("firth_se", plan.firth_se)?;
         Ok(payload)
+    }
+
+    #[allow(clippy::unused_self)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn build_phenotype_compute_groups(
+        &self,
+        phenotype_names: Vec<String>,
+        multi_phenotype_sample_mode: String,
+    ) -> PyResult<Vec<NativeHostPhenotypeComputeGroupPlan>> {
+        native_host_policy::build_phenotype_compute_groups(&phenotype_names, &multi_phenotype_sample_mode)
+            .map(|groups| groups.into_iter().map(NativeHostPhenotypeComputeGroupPlan::from_payload).collect())
+            .map_err(host_policy_error_to_py)
     }
 
     #[allow(clippy::unused_self)]
@@ -109,8 +182,76 @@ impl NativeHostPlanningPolicy {
     }
 }
 
+#[pymethods]
+impl NativeHostAssociationBackendPlan {
+    #[getter]
+    fn backend_kind(&self) -> &str {
+        self.backend_kind.as_str()
+    }
+
+    #[getter]
+    fn association_mode(&self) -> &str {
+        self.association_mode.as_str()
+    }
+
+    #[getter]
+    fn jax_device(&self) -> &str {
+        self.jax_device.as_str()
+    }
+
+    #[getter]
+    fn genotype_format(&self) -> &str {
+        self.genotype_format.as_str()
+    }
+
+    #[getter]
+    fn uses_variant_major_packed8_delivery(&self) -> bool {
+        self.uses_variant_major_packed8_delivery
+    }
+}
+
+#[pymethods]
+impl NativeHostPhenotypeComputeGroupPlan {
+    #[getter]
+    fn group_mode(&self) -> &str {
+        self.group_mode.as_str()
+    }
+
+    #[getter]
+    fn phenotype_indices(&self) -> Vec<i64> {
+        self.phenotype_indices.clone()
+    }
+
+    #[getter]
+    fn phenotype_names(&self) -> Vec<String> {
+        self.phenotype_names.clone()
+    }
+
+    #[getter]
+    fn sample_mode(&self) -> &str {
+        self.sample_mode.as_str()
+    }
+
+    #[getter]
+    fn sample_set_fingerprint(&self) -> Option<String> {
+        self.sample_set_fingerprint.clone()
+    }
+
+    #[getter]
+    fn covariate_design_fingerprint(&self) -> Option<String> {
+        self.covariate_design_fingerprint.clone()
+    }
+
+    #[getter]
+    fn prediction_alignment_fingerprint(&self) -> Option<String> {
+        self.prediction_alignment_fingerprint.clone()
+    }
+}
+
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeHostPlanningPolicy>()?;
+    module.add_class::<NativeHostAssociationBackendPlan>()?;
+    module.add_class::<NativeHostPhenotypeComputeGroupPlan>()?;
     Ok(())
 }
 

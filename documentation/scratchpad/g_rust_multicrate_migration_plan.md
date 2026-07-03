@@ -2830,6 +2830,10 @@ Current guardrail notes:
   of parsing the legacy run-request dict payload. The Python architecture
   checker rejects `_core.compile_run_request_payload` in production and allows
   `_core.compile_run_request` only inside `g.execution_plan`.
+- Host planning now returns typed backend-plan and phenotype-compute-group
+  PyO3 handles for production callers. Legacy host-planning payload methods
+  remain compatibility surface on the policy object, but the Python
+  architecture checker rejects production calls to those dict payload methods.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture
@@ -3177,6 +3181,8 @@ explicit all-hooks contract when a Python effects object is supplied.
 The run-request rule rejects legacy dict/JSON run-request payload calls in
 production and confines typed native run-request compilation to the
 `g.execution_plan` adapter.
+The host-planning rule rejects dict payload backend/group/correction planning
+methods in production so Python callers consume typed native handles.
 
 ---
 

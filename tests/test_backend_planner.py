@@ -99,3 +99,25 @@ def test_plan_association_backend_rejects_unresolved_auto_format() -> None:
             jax_device=types.Device.GPU,
             gpu_genotype_format=types.GpuGenotypeFormat.AUTO,
         )
+
+
+def test_native_host_planning_returns_typed_handles() -> None:
+    native_policy = _core.NativeHostPlanningPolicy()
+
+    backend_plan = native_policy.plan_association_backend(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        types.Device.GPU.value,
+        types.GpuGenotypeFormat.PACKED8.value,
+    )
+    compute_groups = native_policy.build_phenotype_compute_groups(
+        ["one", "two"],
+        types.MultiPhenotypeSampleMode.COMPLETE_CASE.value,
+    )
+
+    assert isinstance(backend_plan, _core.NativeHostAssociationBackendPlan)
+    assert backend_plan.backend_kind == types.AssociationBackendKind.JAX_PACKED8.value
+    assert backend_plan.uses_variant_major_packed8_delivery is True
+    assert len(compute_groups) == 1
+    assert isinstance(compute_groups[0], _core.NativeHostPhenotypeComputeGroupPlan)
+    assert compute_groups[0].group_mode == types.PhenotypeComputeGroupMode.COMPLETE_CASE.value
+    assert compute_groups[0].phenotype_indices == [0, 1]

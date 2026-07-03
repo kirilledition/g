@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import typing
 
 from g import _core, types
 
@@ -63,18 +62,15 @@ def plan_association_backend(
 ) -> AssociationBackendPlan:
     """Select the concrete backend used by association execution."""
     native_host_planning_policy = _core.NativeHostPlanningPolicy()
-    backend_payload = native_host_planning_policy.plan_association_backend_payload(
+    backend_plan = native_host_planning_policy.plan_association_backend(
         association_mode.value,
         jax_device.value,
         gpu_genotype_format.value,
     )
     return AssociationBackendPlan(
-        backend_kind=types.AssociationBackendKind(typing.cast("str", backend_payload["backend_kind"])),
-        association_mode=types.AssociationMode(typing.cast("str", backend_payload["association_mode"])),
-        jax_device=types.Device(typing.cast("str", backend_payload["jax_device"])),
-        genotype_format=types.GpuGenotypeFormat(typing.cast("str", backend_payload["genotype_format"])),
-        uses_variant_major_packed8_delivery=typing.cast(
-            "bool",
-            backend_payload["uses_variant_major_packed8_delivery"],
-        ),
+        backend_kind=types.AssociationBackendKind(backend_plan.backend_kind),
+        association_mode=types.AssociationMode(backend_plan.association_mode),
+        jax_device=types.Device(backend_plan.jax_device),
+        genotype_format=types.GpuGenotypeFormat(backend_plan.genotype_format),
+        uses_variant_major_packed8_delivery=backend_plan.uses_variant_major_packed8_delivery,
     )

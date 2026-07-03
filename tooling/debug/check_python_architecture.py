@@ -786,6 +786,17 @@ PYTHON_CALL_POLICIES = (
         message="production Python must route typed native run-request compilation through the execution-plan adapter",
     ),
     PythonCallPolicy(
+        name="host_planning_payload_isolation",
+        source_directory=Path(),
+        forbidden_calls=(
+            "plan_association_backend_payload",
+            "build_phenotype_compute_groups_payload",
+            "normalize_binary_correction_payload",
+        ),
+        allowed_paths=(),
+        message="production Python must consume typed host-planning handles instead of payload dictionaries",
+    ),
+    PythonCallPolicy(
         name="pipeline_native_schedule_adapter_isolation",
         source_directory=Path("engine/regenie2_pipeline"),
         forbidden_calls=("_core.NativeSchedulePolicy",),
