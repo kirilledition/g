@@ -1,4 +1,4 @@
-"""JAX compilation-cache warming helpers for native REGENIE step 2 runs."""
+"""Test support for warming JAX compilation-cache signatures."""
 
 from __future__ import annotations
 

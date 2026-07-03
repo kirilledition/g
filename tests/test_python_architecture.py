@@ -247,6 +247,31 @@ def test_obsolete_io_source_import_policy_rejects_source_module_imports(tmp_path
     ]
 
 
+def test_import_policy_rejects_obsolete_warm_cache_module(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "execution.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import warm_cache",
+                "import g.engine.warm_cache",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/runner/execution.py"), 1, "g.engine.warm_cache", "g.engine.warm_cache"),
+        (Path("g/runner/execution.py"), 2, "g.engine.warm_cache", "g.engine.warm_cache"),
+    ]
+
+
 def test_execution_plan_import_policy_rejects_output_adapter_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()
@@ -690,6 +715,31 @@ def test_pipeline_import_policy_allows_pipeline_preflight_adapter(tmp_path: Path
     violations = check_python_architecture.collect_python_import_policy_violations(package_root)
 
     assert violations == ()
+
+
+def test_preflight_import_policy_rejects_run_event_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    engine_directory = package_root / "engine"
+    engine_directory.mkdir(parents=True)
+    (engine_directory / "preflight.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events",
+                "import g.engine.run_events",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/engine/preflight.py"), 1, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/preflight.py"), 2, "g.engine.run_events", "g.engine.run_events"),
+    ]
 
 
 def test_pipeline_import_policy_rejects_bgen_engine_imports(tmp_path: Path) -> None:

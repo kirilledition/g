@@ -372,7 +372,7 @@ def test_preflight_rejects_empty_variant_scans(
 
 def test_preflight_records_low_degrees_of_freedom_and_trusted_path_warnings() -> None:
     with unittest.mock.patch(
-        "g.engine.preflight.run_events.native_output_preflight_diagnostic_policy"
+        "g.engine.preflight.preflight_events.native_output_preflight_diagnostic_policy"
     ) as diagnostic_policy_factory_mock:
         report = preflight.run_regenie2_preflight(
             run_input=build_run_input(),

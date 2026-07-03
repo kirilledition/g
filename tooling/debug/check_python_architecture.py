@@ -283,6 +283,12 @@ PYTHON_IMPORT_POLICIES = (
         message="BGEN source configuration is part of the execution-plan contract, not the output package",
     ),
     PythonImportPolicy(
+        name="obsolete_warm_cache_module_isolation",
+        source_directory=Path(),
+        forbidden_imports=("g.engine.warm_cache",),
+        message="warm-cache orchestration is test support, not production engine code",
+    ),
+    PythonImportPolicy(
         name="execution_plan_output_adapter_isolation",
         source_directory=Path("execution_plan.py"),
         forbidden_imports=("g.io",),
@@ -426,6 +432,12 @@ PYTHON_IMPORT_POLICIES = (
         forbidden_imports=("g.engine.backend_planner",),
         message="REGENIE pipeline modules must route backend planning access through pipeline helpers",
         allowed_paths=(Path("engine/regenie2_pipeline/backend.py"),),
+    ),
+    PythonImportPolicy(
+        name="preflight_event_adapter_isolation",
+        source_directory=Path("engine/preflight.py"),
+        forbidden_imports=("g.engine.run_events",),
+        message="preflight validation must route diagnostic events through the preflight event helper",
     ),
 )
 

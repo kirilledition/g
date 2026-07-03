@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 
 from g import execution_plan, types
-from g.engine import warm_cache
 from g.interface import config as interface_config
+from tests.support import warm_cache
 
 if typing.TYPE_CHECKING:
     from g import _core

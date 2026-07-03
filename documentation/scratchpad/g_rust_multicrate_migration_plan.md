@@ -2642,6 +2642,12 @@ Current guardrail notes:
   through `g.engine.regenie2_pipeline.backend`; the Python architecture checker
   rejects direct `g.engine.backend_planner` imports from sibling pipeline
   modules.
+- Preflight validation now routes preflight-warning diagnostic policy access
+  through `g.engine.preflight_events`; the Python architecture checker rejects
+  direct `g.engine.run_events` imports from `g.engine.preflight`.
+- The obsolete production warm-cache orchestration module was moved to test
+  support; the Python architecture checker rejects production imports of
+  `g.engine.warm_cache`.
 
 ### Exit criteria
 
@@ -2888,6 +2894,7 @@ interface/config, output, or runner orchestration packages.
 g.io must not import JAX runtime setup packages.
 g.io must not import engine orchestration packages.
 Production Python must not import the obsolete `g.io.source` module.
+Production Python must not import the obsolete `g.engine.warm_cache` module.
 g.execution_plan must not import output adapter packages.
 g.cli must not import engine run-event, shutdown, or telemetry packages directly.
 g.runner modules must not import output adapter packages directly, except the runner output helper.
@@ -2908,6 +2915,7 @@ g.engine.regenie2_pipeline modules must not import callback packages directly, e
 g.engine.regenie2_pipeline modules must not import compute packages directly, except the pipeline compute-config helper.
 g.engine.regenie2_pipeline modules must not import JAX runtime packages directly, except the pipeline runtime-policy helper.
 g.engine.regenie2_pipeline modules must not import backend planner helpers directly, except the pipeline backend helper.
+g.engine.preflight must not import run-event packages directly, except the preflight event helper.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
