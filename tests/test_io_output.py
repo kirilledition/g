@@ -672,13 +672,20 @@ def test_prediction_loco_fingerprints_use_native_payload(tmp_path: Path) -> None
     loco_path.write_text("FID_IID F1_I1\n22 0.1\n", encoding="utf-8")
     prediction_list_path = tmp_path / "predictions.list"
     prediction_list_path.write_text("first shared.loco\nsecond shared.loco\n", encoding="utf-8")
+    fingerprint_cache = output.ManifestFileFingerprintCache()
 
     loco_files = output.build_prediction_loco_file_fingerprints(
         prediction_list_path=prediction_list_path,
         phenotype_names=("first", "second"),
-        fingerprint_cache=output.ManifestFileFingerprintCache(),
+        fingerprint_cache=fingerprint_cache,
+    )
+    native_loco_files = fingerprint_cache.native_cache.build_prediction_loco_file_fingerprints(
+        str(prediction_list_path),
+        ["first", "second"],
     )
 
+    assert isinstance(native_loco_files[0], _core.NativePredictionLocoFileFingerprint)
+    assert native_loco_files[0].path == str(loco_path.resolve())
     assert [loco_file.phenotype for loco_file in loco_files] == ["first", "second"]
     assert [loco_file.path for loco_file in loco_files] == [str(loco_path.resolve()), str(loco_path.resolve())]
 
@@ -718,7 +725,13 @@ def test_manifest_file_fingerprint_cache_uses_native_payload(tmp_path: Path) -> 
     fingerprint_cache = output.ManifestFileFingerprintCache()
     first_fingerprint = fingerprint_cache.build_file_fingerprint(input_path, include_content_hash=True)
     second_fingerprint = fingerprint_cache.build_file_fingerprint(input_path, include_content_hash=True)
+    native_fingerprint = fingerprint_cache.native_cache.build_file_fingerprint(
+        str(input_path),
+        include_content_hash=True,
+    )
 
+    assert isinstance(native_fingerprint, _core.NativeManifestFileFingerprint)
+    assert native_fingerprint.path == str(input_path.resolve())
     assert first_fingerprint == second_fingerprint
     assert first_fingerprint is not None
     assert first_fingerprint.path == str(input_path.resolve())

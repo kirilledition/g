@@ -2214,6 +2214,44 @@ def test_output_manifest_helper_policy_rejects_direct_native_helpers(tmp_path: P
     ]
 
 
+def test_runner_output_policy_rejects_fingerprint_payload_methods(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "outputs.py").write_text(
+        "\n".join(
+            (
+                "def build(cache):",
+                "    cache.build_file_fingerprint_payload('input.bgen', True)",
+                "    cache.build_prediction_loco_file_fingerprints_payload('pred.list', ['phenotype'])",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/outputs.py"),
+            2,
+            "runner_output_fingerprint_payload_isolation",
+            "cache.build_file_fingerprint_payload",
+            "build_file_fingerprint_payload",
+        ),
+        (
+            Path("g/runner/outputs.py"),
+            3,
+            "runner_output_fingerprint_payload_isolation",
+            "cache.build_prediction_loco_file_fingerprints_payload",
+            "build_prediction_loco_file_fingerprints_payload",
+        ),
+    ]
+
+
 def test_run_metadata_policy_rejects_direct_native_metadata_helpers(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"
@@ -2268,6 +2306,40 @@ def test_run_metadata_policy_rejects_direct_native_metadata_helpers(tmp_path: Pa
             "g._core.extend_run_manifest_metadata",
             "_core.extend_run_manifest_metadata",
         ),
+    ]
+
+
+def test_runner_metadata_policy_rejects_artifact_payload_method(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "metadata.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build_metadata():",
+                "    builder = _core.NativeRunMetadataBuilder()",
+                "    builder.build_execution_run_artifacts_payload(",
+                "        'regenie2_linear', 1, 'parquet', (), (), (), (), ()",
+                "    )",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/metadata.py"),
+            4,
+            "runner_metadata_payload_isolation",
+            "builder.build_execution_run_artifacts_payload",
+            "build_execution_run_artifacts_payload",
+        )
     ]
 
 

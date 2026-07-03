@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple};
 
 use super::config::RegenieConfig;
+use super::run_events;
 use g_interface as interface;
 use g_output::OutputWriterError;
 use g_runtime::run_metadata as native_run_metadata;
@@ -19,6 +20,36 @@ impl NativeRunMetadataBuilder {
     #[new]
     fn new() -> Self {
         Self
+    }
+
+    #[allow(clippy::unused_self)]
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn build_execution_run_artifacts(
+        &self,
+        association_mode: String,
+        phenotype_count: i64,
+        output_format: String,
+        output_run_directories: Vec<String>,
+        chunks_directories: Vec<String>,
+        effective_configs: Vec<String>,
+        phenotype_names: Vec<String>,
+        final_output_paths: Vec<Option<String>>,
+    ) -> PyResult<run_events::NativeRunArtifacts> {
+        native_run_metadata::build_execution_run_artifacts_from_sequences(
+            native_run_metadata::ExecutionRunArtifactsSequenceInput {
+                association_mode,
+                phenotype_count,
+                output_format,
+                output_run_directories,
+                chunks_directories,
+                effective_configs,
+                phenotype_names,
+                final_output_paths,
+            },
+        )
+        .map(run_events::NativeRunArtifacts::from_payload)
+        .map_err(|error| run_metadata_error_to_py(&error))
     }
 
     #[allow(clippy::unused_self)]

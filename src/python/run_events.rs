@@ -301,6 +301,12 @@ pub(crate) struct NativeRunFailedEvent {
     data: native_run_events::RunFailedEventPayload,
 }
 
+impl NativeRunArtifacts {
+    pub(crate) fn from_payload(data: native_run_events::RunArtifactsPayload) -> Self {
+        Self { data }
+    }
+}
+
 #[pymethods]
 #[allow(clippy::needless_pass_by_value)]
 #[allow(clippy::unused_self)]
@@ -349,7 +355,7 @@ impl NativeRunEventPayloadPolicy {
             &association_mode,
             phenotype_count,
         );
-        Ok(NativeRunArtifacts { data })
+        Ok(NativeRunArtifacts::from_payload(data))
     }
 
     fn build_run_interrupted_event_payload<'py>(
@@ -441,7 +447,7 @@ impl NativeRunArtifacts {
 
     #[getter]
     fn phenotype_artifacts(&self) -> Vec<NativeRunArtifacts> {
-        self.data.phenotype_artifacts.iter().cloned().map(|data| NativeRunArtifacts { data }).collect()
+        self.data.phenotype_artifacts.iter().cloned().map(NativeRunArtifacts::from_payload).collect()
     }
 
     #[getter]

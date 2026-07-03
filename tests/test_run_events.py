@@ -154,12 +154,24 @@ def test_execution_run_artifacts_uses_native_artifact_tree_builder() -> None:
         ("height", "weight"),
         ("out/height/final.parquet", "out/weight/final.parquet"),
     )
-    artifacts = run_events.run_artifacts_from_native_payload(native_payload)
+    native_artifacts = native_metadata_builder.build_execution_run_artifacts(
+        types.AssociationMode.REGENIE2_LINEAR.value,
+        2,
+        "parquet",
+        ("out/height/run", "out/weight/run"),
+        ("out/height/run/parts", "out/weight/run/parts"),
+        ("out/height/effective_config.toml", "out/weight/effective_config.toml"),
+        ("height", "weight"),
+        ("out/height/final.parquet", "out/weight/final.parquet"),
+    )
+    artifacts = run_events.run_artifacts_from_native_artifacts(native_artifacts)
     phenotype_payloads = typing.cast("tuple[dict[str, object], ...]", native_payload["phenotype_artifacts"])
 
     assert native_payload["output_run_directory"] is None
     assert native_payload["association_mode"] == types.AssociationMode.REGENIE2_LINEAR.value
     assert native_payload["phenotype_count"] == 2
+    assert isinstance(native_artifacts, _core.NativeRunArtifacts)
+    assert native_artifacts.phenotype_artifacts[1].phenotype_name == "weight"
     assert phenotype_payloads[1]["phenotype_name"] == "weight"
     assert phenotype_payloads[1]["final_dataset"] == "out/weight/run/parts"
     assert phenotype_payloads[1]["final_parquet"] == "out/weight/final.parquet"

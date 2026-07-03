@@ -3080,6 +3080,11 @@ class NativeOutputWriterLifecyclePolicy:
 
 class NativeManifestFileFingerprintCache:
     def __init__(self) -> None: ...
+    def build_file_fingerprint(
+        self,
+        path: str,
+        include_content_hash: bool,
+    ) -> NativeManifestFileFingerprint: ...
     def build_file_fingerprint_payload(
         self,
         path: str,
@@ -3094,6 +3099,37 @@ class NativeManifestFileFingerprintCache:
         prediction_list_path: str,
         phenotype_names: list[str],
     ) -> tuple[dict[str, object], ...]: ...
+    def build_prediction_loco_file_fingerprints(
+        self,
+        prediction_list_path: str,
+        phenotype_names: list[str],
+    ) -> list[NativePredictionLocoFileFingerprint]: ...
+
+class NativeManifestFileFingerprint:
+    @property
+    def path(self) -> str: ...
+    @property
+    def size(self) -> int: ...
+    @property
+    def mtime_ns(self) -> int: ...
+    @property
+    def content_hash_algorithm(self) -> str: ...
+    @property
+    def content_sha256(self) -> str | None: ...
+
+class NativePredictionLocoFileFingerprint:
+    @property
+    def phenotype(self) -> str: ...
+    @property
+    def path(self) -> str: ...
+    @property
+    def size(self) -> int: ...
+    @property
+    def mtime_ns(self) -> int: ...
+    @property
+    def content_hash_algorithm(self) -> str: ...
+    @property
+    def content_sha256(self) -> str | None: ...
 
 class NativeOutputChunkWritePolicy:
     def __init__(self) -> None: ...
@@ -3684,6 +3720,17 @@ class NativeDispatchDiagnosticPolicy:
 
 class NativeRunMetadataBuilder:
     def __init__(self) -> None: ...
+    def build_execution_run_artifacts(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        output_format: str,
+        output_run_directories: typing.Sequence[str],
+        chunks_directories: typing.Sequence[str],
+        effective_configs: typing.Sequence[str],
+        phenotype_names: typing.Sequence[str],
+        final_output_paths: typing.Sequence[str | None],
+    ) -> NativeRunArtifacts: ...
     def build_execution_run_artifacts_payload(
         self,
         association_mode: str,

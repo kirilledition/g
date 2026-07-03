@@ -738,11 +738,25 @@ PYTHON_CALL_POLICIES = (
         message="production Python must route native run-metadata helpers through the runner metadata adapter",
     ),
     PythonCallPolicy(
+        name="runner_output_fingerprint_payload_isolation",
+        source_directory=Path("runner/outputs.py"),
+        forbidden_calls=("build_file_fingerprint_payload", "build_prediction_loco_file_fingerprints_payload"),
+        allowed_paths=(),
+        message="runner output fingerprinting must consume typed native fingerprint handles",
+    ),
+    PythonCallPolicy(
         name="native_run_start_metadata_side_effect_isolation",
         source_directory=Path("runner"),
         forbidden_calls=("write_toml",),
         allowed_paths=(),
         message="runner metadata must write effective TOML through the native run-metadata builder",
+    ),
+    PythonCallPolicy(
+        name="runner_metadata_payload_isolation",
+        source_directory=Path("runner"),
+        forbidden_calls=("build_execution_run_artifacts_payload",),
+        allowed_paths=(),
+        message="runner metadata must consume typed native artifact handles instead of payload dictionaries",
     ),
     PythonCallPolicy(
         name="runner_shutdown_payload_isolation",

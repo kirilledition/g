@@ -109,8 +109,8 @@ def finalize_execution_plan(
     """Build user-facing artifacts after native execution."""
     del regenie_config
     native_metadata_builder = _core.NativeRunMetadataBuilder()
-    artifacts = events.run_artifacts_from_native_payload(
-        native_metadata_builder.build_execution_run_artifacts_payload(
+    artifacts = events.run_artifacts_from_native_artifacts(
+        native_metadata_builder.build_execution_run_artifacts(
             plan.association_mode.value,
             len(phenotype_run_plans),
             plan.output_plan.writer_settings.output_format.value,

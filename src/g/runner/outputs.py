@@ -106,8 +106,8 @@ class ManifestFileFingerprintCache:
         """Build or reuse a fingerprint for the observed input file state."""
         if path is None:
             return None
-        return manifest_file_fingerprint_from_native_payload(
-            self.native_cache.build_file_fingerprint_payload(str(path), include_content_hash)
+        return manifest_file_fingerprint_from_native_fingerprint(
+            self.native_cache.build_file_fingerprint(str(path), include_content_hash)
         )
 
 
@@ -158,6 +158,19 @@ def manifest_file_fingerprint_from_native_payload(payload: object) -> ManifestFi
     )
 
 
+def manifest_file_fingerprint_from_native_fingerprint(
+    native_fingerprint: _core.NativeManifestFileFingerprint,
+) -> ManifestFileFingerprint:
+    """Adapt native file-fingerprint metadata to the public Python dataclass."""
+    return ManifestFileFingerprint(
+        path=native_fingerprint.path,
+        size=native_fingerprint.size,
+        mtime_ns=native_fingerprint.mtime_ns,
+        content_hash_algorithm=native_fingerprint.content_hash_algorithm,
+        content_sha256=native_fingerprint.content_sha256,
+    )
+
+
 def native_mapping_payload(payload: object) -> dict[str, object]:
     """Adapt a native mapping payload to a mutable Python dictionary."""
     return dict(typing.cast("typing.Mapping[str, object]", payload))
@@ -192,14 +205,13 @@ def build_prediction_loco_file_fingerprints(
 ) -> tuple[PredictionLocoFileFingerprint, ...]:
     """Build content fingerprints for LOCO files selected from a prediction list."""
     resolved_fingerprint_cache = fingerprint_cache if fingerprint_cache is not None else ManifestFileFingerprintCache()
-    loco_file_payloads = resolved_fingerprint_cache.native_cache.build_prediction_loco_file_fingerprints_payload(
+    loco_file_fingerprints = resolved_fingerprint_cache.native_cache.build_prediction_loco_file_fingerprints(
         str(prediction_list_path),
         list(phenotype_names),
     )
-    if not isinstance(loco_file_payloads, tuple):
-        message = "Native LOCO fingerprint payload must contain a JSON array."
-        raise ValueError(message)
-    return tuple(prediction_loco_file_fingerprint_from_native_payload(payload) for payload in loco_file_payloads)
+    return tuple(
+        prediction_loco_file_fingerprint_from_native_fingerprint(fingerprint) for fingerprint in loco_file_fingerprints
+    )
 
 
 def prediction_loco_file_fingerprint_from_native_payload(payload: object) -> PredictionLocoFileFingerprint:
@@ -215,6 +227,24 @@ def prediction_loco_file_fingerprint_from_native_payload(payload: object) -> Pre
         size=typing.cast("int", loco_file_payload["size"]),
         mtime_ns=typing.cast("int", loco_file_payload["mtime_ns"]),
         content_hash_algorithm=typing.cast("str", loco_file_payload["content_hash_algorithm"]),
+        content_sha256=content_sha256,
+    )
+
+
+def prediction_loco_file_fingerprint_from_native_fingerprint(
+    native_fingerprint: _core.NativePredictionLocoFileFingerprint,
+) -> PredictionLocoFileFingerprint:
+    """Adapt native LOCO file-fingerprint metadata."""
+    content_sha256 = native_fingerprint.content_sha256
+    if content_sha256 is None:
+        message = "LOCO prediction file fingerprint must include a content hash."
+        raise ValueError(message)
+    return PredictionLocoFileFingerprint(
+        phenotype=native_fingerprint.phenotype,
+        path=native_fingerprint.path,
+        size=native_fingerprint.size,
+        mtime_ns=native_fingerprint.mtime_ns,
+        content_hash_algorithm=native_fingerprint.content_hash_algorithm,
         content_sha256=content_sha256,
     )
 

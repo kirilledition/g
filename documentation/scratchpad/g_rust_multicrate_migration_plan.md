@@ -2850,6 +2850,14 @@ Current guardrail notes:
   interrupted, failed, and metadata-attached artifact handles instead of dict
   payloads. Legacy event payload methods remain for compatibility tests, while
   runner modules are guarded from calling them.
+- Runner execution-finalization metadata now consumes typed native run-artifact
+  handles from the run-metadata builder instead of dict payloads. The legacy
+  execution-artifacts payload method remains for compatibility tests, while
+  runner modules are guarded from calling it.
+- Runner output fingerprinting now consumes typed native manifest and
+  prediction-LOCO fingerprint handles instead of dict payloads. Legacy
+  fingerprint payload methods remain for compatibility tests, while the output
+  adapter is guarded from calling them.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture
@@ -3207,6 +3215,11 @@ The runner-telemetry-path rule rejects telemetry path payload methods under
 `g.runner`, keeping event helpers on typed native path handles.
 The runner-lifecycle-event rule rejects run-event lifecycle payload methods
 under `g.runner`, keeping event construction on typed native event handles.
+The runner-metadata rule rejects execution-artifact payload methods under
+`g.runner`, keeping metadata finalization on typed native artifact handles.
+The runner-output-fingerprint rule rejects manifest and prediction-LOCO
+fingerprint payload methods in `g.runner.outputs`, keeping fingerprint
+adaptation on typed native handles.
 
 ---
 
