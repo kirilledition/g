@@ -442,6 +442,29 @@ impl NativeBinaryCorrectionSummaryTelemetryPolicy {
         native_telemetry_session.call_method1("emit_binary_correction_summary_event", (summary_payload,))?;
         Ok(())
     }
+
+    #[allow(clippy::unused_self)]
+    fn emit_binary_correction_summary_telemetry_from_summary(
+        &self,
+        telemetry_session: &Bound<'_, PyAny>,
+        summary: Option<&NativeBinaryCorrectionSummary>,
+        missing_session_message: &str,
+    ) -> PyResult<()> {
+        let Some(summary) = summary else {
+            return Ok(());
+        };
+        if telemetry_session.is_none() {
+            return Err(PyRuntimeError::new_err(missing_session_message.to_owned()));
+        }
+        let Some(native_telemetry_session) =
+            optional_native_telemetry_session(telemetry_session.py(), telemetry_session)?
+        else {
+            return Ok(());
+        };
+        let summary_payload = summary.summary_payload_value(telemetry_session.py())?;
+        native_telemetry_session.call_method1("emit_binary_correction_summary_event", (summary_payload,))?;
+        Ok(())
+    }
 }
 
 fn optional_native_telemetry_session<'py>(

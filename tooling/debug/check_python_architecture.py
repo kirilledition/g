@@ -988,6 +988,13 @@ PYTHON_CALL_POLICIES = (
         message="production Python must not use compatibility telemetry wrapper methods for event dispatch",
     ),
     PythonCallPolicy(
+        name="callback_summary_payload_isolation",
+        source_directory=Path("engine/callbacks/runtime.py"),
+        forbidden_calls=("binary_correction_summary_payload", "emit_binary_correction_summary_telemetry"),
+        allowed_paths=(),
+        message="production callback runtime must emit binary correction summaries through typed native handles",
+    ),
+    PythonCallPolicy(
         name="native_jax_cache_resolution_isolation",
         source_directory=Path(),
         forbidden_calls=("resolve_jax_runtime_cache_directory",),
@@ -1280,6 +1287,46 @@ PYTHON_DEFINITION_POLICIES = (
         message="production runner runtime must use native process-runtime handles directly",
     ),
     PythonDefinitionPolicy(
+        name="runner_runtime_payload_adapter_definition_isolation",
+        source_directory=Path("runner/runtime.py"),
+        forbidden_function_names=(
+            "logging_runtime_policy_from_native_payload",
+            "logging_runtime_policy_to_native_payload",
+            "jax_runtime_policy_from_native_payload",
+            "optional_path_from_native_payload",
+            "native_mapping_payload",
+            "native_int_payload",
+        ),
+        allowed_paths=(),
+        message="production runner runtime must consume typed native policy handles",
+    ),
+    PythonDefinitionPolicy(
+        name="runner_lifecycle_payload_adapter_definition_isolation",
+        source_directory=Path("runner/lifecycle.py"),
+        forbidden_function_names=(
+            "shutdown_signal_from_native_payload",
+            "native_int_payload",
+            "native_mapping_payload",
+        ),
+        allowed_paths=(),
+        message="production runner lifecycle must consume typed native shutdown handles",
+    ),
+    PythonDefinitionPolicy(
+        name="runner_event_payload_adapter_definition_isolation",
+        source_directory=Path("runner/events.py"),
+        forbidden_function_names=(
+            "telemetry_paths_from_native_payload",
+            "run_artifacts_from_native_payload",
+            "run_completed_event_from_native_payload",
+            "run_artifact_payload_from_native_payload",
+            "run_interrupted_event_from_native_payload",
+            "run_failed_event_from_native_payload",
+            "native_mapping_payload",
+        ),
+        allowed_paths=(),
+        message="production runner events must consume typed native event handles",
+    ),
+    PythonDefinitionPolicy(
         name="output_strict_resume_helper_definition_isolation",
         source_directory=Path("runner/outputs.py"),
         forbidden_function_names=(
@@ -1291,6 +1338,17 @@ PYTHON_DEFINITION_POLICIES = (
         ),
         allowed_paths=(),
         message="production output strict-resume checks must stay in the native lifecycle policy",
+    ),
+    PythonDefinitionPolicy(
+        name="output_payload_adapter_definition_isolation",
+        source_directory=Path("runner/outputs.py"),
+        forbidden_function_names=(
+            "manifest_file_fingerprint_from_native_payload",
+            "prediction_loco_file_fingerprint_from_native_payload",
+            "native_mapping_payload",
+        ),
+        allowed_paths=(),
+        message="production output fingerprint adapters must consume typed native handles",
     ),
     PythonDefinitionPolicy(
         name="output_manifest_io_helper_definition_isolation",
@@ -1349,6 +1407,28 @@ PYTHON_DEFINITION_POLICIES = (
         ),
         allowed_paths=(),
         message="JAX GPU validation helper state must stay in native setup sessions",
+    ),
+    PythonDefinitionPolicy(
+        name="jax_runtime_policy_payload_adapter_definition_isolation",
+        source_directory=Path("jax_runtime/resolution.py"),
+        forbidden_function_names=(
+            "jax_runtime_policy_to_native_payload",
+            "build_native_jax_runtime_policy_payload",
+            "jax_runtime_setup_report_from_native_payload",
+        ),
+        allowed_paths=(),
+        message="JAX runtime resolution must consume typed native policy and setup handles",
+    ),
+    PythonDefinitionPolicy(
+        name="jax_runtime_diagnostic_payload_adapter_definition_isolation",
+        source_directory=Path("jax_runtime/diagnostics.py"),
+        forbidden_function_names=(
+            "diagnostic_event_from_native_payload",
+            "diagnostic_field_from_native_payload",
+            "native_mapping_payload",
+        ),
+        allowed_paths=(),
+        message="JAX runtime diagnostics must consume typed native diagnostic handles",
     ),
 )
 

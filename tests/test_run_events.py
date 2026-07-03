@@ -231,7 +231,7 @@ def test_run_start_metadata_uses_native_effective_config_and_manifest_writer(tmp
 
 def test_execution_run_artifacts_single_phenotype_has_no_wrapper() -> None:
     native_metadata_builder = _core.NativeRunMetadataBuilder()
-    native_payload = native_metadata_builder.build_execution_run_artifacts_payload(
+    native_artifacts = native_metadata_builder.build_execution_run_artifacts(
         types.AssociationMode.REGENIE2_LINEAR.value,
         1,
         "regenie",
@@ -241,12 +241,12 @@ def test_execution_run_artifacts_single_phenotype_has_no_wrapper() -> None:
         ("height",),
         ("out/height.regenie",),
     )
-    artifacts = run_events.run_artifacts_from_native_payload(native_payload)
+    artifacts = run_events.run_artifacts_from_native_artifacts(native_artifacts)
 
-    assert native_payload["output_run_directory"] == "out/height/run"
-    assert native_payload["phenotype_artifacts"] == ()
-    assert native_payload["final_dataset"] is None
-    assert native_payload["final_regenie"] == "out/height.regenie"
+    assert native_artifacts.output_run_directory == "out/height/run"
+    assert tuple(native_artifacts.phenotype_artifacts) == ()
+    assert native_artifacts.final_dataset is None
+    assert native_artifacts.final_regenie == "out/height.regenie"
     assert artifacts.phenotype_artifacts == ()
     assert artifacts.final_regenie == Path("out/height.regenie")
 

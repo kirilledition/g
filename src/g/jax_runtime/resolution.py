@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import typing
 from pathlib import Path
 
 from g import _core, types
@@ -85,28 +84,6 @@ def jax_runtime_policy_to_native_policy(policy: models.JaxRuntimePolicy) -> _cor
     )
 
 
-def jax_runtime_policy_to_native_payload(policy: models.JaxRuntimePolicy) -> dict[str, object]:
-    """Adapt a JAX runtime policy into the native process-runtime payload.
-
-    Args:
-        policy: Requested runtime policy.
-
-    Returns:
-        Native runtime policy payload.
-
-    """
-    return build_native_jax_runtime_policy_payload(
-        device=policy.device.value,
-        cache_directory=None if policy.cache_directory is None else str(policy.cache_directory),
-        matmul_precision=None if policy.matmul_precision is None else policy.matmul_precision.value,
-        persistent_cache=policy.persistent_cache,
-        persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
-        xla_autotune_cache=policy.xla_autotune_cache,
-        transfer_guard=policy.transfer_guard,
-    )
-
-
 def build_native_jax_runtime_policy(
     *,
     device: str,
@@ -146,45 +123,6 @@ def build_native_jax_runtime_policy(
     )
 
 
-def build_native_jax_runtime_policy_payload(
-    *,
-    device: str,
-    cache_directory: str | None,
-    matmul_precision: str | None,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: int,
-    persistent_cache_min_compile_time_seconds: int,
-    xla_autotune_cache: bool,
-    transfer_guard: bool,
-) -> dict[str, object]:
-    """Build a native JAX runtime policy payload through runtime state.
-
-    Args:
-        device: Requested JAX device policy.
-        cache_directory: Optional requested persistent cache directory.
-        matmul_precision: Optional requested JAX matmul precision.
-        persistent_cache: Whether persistent compilation cache is enabled.
-        persistent_cache_min_entry_size_bytes: Minimum persistent-cache entry size.
-        persistent_cache_min_compile_time_seconds: Minimum compile time for persistent cache entries.
-        xla_autotune_cache: Whether XLA autotune cache policy is enabled.
-        transfer_guard: Whether JAX transfer guard policy is enabled.
-
-    Returns:
-        Native runtime policy payload.
-
-    """
-    return _core.NativeRuntimeState().build_jax_runtime_policy_payload(
-        device=device,
-        cache_directory=cache_directory,
-        matmul_precision=matmul_precision,
-        persistent_cache=persistent_cache,
-        persistent_cache_min_entry_size_bytes=persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds=persistent_cache_min_compile_time_seconds,
-        xla_autotune_cache=xla_autotune_cache,
-        transfer_guard=transfer_guard,
-    )
-
-
 def jax_runtime_policy_from_native_policy(native_policy: _core.NativeJaxRuntimePolicy) -> models.JaxRuntimePolicy:
     """Adapt a typed native JAX runtime policy to the Python dataclass.
 
@@ -206,41 +144,6 @@ def jax_runtime_policy_from_native_policy(native_policy: _core.NativeJaxRuntimeP
         persistent_cache_min_compile_time_seconds=native_policy.persistent_cache_min_compile_time_seconds,
         xla_autotune_cache=native_policy.xla_autotune_cache,
         transfer_guard=native_policy.transfer_guard,
-    )
-
-
-def jax_runtime_setup_report_from_native_payload(payload: object) -> models.JaxRuntimeSetupReport:
-    """Adapt a native JAX runtime setup payload.
-
-    Args:
-        payload: Native setup payload mapping.
-
-    Returns:
-        JAX runtime setup report.
-
-    """
-    setup_payload = dict(typing.cast("typing.Mapping[str, object]", payload))
-    return models.JaxRuntimeSetupReport(
-        requested_device=types.Device(typing.cast("str", setup_payload["requested_device"])),
-        platform_name=typing.cast("str", setup_payload["platform_name"]),
-        cache_directory=Path(typing.cast("str", setup_payload["cache_directory"])),
-        matmul_precision=types.JaxMatmulPrecision(typing.cast("str", setup_payload["matmul_precision"])),
-        persistent_cache_enabled=typing.cast("bool", setup_payload["persistent_cache_enabled"]),
-        persistent_cache_min_entry_size_bytes=typing.cast(
-            "int",
-            setup_payload["persistent_cache_min_entry_size_bytes"],
-        ),
-        persistent_cache_min_compile_time_seconds=typing.cast(
-            "int",
-            setup_payload["persistent_cache_min_compile_time_seconds"],
-        ),
-        xla_auxiliary_cache_mode=models.XlaAuxiliaryCacheMode(
-            typing.cast("str", setup_payload["xla_auxiliary_cache_mode"])
-        ),
-        xla_auxiliary_cache_reason=typing.cast("str", setup_payload["xla_auxiliary_cache_reason"]),
-        transfer_guard_enabled=typing.cast("bool", setup_payload["transfer_guard_enabled"]),
-        gpu_validation_status=models.GpuValidationStatus(typing.cast("str", setup_payload["gpu_validation_status"])),
-        gpu_validation_message=typing.cast("str | None", setup_payload["gpu_validation_message"]),
     )
 
 

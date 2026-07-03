@@ -126,6 +126,7 @@ pub(crate) struct NativeCallbackWorkerFinishLifecycleResult {
     shutdown_timeout_seconds: Option<f64>,
     progress_completion_event: Option<NativeCallbackProgressTelemetryEvent>,
     flush_binary_correction_pending_diagnostics: bool,
+    binary_correction_summary: Option<Py<NativeBinaryCorrectionSummary>>,
     binary_correction_summary_payload: Option<Py<PyDict>>,
 }
 
@@ -729,6 +730,7 @@ impl NativeCallbackRuntimeResources {
                 && !summary_emit_plan.should_flush_pending_diagnostics_value()
             {
                 let summary_payload = self.binary_correction_summary.bind(py).borrow().summary_payload_value(py)?;
+                finish_result.record_binary_correction_summary(self.binary_correction_summary.clone_ref(py));
                 finish_result.record_binary_correction_summary_payload(summary_payload.unbind());
             }
         }
@@ -2812,6 +2814,11 @@ impl NativeCallbackWorkerFinishLifecycleResult {
     fn binary_correction_summary_payload(&self, py: Python<'_>) -> Option<Py<PyDict>> {
         self.binary_correction_summary_payload.as_ref().map(|summary_payload| summary_payload.clone_ref(py))
     }
+
+    #[getter]
+    fn binary_correction_summary(&self, py: Python<'_>) -> Option<Py<NativeBinaryCorrectionSummary>> {
+        self.binary_correction_summary.as_ref().map(|summary| summary.clone_ref(py))
+    }
 }
 
 impl NativeCallbackWorkerFinishLifecycleResult {
@@ -2822,6 +2829,7 @@ impl NativeCallbackWorkerFinishLifecycleResult {
             shutdown_timeout_seconds: None,
             progress_completion_event: None,
             flush_binary_correction_pending_diagnostics: false,
+            binary_correction_summary: None,
             binary_correction_summary_payload: None,
         }
     }
@@ -2833,6 +2841,10 @@ impl NativeCallbackWorkerFinishLifecycleResult {
 
     fn record_progress_completion(&mut self, progress_completion: Option<NativeCallbackProgressCompletion>) {
         self.progress_completion_event = progress_completion.map(|completion| completion.telemetry_event_value());
+    }
+
+    fn record_binary_correction_summary(&mut self, summary: Py<NativeBinaryCorrectionSummary>) {
+        self.binary_correction_summary = Some(summary);
     }
 
     fn record_binary_correction_summary_payload(&mut self, summary_payload: Py<PyDict>) {

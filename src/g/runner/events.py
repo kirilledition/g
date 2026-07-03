@@ -277,17 +277,6 @@ def telemetry_paths_from_native_paths(native_paths: _core.NativeTelemetryPaths) 
     )
 
 
-def telemetry_paths_from_native_payload(payload: object) -> TelemetryPaths:
-    """Adapt a native telemetry path payload to the public Python dataclass."""
-    telemetry_paths_payload = native_mapping_payload(payload)
-    return TelemetryPaths(
-        log_dir=optional_path_from_native_payload(telemetry_paths_payload["log_dir"]),
-        stream_file=optional_path_from_native_payload(telemetry_paths_payload["stream_file"]),
-        profile_summary_json=optional_path_from_native_payload(telemetry_paths_payload["profile_summary_json"]),
-        stage_timings_json=optional_path_from_native_payload(telemetry_paths_payload["stage_timings_json"]),
-    )
-
-
 def native_run_event_telemetry_policy() -> _core.NativeRunEventTelemetryPolicy:
     """Build the native run-event telemetry policy handle."""
     return _core.NativeRunEventTelemetryPolicy()
@@ -383,30 +372,6 @@ def run_artifacts_from_native_artifacts(native_artifacts: _core.NativeRunArtifac
     )
 
 
-def run_artifacts_from_native_payload(payload: object) -> RunArtifacts:
-    """Adapt a native artifact tree payload to the public Python dataclass."""
-    artifacts_payload = native_mapping_payload(payload)
-    association_mode_payload = typing.cast("str | None", artifacts_payload["association_mode"])
-    return RunArtifacts(
-        output_run_directory=optional_path_from_native_payload(artifacts_payload["output_run_directory"]),
-        final_dataset=optional_path_from_native_payload(artifacts_payload["final_dataset"]),
-        final_parquet=optional_path_from_native_payload(artifacts_payload["final_parquet"]),
-        final_regenie=optional_path_from_native_payload(artifacts_payload["final_regenie"]),
-        effective_config=optional_path_from_native_payload(artifacts_payload["effective_config"]),
-        phenotype_artifacts=tuple(
-            run_artifacts_from_native_payload(phenotype_artifact_payload)
-            for phenotype_artifact_payload in typing.cast(
-                "typing.Sequence[object]",
-                artifacts_payload["phenotype_artifacts"],
-            )
-        ),
-        phenotype_name=typing.cast("str | None", artifacts_payload["phenotype_name"]),
-        association_mode=None if association_mode_payload is None else types.AssociationMode(association_mode_payload),
-        phenotype_count=typing.cast("int | None", artifacts_payload["phenotype_count"]),
-        run_id=typing.cast("str | None", artifacts_payload["run_id"]),
-    )
-
-
 def run_completed_event_from_native_event(native_event: _core.NativeRunCompletedEvent) -> RunCompletedEvent:
     """Adapt native completed-run event metadata to the public Python dataclass."""
     association_mode_payload = native_event.association_mode
@@ -416,21 +381,6 @@ def run_completed_event_from_native_event(native_event: _core.NativeRunCompleted
         phenotype_count=native_event.phenotype_count,
         artifacts=tuple(
             run_artifact_payload_from_native_artifact(native_artifact) for native_artifact in native_event.artifacts
-        ),
-    )
-
-
-def run_completed_event_from_native_payload(payload: object) -> RunCompletedEvent:
-    """Adapt a native completed-run event payload to the public Python dataclass."""
-    event_payload = native_mapping_payload(payload)
-    association_mode_payload = typing.cast("str | None", event_payload["association_mode"])
-    return RunCompletedEvent(
-        run_id=typing.cast("str | None", event_payload["run_id"]),
-        association_mode=None if association_mode_payload is None else types.AssociationMode(association_mode_payload),
-        phenotype_count=typing.cast("int | None", event_payload["phenotype_count"]),
-        artifacts=tuple(
-            run_artifact_payload_from_native_payload(artifact_payload)
-            for artifact_payload in typing.cast("typing.Sequence[object]", event_payload["artifacts"])
         ),
     )
 
@@ -447,19 +397,6 @@ def run_artifact_payload_from_native_artifact(native_artifact: _core.NativeRunAr
     )
 
 
-def run_artifact_payload_from_native_payload(payload: object) -> RunArtifactPayload:
-    """Adapt one native completed-run artifact payload."""
-    artifact_payload = native_mapping_payload(payload)
-    return RunArtifactPayload(
-        phenotype_name=typing.cast("str | None", artifact_payload["phenotype_name"]),
-        output_run_directory=optional_path_from_native_payload(artifact_payload["output_run_directory"]),
-        final_dataset=optional_path_from_native_payload(artifact_payload["final_dataset"]),
-        final_parquet=optional_path_from_native_payload(artifact_payload["final_parquet"]),
-        final_regenie=optional_path_from_native_payload(artifact_payload["final_regenie"]),
-        effective_config=optional_path_from_native_payload(artifact_payload["effective_config"]),
-    )
-
-
 def run_interrupted_event_from_native_event(native_event: _core.NativeRunInterruptedEvent) -> RunInterruptedEvent:
     """Adapt native interrupted-run event metadata to the public Python dataclass."""
     return RunInterruptedEvent(
@@ -467,17 +404,6 @@ def run_interrupted_event_from_native_event(native_event: _core.NativeRunInterru
         signal_name=native_event.signal_name,
         exit_code=native_event.exit_code,
         flushed_for_resume=native_event.flushed_for_resume,
-    )
-
-
-def run_interrupted_event_from_native_payload(payload: object) -> RunInterruptedEvent:
-    """Adapt a native interrupted-run event payload."""
-    event_payload = native_mapping_payload(payload)
-    return RunInterruptedEvent(
-        signal_number=typing.cast("int", event_payload["signal_number"]),
-        signal_name=typing.cast("str", event_payload["signal_name"]),
-        exit_code=typing.cast("int", event_payload["exit_code"]),
-        flushed_for_resume=typing.cast("bool", event_payload["flushed_for_resume"]),
     )
 
 
@@ -489,22 +415,8 @@ def run_failed_event_from_native_event(native_event: _core.NativeRunFailedEvent)
     )
 
 
-def run_failed_event_from_native_payload(payload: object) -> RunFailedEvent:
-    """Adapt a native failed-run event payload."""
-    event_payload = native_mapping_payload(payload)
-    return RunFailedEvent(
-        error_type=typing.cast("str", event_payload["error_type"]),
-        error_message=typing.cast("str", event_payload["error_message"]),
-    )
-
-
 def optional_path_from_native_payload(path_payload: object) -> Path | None:
     """Adapt an optional native path string."""
     if path_payload is None:
         return None
     return Path(typing.cast("str", path_payload))
-
-
-def native_mapping_payload(payload: object) -> dict[str, object]:
-    """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, object]", payload))

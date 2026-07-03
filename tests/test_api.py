@@ -1054,9 +1054,9 @@ def test_runtime_bootstrap_delegates_policy_to_jax_runtime_setup_once() -> None:
             del diagnostic_sink
             assert isinstance(native_setup_session, _core.NativeJaxRuntimeSetupSession)
             assert native_setup_session.should_configure is True
-            native_setup_session.complete_validation_payload("succeeded", None)
-            setup_report = jax_runtime_resolution.jax_runtime_setup_report_from_native_payload(
-                native_setup_session.setup_payload()
+            native_setup_session.complete_validation("succeeded", None)
+            setup_report = jax_runtime_resolution.jax_runtime_setup_report_from_native_report(
+                native_setup_session.setup()
             )
             call_order.append(f"setup:{setup_report.requested_device.value}")
             return setup_report
@@ -1111,8 +1111,8 @@ def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
             diagnostic_sink: typing.Callable[[jax_runtime_models.JaxRuntimeDiagnosticEvent], None],
         ) -> jax_runtime_models.JaxRuntimeSetupReport:
             assert isinstance(native_setup_session, _core.NativeJaxRuntimeSetupSession)
-            setup_report = jax_runtime_resolution.jax_runtime_setup_report_from_native_payload(
-                native_setup_session.setup_payload()
+            setup_report = jax_runtime_resolution.jax_runtime_setup_report_from_native_report(
+                native_setup_session.setup()
             )
             for diagnostic_event in jax_runtime_diagnostics.diagnostic_events_from_native_setup_session(
                 native_setup_session
@@ -1250,8 +1250,8 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
         ) -> jax_runtime_models.JaxRuntimeSetupReport:
             del diagnostic_sink
             assert isinstance(native_setup_session, _core.NativeJaxRuntimeSetupSession)
-            setup_report = jax_runtime_resolution.jax_runtime_setup_report_from_native_payload(
-                native_setup_session.setup_payload()
+            setup_report = jax_runtime_resolution.jax_runtime_setup_report_from_native_report(
+                native_setup_session.setup()
             )
             call_order.append(f"setup:{setup_report.cache_directory}")
             return setup_report

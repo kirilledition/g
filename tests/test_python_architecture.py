@@ -3134,6 +3134,48 @@ def test_telemetry_dispatch_policy_rejects_direct_handle_and_wrapper_calls(tmp_p
     ]
 
 
+def test_callback_summary_policy_rejects_payload_boundary_calls(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "runtime.py").write_text(
+        "\n".join(
+            (
+                "def emit(runtime_resources, telemetry_policy, telemetry_session):",
+                "    summary_payload = runtime_resources.binary_correction_summary_payload()",
+                "    telemetry_policy.emit_binary_correction_summary_telemetry(",
+                "        telemetry_session,",
+                "        summary_payload,",
+                "        'missing session',",
+                "    )",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/callbacks/runtime.py"),
+            2,
+            "callback_summary_payload_isolation",
+            "runtime_resources.binary_correction_summary_payload",
+            "binary_correction_summary_payload",
+        ),
+        (
+            Path("g/engine/callbacks/runtime.py"),
+            3,
+            "callback_summary_payload_isolation",
+            "telemetry_policy.emit_binary_correction_summary_telemetry",
+            "emit_binary_correction_summary_telemetry",
+        ),
+    ]
+
+
 def test_jax_cache_resolution_policy_rejects_production_python_resolver_calls(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"
@@ -3837,6 +3879,12 @@ def test_definition_policy_rejects_removed_orchestration_helpers(tmp_path: Path)
                 "    pass",
                 "def normalize_execution_plan_value():",
                 "    pass",
+                "def manifest_file_fingerprint_from_native_payload():",
+                "    pass",
+                "def prediction_loco_file_fingerprint_from_native_payload():",
+                "    pass",
+                "def native_mapping_payload():",
+                "    pass",
             )
         ),
         encoding="utf-8",
@@ -3847,6 +3895,52 @@ def test_definition_policy_rejects_removed_orchestration_helpers(tmp_path: Path)
                 "def build_process_runtime_state():",
                 "    pass",
                 "def describe_logging_runtime_policy():",
+                "    pass",
+                "def logging_runtime_policy_from_native_payload():",
+                "    pass",
+                "def logging_runtime_policy_to_native_payload():",
+                "    pass",
+                "def jax_runtime_policy_from_native_payload():",
+                "    pass",
+                "def optional_path_from_native_payload():",
+                "    pass",
+                "def native_mapping_payload():",
+                "    pass",
+                "def native_int_payload():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (runner_directory / "lifecycle.py").write_text(
+        "\n".join(
+            (
+                "def shutdown_signal_from_native_payload():",
+                "    pass",
+                "def native_int_payload():",
+                "    pass",
+                "def native_mapping_payload():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (runner_directory / "events.py").write_text(
+        "\n".join(
+            (
+                "def telemetry_paths_from_native_payload():",
+                "    pass",
+                "def run_artifacts_from_native_payload():",
+                "    pass",
+                "def run_completed_event_from_native_payload():",
+                "    pass",
+                "def run_artifact_payload_from_native_payload():",
+                "    pass",
+                "def run_interrupted_event_from_native_payload():",
+                "    pass",
+                "def run_failed_event_from_native_payload():",
+                "    pass",
+                "def native_mapping_payload():",
                 "    pass",
             )
         ),
@@ -3936,6 +4030,32 @@ def test_definition_policy_rejects_removed_orchestration_helpers(tmp_path: Path)
         ),
         encoding="utf-8",
     )
+    (jax_runtime_directory / "resolution.py").write_text(
+        "\n".join(
+            (
+                "def jax_runtime_policy_to_native_payload():",
+                "    pass",
+                "def build_native_jax_runtime_policy_payload():",
+                "    pass",
+                "def jax_runtime_setup_report_from_native_payload():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (jax_runtime_directory / "diagnostics.py").write_text(
+        "\n".join(
+            (
+                "def diagnostic_event_from_native_payload():",
+                "    pass",
+                "def diagnostic_field_from_native_payload():",
+                "    pass",
+                "def native_mapping_payload():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
 
     violations = check_python_architecture.collect_python_definition_policy_violations(package_root)
 
@@ -3960,10 +4080,26 @@ def test_definition_policy_rejects_removed_orchestration_helpers(tmp_path: Path)
         (Path("g/interface/config.py"), 15, "flatten_mapping_section"),
         (Path("g/interface/config.py"), 17, "load_toml"),
         (Path("g/interface/config.py"), 19, "validate_config"),
+        (Path("g/jax_runtime/diagnostics.py"), 1, "diagnostic_event_from_native_payload"),
+        (Path("g/jax_runtime/diagnostics.py"), 3, "diagnostic_field_from_native_payload"),
+        (Path("g/jax_runtime/diagnostics.py"), 5, "native_mapping_payload"),
+        (Path("g/jax_runtime/resolution.py"), 1, "jax_runtime_policy_to_native_payload"),
+        (Path("g/jax_runtime/resolution.py"), 3, "build_native_jax_runtime_policy_payload"),
+        (Path("g/jax_runtime/resolution.py"), 5, "jax_runtime_setup_report_from_native_payload"),
         (Path("g/jax_runtime/setup.py"), 1, "default_nvidia_driver_probe_paths"),
         (Path("g/jax_runtime/setup.py"), 3, "nvidia_driver_is_visible"),
         (Path("g/jax_runtime/setup.py"), 5, "complete_jax_runtime_setup_validation_report"),
         (Path("g/jax_runtime/setup.py"), 7, "jax_gpu_validation_report_from_native_payload"),
+        (Path("g/runner/events.py"), 1, "telemetry_paths_from_native_payload"),
+        (Path("g/runner/events.py"), 3, "run_artifacts_from_native_payload"),
+        (Path("g/runner/events.py"), 5, "run_completed_event_from_native_payload"),
+        (Path("g/runner/events.py"), 7, "run_artifact_payload_from_native_payload"),
+        (Path("g/runner/events.py"), 9, "run_interrupted_event_from_native_payload"),
+        (Path("g/runner/events.py"), 11, "run_failed_event_from_native_payload"),
+        (Path("g/runner/events.py"), 13, "native_mapping_payload"),
+        (Path("g/runner/lifecycle.py"), 1, "shutdown_signal_from_native_payload"),
+        (Path("g/runner/lifecycle.py"), 3, "native_int_payload"),
+        (Path("g/runner/lifecycle.py"), 5, "native_mapping_payload"),
         (Path("g/runner/outputs.py"), 1, "build_execution_plan_hash"),
         (Path("g/runner/outputs.py"), 3, "validate_manifest_compatibility"),
         (Path("g/runner/outputs.py"), 5, "read_manifest_committed_chunk_identifiers"),
@@ -3974,8 +4110,17 @@ def test_definition_policy_rejects_removed_orchestration_helpers(tmp_path: Path)
         (Path("g/runner/outputs.py"), 15, "resolve_output_run_paths"),
         (Path("g/runner/outputs.py"), 17, "initialize_output_run"),
         (Path("g/runner/outputs.py"), 19, "normalize_execution_plan_value"),
+        (Path("g/runner/outputs.py"), 21, "manifest_file_fingerprint_from_native_payload"),
+        (Path("g/runner/outputs.py"), 23, "prediction_loco_file_fingerprint_from_native_payload"),
+        (Path("g/runner/outputs.py"), 25, "native_mapping_payload"),
         (Path("g/runner/runtime.py"), 1, "build_process_runtime_state"),
         (Path("g/runner/runtime.py"), 3, "describe_logging_runtime_policy"),
+        (Path("g/runner/runtime.py"), 5, "logging_runtime_policy_from_native_payload"),
+        (Path("g/runner/runtime.py"), 7, "logging_runtime_policy_to_native_payload"),
+        (Path("g/runner/runtime.py"), 9, "jax_runtime_policy_from_native_payload"),
+        (Path("g/runner/runtime.py"), 11, "optional_path_from_native_payload"),
+        (Path("g/runner/runtime.py"), 13, "native_mapping_payload"),
+        (Path("g/runner/runtime.py"), 15, "native_int_payload"),
         (Path("g/runner/timing.py"), 1, "serialize_chunk_stage_timings"),
         (Path("g/runner/timing.py"), 3, "serialize_binary_chunk_diagnostics"),
         (Path("g/runner/timing.py"), 5, "serialize_null_logistic_diagnostics"),

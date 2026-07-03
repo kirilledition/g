@@ -18,9 +18,9 @@ def test_shutdown_controller_uses_native_metadata_for_supported_linux_signals() 
 
         signal_number = int(signal_member)
         native_controller = _core.NativeShutdownController([signal_number])
-        signal_payload = native_controller.request_shutdown_signal_or_raise_second_signal_payload(signal_number)
+        native_signal = native_controller.request_shutdown_signal_or_raise_second_signal(signal_number)
 
-        assert shutdown.shutdown_signal_from_native_payload(signal_payload) == shutdown.ShutdownSignal(
+        assert shutdown.shutdown_signal_from_native_signal(native_signal) == shutdown.ShutdownSignal(
             number=signal_number,
             name=signal_name,
             exit_code=128 + signal_number,
@@ -67,13 +67,11 @@ def test_native_shutdown_controller_repeated_sigterm_raises_system_exit() -> Non
         unittest.mock.patch("signal.signal") as signal_mock,
     ):
         native_controller.install_python_signal_handlers(installed_handler)
-        first_signal_payload = dict(
-            native_controller.request_shutdown_signal_or_raise_second_signal_payload(int(signal.SIGTERM))
-        )
+        first_signal = native_controller.request_shutdown_signal_or_raise_second_signal(int(signal.SIGTERM))
         with pytest.raises(SystemExit) as system_exit:
-            native_controller.request_shutdown_signal_or_raise_second_signal_payload(int(signal.SIGTERM))
+            native_controller.request_shutdown_signal_or_raise_second_signal(int(signal.SIGTERM))
 
-    assert first_signal_payload["name"] == "SIGTERM"
+    assert first_signal.name == "SIGTERM"
     assert system_exit.value.code == 128 + int(signal.SIGTERM)
     assert native_controller.handlers_installed is False
     signal_mock.assert_any_call(signal.SIGTERM, installed_handler)

@@ -2856,8 +2856,9 @@ Current guardrail notes:
   runner modules are guarded from calling it.
 - Runner output fingerprinting now consumes typed native manifest and
   prediction-LOCO fingerprint handles instead of dict payloads. Legacy
-  fingerprint payload methods remain for compatibility tests, while the output
-  adapter is guarded from calling them.
+  native fingerprint payload methods remain for compatibility tests, while the
+  Python payload adapters were removed and the output adapter is guarded from
+  reintroducing them.
 - Runner stage-timing snapshots now consume typed native snapshot, chunk,
   queue-backpressure, and transfer-metadata handles instead of the legacy
   snapshot payload method. Binary/null diagnostic maps remain native-owned
@@ -2865,12 +2866,22 @@ Current guardrail notes:
   `snapshot_payload()`.
 - Runner process-runtime policy and state reads now consume typed native
   logging/JAX policy and runtime-state snapshot handles instead of legacy dict
-  payload getters. Legacy payload helpers remain for compatibility tests, while
-  `g.runner.runtime` is guarded from calling them.
+  payload getters. Legacy native payload methods remain for compatibility
+  tests, while the Python payload adapters were removed and `g.runner.runtime`
+  is guarded from reintroducing them.
 - JAX runtime setup and diagnostic adapters now consume typed native setup
   report, diagnostic-event, and diagnostic-field handles instead of setup and
-  event payload methods. Legacy payload helpers remain for compatibility tests,
-  while `g.jax_runtime` is guarded from calling them.
+  event payload methods. Legacy native payload methods remain for compatibility
+  tests, while the Python payload adapters were removed and `g.jax_runtime` is
+  guarded from reintroducing them.
+- Runner lifecycle and event tests now adapt typed native shutdown, telemetry,
+  run-artifact, and run-event handles directly; the old Python payload adapter
+  helpers were removed and definition guards reject their return.
+- Callback binary-correction summary telemetry now passes typed
+  `NativeBinaryCorrectionSummary` handles into the native telemetry policy
+  instead of fetching summary dictionaries in production Python. Legacy summary
+  payload getters remain for compatibility tests, while a production call guard
+  rejects their use in callback runtime.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture

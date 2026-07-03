@@ -360,40 +360,6 @@ def logging_runtime_policy_from_native_policy(native_policy: _core.NativeLogging
     )
 
 
-def logging_runtime_policy_from_native_payload(payload: object) -> LoggingRuntimePolicy:
-    """Adapt a native logging-runtime policy payload to the Python dataclass."""
-    policy_payload = native_mapping_payload(payload)
-    trace_event_cap_payload = policy_payload["trace_event_cap"]
-    return LoggingRuntimePolicy(
-        log_filter=str(policy_payload["log_filter"]),
-        log_file=optional_path_from_native_payload(policy_payload["log_file"]),
-        log_stderr=bool(policy_payload["log_stderr"]),
-        log_queue_size=native_int_payload(policy_payload["log_queue_size"]),
-        log_lossy=bool(policy_payload["log_lossy"]),
-        include_source_location=bool(policy_payload["include_source_location"]),
-        include_span_events=bool(policy_payload["include_span_events"]),
-        trace_file=optional_path_from_native_payload(policy_payload["trace_file"]),
-        trace_filter=str(policy_payload["trace_filter"]),
-        trace_event_cap=None if trace_event_cap_payload is None else native_int_payload(trace_event_cap_payload),
-    )
-
-
-def logging_runtime_policy_to_native_payload(policy: LoggingRuntimePolicy) -> dict[str, object]:
-    """Adapt a Python logging runtime policy view to the native payload shape."""
-    return {
-        "log_filter": policy.log_filter,
-        "log_file": None if policy.log_file is None else str(policy.log_file),
-        "log_stderr": policy.log_stderr,
-        "log_queue_size": policy.log_queue_size,
-        "log_lossy": policy.log_lossy,
-        "include_source_location": policy.include_source_location,
-        "include_span_events": policy.include_span_events,
-        "trace_file": None if policy.trace_file is None else str(policy.trace_file),
-        "trace_filter": policy.trace_filter,
-        "trace_event_cap": policy.trace_event_cap,
-    }
-
-
 def logging_runtime_policy_to_native_policy(policy: LoggingRuntimePolicy) -> _core.NativeLoggingRuntimePolicy:
     """Adapt a Python logging runtime policy view to a typed native handle."""
     return PROCESS_RUNTIME_STATE.build_logging_runtime_policy_from_values(
@@ -408,44 +374,6 @@ def logging_runtime_policy_to_native_policy(policy: LoggingRuntimePolicy) -> _co
         policy.trace_filter,
         policy.trace_event_cap,
     )
-
-
-def jax_runtime_policy_from_native_payload(payload: object) -> jax_runtime_models.JaxRuntimePolicy:
-    """Adapt a native JAX runtime policy payload to the Python dataclass."""
-    policy_payload = native_mapping_payload(payload)
-    return jax_runtime_models.JaxRuntimePolicy(
-        device=types.Device(str(policy_payload["device"])),
-        cache_directory=optional_path_from_native_payload(policy_payload["cache_directory"]),
-        matmul_precision=None
-        if policy_payload["matmul_precision"] is None
-        else types.JaxMatmulPrecision(str(policy_payload["matmul_precision"])),
-        persistent_cache=bool(policy_payload["persistent_cache"]),
-        persistent_cache_min_entry_size_bytes=native_int_payload(
-            policy_payload["persistent_cache_min_entry_size_bytes"]
-        ),
-        persistent_cache_min_compile_time_seconds=native_int_payload(
-            policy_payload["persistent_cache_min_compile_time_seconds"]
-        ),
-        xla_autotune_cache=bool(policy_payload["xla_autotune_cache"]),
-        transfer_guard=bool(policy_payload["transfer_guard"]),
-    )
-
-
-def optional_path_from_native_payload(path_payload: object) -> Path | None:
-    """Adapt a native optional path payload to `Path`."""
-    if path_payload is None:
-        return None
-    return Path(str(path_payload))
-
-
-def native_mapping_payload(payload: object) -> dict[str, object]:
-    """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, object]", payload))
-
-
-def native_int_payload(payload: object) -> int:
-    """Adapt a native integer-like payload to `int`."""
-    return int(typing.cast("int | str", payload))
 
 
 def build_runtime_policy(

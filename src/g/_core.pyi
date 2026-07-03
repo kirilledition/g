@@ -1137,6 +1137,12 @@ class NativeBinaryCorrectionSummaryTelemetryPolicy:
         summary_payload: dict[str, int] | None,
         missing_session_message: str,
     ) -> None: ...
+    def emit_binary_correction_summary_telemetry_from_summary(
+        self,
+        telemetry_session: object | None,
+        summary: NativeBinaryCorrectionSummary | None,
+        missing_session_message: str,
+    ) -> None: ...
 
 class NativeCallbackQueueLimits:
     @property
@@ -1299,6 +1305,8 @@ class NativeCallbackWorkerFinishLifecycleResult:
     def emit_binary_correction_summary(self) -> bool: ...
     @property
     def flush_binary_correction_pending_diagnostics(self) -> bool: ...
+    @property
+    def binary_correction_summary(self) -> NativeBinaryCorrectionSummary | None: ...
     @property
     def binary_correction_summary_payload(self) -> dict[str, int] | None: ...
 

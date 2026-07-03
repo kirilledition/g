@@ -2774,21 +2774,25 @@ def test_emit_binary_correction_summary_telemetry_uses_native_missing_session_po
     summary.add_null_model_failure_count(3)
     summary_payload = summary.summary_payload()
 
-    telemetry_policy.emit_binary_correction_summary_telemetry(
-        telemetry_session, summary_payload, "missing summary session"
+    telemetry_policy.emit_binary_correction_summary_telemetry_from_summary(
+        telemetry_session, summary, "missing summary session"
     )
-    telemetry_policy.emit_binary_correction_summary_telemetry(None, None, "missing summary session")
-    telemetry_policy.emit_binary_correction_summary_telemetry(
-        DisabledTelemetrySession(), summary_payload, "missing summary session"
+    telemetry_policy.emit_binary_correction_summary_telemetry_from_summary(None, None, "missing summary session")
+    telemetry_policy.emit_binary_correction_summary_telemetry_from_summary(
+        DisabledTelemetrySession(), summary, "missing summary session"
     )
 
     assert telemetry_session.binary_summaries == [summary_payload]
     with pytest.raises(RuntimeError, match="missing summary session"):
-        telemetry_policy.emit_binary_correction_summary_telemetry(None, summary_payload, "missing summary session")
+        telemetry_policy.emit_binary_correction_summary_telemetry_from_summary(
+            None,
+            summary,
+            "missing summary session",
+        )
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        telemetry_policy.emit_binary_correction_summary_telemetry(
+        telemetry_policy.emit_binary_correction_summary_telemetry_from_summary(
             LegacyTelemetrySession(),
-            summary_payload,
+            summary,
             "missing summary session",
         )
 

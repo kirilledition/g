@@ -1193,10 +1193,9 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.flush_binary_correction_diagnostics()
         if not summary_emit_plan.should_emit_summary:
             return
-        summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
-        native_binary_correction_summary_telemetry_policy().emit_binary_correction_summary_telemetry(
+        native_binary_correction_summary_telemetry_policy().emit_binary_correction_summary_telemetry_from_summary(
             self.telemetry_session,
-            summary_payload,
+            self.callback_runtime_resources.binary_correction_summary,
             "Native binary correction summary emit plan selected a missing telemetry session.",
         )
 
@@ -1443,13 +1442,13 @@ class NativeBgenCallbackRunner(abc.ABC):
             "Native callback worker finish result selected a missing telemetry session.",
         )
         if finish_result.emit_binary_correction_summary:
-            summary_payload = finish_result.binary_correction_summary_payload
-            if summary_payload is None and finish_result.flush_binary_correction_pending_diagnostics:
+            summary = finish_result.binary_correction_summary
+            if summary is None and finish_result.flush_binary_correction_pending_diagnostics:
                 self.materialize_binary_correction_pending_diagnostics()
-                summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
-            native_binary_correction_summary_telemetry_policy().emit_binary_correction_summary_telemetry(
+                summary = self.callback_runtime_resources.binary_correction_summary
+            native_binary_correction_summary_telemetry_policy().emit_binary_correction_summary_telemetry_from_summary(
                 self.telemetry_session,
-                summary_payload,
+                summary,
                 "Native callback worker finish result selected a missing telemetry session.",
             )
 

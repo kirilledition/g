@@ -146,18 +146,6 @@ def get_run_manifest_path(output_run_paths: OutputRunPaths) -> Path:
     return output_run_paths.run_directory / RUN_MANIFEST_FILENAME
 
 
-def manifest_file_fingerprint_from_native_payload(payload: object) -> ManifestFileFingerprint:
-    """Adapt a native file-fingerprint payload to the public Python dataclass."""
-    fingerprint_payload = native_mapping_payload(payload)
-    return ManifestFileFingerprint(
-        path=typing.cast("str", fingerprint_payload["path"]),
-        size=typing.cast("int", fingerprint_payload["size"]),
-        mtime_ns=typing.cast("int", fingerprint_payload["mtime_ns"]),
-        content_hash_algorithm=typing.cast("str", fingerprint_payload["content_hash_algorithm"]),
-        content_sha256=typing.cast("str | None", fingerprint_payload["content_sha256"]),
-    )
-
-
 def manifest_file_fingerprint_from_native_fingerprint(
     native_fingerprint: _core.NativeManifestFileFingerprint,
 ) -> ManifestFileFingerprint:
@@ -169,11 +157,6 @@ def manifest_file_fingerprint_from_native_fingerprint(
         content_hash_algorithm=native_fingerprint.content_hash_algorithm,
         content_sha256=native_fingerprint.content_sha256,
     )
-
-
-def native_mapping_payload(payload: object) -> dict[str, object]:
-    """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, object]", payload))
 
 
 def native_json_payload(payload: object) -> object:
@@ -211,23 +194,6 @@ def build_prediction_loco_file_fingerprints(
     )
     return tuple(
         prediction_loco_file_fingerprint_from_native_fingerprint(fingerprint) for fingerprint in loco_file_fingerprints
-    )
-
-
-def prediction_loco_file_fingerprint_from_native_payload(payload: object) -> PredictionLocoFileFingerprint:
-    """Adapt a native LOCO file fingerprint payload."""
-    loco_file_payload = native_mapping_payload(payload)
-    content_sha256 = typing.cast("str | None", loco_file_payload["content_sha256"])
-    if content_sha256 is None:
-        message = "LOCO prediction file fingerprint must include a content hash."
-        raise ValueError(message)
-    return PredictionLocoFileFingerprint(
-        phenotype=typing.cast("str", loco_file_payload["phenotype"]),
-        path=typing.cast("str", loco_file_payload["path"]),
-        size=typing.cast("int", loco_file_payload["size"]),
-        mtime_ns=typing.cast("int", loco_file_payload["mtime_ns"]),
-        content_hash_algorithm=typing.cast("str", loco_file_payload["content_hash_algorithm"]),
-        content_sha256=content_sha256,
     )
 
 
@@ -347,7 +313,7 @@ def build_current_run_manifest_header(
     prepared_header = resolved_fingerprint_cache.native_cache.build_current_run_manifest_header_payload_from_input(
         current_header_input
     )
-    return native_mapping_payload(prepared_header)
+    return require_native_mapping_payload(prepared_header, "Prepared run manifest header must contain a JSON object.")
 
 
 def native_pipeline_output_preparation_policy() -> _core.NativePipelineOutputPreparationPolicy:

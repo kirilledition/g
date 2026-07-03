@@ -1385,6 +1385,12 @@ def test_finish_writer_sessions_uses_bounded_concurrent_pool() -> None:
                 active_finish_count -= 1
             return f"results/{self.name}.parquet"
 
+        def finish_interrupted(self, signal_name: str) -> None:
+            del signal_name
+
+        def abort(self) -> None:
+            pass
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         finish_future = executor.submit(
             native_dispatch_writers.finish_writer_sessions,
@@ -1432,6 +1438,12 @@ def test_finish_writer_sessions_records_native_lifecycle_diagnostic(monkeypatch:
     class FinishedWriterSession:
         def finish(self) -> str:
             return "results/trait-a.parquet"
+
+        def finish_interrupted(self, signal_name: str) -> None:
+            del signal_name
+
+        def abort(self) -> None:
+            pass
 
     class FakeDispatchDiagnosticPolicy:
         def record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
@@ -3127,6 +3139,8 @@ def build_native_metadata_for_chunk(*, chunk_identifier: int) -> typing.Any:
 def test_get_metadata_chromosome_prefers_scalar_label_without_full_column_access() -> None:
     class ScalarChromosomeMetadata:
         chromosome_label = "22"
+        variant_start_index = 0
+        variant_stop_index = 1
 
         @property
         def chromosome(self) -> list[str]:
@@ -6904,6 +6918,9 @@ def test_native_callback_runtime_resources_own_worker_finish_and_abort_lifecycle
     assert finish_result.complete_progress is True
     assert finish_result.emit_binary_correction_summary is True
     assert finish_result.flush_binary_correction_pending_diagnostics is False
+    summary = finish_result.binary_correction_summary
+    assert summary is not None
+    assert summary.null_model_failure_count == 2
     summary_payload = finish_result.binary_correction_summary_payload
     assert summary_payload is not None
     assert summary_payload["null_model_failure_count"] == 2
@@ -12322,13 +12339,17 @@ def test_multi_resume_manifest_mismatch_does_not_partially_initialize_outputs(tm
     second_output_run_paths = output.OutputRunPaths(tmp_path / "two.run", tmp_path / "two.run/chunks")
     first_output_run_paths.chunks_directory.mkdir(parents=True)
     second_output_run_paths.chunks_directory.mkdir(parents=True)
-    first_header = {"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION, "phenotype_name": "one", "chunk_size": 32}
-    second_manifest_header = {
+    first_header: output.RunManifestHeaderInput = {
+        "schema_version": output.RUN_MANIFEST_SCHEMA_VERSION,
+        "phenotype_name": "one",
+        "chunk_size": 32,
+    }
+    second_manifest_header: output.RunManifestHeaderInput = {
         "schema_version": output.RUN_MANIFEST_SCHEMA_VERSION,
         "phenotype_name": "two",
         "chunk_size": 32,
     }
-    second_current_header = {
+    second_current_header: output.RunManifestHeaderInput = {
         "schema_version": output.RUN_MANIFEST_SCHEMA_VERSION,
         "phenotype_name": "two",
         "chunk_size": 64,
@@ -12356,7 +12377,11 @@ def test_multi_resume_manifest_mismatch_does_not_partially_initialize_outputs(tm
 def test_pipeline_output_initialization_returns_native_handle(tmp_path: Path) -> None:
     output_run_paths = output.OutputRunPaths(tmp_path / "one.run", tmp_path / "one.run/chunks")
     output_run_paths.chunks_directory.mkdir(parents=True)
-    current_header = {"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION, "phenotype_name": "one", "chunk_size": 32}
+    current_header: output.RunManifestHeaderInput = {
+        "schema_version": output.RUN_MANIFEST_SCHEMA_VERSION,
+        "phenotype_name": "one",
+        "chunk_size": 32,
+    }
     native_preparation_batch = pipeline_outputs.build_pipeline_output_preparation_batch(
         output_run_paths_by_trait=(output_run_paths,),
         existing_manifests_by_trait=(None,),
