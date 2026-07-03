@@ -75,6 +75,19 @@ pub(crate) struct NativePythonAssociationBackend {
     backend: Py<PyAny>,
 }
 
+const REQUIRED_ENGINE_RUN_EFFECT_METHODS: &[&str] = &[
+    "emit_phase_event",
+    "open_inputs",
+    "align_inputs",
+    "validate_preflight",
+    "validate_output_compatibility",
+    "construct_writers",
+    "write_batch_result",
+    "drain_writers",
+    "finalize_outputs",
+    "abort_outputs",
+];
+
 #[pymethods]
 impl NativePreparedGroupInput {
     #[new]
@@ -244,8 +257,9 @@ impl NativeAssociationGroupRunReport {
 #[pymethods]
 impl NativePythonEngineRunEffects {
     #[new]
-    fn new(effects: Py<PyAny>) -> Self {
-        Self { effects }
+    fn new(py: Python<'_>, effects: Py<PyAny>) -> PyResult<Self> {
+        validate_python_engine_run_effect_methods(py, &effects)?;
+        Ok(Self { effects })
     }
 }
 
@@ -545,72 +559,66 @@ impl NativePythonAssociationBackend {
 
 impl EngineRunEffects for NativePythonEngineRunEffects {
     fn emit_phase_event(&mut self, phase: RunPhase) -> Result<(), EngineEffectError> {
-        self.call_optional_effect_method1("emit_phase_event", phase.to_string())
+        self.call_effect_method1("emit_phase_event", phase.to_string())
     }
 
     fn open_inputs(&mut self) -> Result<(), EngineEffectError> {
-        self.call_optional_effect_method0("open_inputs")
+        self.call_effect_method0("open_inputs")
     }
 
     fn align_inputs(&mut self) -> Result<(), EngineEffectError> {
-        self.call_optional_effect_method0("align_inputs")
+        self.call_effect_method0("align_inputs")
     }
 
     fn validate_preflight(&mut self) -> Result<(), EngineEffectError> {
-        self.call_optional_effect_method0("validate_preflight")
+        self.call_effect_method0("validate_preflight")
     }
 
     fn validate_output_compatibility(&mut self) -> Result<(), EngineEffectError> {
-        self.call_optional_effect_method0("validate_output_compatibility")
+        self.call_effect_method0("validate_output_compatibility")
     }
 
     fn construct_writers(&mut self) -> Result<(), EngineEffectError> {
-        self.call_optional_effect_method0("construct_writers")
+        self.call_effect_method0("construct_writers")
     }
 
     fn write_batch_result(&mut self, result: &AssociationBatchResult) -> Result<(), EngineEffectError> {
         Python::attach(|py| -> PyResult<()> {
             let effects = self.effects.bind(py);
-            if effects.hasattr("write_batch_result")? {
-                let native_result = Py::new(py, NativeAssociationBatchResult { inner: result.clone() })?;
-                effects.call_method1("write_batch_result", (native_result.bind(py),))?;
-            }
+            let native_result = Py::new(py, NativeAssociationBatchResult { inner: result.clone() })?;
+            effects.call_method1("write_batch_result", (native_result.bind(py),))?;
             Ok(())
         })
         .map_err(|error| engine_effect_error_from_py_error(&error))
     }
 
     fn drain_writers(&mut self) -> Result<(), EngineEffectError> {
-        self.call_optional_effect_method0("drain_writers")
+        self.call_effect_method0("drain_writers")
     }
 
     fn finalize_outputs(&mut self) -> Result<(), EngineEffectError> {
-        self.call_optional_effect_method0("finalize_outputs")
+        self.call_effect_method0("finalize_outputs")
     }
 
     fn abort_outputs(&mut self, phase: RunPhase) {
-        let _ = self.call_optional_effect_method1("abort_outputs", phase.to_string());
+        let _ = self.call_effect_method1("abort_outputs", phase.to_string());
     }
 }
 
 impl NativePythonEngineRunEffects {
-    fn call_optional_effect_method0(&self, method_name: &str) -> Result<(), EngineEffectError> {
+    fn call_effect_method0(&self, method_name: &str) -> Result<(), EngineEffectError> {
         Python::attach(|py| -> PyResult<()> {
             let effects = self.effects.bind(py);
-            if effects.hasattr(method_name)? {
-                effects.call_method0(method_name)?;
-            }
+            effects.call_method0(method_name)?;
             Ok(())
         })
         .map_err(|error| engine_effect_error_from_py_error(&error))
     }
 
-    fn call_optional_effect_method1(&self, method_name: &str, argument: String) -> Result<(), EngineEffectError> {
+    fn call_effect_method1(&self, method_name: &str, argument: String) -> Result<(), EngineEffectError> {
         Python::attach(|py| -> PyResult<()> {
             let effects = self.effects.bind(py);
-            if effects.hasattr(method_name)? {
-                effects.call_method1(method_name, (argument,))?;
-            }
+            effects.call_method1(method_name, (argument,))?;
             Ok(())
         })
         .map_err(|error| engine_effect_error_from_py_error(&error))
@@ -716,4 +724,15 @@ fn engine_error_to_py_runtime_error(error: &EngineError) -> PyErr {
 
 fn engine_effect_error_from_py_error(error: &PyErr) -> EngineEffectError {
     EngineEffectError::new(error.to_string())
+}
+
+fn validate_python_engine_run_effect_methods(py: Python<'_>, effects: &Py<PyAny>) -> PyResult<()> {
+    let effects = effects.bind(py);
+    for method_name in REQUIRED_ENGINE_RUN_EFFECT_METHODS {
+        if effects.hasattr(*method_name)? {
+            continue;
+        }
+        return Err(PyRuntimeError::new_err(format!("NativePythonEngineRunEffects requires `{method_name}` method")));
+    }
+    Ok(())
 }

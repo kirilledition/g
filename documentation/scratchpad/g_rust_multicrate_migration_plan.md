@@ -2681,6 +2681,17 @@ Current guardrail notes:
   policy adapters, writer session construction, and runner output plan
   preparation now live in `g.runner.outputs`; the obsolete `g.io.output`
   production module and empty `g.io` package were removed.
+- The Python architecture checker now rejects reintroduced obsolete production
+  module files for the removed output, run-event, telemetry, shutdown, timing,
+  warm-cache, backend-planner, trusted-validation, preflight, and local shim
+  modules. This guards against silent file resurrection even when no current
+  module imports the stale path.
+- The native association-backend PyO3 scaffold now treats
+  `NativePythonEngineRunEffects` as a complete side-effect contract. Supplying
+  an effects object with missing hooks fails during construction, and execution
+  calls the required hooks directly instead of probing and silently skipping
+  missing Python methods. The Rust architecture checker rejects reintroduced
+  optional effect dispatch helpers in the root PyO3 association-backend adapter.
 
 ### Exit criteria
 
@@ -2963,6 +2974,9 @@ g.engine.regenie2_pipeline modules must not import JAX runtime packages directly
 Production Python must not import the obsolete `g.engine.backend_planner` module.
 Production Python must not import the obsolete `g.engine.trusted_validation` module.
 Production Python must not import the obsolete `g.engine.preflight_events` module.
+Production Python must not reintroduce removed orchestration module files for
+output, run events, telemetry, shutdown, timing, warm-cache, backend planning,
+trusted validation, preflight, or local callback/native-dispatch/pipeline shims.
 Pipeline preflight must not import run-event packages directly.
 Production Python must route native event policy construction through boundary-local helpers.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
@@ -2996,7 +3010,12 @@ construction; the native diagnostic rules reject direct payload builders
 outside compatibility adapters, raw diagnostic emitters, and old telemetry
 fallback method calls in production Python. The runner import rule preserves
 the delayed import boundary that keeps JAX-facing pipeline modules and direct
-`jax`/`jaxlib` imports behind runtime setup.
+`jax`/`jaxlib` imports behind runtime setup. The forbidden-path rule rejects
+the removed Phase 14 orchestration module files themselves, so a stale shim
+cannot return unnoticed just because no current production module imports it.
+The Rust association-backend effects rule rejects optional Python effect-method
+probes in the root PyO3 coordinator scaffold, keeping the effect boundary an
+explicit all-hooks contract when a Python effects object is supplied.
 
 ---
 

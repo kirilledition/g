@@ -295,6 +295,12 @@ PYTHON_TELEMETRY_FALLBACK_CALL_PATTERN = re.compile(
     + "|".join(re.escape(method_name) for method_name in PYTHON_TELEMETRY_FALLBACK_METHOD_NAMES)
     + r")\""
 )
+PYTHON_ASSOCIATION_EFFECT_FALLBACK_MESSAGE = (
+    "root PyO3 association backend effects must use a complete effect contract, not optional Python method probes"
+)
+PYTHON_ASSOCIATION_EFFECT_FALLBACK_PATTERN = re.compile(
+    r"(?P<marker>call_optional_effect_method[01]?|hasattr\s*\(\s*\"write_batch_result\"\s*\))"
+)
 
 ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-plan": set(),
@@ -354,6 +360,24 @@ class PythonTelemetryFallbackViolation:
 
     source_path: Path
     method_name: str
+    line_number: int
+    message: str
+
+
+@dataclass(frozen=True)
+class PythonAssociationEffectFallbackViolation:
+    """A root PyO3 association-backend effect optional dispatch path.
+
+    Attributes:
+        source_path: Source file containing the violation.
+        marker: Optional-dispatch marker observed in source.
+        line_number: One-based source line number containing the marker.
+        message: Human-readable policy description.
+
+    """
+
+    source_path: Path
+    marker: str
     line_number: int
     message: str
 
@@ -542,6 +566,30 @@ def collect_python_telemetry_fallback_violations(repository_root: Path) -> tuple
     return tuple(violations)
 
 
+def collect_python_association_effect_fallback_violations(
+    repository_root: Path,
+) -> tuple[PythonAssociationEffectFallbackViolation, ...]:
+    """Collect root PyO3 association-backend optional effect dispatch violations."""
+    association_backend_path = repository_root / ROOT_CRATE_PYTHON_SOURCE_DIRECTORY / "association_backend.rs"
+    if not association_backend_path.exists():
+        return ()
+
+    source_text = association_backend_path.read_text(encoding="utf-8")
+    relative_source_path = association_backend_path.relative_to(repository_root)
+    violations: list[PythonAssociationEffectFallbackViolation] = []
+    for fallback_match in PYTHON_ASSOCIATION_EFFECT_FALLBACK_PATTERN.finditer(source_text):
+        line_number = source_text.count("\n", 0, fallback_match.start()) + 1
+        violations.append(
+            PythonAssociationEffectFallbackViolation(
+                source_path=relative_source_path,
+                marker=fallback_match.group("marker"),
+                line_number=line_number,
+                message=PYTHON_ASSOCIATION_EFFECT_FALLBACK_MESSAGE,
+            )
+        )
+    return tuple(violations)
+
+
 def collect_root_pyo3_registered_export_violations(
     source_text: str,
     relative_source_path: Path,
@@ -643,6 +691,16 @@ def format_python_telemetry_fallback_violations(violations: tuple[PythonTelemetr
     )
 
 
+def format_python_association_effect_fallback_violations(
+    violations: tuple[PythonAssociationEffectFallbackViolation, ...],
+) -> str:
+    """Format root PyO3 association-backend optional effect violations for command-line output."""
+    return "\n".join(
+        f"- {violation.source_path}:{violation.line_number} [{violation.marker}]: {violation.message}"
+        for violation in violations
+    )
+
+
 def format_root_pyo3_export_violations(violations: tuple[RootPyO3ExportViolation, ...]) -> str:
     """Format removed root PyO3 export violations for command-line output."""
     return "\n".join(
@@ -662,8 +720,15 @@ def run_tool(repository_root: Path) -> int:
     dependency_violations = collect_rust_architecture_violations(metadata_payload)
     root_crate_violations = collect_root_crate_boundary_violations(repository_root)
     telemetry_fallback_violations = collect_python_telemetry_fallback_violations(repository_root)
+    association_effect_fallback_violations = collect_python_association_effect_fallback_violations(repository_root)
     root_pyo3_export_violations = collect_root_pyo3_export_violations(repository_root)
-    if dependency_violations or root_crate_violations or telemetry_fallback_violations or root_pyo3_export_violations:
+    if (
+        dependency_violations
+        or root_crate_violations
+        or telemetry_fallback_violations
+        or association_effect_fallback_violations
+        or root_pyo3_export_violations
+    ):
         print("Rust workspace architecture violations:")
         if dependency_violations:
             print(format_violations(dependency_violations))
@@ -671,6 +736,8 @@ def run_tool(repository_root: Path) -> int:
             print(format_root_crate_boundary_violations(root_crate_violations))
         if telemetry_fallback_violations:
             print(format_python_telemetry_fallback_violations(telemetry_fallback_violations))
+        if association_effect_fallback_violations:
+            print(format_python_association_effect_fallback_violations(association_effect_fallback_violations))
         if root_pyo3_export_violations:
             print(format_root_pyo3_export_violations(root_pyo3_export_violations))
         return 1

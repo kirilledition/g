@@ -59,6 +59,40 @@ def build_native_runtime_compatibility_token() -> _core.NativeRuntimeCompatibili
     )
 
 
+class CompleteNativeEngineRunEffects:
+    """No-op implementation of the native coordinator effects contract."""
+
+    def emit_phase_event(self, phase: str) -> None:
+        del phase
+
+    def open_inputs(self) -> None:
+        pass
+
+    def align_inputs(self) -> None:
+        pass
+
+    def validate_preflight(self) -> None:
+        pass
+
+    def validate_output_compatibility(self) -> None:
+        pass
+
+    def construct_writers(self) -> None:
+        pass
+
+    def write_batch_result(self, result: _core.NativeAssociationBatchResult) -> None:
+        del result
+
+    def drain_writers(self) -> None:
+        pass
+
+    def finalize_outputs(self) -> None:
+        pass
+
+    def abort_outputs(self, phase: str) -> None:
+        del phase
+
+
 def build_native_jax_runtime_setup_session(
     *,
     requested_device: str,
@@ -624,7 +658,7 @@ def test_native_python_association_backend_runs_single_batch_with_effects() -> N
             statistic_sum += batch.variant_offset
             return _core.NativeAssociationBatchResult(batch.chromosome, batch.variant_count, float(statistic_sum))
 
-    class RecordingEngineRunEffects:
+    class RecordingEngineRunEffects(CompleteNativeEngineRunEffects):
         def __init__(self) -> None:
             self.calls: list[str] = []
             self.written_results: list[tuple[str, int, float]] = []
@@ -775,7 +809,7 @@ def test_native_python_association_backend_runs_chromosome_batches_with_effects(
             statistic_sum += batch.variant_offset
             return _core.NativeAssociationBatchResult(batch.chromosome, batch.variant_count, float(statistic_sum))
 
-    class RecordingEngineRunEffects:
+    class RecordingEngineRunEffects(CompleteNativeEngineRunEffects):
         def __init__(self) -> None:
             self.written_results: list[tuple[str, int, float]] = []
 
@@ -940,7 +974,7 @@ def test_native_python_association_backend_runs_group_chromosomes_with_effects()
             statistic_sum += batch.variant_offset
             return _core.NativeAssociationBatchResult(batch.chromosome, batch.variant_count, float(statistic_sum))
 
-    class RecordingEngineRunEffects:
+    class RecordingEngineRunEffects(CompleteNativeEngineRunEffects):
         def __init__(self) -> None:
             self.calls: list[str] = []
             self.written_results: list[tuple[str, int, float]] = []
@@ -1063,7 +1097,7 @@ def test_native_python_association_backend_maps_python_effect_errors() -> None:
             statistic_sum += batch.variant_offset
             return _core.NativeAssociationBatchResult(batch.chromosome, batch.variant_count, float(statistic_sum))
 
-    class FailingEngineRunEffects:
+    class FailingEngineRunEffects(CompleteNativeEngineRunEffects):
         def __init__(self) -> None:
             self.aborted_phases: list[str] = []
 
@@ -1089,6 +1123,15 @@ def test_native_python_association_backend_maps_python_effect_errors() -> None:
         native_backend.run_group_chromosomes_with_effects("binary", 2, chromosome_inputs, native_effects)
 
     assert python_effects.aborted_phases == ["running"]
+
+
+def test_native_python_engine_run_effects_requires_complete_contract() -> None:
+    class IncompleteEngineRunEffects:
+        def emit_phase_event(self, phase: str) -> None:
+            del phase
+
+    with pytest.raises(RuntimeError, match="requires `open_inputs` method"):
+        _core.NativePythonEngineRunEffects(IncompleteEngineRunEffects())
 
 
 def test_native_python_association_backend_maps_python_errors() -> None:

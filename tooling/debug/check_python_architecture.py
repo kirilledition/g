@@ -65,6 +65,44 @@ class PythonImportViolation:
 
 
 @dataclasses.dataclass(frozen=True)
+class PythonForbiddenPathPolicy:
+    """A Python source path policy.
+
+    Attributes:
+        name: Stable policy name for diagnostics.
+        forbidden_paths: Source paths, relative to the production package root, rejected when present.
+        message: Human-readable policy description.
+
+    """
+
+    name: str
+    forbidden_paths: tuple[Path, ...]
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class PythonForbiddenPathViolation:
+    """A Python source path that must not exist in production.
+
+    Attributes:
+        path: Reintroduced source path.
+        line_number: One-based source line number used for diagnostics.
+        column_offset: Zero-based source column used for diagnostics.
+        policy_name: Path policy that rejected the source path.
+        forbidden_path: Source path, relative to the production package root, matched by the policy.
+        message: Human-readable policy description.
+
+    """
+
+    path: Path
+    line_number: int
+    column_offset: int
+    policy_name: str
+    forbidden_path: Path
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
 class PythonCallPolicy:
     """A Python call-boundary policy.
 
@@ -195,6 +233,33 @@ CLI_SHIM_SENTINEL_ENVIRONMENT_VARIABLE = "G_NATIVE_CLI_PYTHON_BRIDGE_SENTINEL"
 CLI_SHIM_MESSAGE = (
     "the public Python CLI entry point must remain compatibility glue into the native CLI runner; "
     "only the sentinel-protected legacy backend may call dispatch_cli"
+)
+
+PYTHON_FORBIDDEN_PATH_POLICIES = (
+    PythonForbiddenPathPolicy(
+        name="obsolete_python_orchestration_module_path_isolation",
+        forbidden_paths=(
+            Path("io/__init__.py"),
+            Path("io/output.py"),
+            Path("io/source.py"),
+            Path("engine/backend_planner.py"),
+            Path("engine/preflight.py"),
+            Path("engine/preflight_events.py"),
+            Path("engine/run_events.py"),
+            Path("engine/shutdown.py"),
+            Path("engine/telemetry.py"),
+            Path("engine/timing.py"),
+            Path("engine/trusted_validation.py"),
+            Path("engine/warm_cache.py"),
+            Path("engine/callbacks/events.py"),
+            Path("engine/callbacks/timing.py"),
+            Path("engine/native_dispatch/events.py"),
+            Path("engine/native_dispatch/lifecycle.py"),
+            Path("engine/native_dispatch/timing.py"),
+            Path("engine/regenie2_pipeline/timing.py"),
+        ),
+        message="obsolete Python orchestration modules must not be reintroduced after runner ownership moved",
+    ),
 )
 
 PYTHON_IMPORT_POLICIES = (
@@ -1073,6 +1138,30 @@ def collect_call_violations_for_statement(
     return tuple(violations)
 
 
+def collect_python_forbidden_path_policy_violations(
+    package_root: Path,
+    policies: tuple[PythonForbiddenPathPolicy, ...] = PYTHON_FORBIDDEN_PATH_POLICIES,
+) -> tuple[PythonForbiddenPathViolation, ...]:
+    """Collect Python source path violations under a production package root."""
+    violations: list[PythonForbiddenPathViolation] = []
+    for policy in policies:
+        for forbidden_path in policy.forbidden_paths:
+            path = package_root / forbidden_path
+            if not path.exists():
+                continue
+            violations.append(
+                PythonForbiddenPathViolation(
+                    path=path.relative_to(package_root.parent),
+                    line_number=1,
+                    column_offset=0,
+                    policy_name=policy.name,
+                    forbidden_path=forbidden_path,
+                    message=policy.message,
+                )
+            )
+    return tuple(violations)
+
+
 def collect_python_import_policy_violations(
     package_root: Path,
     policies: tuple[PythonImportPolicy, ...] = PYTHON_IMPORT_POLICIES,
@@ -1373,6 +1462,15 @@ def render_violation(violation: PythonImportViolation) -> str:
     )
 
 
+def render_forbidden_path_violation(violation: PythonForbiddenPathViolation) -> str:
+    """Render a source path-policy violation for command-line output."""
+    location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
+    return (
+        f"{location}: {violation.policy_name} rejects `{violation.path}` "
+        f"via `{violation.forbidden_path}`: {violation.message}"
+    )
+
+
 def render_call_violation(violation: PythonCallViolation) -> str:
     """Render a call-policy violation for command-line output."""
     location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
@@ -1396,12 +1494,21 @@ def render_cli_shim_violation(violation: PythonCliShimViolation) -> str:
 
 def run_tool(package_root: Path) -> int:
     """Verify Python package ownership boundaries."""
+    forbidden_path_violations = collect_python_forbidden_path_policy_violations(package_root)
     import_violations = collect_python_import_policy_violations(package_root)
     call_violations = collect_python_call_policy_violations(package_root)
     definition_violations = collect_python_definition_policy_violations(package_root)
     cli_shim_violations = collect_python_cli_shim_violations(package_root)
-    if import_violations or call_violations or definition_violations or cli_shim_violations:
+    if (
+        forbidden_path_violations
+        or import_violations
+        or call_violations
+        or definition_violations
+        or cli_shim_violations
+    ):
         print(f"Python architecture violations under `{package_root}`:")
+        for violation in forbidden_path_violations:
+            print(f"  {render_forbidden_path_violation(violation)}")
         for violation in import_violations:
             print(f"  {render_violation(violation)}")
         for violation in call_violations:

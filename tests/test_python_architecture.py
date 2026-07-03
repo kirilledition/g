@@ -14,6 +14,187 @@ def test_python_import_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_import_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
 
+def test_python_forbidden_path_policy_allows_current_production_tree() -> None:
+    assert check_python_architecture.collect_python_forbidden_path_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
+
+
+def test_forbidden_path_policy_rejects_obsolete_python_orchestration_files(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    for source_path in (
+        Path("io/__init__.py"),
+        Path("io/output.py"),
+        Path("engine/run_events.py"),
+        Path("engine/shutdown.py"),
+        Path("engine/telemetry.py"),
+        Path("engine/timing.py"),
+        Path("engine/callbacks/events.py"),
+        Path("engine/callbacks/timing.py"),
+        Path("engine/native_dispatch/events.py"),
+        Path("engine/native_dispatch/lifecycle.py"),
+        Path("engine/native_dispatch/timing.py"),
+        Path("engine/regenie2_pipeline/timing.py"),
+    ):
+        path = package_root / source_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+
+    violations = check_python_architecture.collect_python_forbidden_path_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.forbidden_path)
+        for violation in violations
+    ] == [
+        (
+            Path("g/io/__init__.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("io/__init__.py"),
+        ),
+        (
+            Path("g/io/output.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("io/output.py"),
+        ),
+        (
+            Path("g/engine/run_events.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/run_events.py"),
+        ),
+        (
+            Path("g/engine/shutdown.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/shutdown.py"),
+        ),
+        (
+            Path("g/engine/telemetry.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/telemetry.py"),
+        ),
+        (
+            Path("g/engine/timing.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/timing.py"),
+        ),
+        (
+            Path("g/engine/callbacks/events.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/callbacks/events.py"),
+        ),
+        (
+            Path("g/engine/callbacks/timing.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/callbacks/timing.py"),
+        ),
+        (
+            Path("g/engine/native_dispatch/events.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/native_dispatch/events.py"),
+        ),
+        (
+            Path("g/engine/native_dispatch/lifecycle.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/native_dispatch/lifecycle.py"),
+        ),
+        (
+            Path("g/engine/native_dispatch/timing.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/native_dispatch/timing.py"),
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/timing.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/regenie2_pipeline/timing.py"),
+        ),
+    ]
+
+
+def test_forbidden_path_policy_rejects_obsolete_support_files(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    for source_path in (
+        Path("io/source.py"),
+        Path("engine/backend_planner.py"),
+        Path("engine/preflight.py"),
+        Path("engine/preflight_events.py"),
+        Path("engine/trusted_validation.py"),
+        Path("engine/warm_cache.py"),
+    ):
+        path = package_root / source_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+
+    violations = check_python_architecture.collect_python_forbidden_path_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.forbidden_path)
+        for violation in violations
+    ] == [
+        (
+            Path("g/io/source.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("io/source.py"),
+        ),
+        (
+            Path("g/engine/backend_planner.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/backend_planner.py"),
+        ),
+        (
+            Path("g/engine/preflight.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/preflight.py"),
+        ),
+        (
+            Path("g/engine/preflight_events.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/preflight_events.py"),
+        ),
+        (
+            Path("g/engine/trusted_validation.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/trusted_validation.py"),
+        ),
+        (
+            Path("g/engine/warm_cache.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("engine/warm_cache.py"),
+        ),
+    ]
+
+
+def test_forbidden_path_violation_renderer_includes_policy_path_and_message() -> None:
+    violation = check_python_architecture.PythonForbiddenPathViolation(
+        path=Path("g/engine/timing.py"),
+        line_number=1,
+        column_offset=0,
+        policy_name="obsolete_python_orchestration_module_path_isolation",
+        forbidden_path=Path("engine/timing.py"),
+        message="obsolete Python orchestration modules must not be reintroduced after runner ownership moved",
+    )
+
+    assert check_python_architecture.render_forbidden_path_violation(violation) == (
+        "g/engine/timing.py:1:1: obsolete_python_orchestration_module_path_isolation rejects "
+        "`g/engine/timing.py` via `engine/timing.py`: obsolete Python orchestration modules must not be "
+        "reintroduced after runner ownership moved"
+    )
+
+
 def test_python_call_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_call_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
 

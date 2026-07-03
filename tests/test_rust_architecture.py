@@ -57,6 +57,10 @@ def test_python_telemetry_fallback_policy_allows_current_adapter() -> None:
     assert check_rust_architecture.collect_python_telemetry_fallback_violations(REPOSITORY_ROOT) == ()
 
 
+def test_python_association_effect_fallback_policy_allows_current_adapter() -> None:
+    assert check_rust_architecture.collect_python_association_effect_fallback_violations(REPOSITORY_ROOT) == ()
+
+
 def test_root_pyo3_removed_export_policy_allows_current_adapter() -> None:
     assert check_rust_architecture.collect_root_pyo3_export_violations(REPOSITORY_ROOT) == ()
 
@@ -137,6 +141,44 @@ def test_python_telemetry_fallback_policy_rejects_rust_to_python_dispatch(tmp_pa
             method_name="log_jax_runtime_diagnostic_event",
             line_number=3,
             message=check_rust_architecture.PYTHON_TELEMETRY_FALLBACK_MESSAGE,
+        ),
+    )
+
+
+def test_python_association_effect_fallback_policy_rejects_optional_effect_dispatch(tmp_path: Path) -> None:
+    python_source_directory = tmp_path / "src" / "python"
+    python_source_directory.mkdir(parents=True)
+    (python_source_directory / "association_backend.rs").write_text(
+        "\n".join(
+            (
+                'self.call_optional_effect_method0("open_inputs")?;',
+                'self.call_optional_effect_method1("abort_outputs", phase.to_string());',
+                'if effects.hasattr("write_batch_result")? { effects.call_method0("write_batch_result")?; }',
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_rust_architecture.collect_python_association_effect_fallback_violations(tmp_path)
+
+    assert violations == (
+        check_rust_architecture.PythonAssociationEffectFallbackViolation(
+            source_path=Path("src/python/association_backend.rs"),
+            marker="call_optional_effect_method0",
+            line_number=1,
+            message=check_rust_architecture.PYTHON_ASSOCIATION_EFFECT_FALLBACK_MESSAGE,
+        ),
+        check_rust_architecture.PythonAssociationEffectFallbackViolation(
+            source_path=Path("src/python/association_backend.rs"),
+            marker="call_optional_effect_method1",
+            line_number=2,
+            message=check_rust_architecture.PYTHON_ASSOCIATION_EFFECT_FALLBACK_MESSAGE,
+        ),
+        check_rust_architecture.PythonAssociationEffectFallbackViolation(
+            source_path=Path("src/python/association_backend.rs"),
+            marker='hasattr("write_batch_result")',
+            line_number=3,
+            message=check_rust_architecture.PYTHON_ASSOCIATION_EFFECT_FALLBACK_MESSAGE,
         ),
     )
 
