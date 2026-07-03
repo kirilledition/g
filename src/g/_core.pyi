@@ -933,6 +933,16 @@ class NativeTelemetrySessionPolicy:
         output_path: str,
         output_run_directory: str | None,
     ) -> str: ...
+    def resolve_paths(
+        self,
+        output_path: str,
+        output_run_directory: str | None,
+        log_dir: str | None,
+        log_file: str | None,
+        trace_file: str | None,
+        profile_summary_json: str | None,
+        stage_timings_json: str | None,
+    ) -> NativeTelemetryPaths: ...
     def resolve_paths_payload(
         self,
         output_path: str,
@@ -943,6 +953,16 @@ class NativeTelemetrySessionPolicy:
         profile_summary_json: str | None,
         stage_timings_json: str | None,
     ) -> dict[str, object]: ...
+
+class NativeTelemetryPaths:
+    @property
+    def log_dir(self) -> str | None: ...
+    @property
+    def stream_file(self) -> str | None: ...
+    @property
+    def profile_summary_json(self) -> str | None: ...
+    @property
+    def stage_timings_json(self) -> str | None: ...
 
 class NativeTelemetrySession:
     def __init__(

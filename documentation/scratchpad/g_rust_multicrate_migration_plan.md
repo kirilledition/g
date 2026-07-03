@@ -2842,6 +2842,10 @@ Current guardrail notes:
   for requested-signal and first-signal handling. Legacy shutdown payload
   methods remain on the controller for compatibility tests, while runner
   modules are guarded from calling those payload methods.
+- Runner telemetry path resolution now consumes typed native telemetry path
+  handles instead of dict payloads. The legacy telemetry path payload method
+  remains for compatibility tests, while runner modules are guarded from
+  calling it.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture
@@ -3195,6 +3199,8 @@ The preflight rule rejects dict payload shape/report methods in pipeline
 preflight so production code consumes typed native validation handles.
 The runner-shutdown rule rejects payload signal/handler methods under
 `g.runner`, keeping lifecycle code on typed native shutdown handles.
+The runner-telemetry-path rule rejects telemetry path payload methods under
+`g.runner`, keeping event helpers on typed native path handles.
 
 ---
 

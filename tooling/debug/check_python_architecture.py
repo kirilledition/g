@@ -758,6 +758,13 @@ PYTHON_CALL_POLICIES = (
         message="runner lifecycle must consume typed native shutdown handles instead of payload dictionaries",
     ),
     PythonCallPolicy(
+        name="runner_telemetry_path_payload_isolation",
+        source_directory=Path("runner"),
+        forbidden_calls=("resolve_paths_payload",),
+        allowed_paths=(),
+        message="runner telemetry path resolution must consume typed native telemetry path handles",
+    ),
+    PythonCallPolicy(
         name="callback_worker_queue_isolation",
         source_directory=Path("engine/callbacks"),
         forbidden_calls=(

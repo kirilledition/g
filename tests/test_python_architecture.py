@@ -2651,6 +2651,38 @@ def test_runner_shutdown_policy_rejects_payload_methods(tmp_path: Path) -> None:
     ]
 
 
+def test_runner_telemetry_path_policy_rejects_payload_methods(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "events.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build():",
+                "    policy = _core.NativeTelemetrySessionPolicy('profile', 0)",
+                "    policy.resolve_paths_payload('out.parquet', None, None, None, None, None, None)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/events.py"),
+            4,
+            "runner_telemetry_path_payload_isolation",
+            "policy.resolve_paths_payload",
+            "resolve_paths_payload",
+        )
+    ]
+
+
 def test_diagnostic_payload_policy_rejects_direct_payload_builders(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"

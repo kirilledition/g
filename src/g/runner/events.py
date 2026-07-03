@@ -243,8 +243,8 @@ def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPa
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_directory = regenie_config.g_output.output_run_directory
     telemetry_policy = native_telemetry_session_policy(regenie_config)
-    return telemetry_paths_from_native_payload(
-        telemetry_policy.resolve_paths_payload(
+    return telemetry_paths_from_native_paths(
+        telemetry_policy.resolve_paths(
             str(output_prefix),
             None if output_run_directory is None else str(output_run_directory),
             None if diagnostics_config.log_dir is None else str(diagnostics_config.log_dir),
@@ -265,6 +265,16 @@ def native_telemetry_session_policy(regenie_config: config.RegenieConfig) -> _co
 def native_telemetry_close_policy() -> _core.NativeTelemetryClosePolicy:
     """Build the native telemetry close policy handle."""
     return _core.NativeTelemetryClosePolicy()
+
+
+def telemetry_paths_from_native_paths(native_paths: _core.NativeTelemetryPaths) -> TelemetryPaths:
+    """Adapt native telemetry path metadata to the public Python dataclass."""
+    return TelemetryPaths(
+        log_dir=optional_path_from_native_payload(native_paths.log_dir),
+        stream_file=optional_path_from_native_payload(native_paths.stream_file),
+        profile_summary_json=optional_path_from_native_payload(native_paths.profile_summary_json),
+        stage_timings_json=optional_path_from_native_payload(native_paths.stage_timings_json),
+    )
 
 
 def telemetry_paths_from_native_payload(payload: object) -> TelemetryPaths:

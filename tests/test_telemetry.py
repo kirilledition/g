@@ -485,6 +485,29 @@ def test_telemetry_session_uses_native_policy_payload(tmp_path: Path) -> None:
     assert profile_session.profile_enabled
 
 
+def test_native_telemetry_session_policy_returns_typed_paths(tmp_path: Path) -> None:
+    output_path = tmp_path / "results.parquet"
+    stage_timing_path = tmp_path / "timing.json"
+    telemetry_policy = _core.NativeTelemetrySessionPolicy(types.TelemetryMode.PROFILE.value, 0)
+
+    native_paths = telemetry_policy.resolve_paths(
+        str(output_path),
+        None,
+        None,
+        None,
+        None,
+        None,
+        str(stage_timing_path),
+    )
+    telemetry_paths = telemetry.telemetry_paths_from_native_paths(native_paths)
+
+    assert isinstance(native_paths, _core.NativeTelemetryPaths)
+    assert telemetry_paths.log_dir == tmp_path / "results.parquet.g" / "logs"
+    assert telemetry_paths.stream_file == tmp_path / "results.parquet.g" / "logs" / "events.jsonl"
+    assert telemetry_paths.profile_summary_json == tmp_path / "results.parquet.g" / "logs" / "profile.summary.json"
+    assert telemetry_paths.stage_timings_json == stage_timing_path
+
+
 def test_native_telemetry_run_session_owns_progress_emission(tmp_path: Path) -> None:
     telemetry_paths = telemetry.TelemetryPaths(
         log_dir=tmp_path,
