@@ -21,7 +21,10 @@ pub use manifest::{
 pub use resume::repair_strict_manifest_chunk_commits;
 pub use resume::{scan_committed_chunk_identifiers, validate_strict_manifest_chunks};
 pub(crate) use schema::OutputStatisticDtype;
-pub use session::OutputWriterSession;
 pub use session::{NativeChunkHandle, NativeChunkStats, VariantMetadataColumns};
+pub use session::{
+    OutputWriterSession, abort_output_writer_sessions, finish_output_writer_sessions,
+    finish_output_writer_sessions_interrupted,
+};
 pub use writer::OutputFileFormat;
 pub use writer::OutputWriterError;

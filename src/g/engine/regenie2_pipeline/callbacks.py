@@ -16,6 +16,8 @@ if typing.TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
+    from g import _core
+
 type MultiPhenotypeGroupCallbackProtocol = callback_shared.MultiPhenotypeGroupCallbackProtocol
 type MultiPhenotypeGroupFanout = callback_shared.MultiPhenotypeGroupFanout
 
@@ -25,7 +27,7 @@ def build_single_trait_callback(
     context: pipeline_context.Regenie2PipelineContext,
     run_input: inputs.NativeBgenRunInput,
     prediction_source: typing.Any,
-    writer_session: typing.Any,
+    writer_session: _core.OutputWriterSession,
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -71,7 +73,7 @@ def build_multi_phenotype_group_callback(
     context: pipeline_context.Regenie2PipelineContext,
     run_input: inputs.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
-    writer_sessions: tuple[typing.Any, ...],
+    writer_sessions: tuple[_core.OutputWriterSession, ...],
     committed_chunk_identifier_sets: tuple[set[int], ...],
     staging_depth: int,
     native_callback_batch_size: int,

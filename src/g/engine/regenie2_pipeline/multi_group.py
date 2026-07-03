@@ -205,7 +205,7 @@ def run_bgen_engine_with_multi_callback(
     engine: _core.Regenie2RunEngine,
     run_input: inputs.NativeBgenMultiRunInput,
     committed_chunk_identifiers: set[int] | None,
-    writer_sessions: tuple[typing.Any, ...],
+    writer_sessions: tuple[_core.OutputWriterSession, ...],
     callback: inputs.BgenDeliveryCallbackProtocol,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     writer_finish_thread_count: int,

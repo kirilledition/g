@@ -9,8 +9,11 @@ from g import _core
 if typing.TYPE_CHECKING:
     from g import types
     from g.engine.regenie2_pipeline import context as pipeline_context
+    from g.runner import events as runner_events
 
-type TelemetrySession = object
+    type TelemetrySession = runner_events.TelemetrySession
+else:
+    type TelemetrySession = object
 
 
 def native_pipeline_diagnostic_policy() -> _core.NativePipelineDiagnosticPolicy:

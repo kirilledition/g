@@ -335,7 +335,7 @@ def create_pipeline_writer_sessions(
     *,
     context: pipeline_context.Regenie2PipelineContext,
     output_run_paths_by_trait: tuple[OutputRunPaths, ...],
-) -> tuple[typing.Any, ...]:
+) -> tuple[_core.OutputWriterSession, ...]:
     """Create output writer sessions and record preparation timing."""
     writer_start_time = time.perf_counter()
     telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_output_writer_sessions_create_started_diagnostic_event(

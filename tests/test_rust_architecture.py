@@ -751,6 +751,11 @@ def test_root_pyo3_removed_export_policy_rejects_class_method_exports(tmp_path: 
                 "impl NativeOutputLifecyclePolicy {",
                 "    fn build_prepared_run_plan_json_from_current_header(&self) {}",
                 "}",
+                "fn finish_native_output_writer_sessions() {}",
+                "fn finish_native_output_writer_sessions_interrupted() {}",
+                "fn abort_native_output_writer_sessions() {}",
+                "fn validate_writer_lifecycle_thread_count() {}",
+                "fn collect_parallel_writer_results() {}",
             )
         ),
         encoding="utf-8",
@@ -781,6 +786,36 @@ def test_root_pyo3_removed_export_policy_rejects_class_method_exports(tmp_path: 
             source_path=Path("src/python/output.rs"),
             export_name="build_prepared_run_plan_json_from_current_header",
             line_number=10,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/output.rs"),
+            export_name="finish_native_output_writer_sessions",
+            line_number=12,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/output.rs"),
+            export_name="finish_native_output_writer_sessions_interrupted",
+            line_number=13,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/output.rs"),
+            export_name="abort_native_output_writer_sessions",
+            line_number=14,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/output.rs"),
+            export_name="validate_writer_lifecycle_thread_count",
+            line_number=15,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/output.rs"),
+            export_name="collect_parallel_writer_results",
+            line_number=16,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

@@ -119,7 +119,7 @@ class PreparedMultiPhenotypeGroupDelivery:
     phenotype_indices: tuple[int, ...]
     run_input: inputs.NativeBgenMultiRunInput
     callback: callbacks.MultiPhenotypeGroupCallbackProtocol
-    writer_sessions: tuple[typing.Any, ...]
+    writer_sessions: tuple[_core.OutputWriterSession, ...]
     committed_chunk_identifier_sets: tuple[set[int], ...]
 
 

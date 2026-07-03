@@ -390,7 +390,7 @@ def create_output_writer_session(
     parquet_compression: types.ParquetCompression,
     output_statistic_dtype: types.FloatingPointDtype,
     collect_stage_timings: bool,
-) -> typing.Any:
+) -> _core.OutputWriterSession:
     """Create one native Rust output writer session."""
     return _core.OutputWriterSession(
         run_directory=str(output_run_paths.run_directory),

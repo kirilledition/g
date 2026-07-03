@@ -849,6 +849,120 @@ impl OutputWriterSession {
     }
 }
 
+/// Finish native writer sessions, optionally in parallel.
+///
+/// # Errors
+///
+/// Returns an error when the lifecycle thread count is zero, a writer session
+/// fails to finish, or a lifecycle worker panics.
+pub fn finish_output_writer_sessions(
+    sessions: &[Arc<OutputWriterSession>],
+    thread_count: usize,
+) -> Result<Vec<Option<PathBuf>>, OutputWriterError> {
+    if sessions.is_empty() {
+        return Ok(Vec::new());
+    }
+    validate_writer_lifecycle_thread_count(thread_count)?;
+    if sessions.len() <= 1 || thread_count == 1 {
+        return sessions.iter().map(|session| session.finish()).collect();
+    }
+    collect_parallel_writer_results(sessions, thread_count, OutputWriterSession::finish)
+}
+
+/// Finish interrupted native writer sessions, optionally in parallel.
+///
+/// # Errors
+///
+/// Returns an error when the lifecycle thread count is zero, a writer session
+/// fails to flush interrupted output, or a lifecycle worker panics.
+pub fn finish_output_writer_sessions_interrupted(
+    sessions: &[Arc<OutputWriterSession>],
+    signal_name: &str,
+    thread_count: usize,
+) -> Result<(), OutputWriterError> {
+    if sessions.is_empty() {
+        return Ok(());
+    }
+    validate_writer_lifecycle_thread_count(thread_count)?;
+    if sessions.len() <= 1 || thread_count == 1 {
+        for session in sessions {
+            session.finish_interrupted(signal_name)?;
+        }
+        return Ok(());
+    }
+    let signal_name = signal_name.to_owned();
+    collect_parallel_writer_results(sessions, thread_count, move |session| {
+        session.finish_interrupted(&signal_name)?;
+        Ok(None)
+    })?;
+    Ok(())
+}
+
+/// Abort native writer sessions in sequence.
+///
+/// # Errors
+///
+/// Returns an error when any writer session fails to abort.
+pub fn abort_output_writer_sessions(sessions: &[Arc<OutputWriterSession>]) -> Result<(), OutputWriterError> {
+    for session in sessions {
+        session.abort()?;
+    }
+    Ok(())
+}
+
+fn validate_writer_lifecycle_thread_count(thread_count: usize) -> Result<(), OutputWriterError> {
+    if thread_count == 0 {
+        return Err(OutputWriterError::InvalidInput("Writer lifecycle thread count must be at least 1.".to_string()));
+    }
+    Ok(())
+}
+
+fn collect_parallel_writer_results<F>(
+    sessions: &[Arc<OutputWriterSession>],
+    thread_count: usize,
+    operation: F,
+) -> Result<Vec<Option<PathBuf>>, OutputWriterError>
+where
+    F: Fn(&OutputWriterSession) -> Result<Option<PathBuf>, OutputWriterError> + Clone + Send + Sync + 'static,
+{
+    let worker_count = thread_count.min(sessions.len()).max(1);
+    let chunk_size = sessions.len().div_ceil(worker_count);
+    let session_count = sessions.len();
+    let handles = sessions
+        .chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, chunk)| {
+            let chunk_sessions = chunk.to_vec();
+            let start_index = chunk_index * chunk_size;
+            let operation = operation.clone();
+            std::thread::spawn(move || {
+                chunk_sessions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, session)| operation(&session).map(|path| (start_index + offset, path)))
+                    .collect::<Result<Vec<_>, OutputWriterError>>()
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut ordered_paths = vec![None; session_count];
+    for handle in handles {
+        let chunk_results = handle
+            .join()
+            .map_err(|_| OutputWriterError::Runtime("Rust output writer lifecycle worker panicked.".to_string()))??;
+        for (index, path) in chunk_results {
+            ordered_paths[index] = Some(path);
+        }
+    }
+    ordered_paths
+        .into_iter()
+        .map(|path| {
+            path.ok_or_else(|| {
+                OutputWriterError::Runtime("Rust output writer lifecycle worker did not report a result.".to_string())
+            })
+        })
+        .collect()
+}
+
 fn build_float32_result_array(values: &[f32]) -> ArrayRef {
     Arc::new(Float32Array::from(values.to_vec()))
 }
@@ -1035,6 +1149,36 @@ fn run_output_write_task(output_write_task: OutputWriteTask) {
 mod tests {
     use super::*;
     use crate::finalization::RegenieStep2FinalizationTiming;
+    use std::path::Path;
+
+    fn temporary_output_root(test_name: &str) -> PathBuf {
+        let timestamp_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("test timestamp should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("g-output-{test_name}-{}-{timestamp_ns}", std::process::id()))
+    }
+
+    fn create_test_output_writer_session(root: &Path, label: &str) -> OutputWriterSession {
+        let run_directory = root.join(label);
+        let chunks_directory = run_directory.join("chunks");
+        std::fs::create_dir_all(&chunks_directory).expect("test output directories should be created");
+        OutputWriterSession::new(
+            run_directory.display().to_string(),
+            chunks_directory.display().to_string(),
+            "regenie2_linear".to_string(),
+            1,
+            1,
+            "arrow",
+            "float32",
+            false,
+            1,
+            "none".to_string(),
+            "none".to_string(),
+            false,
+        )
+        .expect("test writer session should be created")
+    }
 
     #[test]
     fn stage_timing_accumulator_records_finalization_timing() {
@@ -1078,5 +1222,46 @@ mod tests {
         assert!(std::sync::Arc::ptr_eq(&first_pool, &second_pool));
         assert!(std::sync::Arc::ptr_eq(&second_pool, &third_pool));
         assert!(third_pool.current_worker_count() >= 2);
+    }
+
+    #[test]
+    fn finish_output_writer_sessions_finishes_native_sessions_in_order() {
+        let output_root = temporary_output_root("finish-batch");
+        let sessions = vec![
+            Arc::new(create_test_output_writer_session(&output_root, "trait-a")),
+            Arc::new(create_test_output_writer_session(&output_root, "trait-b")),
+        ];
+
+        let final_paths =
+            finish_output_writer_sessions(&sessions, 2).expect("native output writer sessions should finish");
+
+        assert_eq!(final_paths, vec![None, None]);
+        std::fs::remove_dir_all(output_root).expect("test output directory should be removed");
+    }
+
+    #[test]
+    fn finish_output_writer_sessions_rejects_zero_threads_for_nonempty_batch() {
+        let output_root = temporary_output_root("finish-zero-threads");
+        let session = Arc::new(create_test_output_writer_session(&output_root, "trait-a"));
+
+        let error = finish_output_writer_sessions(&[Arc::clone(&session)], 0)
+            .expect_err("nonempty writer lifecycle batch should reject zero threads");
+        session.abort().expect("test writer session should abort after rejected batch");
+
+        assert_eq!(error.to_string(), "Writer lifecycle thread count must be at least 1.");
+        std::fs::remove_dir_all(output_root).expect("test output directory should be removed");
+    }
+
+    #[test]
+    fn abort_output_writer_sessions_aborts_native_sessions() {
+        let output_root = temporary_output_root("abort-batch");
+        let sessions = vec![
+            Arc::new(create_test_output_writer_session(&output_root, "trait-a")),
+            Arc::new(create_test_output_writer_session(&output_root, "trait-b")),
+        ];
+
+        abort_output_writer_sessions(&sessions).expect("native output writer sessions should abort");
+
+        std::fs::remove_dir_all(output_root).expect("test output directory should be removed");
     }
 }

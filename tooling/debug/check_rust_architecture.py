@@ -266,10 +266,15 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
 )
 DISALLOWED_ROOT_PYO3_CLASS_MEMBER_NAMES = frozenset(
     (
+        "abort_native_output_writer_sessions",
         "build_prepared_run_plan_json_from_current_header",
         "build_current_run_manifest_header_json_from_input_json",
         "build_prediction_loco_file_fingerprints_json",
+        "collect_parallel_writer_results",
         "existing_manifest_json",
+        "finish_native_output_writer_sessions",
+        "finish_native_output_writer_sessions_interrupted",
+        "validate_writer_lifecycle_thread_count",
     )
 )
 ROOT_PYO3_PYFUNCTION_EXPORT_PATTERN = re.compile(r"wrap_pyfunction!\s*\(\s*(?P<export_name>[A-Za-z0-9_]+)")

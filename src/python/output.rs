@@ -11,9 +11,12 @@ use g_output::{
     ManifestFileFingerprintCache as NativeManifestFileFingerprintCacheState, NativeChunkHandle,
     NativeChunkStats as NativeOutputChunkStats, OutputFileFormat, OutputResumeMode, OutputWriterError,
     OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
+    abort_output_writer_sessions as abort_native_output_writer_sessions,
     build_current_run_manifest_header_json_with_cache as build_native_current_run_manifest_header_json_with_cache,
     build_manifest_json_sha256 as build_native_manifest_json_sha256,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
+    finish_output_writer_sessions as finish_native_output_writer_sessions,
+    finish_output_writer_sessions_interrupted as finish_native_output_writer_sessions_interrupted,
     initialize_output_run as initialize_native_output_run, load_run_manifest_json as load_native_run_manifest_json,
     prepare_output_run as prepare_native_output_run,
     read_run_manifest_committed_chunk_identifiers_from_text as read_native_manifest_committed_chunk_identifiers,
@@ -517,7 +520,7 @@ impl NativeOutputWriterLifecyclePolicy {
         thread_count: usize,
     ) -> PyResult<Vec<Option<String>>> {
         let sessions = writer_sessions.iter().map(|session| Arc::clone(&session.inner)).collect::<Vec<_>>();
-        py.detach(|| finish_native_output_writer_sessions(sessions, thread_count))
+        py.detach(|| finish_native_output_writer_sessions(&sessions, thread_count))
             .map(paths_to_python_strings)
             .map_err(|error| output_writer_error_to_py(error, "finish_writer_sessions"))
     }
@@ -531,7 +534,7 @@ impl NativeOutputWriterLifecyclePolicy {
         thread_count: usize,
     ) -> PyResult<()> {
         let sessions = writer_sessions.iter().map(|session| Arc::clone(&session.inner)).collect::<Vec<_>>();
-        py.detach(|| finish_native_output_writer_sessions_interrupted(sessions, &signal_name, thread_count))
+        py.detach(|| finish_native_output_writer_sessions_interrupted(&sessions, &signal_name, thread_count))
             .map_err(|error| output_writer_error_to_py(error, "finish_writer_sessions_interrupted"))
     }
 
@@ -541,110 +544,13 @@ impl NativeOutputWriterLifecyclePolicy {
         writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
     ) -> PyResult<()> {
         let sessions = writer_sessions.iter().map(|session| Arc::clone(&session.inner)).collect::<Vec<_>>();
-        py.detach(|| abort_native_output_writer_sessions(sessions))
+        py.detach(|| abort_native_output_writer_sessions(&sessions))
             .map_err(|error| output_writer_error_to_py(error, "abort_writer_sessions"))
     }
 }
 
 fn paths_to_python_strings(paths: Vec<Option<PathBuf>>) -> Vec<Option<String>> {
     paths.into_iter().map(|path| path.map(|path| path.display().to_string())).collect()
-}
-
-fn finish_native_output_writer_sessions(
-    sessions: Vec<Arc<NativeOutputWriterSession>>,
-    thread_count: usize,
-) -> Result<Vec<Option<PathBuf>>, OutputWriterError> {
-    if sessions.is_empty() {
-        return Ok(Vec::new());
-    }
-    validate_writer_lifecycle_thread_count(thread_count)?;
-    if sessions.len() <= 1 || thread_count == 1 {
-        return sessions.iter().map(|session| session.finish()).collect();
-    }
-    collect_parallel_writer_results(sessions, thread_count, NativeOutputWriterSession::finish)
-}
-
-fn finish_native_output_writer_sessions_interrupted(
-    sessions: Vec<Arc<NativeOutputWriterSession>>,
-    signal_name: &str,
-    thread_count: usize,
-) -> Result<(), OutputWriterError> {
-    if sessions.is_empty() {
-        return Ok(());
-    }
-    validate_writer_lifecycle_thread_count(thread_count)?;
-    if sessions.len() <= 1 || thread_count == 1 {
-        for session in sessions {
-            session.finish_interrupted(signal_name)?;
-        }
-        return Ok(());
-    }
-    let signal_name = signal_name.to_owned();
-    collect_parallel_writer_results(sessions, thread_count, move |session| {
-        session.finish_interrupted(&signal_name)?;
-        Ok(None)
-    })?;
-    Ok(())
-}
-
-fn abort_native_output_writer_sessions(sessions: Vec<Arc<NativeOutputWriterSession>>) -> Result<(), OutputWriterError> {
-    for session in sessions {
-        session.abort()?;
-    }
-    Ok(())
-}
-
-fn validate_writer_lifecycle_thread_count(thread_count: usize) -> Result<(), OutputWriterError> {
-    if thread_count == 0 {
-        return Err(OutputWriterError::InvalidInput("Writer lifecycle thread count must be at least 1.".to_string()));
-    }
-    Ok(())
-}
-
-fn collect_parallel_writer_results<F>(
-    sessions: Vec<Arc<NativeOutputWriterSession>>,
-    thread_count: usize,
-    operation: F,
-) -> Result<Vec<Option<PathBuf>>, OutputWriterError>
-where
-    F: Fn(&NativeOutputWriterSession) -> Result<Option<PathBuf>, OutputWriterError> + Clone + Send + Sync + 'static,
-{
-    let worker_count = thread_count.min(sessions.len()).max(1);
-    let chunk_size = sessions.len().div_ceil(worker_count);
-    let session_count = sessions.len();
-    let handles = sessions
-        .chunks(chunk_size)
-        .enumerate()
-        .map(|(chunk_index, chunk)| {
-            let chunk_sessions = chunk.to_vec();
-            let start_index = chunk_index * chunk_size;
-            let operation = operation.clone();
-            std::thread::spawn(move || {
-                chunk_sessions
-                    .into_iter()
-                    .enumerate()
-                    .map(|(offset, session)| operation(&session).map(|path| (start_index + offset, path)))
-                    .collect::<Result<Vec<_>, OutputWriterError>>()
-            })
-        })
-        .collect::<Vec<_>>();
-    let mut ordered_paths = vec![None; session_count];
-    for handle in handles {
-        let chunk_results = handle
-            .join()
-            .map_err(|_| OutputWriterError::Runtime("Rust output writer lifecycle worker panicked.".to_string()))??;
-        for (index, path) in chunk_results {
-            ordered_paths[index] = Some(path);
-        }
-    }
-    ordered_paths
-        .into_iter()
-        .map(|path| {
-            path.ok_or_else(|| {
-                OutputWriterError::Runtime("Rust output writer lifecycle worker did not report a result.".to_string())
-            })
-        })
-        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]

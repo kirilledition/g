@@ -2784,9 +2784,12 @@ Current guardrail notes:
   aliases; callback code calls the owning adapters explicitly, and the Python
   architecture checker rejects reintroduced helper alias assignments.
 - Real native writer-session finish, interrupted-finish, and abort cleanup now
-  enter through a typed native writer lifecycle batch policy. The Python
-  native-dispatch writer helper keeps the old per-object path only for fake
-  writer sessions used by tests.
+  enter through a typed `g-output` writer lifecycle batch policy exposed by
+  the root PyO3 adapter. The Python native-dispatch writer helper keeps the old
+  per-object path only for fake writer sessions used by tests. The Rust
+  architecture checker rejects reintroducing the root PyO3 writer lifecycle
+  helper definitions, and production pipeline annotations now carry native
+  writer-session types instead of generic `typing.Any` sessions.
 - Test-only runner runtime construction/description helpers were also removed;
   isolated tests build native runtime-state handles directly.
 - The test-only `execution_plan.build_kernel_config()` wrapper was removed;
@@ -2797,7 +2800,8 @@ Current guardrail notes:
   `wild` linker wrapper. The build completed in `2:17.09` wall time with Cargo
   reporting `1m43s`. A later incremental rebuild after the native writer
   lifecycle batch policy completed in `28.18s` wall time with Cargo reporting
-  `14.99s`.
+  `14.99s`; after moving the batch policy into `g-output`, the rebuild took
+  `36.42s` wall time with Cargo reporting `22.98s`.
 
 ### Exit criteria
 
