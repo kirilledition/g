@@ -17,4 +17,4 @@ def default_local_cache_directory(directory_name: str) -> Path:
         Default temporary cache directory path.
 
     """
-    return Path(_core.default_local_cache_directory_value(directory_name))
+    return Path(_core.NativeRuntimeState().default_local_cache_directory_value(directory_name))

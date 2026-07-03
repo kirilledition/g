@@ -132,6 +132,15 @@ class Regenie2MultiBinaryChunkResult:
     nr_warm_start_iteration_count: jax.Array
 
 
+type Regenie2AnyBinaryChunkResult = (
+    Regenie2BinaryScoreChunkResult
+    | Regenie2BinaryChunkResult
+    | Regenie2MultiBinaryScoreChunkResult
+    | Regenie2MultiBinaryChunkResult
+)
+type Regenie2BinaryDiagnosticChunkResult = Regenie2BinaryChunkResult | Regenie2MultiBinaryChunkResult
+
+
 def build_empty_firth_integer_array(extra_code: jax.Array) -> jax.Array:
     """Build an integer Firth diagnostic array for score-test-only results."""
     return jnp.zeros_like(extra_code, dtype=jnp.int32)
@@ -184,6 +193,17 @@ def expand_multi_score_result_with_empty_firth_diagnostics(
         nr_zero_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
         nr_warm_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
     )
+
+
+def expand_binary_result_with_empty_firth_diagnostics(
+    result: Regenie2AnyBinaryChunkResult,
+) -> Regenie2BinaryDiagnosticChunkResult:
+    """Return a binary result with every Firth diagnostic array present."""
+    if isinstance(result, Regenie2BinaryScoreChunkResult):
+        return expand_score_result_with_empty_firth_diagnostics(result)
+    if isinstance(result, Regenie2MultiBinaryScoreChunkResult):
+        return expand_multi_score_result_with_empty_firth_diagnostics(result)
+    return result
 
 
 def squeeze_single_binary_score_result(

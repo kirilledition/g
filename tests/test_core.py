@@ -28,7 +28,7 @@ def run_logging_subprocess(script: str) -> subprocess.CompletedProcess[str]:
 
 def build_native_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:
     runtime_state = _core.NativeRuntimeState()
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    logging_policy_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,
@@ -71,7 +71,8 @@ def build_native_jax_runtime_setup_session(
     transfer_guard: bool = False,
 ) -> _core.NativeJaxRuntimeSetupSession:
     """Build a native setup session through the runtime-state boundary."""
-    jax_policy_payload = _core.build_jax_runtime_policy_payload(
+    runtime_state = _core.NativeRuntimeState()
+    jax_policy_payload = runtime_state.build_jax_runtime_policy_payload(
         device=requested_device,
         cache_directory=cache_directory,
         matmul_precision=matmul_precision,
@@ -81,7 +82,7 @@ def build_native_jax_runtime_setup_session(
         xla_autotune_cache=xla_autotune_cache,
         transfer_guard=transfer_guard,
     )
-    return _core.NativeRuntimeState().build_jax_runtime_setup_session(jax_policy_payload, cache_directory)
+    return runtime_state.build_jax_runtime_setup_session(jax_policy_payload, cache_directory)
 
 
 class RecordingNativeCallbackTelemetrySession:
@@ -178,6 +179,7 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "configure_bgen_decode_tile_variant_count")
     assert not hasattr(_core, "configure_rayon_global_thread_pool")
     assert not hasattr(_core, "build_default_local_cache_directory_value")
+    assert not hasattr(_core, "default_local_cache_directory_value")
     assert not hasattr(_core, "build_file_content_sha256_value")
     assert not hasattr(_core, "build_current_run_manifest_header_json_from_input_json")
     assert not hasattr(_core, "build_manifest_file_fingerprint_payload")
@@ -189,6 +191,9 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "build_prediction_loco_file_fingerprints_json")
     assert not hasattr(_core, "build_run_manifest_extension_payload")
     assert not hasattr(_core, "build_trusted_bgen_validation_cache_payload")
+    assert not hasattr(_core, "compile_run_request_json")
+    assert not hasattr(_core, "initialize_pipeline_output_run_batch")
+    assert not hasattr(_core, "initialize_pipeline_output_runs")
     assert not hasattr(_core, "build_trusted_bgen_validation_cache_path_value")
     assert not hasattr(_core, "build_trusted_bgen_validation_fingerprint_value")
     assert not hasattr(_core, "default_trusted_bgen_validation_cache_directory_value")
@@ -203,6 +208,120 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
     assert not hasattr(_core, "plan_telemetry_close")
     assert not hasattr(_core, "plan_telemetry_event_emission")
     assert not hasattr(_core, "plan_telemetry_progress_emission")
+    assert not hasattr(_core, "build_pipeline_output_preparation_batch_from_values")
+    for removed_output_lifecycle_export_name in (
+        "abort_output_writer_session",
+        "build_manifest_json_sha256_from_value",
+        "build_prepared_run_plan_json_from_current_header",
+        "finalize_output_run_chunks",
+        "finish_output_writer_session",
+        "finish_output_writer_session_interrupted",
+        "initialize_output_run_from_values",
+        "load_run_manifest_payload",
+        "prepare_output_run",
+        "read_manifest_committed_chunk_identifiers_from_value",
+        "repair_strict_manifest_chunk_commits_from_value",
+        "resolve_output_run_paths",
+        "scan_committed_chunk_identifiers",
+        "validate_run_manifest_compatibility_from_values",
+        "validate_strict_manifest_chunks_from_value",
+        "write_run_manifest",
+        "write_regenie2_multi_native_chunk",
+        "write_regenie2_multi_native_chunk_f64",
+    ):
+        assert not hasattr(_core, removed_output_lifecycle_export_name)
+    for removed_runtime_global_export_name in (
+        "close_telemetry_session_with_event",
+        "global_process_runtime_state",
+    ):
+        assert not hasattr(_core, removed_runtime_global_export_name)
+    for removed_runner_diagnostic_export_name in (
+        "record_runner_binary_engine_dispatch_started_diagnostic_event",
+        "record_runner_execution_plan_build_started_diagnostic_event",
+        "record_runner_execution_plan_dispatch_started_diagnostic_event",
+        "record_runner_execution_plan_finalization_started_diagnostic_event",
+        "record_runner_execution_plan_prepared_diagnostic_event",
+        "record_runner_jax_runtime_configuration_started_diagnostic_event",
+        "record_runner_linear_engine_dispatch_started_diagnostic_event",
+        "record_runner_metadata_artifacts_finalized_diagnostic_event",
+        "record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event",
+        "record_runner_multi_phenotype_dispatch_started_diagnostic_event",
+        "record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event",
+        "record_runner_run_completed_diagnostic_event",
+        "record_runner_run_failed_diagnostic_event",
+        "record_runner_run_interrupted_diagnostic_event",
+        "record_runner_run_started_diagnostic_event",
+        "record_runner_single_phenotype_dispatch_started_diagnostic_event",
+    ):
+        assert not hasattr(_core, removed_runner_diagnostic_export_name)
+    for removed_runtime_timing_export_name in (
+        "record_final_timing_outputs_write_started_diagnostic_event",
+        "record_jax_runtime_diagnostic_event",
+        "resolve_final_timing_output_context",
+    ):
+        assert not hasattr(_core, removed_runtime_timing_export_name)
+    for removed_run_event_diagnostic_export_name in (
+        "record_callback_null_logistic_nonconvergence_warning_diagnostic_event",
+        "record_io_output_resume_committed_chunks_diagnostic_event",
+        "record_native_dispatch_bgen_engine_constructing_diagnostic_event",
+        "record_native_dispatch_callback_drain_started_diagnostic_event",
+        "record_native_dispatch_delivery_failed_diagnostic_event",
+        "record_native_dispatch_delivery_finished_diagnostic_event",
+        "record_native_dispatch_delivery_interrupted_diagnostic_event",
+        "record_native_dispatch_delivery_started_diagnostic_event",
+        "record_native_dispatch_pipeline_finished_diagnostic_event",
+        "record_native_dispatch_trusted_bgen_validation_started_diagnostic_event",
+        "record_native_dispatch_writer_session_finish_started_diagnostic_event",
+        "record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event",
+        "record_native_dispatch_writer_sessions_finish_started_diagnostic_event",
+        "record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event",
+        "record_pipeline_bgen_engine_open_started_diagnostic_event",
+        "record_pipeline_bgen_engine_opened_diagnostic_event",
+        "record_pipeline_gpu_genotype_format_resolved_diagnostic_event",
+        "record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event",
+        "record_pipeline_grouped_per_phenotype_started_diagnostic_event",
+        "record_pipeline_grouped_union_delivery_selected_diagnostic_event",
+        "record_pipeline_multi_group_preflight_completed_diagnostic_event",
+        "record_pipeline_multi_group_preflight_started_diagnostic_event",
+        "record_pipeline_multi_phenotype_sample_summary_diagnostic_event",
+        "record_pipeline_multi_trait_input_aligned_diagnostic_event",
+        "record_pipeline_multi_trait_input_load_started_diagnostic_event",
+        "record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event",
+        "record_pipeline_multi_trait_started_diagnostic_event",
+        "record_pipeline_output_resume_committed_chunks_diagnostic_event",
+        "record_pipeline_output_writer_sessions_create_started_diagnostic_event",
+        "record_pipeline_prevalidated_bgen_engine_used_diagnostic_event",
+        "record_pipeline_single_trait_input_aligned_diagnostic_event",
+        "record_pipeline_single_trait_input_load_started_diagnostic_event",
+        "record_pipeline_single_trait_prediction_source_load_started_diagnostic_event",
+        "record_pipeline_single_trait_preflight_completed_diagnostic_event",
+        "record_pipeline_single_trait_preflight_started_diagnostic_event",
+        "record_pipeline_single_trait_started_diagnostic_event",
+        "record_preflight_warning_diagnostic_event",
+    ):
+        assert not hasattr(_core, removed_run_event_diagnostic_export_name)
+    assert not hasattr(_core.NativePreparedOutputRun, "existing_manifest_json")
+    assert not hasattr(
+        _core.NativeManifestFileFingerprintCache,
+        "build_current_run_manifest_header_json_from_input_json",
+    )
+    assert not hasattr(
+        _core.NativeManifestFileFingerprintCache,
+        "build_prediction_loco_file_fingerprints_json",
+    )
+    native_pipeline_output_preparation_batch_type = typing.cast(
+        "typing.Any",
+        _core.NativePipelineOutputPreparationBatch,
+    )
+    with pytest.raises(TypeError):
+        native_pipeline_output_preparation_batch_type(
+            (),
+            (),
+            (),
+            (),
+            resume=False,
+            resume_mode="fast",
+        )
     assert not hasattr(_core, "plan_timing_file_write")
     assert not hasattr(_core, "plan_null_logistic_nonconvergence")
     for removed_scheduler_export_name in (
@@ -230,9 +349,59 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         "resolve_bgen_delivery_method_value",
         "resolve_callback_worker_backpressure_poll_timeout_seconds",
         "resolve_callback_worker_stop_poll_timeout_seconds",
+        "resolve_delivery_callback_batch_size",
+        "resolve_effective_trusted_no_missing_diploid",
+        "resolve_grouped_union_callback_batch_size",
+        "resolve_manifest_gpu_genotype_format",
         "resolve_native_callback_queue_limits",
         "resolve_native_callback_worker_shutdown_timeouts",
+        "resolve_writer_finish_thread_count",
         "should_attempt_callback_worker_stop",
+        "build_callback_chunk_identity",
+        "emit_binary_correction_summary_telemetry",
+        "emit_callback_progress_completion_telemetry",
+        "emit_callback_progress_event_telemetry",
+        "emit_callback_progress_update_telemetry",
+        "intersect_committed_chunk_identifier_sets",
+        "plan_auto_gpu_genotype_format_after_trusted_validation",
+        "plan_bgen_delivery_cleanup",
+        "plan_bgen_delivery_invocation",
+        "plan_gpu_genotype_format_auto_to_dosage",
+        "plan_multi_trait_chunk_write",
+        "plan_multi_trait_output_write",
+        "plan_null_logistic_nonconvergence_from_array",
+        "plan_single_trait_binary_gpu_genotype_format_resolution",
+        "plan_single_trait_output_write",
+        "plan_writer_finish_execution",
+        "attach_run_metadata_payload",
+        "build_run_completed_event_payload",
+        "build_run_failed_event_payload",
+        "build_run_interrupted_event_payload",
+        "record_association_backend_selected_telemetry_event",
+        "record_bgen_engine_opened_telemetry_event",
+        "record_effective_config_written_telemetry_event",
+        "record_execution_plan_prepared_telemetry_event",
+        "record_gpu_genotype_format_resolved_telemetry_event",
+        "record_multi_phenotype_preflight_completed_telemetry_event",
+        "record_multi_phenotype_sample_summary_telemetry_event",
+        "record_multi_writer_finished_telemetry_event",
+        "record_native_cli_completed_line_diagnostic_event",
+        "record_native_cli_failed_line_diagnostic_event",
+        "record_native_cli_interrupted_line_diagnostic_event",
+        "record_native_cli_stderr_diagnostic_event",
+        "record_native_cli_stdout_diagnostic_event",
+        "record_native_runtime_knobs_configured_diagnostic_event",
+        "record_prediction_source_loaded_telemetry_event",
+        "record_runner_run_completed_telemetry_event",
+        "record_runner_run_failed_telemetry_event",
+        "record_runner_run_interrupted_telemetry_event",
+        "record_runner_run_started_telemetry_event",
+        "record_sample_alignment_completed_telemetry_event",
+        "record_single_trait_preflight_completed_telemetry_event",
+        "record_writer_finished_telemetry_event",
+        "render_run_completed_lines",
+        "render_run_failed_lines",
+        "render_run_interrupted_lines",
         "validate_pipeline_resume_compatibility",
     ):
         assert not hasattr(_core, removed_scheduler_export_name)
@@ -262,14 +431,18 @@ def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:
 
 
 def test_intersect_committed_chunk_identifier_sets_returns_sorted_shared_identifiers() -> None:
-    shared_chunk_identifiers = _core.intersect_committed_chunk_identifier_sets(((64, 0, 32), (32, 64, 96), (32, 128)))
+    native_schedule_policy = _core.NativeSchedulePolicy()
+    shared_chunk_identifiers = native_schedule_policy.intersect_committed_chunk_identifier_sets(
+        ((64, 0, 32), (32, 64, 96), (32, 128))
+    )
 
     assert shared_chunk_identifiers == [32]
-    assert _core.intersect_committed_chunk_identifier_sets(()) == []
+    assert native_schedule_policy.intersect_committed_chunk_identifier_sets(()) == []
 
 
 def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> None:
-    write_plan = _core.plan_multi_trait_chunk_write(
+    native_schedule_policy = _core.NativeSchedulePolicy()
+    write_plan = native_schedule_policy.plan_multi_trait_chunk_write(
         writer_session_count=3,
         chunk_identifier=32,
         committed_chunk_identifier_sets=((0,), (32,), (64,)),
@@ -279,7 +452,7 @@ def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> No
     assert write_plan.active_trait_count == 2
     assert write_plan.all_traits_committed is False
 
-    committed_write_plan = _core.plan_multi_trait_chunk_write(
+    committed_write_plan = native_schedule_policy.plan_multi_trait_chunk_write(
         writer_session_count=2,
         chunk_identifier=32,
         committed_chunk_identifier_sets=((32,), (0, 32)),
@@ -289,7 +462,7 @@ def test_plan_multi_trait_chunk_write_uses_native_committed_chunk_policy() -> No
     assert committed_write_plan.all_traits_committed is True
 
     with pytest.raises(ValueError, match="Committed chunk identifier set count"):
-        _core.plan_multi_trait_chunk_write(
+        native_schedule_policy.plan_multi_trait_chunk_write(
             writer_session_count=2,
             chunk_identifier=32,
             committed_chunk_identifier_sets=((32,),),
@@ -954,7 +1127,9 @@ def test_native_python_association_backend_requires_native_batch_result() -> Non
 
 
 def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None:
-    single_payload = _core.validate_single_trait_preflight_shape_payload(
+    native_preflight_validator = _core.NativePreflightValidator()
+
+    single_payload = native_preflight_validator.validate_single_trait_preflight_shape_payload(
         phenotype_sample_count=3,
         covariate_dimension_count=2,
         covariate_sample_count=3,
@@ -962,7 +1137,7 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
     )
     assert single_payload == {"sample_count": 3, "covariate_count": 2}
 
-    multi_payload = _core.validate_multi_trait_preflight_shape_payload(
+    multi_payload = native_preflight_validator.validate_multi_trait_preflight_shape_payload(
         phenotype_dimension_count=2,
         phenotype_trait_count=2,
         phenotype_sample_count=3,
@@ -973,7 +1148,7 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
     assert multi_payload == {"trait_count": 2, "sample_count": 3, "covariate_count": 2}
 
     with pytest.raises(ValueError, match="Covariate matrix must be two-dimensional"):
-        _core.validate_single_trait_preflight_shape_payload(
+        native_preflight_validator.validate_single_trait_preflight_shape_payload(
             phenotype_sample_count=3,
             covariate_dimension_count=1,
             covariate_sample_count=3,
@@ -981,7 +1156,7 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
         )
 
     with pytest.raises(ValueError, match="Phenotype matrix must contain at least one trait"):
-        _core.validate_multi_trait_preflight_shape_payload(
+        native_preflight_validator.validate_multi_trait_preflight_shape_payload(
             phenotype_dimension_count=2,
             phenotype_trait_count=0,
             phenotype_sample_count=3,
@@ -992,92 +1167,143 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
 
 
 def test_native_preflight_binary_and_prediction_shape_policy() -> None:
-    _core.validate_finite_array_values("Phenotype", np.asarray([0.0, 1.0], dtype=np.float32))
-    _core.validate_finite_array_values("Integer phenotype", np.asarray([0, 1], dtype=np.int64))
-    _core.validate_covariate_matrix_rank(covariate_rank=2, covariate_count=2)
-    _core.validate_binary_phenotype_array(np.asarray([0.0, 1.0, 1.0], dtype=np.float64))
-    _core.validate_binary_phenotype_array(np.asarray([False, True, True], dtype=np.bool_))
-    _core.validate_single_prediction_preflight_shape("1", (3,), sample_count=3)
-    _core.validate_multi_prediction_preflight_shape("2", (2, 3), trait_count=2, sample_count=3)
+    native_preflight_validator = _core.NativePreflightValidator()
+
+    native_preflight_validator.validate_finite_array_values("Phenotype", np.asarray([0.0, 1.0], dtype=np.float32))
+    native_preflight_validator.validate_finite_array_values("Integer phenotype", np.asarray([0, 1], dtype=np.int64))
+    native_preflight_validator.validate_covariate_matrix_rank(covariate_rank=2, covariate_count=2)
+    native_preflight_validator.validate_covariate_matrix_rank_array(
+        np.asarray([[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]], dtype=np.float32),
+        covariate_count=2,
+    )
+    native_preflight_validator.validate_binary_phenotype_array(np.asarray([0.0, 1.0, 1.0], dtype=np.float64))
+    native_preflight_validator.validate_binary_phenotype_array(np.asarray([False, True, True], dtype=np.bool_))
+    native_preflight_validator.validate_single_prediction_preflight_shape("1", (3,), sample_count=3)
+    native_preflight_validator.validate_multi_prediction_preflight_shape("2", (2, 3), trait_count=2, sample_count=3)
 
     with pytest.raises(ValueError, match="Phenotype contains non-finite values"):
-        _core.validate_finite_array_values("Phenotype", np.asarray([0.0, np.nan], dtype=np.float64))
+        native_preflight_validator.validate_finite_array_values(
+            "Phenotype", np.asarray([0.0, np.nan], dtype=np.float64)
+        )
 
     with pytest.raises(ValueError, match="Covariate matrix is rank deficient"):
-        _core.validate_covariate_matrix_rank(covariate_rank=1, covariate_count=2)
+        native_preflight_validator.validate_covariate_matrix_rank(covariate_rank=1, covariate_count=2)
+
+    with pytest.raises(ValueError, match="Covariate matrix is rank deficient"):
+        native_preflight_validator.validate_covariate_matrix_rank_array(
+            np.asarray([[1.0, 2.0], [1.0, 2.0], [1.0, 2.0]], dtype=np.float64),
+            covariate_count=2,
+        )
 
     with pytest.raises(ValueError, match="Binary phenotype must be coded as 0/1 after alignment"):
-        _core.validate_binary_phenotype_array(np.asarray([0.0, 0.5, 1.0], dtype=np.float32))
+        native_preflight_validator.validate_binary_phenotype_array(np.asarray([0.0, 0.5, 1.0], dtype=np.float32))
 
     with pytest.raises(ValueError, match="Binary phenotype must contain at least one case and one control"):
-        _core.validate_binary_phenotype_array(np.asarray([0, 0, 0], dtype=np.int32))
+        native_preflight_validator.validate_binary_phenotype_array(np.asarray([0, 0, 0], dtype=np.int32))
 
     with pytest.raises(ValueError, match="Prediction sample count for chromosome 1 is 2, expected 3"):
-        _core.validate_single_prediction_preflight_shape("1", (2,), sample_count=3)
+        native_preflight_validator.validate_single_prediction_preflight_shape("1", (2,), sample_count=3)
 
     with pytest.raises(
         ValueError,
         match=r"Prediction matrix shape for chromosome 2 is \(2, 2\), expected \(2, 3\)",
     ):
-        _core.validate_multi_prediction_preflight_shape("2", (2, 2), trait_count=2, sample_count=3)
+        native_preflight_validator.validate_multi_prediction_preflight_shape("2", (2, 2), trait_count=2, sample_count=3)
+
+
+def test_detached_native_preflight_helpers_removed_from_root_surface() -> None:
+    removed_helper_names = (
+        "build_preflight_report_payload",
+        "resolve_preflight_variant_count",
+        "validate_binary_phenotype_array",
+        "validate_covariate_matrix_rank",
+        "validate_covariate_matrix_rank_array",
+        "validate_finite_array_values",
+        "validate_multi_prediction_preflight_shape",
+        "validate_multi_trait_preflight_shape_payload",
+        "validate_single_prediction_preflight_shape",
+        "validate_single_trait_preflight_shape_payload",
+    )
+
+    for helper_name in removed_helper_names:
+        assert not hasattr(_core, helper_name)
+
+
+def test_native_preflight_covariate_rank_array_uses_numpy_default_tolerance() -> None:
+    native_preflight_validator = _core.NativePreflightValidator()
+    tiny_float32_singular_value = np.finfo(np.float32).eps
+    covariate_matrix = np.asarray(
+        [
+            [1.0, 0.0],
+            [0.0, tiny_float32_singular_value],
+            [0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    with pytest.raises(ValueError, match="Covariate matrix is rank deficient"):
+        native_preflight_validator.validate_covariate_matrix_rank_array(covariate_matrix, covariate_count=2)
+
+    native_preflight_validator.validate_covariate_matrix_rank_array(
+        covariate_matrix.astype(np.float64), covariate_count=2
+    )
 
 
 def test_native_pipeline_resume_compatibility_validates_all_manifests(tmp_path: Path) -> None:
     run_directory = tmp_path / "run"
     chunks_directory = tmp_path / "chunks"
     chunks_directory.mkdir()
-    manifest_json = json.dumps(
-        {"schema_version": 7, "chunk_size": 32, "committed_chunks": []},
-        sort_keys=True,
-    )
-    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
+    manifest: dict[str, object] = {"schema_version": 7, "chunk_size": 32, "committed_chunks": []}
+    current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
 
     def validate_resume_compatibility(
         *,
-        existing_manifest_json_values: tuple[str | None, ...],
-        current_header_json_values: tuple[str, ...],
+        existing_manifest_values: tuple[dict[str, object] | None, ...],
+        current_header_values: tuple[dict[str, object], ...],
         resume_mode: str,
     ) -> None:
-        preparation_batch = _core.NativePipelineOutputPreparationBatch(
-            run_directories=(str(run_directory),),
-            chunks_directories=(str(chunks_directory),),
-            existing_manifest_json_values=existing_manifest_json_values,
-            current_header_json_values=current_header_json_values,
-            resume=True,
-            resume_mode=resume_mode,
+        preparation_batch = (
+            _core.NativePipelineOutputPreparationPolicy().build_pipeline_output_preparation_batch_from_values(
+                run_directories=(str(run_directory),),
+                chunks_directories=(str(chunks_directory),),
+                existing_manifest_values=existing_manifest_values,
+                current_header_values=current_header_values,
+                resume=True,
+                resume_mode=resume_mode,
+            )
         )
         preparation_batch.validate_resume_compatibility()
 
     validate_resume_compatibility(
-        existing_manifest_json_values=(manifest_json,),
-        current_header_json_values=(current_header_json,),
+        existing_manifest_values=(manifest,),
+        current_header_values=(current_header,),
         resume_mode="fast",
     )
     validate_resume_compatibility(
-        existing_manifest_json_values=(manifest_json,),
-        current_header_json_values=(current_header_json,),
+        existing_manifest_values=(manifest,),
+        current_header_values=(current_header,),
         resume_mode="strict",
     )
 
     with pytest.raises(ValueError, match=r"Resume requires run_manifest\.json"):
         validate_resume_compatibility(
-            existing_manifest_json_values=(None,),
-            current_header_json_values=(current_header_json,),
+            existing_manifest_values=(None,),
+            current_header_values=(current_header,),
             resume_mode="fast",
         )
 
     with pytest.raises(ValueError, match="input counts must match"):
         validate_resume_compatibility(
-            existing_manifest_json_values=(),
-            current_header_json_values=(current_header_json,),
+            existing_manifest_values=(),
+            current_header_values=(current_header,),
             resume_mode="fast",
         )
 
-    incompatible_header_json = json.dumps({"schema_version": 7, "chunk_size": 64}, sort_keys=True)
+    incompatible_header: dict[str, object] = {"schema_version": 7, "chunk_size": 64}
     with pytest.raises(ValueError, match="chunk_size"):
         validate_resume_compatibility(
-            existing_manifest_json_values=(manifest_json,),
-            current_header_json_values=(incompatible_header_json,),
+            existing_manifest_values=(manifest,),
+            current_header_values=(incompatible_header,),
             resume_mode="fast",
         )
 
@@ -1086,33 +1312,33 @@ def test_native_pipeline_output_initialization_returns_committed_sets(tmp_path: 
     run_directory = tmp_path / "run"
     chunks_directory = run_directory / "chunks"
     chunks_directory.mkdir(parents=True)
-    existing_manifest_json = json.dumps(
-        {
-            "schema_version": 7,
-            "chunk_size": 32,
-            "committed_chunks": [
-                {
-                    "chunk_identifier": 2,
-                    "variant_start_index": 2,
-                    "variant_stop_index": 4,
-                    "row_count": 2,
-                    "chunk_file_name": "chunk_2.arrow",
-                }
-            ],
-        },
-        sort_keys=True,
-    )
-    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
+    existing_manifest: dict[str, object] = {
+        "schema_version": 7,
+        "chunk_size": 32,
+        "committed_chunks": [
+            {
+                "chunk_identifier": 2,
+                "variant_start_index": 2,
+                "variant_stop_index": 4,
+                "row_count": 2,
+                "chunk_file_name": "chunk_2.arrow",
+            }
+        ],
+    }
+    current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
 
-    committed_chunk_identifier_sets = _core.initialize_pipeline_output_runs(
-        run_directories=(str(run_directory),),
-        chunks_directories=(str(chunks_directory),),
-        existing_manifest_json_values=(existing_manifest_json,),
-        current_header_json_values=(current_header_json,),
-        resume=True,
-        resume_mode="fast",
-        runtime_compatibility_token=build_native_runtime_compatibility_token(),
+    preparation_batch = (
+        _core.NativePipelineOutputPreparationPolicy().build_pipeline_output_preparation_batch_from_values(
+            run_directories=(str(run_directory),),
+            chunks_directories=(str(chunks_directory),),
+            existing_manifest_values=(existing_manifest,),
+            current_header_values=(current_header,),
+            resume=True,
+            resume_mode="fast",
+        )
     )
+    native_initialization = preparation_batch.initialize(build_native_runtime_compatibility_token())
+    committed_chunk_identifier_sets = native_initialization.committed_chunk_identifier_sets()
 
     assert committed_chunk_identifier_sets == [[2]]
     written_manifest = json.loads((run_directory / "run_manifest.json").read_text(encoding="utf-8"))
@@ -1123,33 +1349,32 @@ def test_native_pipeline_output_initialization_handle_returns_committed_sets(tmp
     run_directory = tmp_path / "run"
     chunks_directory = run_directory / "chunks"
     chunks_directory.mkdir(parents=True)
-    existing_manifest_json = json.dumps(
-        {
-            "schema_version": 7,
-            "chunk_size": 32,
-            "committed_chunks": [
-                {
-                    "chunk_identifier": 2,
-                    "variant_start_index": 2,
-                    "variant_stop_index": 4,
-                    "row_count": 2,
-                    "chunk_file_name": "chunk_2.arrow",
-                }
-            ],
-        },
-        sort_keys=True,
-    )
-    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
+    existing_manifest: dict[str, object] = {
+        "schema_version": 7,
+        "chunk_size": 32,
+        "committed_chunks": [
+            {
+                "chunk_identifier": 2,
+                "variant_start_index": 2,
+                "variant_stop_index": 4,
+                "row_count": 2,
+                "chunk_file_name": "chunk_2.arrow",
+            }
+        ],
+    }
+    current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
 
-    native_initialization = _core.initialize_pipeline_output_run_batch(
-        run_directories=(str(run_directory),),
-        chunks_directories=(str(chunks_directory),),
-        existing_manifest_json_values=(existing_manifest_json,),
-        current_header_json_values=(current_header_json,),
-        resume=True,
-        resume_mode="fast",
-        runtime_compatibility_token=build_native_runtime_compatibility_token(),
+    preparation_batch = (
+        _core.NativePipelineOutputPreparationPolicy().build_pipeline_output_preparation_batch_from_values(
+            run_directories=(str(run_directory),),
+            chunks_directories=(str(chunks_directory),),
+            existing_manifest_values=(existing_manifest,),
+            current_header_values=(current_header,),
+            resume=True,
+            resume_mode="fast",
+        )
     )
+    native_initialization = preparation_batch.initialize(build_native_runtime_compatibility_token())
 
     assert isinstance(native_initialization, _core.NativePipelineOutputInitialization)
     assert native_initialization.output_count == 1
@@ -1163,30 +1388,29 @@ def test_native_pipeline_output_preparation_batch_initializes_outputs(tmp_path: 
     run_directory = tmp_path / "run"
     chunks_directory = run_directory / "chunks"
     chunks_directory.mkdir(parents=True)
-    existing_manifest_json = json.dumps(
-        {
-            "schema_version": 7,
-            "chunk_size": 32,
-            "committed_chunks": [
-                {
-                    "chunk_identifier": 2,
-                    "variant_start_index": 2,
-                    "variant_stop_index": 4,
-                    "row_count": 2,
-                    "chunk_file_name": "chunk_2.arrow",
-                }
-            ],
-        },
-        sort_keys=True,
-    )
-    current_header_json = json.dumps({"schema_version": 7, "chunk_size": 32}, sort_keys=True)
-    native_preparation_batch = _core.NativePipelineOutputPreparationBatch(
-        run_directories=(str(run_directory),),
-        chunks_directories=(str(chunks_directory),),
-        existing_manifest_json_values=(existing_manifest_json,),
-        current_header_json_values=(current_header_json,),
-        resume=True,
-        resume_mode="fast",
+    existing_manifest: dict[str, object] = {
+        "schema_version": 7,
+        "chunk_size": 32,
+        "committed_chunks": [
+            {
+                "chunk_identifier": 2,
+                "variant_start_index": 2,
+                "variant_stop_index": 4,
+                "row_count": 2,
+                "chunk_file_name": "chunk_2.arrow",
+            }
+        ],
+    }
+    current_header: dict[str, object] = {"schema_version": 7, "chunk_size": 32}
+    native_preparation_batch = (
+        _core.NativePipelineOutputPreparationPolicy().build_pipeline_output_preparation_batch_from_values(
+            run_directories=(str(run_directory),),
+            chunks_directories=(str(chunks_directory),),
+            existing_manifest_values=(existing_manifest,),
+            current_header_values=(current_header,),
+            resume=True,
+            resume_mode="fast",
+        )
     )
 
     native_preparation_batch.validate_resume_compatibility()
@@ -1199,22 +1423,26 @@ def test_native_pipeline_output_preparation_batch_initializes_outputs(tmp_path: 
 
 
 def test_native_effective_trusted_no_missing_diploid_policy() -> None:
-    assert not _core.resolve_effective_trusted_no_missing_diploid(
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    assert not native_schedule_policy.resolve_effective_trusted_no_missing_diploid(
         requested_trusted_no_missing_diploid=False,
         variant_major_packed8_probability_pairs=False,
     )
-    assert _core.resolve_effective_trusted_no_missing_diploid(
+    assert native_schedule_policy.resolve_effective_trusted_no_missing_diploid(
         requested_trusted_no_missing_diploid=True,
         variant_major_packed8_probability_pairs=False,
     )
-    assert _core.resolve_effective_trusted_no_missing_diploid(
+    assert native_schedule_policy.resolve_effective_trusted_no_missing_diploid(
         requested_trusted_no_missing_diploid=False,
         variant_major_packed8_probability_pairs=True,
     )
 
 
 def test_native_null_logistic_nonconvergence_policy() -> None:
-    continue_plan = _core.plan_null_logistic_nonconvergence_from_array(
+    native_callback_diagnostics_policy = _core.NativeCallbackDiagnosticsPolicy()
+
+    continue_plan = native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
         convergence_values=np.asarray(1, dtype=np.bool_),
         phenotype_names=None,
@@ -1228,7 +1456,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert continue_plan.scalar_convergence is True
     assert continue_plan.total_fit_count == 1
 
-    fail_plan = _core.plan_null_logistic_nonconvergence_from_array(
+    fail_plan = native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
         convergence_values=np.asarray(0, dtype=np.bool_),
         phenotype_names=None,
@@ -1242,7 +1470,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert fail_plan.scalar_convergence is True
     assert fail_plan.total_fit_count == 1
 
-    warn_plan = _core.plan_null_logistic_nonconvergence_from_array(
+    warn_plan = native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
         convergence_values=np.asarray([True, False], dtype=np.bool_),
         phenotype_names=("trait_a", "trait_b"),
@@ -1259,7 +1487,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert warn_plan.scalar_convergence is False
     assert warn_plan.total_fit_count == 2
 
-    array_plan = _core.plan_null_logistic_nonconvergence_from_array(
+    array_plan = native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
         chromosome="22",
         convergence_values=np.asarray([True, False, False], dtype=np.bool_),
         phenotype_names=("trait_a", "trait_b", "trait_c"),
@@ -1272,7 +1500,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
     assert array_plan.total_fit_count == 3
 
     with pytest.raises(ValueError, match="Unsupported null logistic nonconvergence policy"):
-        _core.plan_null_logistic_nonconvergence_from_array(
+        native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
             chromosome="22",
             convergence_values=np.asarray(0, dtype=np.bool_),
             phenotype_names=None,
@@ -1280,7 +1508,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
         )
 
     with pytest.raises(ValueError, match="bool dtype"):
-        _core.plan_null_logistic_nonconvergence_from_array(
+        native_callback_diagnostics_policy.plan_null_logistic_nonconvergence_from_array(
             chromosome="22",
             convergence_values=np.asarray([0, 1], dtype=np.int32),
             phenotype_names=None,
@@ -1290,7 +1518,7 @@ def test_native_null_logistic_nonconvergence_policy() -> None:
 
 def test_native_runtime_state_issues_compatibility_token() -> None:
     runtime_state = _core.NativeRuntimeState()
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    logging_policy_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,
@@ -1320,7 +1548,7 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
         None,
         jax_policy_payload,
     )
-    runtime_policy = _core.build_runtime_policy_handle(logging_policy_payload, None, jax_policy_payload)
+    runtime_policy = runtime_state.build_runtime_policy_handle(logging_policy_payload, None, jax_policy_payload)
     runtime_token_from_policy_handle = runtime_state.require_compatible_runtime_policy_handle(runtime_policy)
     run_runtime = runtime_state.build_run_runtime(runtime_policy)
 
@@ -1335,6 +1563,8 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
     assert run_runtime.rayon_thread_count is None
     assert run_runtime.logging_runtime_policy_payload() == logging_policy_payload
     assert run_runtime.jax_runtime_policy_payload() == jax_policy_payload
+    assert not hasattr(_core, "build_runtime_policy_handle")
+    assert not hasattr(_core, "describe_logging_runtime_policy_value")
 
     runtime_state.record_jax_runtime_policy({**jax_policy_payload, "cache_directory": "/tmp/first-cache"})
     with pytest.raises(RuntimeError, match="JAX runtime is already configured"):
@@ -1345,20 +1575,17 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
         )
 
 
-def test_native_cli_run_lifecycle_state_plans_failed_telemetry() -> None:
+def test_native_cli_run_lifecycle_state_tracks_runner_started() -> None:
     cli_lifecycle_state = _core.NativeCliRunLifecycleState()
 
-    initial_plan = cli_lifecycle_state.plan_run_failed_telemetry()
-
     assert cli_lifecycle_state.runner_started is False
-    assert isinstance(initial_plan, _core.NativeCliRunFailureTelemetryPlan)
-    assert initial_plan.should_log_run_failed_to_telemetry is True
 
     cli_lifecycle_state.mark_runner_started()
-    started_plan = cli_lifecycle_state.plan_run_failed_telemetry()
 
     assert cli_lifecycle_state.runner_started is True
-    assert started_plan.should_log_run_failed_to_telemetry is False
+    assert not hasattr(_core, "NativeCliRunFailureTelemetryPlan")
+    assert not hasattr(_core, "emit_cli_run_failed_telemetry_event")
+    assert not hasattr(_core, "plan_cli_telemetry_close_failure")
 
 
 def test_native_cli_run_failed_telemetry_emission() -> None:
@@ -1395,41 +1622,38 @@ def test_native_cli_run_failed_telemetry_emission() -> None:
     recording_session = RecordingTelemetrySession()
     failing_session = FailingTelemetrySession()
     legacy_session = LegacyTelemetrySession()
+    cli_lifecycle_state = _core.NativeCliRunLifecycleState()
+    started_cli_lifecycle_state = _core.NativeCliRunLifecycleState()
+    started_cli_lifecycle_state.mark_runner_started()
 
-    _core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         None,
         failed_event,
-        should_log_run_failed_to_telemetry=True,
     )
-    _core.emit_cli_run_failed_telemetry_event(
+    started_cli_lifecycle_state.emit_run_failed_telemetry_event(
         recording_session,
         failed_event,
-        should_log_run_failed_to_telemetry=False,
     )
     assert recording_session.events == []
-    _core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         DisabledTelemetrySession(),
         failed_event,
-        should_log_run_failed_to_telemetry=True,
     )
-    _core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         legacy_session,
         failed_event,
-        should_log_run_failed_to_telemetry=True,
     )
     assert legacy_session.call_count == 0
 
-    _core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         recording_session,
         failed_event,
-        should_log_run_failed_to_telemetry=True,
     )
     assert recording_session.events == [failed_event]
 
-    _core.emit_cli_run_failed_telemetry_event(
+    cli_lifecycle_state.emit_run_failed_telemetry_event(
         failing_session,
         failed_event,
-        should_log_run_failed_to_telemetry=True,
     )
     assert failing_session.call_count == 1
 
@@ -1503,14 +1727,152 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
         ) -> None:
             self.calls.append(("multi_writer_finished", (association_mode, phenotype_count, tuple(final_output_paths))))
 
+        def emit_single_trait_preflight_completed_event(
+            self,
+            association_mode: str,
+            phenotype: str,
+            sample_count: int,
+            covariate_count: int,
+            chromosome_count: int,
+        ) -> None:
+            self.calls.append(
+                (
+                    "single_trait_preflight_completed",
+                    (association_mode, phenotype, sample_count, covariate_count, chromosome_count),
+                )
+            )
+
+        def emit_multi_phenotype_preflight_completed_event(
+            self,
+            association_mode: str,
+            phenotype_count: int,
+            sample_count: int,
+        ) -> None:
+            self.calls.append(
+                ("multi_phenotype_preflight_completed", (association_mode, phenotype_count, sample_count))
+            )
+
+        def emit_sample_alignment_completed_event(
+            self,
+            association_mode: str,
+            phenotype: str | None,
+            phenotype_count: int | None,
+            sample_count: int | None,
+            covariate_count: int | None,
+            phenotype_group_count: int | None,
+        ) -> None:
+            self.calls.append(
+                (
+                    "sample_alignment_completed",
+                    (
+                        association_mode,
+                        phenotype,
+                        phenotype_count,
+                        sample_count,
+                        covariate_count,
+                        phenotype_group_count,
+                    ),
+                )
+            )
+
+        def emit_prediction_source_loaded_event(
+            self,
+            association_mode: str,
+            phenotype: str | None,
+            phenotype_count: int | None,
+        ) -> None:
+            self.calls.append(("prediction_source_loaded", (association_mode, phenotype, phenotype_count)))
+
+        def emit_multi_phenotype_sample_summary_event(
+            self,
+            association_mode: str,
+            sample_mode: str,
+            sample_counts: typing.Sequence[int],
+            sample_set_fingerprints: typing.Sequence[str | None],
+            phenotype_group_count: int,
+        ) -> None:
+            self.calls.append(
+                (
+                    "multi_phenotype_sample_summary",
+                    (
+                        association_mode,
+                        sample_mode,
+                        tuple(sample_counts),
+                        tuple(sample_set_fingerprints),
+                        phenotype_group_count,
+                    ),
+                )
+            )
+
+        def emit_gpu_genotype_format_resolved_event(
+            self,
+            requested_gpu_genotype_format: str,
+            resolved_gpu_genotype_format: str,
+            resolution_reason: str,
+            fallback_error: str | None,
+        ) -> None:
+            self.calls.append(
+                (
+                    "gpu_genotype_format_resolved",
+                    (requested_gpu_genotype_format, resolved_gpu_genotype_format, resolution_reason, fallback_error),
+                )
+            )
+
+        def emit_association_backend_selected_event(
+            self,
+            association_mode: str,
+            association_backend_kind: str,
+            device: str,
+            genotype_format: str,
+            phenotype: str | None,
+            phenotype_count: int | None,
+        ) -> None:
+            self.calls.append(
+                (
+                    "association_backend_selected",
+                    (
+                        association_mode,
+                        association_backend_kind,
+                        device,
+                        genotype_format,
+                        phenotype,
+                        phenotype_count,
+                    ),
+                )
+            )
+
+        def emit_bgen_engine_opened_event(
+            self,
+            association_mode: str,
+            association_backend_kind: str,
+            sample_count: int,
+            variant_count: int,
+            phenotype: str | None,
+            phenotype_count: int | None,
+        ) -> None:
+            self.calls.append(
+                (
+                    "bgen_engine_opened",
+                    (
+                        association_mode,
+                        association_backend_kind,
+                        sample_count,
+                        variant_count,
+                        phenotype,
+                        phenotype_count,
+                    ),
+                )
+            )
+
     class RecordingTelemetrySession:
         def __init__(self, native_session_handle: RecordingNativeSessionHandle) -> None:
             self.native_session_handle = native_session_handle
 
     native_session_handle = RecordingNativeSessionHandle()
     telemetry_session = RecordingTelemetrySession(native_session_handle)
+    telemetry_policy = _core.NativeRunEventTelemetryPolicy()
 
-    _core.record_execution_plan_prepared_telemetry_event(
+    telemetry_policy.record_execution_plan_prepared_telemetry_event(
         None,
         "regenie2_linear",
         "quantitative",
@@ -1524,17 +1886,17 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
     interrupted_event = object()
     failed_event = object()
     completed_event = object()
-    _core.record_runner_run_started_telemetry_event(
+    telemetry_policy.record_runner_run_started_telemetry_event(
         telemetry_session,
         "regenie2_linear",
         "quantitative",
         2,
         "output.g",
     )
-    _core.record_runner_run_interrupted_telemetry_event(telemetry_session, interrupted_event)
-    _core.record_runner_run_failed_telemetry_event(telemetry_session, failed_event)
-    _core.record_runner_run_completed_telemetry_event(telemetry_session, completed_event)
-    _core.record_execution_plan_prepared_telemetry_event(
+    telemetry_policy.record_runner_run_interrupted_telemetry_event(telemetry_session, interrupted_event)
+    telemetry_policy.record_runner_run_failed_telemetry_event(telemetry_session, failed_event)
+    telemetry_policy.record_runner_run_completed_telemetry_event(telemetry_session, completed_event)
+    telemetry_policy.record_execution_plan_prepared_telemetry_event(
         telemetry_session,
         "regenie2_linear",
         "quantitative",
@@ -1543,24 +1905,86 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
         None,
         "gpu",
     )
-    _core.record_effective_config_written_telemetry_event(
+    telemetry_policy.record_effective_config_written_telemetry_event(
         telemetry_session,
         "regenie2_linear",
         "height",
         "height/effective_config.toml",
         "height",
     )
-    _core.record_writer_finished_telemetry_event(
+    telemetry_policy.record_writer_finished_telemetry_event(
         telemetry_session,
         "regenie2_linear",
         "height",
         "height.parquet",
     )
-    _core.record_multi_writer_finished_telemetry_event(
+    telemetry_policy.record_multi_writer_finished_telemetry_event(
         telemetry_session,
         "regenie2_binary",
         2,
         ("case_status.parquet", None),
+    )
+    telemetry_policy.record_single_trait_preflight_completed_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "height",
+        100,
+        4,
+        22,
+    )
+    telemetry_policy.record_multi_phenotype_preflight_completed_telemetry_event(
+        telemetry_session,
+        "regenie2_binary",
+        3,
+        150,
+    )
+    telemetry_policy.record_sample_alignment_completed_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "height",
+        None,
+        100,
+        4,
+        None,
+    )
+    telemetry_policy.record_prediction_source_loaded_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "height",
+        None,
+    )
+    telemetry_policy.record_multi_phenotype_sample_summary_telemetry_event(
+        telemetry_session,
+        "regenie2_binary",
+        "per_phenotype",
+        (100, 98),
+        ("abc", None),
+        2,
+    )
+    telemetry_policy.record_gpu_genotype_format_resolved_telemetry_event(
+        telemetry_session,
+        "auto",
+        "dosage",
+        "cpu-request",
+        None,
+    )
+    telemetry_policy.record_association_backend_selected_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "jax",
+        "gpu",
+        "dosage",
+        "height",
+        None,
+    )
+    telemetry_policy.record_bgen_engine_opened_telemetry_event(
+        telemetry_session,
+        "regenie2_linear",
+        "jax",
+        100,
+        200,
+        "height",
+        None,
     )
 
     assert native_session_handle.calls == [
@@ -1572,15 +1996,24 @@ def test_native_runner_telemetry_dispatch_helpers() -> None:
         ("effective_config_written", ("regenie2_linear", "height", "height/effective_config.toml", "height")),
         ("writer_finished", ("regenie2_linear", "height", "height.parquet")),
         ("multi_writer_finished", ("regenie2_binary", 2, ("case_status.parquet", None))),
+        ("single_trait_preflight_completed", ("regenie2_linear", "height", 100, 4, 22)),
+        ("multi_phenotype_preflight_completed", ("regenie2_binary", 3, 150)),
+        ("sample_alignment_completed", ("regenie2_linear", "height", None, 100, 4, None)),
+        ("prediction_source_loaded", ("regenie2_linear", "height", None)),
+        ("multi_phenotype_sample_summary", ("regenie2_binary", "per_phenotype", (100, 98), ("abc", None), 2)),
+        ("gpu_genotype_format_resolved", ("auto", "dosage", "cpu-request", None)),
+        ("association_backend_selected", ("regenie2_linear", "jax", "gpu", "dosage", "height", None)),
+        ("bgen_engine_opened", ("regenie2_linear", "jax", 100, 200, "height", None)),
     ]
 
 
 def test_native_cli_telemetry_close_failure_plan() -> None:
-    successful_run_plan = _core.plan_cli_telemetry_close_failure(
+    cli_lifecycle_state = _core.NativeCliRunLifecycleState()
+    successful_run_plan = cli_lifecycle_state.plan_telemetry_close_failure(
         current_exit_code=0,
         runtime_failure_exit_code=1,
     )
-    interrupted_run_plan = _core.plan_cli_telemetry_close_failure(
+    interrupted_run_plan = cli_lifecycle_state.plan_telemetry_close_failure(
         current_exit_code=130,
         runtime_failure_exit_code=1,
     )
@@ -1594,7 +2027,7 @@ def test_native_cli_telemetry_close_failure_plan() -> None:
 
 def test_native_runtime_state_returns_snapshot_payload() -> None:
     runtime_state = _core.NativeRuntimeState()
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    logging_policy_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,
@@ -1635,10 +2068,12 @@ def test_native_runtime_state_returns_snapshot_payload() -> None:
         "rayon_thread_count": 4,
         "jax_policy": jax_policy_payload,
     }
+    assert not hasattr(_core, "build_logging_runtime_policy_payload")
 
 
 def test_native_process_runtime_state_handle_seeds_snapshot_payload() -> None:
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    runtime_state_builder = _core.NativeRuntimeState()
+    logging_policy_payload = runtime_state_builder.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,
@@ -1663,8 +2098,10 @@ def test_native_process_runtime_state_handle_seeds_snapshot_payload() -> None:
         "transfer_guard": False,
     }
 
-    runtime_state = _core.build_process_runtime_state_handle(logging_policy_payload, 4, jax_policy_payload)
-    empty_runtime_state = _core.build_process_runtime_state_handle(None, None, None)
+    runtime_state = runtime_state_builder.build_process_runtime_state_handle(
+        logging_policy_payload, 4, jax_policy_payload
+    )
+    empty_runtime_state = runtime_state_builder.build_process_runtime_state_handle(None, None, None)
 
     assert runtime_state.runtime_state_payload() == {
         "logging_policy": logging_policy_payload,
@@ -1676,6 +2113,7 @@ def test_native_process_runtime_state_handle_seeds_snapshot_payload() -> None:
         "rayon_thread_count": None,
         "jax_policy": None,
     }
+    assert not hasattr(_core, "build_process_runtime_state_handle")
 
 
 def test_global_process_runtime_state_is_native_owned_singleton() -> None:
@@ -1683,8 +2121,8 @@ def test_global_process_runtime_state_is_native_owned_singleton() -> None:
         "\n".join(
             [
                 "from g import _core",
-                "first_state = _core.global_process_runtime_state()",
-                "second_state = _core.global_process_runtime_state()",
+                "first_state = _core.NativeRuntimeState.global_process_runtime_state()",
+                "second_state = _core.NativeRuntimeState.global_process_runtime_state()",
                 "first_state.record_rayon_thread_count(6)",
                 "print(second_state.rayon_thread_count)",
             ]
@@ -1730,7 +2168,7 @@ def test_native_runtime_state_configures_runtime_knobs() -> None:
 
 def test_native_runtime_state_initializes_logging_runtime_policy_preflight() -> None:
     runtime_state = _core.NativeRuntimeState()
-    configured_payload = _core.build_logging_runtime_policy_payload(
+    configured_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file="/tmp/g-first.jsonl",
         log_stderr=False,
@@ -1895,7 +2333,8 @@ def test_native_jax_runtime_setup_session_validates_gpu_devices(tmp_path: Path) 
 
 
 def test_native_jax_runtime_policy_payload() -> None:
-    jax_policy_payload = _core.build_jax_runtime_policy_payload(
+    runtime_state = _core.NativeRuntimeState()
+    jax_policy_payload = runtime_state.build_jax_runtime_policy_payload(
         device="gpu",
         cache_directory="/tmp/g-jax-cache",
         matmul_precision="highest",
@@ -1916,6 +2355,7 @@ def test_native_jax_runtime_policy_payload() -> None:
         "xla_autotune_cache": True,
         "transfer_guard": True,
     }
+    assert not hasattr(_core, "build_jax_runtime_policy_payload")
 
 
 def test_native_jax_runtime_setup_session_owns_diagnostic_payloads() -> None:
@@ -2050,18 +2490,29 @@ def test_native_jax_runtime_diagnostic_event_records_telemetry() -> None:
 
     diagnostic_event = DiagnosticEvent()
     telemetry_session = RecordingTelemetrySession()
+    native_jax_runtime_diagnostic_policy = _core.NativeJaxRuntimeDiagnosticPolicy()
 
-    emitted_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session)
-    disabled_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, DisabledTelemetrySession())
-    skipped_plan = _core.record_jax_runtime_diagnostic_event(diagnostic_event, None)
+    emitted_plan = native_jax_runtime_diagnostic_policy.record_jax_runtime_diagnostic_event(
+        diagnostic_event,
+        telemetry_session,
+    )
+    disabled_plan = native_jax_runtime_diagnostic_policy.record_jax_runtime_diagnostic_event(
+        diagnostic_event,
+        DisabledTelemetrySession(),
+    )
+    skipped_plan = native_jax_runtime_diagnostic_policy.record_jax_runtime_diagnostic_event(diagnostic_event, None)
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        _core.record_jax_runtime_diagnostic_event(diagnostic_event, LegacyTelemetrySession())
+        native_jax_runtime_diagnostic_policy.record_jax_runtime_diagnostic_event(
+            diagnostic_event,
+            LegacyTelemetrySession(),
+        )
 
     assert emitted_plan.should_emit_telemetry is True
     assert emitted_plan.telemetry_level == "info"
     assert disabled_plan.should_emit_telemetry is False
     assert skipped_plan.should_emit_telemetry is False
     assert telemetry_session.native_telemetry_session.events == [(diagnostic_event, "info")]
+    assert not hasattr(_core, "record_jax_runtime_diagnostic_event")
     assert not hasattr(_core, "plan_jax_runtime_diagnostic_record")
     assert not hasattr(_core, "record_jax_runtime_diagnostic_log_event")
     assert not hasattr(_core, "plan_jax_runtime_diagnostic_record_payload")
@@ -2118,21 +2569,24 @@ def test_emit_binary_correction_summary_telemetry_uses_native_missing_session_po
             raise AssertionError(summary_payload)
 
     telemetry_session = RecordingNativeCallbackTelemetrySession()
+    telemetry_policy = _core.NativeBinaryCorrectionSummaryTelemetryPolicy()
     summary = _core.NativeBinaryCorrectionSummary()
     summary.add_null_model_failure_count(3)
     summary_payload = summary.summary_payload()
 
-    _core.emit_binary_correction_summary_telemetry(telemetry_session, summary_payload, "missing summary session")
-    _core.emit_binary_correction_summary_telemetry(None, None, "missing summary session")
-    _core.emit_binary_correction_summary_telemetry(
+    telemetry_policy.emit_binary_correction_summary_telemetry(
+        telemetry_session, summary_payload, "missing summary session"
+    )
+    telemetry_policy.emit_binary_correction_summary_telemetry(None, None, "missing summary session")
+    telemetry_policy.emit_binary_correction_summary_telemetry(
         DisabledTelemetrySession(), summary_payload, "missing summary session"
     )
 
     assert telemetry_session.binary_summaries == [summary_payload]
     with pytest.raises(RuntimeError, match="missing summary session"):
-        _core.emit_binary_correction_summary_telemetry(None, summary_payload, "missing summary session")
+        telemetry_policy.emit_binary_correction_summary_telemetry(None, summary_payload, "missing summary session")
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        _core.emit_binary_correction_summary_telemetry(
+        telemetry_policy.emit_binary_correction_summary_telemetry(
             LegacyTelemetrySession(),
             summary_payload,
             "missing summary session",
@@ -2143,33 +2597,40 @@ def test_native_nvidia_driver_visibility_uses_any_driver_path(tmp_path: Path) ->
     control_device_path = tmp_path / "nvidiactl"
     uvm_device_path = tmp_path / "nvidia-uvm"
     driver_directory_path = tmp_path / "driver"
+    setup_session = build_native_jax_runtime_setup_session(requested_device="gpu", cache_directory="")
 
-    assert not _core.nvidia_driver_files_are_visible_value(
-        control_device_path=str(control_device_path),
-        uvm_device_path=str(uvm_device_path),
-        driver_directory_path=str(driver_directory_path),
+    assert not setup_session.nvidia_driver_files_are_visible(
+        str(control_device_path),
+        str(uvm_device_path),
+        str(driver_directory_path),
     )
 
     driver_directory_path.mkdir()
 
-    assert _core.nvidia_driver_files_are_visible_value(
-        control_device_path=str(control_device_path),
-        uvm_device_path=str(uvm_device_path),
-        driver_directory_path=str(driver_directory_path),
+    assert setup_session.nvidia_driver_files_are_visible(
+        str(control_device_path),
+        str(uvm_device_path),
+        str(driver_directory_path),
     )
 
 
 def test_native_default_nvidia_driver_probe_paths_payload() -> None:
-    assert _core.default_nvidia_driver_probe_paths_payload() == {
+    setup_session = build_native_jax_runtime_setup_session(requested_device="gpu", cache_directory="")
+
+    assert setup_session.default_nvidia_driver_probe_paths_payload() == {
         "control_device_path": "/dev/nvidiactl",
         "uvm_device_path": "/dev/nvidia-uvm",
         "driver_directory_path": "/proc/driver/nvidia",
     }
+    assert not hasattr(_core, "nvidia_driver_files_are_visible_value")
+    assert not hasattr(_core, "default_nvidia_driver_probe_paths_payload")
 
 
 def test_native_gpu_genotype_format_resolution_policy() -> None:
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
     assert (
-        _core.resolve_manifest_gpu_genotype_format(
+        native_schedule_policy.resolve_manifest_gpu_genotype_format(
             resume=True,
             manifest_gpu_genotype_format="packed8",
             association_backend_genotype_format="dosage",
@@ -2177,7 +2638,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
         == "packed8"
     )
     assert (
-        _core.resolve_manifest_gpu_genotype_format(
+        native_schedule_policy.resolve_manifest_gpu_genotype_format(
             resume=True,
             manifest_gpu_genotype_format=None,
             association_backend_genotype_format="dosage",
@@ -2185,7 +2646,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
         == "dosage"
     )
     assert (
-        _core.resolve_manifest_gpu_genotype_format(
+        native_schedule_policy.resolve_manifest_gpu_genotype_format(
             resume=False,
             manifest_gpu_genotype_format="packed8",
             association_backend_genotype_format=None,
@@ -2193,7 +2654,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
         is None
     )
 
-    auto_to_dosage_plan = _core.plan_gpu_genotype_format_auto_to_dosage(
+    auto_to_dosage_plan = native_schedule_policy.plan_gpu_genotype_format_auto_to_dosage(
         requested_gpu_genotype_format="auto",
         resolution_reason="multi_trait_or_linear_pipeline",
     )
@@ -2205,7 +2666,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert auto_to_dosage_plan.is_resolved is True
     assert auto_to_dosage_plan.should_log_auto_resolution is True
 
-    explicit_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+    explicit_plan = native_schedule_policy.plan_single_trait_binary_gpu_genotype_format_resolution(
         requested_gpu_genotype_format="packed8",
         manifest_gpu_genotype_format=None,
         association_backend_genotype_format=None,
@@ -2216,7 +2677,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert explicit_plan.resolution_reason == "explicit"
     assert explicit_plan.should_log_auto_resolution is False
 
-    manifest_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+    manifest_plan = native_schedule_policy.plan_single_trait_binary_gpu_genotype_format_resolution(
         requested_gpu_genotype_format="auto",
         manifest_gpu_genotype_format=None,
         association_backend_genotype_format="dosage",
@@ -2227,7 +2688,7 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert manifest_plan.resolution_reason == "resume_manifest"
     assert manifest_plan.requires_trusted_validation is False
 
-    validation_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+    validation_plan = native_schedule_policy.plan_single_trait_binary_gpu_genotype_format_resolution(
         requested_gpu_genotype_format="auto",
         manifest_gpu_genotype_format=None,
         association_backend_genotype_format=None,
@@ -2238,11 +2699,11 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert validation_plan.resolution_reason is None
     assert validation_plan.requires_trusted_validation is True
 
-    passed_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(fallback_error=None)
+    passed_plan = native_schedule_policy.plan_auto_gpu_genotype_format_after_trusted_validation(fallback_error=None)
     assert passed_plan.resolved_gpu_genotype_format == "packed8"
     assert passed_plan.resolution_reason == "trusted_validation_passed"
 
-    failed_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(
+    failed_plan = native_schedule_policy.plan_auto_gpu_genotype_format_after_trusted_validation(
         fallback_error="packed8 incompatible",
     )
     assert failed_plan.resolved_gpu_genotype_format == "dosage"
@@ -2250,48 +2711,52 @@ def test_native_gpu_genotype_format_resolution_policy() -> None:
     assert failed_plan.fallback_error == "packed8 incompatible"
 
     with pytest.raises(ValueError, match="Unsupported GPU genotype format"):
-        _core.plan_gpu_genotype_format_auto_to_dosage(
+        native_schedule_policy.plan_gpu_genotype_format_auto_to_dosage(
             requested_gpu_genotype_format="unknown",
             resolution_reason="unused",
         )
 
 
 def test_resolve_delivery_callback_batch_size_enforces_native_delivery_policy() -> None:
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
     assert (
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy.resolve_delivery_callback_batch_size(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
         )
         == 1
     )
     assert (
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy.resolve_delivery_callback_batch_size(
             callback_batch_size=2,
             variant_major_packed8_probability_pairs=False,
         )
         == 2
     )
     assert (
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy.resolve_delivery_callback_batch_size(
             callback_batch_size=1,
             variant_major_packed8_probability_pairs=True,
         )
         == 1
     )
     with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy.resolve_delivery_callback_batch_size(
             callback_batch_size=0,
             variant_major_packed8_probability_pairs=False,
         )
     with pytest.raises(ValueError, match="packed8 BGEN delivery"):
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy.resolve_delivery_callback_batch_size(
             callback_batch_size=2,
             variant_major_packed8_probability_pairs=True,
         )
 
 
 def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
-    dosage_plan = _core.plan_bgen_delivery_invocation(
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    dosage_plan = native_schedule_policy.plan_bgen_delivery_invocation(
         callback_batch_size=2,
         variant_major_packed8_probability_pairs=False,
         has_native_multi_aligned_sample_data=True,
@@ -2300,7 +2765,7 @@ def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
     assert dosage_plan.delivery_method == "dosage_native_multi_aligned_samples"
     assert dosage_plan.callback_batch_size == 2
 
-    fallback_dosage_plan = _core.plan_bgen_delivery_invocation(
+    fallback_dosage_plan = native_schedule_policy.plan_bgen_delivery_invocation(
         callback_batch_size=None,
         variant_major_packed8_probability_pairs=False,
         has_native_multi_aligned_sample_data=False,
@@ -2309,7 +2774,7 @@ def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
     assert fallback_dosage_plan.delivery_method == "dosage_sample_indices"
     assert fallback_dosage_plan.callback_batch_size == 1
 
-    packed8_plan = _core.plan_bgen_delivery_invocation(
+    packed8_plan = native_schedule_policy.plan_bgen_delivery_invocation(
         callback_batch_size=1,
         variant_major_packed8_probability_pairs=True,
         has_native_multi_aligned_sample_data=False,
@@ -2319,7 +2784,7 @@ def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
     assert packed8_plan.callback_batch_size == 1
 
     with pytest.raises(ValueError, match="packed8 BGEN delivery"):
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=2,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=False,
@@ -2328,11 +2793,13 @@ def test_plan_bgen_delivery_invocation_uses_native_delivery_policy() -> None:
 
 
 def test_resolve_grouped_union_callback_batch_size_enforces_native_delivery_policy() -> None:
-    assert _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=1) == 1
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    assert native_schedule_policy.resolve_grouped_union_callback_batch_size(native_callback_batch_size=1) == 1
     with pytest.raises(ValueError, match="native_callback_batch_size must be positive"):
-        _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=0)
+        native_schedule_policy.resolve_grouped_union_callback_batch_size(native_callback_batch_size=0)
     with pytest.raises(ValueError, match="grouped union BGEN delivery"):
-        _core.resolve_grouped_union_callback_batch_size(native_callback_batch_size=2)
+        native_schedule_policy.resolve_grouped_union_callback_batch_size(native_callback_batch_size=2)
 
 
 def test_native_callback_worker_lifecycle_state_tracks_start() -> None:
@@ -2994,9 +3461,10 @@ def test_native_callback_scheduler_state_plans_dosage_buffer_attempts() -> None:
 
 
 def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
+    native_callback_progress_policy = _core.NativeCallbackProgressPolicy()
     progress_state = _core.NativeCallbackProgressState()
 
-    first_identity = _core.build_callback_chunk_identity("chr1", 0, 8)
+    first_identity = native_callback_progress_policy.build_callback_chunk_identity("chr1", 0, 8)
     assert first_identity.chunk_identifier == 0
     assert first_identity.chromosome == "chr1"
     assert first_identity.variant_start_index == 0
@@ -3024,7 +3492,9 @@ def test_native_callback_progress_state_tracks_chromosome_transitions() -> None:
     assert first_telemetry_plan.progress.variant_stop_index == 8
     assert first_telemetry_plan.progress.variant_count == 8
 
-    second_update = progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr2", 8, 10))
+    second_update = progress_state.record_processed_chunk(
+        native_callback_progress_policy.build_callback_chunk_identity("chr2", 8, 10)
+    )
     assert second_update.processed_chunk_count == 2
     assert second_update.completed_chromosome == "chr1"
     assert second_update.completed_processed_chunk_count == 1
@@ -3067,12 +3537,15 @@ def test_emit_callback_progress_update_telemetry_uses_native_plan() -> None:
             raise AssertionError(fields)
 
     telemetry_session = RecordingNativeCallbackTelemetrySession()
+    native_callback_progress_policy = _core.NativeCallbackProgressPolicy()
     progress_state = _core.NativeCallbackProgressState()
-    progress_update = progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr1", 0, 8))
+    progress_update = progress_state.record_processed_chunk(
+        native_callback_progress_policy.build_callback_chunk_identity("chr1", 0, 8)
+    )
 
-    _core.emit_callback_progress_update_telemetry(telemetry_session, progress_update)
-    _core.emit_callback_progress_update_telemetry(None, None)
-    _core.emit_callback_progress_update_telemetry(DisabledTelemetrySession(), progress_update)
+    native_callback_progress_policy.emit_callback_progress_update_telemetry(telemetry_session, progress_update)
+    native_callback_progress_policy.emit_callback_progress_update_telemetry(None, None)
+    native_callback_progress_policy.emit_callback_progress_update_telemetry(DisabledTelemetrySession(), progress_update)
 
     assert telemetry_session.progress_events == [("chromosome_started", "info", "chr1", 1)]
     assert telemetry_session.progress_records == [
@@ -3086,9 +3559,11 @@ def test_emit_callback_progress_update_telemetry_uses_native_plan() -> None:
         }
     ]
     with pytest.raises(RuntimeError, match="Native callback progress plan selected a missing telemetry session"):
-        _core.emit_callback_progress_update_telemetry(None, progress_update)
+        native_callback_progress_policy.emit_callback_progress_update_telemetry(None, progress_update)
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        _core.emit_callback_progress_update_telemetry(LegacyTelemetrySession(), progress_update)
+        native_callback_progress_policy.emit_callback_progress_update_telemetry(
+            LegacyTelemetrySession(), progress_update
+        )
 
 
 def test_emit_callback_progress_completion_telemetry_preserves_optional_session_behavior() -> None:
@@ -3100,19 +3575,26 @@ def test_emit_callback_progress_completion_telemetry_preserves_optional_session_
             raise AssertionError(progress_event)
 
     telemetry_session = RecordingNativeCallbackTelemetrySession()
+    native_callback_progress_policy = _core.NativeCallbackProgressPolicy()
     progress_state = _core.NativeCallbackProgressState()
-    progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr2", 0, 4))
+    progress_state.record_processed_chunk(native_callback_progress_policy.build_callback_chunk_identity("chr2", 0, 4))
     progress_completion = progress_state.finish_progress()
     assert progress_completion is not None
 
-    _core.emit_callback_progress_completion_telemetry(None, progress_completion)
-    _core.emit_callback_progress_completion_telemetry(telemetry_session, None)
-    _core.emit_callback_progress_completion_telemetry(DisabledTelemetrySession(), progress_completion)
-    _core.emit_callback_progress_completion_telemetry(telemetry_session, progress_completion)
+    native_callback_progress_policy.emit_callback_progress_completion_telemetry(None, progress_completion)
+    native_callback_progress_policy.emit_callback_progress_completion_telemetry(telemetry_session, None)
+    native_callback_progress_policy.emit_callback_progress_completion_telemetry(
+        DisabledTelemetrySession(),
+        progress_completion,
+    )
+    native_callback_progress_policy.emit_callback_progress_completion_telemetry(telemetry_session, progress_completion)
 
     assert telemetry_session.progress_events == [("chromosome_completed", "info", "chr2", 1)]
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        _core.emit_callback_progress_completion_telemetry(LegacyTelemetrySession(), progress_completion)
+        native_callback_progress_policy.emit_callback_progress_completion_telemetry(
+            LegacyTelemetrySession(),
+            progress_completion,
+        )
 
 
 def test_emit_callback_progress_event_telemetry_uses_native_missing_session_policy() -> None:
@@ -3124,21 +3606,28 @@ def test_emit_callback_progress_event_telemetry_uses_native_missing_session_poli
             raise AssertionError(progress_event)
 
     telemetry_session = RecordingNativeCallbackTelemetrySession()
+    native_callback_progress_policy = _core.NativeCallbackProgressPolicy()
     progress_state = _core.NativeCallbackProgressState()
-    progress_state.record_processed_chunk(_core.build_callback_chunk_identity("chr3", 0, 6))
+    progress_state.record_processed_chunk(native_callback_progress_policy.build_callback_chunk_identity("chr3", 0, 6))
     progress_completion = progress_state.finish_progress()
     assert progress_completion is not None
     progress_event = progress_completion.telemetry_event
 
-    _core.emit_callback_progress_event_telemetry(telemetry_session, progress_event, "missing progress session")
-    _core.emit_callback_progress_event_telemetry(None, None, "missing progress session")
-    _core.emit_callback_progress_event_telemetry(DisabledTelemetrySession(), progress_event, "missing progress session")
+    native_callback_progress_policy.emit_callback_progress_event_telemetry(
+        telemetry_session, progress_event, "missing progress session"
+    )
+    native_callback_progress_policy.emit_callback_progress_event_telemetry(None, None, "missing progress session")
+    native_callback_progress_policy.emit_callback_progress_event_telemetry(
+        DisabledTelemetrySession(), progress_event, "missing progress session"
+    )
 
     assert telemetry_session.progress_events == [("chromosome_completed", "info", "chr3", 1)]
     with pytest.raises(RuntimeError, match="missing progress session"):
-        _core.emit_callback_progress_event_telemetry(None, progress_event, "missing progress session")
+        native_callback_progress_policy.emit_callback_progress_event_telemetry(
+            None, progress_event, "missing progress session"
+        )
     with pytest.raises(TypeError, match="native telemetry session handle"):
-        _core.emit_callback_progress_event_telemetry(
+        native_callback_progress_policy.emit_callback_progress_event_telemetry(
             LegacyTelemetrySession(),
             progress_event,
             "missing progress session",
@@ -3717,8 +4206,10 @@ def test_native_result_in_flight_slot_state_tracks_capacity() -> None:
 
 
 def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None:
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
             has_native_multi_aligned_sample_data=True,
@@ -3727,7 +4218,7 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
         == "dosage_native_multi_aligned_samples"
     )
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
             has_native_multi_aligned_sample_data=False,
@@ -3736,7 +4227,7 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
         == "dosage_native_aligned_samples"
     )
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=False,
             has_native_multi_aligned_sample_data=False,
@@ -3745,7 +4236,7 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
         == "dosage_sample_indices"
     )
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=True,
@@ -3754,7 +4245,7 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
         == "packed8_native_multi_aligned_samples"
     )
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=False,
@@ -3763,7 +4254,7 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
         == "packed8_native_aligned_samples"
     )
     assert (
-        _core.plan_bgen_delivery_invocation(
+        native_schedule_policy.plan_bgen_delivery_invocation(
             callback_batch_size=None,
             variant_major_packed8_probability_pairs=True,
             has_native_multi_aligned_sample_data=False,
@@ -3774,38 +4265,51 @@ def test_resolve_bgen_delivery_method_uses_native_alignment_precedence() -> None
 
 
 def test_resolve_writer_finish_thread_count_enforces_native_cleanup_policy() -> None:
-    assert _core.resolve_writer_finish_thread_count(0, 0) == 0
-    assert _core.resolve_writer_finish_thread_count(3, 2) == 2
-    assert _core.resolve_writer_finish_thread_count(3, 5) == 3
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    assert native_schedule_policy.resolve_writer_finish_thread_count(0, 0) == 0
+    assert native_schedule_policy.resolve_writer_finish_thread_count(3, 2) == 2
+    assert native_schedule_policy.resolve_writer_finish_thread_count(3, 5) == 3
     with pytest.raises(ValueError, match="Writer finish thread count must be positive"):
-        _core.resolve_writer_finish_thread_count(1, 0)
+        native_schedule_policy.resolve_writer_finish_thread_count(1, 0)
 
 
 def test_plan_writer_finish_execution_uses_native_cleanup_policy() -> None:
-    empty_finish_plan = _core.plan_writer_finish_execution(writer_session_count=0, requested_thread_count=0)
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    empty_finish_plan = native_schedule_policy.plan_writer_finish_execution(
+        writer_session_count=0, requested_thread_count=0
+    )
     assert empty_finish_plan.writer_session_count == 0
     assert empty_finish_plan.thread_count == 0
     assert empty_finish_plan.has_writer_sessions is False
     assert empty_finish_plan.uses_parallel_finish is False
 
-    serial_finish_plan = _core.plan_writer_finish_execution(writer_session_count=1, requested_thread_count=1)
+    serial_finish_plan = native_schedule_policy.plan_writer_finish_execution(
+        writer_session_count=1, requested_thread_count=1
+    )
     assert serial_finish_plan.writer_session_count == 1
     assert serial_finish_plan.thread_count == 1
     assert serial_finish_plan.has_writer_sessions is True
     assert serial_finish_plan.uses_parallel_finish is False
 
-    parallel_finish_plan = _core.plan_writer_finish_execution(writer_session_count=3, requested_thread_count=2)
+    parallel_finish_plan = native_schedule_policy.plan_writer_finish_execution(
+        writer_session_count=3,
+        requested_thread_count=2,
+    )
     assert parallel_finish_plan.writer_session_count == 3
     assert parallel_finish_plan.thread_count == 2
     assert parallel_finish_plan.has_writer_sessions is True
     assert parallel_finish_plan.uses_parallel_finish is True
 
     with pytest.raises(ValueError, match="Writer finish thread count must be positive"):
-        _core.plan_writer_finish_execution(writer_session_count=1, requested_thread_count=0)
+        native_schedule_policy.plan_writer_finish_execution(writer_session_count=1, requested_thread_count=0)
 
 
 def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
-    success_plan = _core.plan_bgen_delivery_cleanup(cleanup_outcome="success", callback_finished=False)
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    success_plan = native_schedule_policy.plan_bgen_delivery_cleanup(cleanup_outcome="success", callback_finished=False)
     assert success_plan.cleanup_actions == [
         "drain_callback",
         "finish_writer_sessions",
@@ -3818,7 +4322,7 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
     assert success_plan.abort_writer_sessions is False
     assert success_plan.write_stage_timing_snapshot is True
 
-    interrupted_pending_callback_plan = _core.plan_bgen_delivery_cleanup(
+    interrupted_pending_callback_plan = native_schedule_policy.plan_bgen_delivery_cleanup(
         cleanup_outcome="interrupted",
         callback_finished=False,
     )
@@ -3833,7 +4337,7 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
         "write_stage_timing_snapshot",
     ]
 
-    interrupted_finished_callback_plan = _core.plan_bgen_delivery_cleanup(
+    interrupted_finished_callback_plan = native_schedule_policy.plan_bgen_delivery_cleanup(
         cleanup_outcome="interrupted",
         callback_finished=True,
     )
@@ -3844,7 +4348,7 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
         "write_stage_timing_snapshot",
     ]
 
-    failure_plan = _core.plan_bgen_delivery_cleanup(cleanup_outcome="failure", callback_finished=False)
+    failure_plan = native_schedule_policy.plan_bgen_delivery_cleanup(cleanup_outcome="failure", callback_finished=False)
     assert failure_plan.drain_callback is False
     assert failure_plan.finish_writer_sessions is False
     assert failure_plan.finish_interrupted_writer_sessions is False
@@ -3857,7 +4361,7 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
         "write_stage_timing_snapshot",
     ]
 
-    cleanup_failure_plan = _core.plan_bgen_delivery_cleanup(
+    cleanup_failure_plan = native_schedule_policy.plan_bgen_delivery_cleanup(
         cleanup_outcome="interrupted_cleanup_failure",
         callback_finished=False,
     )
@@ -3865,25 +4369,27 @@ def test_plan_bgen_delivery_cleanup_uses_native_lifecycle_policy() -> None:
     assert cleanup_failure_plan.abort_writer_sessions is True
 
     with pytest.raises(ValueError, match="Unsupported BGEN delivery cleanup outcome"):
-        _core.plan_bgen_delivery_cleanup(cleanup_outcome="unknown", callback_finished=False)
+        native_schedule_policy.plan_bgen_delivery_cleanup(cleanup_outcome="unknown", callback_finished=False)
 
 
 def test_plan_output_write_methods_use_native_dtype_policy() -> None:
-    native_float64_write_plan = _core.plan_single_trait_output_write(
+    native_schedule_policy = _core.NativeSchedulePolicy()
+
+    native_float64_write_plan = native_schedule_policy.plan_single_trait_output_write(
         is_native_writer_session=True,
         output_statistic_dtype="float64",
     )
     assert native_float64_write_plan.method_name == "write_regenie2_native_chunk_f64"
     assert native_float64_write_plan.uses_float64_native_writer is True
 
-    fallback_float64_write_plan = _core.plan_single_trait_output_write(
+    fallback_float64_write_plan = native_schedule_policy.plan_single_trait_output_write(
         is_native_writer_session=False,
         output_statistic_dtype="float64",
     )
     assert fallback_float64_write_plan.method_name == "write_regenie2_native_chunk"
     assert fallback_float64_write_plan.uses_float64_native_writer is False
 
-    native_multi_write_plan = _core.plan_multi_trait_output_write(
+    native_multi_write_plan = native_schedule_policy.plan_multi_trait_output_write(
         active_trait_count=2,
         all_writer_sessions_native=True,
         output_statistic_dtype="float64",
@@ -3892,7 +4398,7 @@ def test_plan_output_write_methods_use_native_dtype_policy() -> None:
     assert native_multi_write_plan.use_native_multi_writer is True
     assert native_multi_write_plan.uses_float64_native_writer is True
 
-    fallback_multi_write_plan = _core.plan_multi_trait_output_write(
+    fallback_multi_write_plan = native_schedule_policy.plan_multi_trait_output_write(
         active_trait_count=2,
         all_writer_sessions_native=False,
         output_statistic_dtype="float64",
@@ -3901,9 +4407,12 @@ def test_plan_output_write_methods_use_native_dtype_policy() -> None:
     assert fallback_multi_write_plan.uses_float64_native_writer is False
 
     with pytest.raises(ValueError, match="Unsupported public statistic output dtype"):
-        _core.plan_single_trait_output_write(is_native_writer_session=True, output_statistic_dtype="float16")
+        native_schedule_policy.plan_single_trait_output_write(
+            is_native_writer_session=True,
+            output_statistic_dtype="float16",
+        )
     with pytest.raises(ValueError, match="Unsupported public statistic output dtype"):
-        _core.plan_multi_trait_output_write(
+        native_schedule_policy.plan_multi_trait_output_write(
             active_trait_count=1,
             all_writer_sessions_native=True,
             output_statistic_dtype="float16",

@@ -8,6 +8,7 @@ rust-version = "1.96.0"
 members = [
     ".",
     "crates/bgen-capi",
+    "crates/cli",
     "crates/engine",
     "crates/genotype",
     "crates/input",
@@ -38,6 +39,7 @@ criterion = "0.8.2"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
+g-cli = { path = "crates/cli" }
 g-engine = { path = "crates/engine" }
 g-genotype = { path = "crates/genotype" }
 g-input = { path = "crates/input" }
@@ -47,6 +49,7 @@ g-plan = { path = "crates/plan" }
 g-runtime = { path = "crates/runtime" }
 memchr = "2.8.1"
 memmap2 = "0.9.10"
+nalgebra = { version = "0.34.1", default-features = false, features = ["std"] }
 numpy = "0.28.0"
 parquet = { version = "59.0.0", default-features = false, features = ["arrow", "zstd"] }
 pyo3 = { version = "0.28.3", features = ["abi3-py314"] }
@@ -73,12 +76,14 @@ pyo3 = { workspace = true }
 numpy = { workspace = true }
 arrow = { workspace = true }
 g-engine = { workspace = true }
+g-cli = { workspace = true }
 g-genotype = { workspace = true }
 g-input = { workspace = true }
 g-interface = { workspace = true }
 g-output = { workspace = true }
 g-plan = { workspace = true }
 g-runtime = { workspace = true }
+nalgebra = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 pyo3-pylogger = { workspace = true }

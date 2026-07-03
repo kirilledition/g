@@ -116,10 +116,11 @@ just slurm-gpu-bench-tensorqtl-chr22
 
 `rust-bench` runs Criterion benchmarks through `cargo bench --workspace` so
 workspace-owned benches are discovered from their owning crates.
-`bench-rust-build-profiles` includes linker comparison labels for `dev-fast`
-and the routine `perf` profile when the requested linker tooling is available;
-when `CARGO_BUILD_JOBS` is configured, its Maturin build commands pass that
-value with `-j`.
+`bench-rust-build-profiles` uses the repo Cargo configuration by default, so
+Linux Rust builds enable `target-cpu=native` without per-recipe `RUSTFLAGS`.
+Linker and rustc-wrapper choices stay outside the repo and should be supplied
+through environment variables when needed. When `CARGO_BUILD_JOBS` is
+configured, its Maturin build commands pass that value with `-j`.
 
 Historical external baseline comparisons remain available under `legacy-*`:
 

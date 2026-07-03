@@ -24,6 +24,7 @@ from g.jax_runtime import models as jax_runtime_models
 from g.jax_runtime import resolution as jax_runtime_resolution
 from g.runner import execution as runner_execution
 from g.runner import metadata as runner_metadata
+from g.runner import outputs as runner_outputs
 from g.runner import runtime as runner_runtime
 
 
@@ -127,6 +128,66 @@ def build_test_runtime_compatibility_token(
     runtime_policy = runner_runtime.build_runtime_policy(regenie_config, telemetry_paths)
     runtime_state = typing.cast("_core.NativeRuntimeState", build_test_process_runtime_state(None, None))
     return runtime_state.require_compatible_runtime_policy_handle(runtime_policy.native_policy)
+
+
+def prepare_test_execution_plan_outputs(
+    *,
+    plan: execution_plan.RegenieExecutionPlan,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
+) -> tuple[runner_outputs.PreparedPhenotypeRunPlan, ...]:
+    """Prepare output state for direct execution-plan tests."""
+    return runner_outputs.prepare_execution_plan_outputs(
+        plan=plan,
+        runtime_compatibility_token=runtime_compatibility_token,
+    )
+
+
+class FakeLoggingProcessRuntimeState:
+    """Capture initialized logging policies while simulating native policy resolution."""
+
+    def __init__(self, calls: list[dict[str, object]]) -> None:
+        """Initialize the fake with a shared call sink."""
+        self.calls = calls
+
+    def build_logging_runtime_policy_payload(self, *arguments: object) -> dict[str, object]:
+        """Build the resolved native logging policy payload."""
+        if len(arguments) != 12:
+            message = "Expected the native logging policy builder argument shape."
+            raise AssertionError(message)
+        log_filter = typing.cast("str", arguments[0])
+        log_file = typing.cast("str | None", arguments[1])
+        log_stderr = typing.cast("bool", arguments[2])
+        log_queue_size = typing.cast("int", arguments[3])
+        log_lossy = typing.cast("bool", arguments[4])
+        include_source_location = typing.cast("bool", arguments[5])
+        include_span_events = typing.cast("bool", arguments[6])
+        trace_file = typing.cast("str | None", arguments[7])
+        trace_filter = typing.cast("str", arguments[8])
+        trace_event_cap = typing.cast("int | None", arguments[9])
+        telemetry_mode = typing.cast("str", arguments[10])
+        telemetry_stream_file = typing.cast("str | None", arguments[11])
+        resolved_log_file = log_file
+        resolved_trace_file = trace_file
+        if telemetry_stream_file is not None:
+            resolved_log_file = None
+            resolved_trace_file = telemetry_stream_file
+        return {
+            "log_filter": log_filter,
+            "log_file": resolved_log_file,
+            "log_stderr": log_stderr,
+            "log_queue_size": log_queue_size,
+            "log_lossy": log_lossy,
+            "include_source_location": include_source_location,
+            "include_span_events": include_span_events,
+            "trace_file": resolved_trace_file,
+            "trace_filter": trace_filter,
+            "trace_event_cap": trace_event_cap if telemetry_mode == types.TelemetryMode.TRACE.value else None,
+        }
+
+    def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+        """Capture the initialized logging policy payload."""
+        self.calls.append(payload)
+        return True
 
 
 def build_diagnostics_config(**overrides: object) -> config.GDiagnosticsConfig:
@@ -235,17 +296,24 @@ def test_execution_plan_uses_safe_phenotype_output_directories() -> None:
     )
 
     with patch(
-        "g.execution_plan.output.prepare_output_run", return_value=prepared_output_run
+        "g.runner.outputs.output.prepare_output_run", return_value=prepared_output_run
     ) as mock_prepare_output_run:
-        plan = execution_plan.build_regenie_execution_plan(
-            regenie_config,
-            runtime_compatibility_token=build_test_runtime_compatibility_token(regenie_config),
+        runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        prepare_test_execution_plan_outputs(
+            plan=plan,
+            runtime_compatibility_token=runtime_compatibility_token,
         )
 
     assert tuple(phenotype_plan.phenotype_name for phenotype_plan in plan.phenotype_run_plans) == (
         "../bad",
         "a/b",
         "/tmp/outside",
+    )
+    assert tuple(phenotype_plan.output_directory_name for phenotype_plan in plan.phenotype_run_plans) == (
+        "trait_0001_bad",
+        "trait_0002_a_b",
+        "trait_0003_tmp_outside",
     )
     output_roots = tuple(call.kwargs["output_root"] for call in mock_prepare_output_run.call_args_list)
     assert output_roots == (
@@ -361,7 +429,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
         patch("g.runner.runtime.configure_runtime_before_jax_import") as mock_configure_runtime_before_jax_import,
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest={"committed_chunks": []}),
         ) as mock_prepare_output_run,
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=complete_pipeline) as mock_pipeline,
@@ -423,7 +491,7 @@ def test_regenie_completion_event_includes_user_visible_artifacts(tmp_path: Path
         patch("g.runner.runtime.configure_runtime"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", return_value=final_parquet),
@@ -521,7 +589,7 @@ def test_regenie_graceful_shutdown_event_preserves_signal_exit(tmp_path: Path) -
         patch("g.runner.runtime.configure_runtime"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=shutdown_request),
@@ -574,7 +642,7 @@ def test_regenie_does_not_write_run_start_metadata_before_output_initialization_
         patch("g.interface.config.validate_config_for_run"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=fail_pipeline),
@@ -617,7 +685,7 @@ def test_regenie_writes_run_start_metadata_after_output_initialization() -> None
         patch("g.interface.config.validate_config_for_run"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=fail_after_output_initialization),
@@ -668,7 +736,7 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
         patch("g.runner.runtime.initialize_logging", side_effect=record_logging_bootstrap),
         patch("g.runner.runtime.configure_runtime", side_effect=record_native_runtime_bootstrap),
         patch("g.runner.runtime.configure_runtime_before_jax_import", side_effect=record_jax_bootstrap),
-        patch("g.execution_plan.output.prepare_output_run", side_effect=record_prepare_output_run),
+        patch("g.runner.outputs.output.prepare_output_run", side_effect=record_prepare_output_run),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=record_pipeline),
         patch("g.runner.metadata.extend_run_manifest"),
         patch("g.interface.config.validate_config_for_run"),
@@ -681,11 +749,6 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
 
 def test_initialize_logging_passes_diagnostics_to_native_state(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
-
-    class FakeProcessRuntimeState:
-        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
-            calls.append(payload)
-            return True
 
     diagnostics_config = build_diagnostics_config(
         telemetry=types.TelemetryMode.TRACE,
@@ -701,7 +764,7 @@ def test_initialize_logging_passes_diagnostics_to_native_state(tmp_path: Path) -
         trace_event_cap=2048,
     )
 
-    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeLoggingProcessRuntimeState(calls)):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths=None)
 
     assert calls == [
@@ -723,11 +786,6 @@ def test_initialize_logging_passes_diagnostics_to_native_state(tmp_path: Path) -
 def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    class FakeProcessRuntimeState:
-        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
-            calls.append(payload)
-            return True
-
     stream_file = tmp_path / "logs" / "events.jsonl"
     diagnostics_config = build_diagnostics_config(log_file=stream_file)
     telemetry_paths = telemetry_module.TelemetryPaths(
@@ -737,7 +795,7 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
         stage_timings_json=None,
     )
 
-    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeLoggingProcessRuntimeState(calls)):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["log_file"] is None
@@ -747,11 +805,6 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
 
 def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
-
-    class FakeProcessRuntimeState:
-        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
-            calls.append(payload)
-            return True
 
     stream_file = tmp_path / "logs" / "events.jsonl"
     diagnostics_config = build_diagnostics_config(
@@ -766,7 +819,7 @@ def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path)
         stage_timings_json=None,
     )
 
-    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeLoggingProcessRuntimeState(calls)):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["trace_event_cap"] == 17
@@ -774,11 +827,6 @@ def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path)
 
 def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
-
-    class FakeProcessRuntimeState:
-        def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
-            calls.append(payload)
-            return True
 
     stream_file = tmp_path / "logs" / "events.jsonl"
     diagnostics_config = build_diagnostics_config(trace_file=stream_file)
@@ -789,7 +837,7 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
         stage_timings_json=None,
     )
 
-    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeProcessRuntimeState()):
+    with patch("g.runner.runtime.PROCESS_RUNTIME_STATE", FakeLoggingProcessRuntimeState(calls)):
         runner_runtime.initialize_logging(diagnostics_config, telemetry_paths)
 
     assert calls[0]["log_file"] is None
@@ -891,27 +939,33 @@ def test_configure_runtime_propagates_native_runtime_knob_failure() -> None:
 def test_finalize_execution_plan_records_native_metadata_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
     diagnostic_calls: list[tuple[str, int]] = []
 
-    def record_metadata_artifacts_finalized(
-        *,
-        association_mode: str,
-        phenotype_count: int,
-    ) -> None:
-        diagnostic_calls.append((association_mode, phenotype_count))
+    class FakeRunnerDiagnosticPolicy:
+        def record_runner_metadata_artifacts_finalized_diagnostic_event(
+            self,
+            *,
+            association_mode: str,
+            phenotype_count: int,
+        ) -> None:
+            diagnostic_calls.append((association_mode, phenotype_count))
 
     monkeypatch.setattr(
-        runner_metadata._core,
-        "record_runner_metadata_artifacts_finalized_diagnostic_event",
-        record_metadata_artifacts_finalized,
+        runner_metadata.events,
+        "native_runner_diagnostic_policy",
+        FakeRunnerDiagnosticPolicy,
     )
 
     output_run_paths = output.OutputRunPaths(Path("run/trait"), Path("run/trait/chunks"))
-    phenotype_run_plan = execution_plan.PhenotypeRunPlan(
+    phenotype_run_plan = runner_outputs.PreparedPhenotypeRunPlan(
         phenotype_name="trait",
         output_run_paths=output_run_paths,
         existing_manifest=None,
         effective_config_path=Path("run/trait/effective.toml"),
     )
-    writer_settings = output.OutputWriterSettings(
+    requested_phenotype_run_plan = execution_plan.PhenotypeRunPlan(
+        phenotype_name="trait",
+        output_directory_name="trait.regenie2_binary.run",
+    )
+    writer_settings = execution_plan.OutputWriterPlan(
         finalize_parquet=True,
         writer_thread_count=1,
         writer_queue_depth=8,
@@ -928,7 +982,7 @@ def test_finalize_execution_plan_records_native_metadata_diagnostic(monkeypatch:
         prediction_list_path=Path("predictions.list"),
         covariate_path=None,
         covariate_names=None,
-        phenotype_run_plans=(phenotype_run_plan,),
+        phenotype_run_plans=(requested_phenotype_run_plan,),
         phenotype_compute_groups=(),
         binary_correction_plan=typing.cast("typing.Any", object()),
         kernel_config=typing.cast("typing.Any", object()),
@@ -945,6 +999,7 @@ def test_finalize_execution_plan_records_native_metadata_diagnostic(monkeypatch:
     artifacts = runner_metadata.finalize_execution_plan(
         regenie_config=typing.cast("typing.Any", object()),
         plan=plan,
+        phenotype_run_plans=(phenotype_run_plan,),
         final_output_paths=(Path("run/trait/final.parquet"),),
     )
 
@@ -1126,6 +1181,14 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
             telemetry_level="trace",
         )
 
+    class FakeNativeJaxRuntimeDiagnosticPolicy:
+        def record_jax_runtime_diagnostic_event(
+            self,
+            event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
+            telemetry_session: telemetry_module.TelemetrySession | None,
+        ) -> NativeDiagnosticRecordPlan:
+            return record_jax_runtime_diagnostic_event(event, telemetry_session)
+
     diagnostic_event = jax_runtime_models.JaxRuntimeDiagnosticEvent(
         event_name="jax_native_plan_test",
         level=jax_runtime_models.JaxRuntimeDiagnosticLevel.INFO,
@@ -1135,8 +1198,8 @@ def test_runtime_diagnostic_recording_uses_native_record_plan() -> None:
     active_telemetry_session = typing.cast("telemetry_module.TelemetrySession", RecordingTelemetrySession())
 
     with patch(
-        "g.runner.runtime._core.record_jax_runtime_diagnostic_event",
-        side_effect=record_jax_runtime_diagnostic_event,
+        "g.runner.runtime.native_jax_runtime_diagnostic_policy",
+        return_value=FakeNativeJaxRuntimeDiagnosticPolicy(),
     ):
         runner_runtime.record_jax_runtime_diagnostic_event(
             diagnostic_event,
@@ -1202,7 +1265,7 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch(
@@ -1276,7 +1339,7 @@ def test_regenie_rejects_incompatible_logging_policy_before_output_prepare(tmp_p
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
             build_test_process_runtime_state(configured_policy.logging_policy, None),
         ),
-        patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
+        patch("g.runner.outputs.output.prepare_output_run") as prepare_output_run_mock,
         patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
         pytest.raises(RuntimeError, match=r"Logging runtime policy is process-global.*fresh Python process"),
@@ -1292,7 +1355,7 @@ def test_regenie_rejects_incompatible_rayon_policy_before_output_prepare() -> No
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
-        patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
+        patch("g.runner.outputs.output.prepare_output_run") as prepare_output_run_mock,
         patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
         pytest.raises(RuntimeError, match=r"Rayon --threads is process-global.*fresh Python process"),
@@ -1317,7 +1380,7 @@ def test_regenie_rejects_incompatible_jax_policy_before_output_prepare(tmp_path:
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
             build_test_process_runtime_state(None, None, configured_jax_policy),
         ),
-        patch("g.execution_plan.output.prepare_output_run") as prepare_output_run_mock,
+        patch("g.runner.outputs.output.prepare_output_run") as prepare_output_run_mock,
         patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
         pytest.raises(RuntimeError, match=r"JAX runtime is already configured.*fresh Python process"),
@@ -1383,7 +1446,7 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
         patch("g.runner.runtime.initialize_logging"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
@@ -1478,18 +1541,19 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
 
     with (
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=output.PreparedOutputRun(run_paths, None),
         ),
         patch("g.runner.runtime.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
     ):
-        plan = execution_plan.build_regenie_execution_plan(
-            regenie_config,
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        phenotype_run_plans = prepare_test_execution_plan_outputs(
+            plan=plan,
             runtime_compatibility_token=runtime_compatibility_token,
         )
         runner_execution.dispatch_one_phenotype_engine_pipeline(
             plan=plan,
-            phenotype_run_plan=plan.phenotype_run_plans[0],
+            phenotype_run_plan=phenotype_run_plans[0],
             stage_timing_recorder=None,
             telemetry_session=None,
             runtime_compatibility_token=runtime_compatibility_token,
@@ -1531,7 +1595,7 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
 
     with (
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             side_effect=(
                 output.PreparedOutputRun(run_paths[0], None),
                 output.PreparedOutputRun(run_paths[1], None),
@@ -1540,12 +1604,14 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
         patch("g.runner.runtime.run_regenie2_multi_phenotype_binary_bgen_pipeline") as mock_binary_pipeline,
     ):
         runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
-        plan = execution_plan.build_regenie_execution_plan(
-            regenie_config,
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        phenotype_run_plans = prepare_test_execution_plan_outputs(
+            plan=plan,
             runtime_compatibility_token=runtime_compatibility_token,
         )
         runner_execution.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
+            phenotype_run_plans=phenotype_run_plans,
             stage_timing_recorder=None,
             telemetry_session=None,
             runtime_compatibility_token=runtime_compatibility_token,
@@ -1633,18 +1699,20 @@ def test_default_multi_phenotype_plan_dispatches_grouped_multi_phenotype_run() -
 
     with (
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=output.PreparedOutputRun(run_paths, None),
         ),
         patch("g.runner.runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
     ):
-        plan = execution_plan.build_regenie_execution_plan(
-            regenie_config,
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        phenotype_run_plans = prepare_test_execution_plan_outputs(
+            plan=plan,
             runtime_compatibility_token=runtime_compatibility_token,
         )
         runner_execution.dispatch_execution_plan(
             regenie_config=regenie_config,
             plan=plan,
+            phenotype_run_plans=phenotype_run_plans,
             stage_timing_recorder=None,
             telemetry_session=None,
             runtime_compatibility_token=runtime_compatibility_token,
@@ -1684,7 +1752,7 @@ def test_multi_phenotype_plan_dispatch_forwards_packed8_genotype_format() -> Non
 
     with (
         patch(
-            "g.execution_plan.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             side_effect=(
                 output.PreparedOutputRun(run_paths[0], None),
                 output.PreparedOutputRun(run_paths[1], None),
@@ -1693,12 +1761,14 @@ def test_multi_phenotype_plan_dispatch_forwards_packed8_genotype_format() -> Non
         patch("g.runner.runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
     ):
         runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
-        plan = execution_plan.build_regenie_execution_plan(
-            regenie_config,
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        phenotype_run_plans = prepare_test_execution_plan_outputs(
+            plan=plan,
             runtime_compatibility_token=runtime_compatibility_token,
         )
         runner_execution.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
+            phenotype_run_plans=phenotype_run_plans,
             stage_timing_recorder=None,
             telemetry_session=None,
             runtime_compatibility_token=runtime_compatibility_token,
@@ -1735,23 +1805,25 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
     existing_manifests = ({"phenotype_name": "one"}, {"phenotype_name": "two"})
 
     with patch(
-        "g.execution_plan.output.prepare_output_run",
+        "g.runner.outputs.output.prepare_output_run",
         side_effect=(
             output.PreparedOutputRun(run_paths[0], existing_manifests[0]),
             output.PreparedOutputRun(run_paths[1], existing_manifests[1]),
         ),
     ):
         runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
-        plan = execution_plan.build_regenie_execution_plan(
-            regenie_config,
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        phenotype_run_plans = prepare_test_execution_plan_outputs(
+            plan=plan,
             runtime_compatibility_token=runtime_compatibility_token,
         )
 
-    assert tuple(phenotype_plan.output_run_paths for phenotype_plan in plan.phenotype_run_plans) == run_paths
-    assert tuple(phenotype_plan.existing_manifest for phenotype_plan in plan.phenotype_run_plans) == existing_manifests
+    assert tuple(phenotype_plan.output_run_paths for phenotype_plan in phenotype_run_plans) == run_paths
+    assert tuple(phenotype_plan.existing_manifest for phenotype_plan in phenotype_run_plans) == existing_manifests
     with patch("g.runner.runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_pipeline:
         runner_execution.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
+            phenotype_run_plans=phenotype_run_plans,
             stage_timing_recorder=None,
             telemetry_session=None,
             runtime_compatibility_token=runtime_compatibility_token,
@@ -1778,19 +1850,21 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
     regenie_config = build_minimal_config()
 
     with patch(
-        "g.execution_plan.output.prepare_output_run",
+        "g.runner.outputs.output.prepare_output_run",
         return_value=output.PreparedOutputRun(run_paths, None),
     ):
-        plan = execution_plan.build_regenie_execution_plan(
-            regenie_config,
-            runtime_compatibility_token=build_test_runtime_compatibility_token(regenie_config),
+        runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        phenotype_run_plans = prepare_test_execution_plan_outputs(
+            plan=plan,
+            runtime_compatibility_token=runtime_compatibility_token,
         )
 
     with (
         patch("g.io.output.load_run_manifest", side_effect=AssertionError("metadata extension must stay native")),
         patch("g.io.output.write_run_manifest", side_effect=AssertionError("metadata extension must stay native")),
     ):
-        runner_metadata.extend_run_manifest(plan=plan, phenotype_run_plan=plan.phenotype_run_plans[0])
+        runner_metadata.extend_run_manifest(plan=plan, phenotype_run_plan=phenotype_run_plans[0])
 
     manifest = output.load_run_manifest(run_paths)
     assert manifest is not None

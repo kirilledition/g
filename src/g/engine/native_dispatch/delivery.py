@@ -8,7 +8,7 @@ import typing
 from dataclasses import dataclass
 
 from g import _core
-from g.engine import shutdown, timing
+from g.engine import run_events, shutdown, timing
 from g.engine.native_dispatch import models, writers
 
 if typing.TYPE_CHECKING:
@@ -66,7 +66,7 @@ def plan_bgen_delivery_cleanup(
     callback_finished: bool,
 ) -> _core.NativeBgenDeliveryCleanupPlan:
     """Return the native cleanup plan for one delivery outcome."""
-    return _core.plan_bgen_delivery_cleanup(cleanup_outcome.value, callback_finished)
+    return native_schedule_policy().plan_bgen_delivery_cleanup(cleanup_outcome.value, callback_finished)
 
 
 def resolve_native_callback_batch_size(
@@ -76,7 +76,7 @@ def resolve_native_callback_batch_size(
 ) -> int:
     """Return the validated native callback batch size for one callback object."""
     return int(
-        _core.resolve_delivery_callback_batch_size(
+        native_schedule_policy().resolve_delivery_callback_batch_size(
             callback.native_callback_batch_size,
             variant_major_packed8_probability_pairs,
         )
@@ -90,12 +90,17 @@ def plan_bgen_delivery_invocation(
     variant_major_packed8_probability_pairs: bool,
 ) -> _core.NativeBgenDeliveryInvocationPlan:
     """Return the native delivery invocation plan for one run input."""
-    return _core.plan_bgen_delivery_invocation(
+    return native_schedule_policy().plan_bgen_delivery_invocation(
         callback.native_callback_batch_size,
         variant_major_packed8_probability_pairs,
         run_input.native_multi_aligned_sample_data is not None,
         run_input.native_aligned_sample_data is not None,
     )
+
+
+def native_schedule_policy() -> _core.NativeSchedulePolicy:
+    """Build the native schedule policy handle."""
+    return _core.NativeSchedulePolicy()
 
 
 def execute_bgen_delivery_cleanup_plan(
@@ -257,7 +262,8 @@ def run_bgen_engine_with_writer_sessions(
             engine.reset_profile()
         engine_delivery_start_time = time.perf_counter()
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
-        _core.record_native_dispatch_delivery_started_diagnostic_event(
+        native_dispatch_diagnostic_policy = run_events.native_dispatch_diagnostic_policy()
+        native_dispatch_diagnostic_policy.record_native_dispatch_delivery_started_diagnostic_event(
             committed_chunk_count=len(committed_chunk_identifier_list),
             pipeline_label=pipeline_label,
             variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
@@ -278,7 +284,7 @@ def run_bgen_engine_with_writer_sessions(
                 committed_chunk_identifier_list=committed_chunk_identifier_list,
             )
         timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
-        _core.record_native_dispatch_delivery_finished_diagnostic_event(
+        native_dispatch_diagnostic_policy.record_native_dispatch_delivery_finished_diagnostic_event(
             pipeline_label=pipeline_label,
             processed_chunk_count=processed_chunk_count,
         )
@@ -300,7 +306,7 @@ def run_bgen_engine_with_writer_sessions(
         callback_finished = cleanup_execution.callback_finished
         final_parquet_paths = cleanup_execution.final_parquet_paths
     except shutdown.GracefulShutdownRequested as shutdown_request:
-        _core.record_native_dispatch_delivery_interrupted_diagnostic_event(
+        run_events.native_dispatch_diagnostic_policy().record_native_dispatch_delivery_interrupted_diagnostic_event(
             pipeline_label=pipeline_label,
             signal_exit_code=shutdown_request.exit_code,
             signal_name=shutdown_request.signal_name,
@@ -338,7 +344,7 @@ def run_bgen_engine_with_writer_sessions(
             raise
         raise
     except BaseException as exception:
-        _core.record_native_dispatch_delivery_failed_diagnostic_event(
+        run_events.native_dispatch_diagnostic_policy().record_native_dispatch_delivery_failed_diagnostic_event(
             exception_message=str(exception),
             exception_type=type(exception).__name__,
             pipeline_label=pipeline_label,
@@ -357,7 +363,7 @@ def run_bgen_engine_with_writer_sessions(
             shutdown_request=None,
         )
         raise
-    _core.record_native_dispatch_pipeline_finished_diagnostic_event(
+    run_events.native_dispatch_diagnostic_policy().record_native_dispatch_pipeline_finished_diagnostic_event(
         final_parquet_path_count=len(final_parquet_paths),
         pipeline_label=pipeline_label,
     )

@@ -6,25 +6,25 @@ import time
 import typing
 
 from g import _core, execution_plan, types
-from g.engine import telemetry, timing
-from g.engine.native_dispatch import groups as native_dispatch_groups
-from g.engine.native_dispatch import loaders as native_dispatch_loaders
-from g.engine.native_dispatch import models as native_dispatch_models
+from g.engine.regenie2_pipeline import (
+    compute_config,
+    gpu_format,
+    grouped,
+    inputs,
+    multi_group,
+    outputs,
+    telemetry_events,
+    timing,
+)
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import gpu_format, grouped, multi_group, outputs, telemetry_events
-from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g.compute.regenie2_binary import config as regenie2_binary_config
-    from g.compute.regenie2_linear import config as regenie2_linear_config
-    from g.io import source
-
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
     prediction_list_path: Path,
@@ -32,7 +32,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
-    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -40,7 +40,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None,
     resume: bool,
     resume_mode: types.ResumeMode,
-    writer_settings: output.OutputWriterSettings,
+    writer_settings: outputs.OutputWriterSettings,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     bgen_decode_tile_variant_count: int,
@@ -48,11 +48,11 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     jax_matmul_precision: types.JaxMatmulPrecision | None,
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
+    linear_numerical_config: compute_config.LinearNumericalConfig | None,
     gpu_genotype_format: types.GpuGenotypeFormat,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
@@ -106,7 +106,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
 
 def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
     prediction_list_path: Path,
@@ -114,7 +114,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
-    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -122,7 +122,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None,
     resume: bool,
     resume_mode: types.ResumeMode,
-    writer_settings: output.OutputWriterSettings,
+    writer_settings: outputs.OutputWriterSettings,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     bgen_decode_tile_variant_count: int,
@@ -131,19 +131,19 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     correction_plan: types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: compute_config.BinaryKernelConfig,
     gpu_genotype_format: types.GpuGenotypeFormat,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> tuple[Path | None, ...]:
     """Run the complete-case native BGEN pipeline once for multiple binary phenotypes."""
-    resolved_kernel_config = pipeline_context.require_binary_kernel_config(kernel_config)
+    resolved_kernel_config = compute_config.require_binary_kernel_config(kernel_config)
     return run_regenie2_multi_phenotype_bgen_pipeline(
         genotype_source_config=genotype_source_config,
         phenotype_path=phenotype_path,
@@ -187,7 +187,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
 
 def run_regenie2_multi_phenotype_bgen_pipeline(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
     prediction_list_path: Path,
@@ -195,7 +195,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
-    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -203,7 +203,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None,
     resume: bool,
     resume_mode: types.ResumeMode,
-    writer_settings: output.OutputWriterSettings,
+    writer_settings: outputs.OutputWriterSettings,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     bgen_decode_tile_variant_count: int,
@@ -213,16 +213,16 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     firth_dtype: types.FloatingPointDtype,
     gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
+    kernel_config: compute_config.BinaryKernelConfig | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
     association_mode: types.AssociationMode,
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
+    linear_numerical_config: compute_config.LinearNumericalConfig | None,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> tuple[Path | None, ...]:
     """Shared implementation for multi-phenotype BGEN pipelines."""
@@ -237,7 +237,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_compute_groups=phenotype_compute_groups,
     )
     resolved_kernel_config = (
-        pipeline_context.require_binary_kernel_config(kernel_config)
+        compute_config.require_binary_kernel_config(kernel_config)
         if association_mode == types.AssociationMode.REGENIE2_BINARY
         else None
     )
@@ -287,7 +287,8 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     if sample_mode != types.MultiPhenotypeSampleMode.COMPLETE_CASE:
         message = "Multi-phenotype sample mode must be per-phenotype or complete-case."
         raise ValueError(message)
-    _core.record_pipeline_multi_trait_started_diagnostic_event(
+    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy.record_pipeline_multi_trait_started_diagnostic_event(
         association_mode=context.association_mode.value,
         phenotype_count=len(phenotype_names),
         sample_mode=sample_mode.value,
@@ -301,10 +302,10 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_count=len(planned_compute_group.phenotype_names),
     )
     alignment_start_time = time.perf_counter()
-    _core.record_pipeline_multi_trait_input_load_started_diagnostic_event(
+    native_pipeline_diagnostic_policy.record_pipeline_multi_trait_input_load_started_diagnostic_event(
         phenotype_count=len(planned_compute_group.phenotype_names),
     )
-    run_input = native_dispatch_loaders.load_native_bgen_multi_run_input(
+    run_input = inputs.load_native_bgen_multi_run_input(
         genotype_source_config=context.genotype_source_config,
         engine=engine,
         phenotype_path=context.phenotype_path,
@@ -314,7 +315,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         is_binary_trait=context.is_binary_trait,
         alignment_config=context.alignment_config,
     )
-    resolved_compute_group = native_dispatch_groups.build_resolved_complete_case_phenotype_compute_group(
+    resolved_compute_group = inputs.build_resolved_complete_case_phenotype_compute_group(
         run_input=run_input,
         prediction_list_path=context.prediction_list_path,
         planned_compute_groups=context.phenotype_compute_groups,
@@ -326,7 +327,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     sample_count = int(run_input.sample_indices.shape[0])
     phenotype_count = len(run_input.phenotype_names)
     covariate_count = len(run_input.native_multi_aligned_sample_data.covariate_names)
-    _core.record_pipeline_multi_trait_input_aligned_diagnostic_event(
+    native_pipeline_diagnostic_policy.record_pipeline_multi_trait_input_aligned_diagnostic_event(
         covariate_count=covariate_count,
         phenotype_count=phenotype_count,
         sample_count=sample_count,
@@ -349,10 +350,10 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_group_count=1,
     )
     prediction_start_time = time.perf_counter()
-    _core.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
+    native_pipeline_diagnostic_policy.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
         phenotype_count=phenotype_count,
     )
-    prediction_source = native_dispatch_loaders.build_multi_regenie_prediction_source(
+    prediction_source = inputs.build_multi_regenie_prediction_source(
         prediction_list_path=context.prediction_list_path,
         run_input=run_input,
         alignment_config=context.alignment_config,
@@ -365,7 +366,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         prediction_source=prediction_source,
         compute_group=resolved_compute_group,
         output_run_paths_by_phenotype=typing.cast(
-            "tuple[output.OutputRunPaths, ...]",
+            "tuple[outputs.OutputRunPaths, ...]",
             pipeline_context.select_by_phenotype_indices(
                 output_run_paths_by_phenotype,
                 resolved_compute_group.phenotype_indices,
@@ -382,5 +383,5 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         resume=resume,
         resume_mode=resume_mode,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-        output_sample_mode=output.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        output_sample_mode=outputs.COMPLETE_CASE_SAMPLE_MODE,
     )

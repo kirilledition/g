@@ -9,7 +9,7 @@ import typing
 from pathlib import Path
 
 from g import _core
-from g.engine import shutdown, timing
+from g.engine import run_events, shutdown, timing
 
 if typing.TYPE_CHECKING:
     from g.engine.native_dispatch import models
@@ -22,7 +22,7 @@ def finish_callback_drain(
 ) -> None:
     """Wait for queued callback work to drain."""
     callback_finish_start_time = time.perf_counter()
-    _core.record_native_dispatch_callback_drain_started_diagnostic_event()
+    run_events.native_dispatch_diagnostic_policy().record_native_dispatch_callback_drain_started_diagnostic_event()
     callback.finish()
     timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
 
@@ -39,7 +39,7 @@ def finish_writer_session(
 ) -> str | None:
     """Finish the writer session and optionally finalize Parquet output."""
     writer_finish_start_time = time.perf_counter()
-    _core.record_native_dispatch_writer_session_finish_started_diagnostic_event()
+    run_events.native_dispatch_diagnostic_policy().record_native_dispatch_writer_session_finish_started_diagnostic_event()
     final_parquet_path = finish_writer_session_to_path(writer_session)
     timing.record_stage_duration(
         stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
@@ -49,7 +49,9 @@ def finish_writer_session(
 
 def resolve_writer_finish_thread_count(writer_session_count: int, requested_thread_count: int) -> int:
     """Return the bounded number of threads used to finish writer sessions."""
-    return int(_core.resolve_writer_finish_thread_count(writer_session_count, requested_thread_count))
+    return int(
+        native_schedule_policy().resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)
+    )
 
 
 def plan_writer_finish_execution(
@@ -57,24 +59,23 @@ def plan_writer_finish_execution(
     requested_thread_count: int,
 ) -> _core.NativeWriterFinishExecutionPlan:
     """Return the native writer-finish execution plan."""
-    return _core.plan_writer_finish_execution(writer_session_count, requested_thread_count)
+    return native_schedule_policy().plan_writer_finish_execution(writer_session_count, requested_thread_count)
+
+
+def native_schedule_policy() -> _core.NativeSchedulePolicy:
+    """Build the native schedule policy handle."""
+    return _core.NativeSchedulePolicy()
 
 
 def finish_writer_session_to_path(writer_session: typing.Any) -> Path | None:
     """Finish one writer session and normalize its optional final Parquet path."""
-    if isinstance(writer_session, _core.OutputWriterSession):
-        final_parquet_path = _core.finish_output_writer_session(writer_session)
-    else:
-        final_parquet_path = typing.cast("str | None", writer_session.finish())
+    final_parquet_path = typing.cast("str | None", writer_session.finish())
     return None if final_parquet_path is None else Path(final_parquet_path)
 
 
 def finish_writer_session_interrupted_by_signal(writer_session: typing.Any, signal_name: str) -> None:
     """Flush one interrupted writer session."""
-    if isinstance(writer_session, _core.OutputWriterSession):
-        _core.finish_output_writer_session_interrupted(writer_session, signal_name)
-    else:
-        writer_session.finish_interrupted(signal_name)
+    writer_session.finish_interrupted(signal_name)
 
 
 def finish_writer_sessions(
@@ -85,7 +86,7 @@ def finish_writer_sessions(
 ) -> tuple[Path | None, ...]:
     """Finish writer sessions and optionally finalize Parquet output."""
     writer_finish_start_time = time.perf_counter()
-    _core.record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
+    run_events.native_dispatch_diagnostic_policy().record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
         requested_thread_count=writer_finish_thread_count,
         writer_session_count=len(writer_sessions),
     )
@@ -115,7 +116,7 @@ def finish_writer_session_interrupted(
 ) -> None:
     """Flush writer output for an interrupted run without final Parquet."""
     writer_finish_start_time = time.perf_counter()
-    _core.record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
+    run_events.native_dispatch_diagnostic_policy().record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
         signal_exit_code=shutdown_request.exit_code,
         signal_name=shutdown_request.signal_name,
         signal_number=shutdown_request.shutdown_signal.number,
@@ -133,7 +134,7 @@ def finish_writer_sessions_interrupted(
 ) -> None:
     """Flush interrupted writer sessions without final Parquet output."""
     writer_finish_start_time = time.perf_counter()
-    _core.record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
+    run_events.native_dispatch_diagnostic_policy().record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
         requested_thread_count=writer_finish_thread_count,
         signal_exit_code=shutdown_request.exit_code,
         signal_name=shutdown_request.signal_name,
@@ -169,10 +170,7 @@ def abort_callback(callback: models.BgenDeliveryCallbackProtocol) -> None:
 def abort_writer_session(writer_session: typing.Any) -> None:
     """Abort one writer session."""
     with contextlib.suppress(Exception):
-        if isinstance(writer_session, _core.OutputWriterSession):
-            _core.abort_output_writer_session(writer_session)
-        else:
-            writer_session.abort()
+        writer_session.abort()
 
 
 def abort_writer_sessions(writer_sessions: tuple[typing.Any, ...]) -> None:

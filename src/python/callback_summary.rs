@@ -23,6 +23,9 @@ pub(crate) struct NativeBinaryCorrectionSummaryEmitPlan {
     inner: native_callback_summary::BinaryCorrectionSummaryEmitPlan,
 }
 
+#[pyclass]
+pub(crate) struct NativeBinaryCorrectionSummaryTelemetryPolicy;
+
 #[pymethods]
 impl NativeBinaryCorrectionSummary {
     #[new]
@@ -411,24 +414,34 @@ impl From<native_callback_summary::BinaryCorrectionSummaryEmitPlan> for NativeBi
     }
 }
 
-#[pyfunction]
-pub(crate) fn emit_binary_correction_summary_telemetry(
-    telemetry_session: &Bound<'_, PyAny>,
-    summary_payload: &Bound<'_, PyAny>,
-    missing_session_message: &str,
-) -> PyResult<()> {
-    if summary_payload.is_none() {
-        return Ok(());
+#[pymethods]
+impl NativeBinaryCorrectionSummaryTelemetryPolicy {
+    #[new]
+    fn new() -> Self {
+        Self
     }
-    if telemetry_session.is_none() {
-        return Err(PyRuntimeError::new_err(missing_session_message.to_owned()));
+
+    #[allow(clippy::unused_self)]
+    fn emit_binary_correction_summary_telemetry(
+        &self,
+        telemetry_session: &Bound<'_, PyAny>,
+        summary_payload: &Bound<'_, PyAny>,
+        missing_session_message: &str,
+    ) -> PyResult<()> {
+        if summary_payload.is_none() {
+            return Ok(());
+        }
+        if telemetry_session.is_none() {
+            return Err(PyRuntimeError::new_err(missing_session_message.to_owned()));
+        }
+        let Some(native_telemetry_session) =
+            optional_native_telemetry_session(telemetry_session.py(), telemetry_session)?
+        else {
+            return Ok(());
+        };
+        native_telemetry_session.call_method1("emit_binary_correction_summary_event", (summary_payload,))?;
+        Ok(())
     }
-    let Some(native_telemetry_session) = optional_native_telemetry_session(telemetry_session.py(), telemetry_session)?
-    else {
-        return Ok(());
-    };
-    native_telemetry_session.call_method1("emit_binary_correction_summary_event", (summary_payload,))?;
-    Ok(())
 }
 
 fn optional_native_telemetry_session<'py>(
@@ -449,10 +462,10 @@ fn optional_native_telemetry_session<'py>(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeBinaryCorrectionSummaryTelemetryPolicy>()?;
     module.add_class::<NativeBinaryCorrectionDiagnosticsRecordPlan>()?;
     module.add_class::<NativeBinaryCorrectionSummary>()?;
     module.add_class::<NativeBinaryCorrectionSummaryEmitPlan>()?;
-    module.add_function(wrap_pyfunction!(emit_binary_correction_summary_telemetry, module)?)?;
     Ok(())
 }
 

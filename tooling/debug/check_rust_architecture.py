@@ -25,34 +25,74 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
         "NativeTelemetryEventEmissionPlan",
         "NativeTelemetryProgressEmissionPlan",
         "NativeTimingFileWritePlan",
+        "NativeCliRunFailureTelemetryPlan",
         "build_current_run_manifest_header_json_from_input_json",
+        "close_telemetry_session_with_event",
         "build_default_local_cache_directory_value",
         "build_file_content_sha256_value",
         "build_final_timing_outputs_write_started_diagnostic_payload",
+        "build_jax_runtime_policy_payload",
         "build_jax_runtime_setup_diagnostic_payloads",
+        "build_logging_runtime_policy_payload",
+        "build_manifest_json_sha256_from_value",
         "build_manifest_file_fingerprint_mapping_payload",
         "build_manifest_file_fingerprint_payload",
         "build_multi_run_artifacts_payload",
+        "build_phenotype_compute_group_id_value",
+        "build_phenotype_compute_groups_payload",
+        "build_phenotype_output_directory_name",
+        "build_pipeline_output_preparation_batch_from_values",
         "build_phenotype_run_artifacts_payload",
         "build_prediction_loco_file_fingerprints_json",
         "build_prepared_run_manifest_header_json",
+        "build_prepared_run_plan_json_from_current_header",
         "build_prepared_run_plan_json",
+        "build_process_runtime_state_handle",
+        "build_callback_chunk_identity",
+        "build_execution_run_artifacts_payload",
+        "build_run_completed_event_payload",
+        "build_run_failed_event_payload",
+        "build_run_interrupted_event_payload",
         "build_run_manifest_extension_payload",
+        "build_runtime_policy_handle",
         "build_shutdown_signal_payload",
         "build_trusted_bgen_validation_cache_path_value",
         "build_trusted_bgen_validation_cache_payload",
         "build_trusted_bgen_validation_fingerprint_value",
         "complete_jax_runtime_setup_validation_payload",
+        "compile_run_request_json",
         "configure_bgen_decode_tile_variant_count",
         "configure_rayon_global_thread_pool",
+        "default_local_cache_directory_value",
         "default_local_temporary_root_value",
+        "default_nvidia_driver_probe_paths_payload",
         "default_shutdown_signal_numbers",
         "default_trusted_bgen_validation_cache_directory_value",
+        "describe_logging_runtime_policy_value",
+        "emit_cli_run_failed_telemetry_event",
+        "emit_binary_correction_summary_telemetry",
+        "emit_callback_progress_completion_telemetry",
+        "emit_callback_progress_event_telemetry",
+        "emit_callback_progress_update_telemetry",
         "emit_diagnostic_event",
         "emit_diagnostic_event_fields",
+        "existing_manifest_json",
+        "extend_run_manifest_metadata",
+        "finalize_output_run_chunks",
         "format_rayon_thread_pool_configuration_error_value",
         "format_dosage_callback_worker_error_message",
         "format_result_callback_worker_error_message",
+        "finish_output_writer_session",
+        "finish_output_writer_session_interrupted",
+        "global_process_runtime_state",
+        "initialize_output_run_from_values",
+        "initialize_pipeline_output_run_batch",
+        "initialize_pipeline_output_runs",
+        "load_run_manifest_payload",
+        "nvidia_driver_files_are_visible_value",
+        "plan_cli_telemetry_close_failure",
+        "normalize_binary_correction_payload",
+        "plan_association_backend_payload",
         "plan_jax_gpu_validation_payload",
         "plan_jax_runtime_config_update_payloads",
         "plan_jax_runtime_diagnostic_record",
@@ -72,11 +112,20 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
         "plan_dosage_work_handoff",
         "plan_dosage_work_item_dispatch",
         "plan_dosage_work_item_stage_duration",
+        "plan_auto_gpu_genotype_format_after_trusted_validation",
+        "plan_bgen_delivery_cleanup",
+        "plan_bgen_delivery_invocation",
+        "plan_gpu_genotype_format_auto_to_dosage",
+        "plan_multi_trait_chunk_write",
+        "plan_multi_trait_output_write",
         "plan_null_logistic_nonconvergence",
+        "plan_null_logistic_nonconvergence_from_array",
         "plan_result_callback_worker_join",
         "plan_result_callback_worker_stop",
         "plan_result_write_handoff",
         "plan_result_write_item_dispatch",
+        "plan_single_trait_binary_gpu_genotype_format_resolution",
+        "plan_single_trait_output_write",
         "plan_second_signal_exception",
         "plan_stage_timing_recorder",
         "plan_telemetry_close",
@@ -85,24 +134,150 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
         "plan_timing_file_write",
         "plan_trusted_bgen_validation_cache_lookup",
         "plan_variant_major_dosage_batch_handoff",
+        "plan_writer_finish_execution",
+        "prepare_output_run",
         "raise_second_signal_exception",
+        "attach_run_metadata_payload",
+        "abort_output_writer_session",
+        "record_association_backend_selected_telemetry_event",
+        "record_bgen_engine_opened_telemetry_event",
+        "record_effective_config_written_telemetry_event",
+        "record_execution_plan_prepared_telemetry_event",
+        "record_gpu_genotype_format_resolved_telemetry_event",
+        "record_multi_phenotype_preflight_completed_telemetry_event",
+        "record_multi_phenotype_sample_summary_telemetry_event",
+        "record_multi_writer_finished_telemetry_event",
+        "record_native_cli_completed_line_diagnostic_event",
+        "record_native_cli_failed_line_diagnostic_event",
+        "record_native_cli_interrupted_line_diagnostic_event",
+        "record_native_cli_stderr_diagnostic_event",
+        "record_native_cli_stdout_diagnostic_event",
+        "record_native_runtime_knobs_configured_diagnostic_event",
+        "record_final_timing_outputs_write_started_diagnostic_event",
+        "record_jax_runtime_diagnostic_event",
+        "record_callback_null_logistic_nonconvergence_warning_diagnostic_event",
+        "record_io_output_resume_committed_chunks_diagnostic_event",
+        "record_native_dispatch_bgen_engine_constructing_diagnostic_event",
+        "record_native_dispatch_callback_drain_started_diagnostic_event",
+        "record_native_dispatch_delivery_failed_diagnostic_event",
+        "record_native_dispatch_delivery_finished_diagnostic_event",
+        "record_native_dispatch_delivery_interrupted_diagnostic_event",
+        "record_native_dispatch_delivery_started_diagnostic_event",
+        "record_native_dispatch_pipeline_finished_diagnostic_event",
+        "record_native_dispatch_trusted_bgen_validation_started_diagnostic_event",
+        "record_native_dispatch_writer_session_finish_started_diagnostic_event",
+        "record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event",
+        "record_native_dispatch_writer_sessions_finish_started_diagnostic_event",
+        "record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event",
+        "record_pipeline_bgen_engine_open_started_diagnostic_event",
+        "record_pipeline_bgen_engine_opened_diagnostic_event",
+        "record_pipeline_gpu_genotype_format_resolved_diagnostic_event",
+        "record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event",
+        "record_pipeline_grouped_per_phenotype_started_diagnostic_event",
+        "record_pipeline_grouped_union_delivery_selected_diagnostic_event",
+        "record_pipeline_multi_group_preflight_completed_diagnostic_event",
+        "record_pipeline_multi_group_preflight_started_diagnostic_event",
+        "record_pipeline_multi_phenotype_sample_summary_diagnostic_event",
+        "record_pipeline_multi_trait_input_aligned_diagnostic_event",
+        "record_pipeline_multi_trait_input_load_started_diagnostic_event",
+        "record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event",
+        "record_pipeline_multi_trait_started_diagnostic_event",
+        "record_pipeline_output_resume_committed_chunks_diagnostic_event",
+        "record_pipeline_output_writer_sessions_create_started_diagnostic_event",
+        "record_pipeline_prevalidated_bgen_engine_used_diagnostic_event",
+        "record_pipeline_single_trait_input_aligned_diagnostic_event",
+        "record_pipeline_single_trait_input_load_started_diagnostic_event",
+        "record_pipeline_single_trait_prediction_source_load_started_diagnostic_event",
+        "record_pipeline_single_trait_preflight_completed_diagnostic_event",
+        "record_pipeline_single_trait_preflight_started_diagnostic_event",
+        "record_pipeline_single_trait_started_diagnostic_event",
+        "record_preflight_warning_diagnostic_event",
+        "record_prediction_source_loaded_telemetry_event",
+        "record_runner_binary_engine_dispatch_started_diagnostic_event",
+        "record_runner_execution_plan_build_started_diagnostic_event",
+        "record_runner_execution_plan_dispatch_started_diagnostic_event",
+        "record_runner_execution_plan_finalization_started_diagnostic_event",
+        "record_runner_execution_plan_prepared_diagnostic_event",
+        "record_runner_jax_runtime_configuration_started_diagnostic_event",
+        "record_runner_linear_engine_dispatch_started_diagnostic_event",
+        "record_runner_metadata_artifacts_finalized_diagnostic_event",
+        "record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event",
+        "record_runner_multi_phenotype_dispatch_started_diagnostic_event",
+        "record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event",
+        "record_runner_run_completed_diagnostic_event",
+        "record_runner_run_failed_diagnostic_event",
+        "record_runner_run_interrupted_diagnostic_event",
+        "record_runner_run_started_diagnostic_event",
+        "record_runner_single_phenotype_dispatch_started_diagnostic_event",
+        "read_manifest_committed_chunk_identifiers_from_value",
+        "repair_strict_manifest_chunk_commits_from_value",
+        "resolve_final_timing_output_context",
+        "resolve_output_run_paths",
+        "scan_committed_chunk_identifiers",
+        "validate_run_manifest_compatibility_from_values",
+        "validate_strict_manifest_chunks_from_value",
+        "write_run_manifest",
+        "write_regenie2_multi_native_chunk",
+        "write_regenie2_multi_native_chunk_f64",
+        "record_runner_run_completed_telemetry_event",
+        "record_runner_run_failed_telemetry_event",
+        "record_runner_run_interrupted_telemetry_event",
+        "record_runner_run_started_telemetry_event",
+        "record_sample_alignment_completed_telemetry_event",
+        "record_single_trait_preflight_completed_telemetry_event",
+        "record_writer_finished_telemetry_event",
         "record_jax_runtime_diagnostic_log_event",
         "resolve_bgen_delivery_method_value",
+        "resolve_association_mode_value",
         "resolve_callback_worker_backpressure_poll_timeout_seconds",
         "resolve_callback_worker_stop_poll_timeout_seconds",
+        "resolve_delivery_callback_batch_size",
+        "resolve_effective_trusted_no_missing_diploid",
+        "resolve_grouped_union_callback_batch_size",
         "resolve_jax_runtime_setup_payload",
+        "resolve_manifest_gpu_genotype_format",
         "resolve_native_callback_queue_limits",
         "resolve_native_callback_worker_shutdown_timeouts",
+        "resolve_telemetry_output_run_root_value",
+        "resolve_telemetry_paths_payload",
+        "resolve_writer_finish_thread_count",
+        "render_run_completed_lines",
+        "render_run_failed_lines",
+        "render_run_interrupted_lines",
         "should_attempt_callback_worker_stop",
+        "build_preflight_report_payload",
+        "intersect_committed_chunk_identifier_sets",
+        "resolve_preflight_variant_count",
+        "validate_binary_phenotype_array",
         "validate_binary_phenotype_case_control_counts",
         "validate_binary_phenotype_coding",
+        "validate_covariate_matrix_rank",
+        "validate_covariate_matrix_rank_array",
+        "validate_finite_array_values",
         "validate_finite_array",
+        "validate_multi_prediction_preflight_shape",
+        "validate_multi_trait_preflight_shape_payload",
         "validate_pipeline_resume_compatibility",
+        "validate_single_prediction_preflight_shape",
+        "validate_single_trait_preflight_shape_payload",
         "write_trusted_bgen_validation_cache_payload",
+    )
+)
+DISALLOWED_ROOT_PYO3_CLASS_MEMBER_NAMES = frozenset(
+    (
+        "build_current_run_manifest_header_json_from_input_json",
+        "build_prediction_loco_file_fingerprints_json",
+        "existing_manifest_json",
     )
 )
 ROOT_PYO3_PYFUNCTION_EXPORT_PATTERN = re.compile(r"wrap_pyfunction!\s*\(\s*(?P<export_name>[A-Za-z0-9_]+)")
 ROOT_PYO3_PYCLASS_EXPORT_PATTERN = re.compile(r"add_class::\s*<\s*(?P<export_name>[A-Za-z0-9_]+)\s*>")
+ROOT_PYO3_PYMETHOD_EXPORT_PATTERN = re.compile(
+    r"(?m)^\s*(?:pub(?:\(crate\))?\s+)?fn\s+(?P<export_name>[A-Za-z0-9_]+)\s*\("
+)
+ROOT_PYO3_FIELD_GETTER_EXPORT_PATTERN = re.compile(
+    r"(?m)^\s*#\[pyo3\(get\)\]\s*\n\s*(?P<export_name>[A-Za-z0-9_]+)\s*:"
+)
 ROOT_PYO3_REMOVED_EXPORT_MESSAGE = "root PyO3 adapter must not re-export removed raw helper surface"
 PYTHON_TELEMETRY_FALLBACK_METHOD_NAMES = (
     "close_with_event",
@@ -123,6 +298,7 @@ PYTHON_TELEMETRY_FALLBACK_CALL_PATTERN = re.compile(
 
 ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-plan": set(),
+    "g-cli": {"g-interface"},
     "g-interface": {"g-plan"},
     "g-genotype": set(),
     "g-input": {"g-genotype", "g-plan"},
@@ -366,6 +542,52 @@ def collect_python_telemetry_fallback_violations(repository_root: Path) -> tuple
     return tuple(violations)
 
 
+def collect_root_pyo3_registered_export_violations(
+    source_text: str,
+    relative_source_path: Path,
+) -> tuple[RootPyO3ExportViolation, ...]:
+    """Collect removed free-function and class registrations from one source file."""
+    violations: list[RootPyO3ExportViolation] = []
+    for export_pattern in (ROOT_PYO3_PYFUNCTION_EXPORT_PATTERN, ROOT_PYO3_PYCLASS_EXPORT_PATTERN):
+        for export_match in export_pattern.finditer(source_text):
+            export_name = export_match.group("export_name")
+            if export_name not in DISALLOWED_ROOT_PYO3_EXPORT_NAMES:
+                continue
+            line_number = source_text.count("\n", 0, export_match.start()) + 1
+            violations.append(
+                RootPyO3ExportViolation(
+                    source_path=relative_source_path,
+                    export_name=export_name,
+                    line_number=line_number,
+                    message=ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+                )
+            )
+    return tuple(violations)
+
+
+def collect_root_pyo3_class_member_export_violations(
+    source_text: str,
+    relative_source_path: Path,
+) -> tuple[RootPyO3ExportViolation, ...]:
+    """Collect removed class methods and getters from one source file."""
+    violations: list[RootPyO3ExportViolation] = []
+    for export_pattern in (ROOT_PYO3_PYMETHOD_EXPORT_PATTERN, ROOT_PYO3_FIELD_GETTER_EXPORT_PATTERN):
+        for export_match in export_pattern.finditer(source_text):
+            export_name = export_match.group("export_name")
+            if export_name not in DISALLOWED_ROOT_PYO3_CLASS_MEMBER_NAMES:
+                continue
+            line_number = source_text.count("\n", 0, export_match.start()) + 1
+            violations.append(
+                RootPyO3ExportViolation(
+                    source_path=relative_source_path,
+                    export_name=export_name,
+                    line_number=line_number,
+                    message=ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+                )
+            )
+    return tuple(violations)
+
+
 def collect_root_pyo3_export_violations(repository_root: Path) -> tuple[RootPyO3ExportViolation, ...]:
     """Collect removed raw helper exports from root PyO3 adapter modules."""
     root_python_source_directory = repository_root / ROOT_CRATE_PYTHON_SOURCE_DIRECTORY
@@ -376,20 +598,8 @@ def collect_root_pyo3_export_violations(repository_root: Path) -> tuple[RootPyO3
     for rust_source_path in sorted(root_python_source_directory.rglob("*.rs")):
         source_text = rust_source_path.read_text(encoding="utf-8")
         relative_source_path = rust_source_path.relative_to(repository_root)
-        for export_pattern in (ROOT_PYO3_PYFUNCTION_EXPORT_PATTERN, ROOT_PYO3_PYCLASS_EXPORT_PATTERN):
-            for export_match in export_pattern.finditer(source_text):
-                export_name = export_match.group("export_name")
-                if export_name not in DISALLOWED_ROOT_PYO3_EXPORT_NAMES:
-                    continue
-                line_number = source_text.count("\n", 0, export_match.start()) + 1
-                violations.append(
-                    RootPyO3ExportViolation(
-                        source_path=relative_source_path,
-                        export_name=export_name,
-                        line_number=line_number,
-                        message=ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
-                    )
-                )
+        violations.extend(collect_root_pyo3_registered_export_violations(source_text, relative_source_path))
+        violations.extend(collect_root_pyo3_class_member_export_violations(source_text, relative_source_path))
     return tuple(sorted(violations, key=lambda violation: (violation.source_path, violation.line_number)))
 
 

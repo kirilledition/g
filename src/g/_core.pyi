@@ -768,6 +768,10 @@ class NativeTelemetryRunSession:
     def finish_close_metadata(self) -> dict[str, object] | None: ...
     def finish_with_current_close_event_metadata(self) -> dict[str, object] | None: ...
 
+class NativeTelemetryClosePolicy:
+    def __init__(self) -> None: ...
+    def close_telemetry_session_with_event(self, telemetry_session: object | None) -> None: ...
+
 class NativeTelemetrySessionPolicy:
     def __init__(self, telemetry_mode: str, trace_event_cap: int) -> None: ...
     @property
@@ -776,6 +780,21 @@ class NativeTelemetrySessionPolicy:
     def profile_enabled(self) -> bool: ...
     @property
     def event_cap(self) -> int | None: ...
+    def resolve_output_run_root_value(
+        self,
+        output_path: str,
+        output_run_directory: str | None,
+    ) -> str: ...
+    def resolve_paths_payload(
+        self,
+        output_path: str,
+        output_run_directory: str | None,
+        log_dir: str | None,
+        log_file: str | None,
+        trace_file: str | None,
+        profile_summary_json: str | None,
+        stage_timings_json: str | None,
+    ) -> dict[str, object]: ...
 
 class NativeTelemetrySession:
     def __init__(
@@ -942,11 +961,14 @@ class NativeBinaryCorrectionSummary:
     ) -> NativeBinaryCorrectionSummaryEmitPlan: ...
     def summary_payload(self) -> dict[str, int]: ...
 
-def emit_binary_correction_summary_telemetry(
-    telemetry_session: object | None,
-    summary_payload: dict[str, int] | None,
-    missing_session_message: str,
-) -> None: ...
+class NativeBinaryCorrectionSummaryTelemetryPolicy:
+    def __init__(self) -> None: ...
+    def emit_binary_correction_summary_telemetry(
+        self,
+        telemetry_session: object | None,
+        summary_payload: dict[str, int] | None,
+        missing_session_message: str,
+    ) -> None: ...
 
 class NativeCallbackQueueLimits:
     @property
@@ -2148,19 +2170,30 @@ class NativeCallbackProgressState:
     def record_processed_chunk_without_progress(self) -> None: ...
     def finish_progress(self) -> NativeCallbackProgressCompletion | None: ...
 
-def emit_callback_progress_update_telemetry(
-    telemetry_session: object | None,
-    progress_update: NativeCallbackProgressUpdate | None,
-) -> None: ...
-def emit_callback_progress_event_telemetry(
-    telemetry_session: object | None,
-    progress_event: NativeCallbackProgressTelemetryEvent | None,
-    missing_session_message: str,
-) -> None: ...
-def emit_callback_progress_completion_telemetry(
-    telemetry_session: object | None,
-    progress_completion: NativeCallbackProgressCompletion | None,
-) -> None: ...
+class NativeCallbackProgressPolicy:
+    def __init__(self) -> None: ...
+    def build_callback_chunk_identity(
+        self,
+        chromosome: str,
+        variant_start_index: int,
+        variant_stop_index: int,
+    ) -> NativeCallbackChunkIdentity: ...
+    def emit_callback_progress_update_telemetry(
+        self,
+        telemetry_session: object | None,
+        progress_update: NativeCallbackProgressUpdate | None,
+    ) -> None: ...
+    def emit_callback_progress_event_telemetry(
+        self,
+        telemetry_session: object | None,
+        progress_event: NativeCallbackProgressTelemetryEvent | None,
+        missing_session_message: str,
+    ) -> None: ...
+    def emit_callback_progress_completion_telemetry(
+        self,
+        telemetry_session: object | None,
+        progress_completion: NativeCallbackProgressCompletion | None,
+    ) -> None: ...
 
 class NativeDosageBufferReusePlan:
     @property
@@ -2263,6 +2296,82 @@ class NativeMultiTraitOutputWritePlan:
     def use_native_multi_writer(self) -> bool: ...
     @property
     def uses_float64_native_writer(self) -> bool: ...
+
+class NativeSchedulePolicy:
+    def __init__(self) -> None: ...
+    def intersect_committed_chunk_identifier_sets(
+        self,
+        committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
+    ) -> list[int]: ...
+    def resolve_delivery_callback_batch_size(
+        self,
+        callback_batch_size: int | None,
+        variant_major_packed8_probability_pairs: bool,
+    ) -> int: ...
+    def resolve_grouped_union_callback_batch_size(self, native_callback_batch_size: int) -> int: ...
+    def resolve_manifest_gpu_genotype_format(
+        self,
+        resume: bool,
+        manifest_gpu_genotype_format: str | None,
+        association_backend_genotype_format: str | None,
+    ) -> str | None: ...
+    def resolve_effective_trusted_no_missing_diploid(
+        self,
+        requested_trusted_no_missing_diploid: bool,
+        variant_major_packed8_probability_pairs: bool,
+    ) -> bool: ...
+    def plan_gpu_genotype_format_auto_to_dosage(
+        self,
+        requested_gpu_genotype_format: str,
+        resolution_reason: str,
+    ) -> NativeGpuGenotypeFormatResolutionPlan: ...
+    def plan_single_trait_binary_gpu_genotype_format_resolution(
+        self,
+        requested_gpu_genotype_format: str,
+        manifest_gpu_genotype_format: str | None,
+        association_backend_genotype_format: str | None,
+        resume: bool,
+        jax_device: str,
+    ) -> NativeGpuGenotypeFormatResolutionPlan: ...
+    def plan_auto_gpu_genotype_format_after_trusted_validation(
+        self,
+        fallback_error: str | None,
+    ) -> NativeGpuGenotypeFormatResolutionPlan: ...
+    def plan_multi_trait_chunk_write(
+        self,
+        writer_session_count: int,
+        chunk_identifier: int,
+        committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
+    ) -> NativeMultiTraitChunkWritePlan: ...
+    def resolve_writer_finish_thread_count(self, writer_session_count: int, requested_thread_count: int) -> int: ...
+    def plan_writer_finish_execution(
+        self,
+        writer_session_count: int,
+        requested_thread_count: int,
+    ) -> NativeWriterFinishExecutionPlan: ...
+    def plan_bgen_delivery_cleanup(
+        self,
+        cleanup_outcome: str,
+        callback_finished: bool,
+    ) -> NativeBgenDeliveryCleanupPlan: ...
+    def plan_bgen_delivery_invocation(
+        self,
+        callback_batch_size: int | None,
+        variant_major_packed8_probability_pairs: bool,
+        has_native_multi_aligned_sample_data: bool,
+        has_native_aligned_sample_data: bool,
+    ) -> NativeBgenDeliveryInvocationPlan: ...
+    def plan_single_trait_output_write(
+        self,
+        is_native_writer_session: bool,
+        output_statistic_dtype: str,
+    ) -> NativeSingleTraitOutputWritePlan: ...
+    def plan_multi_trait_output_write(
+        self,
+        active_trait_count: int,
+        all_writer_sessions_native: bool,
+        output_statistic_dtype: str,
+    ) -> NativeMultiTraitOutputWritePlan: ...
 
 class NativeCallbackWorkerLifecycleState:
     def __init__(self) -> None: ...
@@ -2448,8 +2557,19 @@ class NativeFinalTimingOutputContext:
     run_id: str | None
     force_stage_timing_recorder: bool
 
-class NativeCliRunFailureTelemetryPlan:
-    should_log_run_failed_to_telemetry: bool
+class NativeFinalTimingOutputPolicy:
+    def __init__(self) -> None: ...
+    def resolve_final_timing_output_context(
+        self,
+        diagnostics_stage_timing_path: str | None,
+        telemetry_session: object | None,
+    ) -> NativeFinalTimingOutputContext: ...
+    def record_final_timing_outputs_write_started_diagnostic_event(
+        self,
+        stage_timing_path: str | None,
+        profile_summary_path: str | None,
+        run_id: str | None,
+    ) -> None: ...
 
 class NativeCliTelemetryCloseFailurePlan:
     should_report_failure: bool
@@ -2460,21 +2580,16 @@ class NativeCliRunLifecycleState:
     @property
     def runner_started(self) -> bool: ...
     def mark_runner_started(self) -> None: ...
-    def plan_run_failed_telemetry(self) -> NativeCliRunFailureTelemetryPlan: ...
-
-def emit_cli_run_failed_telemetry_event(
-    telemetry_session: object | None,
-    failed_event: object,
-    should_log_run_failed_to_telemetry: bool,
-) -> None: ...
-def plan_cli_telemetry_close_failure(
-    current_exit_code: int,
-    runtime_failure_exit_code: int,
-) -> NativeCliTelemetryCloseFailurePlan: ...
-def resolve_final_timing_output_context(
-    diagnostics_stage_timing_path: str | None,
-    telemetry_session: object | None,
-) -> NativeFinalTimingOutputContext: ...
+    def emit_run_failed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        failed_event: object,
+    ) -> None: ...
+    def plan_telemetry_close_failure(
+        self,
+        current_exit_code: int,
+        runtime_failure_exit_code: int,
+    ) -> NativeCliTelemetryCloseFailurePlan: ...
 
 class NativeRuntimeCompatibilityToken:
     pass
@@ -2502,6 +2617,14 @@ class NativeJaxRuntimeDiagnosticRecordPlan:
     should_emit_telemetry: bool
     telemetry_level: str
 
+class NativeJaxRuntimeDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_jax_runtime_diagnostic_event(
+        self,
+        event: object,
+        telemetry_session: object | None,
+    ) -> NativeJaxRuntimeDiagnosticRecordPlan: ...
+
 class NativeJaxRuntimeSetupSession:
     @property
     def should_configure(self) -> bool: ...
@@ -2523,12 +2646,74 @@ class NativeJaxRuntimeSetupSession:
         driver_directory_path: str,
     ) -> dict[str, object]: ...
     def validate_gpu_if_configured_with_default_probe_paths(self) -> dict[str, object]: ...
+    def nvidia_driver_files_are_visible(
+        self,
+        control_device_path: str,
+        uvm_device_path: str,
+        driver_directory_path: str,
+    ) -> bool: ...
+    def nvidia_driver_files_are_visible_with_default_probe_paths(self) -> bool: ...
+    def default_nvidia_driver_probe_paths_payload(self) -> dict[str, str]: ...
 
 class NativeRuntimeState:
     rayon_thread_count: int | None
     def __init__(self) -> None: ...
+    @staticmethod
+    def global_process_runtime_state() -> NativeRuntimeState: ...
     def logging_runtime_policy_payload(self) -> dict[str, object] | None: ...
     def jax_runtime_policy_payload(self) -> dict[str, object] | None: ...
+    def default_local_cache_directory_value(self, directory_name: str) -> str: ...
+    def describe_logging_runtime_policy_value(
+        self,
+        log_filter: str,
+        log_file: str | None,
+        log_stderr: bool,
+        log_queue_size: int,
+        log_lossy: bool,
+        include_source_location: bool,
+        include_span_events: bool,
+        trace_file: str | None,
+        trace_filter: str,
+        trace_event_cap: int | None,
+    ) -> str: ...
+    def build_logging_runtime_policy_payload(
+        self,
+        log_filter: str,
+        log_file: str | None,
+        log_stderr: bool,
+        log_queue_size: int,
+        log_lossy: bool,
+        include_source_location: bool,
+        include_span_events: bool,
+        trace_file: str | None,
+        trace_filter: str,
+        trace_event_cap: int | None,
+        telemetry_mode: str,
+        telemetry_stream_file: str | None,
+    ) -> dict[str, object]: ...
+    def build_jax_runtime_policy_payload(
+        self,
+        device: str,
+        cache_directory: str | None,
+        matmul_precision: str | None,
+        persistent_cache: bool,
+        persistent_cache_min_entry_size_bytes: int,
+        persistent_cache_min_compile_time_seconds: int,
+        xla_autotune_cache: bool,
+        transfer_guard: bool,
+    ) -> dict[str, object]: ...
+    def build_runtime_policy_handle(
+        self,
+        logging_policy_payload: dict[str, object],
+        rayon_thread_count: int | None,
+        jax_policy_payload: dict[str, object],
+    ) -> NativeRuntimePolicy: ...
+    def build_process_runtime_state_handle(
+        self,
+        logging_policy_payload: dict[str, object] | None,
+        rayon_thread_count: int | None,
+        jax_policy_payload: dict[str, object] | None,
+    ) -> NativeRuntimeState: ...
     def runtime_state_payload(self) -> dict[str, object]: ...
     def require_compatible_runtime_policy(
         self,
@@ -2578,13 +2763,6 @@ class NativeRuntimeState:
         self,
         payload: dict[str, object],
     ) -> NativeJaxRuntimeSetupSession: ...
-
-def global_process_runtime_state() -> NativeRuntimeState: ...
-def build_process_runtime_state_handle(
-    logging_policy_payload: dict[str, object] | None,
-    rayon_thread_count: int | None,
-    jax_policy_payload: dict[str, object] | None,
-) -> NativeRuntimeState: ...
 
 class NativeShutdownController:
     def __init__(self, handled_signal_numbers: typing.Sequence[int] | None = None) -> None: ...
@@ -2644,10 +2822,6 @@ class OutputWriterSession:
     def finish_interrupted(self, signal_name: str) -> None: ...
     def abort(self) -> None: ...
 
-def finish_output_writer_session(writer_session: OutputWriterSession) -> str | None: ...
-def finish_output_writer_session_interrupted(writer_session: OutputWriterSession, signal_name: str) -> None: ...
-def abort_output_writer_session(writer_session: OutputWriterSession) -> None: ...
-
 class NativeOutputRunPaths:
     @property
     def run_directory(self) -> str: ...
@@ -2659,12 +2833,58 @@ class NativePreparedOutputRun:
     def run_directory(self) -> str: ...
     @property
     def chunks_directory(self) -> str: ...
-    @property
-    def existing_manifest_json(self) -> str | None: ...
+    def existing_manifest_payload(self) -> dict[str, object] | None: ...
 
 class NativeInitializedOutputRun:
     @property
     def committed_chunk_identifiers(self) -> list[int]: ...
+
+class NativeOutputLifecyclePolicy:
+    def __init__(self) -> None: ...
+    def finalize_output_run_chunks(
+        self,
+        run_directory: str,
+        chunks_directory: str,
+        association_mode: g.types.AssociationMode | str,
+        output_format: g.types.OutputFormat | str,
+    ) -> str: ...
+    def resolve_output_run_paths(
+        self,
+        output_root: str,
+        association_mode: g.types.AssociationMode | str,
+        output_format: g.types.OutputFormat | str,
+    ) -> NativeOutputRunPaths: ...
+    def prepare_output_run(
+        self,
+        output_root: str,
+        association_mode: g.types.AssociationMode | str,
+        output_format: g.types.OutputFormat | str,
+        resume: bool,
+        runtime_compatibility_token: NativeRuntimeCompatibilityToken,
+    ) -> NativePreparedOutputRun: ...
+    def load_run_manifest_payload(self, run_directory: str) -> dict[str, object] | None: ...
+    def write_run_manifest(self, run_directory: str, manifest: object) -> None: ...
+    def build_prepared_run_plan_json_from_current_header(self, current_header: object) -> str: ...
+    def build_manifest_json_sha256_from_value(self, value: object) -> str: ...
+    def validate_run_manifest_compatibility_from_values(self, manifest: object, current_header: object) -> None: ...
+    def read_manifest_committed_chunk_identifiers_from_value(self, manifest: object) -> list[int]: ...
+    def initialize_output_run_from_values(
+        self,
+        run_directory: str,
+        chunks_directory: str,
+        existing_manifest: object | None,
+        current_header: object,
+        resume: bool,
+        resume_mode: g.types.ResumeMode | str,
+        runtime_compatibility_token: NativeRuntimeCompatibilityToken,
+    ) -> NativeInitializedOutputRun: ...
+    def scan_committed_chunk_identifiers(self, chunks_directory: str) -> list[int]: ...
+    def repair_strict_manifest_chunk_commits_from_value(
+        self,
+        chunks_directory: str,
+        manifest: object,
+    ) -> tuple[dict[str, object], ...]: ...
+    def validate_strict_manifest_chunks_from_value(self, chunks_directory: str, manifest: object) -> list[int]: ...
 
 class NativeManifestFileFingerprintCache:
     def __init__(self) -> None: ...
@@ -2673,108 +2893,48 @@ class NativeManifestFileFingerprintCache:
         path: str,
         include_content_hash: bool,
     ) -> dict[str, object]: ...
-    def build_current_run_manifest_header_json_from_input_json(
+    def build_current_run_manifest_header_payload_from_input(
         self,
-        current_header_input_json: str,
-    ) -> str: ...
-    def build_prediction_loco_file_fingerprints_json(
+        current_header_input: object,
+    ) -> dict[str, object]: ...
+    def build_prediction_loco_file_fingerprints_payload(
         self,
         prediction_list_path: str,
         phenotype_names: list[str],
-    ) -> str: ...
+    ) -> tuple[dict[str, object], ...]: ...
 
-def write_regenie2_multi_native_chunk(
-    *,
-    writer_sessions: list[OutputWriterSession],
-    active_trait_indices: list[int],
-    metadata: VariantMetadata,
-    chunk_stats: ChunkStats,
-    beta: npt.NDArray[np.float32],
-    standard_error: npt.NDArray[np.float32],
-    chi_squared: npt.NDArray[np.float32],
-    log10_p_value: npt.NDArray[np.float32],
-    extra_code: npt.NDArray[np.int32] | None = None,
-) -> None: ...
-def write_regenie2_multi_native_chunk_f64(
-    *,
-    writer_sessions: list[OutputWriterSession],
-    active_trait_indices: list[int],
-    metadata: VariantMetadata,
-    chunk_stats: ChunkStats,
-    beta: npt.NDArray[np.float64],
-    standard_error: npt.NDArray[np.float64],
-    chi_squared: npt.NDArray[np.float64],
-    log10_p_value: npt.NDArray[np.float64],
-    extra_code: npt.NDArray[np.int32] | None = None,
-) -> None: ...
+class NativeOutputChunkWritePolicy:
+    def __init__(self) -> None: ...
+    def write_regenie2_multi_native_chunk(
+        self,
+        *,
+        writer_sessions: list[OutputWriterSession],
+        active_trait_indices: list[int],
+        metadata: VariantMetadata,
+        chunk_stats: ChunkStats,
+        beta: npt.NDArray[np.float32],
+        standard_error: npt.NDArray[np.float32],
+        chi_squared: npt.NDArray[np.float32],
+        log10_p_value: npt.NDArray[np.float32],
+        extra_code: npt.NDArray[np.int32] | None = None,
+    ) -> None: ...
+    def write_regenie2_multi_native_chunk_f64(
+        self,
+        *,
+        writer_sessions: list[OutputWriterSession],
+        active_trait_indices: list[int],
+        metadata: VariantMetadata,
+        chunk_stats: ChunkStats,
+        beta: npt.NDArray[np.float64],
+        standard_error: npt.NDArray[np.float64],
+        chi_squared: npt.NDArray[np.float64],
+        log10_p_value: npt.NDArray[np.float64],
+        extra_code: npt.NDArray[np.int32] | None = None,
+    ) -> None: ...
+
 def summarize_variant_major_dosage_chunk_stats(
     genotype_matrix_by_variant: npt.NDArray[np.float32],
 ) -> ChunkStats: ...
-def finalize_output_run_chunks(
-    run_directory: str,
-    chunks_directory: str,
-    association_mode: g.types.AssociationMode | str,
-    output_format: g.types.OutputFormat | str,
-) -> str: ...
-def resolve_output_run_paths(
-    output_root: str,
-    association_mode: g.types.AssociationMode | str,
-    output_format: g.types.OutputFormat | str,
-) -> NativeOutputRunPaths: ...
-def prepare_output_run(
-    output_root: str,
-    association_mode: g.types.AssociationMode | str,
-    output_format: g.types.OutputFormat | str,
-    resume: bool,
-    runtime_compatibility_token: NativeRuntimeCompatibilityToken,
-) -> NativePreparedOutputRun: ...
-def load_run_manifest_json(run_directory: str) -> str | None: ...
-def write_run_manifest_json(run_directory: str, manifest_json: str) -> None: ...
-def build_prepared_run_manifest_header_json_from_current_header_json(current_header_json: str) -> str: ...
-def build_prepared_run_plan_json_from_current_header_json(current_header_json: str) -> str: ...
-def build_manifest_json_sha256(manifest_json: str) -> str: ...
-def validate_run_manifest_compatibility(manifest_json: str, current_header_json: str) -> None: ...
-def read_manifest_committed_chunk_identifiers(manifest_json: str) -> list[int]: ...
-def initialize_output_run(
-    run_directory: str,
-    chunks_directory: str,
-    existing_manifest_json: str | None,
-    current_header_json: str,
-    resume: bool,
-    resume_mode: g.types.ResumeMode | str,
-    runtime_compatibility_token: NativeRuntimeCompatibilityToken,
-) -> NativeInitializedOutputRun: ...
-def build_logging_runtime_policy_payload(
-    log_filter: str,
-    log_file: str | None,
-    log_stderr: bool,
-    log_queue_size: int,
-    log_lossy: bool,
-    include_source_location: bool,
-    include_span_events: bool,
-    trace_file: str | None,
-    trace_filter: str,
-    trace_event_cap: int | None,
-    telemetry_mode: str,
-    telemetry_stream_file: str | None,
-) -> dict[str, object]: ...
-def build_runtime_policy_handle(
-    logging_policy_payload: dict[str, object],
-    rayon_thread_count: int | None,
-    jax_policy_payload: dict[str, object],
-) -> NativeRuntimePolicy: ...
-def describe_logging_runtime_policy_value(
-    log_filter: str,
-    log_file: str | None,
-    log_stderr: bool,
-    log_queue_size: int,
-    log_lossy: bool,
-    include_source_location: bool,
-    include_span_events: bool,
-    trace_file: str | None,
-    trace_filter: str,
-    trace_event_cap: int | None,
-) -> str: ...
 def initialize_logging(
     log_filter: str | None = None,
     log_file: str | None = None,
@@ -2788,479 +2948,544 @@ def initialize_logging(
     trace_event_cap: int | None = None,
 ) -> bool: ...
 def shutdown_logging() -> None: ...
-def resolve_telemetry_output_run_root_value(
-    output_path: str,
-    output_run_directory: str | None,
-) -> str: ...
-def resolve_telemetry_paths_payload(
-    output_path: str,
-    output_run_directory: str | None,
-    telemetry_mode: str,
-    log_dir: str | None,
-    log_file: str | None,
-    trace_file: str | None,
-    profile_summary_json: str | None,
-    stage_timings_json: str | None,
-) -> dict[str, object]: ...
-def attach_run_metadata_payload(
-    artifacts: object,
-    run_id: str | None,
-    association_mode: str,
-    phenotype_count: int,
-) -> dict[str, object]: ...
-def build_run_completed_event_payload(artifacts: object) -> dict[str, object]: ...
-def build_run_interrupted_event_payload(shutdown_request: object) -> dict[str, object]: ...
-def build_run_failed_event_payload(error: BaseException) -> dict[str, object]: ...
-def record_runner_run_started_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    trait_type: str,
-    phenotype_count: int,
-    output_run_root: str,
-) -> None: ...
-def record_runner_run_interrupted_telemetry_event(
-    telemetry_session: object | None,
-    event: object,
-) -> None: ...
-def record_runner_run_failed_telemetry_event(
-    telemetry_session: object | None,
-    event: object,
-) -> None: ...
-def record_runner_run_completed_telemetry_event(
-    telemetry_session: object | None,
-    event: object,
-) -> None: ...
-def record_execution_plan_prepared_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    trait_type: str,
-    phenotype_count: int,
-    chunk_size: int,
-    variant_limit: int | None,
-    device: str,
-) -> None: ...
-def record_effective_config_written_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype: str,
-    effective_config: str,
-    output_run_directory: str,
-) -> None: ...
-def record_writer_finished_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype: str,
-    final_output_path: str | None,
-) -> None: ...
-def record_multi_writer_finished_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype_count: int,
-    final_output_paths: typing.Sequence[str | None],
-) -> None: ...
-def record_single_trait_preflight_completed_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype: str,
-    sample_count: int,
-    covariate_count: int,
-    chromosome_count: int,
-) -> None: ...
-def record_multi_phenotype_preflight_completed_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype_count: int,
-    sample_count: int,
-) -> None: ...
-def record_sample_alignment_completed_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype: str | None,
-    phenotype_count: int | None,
-    sample_count: int | None,
-    covariate_count: int | None,
-    phenotype_group_count: int | None,
-) -> None: ...
-def record_prediction_source_loaded_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    phenotype: str | None,
-    phenotype_count: int | None,
-) -> None: ...
-def record_multi_phenotype_sample_summary_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    sample_mode: str,
-    sample_counts: typing.Sequence[int],
-    sample_set_fingerprints: typing.Sequence[str | None],
-    phenotype_group_count: int,
-) -> None: ...
-def record_gpu_genotype_format_resolved_telemetry_event(
-    telemetry_session: object | None,
-    requested_gpu_genotype_format: str,
-    resolved_gpu_genotype_format: str,
-    resolution_reason: str,
-    fallback_error: str | None,
-) -> None: ...
-def record_association_backend_selected_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    association_backend_kind: str,
-    device: str,
-    genotype_format: str,
-    phenotype: str | None,
-    phenotype_count: int | None,
-) -> None: ...
-def record_bgen_engine_opened_telemetry_event(
-    telemetry_session: object | None,
-    association_mode: str,
-    association_backend_kind: str,
-    sample_count: int,
-    variant_count: int,
-    phenotype: str | None,
-    phenotype_count: int | None,
-) -> None: ...
-def record_native_runtime_knobs_configured_diagnostic_event(
-    bgen_decode_tile_variant_count: int,
-    threads: int | None,
-) -> None: ...
-def record_runner_metadata_artifacts_finalized_diagnostic_event(
-    association_mode: str,
-    phenotype_count: int,
-) -> None: ...
-def record_preflight_warning_diagnostic_event(
-    message: str,
-    chromosome_count: int,
-    covariate_count: int,
-    preflight_scope: str,
-    sample_count: int,
-    trusted_no_missing_diploid: bool,
-    warning_index: int,
-) -> None: ...
-def record_io_output_resume_committed_chunks_diagnostic_event(
-    chunks_directory: str,
-    committed_chunk_count: int,
-    run_directory: str,
-) -> None: ...
-def record_pipeline_bgen_engine_open_started_diagnostic_event(
-    phenotype_count: int | None,
-    phenotype_name: str | None,
-    pipeline_label: str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> None: ...
-def record_pipeline_bgen_engine_opened_diagnostic_event(
-    phenotype_count: int | None,
-    phenotype_name: str | None,
-    pipeline_label: str,
-    sample_count: int,
-    variant_count: int,
-) -> None: ...
-def record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
-    phenotype_count: int | None,
-    phenotype_name: str | None,
-    pipeline_label: str,
-) -> None: ...
-def record_pipeline_output_resume_committed_chunks_diagnostic_event(
-    committed_chunk_count: int,
-    output_index: int,
-) -> None: ...
-def record_pipeline_output_writer_sessions_create_started_diagnostic_event(
-    association_mode: str,
-    output_count: int,
-) -> None: ...
-def record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
-    requested_gpu_genotype_format: str,
-    resolved_gpu_genotype_format: str,
-    resolution_reason: str,
-    fallback_error: str | None,
-) -> None: ...
-def record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
-    message: str,
-    chromosome: str,
-    nonconverged_count: int,
-    phenotype_count: int,
-    policy: str,
-    scalar_convergence: bool,
-    total_fit_count: int,
-) -> None: ...
-def record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
-    phenotype_count: int,
-    phenotype_group_count: int,
-    sample_counts_differ: bool,
-    sample_mode: str,
-) -> None: ...
-def record_pipeline_multi_trait_started_diagnostic_event(
-    association_mode: str,
-    phenotype_count: int,
-    sample_mode: str,
-) -> None: ...
-def record_pipeline_multi_trait_input_load_started_diagnostic_event(
-    phenotype_count: int,
-) -> None: ...
-def record_pipeline_multi_trait_input_aligned_diagnostic_event(
-    covariate_count: int,
-    phenotype_count: int,
-    sample_count: int,
-) -> None: ...
-def record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
-    phenotype_count: int,
-) -> None: ...
-def record_pipeline_grouped_per_phenotype_started_diagnostic_event(
-    association_mode: str,
-    phenotype_count: int,
-    sample_mode: str,
-) -> None: ...
-def record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
-    phenotype_count: int,
-    phenotype_group_count: int,
-) -> None: ...
-def record_pipeline_grouped_union_delivery_selected_diagnostic_event(
-    grouped_sample_count: int,
-    phenotype_group_count: int,
-    union_sample_count: int,
-) -> None: ...
-def record_pipeline_multi_group_preflight_started_diagnostic_event(
-    phenotype_count: int,
-    sample_count: int,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> None: ...
-def record_pipeline_multi_group_preflight_completed_diagnostic_event(
-    phenotype_count: int,
-    sample_count: int,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> None: ...
-def record_pipeline_single_trait_started_diagnostic_event(
-    association_mode: str,
-    phenotype_name: str,
-    pipeline_label: str,
-) -> None: ...
-def record_pipeline_single_trait_input_load_started_diagnostic_event(
-    phenotype_name: str,
-    pipeline_label: str,
-) -> None: ...
-def record_pipeline_single_trait_input_aligned_diagnostic_event(
-    covariate_count: int,
-    phenotype_name: str,
-    pipeline_label: str,
-    sample_count: int,
-) -> None: ...
-def record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
-    phenotype_name: str,
-    pipeline_label: str,
-) -> None: ...
-def record_pipeline_single_trait_preflight_started_diagnostic_event(
-    phenotype_name: str,
-    pipeline_label: str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> None: ...
-def record_pipeline_single_trait_preflight_completed_diagnostic_event(
-    chromosome_count: int,
-    covariate_count: int,
-    phenotype_name: str,
-    pipeline_label: str,
-    sample_count: int,
-) -> None: ...
-def record_native_dispatch_bgen_engine_constructing_diagnostic_event(
-    chunk_size: int,
-    source_path: str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: int | None,
-) -> None: ...
-def record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
-    source_path: str,
-    trusted_bgen_validation_mode: str,
-) -> None: ...
-def record_native_dispatch_delivery_started_diagnostic_event(
-    committed_chunk_count: int,
-    pipeline_label: str,
-    variant_major_packed8_probability_pairs: bool,
-) -> None: ...
-def record_native_dispatch_delivery_finished_diagnostic_event(
-    pipeline_label: str,
-    processed_chunk_count: int,
-) -> None: ...
-def record_native_dispatch_delivery_interrupted_diagnostic_event(
-    pipeline_label: str,
-    signal_exit_code: int,
-    signal_name: str,
-    signal_number: int,
-) -> None: ...
-def record_native_dispatch_delivery_failed_diagnostic_event(
-    exception_message: str,
-    exception_type: str,
-    pipeline_label: str,
-) -> None: ...
-def record_native_dispatch_pipeline_finished_diagnostic_event(
-    final_parquet_path_count: int,
-    pipeline_label: str,
-) -> None: ...
-def record_native_dispatch_callback_drain_started_diagnostic_event() -> None: ...
-def record_native_dispatch_writer_session_finish_started_diagnostic_event() -> None: ...
-def record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
-    requested_thread_count: int,
-    writer_session_count: int,
-) -> None: ...
-def record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
-    signal_exit_code: int,
-    signal_name: str,
-    signal_number: int,
-) -> None: ...
-def record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
-    requested_thread_count: int,
-    signal_exit_code: int,
-    signal_name: str,
-    signal_number: int,
-    writer_session_count: int,
-) -> None: ...
-def record_runner_run_started_diagnostic_event(
-    association_mode: str,
-    trait_type: str,
-    phenotype_count: int,
-) -> None: ...
-def record_runner_run_interrupted_diagnostic_event(event: object) -> None: ...
-def record_runner_run_failed_diagnostic_event(event: object) -> None: ...
-def record_runner_run_completed_diagnostic_event(event: object) -> None: ...
-def record_runner_jax_runtime_configuration_started_diagnostic_event() -> None: ...
-def record_runner_execution_plan_build_started_diagnostic_event() -> None: ...
-def record_runner_execution_plan_prepared_diagnostic_event(
-    association_mode: str,
-    phenotype_count: int,
-    chunk_size: int,
-    variant_limit: int | None,
-    device: str,
-) -> None: ...
-def record_runner_execution_plan_dispatch_started_diagnostic_event(
-    phenotype_count: int,
-    association_mode: str,
-) -> None: ...
-def record_runner_execution_plan_finalization_started_diagnostic_event(
-    phenotype_count: int,
-    association_mode: str,
-) -> None: ...
-def record_runner_multi_phenotype_dispatch_started_diagnostic_event(
-    phenotype_count: int,
-    association_mode: str,
-) -> None: ...
-def record_runner_single_phenotype_dispatch_started_diagnostic_event(
-    association_mode: str,
-    phenotype: str,
-) -> None: ...
-def record_runner_binary_engine_dispatch_started_diagnostic_event(
-    phenotype: str,
-) -> None: ...
-def record_runner_linear_engine_dispatch_started_diagnostic_event(
-    phenotype: str,
-) -> None: ...
-def record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
-    phenotype_count: int,
-) -> None: ...
-def record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
-    phenotype_count: int,
-) -> None: ...
-def record_native_cli_stdout_diagnostic_event(
-    output_text: str,
-    max_payload_chars: int,
-) -> None: ...
-def record_native_cli_stderr_diagnostic_event(
-    output_text: str,
-    max_payload_chars: int,
-) -> None: ...
-def record_native_cli_interrupted_line_diagnostic_event(
-    line: str,
-) -> None: ...
-def record_native_cli_failed_line_diagnostic_event(
-    line: str,
-) -> None: ...
-def record_native_cli_completed_line_diagnostic_event(
-    line: str,
-) -> None: ...
-def build_execution_run_artifacts_payload(
-    association_mode: str,
-    phenotype_count: int,
-    output_format: str,
-    output_run_directories: tuple[str, ...],
-    chunks_directories: tuple[str, ...],
-    effective_configs: tuple[str, ...],
-    phenotype_names: tuple[str, ...],
-    final_output_paths: tuple[str | None, ...],
-) -> dict[str, object]: ...
-def extend_run_manifest_metadata(
-    run_directory: str,
-    phenotype_name: str,
-    effective_config: str,
-    output_format: str,
-    device: str,
-    staging_depth: int,
-    native_callback_batch_size: int,
-    threads: int | None,
-    writer_threads: int,
-    writer_queue_depth: int,
-    chunks_per_arrow_file: int,
-    arrow_compression: str,
-    parquet_compression: str,
-    output_statistic_dtype: str,
-    bgen_decode_tile_variant_count: int,
-    trusted_no_missing_diploid: bool,
-    trusted_bgen_validation_mode: str,
-) -> None: ...
-def render_run_completed_lines(event: object) -> tuple[str, ...]: ...
-def render_run_interrupted_lines(event: object) -> tuple[str, ...]: ...
-def render_run_failed_lines(event: object) -> tuple[str, ...]: ...
-def plan_association_backend_payload(
-    association_mode: str,
-    jax_device: str,
-    gpu_genotype_format: str,
-) -> dict[str, object]: ...
-def resolve_association_mode_value(trait_type: str) -> str: ...
-def normalize_binary_correction_payload(
-    firth: bool,
-    approx: bool,
-    spa: bool,
-    p_threshold: float,
-    firth_se: bool,
-) -> dict[str, object]: ...
-def build_phenotype_compute_groups_payload(
-    phenotype_names: typing.Sequence[str],
-    multi_phenotype_sample_mode: str,
-) -> tuple[dict[str, object], ...]: ...
-def build_phenotype_compute_group_id_value(
-    group_mode: str,
-    phenotype_indices: typing.Sequence[int],
-    phenotype_names: typing.Sequence[str],
-    sample_mode: str,
-    sample_set_fingerprint: str | None,
-    covariate_design_fingerprint: str | None,
-    prediction_alignment_fingerprint: str | None,
-) -> str: ...
-def build_phenotype_output_directory_name(phenotype_index: int, phenotype_name: str) -> str: ...
-def build_jax_runtime_policy_payload(
-    device: str,
-    cache_directory: str | None,
-    matmul_precision: str | None,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: int,
-    persistent_cache_min_compile_time_seconds: int,
-    xla_autotune_cache: bool,
-    transfer_guard: bool,
-) -> dict[str, object]: ...
-def default_local_cache_directory_value(directory_name: str) -> str: ...
-def record_jax_runtime_diagnostic_event(
-    event: object,
-    telemetry_session: object | None,
-) -> NativeJaxRuntimeDiagnosticRecordPlan: ...
-def nvidia_driver_files_are_visible_value(
-    control_device_path: str,
-    uvm_device_path: str,
-    driver_directory_path: str,
-) -> bool: ...
-def default_nvidia_driver_probe_paths_payload() -> dict[str, str]: ...
-def scan_committed_chunk_identifiers(chunks_directory: str) -> list[int]: ...
-def repair_strict_manifest_chunk_commits(chunks_directory: str, manifest_json: str) -> str: ...
-def validate_strict_manifest_chunks(chunks_directory: str, manifest_json: str) -> list[int]: ...
+
+class NativeRunEventPayloadPolicy:
+    def __init__(self) -> None: ...
+    def attach_run_metadata_payload(
+        self,
+        artifacts: object,
+        run_id: str | None,
+        association_mode: str,
+        phenotype_count: int,
+    ) -> dict[str, object]: ...
+    def build_run_completed_event_payload(self, artifacts: object) -> dict[str, object]: ...
+    def build_run_interrupted_event_payload(self, shutdown_request: object) -> dict[str, object]: ...
+    def build_run_failed_event_payload(self, error: BaseException) -> dict[str, object]: ...
+    def render_run_completed_lines(self, event: object) -> tuple[str, ...]: ...
+    def render_run_interrupted_lines(self, event: object) -> tuple[str, ...]: ...
+    def render_run_failed_lines(self, event: object) -> tuple[str, ...]: ...
+
+class NativeRunEventTelemetryPolicy:
+    def __init__(self) -> None: ...
+    def record_runner_run_started_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        trait_type: str,
+        phenotype_count: int,
+        output_run_root: str,
+    ) -> None: ...
+    def record_runner_run_interrupted_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        event: object,
+    ) -> None: ...
+    def record_runner_run_failed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        event: object,
+    ) -> None: ...
+    def record_runner_run_completed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        event: object,
+    ) -> None: ...
+    def record_execution_plan_prepared_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        trait_type: str,
+        phenotype_count: int,
+        chunk_size: int,
+        variant_limit: int | None,
+        device: str,
+    ) -> None: ...
+    def record_effective_config_written_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype: str,
+        effective_config: str,
+        output_run_directory: str,
+    ) -> None: ...
+    def record_writer_finished_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype: str,
+        final_output_path: str | None,
+    ) -> None: ...
+    def record_multi_writer_finished_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype_count: int,
+        final_output_paths: typing.Sequence[str | None],
+    ) -> None: ...
+    def record_single_trait_preflight_completed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype: str,
+        sample_count: int,
+        covariate_count: int,
+        chromosome_count: int,
+    ) -> None: ...
+    def record_multi_phenotype_preflight_completed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype_count: int,
+        sample_count: int,
+    ) -> None: ...
+    def record_sample_alignment_completed_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+        sample_count: int | None,
+        covariate_count: int | None,
+        phenotype_group_count: int | None,
+    ) -> None: ...
+    def record_prediction_source_loaded_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None: ...
+    def record_multi_phenotype_sample_summary_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        sample_mode: str,
+        sample_counts: typing.Sequence[int],
+        sample_set_fingerprints: typing.Sequence[str | None],
+        phenotype_group_count: int,
+    ) -> None: ...
+    def record_gpu_genotype_format_resolved_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        requested_gpu_genotype_format: str,
+        resolved_gpu_genotype_format: str,
+        resolution_reason: str,
+        fallback_error: str | None,
+    ) -> None: ...
+    def record_association_backend_selected_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        association_backend_kind: str,
+        device: str,
+        genotype_format: str,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None: ...
+    def record_bgen_engine_opened_telemetry_event(
+        self,
+        telemetry_session: object | None,
+        association_mode: str,
+        association_backend_kind: str,
+        sample_count: int,
+        variant_count: int,
+        phenotype: str | None,
+        phenotype_count: int | None,
+    ) -> None: ...
+
+class NativeCliDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_native_cli_stdout_diagnostic_event(
+        self,
+        output_text: str,
+        max_payload_chars: int,
+    ) -> None: ...
+    def record_native_cli_stderr_diagnostic_event(
+        self,
+        output_text: str,
+        max_payload_chars: int,
+    ) -> None: ...
+    def record_native_cli_interrupted_line_diagnostic_event(
+        self,
+        line: str,
+    ) -> None: ...
+    def record_native_cli_failed_line_diagnostic_event(
+        self,
+        line: str,
+    ) -> None: ...
+    def record_native_cli_completed_line_diagnostic_event(
+        self,
+        line: str,
+    ) -> None: ...
+    def record_native_runtime_knobs_configured_diagnostic_event(
+        self,
+        bgen_decode_tile_variant_count: int,
+        threads: int | None,
+    ) -> None: ...
+
+class NativeRunnerDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_runner_run_started_diagnostic_event(
+        self,
+        association_mode: str,
+        trait_type: str,
+        phenotype_count: int,
+    ) -> None: ...
+    def record_runner_run_interrupted_diagnostic_event(self, event: object) -> None: ...
+    def record_runner_run_failed_diagnostic_event(self, event: object) -> None: ...
+    def record_runner_run_completed_diagnostic_event(self, event: object) -> None: ...
+    def record_runner_jax_runtime_configuration_started_diagnostic_event(self) -> None: ...
+    def record_runner_execution_plan_build_started_diagnostic_event(self) -> None: ...
+    def record_runner_execution_plan_prepared_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        chunk_size: int,
+        variant_limit: int | None,
+        device: str,
+    ) -> None: ...
+    def record_runner_execution_plan_dispatch_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+        association_mode: str,
+    ) -> None: ...
+    def record_runner_execution_plan_finalization_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+        association_mode: str,
+    ) -> None: ...
+    def record_runner_multi_phenotype_dispatch_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+        association_mode: str,
+    ) -> None: ...
+    def record_runner_single_phenotype_dispatch_started_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype: str,
+    ) -> None: ...
+    def record_runner_binary_engine_dispatch_started_diagnostic_event(
+        self,
+        phenotype: str,
+    ) -> None: ...
+    def record_runner_linear_engine_dispatch_started_diagnostic_event(
+        self,
+        phenotype: str,
+    ) -> None: ...
+    def record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+    ) -> None: ...
+    def record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+    ) -> None: ...
+    def record_runner_metadata_artifacts_finalized_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+    ) -> None: ...
+
+class NativeOutputPreflightDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_preflight_warning_diagnostic_event(
+        self,
+        message: str,
+        chromosome_count: int,
+        covariate_count: int,
+        preflight_scope: str,
+        sample_count: int,
+        trusted_no_missing_diploid: bool,
+        warning_index: int,
+    ) -> None: ...
+    def record_io_output_resume_committed_chunks_diagnostic_event(
+        self,
+        chunks_directory: str,
+        committed_chunk_count: int,
+        run_directory: str,
+    ) -> None: ...
+
+class NativePipelineDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_pipeline_bgen_engine_open_started_diagnostic_event(
+        self,
+        phenotype_count: int | None,
+        phenotype_name: str | None,
+        pipeline_label: str,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None: ...
+    def record_pipeline_bgen_engine_opened_diagnostic_event(
+        self,
+        phenotype_count: int | None,
+        phenotype_name: str | None,
+        pipeline_label: str,
+        sample_count: int,
+        variant_count: int,
+    ) -> None: ...
+    def record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
+        self,
+        phenotype_count: int | None,
+        phenotype_name: str | None,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_pipeline_output_resume_committed_chunks_diagnostic_event(
+        self,
+        committed_chunk_count: int,
+        output_index: int,
+    ) -> None: ...
+    def record_pipeline_output_writer_sessions_create_started_diagnostic_event(
+        self,
+        association_mode: str,
+        output_count: int,
+    ) -> None: ...
+    def record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
+        self,
+        requested_gpu_genotype_format: str,
+        resolved_gpu_genotype_format: str,
+        resolution_reason: str,
+        fallback_error: str | None,
+    ) -> None: ...
+    def record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
+        self,
+        message: str,
+        chromosome: str,
+        nonconverged_count: int,
+        phenotype_count: int,
+        policy: str,
+        scalar_convergence: bool,
+        total_fit_count: int,
+    ) -> None: ...
+    def record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+        self,
+        phenotype_count: int,
+        phenotype_group_count: int,
+        sample_counts_differ: bool,
+        sample_mode: str,
+    ) -> None: ...
+    def record_pipeline_multi_trait_started_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        sample_mode: str,
+    ) -> None: ...
+    def record_pipeline_multi_trait_input_load_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+    ) -> None: ...
+    def record_pipeline_multi_trait_input_aligned_diagnostic_event(
+        self,
+        covariate_count: int,
+        phenotype_count: int,
+        sample_count: int,
+    ) -> None: ...
+    def record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+    ) -> None: ...
+    def record_pipeline_grouped_per_phenotype_started_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        sample_mode: str,
+    ) -> None: ...
+    def record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
+        self,
+        phenotype_count: int,
+        phenotype_group_count: int,
+    ) -> None: ...
+    def record_pipeline_grouped_union_delivery_selected_diagnostic_event(
+        self,
+        grouped_sample_count: int,
+        phenotype_group_count: int,
+        union_sample_count: int,
+    ) -> None: ...
+    def record_pipeline_multi_group_preflight_started_diagnostic_event(
+        self,
+        phenotype_count: int,
+        sample_count: int,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None: ...
+    def record_pipeline_multi_group_preflight_completed_diagnostic_event(
+        self,
+        phenotype_count: int,
+        sample_count: int,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None: ...
+    def record_pipeline_single_trait_started_diagnostic_event(
+        self,
+        association_mode: str,
+        phenotype_name: str,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_pipeline_single_trait_input_load_started_diagnostic_event(
+        self,
+        phenotype_name: str,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_pipeline_single_trait_input_aligned_diagnostic_event(
+        self,
+        covariate_count: int,
+        phenotype_name: str,
+        pipeline_label: str,
+        sample_count: int,
+    ) -> None: ...
+    def record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
+        self,
+        phenotype_name: str,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_pipeline_single_trait_preflight_started_diagnostic_event(
+        self,
+        phenotype_name: str,
+        pipeline_label: str,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None: ...
+    def record_pipeline_single_trait_preflight_completed_diagnostic_event(
+        self,
+        chromosome_count: int,
+        covariate_count: int,
+        phenotype_name: str,
+        pipeline_label: str,
+        sample_count: int,
+    ) -> None: ...
+
+class NativeDispatchDiagnosticPolicy:
+    def __init__(self) -> None: ...
+    def record_native_dispatch_bgen_engine_constructing_diagnostic_event(
+        self,
+        chunk_size: int,
+        source_path: str,
+        trusted_no_missing_diploid: bool,
+        variant_limit: int | None,
+    ) -> None: ...
+    def record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
+        self,
+        source_path: str,
+        trusted_bgen_validation_mode: str,
+    ) -> None: ...
+    def record_native_dispatch_delivery_started_diagnostic_event(
+        self,
+        committed_chunk_count: int,
+        pipeline_label: str,
+        variant_major_packed8_probability_pairs: bool,
+    ) -> None: ...
+    def record_native_dispatch_delivery_finished_diagnostic_event(
+        self,
+        pipeline_label: str,
+        processed_chunk_count: int,
+    ) -> None: ...
+    def record_native_dispatch_delivery_interrupted_diagnostic_event(
+        self,
+        pipeline_label: str,
+        signal_exit_code: int,
+        signal_name: str,
+        signal_number: int,
+    ) -> None: ...
+    def record_native_dispatch_delivery_failed_diagnostic_event(
+        self,
+        exception_message: str,
+        exception_type: str,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_native_dispatch_pipeline_finished_diagnostic_event(
+        self,
+        final_parquet_path_count: int,
+        pipeline_label: str,
+    ) -> None: ...
+    def record_native_dispatch_callback_drain_started_diagnostic_event(self) -> None: ...
+    def record_native_dispatch_writer_session_finish_started_diagnostic_event(self) -> None: ...
+    def record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
+        self,
+        requested_thread_count: int,
+        writer_session_count: int,
+    ) -> None: ...
+    def record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
+        self,
+        signal_exit_code: int,
+        signal_name: str,
+        signal_number: int,
+    ) -> None: ...
+    def record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
+        self,
+        requested_thread_count: int,
+        signal_exit_code: int,
+        signal_name: str,
+        signal_number: int,
+        writer_session_count: int,
+    ) -> None: ...
+
+class NativeRunMetadataBuilder:
+    def __init__(self) -> None: ...
+    def build_execution_run_artifacts_payload(
+        self,
+        association_mode: str,
+        phenotype_count: int,
+        output_format: str,
+        output_run_directories: tuple[str, ...],
+        chunks_directories: tuple[str, ...],
+        effective_configs: tuple[str, ...],
+        phenotype_names: tuple[str, ...],
+        final_output_paths: tuple[str | None, ...],
+    ) -> dict[str, object]: ...
+    def extend_run_manifest_metadata(
+        self,
+        run_directory: str,
+        phenotype_name: str,
+        effective_config: str,
+        output_format: str,
+        device: str,
+        staging_depth: int,
+        native_callback_batch_size: int,
+        threads: int | None,
+        writer_threads: int,
+        writer_queue_depth: int,
+        chunks_per_arrow_file: int,
+        arrow_compression: str,
+        parquet_compression: str,
+        output_statistic_dtype: str,
+        bgen_decode_tile_variant_count: int,
+        trusted_no_missing_diploid: bool,
+        trusted_bgen_validation_mode: str,
+    ) -> None: ...
+
+class NativeHostPlanningPolicy:
+    def __init__(self) -> None: ...
+    def plan_association_backend_payload(
+        self,
+        association_mode: str,
+        jax_device: str,
+        gpu_genotype_format: str,
+    ) -> dict[str, object]: ...
+    def resolve_association_mode_value(self, trait_type: str) -> str: ...
+    def normalize_binary_correction_payload(
+        self,
+        firth: bool,
+        approx: bool,
+        spa: bool,
+        p_threshold: float,
+        firth_se: bool,
+    ) -> dict[str, object]: ...
+    def build_phenotype_compute_groups_payload(
+        self,
+        phenotype_names: typing.Sequence[str],
+        multi_phenotype_sample_mode: str,
+    ) -> tuple[dict[str, object], ...]: ...
+    def build_phenotype_compute_group_id_value(
+        self,
+        group_mode: str,
+        phenotype_indices: typing.Sequence[int],
+        phenotype_names: typing.Sequence[str],
+        sample_mode: str,
+        sample_set_fingerprint: str | None,
+        covariate_design_fingerprint: str | None,
+        prediction_alignment_fingerprint: str | None,
+    ) -> str: ...
+    def build_phenotype_output_directory_name(self, phenotype_index: int, phenotype_name: str) -> str: ...
+
 def plan_genotype_chunks(
     variant_count: int,
     chunk_size: int,
@@ -3309,92 +3534,67 @@ def dumps_config_toml(config: RegenieConfig) -> str: ...
 def write_config_toml(config: RegenieConfig, path: str | Path) -> None: ...
 def validate_regenie_config(config: RegenieConfig) -> None: ...
 def validate_regenie_config_for_run(config: RegenieConfig) -> None: ...
-def compile_run_request_json(config: RegenieConfig) -> str: ...
+def compile_run_request_payload(config: RegenieConfig) -> dict[str, object]: ...
 def dispatch_cli(args: list[str]) -> CliOutcome: ...
-def resolve_preflight_variant_count(variant_count: int, variant_limit: int | None = None) -> int: ...
-def intersect_committed_chunk_identifier_sets(
-    committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
-) -> list[int]: ...
-def build_callback_chunk_identity(
-    chromosome: str,
-    variant_start_index: int,
-    variant_stop_index: int,
-) -> NativeCallbackChunkIdentity: ...
-def resolve_delivery_callback_batch_size(
-    callback_batch_size: int | None,
-    variant_major_packed8_probability_pairs: bool,
-) -> int: ...
-def resolve_grouped_union_callback_batch_size(native_callback_batch_size: int) -> int: ...
-def plan_null_logistic_nonconvergence_from_array(
-    chromosome: str,
-    convergence_values: object,
-    phenotype_names: typing.Sequence[str] | None,
-    policy: str,
-) -> NativeNullLogisticNonconvergencePlan: ...
-def resolve_manifest_gpu_genotype_format(
-    resume: bool,
-    manifest_gpu_genotype_format: str | None,
-    association_backend_genotype_format: str | None,
-) -> str | None: ...
-def resolve_effective_trusted_no_missing_diploid(
-    requested_trusted_no_missing_diploid: bool,
-    variant_major_packed8_probability_pairs: bool,
-) -> bool: ...
-def plan_gpu_genotype_format_auto_to_dosage(
-    requested_gpu_genotype_format: str,
-    resolution_reason: str,
-) -> NativeGpuGenotypeFormatResolutionPlan: ...
-def plan_single_trait_binary_gpu_genotype_format_resolution(
-    requested_gpu_genotype_format: str,
-    manifest_gpu_genotype_format: str | None,
-    association_backend_genotype_format: str | None,
-    resume: bool,
-    jax_device: str,
-) -> NativeGpuGenotypeFormatResolutionPlan: ...
-def plan_auto_gpu_genotype_format_after_trusted_validation(
-    fallback_error: str | None,
-) -> NativeGpuGenotypeFormatResolutionPlan: ...
-def plan_multi_trait_chunk_write(
-    writer_session_count: int,
-    chunk_identifier: int,
-    committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
-) -> NativeMultiTraitChunkWritePlan: ...
-def resolve_writer_finish_thread_count(writer_session_count: int, requested_thread_count: int) -> int: ...
-def plan_writer_finish_execution(
-    writer_session_count: int,
-    requested_thread_count: int,
-) -> NativeWriterFinishExecutionPlan: ...
-def plan_bgen_delivery_cleanup(
-    cleanup_outcome: str,
-    callback_finished: bool,
-) -> NativeBgenDeliveryCleanupPlan: ...
-def close_telemetry_session_with_event(telemetry_session: object | None) -> None: ...
-def record_final_timing_outputs_write_started_diagnostic_event(
-    stage_timing_path: str | None,
-    profile_summary_path: str | None,
-    run_id: str | None,
-) -> None: ...
-def plan_bgen_delivery_invocation(
-    callback_batch_size: int | None,
-    variant_major_packed8_probability_pairs: bool,
-    has_native_multi_aligned_sample_data: bool,
-    has_native_aligned_sample_data: bool,
-) -> NativeBgenDeliveryInvocationPlan: ...
-def plan_single_trait_output_write(
-    is_native_writer_session: bool,
-    output_statistic_dtype: str,
-) -> NativeSingleTraitOutputWritePlan: ...
-def plan_multi_trait_output_write(
-    active_trait_count: int,
-    all_writer_sessions_native: bool,
-    output_statistic_dtype: str,
-) -> NativeMultiTraitOutputWritePlan: ...
-def build_preflight_report_payload(
-    sample_count: int,
-    covariate_count: int,
-    chromosome_count: int,
-    trusted_no_missing_diploid: bool,
-) -> dict[str, object]: ...
+def run_native_cli_python_bridge(
+    args: list[str],
+    python_executable_path: str | Path,
+    sentinel_environment_variable: str,
+) -> CliOutcome: ...
+
+class NativePreflightValidator:
+    def __init__(self) -> None: ...
+    def resolve_preflight_variant_count(self, variant_count: int, variant_limit: int | None = None) -> int: ...
+    def build_preflight_report_payload(
+        self,
+        sample_count: int,
+        covariate_count: int,
+        chromosome_count: int,
+        trusted_no_missing_diploid: bool,
+    ) -> dict[str, object]: ...
+    def validate_single_trait_preflight_shape_payload(
+        self,
+        phenotype_sample_count: int,
+        covariate_dimension_count: int,
+        covariate_sample_count: int,
+        covariate_count: int,
+    ) -> dict[str, object]: ...
+    def validate_multi_trait_preflight_shape_payload(
+        self,
+        phenotype_dimension_count: int,
+        phenotype_trait_count: int,
+        phenotype_sample_count: int,
+        covariate_dimension_count: int,
+        covariate_sample_count: int,
+        covariate_count: int,
+    ) -> dict[str, object]: ...
+    def validate_binary_phenotype_array(self, phenotype_values: object) -> None: ...
+    def validate_finite_array_values(self, label: str, values: object) -> None: ...
+    def validate_covariate_matrix_rank(self, covariate_rank: int, covariate_count: int) -> None: ...
+    def validate_covariate_matrix_rank_array(self, covariate_matrix: object, covariate_count: int) -> None: ...
+    def validate_single_prediction_preflight_shape(
+        self,
+        chromosome: str,
+        prediction_shape: typing.Sequence[int],
+        sample_count: int,
+    ) -> None: ...
+    def validate_multi_prediction_preflight_shape(
+        self,
+        chromosome: str,
+        prediction_shape: typing.Sequence[int],
+        trait_count: int,
+        sample_count: int,
+    ) -> None: ...
+
+class NativeCallbackDiagnosticsPolicy:
+    def __init__(self) -> None: ...
+    def plan_null_logistic_nonconvergence_from_array(
+        self,
+        chromosome: str,
+        convergence_values: object,
+        phenotype_names: typing.Sequence[str] | None,
+        policy: str,
+    ) -> NativeNullLogisticNonconvergencePlan: ...
 
 class NativePipelineOutputInitialization:
     @property
@@ -3403,15 +3603,6 @@ class NativePipelineOutputInitialization:
     def committed_chunk_identifiers(self, output_index: int) -> list[int]: ...
 
 class NativePipelineOutputPreparationBatch:
-    def __init__(
-        self,
-        run_directories: typing.Sequence[str],
-        chunks_directories: typing.Sequence[str],
-        existing_manifest_json_values: typing.Sequence[str | None],
-        current_header_json_values: typing.Sequence[str],
-        resume: bool,
-        resume_mode: str,
-    ) -> None: ...
     @property
     def output_count(self) -> int: ...
     @property
@@ -3422,52 +3613,18 @@ class NativePipelineOutputPreparationBatch:
         runtime_compatibility_token: NativeRuntimeCompatibilityToken,
     ) -> NativePipelineOutputInitialization: ...
 
-def initialize_pipeline_output_run_batch(
-    run_directories: typing.Sequence[str],
-    chunks_directories: typing.Sequence[str],
-    existing_manifest_json_values: typing.Sequence[str | None],
-    current_header_json_values: typing.Sequence[str],
-    resume: bool,
-    resume_mode: str,
-    runtime_compatibility_token: NativeRuntimeCompatibilityToken,
-) -> NativePipelineOutputInitialization: ...
-def initialize_pipeline_output_runs(
-    run_directories: typing.Sequence[str],
-    chunks_directories: typing.Sequence[str],
-    existing_manifest_json_values: typing.Sequence[str | None],
-    current_header_json_values: typing.Sequence[str],
-    resume: bool,
-    resume_mode: str,
-    runtime_compatibility_token: NativeRuntimeCompatibilityToken,
-) -> list[list[int]]: ...
-def validate_single_trait_preflight_shape_payload(
-    phenotype_sample_count: int,
-    covariate_dimension_count: int,
-    covariate_sample_count: int,
-    covariate_count: int,
-) -> dict[str, object]: ...
-def validate_multi_trait_preflight_shape_payload(
-    phenotype_dimension_count: int,
-    phenotype_trait_count: int,
-    phenotype_sample_count: int,
-    covariate_dimension_count: int,
-    covariate_sample_count: int,
-    covariate_count: int,
-) -> dict[str, object]: ...
-def validate_binary_phenotype_array(phenotype_values: object) -> None: ...
-def validate_finite_array_values(label: str, values: object) -> None: ...
-def validate_covariate_matrix_rank(covariate_rank: int, covariate_count: int) -> None: ...
-def validate_single_prediction_preflight_shape(
-    chromosome: str,
-    prediction_shape: typing.Sequence[int],
-    sample_count: int,
-) -> None: ...
-def validate_multi_prediction_preflight_shape(
-    chromosome: str,
-    prediction_shape: typing.Sequence[int],
-    trait_count: int,
-    sample_count: int,
-) -> None: ...
+class NativePipelineOutputPreparationPolicy:
+    def __init__(self) -> None: ...
+    def build_pipeline_output_preparation_batch_from_values(
+        self,
+        run_directories: typing.Sequence[str],
+        chunks_directories: typing.Sequence[str],
+        existing_manifest_values: typing.Sequence[object | None],
+        current_header_values: typing.Sequence[object],
+        resume: bool,
+        resume_mode: str,
+    ) -> NativePipelineOutputPreparationBatch: ...
+
 def align_sample_data_from_sample_file(
     sample_path: str,
     expected_sample_count: int,

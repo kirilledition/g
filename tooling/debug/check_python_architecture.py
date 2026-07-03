@@ -29,6 +29,7 @@ class PythonImportPolicy:
         source_directory: Package directory, relative to the production package root.
         forbidden_imports: Absolute import prefixes rejected under the source directory.
         message: Human-readable policy description.
+        allowed_paths: Source paths, relative to the production package root, excluded from this policy.
 
     """
 
@@ -36,6 +37,7 @@ class PythonImportPolicy:
     source_directory: Path
     forbidden_imports: tuple[str, ...]
     message: str
+    allowed_paths: tuple[Path, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -148,18 +150,142 @@ class PythonDefinitionViolation:
     message: str
 
 
+@dataclasses.dataclass(frozen=True)
+class PythonCliShimViolation:
+    """A Python CLI shim contract violation.
+
+    Attributes:
+        path: Source file containing the violation.
+        line_number: One-based source line number for the relevant statement.
+        column_offset: Zero-based source column for the relevant statement.
+        policy_name: Stable policy name that rejected the CLI shim shape.
+        subject: Function, constant, or file subject that violated the policy.
+        message: Human-readable policy description.
+
+    """
+
+    path: Path
+    line_number: int
+    column_offset: int
+    policy_name: str
+    subject: str
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class ModuleStringAssignment:
+    """Top-level string assignment metadata.
+
+    Attributes:
+        value: Assigned string value.
+        line_number: One-based assignment line number.
+        column_offset: Zero-based assignment column offset.
+
+    """
+
+    value: str
+    line_number: int
+    column_offset: int
+
+
+CLI_SHIM_PATH = Path("cli.py")
+CLI_SHIM_POLICY_NAME = "native_cli_shim_process_owner"
+CLI_SHIM_SENTINEL_CONSTANT_NAME = "NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE"
+CLI_SHIM_SENTINEL_ENVIRONMENT_VARIABLE = "G_NATIVE_CLI_PYTHON_BRIDGE_SENTINEL"
+CLI_SHIM_MESSAGE = (
+    "the public Python CLI entry point must remain compatibility glue into the native CLI runner; "
+    "only the sentinel-protected legacy backend may call dispatch_cli"
+)
+
 PYTHON_IMPORT_POLICIES = (
+    PythonImportPolicy(
+        name="public_api_convenience_layer_isolation",
+        source_directory=Path("api.py"),
+        forbidden_imports=(
+            "g._core",
+            "g.cli",
+            "g.compute",
+            "g.engine.callbacks",
+            "g.engine.native_dispatch",
+            "g.engine.regenie2_pipeline",
+            "g.execution_plan",
+            "g.io",
+            "g.jax_runtime",
+        ),
+        message="public Python API must stay a convenience layer over config, runner, and public run events",
+    ),
+    PythonImportPolicy(
+        name="interface_config_adapter_isolation",
+        source_directory=Path("interface/config.py"),
+        forbidden_imports=(
+            "g.api",
+            "g.cli",
+            "g.compute",
+            "g.engine",
+            "g.execution_plan",
+            "g.io",
+            "g.jax_runtime",
+            "g.runner",
+        ),
+        message="Python config adapter must stay a thin boundary over Rust-owned config bindings",
+    ),
     PythonImportPolicy(
         name="compute_kernel_isolation",
         source_directory=Path("compute"),
-        forbidden_imports=("g.cli", "g.interface", "g.io"),
-        message="JAX compute kernels must not import CLI, config, output, or file-parser packages",
+        forbidden_imports=(
+            "g._core",
+            "g.api",
+            "g.cli",
+            "g.engine",
+            "g.execution_plan",
+            "g.interface",
+            "g.io",
+            "g.jax_runtime",
+            "g.runner",
+        ),
+        message=(
+            "JAX compute kernels must not import native bindings, public API wrappers, CLI/config, "
+            "orchestration, runtime setup, output, or file-parser packages"
+        ),
     ),
     PythonImportPolicy(
         name="jax_runtime_orchestration_isolation",
         source_directory=Path("jax_runtime"),
-        forbidden_imports=("g.runner",),
-        message="JAX runtime helpers must not import runner orchestration packages",
+        forbidden_imports=(
+            "g.api",
+            "g.cli",
+            "g.compute",
+            "g.engine",
+            "g.execution_plan",
+            "g.interface",
+            "g.io",
+            "g.runner",
+        ),
+        message="JAX runtime helpers must not import public API, config, compute, output, or orchestration packages",
+    ),
+    PythonImportPolicy(
+        name="output_jax_runtime_policy_isolation",
+        source_directory=Path("io"),
+        forbidden_imports=("g.jax_runtime",),
+        message="output helpers must consume explicit JAX runtime policy values instead of importing JAX runtime setup",
+    ),
+    PythonImportPolicy(
+        name="output_engine_orchestration_isolation",
+        source_directory=Path("io"),
+        forbidden_imports=("g.engine",),
+        message="output helpers must not import engine orchestration or diagnostics packages",
+    ),
+    PythonImportPolicy(
+        name="obsolete_io_source_module_isolation",
+        source_directory=Path(),
+        forbidden_imports=("g.io.source",),
+        message="BGEN source configuration is part of the execution-plan contract, not the output package",
+    ),
+    PythonImportPolicy(
+        name="execution_plan_output_adapter_isolation",
+        source_directory=Path("execution_plan.py"),
+        forbidden_imports=("g.io",),
+        message="execution-plan construction must not import output adapters or prepare output lifecycle state",
     ),
     PythonImportPolicy(
         name="runner_jax_import_boundary",
@@ -167,13 +293,113 @@ PYTHON_IMPORT_POLICIES = (
         forbidden_imports=("g.engine.regenie2_pipeline", "g.engine.callbacks", "g.compute", "jax", "jaxlib"),
         message="runner modules must not import JAX-facing modules before runtime setup",
     ),
+    PythonImportPolicy(
+        name="runner_output_adapter_isolation",
+        source_directory=Path("runner"),
+        forbidden_imports=("g.io",),
+        message="runner modules must route output adapter access through runner-local output helpers",
+        allowed_paths=(Path("runner/outputs.py"),),
+    ),
+    PythonImportPolicy(
+        name="runner_run_event_adapter_isolation",
+        source_directory=Path("runner"),
+        forbidden_imports=("g.engine.run_events", "g.engine.telemetry"),
+        message="runner modules must route run-event and telemetry access through runner-local event helpers",
+        allowed_paths=(Path("runner/events.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_output_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.io",),
+        message="REGENIE pipeline modules must route output adapter access through pipeline output helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/outputs.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_run_event_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.run_events", "g.engine.telemetry"),
+        message="REGENIE pipeline modules must route run-event and telemetry access through pipeline helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/telemetry_events.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_timing_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.timing",),
+        message="REGENIE pipeline modules must route stage timing access through pipeline timing helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/timing.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_preflight_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.preflight",),
+        message="REGENIE pipeline modules must route preflight access through pipeline preflight helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/preflight.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_bgen_engine_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.native_dispatch.engine",),
+        message="REGENIE pipeline modules must route BGEN engine access through pipeline BGEN engine helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/bgen_engine.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_native_input_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=(
+            "g.engine.native_dispatch.loaders",
+            "g.engine.native_dispatch.groups",
+            "g.engine.native_dispatch.models",
+        ),
+        message="REGENIE pipeline modules must route native input and group access through pipeline input helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/inputs.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_native_delivery_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.native_dispatch.delivery",),
+        message="REGENIE pipeline modules must route native delivery access through pipeline delivery helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/delivery.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_callback_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.callbacks",),
+        message="REGENIE pipeline modules must route callback access through pipeline callback helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/callbacks.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_compute_config_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.compute",),
+        message="REGENIE pipeline modules must route compute configuration access through pipeline helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/compute_config.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_jax_runtime_policy_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.jax_runtime",),
+        message="REGENIE pipeline modules must route JAX runtime policy access through pipeline helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/runtime_policy.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_backend_planner_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.backend_planner",),
+        message="REGENIE pipeline modules must route backend planning access through pipeline helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/backend.py"),),
+    ),
 )
 
 PYTHON_CALL_POLICIES = (
     PythonCallPolicy(
         name="production_manifest_write_isolation",
         source_directory=Path(),
-        forbidden_calls=("output.write_run_manifest", "_core.write_run_manifest_json", "write_run_manifest"),
+        forbidden_calls=(
+            "output.write_run_manifest",
+            "_core.write_run_manifest",
+            "_core.write_run_manifest_json",
+            "write_run_manifest",
+        ),
         allowed_paths=(Path("io/output.py"),),
         message="production Python must not write run manifests outside the output adapter helper",
     ),
@@ -183,15 +409,24 @@ PYTHON_CALL_POLICIES = (
         forbidden_calls=(
             "_core.prepare_output_run",
             "_core.initialize_output_run",
+            "_core.initialize_output_run_from_values",
             "_core.load_run_manifest_json",
+            "_core.load_run_manifest_payload",
+            "_core.NativeOutputLifecyclePolicy",
             "_core.validate_run_manifest_compatibility",
+            "_core.validate_run_manifest_compatibility_from_values",
             "_core.read_manifest_committed_chunk_identifiers",
+            "_core.read_manifest_committed_chunk_identifiers_from_value",
             "_core.validate_strict_manifest_chunks",
+            "_core.validate_strict_manifest_chunks_from_value",
             "_core.repair_strict_manifest_chunk_commits",
+            "_core.repair_strict_manifest_chunk_commits_from_value",
             "_core.scan_committed_chunk_identifiers",
             "_core.finalize_output_run_chunks",
             "_core.resolve_output_run_paths",
+            "_core.build_pipeline_output_preparation_batch_from_values",
             "_core.NativePipelineOutputPreparationBatch",
+            "_core.NativePipelineOutputPreparationPolicy",
             "_core.initialize_pipeline_output_run_batch",
             "_core.initialize_pipeline_output_runs",
         ),
@@ -210,23 +445,40 @@ PYTHON_CALL_POLICIES = (
         message="production Python must route native writer lifecycle calls through the native-dispatch adapter",
     ),
     PythonCallPolicy(
+        name="native_output_chunk_write_adapter_isolation",
+        source_directory=Path(),
+        forbidden_calls=(
+            "_core.write_regenie2_multi_native_chunk",
+            "_core.write_regenie2_multi_native_chunk_f64",
+            "_core.NativeOutputChunkWritePolicy",
+        ),
+        allowed_paths=(Path("engine/callbacks/writers.py"),),
+        message="production Python must route native output chunk writes through the callback writer adapter",
+    ),
+    PythonCallPolicy(
         name="native_output_manifest_helper_adapter_isolation",
         source_directory=Path(),
         forbidden_calls=(
             "_core.NativeManifestFileFingerprintCache",
             "_core.build_current_run_manifest_header_json_from_input_json",
+            "_core.build_current_run_manifest_header_payload_from_input",
             "_core.build_file_content_sha256_value",
             "_core.build_file_fingerprint_payload",
             "_core.build_manifest_file_fingerprint_payload",
             "_core.build_manifest_json_sha256",
+            "_core.build_manifest_json_sha256_from_value",
             "_core.build_prediction_loco_file_fingerprints_json",
+            "_core.build_prediction_loco_file_fingerprints_payload",
             "_core.build_prepared_run_manifest_header_json",
             "_core.build_prepared_run_manifest_header_json_from_current_header_json",
             "_core.build_prepared_run_plan_json",
+            "_core.build_prepared_run_plan_json_from_current_header",
             "_core.build_prepared_run_plan_json_from_current_header_json",
             "build_current_run_manifest_header_json_from_input_json",
+            "build_current_run_manifest_header_payload_from_input",
             "build_file_fingerprint_payload",
             "build_prediction_loco_file_fingerprints_json",
+            "build_prediction_loco_file_fingerprints_payload",
         ),
         allowed_paths=(Path("io/output.py"),),
         message="production Python must route native output manifest helper calls through the output adapter helper",
@@ -235,6 +487,7 @@ PYTHON_CALL_POLICIES = (
         name="native_run_metadata_adapter_isolation",
         source_directory=Path(),
         forbidden_calls=(
+            "_core.NativeRunMetadataBuilder",
             "_core.build_execution_run_artifacts_payload",
             "_core.extend_run_manifest_metadata",
         ),
@@ -267,6 +520,20 @@ PYTHON_CALL_POLICIES = (
         forbidden_calls=("_core.build_prepared_run_plan_json", "build_native_prepared_run_plan_input_mapping"),
         allowed_paths=(),
         message="production Python must not reconstruct canonical prepared-run plans",
+    ),
+    PythonCallPolicy(
+        name="native_run_request_adapter_isolation",
+        source_directory=Path(),
+        forbidden_calls=("_core.compile_run_request_json", "_core.compile_run_request_payload"),
+        allowed_paths=(Path("execution_plan.py"),),
+        message="production Python must route native run-request compilation through the execution-plan adapter",
+    ),
+    PythonCallPolicy(
+        name="pipeline_native_schedule_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_calls=("_core.NativeSchedulePolicy",),
+        allowed_paths=(Path("engine/regenie2_pipeline/schedule.py"),),
+        message="REGENIE pipeline modules must route native scheduling policy access through pipeline schedule helpers",
     ),
     PythonCallPolicy(
         name="native_diagnostic_payload_adapter_isolation",
@@ -386,11 +653,11 @@ PYTHON_CALL_POLICIES = (
         message="production preflight must call the typed native required-chromosome API directly",
     ),
     PythonCallPolicy(
-        name="transitional_covariate_rank_scan_isolation",
+        name="native_covariate_rank_scan_isolation",
         source_directory=Path("engine"),
         forbidden_calls=("np.linalg.matrix_rank", "numpy.linalg.matrix_rank", "matrix_rank"),
-        allowed_paths=(Path("engine/preflight.py"),),
-        message="production covariate rank scans must stay isolated to the preflight adapter until moved native",
+        allowed_paths=(),
+        message="production covariate rank scans must use the native PyO3 SVD-backed rank validator",
     ),
     PythonCallPolicy(
         name="native_callback_convergence_scan_isolation",
@@ -398,6 +665,55 @@ PYTHON_CALL_POLICIES = (
         forbidden_calls=("np.ravel", "numpy.ravel", "np.count_nonzero", "numpy.count_nonzero"),
         allowed_paths=(),
         message="production callback diagnostics must use native PyO3 array checks for convergence scans",
+    ),
+    PythonCallPolicy(
+        name="binary_diagnostics_result_contract_isolation",
+        source_directory=Path("compute/regenie2_binary/diagnostics.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production binary diagnostics must normalize typed results instead of probing optional fields",
+    ),
+    PythonCallPolicy(
+        name="binary_diagnostics_host_materialization_isolation",
+        source_directory=Path("compute/regenie2_binary/diagnostics.py"),
+        forbidden_calls=("jax.device_get", "device_get"),
+        allowed_paths=(),
+        message="production binary diagnostics must leave host materialization to callback adapters",
+    ),
+    PythonCallPolicy(
+        name="callback_readiness_blocker_contract_isolation",
+        source_directory=Path("engine/callbacks/diagnostics.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production callback readiness blocking must use the typed JAX readiness API directly",
+    ),
+    PythonCallPolicy(
+        name="binary_callback_chromosome_state_contract_isolation",
+        source_directory=Path("engine/callbacks/binary.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production binary callbacks must require typed chromosome-state readiness fields",
+    ),
+    PythonCallPolicy(
+        name="linear_callback_chromosome_state_contract_isolation",
+        source_directory=Path("engine/callbacks/linear.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production linear callbacks must require typed chromosome-state readiness fields",
+    ),
+    PythonCallPolicy(
+        name="callback_transfer_contract_isolation",
+        source_directory=Path("engine/callbacks/transfers.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production callback transfer helpers must use typed array and chunk-stat contracts",
+    ),
+    PythonCallPolicy(
+        name="callback_writer_contract_isolation",
+        source_directory=Path("engine/callbacks/writers.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production callback writers must use typed writer contracts, not method-name probing",
     ),
     PythonCallPolicy(
         name="native_compute_group_resolution_isolation",
@@ -433,6 +749,13 @@ PYTHON_CALL_POLICIES = (
         forbidden_calls=("getattr",),
         allowed_paths=(),
         message="production callback metadata helpers must use native scalar chromosome labels directly",
+    ),
+    PythonCallPolicy(
+        name="timing_snapshot_serialization_contract_isolation",
+        source_directory=Path("engine/timing.py"),
+        forbidden_calls=("getattr",),
+        allowed_paths=(),
+        message="production timing snapshot serialization must use typed dataclass mappings, not reflective probing",
     ),
     PythonCallPolicy(
         name="jax_host_materialization_isolation",
@@ -672,8 +995,11 @@ def collect_python_import_policy_violations(
         if not source_directory.exists():
             continue
         for path in python_source_paths_for_policy(source_directory):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             relative_path = path.relative_to(package_root.parent)
+            package_relative_path = path.relative_to(package_root)
+            if package_relative_path in policy.allowed_paths:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for statement in ast.walk(tree):
                 if not isinstance(statement, ast.Import | ast.ImportFrom):
                     continue
@@ -749,6 +1075,197 @@ def collect_python_definition_policy_violations(
     return tuple(violations)
 
 
+def top_level_function_definitions(tree: ast.Module) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Return top-level function definitions by name."""
+    function_definitions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    for statement in tree.body:
+        if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
+            function_definitions[statement.name] = statement
+    return function_definitions
+
+
+def top_level_string_assignments(tree: ast.Module) -> dict[str, ModuleStringAssignment]:
+    """Return top-level string assignments by target name."""
+    assignments: dict[str, ModuleStringAssignment] = {}
+    for statement in tree.body:
+        if isinstance(statement, ast.Assign):
+            for target in statement.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and isinstance(statement.value, ast.Constant)
+                    and isinstance(statement.value.value, str)
+                ):
+                    assignments[target.id] = ModuleStringAssignment(
+                        value=statement.value.value,
+                        line_number=statement.lineno,
+                        column_offset=statement.col_offset,
+                    )
+            continue
+        if (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        ):
+            assignments[statement.target.id] = ModuleStringAssignment(
+                value=statement.value.value,
+                line_number=statement.lineno,
+                column_offset=statement.col_offset,
+            )
+    return assignments
+
+
+def call_names_under_node(node: ast.AST) -> frozenset[str]:
+    """Return dotted call names under an AST node."""
+    call_names: set[str] = set()
+    for child_node in ast.walk(node):
+        if not isinstance(child_node, ast.Call):
+            continue
+        call_name = call_name_from_expression(child_node.func)
+        if call_name is not None:
+            call_names.add(call_name)
+    return frozenset(call_names)
+
+
+def node_references_name(node: ast.AST, name: str) -> bool:
+    """Return whether an AST node references a name."""
+    return any(isinstance(child_node, ast.Name) and child_node.id == name for child_node in ast.walk(node))
+
+
+def call_names_include(call_names: frozenset[str], expected_call_name: str) -> bool:
+    """Return whether collected call names include the expected call name."""
+    return expected_call_name in call_names or any(
+        call_name.endswith(f".{expected_call_name}") for call_name in call_names
+    )
+
+
+def function_contains_call(
+    function_definition: ast.FunctionDef | ast.AsyncFunctionDef, expected_call_name: str
+) -> bool:
+    """Return whether a function contains a call."""
+    return call_names_include(call_names_under_node(function_definition), expected_call_name)
+
+
+def function_has_sentinel_legacy_branch(function_definition: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Return whether a function has a sentinel-gated legacy backend branch."""
+    for statement in function_definition.body:
+        if not isinstance(statement, ast.If):
+            continue
+        if not node_references_name(statement.test, CLI_SHIM_SENTINEL_CONSTANT_NAME):
+            continue
+        if any(
+            call_names_include(call_names_under_node(body_statement), "run_args_legacy")
+            for body_statement in statement.body
+        ):
+            return True
+    return False
+
+
+def cli_shim_violation(
+    relative_path: Path,
+    line_number: int,
+    column_offset: int,
+    subject: str,
+) -> PythonCliShimViolation:
+    """Build a CLI shim violation."""
+    return PythonCliShimViolation(
+        path=relative_path,
+        line_number=line_number,
+        column_offset=column_offset,
+        policy_name=CLI_SHIM_POLICY_NAME,
+        subject=subject,
+        message=CLI_SHIM_MESSAGE,
+    )
+
+
+def collect_python_cli_shim_violations(package_root: Path) -> tuple[PythonCliShimViolation, ...]:
+    """Collect Python CLI shim ownership violations."""
+    cli_path = package_root / CLI_SHIM_PATH
+    relative_path = cli_path.relative_to(package_root.parent)
+    if not cli_path.is_file():
+        return (cli_shim_violation(relative_path, 1, 0, str(CLI_SHIM_PATH)),)
+
+    tree = ast.parse(cli_path.read_text(encoding="utf-8"), filename=str(cli_path))
+    violations: list[PythonCliShimViolation] = []
+    string_assignments = top_level_string_assignments(tree)
+    sentinel_assignment = string_assignments.get(CLI_SHIM_SENTINEL_CONSTANT_NAME)
+    if sentinel_assignment is None:
+        violations.append(cli_shim_violation(relative_path, 1, 0, CLI_SHIM_SENTINEL_CONSTANT_NAME))
+    elif sentinel_assignment.value != CLI_SHIM_SENTINEL_ENVIRONMENT_VARIABLE:
+        violations.append(
+            cli_shim_violation(
+                relative_path,
+                sentinel_assignment.line_number,
+                sentinel_assignment.column_offset,
+                CLI_SHIM_SENTINEL_CONSTANT_NAME,
+            )
+        )
+
+    function_definitions = top_level_function_definitions(tree)
+    run_args_definition = function_definitions.get("run_args")
+    if run_args_definition is None:
+        violations.append(cli_shim_violation(relative_path, 1, 0, "run_args"))
+    else:
+        if not function_contains_call(run_args_definition, "run_native_cli_python_bridge"):
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    run_args_definition.lineno,
+                    run_args_definition.col_offset,
+                    "run_args",
+                )
+            )
+        if function_contains_call(run_args_definition, "dispatch_cli"):
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    run_args_definition.lineno,
+                    run_args_definition.col_offset,
+                    "run_args",
+                )
+            )
+        if not function_has_sentinel_legacy_branch(run_args_definition):
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    run_args_definition.lineno,
+                    run_args_definition.col_offset,
+                    "run_args",
+                )
+            )
+
+    run_args_legacy_definition = function_definitions.get("run_args_legacy")
+    if run_args_legacy_definition is None:
+        violations.append(cli_shim_violation(relative_path, 1, 0, "run_args_legacy"))
+    else:
+        if not function_contains_call(run_args_legacy_definition, "dispatch_cli"):
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    run_args_legacy_definition.lineno,
+                    run_args_legacy_definition.col_offset,
+                    "run_args_legacy",
+                )
+            )
+        if function_contains_call(run_args_legacy_definition, "run_native_cli_python_bridge"):
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    run_args_legacy_definition.lineno,
+                    run_args_legacy_definition.col_offset,
+                    "run_args_legacy",
+                )
+            )
+
+    main_definition = function_definitions.get("main")
+    if main_definition is None:
+        violations.append(cli_shim_violation(relative_path, 1, 0, "main"))
+    elif not function_contains_call(main_definition, "run_args"):
+        violations.append(cli_shim_violation(relative_path, main_definition.lineno, main_definition.col_offset, "main"))
+
+    return tuple(violations)
+
+
 def python_source_paths_for_policy(source_path: Path) -> tuple[Path, ...]:
     """Return Python source paths covered by one architecture policy."""
     if source_path.is_file():
@@ -782,12 +1299,19 @@ def render_definition_violation(violation: PythonDefinitionViolation) -> str:
     return f"{location}: {violation.policy_name} rejects definition `{violation.function_name}`: {violation.message}"
 
 
+def render_cli_shim_violation(violation: PythonCliShimViolation) -> str:
+    """Render a CLI shim-policy violation for command-line output."""
+    location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
+    return f"{location}: {violation.policy_name} rejects `{violation.subject}`: {violation.message}"
+
+
 def run_tool(package_root: Path) -> int:
     """Verify Python package ownership boundaries."""
     import_violations = collect_python_import_policy_violations(package_root)
     call_violations = collect_python_call_policy_violations(package_root)
     definition_violations = collect_python_definition_policy_violations(package_root)
-    if import_violations or call_violations or definition_violations:
+    cli_shim_violations = collect_python_cli_shim_violations(package_root)
+    if import_violations or call_violations or definition_violations or cli_shim_violations:
         print(f"Python architecture violations under `{package_root}`:")
         for violation in import_violations:
             print(f"  {render_violation(violation)}")
@@ -795,6 +1319,8 @@ def run_tool(package_root: Path) -> int:
             print(f"  {render_call_violation(violation)}")
         for violation in definition_violations:
             print(f"  {render_definition_violation(violation)}")
+        for violation in cli_shim_violations:
+            print(f"  {render_cli_shim_violation(violation)}")
         return 1
 
     print(f"Python architecture policy passed for `{package_root}`.")

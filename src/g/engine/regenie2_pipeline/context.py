@@ -5,35 +5,14 @@ from __future__ import annotations
 import typing
 from dataclasses import dataclass
 
-from g import _core, execution_plan, types
-from g.compute.regenie2_linear import config as regenie2_linear_config
-from g.engine import backend_planner, telemetry, timing
-from g.io import output
+from g import execution_plan, types
+from g.engine.regenie2_pipeline import backend, compute_config, outputs, schedule, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g.compute.regenie2_binary import config as regenie2_binary_config
-    from g.engine.callbacks import shared as callback_shared
-    from g.engine.native_dispatch import models as native_dispatch_models
-    from g.io import source
-
-
-def require_binary_kernel_config(
-    kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
-) -> regenie2_binary_config.BinaryKernelConfig:
-    """Return the binary kernel config or fail at an internal boundary."""
-    if kernel_config is None:
-        message = "Binary kernel config is required for binary association."
-        raise ValueError(message)
-    return kernel_config
-
-
-def require_linear_numerical_config(
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
-) -> regenie2_linear_config.LinearNumericalConfig:
-    """Return linear numerical settings, using package defaults for direct pipeline calls."""
-    return linear_numerical_config or regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG
+    from g import _core
+    from g.engine.regenie2_pipeline import callbacks, inputs
 
 
 @dataclass(frozen=True)
@@ -74,7 +53,7 @@ class Regenie2PipelineContext:
     """
 
     association_mode: types.AssociationMode
-    genotype_source_config: source.GenotypeSourceConfig
+    genotype_source_config: execution_plan.GenotypeSourceConfig
     phenotype_path: Path
     prediction_list_path: Path
     covariate_path: Path | None
@@ -89,15 +68,15 @@ class Regenie2PipelineContext:
     firth_dtype: types.FloatingPointDtype
     requested_gpu_genotype_format: types.GpuGenotypeFormat
     gpu_genotype_format: types.GpuGenotypeFormat
-    backend_plan: backend_planner.AssociationBackendPlan
+    backend_plan: backend.AssociationBackendPlan
     correction_plan: types.BinaryCorrectionPlan
-    binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None
-    writer_settings: output.OutputWriterSettings
+    binary_kernel_config: compute_config.BinaryKernelConfig | None
+    linear_numerical_config: compute_config.LinearNumericalConfig | None
+    writer_settings: outputs.OutputWriterSettings
     stage_timing_recorder: timing.StageTimingRecorder | None
-    telemetry_session: telemetry.TelemetrySession | None
-    input_fingerprint_cache: output.ManifestFileFingerprintCache
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
+    telemetry_session: telemetry_events.TelemetrySession | None
+    input_fingerprint_cache: outputs.ManifestFileFingerprintCache
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...]
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
@@ -110,11 +89,9 @@ class Regenie2PipelineContext:
     @property
     def effective_trusted_no_missing_diploid(self) -> bool:
         """Return trusted BGEN mode after packed8 requirements are applied."""
-        return bool(
-            _core.resolve_effective_trusted_no_missing_diploid(
-                self.trusted_no_missing_diploid,
-                self.uses_packed8_genotypes,
-            )
+        return schedule.resolve_effective_trusted_no_missing_diploid(
+            trusted_no_missing_diploid=self.trusted_no_missing_diploid,
+            uses_packed8_genotypes=self.uses_packed8_genotypes,
         )
 
     @property
@@ -139,8 +116,8 @@ class PreparedMultiPhenotypeGroupDelivery:
 
     compute_group: execution_plan.PhenotypeComputeGroup
     phenotype_indices: tuple[int, ...]
-    run_input: native_dispatch_models.NativeBgenMultiRunInput
-    callback: callback_shared.MultiPhenotypeGroupCallbackProtocol
+    run_input: inputs.NativeBgenMultiRunInput
+    callback: callbacks.MultiPhenotypeGroupCallbackProtocol
     writer_sessions: tuple[typing.Any, ...]
     committed_chunk_identifier_sets: tuple[set[int], ...]
 
@@ -148,7 +125,7 @@ class PreparedMultiPhenotypeGroupDelivery:
 def build_regenie2_pipeline_context(
     *,
     association_mode: types.AssociationMode,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     phenotype_path: Path,
     prediction_list_path: Path,
     covariate_path: Path | None,
@@ -164,12 +141,12 @@ def build_regenie2_pipeline_context(
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
     gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
-    binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
-    writer_settings: output.OutputWriterSettings,
+    binary_kernel_config: compute_config.BinaryKernelConfig | None,
+    linear_numerical_config: compute_config.LinearNumericalConfig | None,
+    writer_settings: outputs.OutputWriterSettings,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
-    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
+    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...],
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
@@ -183,7 +160,7 @@ def build_regenie2_pipeline_context(
         )
     else:
         resolved_stage_timing_recorder = stage_timing_recorder
-    backend_plan = backend_planner.plan_association_backend(
+    backend_plan = backend.plan_association_backend(
         association_mode=association_mode,
         jax_device=jax_device,
         gpu_genotype_format=gpu_genotype_format,
@@ -212,7 +189,7 @@ def build_regenie2_pipeline_context(
         writer_settings=writer_settings,
         stage_timing_recorder=resolved_stage_timing_recorder,
         telemetry_session=telemetry_session,
-        input_fingerprint_cache=output.ManifestFileFingerprintCache(),
+        input_fingerprint_cache=outputs.build_manifest_file_fingerprint_cache(),
         alignment_config=alignment_config,
         phenotype_compute_groups=phenotype_compute_groups,
         runtime_compatibility_token=runtime_compatibility_token,

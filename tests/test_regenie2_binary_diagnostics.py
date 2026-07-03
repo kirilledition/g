@@ -7,6 +7,7 @@ import numpy as np
 from g import types
 from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
 from g.compute.regenie2_binary import result as regenie2_binary_result
+from g.engine.callbacks import diagnostics as callback_diagnostics
 
 
 def build_binary_chunk_result(
@@ -174,7 +175,7 @@ def test_binary_chunk_diagnostics_count_all_failure_categories() -> None:
     assert int(diagnostics.sparse_correction_count) == 2
     assert int(diagnostics.dense_correction_count) == 3
 
-    diagnostics_mapping = regenie2_binary_diagnostics.binary_chunk_diagnostics_to_mapping(diagnostics)
+    diagnostics_mapping = callback_diagnostics.binary_chunk_diagnostics_to_mapping(diagnostics)
     assert diagnostics_mapping["score_only_count"] == 0
     assert diagnostics_mapping["firth_candidate_count"] == 5
     assert diagnostics_mapping["firth_failed_count"] == 4

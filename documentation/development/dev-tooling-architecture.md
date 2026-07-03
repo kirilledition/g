@@ -58,9 +58,10 @@ uv run --no-sync python -m tooling.cli.rust_build_profiles tool.labels=[dev-fast
 The build-profile harness writes timestamped JSON/Markdown summaries under
 `results/perf/rust-build-profiles/`, stores command logs beside each summary,
 and keeps per-profile Cargo artifacts isolated under `target/rust-build-profiles/`.
-Use `dev-fast-lld`, `dev-fast-mold`, `perf-thin-cgu8-lld`, and
-`perf-thin-cgu8-mold` when comparing alternative linkers against the default
-toolchain linker.
+Default build-profile labels use the repo Cargo configuration. Linux Rust
+builds enable `target-cpu=native`, while linker and rustc-wrapper choices stay
+outside the repo and should be supplied through environment variables when
+needed.
 
 Optional GPU smoke validation should run through SLURM rather than on the head node:
 

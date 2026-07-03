@@ -20,7 +20,7 @@ Validation baseline: `uv run pytest --collect-only -q tests -m "not phase0_data 
 | `tests/test_interface.py` | rewrite | Removed old dataclass helper skips and rewrote stale TOML/schema placeholders against native config APIs. | 103 collected tests. | N/A | High. |
 | `tests/test_io_output.py` | keep | Owns output schema, native writer, manifest, resume, strict validation, and finalization contracts. | 113 collected tests. | N/A | High. |
 | `tests/test_io_sample.py` | keep | Covers sample parsing and sample contract edge cases. | 5 collected tests. | N/A | Medium. |
-| `tests/test_io_source.py` | keep | Covers source/path parsing and genotype source helpers. | 4 collected tests. | N/A | Medium. |
+| `tests/test_execution_plan_source.py` | keep | Covers execution-plan BGEN source-path contract helpers. | 4 collected tests. | N/A | Medium. |
 | `tests/test_jax_runtime.py` | keep | Protects JAX runtime policy resolution and diagnostics. | 17 collected tests. | N/A | High. |
 | `tests/test_preflight.py` | keep | Covers execution preflight validation and native chromosome API use. | 17 collected tests. | N/A | High. |
 | `tests/test_regenie2_binary.py` | keep | Large but high-value numerical binary kernel and fallback coverage, including p-threshold, sparse/Firth, packed8, and CPU/GPU parity skipif. | 66 collected tests. | N/A | High. |

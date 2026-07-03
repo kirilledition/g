@@ -24,6 +24,9 @@ pub(crate) struct NativeFinalTimingOutputContext {
     inner: native_timing::FinalTimingOutputContext,
 }
 
+#[pyclass]
+pub(crate) struct NativeFinalTimingOutputPolicy;
+
 #[pymethods]
 impl NativeFinalTimingOutputContext {
     #[getter]
@@ -44,6 +47,34 @@ impl NativeFinalTimingOutputContext {
     #[getter]
     fn force_stage_timing_recorder(&self) -> bool {
         self.inner.force_stage_timing_recorder
+    }
+}
+
+#[pymethods]
+#[allow(clippy::unused_self)]
+impl NativeFinalTimingOutputPolicy {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn resolve_final_timing_output_context(
+        &self,
+        diagnostics_stage_timing_path: Option<String>,
+        telemetry_session: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeFinalTimingOutputContext> {
+        resolve_final_timing_output_context(diagnostics_stage_timing_path, telemetry_session)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn record_final_timing_outputs_write_started_diagnostic_event(
+        &self,
+        stage_timing_path: Option<String>,
+        profile_summary_path: Option<String>,
+        run_id: Option<String>,
+    ) -> PyResult<()> {
+        record_final_timing_outputs_write_started_diagnostic_event(stage_timing_path, profile_summary_path, run_id)
     }
 }
 
@@ -261,7 +292,6 @@ impl NativeStageTimingRecorder {
     }
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn resolve_final_timing_output_context(
     diagnostics_stage_timing_path: Option<String>,
@@ -289,7 +319,6 @@ pub(crate) fn resolve_final_timing_output_context(
     Ok(NativeFinalTimingOutputContext { inner: context })
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
     stage_timing_path: Option<String>,
@@ -308,9 +337,8 @@ pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeFinalTimingOutputContext>()?;
+    module.add_class::<NativeFinalTimingOutputPolicy>()?;
     module.add_class::<NativeStageTimingRecorder>()?;
-    module.add_function(wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_final_timing_output_context, module)?)?;
     Ok(())
 }
 

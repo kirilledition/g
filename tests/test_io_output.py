@@ -78,7 +78,7 @@ DEFAULT_TEST_INPUT_PATH: typing.Final[object] = object()
 def build_test_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:
     """Build a native runtime compatibility token for output side-effect tests."""
     runtime_state = _core.NativeRuntimeState()
-    logging_policy_payload = _core.build_logging_runtime_policy_payload(
+    logging_policy_payload = runtime_state.build_logging_runtime_policy_payload(
         log_filter="info",
         log_file=None,
         log_stderr=False,
@@ -320,6 +320,7 @@ def build_test_header_object(
     firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
     output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    jax_enable_x64: bool = True,
     multi_phenotype_sample_mode: output.MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
     phenotype_compute_group_id: str | None = None,
     sample_set_fingerprint: str | None = None,
@@ -394,6 +395,7 @@ def build_test_header_object(
         bgen_decode_tile_variant_count=64,
         trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
         jax_device=types.Device.CPU,
+        jax_enable_x64=jax_enable_x64,
         jax_matmul_precision=None,
         requested_gpu_genotype_format=effective_requested_gpu_genotype_format,
         finalize_parquet=False,
@@ -415,6 +417,13 @@ def test_current_run_manifest_records_configured_x64_policy(tmp_path: Path) -> N
 
     assert current_header["jax_policy"]["enable_x64"] is True
     assert current_header["execution_plan"]["jax_policy"]["enable_x64"] is True
+
+
+def test_current_run_manifest_uses_explicit_x64_policy(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, jax_enable_x64=False)
+
+    assert current_header["jax_policy"]["enable_x64"] is False
+    assert current_header["execution_plan"]["jax_policy"]["enable_x64"] is False
 
 
 def test_current_run_manifest_records_dtype_policy(tmp_path: Path) -> None:
@@ -860,13 +869,29 @@ def test_strict_manifest_core_wrappers_normalize_and_validate_payloads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FakeNativeOutputLifecyclePolicy:
+        def validate_strict_manifest_chunks_from_value(
+            self,
+            chunks_directory: str,
+            manifest: dict[str, object],
+        ) -> list[int]:
+            del chunks_directory, manifest
+            return [0, 2]
+
+        def repair_strict_manifest_chunk_commits_from_value(
+            self,
+            chunks_directory: str,
+            manifest: dict[str, object],
+        ) -> dict[str, str]:
+            del chunks_directory, manifest
+            return {"bad": "shape"}
+
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
     output_run_paths.chunks_directory.mkdir()
-    monkeypatch.setattr(output._core, "validate_strict_manifest_chunks", lambda *_arguments: [0, 2])
     monkeypatch.setattr(
-        output._core,
-        "repair_strict_manifest_chunk_commits",
-        lambda *_arguments: json.dumps({"bad": "shape"}),
+        output,
+        "native_output_lifecycle_policy",
+        FakeNativeOutputLifecyclePolicy,
     )
 
     assert output.validate_strict_manifest_chunks(output_run_paths, {"committed_chunks": []}) == frozenset({0, 2})
@@ -1358,7 +1383,7 @@ def test_public_multi_native_writer_copies_numpy_rows_before_enqueue(tmp_path: P
         )
     )
     try:
-        _core.write_regenie2_multi_native_chunk(
+        _core.NativeOutputChunkWritePolicy().write_regenie2_multi_native_chunk(
             writer_sessions=writer_sessions,
             active_trait_indices=[0, 1],
             metadata=metadata,
@@ -1438,7 +1463,7 @@ def test_public_multi_native_writer_preserves_float64_output_statistics(tmp_path
     chi_squared = np.full((2, row_count), np.nextafter(np.float64(6.0), np.float64(7.0)), dtype=np.float64)
     log10_p_value = np.full((2, row_count), np.nextafter(np.float64(2.0), np.float64(3.0)), dtype=np.float64)
     try:
-        _core.write_regenie2_multi_native_chunk_f64(
+        _core.NativeOutputChunkWritePolicy().write_regenie2_multi_native_chunk_f64(
             writer_sessions=writer_sessions,
             active_trait_indices=[0, 1],
             metadata=metadata,
@@ -1467,25 +1492,7 @@ def test_public_multi_native_writer_preserves_float64_output_statistics(tmp_path
     np.testing.assert_array_equal(second_beta, beta[1])
 
 
-def test_initialize_output_run_compatible_resume_preserves_committed_chunks(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    diagnostic_calls: list[tuple[str, int, str]] = []
-
-    def record_resume_committed_chunks(
-        chunks_directory: str,
-        committed_chunk_count: int,
-        run_directory: str,
-    ) -> None:
-        diagnostic_calls.append((chunks_directory, committed_chunk_count, run_directory))
-
-    monkeypatch.setattr(
-        output._core,
-        "record_io_output_resume_committed_chunks_diagnostic_event",
-        record_resume_committed_chunks,
-    )
-
+def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
     prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
@@ -1507,13 +1514,6 @@ def test_initialize_output_run_compatible_resume_preserves_committed_chunks(
     initialized_output_run = initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
     assert initialized_output_run.committed_chunk_identifiers == frozenset({0, 2})
-    assert diagnostic_calls == [
-        (
-            str(prepared_output_run.output_run_paths.chunks_directory),
-            2,
-            str(prepared_output_run.output_run_paths.run_directory),
-        )
-    ]
     manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
     assert manifest is not None
     assert [chunk["chunk_identifier"] for chunk in manifest["committed_chunks"]] == [0, 2]

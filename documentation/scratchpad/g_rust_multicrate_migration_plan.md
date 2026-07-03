@@ -1433,6 +1433,14 @@ Remove Python as the chunk-level scheduler.
 - Native pipeline output-preparation batch construction now also routes through
   the `g.io.output` adapter, so pipeline orchestration does not construct the
   lower-level native output lifecycle batch directly.
+- Output manifest writes, execution-plan hashing, prepared-plan construction,
+  strict resume validation/repair, and pipeline output-preparation batch
+  construction now pass Python values through PyO3 value wrappers before Rust
+  serialization. The output adapter no longer serializes those
+  manifest/preparation contracts with `json.dumps`.
+- Run manifest loading and prepared-output existing-manifest loading now return
+  native PyO3 value payloads, so production output code no longer parses those
+  native JSON strings with Python `json.loads`.
 - Run-start manifest command/runtime metadata extension now goes through a
   native `g-output` manifest upsert via the root PyO3 adapter, so Python no
   longer loads, mutates, serializes, and rewrites run manifests for that
@@ -1477,9 +1485,8 @@ Remove Python as the chunk-level scheduler.
 - Phase 10 callback-runner fallback removal is complete for this branch:
   production scheduling, queue/resource ownership, worker lifecycle,
   result-slot, and dosage-buffer paths no longer use manual Python fallback
-  ownership. Remaining Python side effects are Phase 11/12 adapter work. Merge
-  from `origin/main` and push are deferred until the next substantial remote
-  checkpoint.
+  ownership. Remaining Python side effects are Phase 11/12 adapter work. The
+  branch was merged with `origin/main` at the Phase 10 handoff checkpoint.
 
 ### Tests
 
@@ -1859,14 +1866,27 @@ Python/JAX should emit typed diagnostic events through a native handle.
 - Production JAX setup now calls the native setup-session default-probe GPU
   validation method directly; the old Python explicit-path validation wrapper
   has been removed.
+- Resolved config to `g-plan::RunRequest` compilation now returns a native
+  payload through a PyO3 value wrapper for `g.execution_plan`; production
+  execution planning no longer parses the run-request JSON string in Python,
+  and the architecture checker rejects direct compile-helper calls outside the
+  execution-plan adapter.
 - Standalone `require_gpu_device()` validation now also builds a native setup
   session and uses the native default-probe method.
+- Detached default NVIDIA probe-path and driver-visibility root exports were
+  removed; Python convenience checks now enter through
+  `NativeJaxRuntimeSetupSession`.
+- The detached JAX runtime policy payload builder was also removed from the
+  root module; payload construction now goes through `NativeRuntimeState`.
+- Detached logging policy payload, runtime policy handle, and seeded process
+  runtime-state builders were also removed; those builder calls now go through
+  `NativeRuntimeState`.
 - Process-global JAX setup completion recording now consumes the native setup
   session, so `g-runtime` rejects pending or failed setup sessions before
   recording a JAX policy as configured.
 - Prediction-input LOCO manifest fingerprints now use the native manifest
   fingerprint cache handle to compose `g-input` LOCO path resolution with
-  `g-output` file fingerprinting; Python adapts the native JSON payload instead
+  `g-output` file fingerprinting; Python adapts the native payload instead
   of resolving and hashing LOCO files in its manifest-header loop, and the old
   Python-facing raw LOCO path resolver and detached LOCO fingerprint function
   are no longer exported from `_core`.
@@ -1890,15 +1910,39 @@ Python/JAX should emit typed diagnostic events through a native handle.
   sub-builders have been removed; the output adapter now passes native
   manifest-header mappings through, and the old many-argument and detached
   JSON-input PyO3 manifest-header exports have been removed.
-- Preflight finite-array checks and binary phenotype coding/case-control scans
-  now execute in the root PyO3 adapter over NumPy buffers and then call the
-  `g-engine` policy helpers. Python preflight no longer owns those reductions
-  through `np.isfinite`, `np.unique`, or `np.count_nonzero`, and a focused
-  Python architecture policy guards that boundary. Covariate-rank validation
-  remains a Python NumPy `matrix_rank` scan until a native rank or SVD-backed
-  implementation can preserve the current tolerance semantics; a focused
-  Python architecture policy keeps that transitional scan isolated to the
-  preflight adapter.
+- Output manifest writes, execution-plan hashing, prepared-plan construction,
+  strict resume validation/repair, and pipeline output-preparation batch
+  construction now use PyO3 value wrappers, so production output code no
+  longer calls Python `json.dumps` for those manifest/preparation contracts.
+- Run manifest loading and prepared-output existing-manifest loading now use
+  PyO3 value wrappers, so production output code no longer calls Python
+  `json.loads` for those native JSON payloads.
+- The root `_core` surface no longer exports the old output JSON-string
+  compatibility helpers for manifest load/write, checksum, compatibility,
+  initialization, strict-resume validation/repair, or prepared-plan/header
+  construction; remaining Python callers enter the value-based output adapter
+  exports.
+- JSON-string manifest cache methods and
+  `NativePreparedOutputRun.existing_manifest_json` are also no longer
+  Python-visible; remaining callers use native payload methods.
+- The resolved-config run-request JSON helper has also been removed from the
+  root `_core` surface; execution planning uses the payload export.
+- Pipeline output-preparation JSON batch constructors and direct JSON batch
+  initializers are likewise no longer exported; callers use the value-based
+  batch factory and returned native handle.
+- Timing diagnostic snapshot serialization no longer reflects over dataclass
+  fields with production `getattr`; the Python architecture checker guards the
+  typed mapping boundary.
+- The Rust architecture checker also rejects re-exporting the removed
+  run-request JSON helper and pipeline output-preparation JSON batch
+  initializer functions, plus removed JSON compatibility class
+  methods/getters.
+- Preflight finite-array checks, SVD-backed covariate-rank validation, and
+  binary phenotype coding/case-control scans now execute in the root PyO3
+  adapter over NumPy buffers and then call the `g-engine` policy helpers.
+  Python preflight no longer owns those reductions through `np.isfinite`,
+  `np.linalg.matrix_rank`, `np.unique`, or `np.count_nonzero`, and focused
+  Python architecture policies guard that boundary.
 - Callback null-logistic nonconvergence planning now has a PyO3 bool-array
   entry point that owns scalar detection, flattening, total-fit counts, and
   nonconverged counts before calling the `g-engine` policy helpers. Python
@@ -1908,6 +1952,15 @@ Python/JAX should emit typed diagnostic events through a native handle.
   loops, or dictionaries. Focused Python architecture policies guard the old
   NumPy reduction boundary and keep production `jax.device_get` host
   materialization isolated to callback diagnostic and writer adapters.
+- Binary chunk diagnostics now normalize score-only result dataclasses through
+  typed empty-Firth expansion helpers and read Firth diagnostic arrays
+  directly. The Python architecture checker rejects optional `getattr`
+  result-field fallback probes in `g.compute.regenie2_binary.diagnostics`.
+- Binary diagnostic mapping and aggregate summary host materialization now live
+  in `g.engine.callbacks.diagnostics`, leaving
+  `g.compute.regenie2_binary.diagnostics` as device-side counting only. The
+  Python architecture checker rejects `jax.device_get` in the compute
+  diagnostics module.
 
 For the Python API, define signal semantics explicitly. Do not silently override host-application signal handlers unless the API contract allows it.
 
@@ -1984,6 +2037,10 @@ Current implementation notes:
 - Host-policy, preflight, preparation, run-metadata, and callback diagnostic
   PyO3 export registration now lives with the corresponding adapter modules,
   leaving the root Python composition module to delegate those export groups.
+- Detached host-policy helper functions for association mode, backend
+  selection, binary correction normalization, phenotype grouping, and phenotype
+  output directory names were removed from the Python-visible root surface;
+  production now enters those policies through `NativeHostPlanningPolicy`.
 - Callback queue, progress, summary, and runtime-resource PyO3 export
   registration now lives with the corresponding callback adapter modules.
 - Logging, JAX runtime, and runtime-state PyO3 export registration now lives
@@ -2038,6 +2095,28 @@ Current implementation notes:
   standalone file-content hashing, lower-level run artifacts, run-manifest
   metadata extensions, and trusted BGEN validation cache entries have been
   removed from the root PyO3 module.
+- Output JSON-string compatibility exports for run-manifest load/write,
+  manifest checksums, compatibility validation, initialization, strict-resume
+  validation/repair, and raw prepared-plan/header construction have been
+  removed from the root PyO3 module; the retained output exports are the
+  value-based adapter boundary plus filesystem lifecycle helpers.
+- JSON-string manifest cache methods and
+  `NativePreparedOutputRun.existing_manifest_json` were removed from the
+  Python-visible root surface after the output adapter moved to payload
+  methods.
+- The resolved-config run-request JSON helper was removed from the root PyO3
+  surface after the execution-plan adapter moved to the payload export.
+- Pipeline output-preparation JSON batch constructors and direct JSON batch
+  initializers were removed from the root PyO3 surface after the output adapter
+  moved production initialization to the value-based batch factory and native
+  handle.
+- Timing diagnostic snapshot serialization now uses explicit dataclass mapping
+  conversion instead of production `getattr` reflection, and the Python
+  architecture checker rejects reintroduced reflective timing serialization.
+- The Rust architecture checker now rejects reintroducing the removed
+  run-request JSON helper and pipeline output-preparation JSON batch
+  initializer root exports, plus removed JSON compatibility class
+  methods/getters.
 - Run lifecycle telemetry-field builders have also been removed from the
   Python-visible root PyO3 surface; native logging keeps the internal
   conversion helpers used by typed telemetry dispatch.
@@ -2056,11 +2135,15 @@ Current implementation notes:
   root PyO3 helpers for diagnostic payloads, shutdown policy, JAX setup,
   manifest/output metadata, runtime knobs, and trusted BGEN cache internals.
 - The remaining Python prepared-run manifest-header identity helpers were
-  removed from the output adapter; active output code now serializes native
-  header mappings directly for prepared-plan and output-preparation calls.
+  removed from the output adapter; active output code now passes native header
+  mappings through value-based PyO3 wrappers for prepared-plan and
+  output-preparation calls.
 - The Python architecture checker now guards native run-metadata helper calls
   outside `g.runner.metadata`, keeping execution artifact construction and
   manifest metadata upserts behind the runner metadata adapter.
+- Detached execution artifact and run-manifest metadata helper functions were
+  removed from the Python-visible root surface; production now enters both
+  through `NativeRunMetadataBuilder`.
 - Run artifact sequence validation and per-phenotype artifact input assembly
   moved from the root PyO3 adapter into `g-runtime`; the root adapter now only
   translates Python arguments and serializes native artifact payloads.
@@ -2071,18 +2154,34 @@ Current implementation notes:
   and setup side-effect payloads were removed from the Python-visible handle;
   production now uses the typed setup execution, GPU validation, and diagnostic
   methods on the native session.
+- Detached default NVIDIA probe-path and driver-visibility helpers were removed
+  from the Python-visible root surface; Python convenience checks now route
+  through `NativeJaxRuntimeSetupSession`.
+- The detached JAX runtime policy payload builder was removed from the
+  Python-visible root surface; resolution and standalone GPU validation now
+  build that payload through `NativeRuntimeState`.
+- Detached logging policy payload, runtime policy handle, and seeded process
+  runtime-state builders were removed from the Python-visible root surface;
+  production now enters those constructors and concise logging policy
+  formatting through `NativeRuntimeState`.
 - The standalone Python-visible default temporary-root helper was removed from
   the root PyO3 surface; tests now exercise native default cache-directory
-  resolution by setting environment inputs, and Python keeps only the concrete
-  default cache-directory adapter.
+  resolution by setting environment inputs, and Python enters the concrete
+  default cache-directory adapter through `NativeRuntimeState`.
 - Detached telemetry dispatch and timing-recorder plan helpers were removed
   from the Python-visible root surface; production now enters those policies
   through native telemetry sessions, telemetry close dispatch, stage timing
   recorder construction, and final timing output methods.
-- Detached scalar preflight validator helpers were removed from the
-  Python-visible root surface; production preflight keeps the typed finite-array
-  and binary-phenotype array entry points that execute the native scans before
-  applying `g-engine` validation policy.
+- Detached CLI run-failed plan/emission and telemetry close-failure helpers
+  were removed from the Python-visible root surface; production now enters
+  those policies through `NativeCliRunLifecycleState`.
+- Detached telemetry output-run root and telemetry path payload helpers were
+  removed from the Python-visible root surface; production now enters that
+  path policy through `NativeTelemetrySessionPolicy`.
+- Detached preflight validator helpers were removed from the Python-visible
+  root surface; production preflight now enters finite-array, covariate-rank,
+  binary-phenotype, shape, prediction-shape, variant-count, and report
+  validation through `NativePreflightValidator`.
 - Production preflight now requires the native engine required-chromosome API
   directly instead of probing engines with optional `getattr` and falling back
   to Python metadata-slice chromosome collection.
@@ -2093,6 +2192,18 @@ Current implementation notes:
 - Callback chunk metadata now uses the native scalar `chromosome_label`
   contract directly; Python no longer falls back to reading the full chromosome
   column from metadata objects.
+- Callback readiness blocking now uses JAX's direct `block_until_ready`
+  boundary, and single-trait linear/binary callbacks require the typed
+  chromosome-state readiness arrays (`adjusted_residual` and
+  `score_residual`) instead of probing prepared state objects for optional
+  attributes.
+- Callback transfer helpers now require arrays with direct `shape`/`dtype`
+  metadata and native chunk stats with the `compute_arrays` contract; Python no
+  longer skips transfer metadata for missing attributes or falls back to
+  per-field chunk-stat property reads when native bundled arrays are absent.
+- Single-trait callback output writes now branch on the native write plan's
+  typed float64-native-writer flag instead of resolving writer methods from a
+  method-name string at runtime.
 - Detached scheduler, queue-observation, dosage-buffer, work-handoff, and
   worker-lifecycle planner aliases were removed from the Python-visible root
   surface; production and tests now enter those policies through typed native
@@ -2101,6 +2212,58 @@ Current implementation notes:
   worker shutdown defaults, stop-attempt policy, and BGEN delivery-method
   selection were also removed from the Python-visible root surface; equivalent
   behavior is covered through typed native scheduler state and delivery plans.
+- Remaining detached schedule policy helpers for GPU genotype-format
+  resolution, effective trusted BGEN mode, delivery callback sizing,
+  grouped-union validation, committed-chunk intersection, writer-finish
+  planning, BGEN delivery invocation/cleanup, and output-write method selection
+  were removed from the Python-visible root surface; production enters those
+  policies through `NativeSchedulePolicy`.
+- Detached callback helper exports for null-logistic nonconvergence array
+  planning, callback chunk identity construction, callback progress telemetry
+  dispatch, and binary correction summary telemetry dispatch were removed from
+  the Python-visible root surface; production enters those policies through
+  typed callback policy handles.
+- Detached run-event telemetry dispatch helper exports for run lifecycle,
+  writer, preflight, sample-alignment, prediction-source, sample-summary,
+  GPU-format, association-backend, and BGEN-open events were removed from the
+  Python-visible root surface; production enters those policies through
+  `NativeRunEventTelemetryPolicy`.
+- Detached run-event lifecycle payload and terminal-render helper exports were
+  removed from the Python-visible root surface; production enters those
+  policies through `NativeRunEventPayloadPolicy`.
+- Detached native CLI diagnostic helper exports for stdout/stderr, completion,
+  interruption, failure, and runtime-knob events were removed from the
+  Python-visible root surface; production enters those policies through
+  `NativeCliDiagnosticPolicy`.
+- Detached runner diagnostic helper exports for run lifecycle, execution-plan,
+  engine-dispatch, and metadata-finalized events were removed from the
+  Python-visible root surface; production enters those policies through
+  `NativeRunnerDiagnosticPolicy`.
+- Detached preflight/output, pipeline/callback-warning, and native-dispatch
+  diagnostic helper exports were removed from the Python-visible root surface;
+  production enters those policies through `NativeOutputPreflightDiagnosticPolicy`,
+  `NativePipelineDiagnosticPolicy`, and `NativeDispatchDiagnosticPolicy`.
+- Detached JAX runtime diagnostic recording and final timing output
+  context/diagnostic helper exports were removed from the Python-visible root
+  surface; production enters those policies through
+  `NativeJaxRuntimeDiagnosticPolicy` and `NativeFinalTimingOutputPolicy`.
+- Detached pipeline output-preparation batch construction was removed from the
+  Python-visible root surface; production enters that policy through
+  `NativePipelineOutputPreparationPolicy`.
+- Detached output lifecycle helper exports for run paths, manifest I/O,
+  resume validation/repair, initialization, and final chunk compaction were
+  removed from the Python-visible root surface; production enters those
+  policies through `NativeOutputLifecyclePolicy`.
+- Detached output writer finish/interrupted-finish/abort helper exports were
+  removed from the Python-visible root surface; production calls the typed
+  `OutputWriterSession` methods directly.
+- Detached multi-trait output chunk writer exports were removed from the
+  Python-visible root surface; production enters that policy through
+  `NativeOutputChunkWritePolicy`.
+- Detached process-runtime singleton and telemetry close helper exports were
+  removed from the Python-visible root surface; production enters those
+  policies through `NativeRuntimeState.global_process_runtime_state()` and
+  `NativeTelemetryClosePolicy`.
 - The detached pipeline resume-compatibility validator was removed from the
   Python-visible root surface; production validates through
   `NativePipelineOutputPreparationBatch.validate_resume_compatibility()`.
@@ -2115,6 +2278,13 @@ Current implementation notes:
   - `dev-fast-mold` build-profile run: build command `122.821s`, import
     command `0.305s`, inner `_core` import `0.058s`, smoke command `0.270s`,
     `_core.abi3.so` size `104949216` bytes.
+  - Interactive `maturin develop -j 30 --profile dev-fast --uv` comparison
+    after touching the root PyO3 crate: mold via
+    `-C link-arg=-fuse-ld=mold` took `24.43s` wall time (`18.08s` Cargo
+    target time), while wild `0.9.0` via the GCC driver `-B` linker path took
+    `21.17s` wall time (`14.46s` Cargo target time). Subsequent interactive
+    development builds should use wild when the local
+    `/mnt/beegfs/kirill/Projects/g/.tools/bin/wild` binary is available.
   - `maturin build -j 30 --profile dev-fast`: wall time `12.53s`, wheel size
     `21360256` bytes.
   - End-to-end CLI smoke fixture: `tests/test_cli_smoke.py -q` passed in
@@ -2133,6 +2303,15 @@ Current implementation notes:
 - Grouped union-sample fanout now exposes the same typed delivery callback
   contract and calls child callback lifecycle methods directly; the Python
   architecture checker rejects grouped fanout lifecycle probing.
+- The Python architecture checker also rejects callback readiness `getattr`
+  probes in `g.engine.callbacks.diagnostics`, `linear`, and `binary`, keeping
+  the single-trait and multi-trait readiness contracts aligned.
+- The same checker rejects optional transfer/chunk-stat probing in
+  `g.engine.callbacks.transfers`, keeping JAX transfer metadata and
+  variant-major compute-array collection on typed callback contracts.
+- It also rejects callback writer method-name probing in
+  `g.engine.callbacks.writers`; callback, native-dispatch, and preflight
+  production modules no longer contain Python `getattr` fallback probes.
 
 ### Tests
 
@@ -2184,6 +2363,97 @@ Make Rust the process owner without prematurely embedding Python around a Python
    - cluster execution.
 
 A transitional option is to retain the tiny Python console entry while it calls one coarse native `run` function.
+
+Current implementation notes:
+
+- Phase 13 now has a `g-cli` Rust package with a binary named `g`. The binary
+  owns native CLI frontend parsing, help output, parse errors, and run-config
+  validation through `g-interface`.
+- The native binary deliberately refuses validated run execution with a clear
+  error until the Python/JAX backend embedding boundary is designed. Its
+  workspace dependency policy still avoids `g-engine` and runtime internals;
+  `g-cli` depends on `g-interface` plus external signal handling support while
+  the backend boundary is prototyped.
+- The Python package entry point is now compatibility glue for installed
+  console scripts: it calls one coarse native PyO3 CLI runner, which routes
+  through `g-cli` frontend validation before delegating validated execution.
+  A sentinel-protected `g.cli.run_args_legacy` path prevents recursive native
+  dispatch when the transitional Python/JAX subprocess backend is invoked.
+- The native frontend now has a Criterion dispatch benchmark covering root
+  help, `regenie --help`, parse errors, and valid-config validation before
+  execution refusal. This is a Rust-side frontend baseline; process startup and
+  Python/JAX environment discovery still need separate packaging benchmarks.
+- Phase 13 packaging validation on 2026-07-03 used `maturin develop -j 30
+  --profile dev-fast --uv` and `maturin build -j 30 --profile dev-fast` with
+  `sccache` plus the `wild` linker. The editable install completed in 1:07.64
+  wall time with Cargo reporting 57.34s; the wheel build completed in 0:41.70
+  wall time with Cargo reporting 29.97s. This verifies that adding the
+  workspace native CLI package does not disrupt the root PyO3 package build.
+- After the Python console script was moved onto the coarse native PyO3 runner,
+  a fresh editable install in a new Phase 13 worktree completed with
+  `maturin develop -j 30 --profile dev-fast --uv` in `1:05.13` wall time with
+  Cargo reporting `54.44s` using `sccache` plus `wild`; a same-worktree native
+  `g-cli` binary build completed in `18.84s`.
+- The same worktree built a wheel with `maturin build -j 30 --profile dev-fast`
+  in `0:41.53` wall time with Cargo reporting `29.23s`. Installing that wheel
+  into a temporary Python 3.14 virtual environment succeeded, `import g,
+  g._core` loaded the installed package and extension from the wheel
+  environment, and the installed `g --help` console script rendered native
+  frontend help through the Python compatibility shim.
+- After the native execution adapter gained the Python/JAX environment probe,
+  panic boundary, and SIGINT/SIGTERM shutdown context, a follow-up packaging and
+  benchmark checkpoint used the same `sccache` plus `wild` development workflow.
+  Incremental `maturin develop -j 30 --profile dev-fast --uv` completed in
+  `0:12.17` wall time with Cargo reporting `3.24s`. Focused
+  `cargo bench -p g-cli --bench frontend -- --warm-up-time 1 --measurement-time
+  2 --sample-size 20` completed in `1:01.33` wall time, with Criterion reporting
+  root help around `95 ns`, parse errors around `112 us`, valid config refusal
+  around `131 us`, TOML config refusal around `108 us`, and `regenie --help`
+  around `361 us`.
+- A lightweight debug checkpoint, `check_native_cli_frontend`, compares the
+  compiled native binary against the Python console bridge for configless help
+  and parse-error paths while recording process startup/help latency medians.
+- Native binary integration coverage now exercises `--config` TOML input and
+  CLI-over-TOML overrides before the temporary native execution refusal. Invalid
+  TOML-derived run configs still fail validation before the execution boundary.
+- The native frontend Criterion benchmark now includes a
+  `valid_toml_config_refusal` case alongside help, parse-error, and CLI-only
+  valid-config dispatch baselines.
+- Validated native CLI configs now cross an explicit `NativeExecutionAdapter`
+  boundary. The default adapter preserves the temporary unsupported-execution
+  error, and unit coverage verifies adapter success/failure propagation plus
+  validation errors stopping before the execution adapter is called. The
+  adapter boundary also catches backend panics and converts them into a
+  deterministic runtime-failure CLI outcome.
+- The native CLI execution boundary now installs SIGINT/SIGTERM handlers while
+  the adapter runs and passes a `NativeExecutionContext` with a shutdown flag
+  into the adapter. First signals become cooperative shutdown requests for the
+  future Python/JAX backend adapter; repeated signals fall back to the platform
+  default action through `signal-hook`.
+- `check_native_cli_frontend` now also runs a CPU-safe Python/JAX environment
+  probe through the configured Python executable, reporting Python/JAX versions
+  and visible JAX device platforms. The default probe sets `JAX_PLATFORMS=cpu`;
+  GPU discovery remains an explicit Slurm/GPU-node override.
+- A GPU/cluster discovery checkpoint on 2026-07-03 ran
+  `check_native_cli_frontend` through `just slurm-gpu-run` on `landau` after
+  installing the locked `jax[cuda12]==0.10.1` extra into the shared development
+  environment. With `tool.expected_jax_device=gpu` and `tool.jax_platforms=null`,
+  the probe reported Python `3.14.3`, JAX `0.10.1`, and `devices=('gpu',)`.
+  The same run kept native/Python configless frontend parity and the
+  Python-backend bridge smoke passed with matching native/direct exit code 1
+  runtime-failure output.
+- A deliberate subprocess backend prototype is available through
+  `PythonBridgeExecutionAdapter`. Setting `G_NATIVE_CLI_PYTHON=/path/to/python`
+  lets the native binary validate the run config and then delegate the original
+  CLI arguments to the sentinel-protected Python legacy backend through that
+  Python executable. The default native binary path still preserves the
+  unsupported-execution refusal until the embedded Python/JAX or direct
+  `g-engine` backend boundary is selected.
+- `check_native_cli_frontend` now includes a Python backend bridge smoke. It
+  writes a temporary validated REGENIE fixture, runs the native binary with
+  `G_NATIVE_CLI_PYTHON` pointed at the configured Python executable, and
+  compares exit code/stdout/stderr against direct `g.cli.run_args` for the same
+  arguments under the same CPU-safe JAX environment.
 
 ### Tests
 
@@ -2251,6 +2521,99 @@ Add checks that fail when:
 - Python reconstructs canonical plans;
 - Python fallback implementations are reintroduced;
 - JAX kernels read CLI/config/files directly.
+
+Current guardrail notes:
+
+- The Python architecture checker now enforces the Phase 13 CLI shim contract:
+  public `g.cli.run_args` must call the coarse native PyO3 CLI runner, must not
+  call `dispatch_cli` directly, and the legacy Python backend must remain behind
+  the shared sentinel used by the native bridge.
+- The `g.compute` import-boundary guard now rejects imports of native bindings,
+  public API wrappers, host orchestration, execution-plan, runner, JAX runtime
+  setup, CLI/config, output, and file-parser packages. This keeps Python/JAX
+  compute modules on the backend side of the Phase 14 ownership line.
+- The kept Python adapters now have explicit import-boundary guards:
+  `g.interface.config` stays a thin Rust config binding adapter, `g.jax_runtime`
+  stays isolated from host orchestration/config/output/compute packages, and
+  `g.api` cannot bypass the public runner/config/run-event surfaces into native
+  bindings, compute kernels, output, JAX setup, or internal engine pipelines.
+- The output adapter no longer imports `g.jax_runtime` to discover the manifest
+  JAX x64 policy. Pipeline callers pass that runtime policy value explicitly,
+  and the Python architecture checker rejects `g.io` imports of JAX runtime
+  setup modules.
+- The output adapter no longer imports engine diagnostics to emit resume events.
+  Pipeline output initialization remains responsible for resume diagnostics,
+  and the Python architecture checker rejects `g.io` imports of engine
+  orchestration modules.
+- BGEN source configuration now lives in the execution-plan contract instead
+  of `g.io.source`; the obsolete source module was removed, and the Python
+  architecture checker rejects imports of `g.io.source`.
+- Execution-plan construction now records requested output directory names and
+  writer policy only; runner metadata prepares output lifecycle state after
+  plan construction, and the Python architecture checker rejects `g.io` imports
+  from `g.execution_plan`.
+- Runner execution and metadata now route output-writer settings adaptation and
+  prepared output-run state through a runner-local output helper instead of
+  importing the output adapter directly; the Python architecture checker
+  rejects `g.io` imports from runner modules except that helper.
+- Runner execution, metadata, and runtime annotations now route run-event and
+  telemetry access through a runner-local event helper instead of importing
+  engine run-event and telemetry packages directly; the Python architecture
+  checker rejects direct `g.engine.run_events` and `g.engine.telemetry` imports
+  from runner modules except that helper.
+- REGENIE pipeline orchestration now routes output-run path types, writer
+  settings, manifest-header types, fingerprint cache construction, and
+  multi-phenotype output sample-mode values through
+  `g.engine.regenie2_pipeline.outputs`; the Python architecture checker rejects
+  `g.io` imports from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes native pipeline diagnostic policy
+  access, run-event telemetry policy access, and telemetry-session annotations
+  through `g.engine.regenie2_pipeline.telemetry_events`; the Python architecture
+  checker rejects direct `g.engine.run_events` and `g.engine.telemetry` imports
+  from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes stage-timing recorder construction,
+  exact-timing checks, and stage-duration recording through
+  `g.engine.regenie2_pipeline.timing`; the Python architecture checker rejects
+  direct `g.engine.timing` imports from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes single- and multi-trait preflight
+  validation entrypoints through `g.engine.regenie2_pipeline.preflight`; the
+  Python architecture checker rejects direct `g.engine.preflight` imports from
+  sibling pipeline modules.
+- REGENIE pipeline orchestration now routes BGEN engine open and trusted
+  validation helpers through `g.engine.regenie2_pipeline.bgen_engine`; the
+  Python architecture checker rejects direct `g.engine.native_dispatch.engine`
+  imports from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes native input loading, prediction
+  source loading, compute-group resolution, native input model annotations, and
+  sample-key-mode resolution through `g.engine.regenie2_pipeline.inputs`; the
+  Python architecture checker rejects direct
+  `g.engine.native_dispatch.loaders`, `g.engine.native_dispatch.groups`, and
+  `g.engine.native_dispatch.models` imports from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes native BGEN delivery entrypoints
+  through `g.engine.regenie2_pipeline.delivery`; the Python architecture
+  checker rejects direct `g.engine.native_dispatch.delivery` imports from
+  sibling pipeline modules.
+- REGENIE pipeline orchestration now routes native schedule-policy access for
+  GPU genotype format planning, effective trusted-BGEN mode, grouped union
+  batch sizing, and committed-chunk intersection through
+  `g.engine.regenie2_pipeline.schedule`; the Python architecture checker
+  rejects direct `_core.NativeSchedulePolicy` construction from sibling
+  pipeline modules.
+- REGENIE pipeline orchestration now routes single-trait callback, compatible
+  multi-phenotype callback, and grouped fanout callback construction through
+  `g.engine.regenie2_pipeline.callbacks`; the Python architecture checker
+  rejects direct `g.engine.callbacks` imports from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes binary kernel and linear numerical
+  configuration defaults through `g.engine.regenie2_pipeline.compute_config`;
+  the Python architecture checker rejects direct `g.compute` imports from
+  sibling pipeline modules.
+- REGENIE pipeline orchestration now routes manifest JAX runtime policy values
+  through `g.engine.regenie2_pipeline.runtime_policy`; the Python architecture
+  checker rejects direct `g.jax_runtime` imports from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes association backend planning
+  through `g.engine.regenie2_pipeline.backend`; the Python architecture checker
+  rejects direct `g.engine.backend_planner` imports from sibling pipeline
+  modules.
 
 ### Exit criteria
 
@@ -2485,13 +2848,39 @@ Adjust only when a concrete domain requirement justifies it.
 Add an import-policy check for Python:
 
 ```text
-g.compute must not import CLI, output, or file parsers.
-g.jax_runtime must not import runner orchestration.
+g.api must not import native bindings, CLI, compute, output, JAX runtime setup,
+execution plans, or internal engine callback/native-dispatch/pipeline modules.
+g.interface.config must not import public API, CLI, compute, engine,
+execution-plan, output, JAX runtime, or runner packages.
+g.compute must not import native bindings, public API wrappers, host
+orchestration, execution plans, runner, JAX runtime setup, CLI/config, output,
+or file parsers.
+g.jax_runtime must not import public API, CLI, compute, engine, execution-plan,
+interface/config, output, or runner orchestration packages.
+g.io must not import JAX runtime setup packages.
+g.io must not import engine orchestration packages.
+Production Python must not import the obsolete `g.io.source` module.
+g.execution_plan must not import output adapter packages.
+g.runner modules must not import output adapter packages directly, except the runner output helper.
+g.runner modules must not import run-event or telemetry packages directly, except the runner event helper.
+g.engine.regenie2_pipeline modules must not import output adapter packages directly, except the pipeline output helper.
+g.engine.regenie2_pipeline modules must not import run-event or telemetry packages directly, except the pipeline telemetry helper.
+g.engine.regenie2_pipeline modules must not import timing packages directly, except the pipeline timing helper.
+g.engine.regenie2_pipeline modules must not import preflight packages directly, except the pipeline preflight helper.
+g.engine.regenie2_pipeline modules must not import native-dispatch BGEN engine helpers directly, except the pipeline BGEN engine helper.
+g.engine.regenie2_pipeline modules must not import native-dispatch input loaders, group helpers, or input models directly, except the pipeline input helper.
+g.engine.regenie2_pipeline modules must not import native-dispatch delivery helpers directly, except the pipeline delivery helper.
+g.engine.regenie2_pipeline modules must not construct native schedule policy handles directly, except the pipeline schedule helper.
+g.engine.regenie2_pipeline modules must not import callback packages directly, except the pipeline callback helper.
+g.engine.regenie2_pipeline modules must not import compute packages directly, except the pipeline compute-config helper.
+g.engine.regenie2_pipeline modules must not import JAX runtime packages directly, except the pipeline runtime-policy helper.
+g.engine.regenie2_pipeline modules must not import backend planner helpers directly, except the pipeline backend helper.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.
 Production Python must not reconstruct canonical prepared-run plans.
 Production Python must route native output lifecycle calls through `g.io.output`.
+Production Python must route native output value-serialization wrappers through `g.io.output`.
 Production Python must use native diagnostic recorders instead of payload builders outside compatibility adapters.
 Production Python must not call legacy telemetry fallback methods.
 ```
@@ -2499,8 +2888,15 @@ Production Python must not call legacy telemetry fallback methods.
 `just check-python-architecture` now enforces these Python import and call
 boundaries through an AST-based checker. The production manifest-write rule
 allows the `g.io.output` adapter helper itself, but rejects production callers
-outside that helper; the compute-kernel rule rejects direct file I/O and common
-NumPy/pandas file loaders under `g.compute`; the prepared-plan rule rejects
+outside that helper; the compute-kernel rules reject host-orchestration imports,
+direct file I/O, and common NumPy/pandas file loaders under `g.compute`; the
+kept-adapter import rules keep `g.api`, `g.interface.config`, and
+`g.jax_runtime` from reaching across their Phase 14 ownership boundaries; the
+output/JAX import rule keeps output manifest construction on explicit runtime
+policy values instead of importing JAX runtime setup; the output/engine import
+rule keeps resume diagnostics in the pipeline layer rather than the output
+adapter; the
+prepared-plan rule rejects
 production calls that rebuild canonical plan payloads in Python; the callback
 worker-queue rule rejects direct Python queue/thread primitives and lower-level
 native callback resource constructors under `g.engine.callbacks`; the output

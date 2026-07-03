@@ -12,7 +12,6 @@ import pytest
 from g import execution_plan, types
 from g.engine import warm_cache
 from g.interface import config as interface_config
-from g.io import source
 
 if typing.TYPE_CHECKING:
     from g import _core
@@ -273,7 +272,7 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
     monkeypatch.setattr(warm_cache.callback_diagnostics, "block_until_ready", fake_block_until_ready)
 
     report = warm_cache.warm_regenie2_linear_bgen_cache(
-        genotype_source_config=source.GenotypeSourceConfig(Path("input.bgen"), Path("input.sample")),
+        genotype_source_config=execution_plan.GenotypeSourceConfig(Path("input.bgen"), Path("input.sample")),
         phenotype_path=Path("phenotypes.tsv"),
         phenotype_name="trait",
         prediction_list_path=Path("predictions.list"),
@@ -389,7 +388,7 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
     monkeypatch.setattr(warm_cache.callback_diagnostics, "block_until_ready", lambda _: None)
 
     report = warm_cache.warm_regenie2_binary_bgen_cache(
-        genotype_source_config=source.GenotypeSourceConfig(Path("input.bgen"), Path("input.sample")),
+        genotype_source_config=execution_plan.GenotypeSourceConfig(Path("input.bgen"), Path("input.sample")),
         phenotype_path=Path("phenotypes.tsv"),
         phenotype_name="trait",
         prediction_list_path=Path("predictions.list"),
@@ -504,7 +503,7 @@ def test_warm_regenie2_binary_packed8_cache_executes_donating_score_entrypoint(
     monkeypatch.setattr(warm_cache.callback_diagnostics, "block_until_ready", lambda _: None)
 
     report = warm_cache.warm_regenie2_binary_bgen_cache(
-        genotype_source_config=source.GenotypeSourceConfig(Path("input.bgen"), Path("input.sample")),
+        genotype_source_config=execution_plan.GenotypeSourceConfig(Path("input.bgen"), Path("input.sample")),
         phenotype_path=Path("phenotypes.tsv"),
         phenotype_name="trait",
         prediction_list_path=Path("predictions.list"),

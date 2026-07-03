@@ -7,13 +7,21 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, execution_plan, types
-from g.engine import timing
-from g.engine.native_dispatch import engine as native_dispatch_engine
-from g.engine.native_dispatch import groups as native_dispatch_groups
+from g.engine.regenie2_pipeline import bgen_engine, inputs, runtime_policy, telemetry_events, timing
 from g.io import output
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
+
+type OutputRunPaths = output.OutputRunPaths
+type OutputWriterSettings = output.OutputWriterSettings
+type RunManifestHeaderInput = output.RunManifestHeaderInput
+type ManifestFileFingerprintCache = output.ManifestFileFingerprintCache
+type MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode
+
+SINGLE_PHENOTYPE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE
+PER_PHENOTYPE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.PER_PHENOTYPE
+COMPLETE_CASE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.COMPLETE_CASE
 
 
 @dataclass(frozen=True)
@@ -58,7 +66,7 @@ def log_association_backend_selected(
     phenotype_count: int | None,
 ) -> None:
     """Emit telemetry for the concrete association backend selection."""
-    _core.record_association_backend_selected_telemetry_event(
+    telemetry_events.native_run_event_telemetry_policy().record_association_backend_selected_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         context.backend_plan.backend_kind.value,
@@ -77,7 +85,7 @@ def log_bgen_engine_opened(
     phenotype_count: int | None,
 ) -> None:
     """Emit telemetry for an opened BGEN engine."""
-    _core.record_bgen_engine_opened_telemetry_event(
+    telemetry_events.native_run_event_telemetry_policy().record_bgen_engine_opened_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         context.backend_plan.backend_kind.value,
@@ -97,7 +105,8 @@ def open_pipeline_bgen_engine(
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN engine and emit shared telemetry."""
     engine_start_time = time.perf_counter()
-    _core.record_pipeline_bgen_engine_open_started_diagnostic_event(
+    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy.record_pipeline_bgen_engine_open_started_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -105,7 +114,7 @@ def open_pipeline_bgen_engine(
         variant_limit=context.variant_limit,
     )
     log_association_backend_selected(context=context, phenotype_name=phenotype_name, phenotype_count=phenotype_count)
-    engine = native_dispatch_engine.build_bgen_run_engine(
+    engine = bgen_engine.build_bgen_run_engine(
         genotype_source_config=context.genotype_source_config,
         chunk_size=context.chunk_size,
         variant_limit=context.variant_limit,
@@ -114,7 +123,7 @@ def open_pipeline_bgen_engine(
         trusted_bgen_validator=None,
     )
     timing.record_stage_duration(context.stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
-    _core.record_pipeline_bgen_engine_opened_diagnostic_event(
+    native_pipeline_diagnostic_policy.record_pipeline_bgen_engine_opened_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -139,13 +148,14 @@ def use_prepared_pipeline_bgen_engine(
     phenotype_count: int | None,
 ) -> _core.Regenie2RunEngine:
     """Reuse a prevalidated BGEN engine and emit shared telemetry."""
-    _core.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
+    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
     log_association_backend_selected(context=context, phenotype_name=phenotype_name, phenotype_count=phenotype_count)
-    _core.record_pipeline_bgen_engine_opened_diagnostic_event(
+    native_pipeline_diagnostic_policy.record_pipeline_bgen_engine_opened_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -168,9 +178,9 @@ def build_pipeline_manifest_header(
     covariate_names: tuple[str, ...],
     sample_count: int,
     variant_count: int,
-    multi_phenotype_sample_mode: output.MultiPhenotypeSampleMode,
+    multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
     phenotype_compute_group: execution_plan.PhenotypeComputeGroup | None,
-) -> output.RunManifestHeaderInput:
+) -> RunManifestHeaderInput:
     """Build the current manifest header for one output run."""
     phenotype_compute_group_id = (
         None
@@ -197,11 +207,12 @@ def build_pipeline_manifest_header(
         variant_limit=context.variant_limit,
         binary_correction_plan=context.correction_plan,
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
-        sample_key_mode=native_dispatch_groups.resolve_sample_key_mode(context.alignment_config),
+        sample_key_mode=inputs.resolve_sample_key_mode(context.alignment_config),
         binary_kernel_config=context.binary_kernel_config if context.is_binary_trait else None,
         bgen_decode_tile_variant_count=context.bgen_decode_tile_variant_count,
         trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
         jax_device=context.jax_device,
+        jax_enable_x64=runtime_policy.JAX_ENABLE_X64,
         jax_matmul_precision=context.jax_matmul_precision,
         requested_gpu_genotype_format=context.requested_gpu_genotype_format,
         gpu_genotype_format=context.gpu_genotype_format,
@@ -231,9 +242,9 @@ def build_pipeline_manifest_header(
 
 def initialize_pipeline_output_runs(
     *,
-    output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
     existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
-    current_headers_by_trait: tuple[output.RunManifestHeaderInput, ...],
+    current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
@@ -248,11 +259,12 @@ def initialize_pipeline_output_runs(
     )
     native_initialization = native_preparation_batch.initialize(runtime_compatibility_token)
     if resume:
+        native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
         for output_index, committed_chunk_identifier_set in enumerate(
             native_initialization.committed_chunk_identifier_sets()
         ):
             committed_chunk_count = len(committed_chunk_identifier_set)
-            _core.record_pipeline_output_resume_committed_chunks_diagnostic_event(
+            native_pipeline_diagnostic_policy.record_pipeline_output_resume_committed_chunks_diagnostic_event(
                 committed_chunk_count=committed_chunk_count,
                 output_index=output_index,
             )
@@ -261,9 +273,9 @@ def initialize_pipeline_output_runs(
 
 def validate_pipeline_resume_compatibility(
     *,
-    output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
     existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
-    current_headers_by_trait: tuple[output.RunManifestHeaderInput, ...],
+    current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
     resume_mode: types.ResumeMode,
 ) -> None:
     """Validate all resume manifests before any output run is mutated."""
@@ -279,9 +291,9 @@ def validate_pipeline_resume_compatibility(
 
 def build_pipeline_output_preparation_batch(
     *,
-    output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
     existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
-    current_headers_by_trait: tuple[output.RunManifestHeaderInput, ...],
+    current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
 ) -> _core.NativePipelineOutputPreparationBatch:
@@ -321,11 +333,11 @@ def notify_output_runs_initialized(
 def create_pipeline_writer_sessions(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
 ) -> tuple[typing.Any, ...]:
     """Create output writer sessions and record preparation timing."""
     writer_start_time = time.perf_counter()
-    _core.record_pipeline_output_writer_sessions_create_started_diagnostic_event(
+    telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_output_writer_sessions_create_started_diagnostic_event(
         association_mode=context.association_mode.value,
         output_count=len(output_run_paths_by_trait),
     )
@@ -347,3 +359,8 @@ def create_pipeline_writer_sessions(
     )
     timing.record_stage_duration(context.stage_timing_recorder, "output_writer_preparation", writer_start_time)
     return writer_sessions
+
+
+def build_manifest_file_fingerprint_cache() -> ManifestFileFingerprintCache:
+    """Build a run-scoped manifest fingerprint cache."""
+    return output.ManifestFileFingerprintCache()

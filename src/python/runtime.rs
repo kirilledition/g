@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 
 use g_runtime::{
-    CliRunFailureTelemetryPlan, CliRunLifecycleState, CliTelemetryCloseFailurePlan,
+    CliRunLifecycleState, CliTelemetryCloseFailurePlan,
     plan_cli_run_failed_telemetry_emission as native_plan_cli_run_failed_telemetry_emission,
     plan_cli_telemetry_close_failure as native_plan_cli_telemetry_close_failure,
 };
@@ -14,21 +14,8 @@ pub(super) struct NativeCliRunLifecycleState {
 }
 
 #[pyclass]
-pub(super) struct NativeCliRunFailureTelemetryPlan {
-    plan: CliRunFailureTelemetryPlan,
-}
-
-#[pyclass]
 pub(super) struct NativeCliTelemetryCloseFailurePlan {
     plan: CliTelemetryCloseFailurePlan,
-}
-
-#[pymethods]
-impl NativeCliRunFailureTelemetryPlan {
-    #[getter]
-    fn should_log_run_failed_to_telemetry(&self) -> bool {
-        self.plan.should_log_run_failed_to_telemetry
-    }
 }
 
 #[pymethods]
@@ -60,58 +47,59 @@ impl NativeCliRunLifecycleState {
         self.state.mark_runner_started();
     }
 
-    fn plan_run_failed_telemetry(&self) -> NativeCliRunFailureTelemetryPlan {
-        NativeCliRunFailureTelemetryPlan { plan: self.state.plan_run_failed_telemetry() }
-    }
-}
-
-#[pyfunction]
-fn plan_cli_telemetry_close_failure(
-    current_exit_code: i32,
-    runtime_failure_exit_code: i32,
-) -> NativeCliTelemetryCloseFailurePlan {
-    NativeCliTelemetryCloseFailurePlan {
-        plan: native_plan_cli_telemetry_close_failure(current_exit_code, runtime_failure_exit_code),
-    }
-}
-
-#[pyfunction]
-#[allow(clippy::missing_errors_doc)]
-fn emit_cli_run_failed_telemetry_event(
-    telemetry_session: &Bound<'_, PyAny>,
-    failed_event: &Bound<'_, PyAny>,
-    should_log_run_failed_to_telemetry: bool,
-) -> PyResult<()> {
-    if !should_log_run_failed_to_telemetry || telemetry_session.is_none() {
-        return Ok(());
-    }
-    let native_telemetry_session = match optional_native_telemetry_session(telemetry_session.py(), telemetry_session) {
-        Ok(native_telemetry_session) => native_telemetry_session,
-        Err(error) => {
-            let emission_plan = native_plan_cli_run_failed_telemetry_emission(should_log_run_failed_to_telemetry, true);
-            if emission_plan.should_suppress_errors {
-                return Ok(());
-            }
-            return Err(error);
+    #[allow(clippy::unused_self)]
+    fn plan_telemetry_close_failure(
+        &self,
+        current_exit_code: i32,
+        runtime_failure_exit_code: i32,
+    ) -> NativeCliTelemetryCloseFailurePlan {
+        NativeCliTelemetryCloseFailurePlan {
+            plan: native_plan_cli_telemetry_close_failure(current_exit_code, runtime_failure_exit_code),
         }
-    };
-    let emission_plan = native_plan_cli_run_failed_telemetry_emission(
-        should_log_run_failed_to_telemetry,
-        native_telemetry_session.is_some(),
-    );
-    if !emission_plan.should_emit {
-        return Ok(());
     }
 
-    let Some(active_native_telemetry_session) = native_telemetry_session else {
-        return Ok(());
-    };
-    let emission_result = active_native_telemetry_session.call_method1("emit_run_failed_event", (failed_event,));
-    if emission_plan.should_suppress_errors {
-        let _ = emission_result;
-        return Ok(());
+    #[allow(clippy::missing_errors_doc)]
+    fn emit_run_failed_telemetry_event(
+        &self,
+        telemetry_session: &Bound<'_, PyAny>,
+        failed_event: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let telemetry_plan = self.state.plan_run_failed_telemetry();
+        if !telemetry_plan.should_log_run_failed_to_telemetry || telemetry_session.is_none() {
+            return Ok(());
+        }
+        let native_telemetry_session =
+            match optional_native_telemetry_session(telemetry_session.py(), telemetry_session) {
+                Ok(native_telemetry_session) => native_telemetry_session,
+                Err(error) => {
+                    let emission_plan = native_plan_cli_run_failed_telemetry_emission(
+                        telemetry_plan.should_log_run_failed_to_telemetry,
+                        true,
+                    );
+                    if emission_plan.should_suppress_errors {
+                        return Ok(());
+                    }
+                    return Err(error);
+                }
+            };
+        let emission_plan = native_plan_cli_run_failed_telemetry_emission(
+            telemetry_plan.should_log_run_failed_to_telemetry,
+            native_telemetry_session.is_some(),
+        );
+        if !emission_plan.should_emit {
+            return Ok(());
+        }
+
+        let Some(active_native_telemetry_session) = native_telemetry_session else {
+            return Ok(());
+        };
+        let emission_result = active_native_telemetry_session.call_method1("emit_run_failed_event", (failed_event,));
+        if emission_plan.should_suppress_errors {
+            let _ = emission_result;
+            return Ok(());
+        }
+        emission_result.map(|_| ())
     }
-    emission_result.map(|_| ())
 }
 
 fn optional_native_telemetry_session<'py>(
@@ -129,10 +117,7 @@ fn optional_native_telemetry_session<'py>(
 }
 
 pub(super) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeCliRunFailureTelemetryPlan>()?;
     module.add_class::<NativeCliRunLifecycleState>()?;
     module.add_class::<NativeCliTelemetryCloseFailurePlan>()?;
-    module.add_function(wrap_pyfunction!(emit_cli_run_failed_telemetry_event, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_cli_telemetry_close_failure, module)?)?;
     Ok(())
 }

@@ -13,7 +13,6 @@ use g_output::{
     OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
     build_current_run_manifest_header_json_with_cache as build_native_current_run_manifest_header_json_with_cache,
     build_manifest_json_sha256 as build_native_manifest_json_sha256,
-    build_prepared_run_manifest_header_json_from_current_header_json as build_native_prepared_run_manifest_header_json_from_current_header_json,
     build_prepared_run_plan_json_from_current_header_json as build_native_prepared_run_plan_json_from_current_header_json,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
     initialize_output_run as initialize_native_output_run, load_run_manifest_json as load_native_run_manifest_json,
@@ -29,12 +28,13 @@ use g_output::{
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
-use serde::de::DeserializeOwned;
+use pyo3::types::{PyAny, PyDict, PyModule};
+use serde_json::Value as JsonValue;
 
 use super::{
     errors::convert_prediction_error,
     genotype::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata},
+    json_bridge,
     runtime_state::NativeRuntimeCompatibilityToken,
 };
 
@@ -42,6 +42,12 @@ use super::{
 pub(crate) struct OutputWriterSession {
     inner: NativeOutputWriterSession,
 }
+
+#[pyclass]
+pub(crate) struct NativeOutputLifecyclePolicy;
+
+#[pyclass]
+pub(crate) struct NativeOutputChunkWritePolicy;
 
 #[pyclass]
 pub(crate) struct NativeOutputRunPaths {
@@ -57,8 +63,19 @@ pub(crate) struct NativePreparedOutputRun {
     run_directory: String,
     #[pyo3(get)]
     chunks_directory: String,
-    #[pyo3(get)]
     existing_manifest_json: Option<String>,
+}
+
+#[pymethods]
+impl NativePreparedOutputRun {
+    fn existing_manifest_payload(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match self.existing_manifest_json.as_deref() {
+            Some(existing_manifest_json) => {
+                json_bridge::json_text_to_py_object(py, existing_manifest_json, "existing run manifest")
+            }
+            None => Ok(py.None()),
+        }
+    }
 }
 
 #[pyclass]
@@ -86,6 +103,196 @@ enum PredictionLocoFingerprintBuildError {
 }
 
 #[pymethods]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::unused_self)]
+impl NativeOutputLifecyclePolicy {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn finalize_output_run_chunks(
+        &self,
+        py: Python<'_>,
+        run_directory: String,
+        chunks_directory: String,
+        association_mode: String,
+        output_format: String,
+    ) -> PyResult<String> {
+        finalize_output_run_chunks(py, run_directory, chunks_directory, association_mode, output_format)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn resolve_output_run_paths(
+        &self,
+        output_root: String,
+        association_mode: String,
+        output_format: String,
+    ) -> PyResult<NativeOutputRunPaths> {
+        resolve_output_run_paths(output_root, association_mode, output_format)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn prepare_output_run(
+        &self,
+        py: Python<'_>,
+        output_root: String,
+        association_mode: String,
+        output_format: String,
+        resume: bool,
+        runtime_compatibility_token: PyRef<'_, NativeRuntimeCompatibilityToken>,
+    ) -> PyResult<NativePreparedOutputRun> {
+        prepare_output_run(py, output_root, association_mode, output_format, resume, runtime_compatibility_token)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn load_run_manifest_payload(&self, py: Python<'_>, run_directory: String) -> PyResult<Py<PyAny>> {
+        load_run_manifest_payload(py, run_directory)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn write_run_manifest(&self, py: Python<'_>, run_directory: String, manifest: &Bound<'_, PyAny>) -> PyResult<()> {
+        write_run_manifest(py, run_directory, manifest)
+    }
+
+    fn build_prepared_run_plan_json_from_current_header(&self, current_header: &Bound<'_, PyAny>) -> PyResult<String> {
+        build_prepared_run_plan_json_from_current_header(current_header)
+    }
+
+    fn build_manifest_json_sha256_from_value(&self, value: &Bound<'_, PyAny>) -> PyResult<String> {
+        build_manifest_json_sha256_from_value(value)
+    }
+
+    fn validate_run_manifest_compatibility_from_values(
+        &self,
+        manifest: &Bound<'_, PyAny>,
+        current_header: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        validate_run_manifest_compatibility_from_values(manifest, current_header)
+    }
+
+    fn read_manifest_committed_chunk_identifiers_from_value(&self, manifest: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
+        read_manifest_committed_chunk_identifiers_from_value(manifest)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn initialize_output_run_from_values(
+        &self,
+        py: Python<'_>,
+        run_directory: String,
+        chunks_directory: String,
+        existing_manifest: &Bound<'_, PyAny>,
+        current_header: &Bound<'_, PyAny>,
+        resume: bool,
+        resume_mode: String,
+        runtime_compatibility_token: PyRef<'_, NativeRuntimeCompatibilityToken>,
+    ) -> PyResult<NativeInitializedOutputRun> {
+        initialize_output_run_from_values(
+            py,
+            run_directory,
+            chunks_directory,
+            existing_manifest,
+            current_header,
+            resume,
+            resume_mode,
+            runtime_compatibility_token,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn scan_committed_chunk_identifiers(&self, py: Python<'_>, chunks_directory: String) -> PyResult<Vec<i64>> {
+        scan_committed_chunk_identifiers(py, chunks_directory)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn validate_strict_manifest_chunks_from_value(
+        &self,
+        py: Python<'_>,
+        chunks_directory: String,
+        manifest: &Bound<'_, PyAny>,
+    ) -> PyResult<Vec<i64>> {
+        validate_strict_manifest_chunks_from_value(py, chunks_directory, manifest)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn repair_strict_manifest_chunk_commits_from_value(
+        &self,
+        py: Python<'_>,
+        chunks_directory: String,
+        manifest: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        repair_strict_manifest_chunk_commits_from_value(py, chunks_directory, manifest)
+    }
+}
+
+#[pymethods]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::unused_self)]
+impl NativeOutputChunkWritePolicy {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    #[pyo3(signature = (writer_sessions, active_trait_indices, metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
+    fn write_regenie2_multi_native_chunk(
+        &self,
+        py: Python<'_>,
+        writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
+        active_trait_indices: Vec<usize>,
+        metadata: PyRef<'_, PyVariantMetadata>,
+        chunk_stats: PyRef<'_, PyChunkStats>,
+        beta: PyReadonlyArray2<'_, f32>,
+        standard_error: PyReadonlyArray2<'_, f32>,
+        chi_squared: PyReadonlyArray2<'_, f32>,
+        log10_p_value: PyReadonlyArray2<'_, f32>,
+        extra_code: Option<PyReadonlyArray2<'_, i32>>,
+    ) -> PyResult<()> {
+        write_regenie2_multi_native_chunk(
+            py,
+            writer_sessions,
+            active_trait_indices,
+            metadata,
+            chunk_stats,
+            beta,
+            standard_error,
+            chi_squared,
+            log10_p_value,
+            extra_code,
+        )
+    }
+
+    #[pyo3(signature = (writer_sessions, active_trait_indices, metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
+    fn write_regenie2_multi_native_chunk_f64(
+        &self,
+        py: Python<'_>,
+        writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
+        active_trait_indices: Vec<usize>,
+        metadata: PyRef<'_, PyVariantMetadata>,
+        chunk_stats: PyRef<'_, PyChunkStats>,
+        beta: PyReadonlyArray2<'_, f64>,
+        standard_error: PyReadonlyArray2<'_, f64>,
+        chi_squared: PyReadonlyArray2<'_, f64>,
+        log10_p_value: PyReadonlyArray2<'_, f64>,
+        extra_code: Option<PyReadonlyArray2<'_, i32>>,
+    ) -> PyResult<()> {
+        write_regenie2_multi_native_chunk_f64(
+            py,
+            writer_sessions,
+            active_trait_indices,
+            metadata,
+            chunk_stats,
+            beta,
+            standard_error,
+            chi_squared,
+            log10_p_value,
+            extra_code,
+        )
+    }
+}
+
+#[pymethods]
 impl NativeManifestFileFingerprintCache {
     #[new]
     fn new() -> Self {
@@ -110,45 +317,45 @@ impl NativeManifestFileFingerprintCache {
         manifest_file_fingerprint_to_dict(py, &file_fingerprint)
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn build_current_run_manifest_header_json_from_input_json(
+    fn build_current_run_manifest_header_payload_from_input(
         &self,
         py: Python<'_>,
-        current_header_input_json: String,
-    ) -> PyResult<String> {
-        let current_header_input = parse_json_argument::<CurrentRunManifestHeaderInput>(
-            "current_header_input_json",
-            &current_header_input_json,
-        )?;
-        py.detach(|| {
-            let mut fingerprint_cache = self.inner.lock().map_err(|_| {
-                OutputWriterError::Runtime("Manifest file fingerprint cache mutex was poisoned.".to_string())
-            })?;
-            build_native_current_run_manifest_header_json_with_cache(current_header_input, &mut fingerprint_cache)
-        })
-        .map_err(|error| output_writer_error_to_py(error, "build_cached_current_run_manifest_header_json"))
+        current_header_input: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let current_header_input = parse_current_header_input_value(current_header_input)?;
+        let current_header_json = py
+            .detach(|| {
+                let mut fingerprint_cache = self.inner.lock().map_err(|_| {
+                    OutputWriterError::Runtime("Manifest file fingerprint cache mutex was poisoned.".to_string())
+                })?;
+                build_native_current_run_manifest_header_json_with_cache(current_header_input, &mut fingerprint_cache)
+            })
+            .map_err(|error| output_writer_error_to_py(error, "build_cached_current_run_manifest_header_payload"))?;
+        json_bridge::json_text_to_py_object(py, &current_header_json, "current-run manifest header")
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn build_prediction_loco_file_fingerprints_json(
+    fn build_prediction_loco_file_fingerprints_payload(
         &self,
         py: Python<'_>,
         prediction_list_path: String,
         phenotype_names: Vec<String>,
-    ) -> PyResult<String> {
-        py.detach(|| {
-            let mut fingerprint_cache = self.inner.lock().map_err(|_| {
-                PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(
-                    "Manifest file fingerprint cache mutex was poisoned.".to_string(),
-                ))
-            })?;
-            build_prediction_loco_file_fingerprints_json_with_cache(
-                &prediction_list_path,
-                &phenotype_names,
-                &mut fingerprint_cache,
-            )
-        })
-        .map_err(prediction_loco_fingerprint_build_error_to_py)
+    ) -> PyResult<Py<PyAny>> {
+        let loco_file_payload_json = py
+            .detach(|| {
+                let mut fingerprint_cache = self.inner.lock().map_err(|_| {
+                    PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(
+                        "Manifest file fingerprint cache mutex was poisoned.".to_string(),
+                    ))
+                })?;
+                build_prediction_loco_file_fingerprints_json_with_cache(
+                    &prediction_list_path,
+                    &phenotype_names,
+                    &mut fingerprint_cache,
+                )
+            })
+            .map_err(prediction_loco_fingerprint_build_error_to_py)?;
+        json_bridge::json_text_to_py_object(py, &loco_file_payload_json, "prediction LOCO file fingerprints")
     }
 }
 
@@ -297,52 +504,8 @@ impl OutputWriterSession {
     }
 }
 
-#[pyfunction]
-pub(crate) fn finish_output_writer_session(
-    py: Python<'_>,
-    writer_session: PyRef<'_, OutputWriterSession>,
-) -> PyResult<Option<String>> {
-    let native_writer_session = &writer_session.inner;
-    py.detach(|| native_writer_session.finish())
-        .map(|maybe_path| maybe_path.map(|path| path.display().to_string()))
-        .map_err(|error| output_writer_error_to_py(error, "finish_output_writer"))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn finish_output_writer_session_interrupted(
-    py: Python<'_>,
-    writer_session: PyRef<'_, OutputWriterSession>,
-    signal_name: String,
-) -> PyResult<()> {
-    let native_writer_session = &writer_session.inner;
-    py.detach(|| native_writer_session.finish_interrupted(&signal_name))
-        .map_err(|error| output_writer_error_to_py(error, "finish_interrupted"))
-}
-
-#[pyfunction]
-pub(crate) fn abort_output_writer_session(
-    py: Python<'_>,
-    writer_session: PyRef<'_, OutputWriterSession>,
-) -> PyResult<()> {
-    let native_writer_session = &writer_session.inner;
-    py.detach(|| native_writer_session.abort()).map_err(|error| output_writer_error_to_py(error, "abort_output_writer"))
-}
-
-#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
-#[pyo3(signature = (
-    writer_sessions,
-    active_trait_indices,
-    metadata,
-    chunk_stats,
-    beta,
-    standard_error,
-    chi_squared,
-    log10_p_value,
-    extra_code=None,
-))]
 pub(crate) fn write_regenie2_multi_native_chunk(
     py: Python<'_>,
     writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
@@ -420,20 +583,8 @@ pub(crate) fn write_regenie2_multi_native_chunk(
     Ok(())
 }
 
-#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
-#[pyo3(signature = (
-    writer_sessions,
-    active_trait_indices,
-    metadata,
-    chunk_stats,
-    beta,
-    standard_error,
-    chi_squared,
-    log10_p_value,
-    extra_code=None,
-))]
 pub(crate) fn write_regenie2_multi_native_chunk_f64(
     py: Python<'_>,
     writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
@@ -511,7 +662,6 @@ pub(crate) fn write_regenie2_multi_native_chunk_f64(
     Ok(())
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn finalize_output_run_chunks(
     py: Python<'_>,
@@ -533,7 +683,6 @@ pub(crate) fn finalize_output_run_chunks(
     .map_err(|error| output_writer_error_to_py(error, "finalize_output_run_chunks"))
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn resolve_output_run_paths(
     output_root: String,
@@ -549,7 +698,6 @@ pub(crate) fn resolve_output_run_paths(
     })
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn prepare_output_run(
     py: Python<'_>,
@@ -571,78 +719,66 @@ pub(crate) fn prepare_output_run(
     })
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn load_run_manifest_json(py: Python<'_>, run_directory: String) -> PyResult<Option<String>> {
-    py.detach(|| load_native_run_manifest_json(Path::new(&run_directory)))
-        .map_err(|error| output_writer_error_to_py(error, "load_run_manifest_json"))
+pub(crate) fn load_run_manifest_payload(py: Python<'_>, run_directory: String) -> PyResult<Py<PyAny>> {
+    let manifest_json = py
+        .detach(|| load_native_run_manifest_json(Path::new(&run_directory)))
+        .map_err(|error| output_writer_error_to_py(error, "load_run_manifest_payload"))?;
+    match manifest_json {
+        Some(manifest_json) => json_bridge::json_text_to_py_object(py, &manifest_json, "run manifest"),
+        None => Ok(py.None()),
+    }
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn write_run_manifest_json(py: Python<'_>, run_directory: String, manifest_json: String) -> PyResult<()> {
+pub(crate) fn write_run_manifest(py: Python<'_>, run_directory: String, manifest: &Bound<'_, PyAny>) -> PyResult<()> {
+    let manifest_json = json_bridge::json_text_from_py_any(manifest)?;
     py.detach(|| write_native_run_manifest_json(Path::new(&run_directory), &manifest_json))
-        .map_err(|error| output_writer_error_to_py(error, "write_run_manifest_json"))
+        .map_err(|error| output_writer_error_to_py(error, "write_run_manifest"))
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_prepared_run_manifest_header_json_from_current_header_json(
-    current_header_json: String,
-) -> PyResult<String> {
-    build_native_prepared_run_manifest_header_json_from_current_header_json(&current_header_json).map_err(|error| {
-        output_writer_error_to_py(error, "build_prepared_run_manifest_header_json_from_current_header_json")
-    })
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_prepared_run_plan_json_from_current_header_json(current_header_json: String) -> PyResult<String> {
+pub(crate) fn build_prepared_run_plan_json_from_current_header(current_header: &Bound<'_, PyAny>) -> PyResult<String> {
+    let current_header_json = json_bridge::json_text_from_py_any(current_header)?;
     build_native_prepared_run_plan_json_from_current_header_json(&current_header_json)
-        .map_err(|error| output_writer_error_to_py(error, "build_prepared_run_plan_json_from_current_header_json"))
+        .map_err(|error| output_writer_error_to_py(error, "build_prepared_run_plan_json_from_current_header"))
 }
 
-fn parse_json_argument<T>(argument_name: &str, argument_json: &str) -> PyResult<T>
-where
-    T: DeserializeOwned,
-{
-    serde_json::from_str(argument_json)
-        .map_err(|error| PyValueError::new_err(format!("Invalid {argument_name}: {error}")))
+pub(crate) fn build_manifest_json_sha256_from_value(value: &Bound<'_, PyAny>) -> PyResult<String> {
+    let value_json = json_bridge::json_text_from_py_any(value)?;
+    Ok(build_native_manifest_json_sha256(&value_json))
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn build_manifest_json_sha256(manifest_json: String) -> String {
-    build_native_manifest_json_sha256(&manifest_json)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn validate_run_manifest_compatibility(manifest_json: String, current_header_json: String) -> PyResult<()> {
+pub(crate) fn validate_run_manifest_compatibility_from_values(
+    manifest: &Bound<'_, PyAny>,
+    current_header: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    let manifest_json = json_bridge::json_text_from_py_any(manifest)?;
+    let current_header_json = json_bridge::json_text_from_py_any(current_header)?;
     validate_native_run_manifest_compatibility(&manifest_json, &current_header_json)
-        .map_err(|error| output_writer_error_to_py(error, "validate_run_manifest_compatibility"))
+        .map_err(|error| output_writer_error_to_py(error, "validate_run_manifest_compatibility_from_values"))
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn read_manifest_committed_chunk_identifiers(manifest_json: String) -> PyResult<Vec<i64>> {
+pub(crate) fn read_manifest_committed_chunk_identifiers_from_value(manifest: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
+    let manifest_json = json_bridge::json_text_from_py_any(manifest)?;
     read_native_manifest_committed_chunk_identifiers(&manifest_json)
-        .map_err(|error| output_writer_error_to_py(error, "read_manifest_committed_chunk_identifiers"))
+        .map_err(|error| output_writer_error_to_py(error, "read_manifest_committed_chunk_identifiers_from_value"))
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn initialize_output_run(
+pub(crate) fn initialize_output_run_from_values(
     py: Python<'_>,
     run_directory: String,
     chunks_directory: String,
-    existing_manifest_json: Option<String>,
-    current_header_json: String,
+    existing_manifest: &Bound<'_, PyAny>,
+    current_header: &Bound<'_, PyAny>,
     resume: bool,
     resume_mode: String,
     runtime_compatibility_token: PyRef<'_, NativeRuntimeCompatibilityToken>,
 ) -> PyResult<NativeInitializedOutputRun> {
     let _runtime_compatibility_token = runtime_compatibility_token.native_token();
+    let existing_manifest_json =
+        if existing_manifest.is_none() { None } else { Some(json_bridge::json_text_from_py_any(existing_manifest)?) };
+    let current_header_json = json_bridge::json_text_from_py_any(current_header)?;
     let native_resume_mode = OutputResumeMode::parse(&resume_mode)
         .map_err(|error| output_writer_error_to_py(error, "parse_output_resume_mode"))?;
     let initialized_output_run = py
@@ -656,39 +792,38 @@ pub(crate) fn initialize_output_run(
                 native_resume_mode,
             )
         })
-        .map_err(|error| output_writer_error_to_py(error, "initialize_output_run"))?;
+        .map_err(|error| output_writer_error_to_py(error, "initialize_output_run_from_values"))?;
     Ok(NativeInitializedOutputRun { committed_chunk_identifiers: initialized_output_run.committed_chunk_identifiers })
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn scan_committed_chunk_identifiers(py: Python<'_>, chunks_directory: String) -> PyResult<Vec<i64>> {
     py.detach(|| scan_native_committed_chunk_identifiers(Path::new(&chunks_directory)))
         .map_err(|error| output_writer_error_to_py(error, "scan_committed_chunk_identifiers"))
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn validate_strict_manifest_chunks(
+pub(crate) fn validate_strict_manifest_chunks_from_value(
     py: Python<'_>,
     chunks_directory: String,
-    manifest_json: String,
+    manifest: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<i64>> {
+    let manifest_json = json_bridge::json_text_from_py_any(manifest)?;
     py.detach(|| validate_native_strict_manifest_chunks(Path::new(&chunks_directory), &manifest_json))
-        .map_err(|error| output_writer_error_to_py(error, "validate_strict_manifest_chunks"))
+        .map_err(|error| output_writer_error_to_py(error, "validate_strict_manifest_chunks_from_value"))
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn repair_strict_manifest_chunk_commits(
+pub(crate) fn repair_strict_manifest_chunk_commits_from_value(
     py: Python<'_>,
     chunks_directory: String,
-    manifest_json: String,
-) -> PyResult<String> {
+    manifest: &Bound<'_, PyAny>,
+) -> PyResult<Py<PyAny>> {
+    let manifest_json = json_bridge::json_text_from_py_any(manifest)?;
     let chunk_commits = py
         .detach(|| repair_native_strict_manifest_chunk_commits(Path::new(&chunks_directory), &manifest_json))
-        .map_err(|error| output_writer_error_to_py(error, "repair_strict_manifest_chunk_commits"))?;
-    serde_json::to_string(
+        .map_err(|error| output_writer_error_to_py(error, "repair_strict_manifest_chunk_commits_from_value"))?;
+    let chunk_commits_json = serde_json::to_string(
         &chunk_commits
             .into_iter()
             .map(|chunk_commit| {
@@ -704,34 +839,56 @@ pub(crate) fn repair_strict_manifest_chunk_commits(
             })
             .collect::<Vec<_>>(),
     )
-    .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    json_bridge::json_text_to_py_object(py, &chunk_commits_json, "strict resume repaired committed chunks")
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeInitializedOutputRun>()?;
     module.add_class::<NativeManifestFileFingerprintCache>()?;
+    module.add_class::<NativeOutputChunkWritePolicy>()?;
+    module.add_class::<NativeOutputLifecyclePolicy>()?;
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<OutputWriterSession>()?;
-    module.add_function(wrap_pyfunction!(abort_output_writer_session, module)?)?;
-    module.add_function(wrap_pyfunction!(build_manifest_json_sha256, module)?)?;
-    module.add_function(wrap_pyfunction!(build_prepared_run_manifest_header_json_from_current_header_json, module)?)?;
-    module.add_function(wrap_pyfunction!(build_prepared_run_plan_json_from_current_header_json, module)?)?;
-    module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
-    module.add_function(wrap_pyfunction!(finish_output_writer_session, module)?)?;
-    module.add_function(wrap_pyfunction!(finish_output_writer_session_interrupted, module)?)?;
-    module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
-    module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;
-    module.add_function(wrap_pyfunction!(prepare_output_run, module)?)?;
-    module.add_function(wrap_pyfunction!(read_manifest_committed_chunk_identifiers, module)?)?;
-    module.add_function(wrap_pyfunction!(repair_strict_manifest_chunk_commits, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_output_run_paths, module)?)?;
-    module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_run_manifest_compatibility, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
-    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
-    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_f64, module)?)?;
-    module.add_function(wrap_pyfunction!(write_run_manifest_json, module)?)?;
+    Ok(())
+}
+
+fn parse_current_header_input_value(
+    current_header_input: &Bound<'_, PyAny>,
+) -> PyResult<CurrentRunManifestHeaderInput> {
+    let mut current_header_input_value = json_bridge::json_value_from_py_any(current_header_input)?;
+    normalize_current_header_input_json_fields(&mut current_header_input_value)?;
+    serde_json::from_value(current_header_input_value)
+        .map_err(|error| PyValueError::new_err(format!("Invalid current_header_input: {error}")))
+}
+
+fn normalize_current_header_input_json_fields(current_header_input_value: &mut JsonValue) -> PyResult<()> {
+    let input_object = current_header_input_value
+        .as_object_mut()
+        .ok_or_else(|| PyValueError::new_err("Current header input must contain a JSON object."))?;
+    if !input_object.contains_key("prediction_loco_files_json") {
+        let prediction_loco_files = input_object
+            .remove("prediction_loco_files")
+            .ok_or_else(|| PyValueError::new_err("Current header input must include prediction_loco_files."))?;
+        input_object.insert(
+            "prediction_loco_files_json".to_string(),
+            JsonValue::String(
+                serde_json::to_string(&prediction_loco_files)
+                    .map_err(|error| PyValueError::new_err(format!("Invalid prediction_loco_files value: {error}")))?,
+            ),
+        );
+    }
+    if !input_object.contains_key("binary_kernel_config_json") {
+        let binary_kernel_config_json = match input_object.remove("binary_kernel_config") {
+            None | Some(JsonValue::Null) => JsonValue::Null,
+            Some(binary_kernel_config) => JsonValue::String(
+                serde_json::to_string(&binary_kernel_config)
+                    .map_err(|error| PyValueError::new_err(format!("Invalid binary_kernel_config value: {error}")))?,
+            ),
+        };
+        input_object.insert("binary_kernel_config_json".to_string(), binary_kernel_config_json);
+    }
     Ok(())
 }
 

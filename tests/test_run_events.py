@@ -46,7 +46,7 @@ def test_run_completed_event_uses_native_artifact_tree_builder() -> None:
         run_id="run-1",
     )
 
-    native_payload = _core.build_run_completed_event_payload(artifacts)
+    native_payload = _core.NativeRunEventPayloadPolicy().build_run_completed_event_payload(artifacts)
     event = run_events.build_run_completed_event(artifacts)
 
     assert native_payload["phenotype_count"] == 2
@@ -97,7 +97,7 @@ def test_attach_run_metadata_uses_native_artifact_tree_builder() -> None:
         run_id=None,
     )
 
-    native_payload = _core.attach_run_metadata_payload(
+    native_payload = _core.NativeRunEventPayloadPolicy().attach_run_metadata_payload(
         artifacts,
         "run-1",
         types.AssociationMode.REGENIE2_LINEAR.value,
@@ -125,7 +125,8 @@ def test_attach_run_metadata_uses_native_artifact_tree_builder() -> None:
 
 
 def test_execution_run_artifacts_uses_native_artifact_tree_builder() -> None:
-    native_payload = _core.build_execution_run_artifacts_payload(
+    native_metadata_builder = _core.NativeRunMetadataBuilder()
+    native_payload = native_metadata_builder.build_execution_run_artifacts_payload(
         types.AssociationMode.REGENIE2_LINEAR.value,
         2,
         "parquet",
@@ -147,10 +148,13 @@ def test_execution_run_artifacts_uses_native_artifact_tree_builder() -> None:
     assert artifacts.phenotype_artifacts[0].phenotype_name == "height"
     assert artifacts.phenotype_artifacts[1].final_dataset == Path("out/weight/run/parts")
     assert artifacts.phenotype_artifacts[1].phenotype_count == 2
+    assert not hasattr(_core, "build_execution_run_artifacts_payload")
+    assert not hasattr(_core, "extend_run_manifest_metadata")
 
 
 def test_execution_run_artifacts_single_phenotype_has_no_wrapper() -> None:
-    native_payload = _core.build_execution_run_artifacts_payload(
+    native_metadata_builder = _core.NativeRunMetadataBuilder()
+    native_payload = native_metadata_builder.build_execution_run_artifacts_payload(
         types.AssociationMode.REGENIE2_LINEAR.value,
         1,
         "regenie",
@@ -307,7 +311,7 @@ def test_interrupted_run_event_uses_native_payload_builder_and_renderer() -> Non
     shutdown_request = shutdown.GracefulShutdownRequested(
         shutdown.ShutdownSignal(number=2, name="SIGINT", exit_code=130)
     )
-    native_payload = _core.build_run_interrupted_event_payload(shutdown_request)
+    native_payload = _core.NativeRunEventPayloadPolicy().build_run_interrupted_event_payload(shutdown_request)
     event = run_events.build_run_interrupted_event(shutdown_request)
 
     assert native_payload == {
@@ -327,7 +331,7 @@ def test_interrupted_run_event_uses_native_payload_builder_and_renderer() -> Non
 
 def test_failed_run_event_uses_native_payload_builder_and_renderer() -> None:
     error = RuntimeError("boom")
-    native_payload = _core.build_run_failed_event_payload(error)
+    native_payload = _core.NativeRunEventPayloadPolicy().build_run_failed_event_payload(error)
     event = run_events.build_run_failed_event(error)
 
     assert native_payload == {"error_type": "RuntimeError", "error_message": "boom"}

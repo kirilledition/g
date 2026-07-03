@@ -7,13 +7,11 @@ import time
 import typing
 from dataclasses import dataclass
 
-from g import _core, types
-from g.engine import timing
-from g.engine.native_dispatch import engine as native_dispatch_engine
+from g import types
+from g.engine.regenie2_pipeline import bgen_engine, schedule, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
-    from g.engine import telemetry
-    from g.io import source
+    from g import _core, execution_plan
 
 MANIFEST_GPU_GENOTYPE_FORMAT_FIELD = "gpu_genotype_format"
 MANIFEST_ASSOCIATION_BACKEND_FIELD = "association_backend"
@@ -54,20 +52,20 @@ class ManifestGpuGenotypeFormatFields:
 
 def log_auto_resolution(
     *,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
     resolved_gpu_genotype_format: types.GpuGenotypeFormat,
     resolution_reason: str,
     fallback_error: str | None,
 ) -> None:
     """Emit logging and telemetry for an auto GPU genotype format decision."""
-    _core.record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
+    telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
         requested_gpu_genotype_format=requested_gpu_genotype_format.value,
         resolved_gpu_genotype_format=resolved_gpu_genotype_format.value,
         resolution_reason=resolution_reason,
         fallback_error=fallback_error,
     )
-    _core.record_gpu_genotype_format_resolved_telemetry_event(
+    telemetry_events.native_run_event_telemetry_policy().record_gpu_genotype_format_resolved_telemetry_event(
         telemetry_session,
         requested_gpu_genotype_format.value,
         resolved_gpu_genotype_format.value,
@@ -79,11 +77,11 @@ def log_auto_resolution(
 def resolve_auto_to_dosage(
     *,
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     resolution_reason: str,
 ) -> types.GpuGenotypeFormat:
     """Resolve non-profiled auto requests to dosage."""
-    native_resolution_plan = _core.plan_gpu_genotype_format_auto_to_dosage(
+    native_resolution_plan = schedule.plan_gpu_genotype_format_auto_to_dosage(
         requested_gpu_genotype_format=requested_gpu_genotype_format.value,
         resolution_reason=resolution_reason,
     )
@@ -118,7 +116,7 @@ def read_manifest_gpu_genotype_format(
 ) -> types.GpuGenotypeFormat | None:
     """Read a concrete GPU genotype format from an existing manifest."""
     manifest_fields = read_manifest_gpu_genotype_format_fields(existing_manifest)
-    native_gpu_genotype_format = _core.resolve_manifest_gpu_genotype_format(
+    native_gpu_genotype_format = schedule.resolve_manifest_gpu_genotype_format(
         resume=True,
         manifest_gpu_genotype_format=manifest_fields.manifest_gpu_genotype_format,
         association_backend_genotype_format=manifest_fields.association_backend_genotype_format,
@@ -151,7 +149,7 @@ def concrete_gpu_genotype_format_from_native_plan(
 
 def log_native_auto_resolution(
     *,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     native_resolution_plan: _core.NativeGpuGenotypeFormatResolutionPlan,
 ) -> None:
     """Emit logging and telemetry for a resolved native auto decision."""
@@ -188,7 +186,7 @@ def build_resolution_from_native_plan(
 
 def validate_auto_packed8_bgen_engine(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
@@ -196,13 +194,13 @@ def validate_auto_packed8_bgen_engine(
 ) -> _core.Regenie2RunEngine:
     """Open and validate the trusted BGEN engine required for packed8 delivery."""
     engine_start_time = time.perf_counter()
-    engine = native_dispatch_engine.open_bgen_run_engine(
+    engine = bgen_engine.open_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=True,
     )
-    native_dispatch_engine.validate_trusted_bgen_run_engine(
+    bgen_engine.validate_trusted_bgen_run_engine(
         engine=engine,
         genotype_source_config=genotype_source_config,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
@@ -218,12 +216,12 @@ def resolve_single_trait_binary_gpu_genotype_format(
     existing_manifest: dict[str, typing.Any] | None,
     resume: bool,
     jax_device: types.Device,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
 ) -> GpuGenotypeFormatResolution:
     """Resolve the single-trait binary GPU genotype format before output initialization."""
     manifest_fields = (
@@ -234,7 +232,7 @@ def resolve_single_trait_binary_gpu_genotype_format(
             association_backend_genotype_format=None,
         )
     )
-    native_resolution_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+    native_resolution_plan = schedule.plan_single_trait_binary_gpu_genotype_format_resolution(
         requested_gpu_genotype_format=requested_gpu_genotype_format.value,
         manifest_gpu_genotype_format=manifest_fields.manifest_gpu_genotype_format,
         association_backend_genotype_format=manifest_fields.association_backend_genotype_format,
@@ -261,12 +259,12 @@ def resolve_single_trait_binary_gpu_genotype_format(
             stage_timing_recorder=stage_timing_recorder,
         )
     except ValueError as error:
-        native_resolution_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(
+        native_resolution_plan = schedule.plan_auto_gpu_genotype_format_after_trusted_validation(
             fallback_error=str(error),
         )
         prepared_engine = None
     else:
-        native_resolution_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(
+        native_resolution_plan = schedule.plan_auto_gpu_genotype_format_after_trusted_validation(
             fallback_error=None,
         )
 

@@ -128,9 +128,14 @@ def test_preflight_accepts_valid_binary_inputs() -> None:
     assert report.chromosome_count == 1
 
 
-def test_preflight_uses_native_finite_and_binary_array_checks() -> None:
+def test_preflight_uses_native_preflight_array_checks() -> None:
     with (
         unittest.mock.patch.object(preflight.np, "isfinite", side_effect=AssertionError("old finite scan used")),
+        unittest.mock.patch.object(
+            preflight.np.linalg,
+            "matrix_rank",
+            side_effect=AssertionError("old rank scan used"),
+        ),
         unittest.mock.patch.object(preflight.np, "unique", side_effect=AssertionError("old binary unique scan used")),
         unittest.mock.patch.object(
             preflight.np,
@@ -367,8 +372,8 @@ def test_preflight_rejects_empty_variant_scans(
 
 def test_preflight_records_low_degrees_of_freedom_and_trusted_path_warnings() -> None:
     with unittest.mock.patch(
-        "g.engine.preflight.g._core.record_preflight_warning_diagnostic_event"
-    ) as record_warning_mock:
+        "g.engine.preflight.run_events.native_output_preflight_diagnostic_policy"
+    ) as diagnostic_policy_factory_mock:
         report = preflight.run_regenie2_preflight(
             run_input=build_run_input(),
             prediction_source=FakePredictionSource({"1": np.zeros(3, dtype=np.float32)}),
@@ -382,6 +387,7 @@ def test_preflight_records_low_degrees_of_freedom_and_trusted_path_warnings() ->
         "REGENIE step 2 is running with fewer than 10 residual degrees of freedom.",
         "Trusted no-missing diploid BGEN path is enabled after compatibility validation.",
     )
+    record_warning_mock = diagnostic_policy_factory_mock.return_value.record_preflight_warning_diagnostic_event
     assert record_warning_mock.call_count == 2
     observed_warning_calls = [dict(call.kwargs) for call in record_warning_mock.call_args_list]
     assert observed_warning_calls == [

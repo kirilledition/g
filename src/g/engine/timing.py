@@ -342,24 +342,22 @@ def binary_chunk_diagnostics_snapshot_to_mapping(
     diagnostics: BinaryChunkDiagnosticsSnapshot,
 ) -> dict[str, int | float]:
     """Serialize a binary diagnostic snapshot to JSON-ready counters."""
-    serialized_diagnostics: dict[str, int | float] = {}
-    for diagnostic_field in dataclasses.fields(diagnostics):
-        diagnostic_value = getattr(diagnostics, diagnostic_field.name)
-        if diagnostic_value is not None:
-            serialized_diagnostics[diagnostic_field.name] = diagnostic_value
-    return serialized_diagnostics
+    return {
+        field_name: typing.cast("int | float", field_value)
+        for field_name, field_value in dataclasses.asdict(diagnostics).items()
+        if field_value is not None
+    }
 
 
 def null_logistic_diagnostics_snapshot_to_mapping(
     diagnostics: NullLogisticDiagnosticsSnapshot,
 ) -> dict[str, int | str]:
     """Serialize a null logistic diagnostic snapshot to JSON-ready counters."""
-    serialized_diagnostics: dict[str, int | str] = {}
-    for diagnostic_field in dataclasses.fields(diagnostics):
-        diagnostic_value = getattr(diagnostics, diagnostic_field.name)
-        if diagnostic_value is not None:
-            serialized_diagnostics[diagnostic_field.name] = diagnostic_value
-    return serialized_diagnostics
+    return {
+        field_name: typing.cast("int | str", field_value)
+        for field_name, field_value in dataclasses.asdict(diagnostics).items()
+        if field_value is not None
+    }
 
 
 class StageTimingRecorder:
@@ -639,12 +637,17 @@ def build_stage_timing_recorder(
     return StageTimingRecorder.from_native_recorder(native_recorder)
 
 
+def native_final_timing_output_policy() -> _core.NativeFinalTimingOutputPolicy:
+    """Build the native final timing output policy handle."""
+    return _core.NativeFinalTimingOutputPolicy()
+
+
 def resolve_final_timing_output_context(
     diagnostics_stage_timing_path: pathlib.Path | None,
     telemetry_session: object | None,
 ) -> FinalTimingOutputContext:
     """Resolve final timing output paths through the native runtime policy."""
-    native_context = _core.resolve_final_timing_output_context(
+    native_context = native_final_timing_output_policy().resolve_final_timing_output_context(
         None if diagnostics_stage_timing_path is None else str(diagnostics_stage_timing_path),
         telemetry_session,
     )
@@ -653,6 +656,19 @@ def resolve_final_timing_output_context(
         profile_summary_path=path_from_native_context_value(native_context.profile_summary_path),
         run_id=native_context.run_id,
         force_stage_timing_recorder=native_context.force_stage_timing_recorder,
+    )
+
+
+def record_final_timing_outputs_write_started_diagnostic_event(
+    stage_timing_path: pathlib.Path | None,
+    profile_summary_path: pathlib.Path | None,
+    run_id: str | None,
+) -> None:
+    """Record that final timing output writes are starting."""
+    native_final_timing_output_policy().record_final_timing_outputs_write_started_diagnostic_event(
+        None if stage_timing_path is None else str(stage_timing_path),
+        None if profile_summary_path is None else str(profile_summary_path),
+        run_id,
     )
 
 

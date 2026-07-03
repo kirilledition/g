@@ -10,14 +10,15 @@ import numpy.typing as npt
 
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
-from g.engine import timing
+from g.engine import run_events, timing
+
+if typing.TYPE_CHECKING:
+    import collections.abc
 
 
 def block_until_ready(value: typing.Any) -> None:
-    """Synchronize a JAX value when it supports readiness blocking."""
-    block_until_ready_method = getattr(value, "block_until_ready", None)
-    if callable(block_until_ready_method):
-        block_until_ready_method()
+    """Synchronize a JAX value or pytree."""
+    jax.block_until_ready(value)
 
 
 def enforce_null_logistic_nonconvergence_policy(
@@ -100,7 +101,7 @@ def enforce_host_null_logistic_nonconvergence_policy(
     phenotype_names: tuple[str, ...] | None,
 ) -> _core.NativeNullLogisticNonconvergencePlan:
     """Raise or warn using already materialized null-logistic convergence flags."""
-    native_policy_plan = _core.plan_null_logistic_nonconvergence_from_array(
+    native_policy_plan = native_callback_diagnostics_policy().plan_null_logistic_nonconvergence_from_array(
         chromosome=chromosome,
         convergence_values=convergence_flags,
         phenotype_names=phenotype_names,
@@ -116,7 +117,7 @@ def enforce_host_null_logistic_nonconvergence_policy(
     warning_message = native_policy_plan.warning_message
     if warning_message is None:
         raise RuntimeError("Native null-logistic nonconvergence warning plan did not include a warning message.")
-    _core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
+    run_events.native_pipeline_diagnostic_policy().record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
         message=warning_message,
         chromosome=chromosome,
         nonconverged_count=native_policy_plan.nonconverged_count,
@@ -126,6 +127,11 @@ def enforce_host_null_logistic_nonconvergence_policy(
         total_fit_count=native_policy_plan.total_fit_count,
     )
     return native_policy_plan
+
+
+def native_callback_diagnostics_policy() -> _core.NativeCallbackDiagnosticsPolicy:
+    """Build the native callback diagnostics policy handle."""
+    return _core.NativeCallbackDiagnosticsPolicy()
 
 
 def record_binary_chunk_diagnostics(
@@ -158,7 +164,98 @@ def record_binary_chunk_diagnostics_from_count(
     if not timing.should_collect_exact_stage_timings(stage_timing_recorder):
         return
     assert stage_timing_recorder is not None
-    stage_timing_recorder.add_binary_chunk_diagnostics(regenie2_binary.binary_chunk_diagnostics_to_mapping(diagnostics))
+    stage_timing_recorder.add_binary_chunk_diagnostics(binary_chunk_diagnostics_to_mapping(diagnostics))
+
+
+def binary_chunk_diagnostics_to_mapping(diagnostics: regenie2_binary.BinaryChunkDiagnostics) -> dict[str, int | float]:
+    """Materialize binary chunk diagnostics as JSON-ready counters."""
+    diagnostics_on_host = jax.device_get(diagnostics)
+    return {
+        "score_only_count": int(diagnostics_on_host.score_only_count),
+        "score_test_candidate_count": int(diagnostics_on_host.score_test_candidate_count),
+        "firth_candidate_count": int(diagnostics_on_host.firth_candidate_count),
+        "firth_iteration_min": int(diagnostics_on_host.firth_iteration_min),
+        "firth_iteration_median": float(diagnostics_on_host.firth_iteration_median),
+        "firth_iteration_max": int(diagnostics_on_host.firth_iteration_max),
+        "firth_converged_count": int(diagnostics_on_host.firth_converged_count),
+        "firth_failed_count": int(diagnostics_on_host.firth_failed_count),
+        "firth_numerical_failure_count": int(diagnostics_on_host.firth_numerical_failure_count),
+        "firth_max_iteration_failure_count": int(diagnostics_on_host.firth_max_iteration_failure_count),
+        "firth_invalid_statistic_failure_count": int(diagnostics_on_host.firth_invalid_statistic_failure_count),
+        "firth_step_halving_failure_count": int(diagnostics_on_host.firth_step_halving_failure_count),
+        "pseudo_firth_attempt_count": int(diagnostics_on_host.pseudo_firth_attempt_count),
+        "pseudo_firth_success_count": int(diagnostics_on_host.pseudo_firth_success_count),
+        "nr_zero_start_attempt_count": int(diagnostics_on_host.nr_zero_start_attempt_count),
+        "nr_zero_start_success_count": int(diagnostics_on_host.nr_zero_start_success_count),
+        "nr_warm_start_attempt_count": int(diagnostics_on_host.nr_warm_start_attempt_count),
+        "nr_warm_start_success_count": int(diagnostics_on_host.nr_warm_start_success_count),
+        "sparse_correction_count": int(diagnostics_on_host.sparse_correction_count),
+        "dense_correction_count": int(diagnostics_on_host.dense_correction_count),
+    }
+
+
+def binary_chunk_diagnostics_to_summary_counts(
+    diagnostics_batch: collections.abc.Sequence[regenie2_binary.BinaryChunkDiagnostics],
+) -> regenie2_binary.BinaryCorrectionSummaryCounts:
+    """Materialize binary diagnostics as one aggregate summary counter payload."""
+    diagnostics_on_host_batch = jax.device_get(tuple(diagnostics_batch))
+    return regenie2_binary.BinaryCorrectionSummaryCounts(
+        chunk_count=len(diagnostics_on_host_batch),
+        score_only_count=sum(
+            int(diagnostics_on_host.score_only_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        score_test_candidate_count=sum(
+            int(diagnostics_on_host.score_test_candidate_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_candidate_count=sum(
+            int(diagnostics_on_host.firth_candidate_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_converged_count=sum(
+            int(diagnostics_on_host.firth_converged_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_failed_count=sum(
+            int(diagnostics_on_host.firth_failed_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_numerical_failure_count=sum(
+            int(diagnostics_on_host.firth_numerical_failure_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_max_iteration_failure_count=sum(
+            int(diagnostics_on_host.firth_max_iteration_failure_count)
+            for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_invalid_statistic_failure_count=sum(
+            int(diagnostics_on_host.firth_invalid_statistic_failure_count)
+            for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        firth_step_halving_failure_count=sum(
+            int(diagnostics_on_host.firth_step_halving_failure_count)
+            for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        pseudo_firth_attempt_count=sum(
+            int(diagnostics_on_host.pseudo_firth_attempt_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        pseudo_firth_success_count=sum(
+            int(diagnostics_on_host.pseudo_firth_success_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        nr_zero_start_attempt_count=sum(
+            int(diagnostics_on_host.nr_zero_start_attempt_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        nr_zero_start_success_count=sum(
+            int(diagnostics_on_host.nr_zero_start_success_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        nr_warm_start_attempt_count=sum(
+            int(diagnostics_on_host.nr_warm_start_attempt_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        nr_warm_start_success_count=sum(
+            int(diagnostics_on_host.nr_warm_start_success_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        sparse_correction_count=sum(
+            int(diagnostics_on_host.sparse_correction_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+        dense_correction_count=sum(
+            int(diagnostics_on_host.dense_correction_count) for diagnostics_on_host in diagnostics_on_host_batch
+        ),
+    )
 
 
 def collect_binary_chunk_diagnostics_if_needed(
@@ -177,6 +274,8 @@ def collect_binary_chunk_diagnostics_if_needed(
 
 
 __all__ = [
+    "binary_chunk_diagnostics_to_mapping",
+    "binary_chunk_diagnostics_to_summary_counts",
     "block_until_ready",
     "collect_binary_chunk_diagnostics_if_needed",
     "enforce_null_logistic_nonconvergence_policy",

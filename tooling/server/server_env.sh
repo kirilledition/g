@@ -77,15 +77,6 @@ gwas_engine_configure_cpu_parallelism() {
 
 gwas_engine_configure_rust_build_environment() {
   gwas_engine_configure_cpu_parallelism
-  if [ -z "${RUSTC_WRAPPER:-}" ] && command -v sccache >/dev/null 2>&1; then
-    export RUSTC_WRAPPER="sccache"
-  fi
-  case "${RUSTC_WRAPPER:-}" in
-    sccache | */sccache)
-      export SCCACHE_DIR="${SCCACHE_DIR:-/tmp/g-sccache}"
-      mkdir -p "${SCCACHE_DIR}"
-      ;;
-  esac
 }
 
 gwas_engine_log_rust_build_environment() {

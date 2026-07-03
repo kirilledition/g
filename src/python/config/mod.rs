@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::PyValueError;
@@ -13,6 +13,7 @@ use g_interface::{
 
 mod conversion;
 
+use super::json_bridge;
 use conversion::{
     enum_value, normalized_toml_table_from_py_options, optional_enum_value, optional_path, path_to_string, string_tuple,
 };
@@ -803,17 +804,43 @@ fn validate_regenie_config_for_run(config: &RegenieConfig) -> PyResult<()> {
 }
 
 #[pyfunction]
-fn compile_run_request_json(config: &RegenieConfig) -> PyResult<String> {
+fn compile_run_request_payload(py: Python<'_>, config: &RegenieConfig) -> PyResult<Py<PyAny>> {
     let run_request = interface::compile_run_request(config.data())
         .map_err(|error| config_error_to_py("compile_run_request", error))?;
-    serde_json::to_string(&run_request)
-        .map_err(|error| PyValueError::new_err(format!("Failed to serialize run request: {error}.")))
+    let run_request_value = serde_json::to_value(&run_request)
+        .map_err(|error| PyValueError::new_err(format!("Failed to serialize run request: {error}.")))?;
+    json_bridge::json_value_to_py_object(py, &run_request_value)
 }
 
 #[pyfunction]
 #[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python list arguments into owned Vec values.")]
 fn dispatch_cli(args: Vec<String>) -> CliOutcome {
     CliOutcome::new(interface::dispatch_cli(&args))
+}
+
+#[pyfunction]
+#[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python list arguments into owned Vec values.")]
+fn run_native_cli_python_bridge(
+    args: Vec<String>,
+    python_executable_path: &Bound<'_, PyAny>,
+    sentinel_environment_variable: String,
+) -> PyResult<CliOutcome> {
+    let python_executable_path_text = path_to_string(python_executable_path)?;
+    let execution_adapter = g_cli::PythonBridgeExecutionAdapter::new_with_environment_overrides(
+        PathBuf::from(python_executable_path_text),
+        vec![(sentinel_environment_variable, "1".to_string())],
+    );
+    let native_outcome = g_cli::dispatch_native_cli_with_adapter(&args, &execution_adapter);
+    Ok(CliOutcome::new(native_cli_outcome_to_cli_outcome_data(native_outcome)))
+}
+
+fn native_cli_outcome_to_cli_outcome_data(native_outcome: g_cli::NativeCliOutcome) -> CliOutcomeData {
+    CliOutcomeData {
+        exit_code: native_outcome.exit_code,
+        stdout: native_outcome.stdout,
+        stderr: native_outcome.stderr,
+        config: None,
+    }
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -833,8 +860,9 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(write_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
-    module.add_function(wrap_pyfunction!(compile_run_request_json, module)?)?;
+    module.add_function(wrap_pyfunction!(compile_run_request_payload, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
+    module.add_function(wrap_pyfunction!(run_native_cli_python_bridge, module)?)?;
     Ok(())
 }
 

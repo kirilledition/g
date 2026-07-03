@@ -14,6 +14,7 @@ mod errors;
 mod genotype;
 mod host_policy;
 mod jax_runtime;
+mod json_bridge;
 mod logging;
 mod output;
 mod prediction_sources;
@@ -24,8 +25,6 @@ mod run_engine;
 mod run_events;
 mod run_metadata;
 mod runtime;
-mod runtime_paths;
-mod runtime_policy;
 mod runtime_state;
 mod sample_alignment;
 mod schedule;
@@ -57,11 +56,9 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     logging::register_module(module)?;
     telemetry_policy::register_module(module)?;
     run_events::register_module(module)?;
-    runtime_policy::register_module(module)?;
     run_metadata::register_module(module)?;
     preflight::register_module(module)?;
     host_policy::register_module(module)?;
-    runtime_paths::register_module(module)?;
     runtime::register_module(module)?;
     Ok(())
 }

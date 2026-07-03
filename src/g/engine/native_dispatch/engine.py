@@ -5,21 +5,21 @@ from __future__ import annotations
 import typing
 
 from g import _core, types
-from g.engine import trusted_validation
+from g.engine import run_events, trusted_validation
 
 if typing.TYPE_CHECKING:
-    from g.io import source
+    from g import execution_plan
 
 
 def open_bgen_run_engine(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
     trusted_no_missing_diploid: bool,
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN run engine without running trusted validation."""
-    _core.record_native_dispatch_bgen_engine_constructing_diagnostic_event(
+    run_events.native_dispatch_diagnostic_policy().record_native_dispatch_bgen_engine_constructing_diagnostic_event(
         chunk_size=chunk_size,
         source_path=str(genotype_source_config.source_path),
         trusted_no_missing_diploid=trusted_no_missing_diploid,
@@ -36,12 +36,12 @@ def open_bgen_run_engine(
 def validate_trusted_bgen_run_engine(
     *,
     engine: _core.Regenie2RunEngine,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     trusted_bgen_validator: typing.Callable[..., None] | None,
 ) -> None:
     """Validate trusted no-missing diploid BGEN mode for an open engine."""
-    _core.record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
+    run_events.native_dispatch_diagnostic_policy().record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
         source_path=str(genotype_source_config.source_path),
         trusted_bgen_validation_mode=trusted_bgen_validation_mode.value,
     )
@@ -55,7 +55,7 @@ def validate_trusted_bgen_run_engine(
 
 def build_bgen_run_engine(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
     trusted_no_missing_diploid: bool,

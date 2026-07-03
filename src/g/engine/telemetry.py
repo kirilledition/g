@@ -105,8 +105,9 @@ def resolve_output_run_root(regenie_config: config.RegenieConfig) -> Path:
     """Resolve the shared output run root for telemetry defaults."""
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_directory = regenie_config.g_output.output_run_directory
+    telemetry_policy = native_telemetry_session_policy(regenie_config)
     return Path(
-        _core.resolve_telemetry_output_run_root_value(
+        telemetry_policy.resolve_output_run_root_value(
             str(output_prefix),
             None if output_run_directory is None else str(output_run_directory),
         )
@@ -118,11 +119,11 @@ def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPa
     diagnostics_config = regenie_config.g_diagnostics
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_directory = regenie_config.g_output.output_run_directory
+    telemetry_policy = native_telemetry_session_policy(regenie_config)
     return telemetry_paths_from_native_payload(
-        _core.resolve_telemetry_paths_payload(
+        telemetry_policy.resolve_paths_payload(
             str(output_prefix),
             None if output_run_directory is None else str(output_run_directory),
-            diagnostics_config.telemetry.value,
             None if diagnostics_config.log_dir is None else str(diagnostics_config.log_dir),
             None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
             None if diagnostics_config.trace_file is None else str(diagnostics_config.trace_file),
@@ -130,6 +131,17 @@ def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPa
             None if diagnostics_config.stage_timings_json is None else str(diagnostics_config.stage_timings_json),
         )
     )
+
+
+def native_telemetry_session_policy(regenie_config: config.RegenieConfig) -> _core.NativeTelemetrySessionPolicy:
+    """Build the native telemetry session policy for a run config."""
+    diagnostics_config = regenie_config.g_diagnostics
+    return _core.NativeTelemetrySessionPolicy(diagnostics_config.telemetry.value, diagnostics_config.trace_event_cap)
+
+
+def native_telemetry_close_policy() -> _core.NativeTelemetryClosePolicy:
+    """Build the native telemetry close policy handle."""
+    return _core.NativeTelemetryClosePolicy()
 
 
 def telemetry_paths_from_native_payload(payload: object) -> TelemetryPaths:
@@ -172,4 +184,4 @@ def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySe
 
 def close_telemetry_session(telemetry_session: TelemetrySession | None) -> None:
     """Flush native telemetry teardown hooks and preserve close failures."""
-    _core.close_telemetry_session_with_event(telemetry_session)
+    native_telemetry_close_policy().close_telemetry_session_with_event(telemetry_session)
