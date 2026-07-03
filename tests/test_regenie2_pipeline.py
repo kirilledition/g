@@ -1483,6 +1483,101 @@ def create_native_writer_session_for_lifecycle_test(tmp_path: Path) -> _core.Out
     )
 
 
+def test_finish_writer_sessions_uses_native_batch_for_native_sessions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer_session = create_native_writer_session_for_lifecycle_test(tmp_path)
+    lifecycle_calls: list[dict[str, object]] = []
+
+    class FakeNativeOutputWriterLifecyclePolicy:
+        def finish_writer_sessions(
+            self,
+            writer_sessions: list[_core.OutputWriterSession],
+            thread_count: int,
+        ) -> list[str | None]:
+            lifecycle_calls.append({"writer_sessions": writer_sessions, "thread_count": thread_count})
+            return ["results/native.parquet"]
+
+    monkeypatch.setattr(
+        native_dispatch_writers,
+        "native_output_writer_lifecycle_policy",
+        FakeNativeOutputWriterLifecyclePolicy,
+    )
+    try:
+        final_parquet_paths = native_dispatch_writers.finish_writer_sessions(
+            writer_sessions=(writer_session,),
+            writer_finish_thread_count=4,
+            stage_timing_recorder=None,
+        )
+    finally:
+        writer_session.abort()
+
+    assert final_parquet_paths == (Path("results/native.parquet"),)
+    assert lifecycle_calls == [{"writer_sessions": [writer_session], "thread_count": 1}]
+
+
+def test_finish_writer_sessions_interrupted_uses_native_batch_for_native_sessions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer_session = create_native_writer_session_for_lifecycle_test(tmp_path)
+    lifecycle_calls: list[dict[str, object]] = []
+
+    class FakeNativeOutputWriterLifecyclePolicy:
+        def finish_writer_sessions_interrupted(
+            self,
+            writer_sessions: list[_core.OutputWriterSession],
+            signal_name: str,
+            thread_count: int,
+        ) -> None:
+            lifecycle_calls.append(
+                {"writer_sessions": writer_sessions, "signal_name": signal_name, "thread_count": thread_count}
+            )
+
+    monkeypatch.setattr(
+        native_dispatch_writers,
+        "native_output_writer_lifecycle_policy",
+        FakeNativeOutputWriterLifecyclePolicy,
+    )
+    shutdown_signal = shutdown.ShutdownSignal(number=15, name="SIGTERM", exit_code=143)
+    try:
+        native_dispatch_writers.finish_writer_sessions_interrupted(
+            writer_sessions=(writer_session,),
+            shutdown_request=shutdown.GracefulShutdownRequested(shutdown_signal),
+            writer_finish_thread_count=4,
+            stage_timing_recorder=None,
+        )
+    finally:
+        writer_session.abort()
+
+    assert lifecycle_calls == [{"writer_sessions": [writer_session], "signal_name": "SIGTERM", "thread_count": 1}]
+
+
+def test_abort_writer_sessions_uses_native_batch_for_native_sessions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer_session = create_native_writer_session_for_lifecycle_test(tmp_path)
+    lifecycle_calls: list[list[_core.OutputWriterSession]] = []
+
+    class FakeNativeOutputWriterLifecyclePolicy:
+        def abort_writer_sessions(self, writer_sessions: list[_core.OutputWriterSession]) -> None:
+            lifecycle_calls.append(writer_sessions)
+
+    monkeypatch.setattr(
+        native_dispatch_writers,
+        "native_output_writer_lifecycle_policy",
+        FakeNativeOutputWriterLifecyclePolicy,
+    )
+    try:
+        native_dispatch_writers.abort_writer_sessions((writer_session,))
+    finally:
+        writer_session.abort()
+
+    assert lifecycle_calls == [[writer_session]]
+
+
 def test_finish_writer_session_to_path_uses_native_session_method(tmp_path: Path) -> None:
     writer_session = create_native_writer_session_for_lifecycle_test(tmp_path)
     final_path: Path | None = None

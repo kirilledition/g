@@ -2783,6 +2783,10 @@ Current guardrail notes:
   transfer, diagnostics, shared metadata, or runtime chromosome-state helper
   aliases; callback code calls the owning adapters explicitly, and the Python
   architecture checker rejects reintroduced helper alias assignments.
+- Real native writer-session finish, interrupted-finish, and abort cleanup now
+  enter through a typed native writer lifecycle batch policy. The Python
+  native-dispatch writer helper keeps the old per-object path only for fake
+  writer sessions used by tests.
 - Test-only runner runtime construction/description helpers were also removed;
   isolated tests build native runtime-state handles directly.
 - The test-only `execution_plan.build_kernel_config()` wrapper was removed;
@@ -2791,7 +2795,9 @@ Current guardrail notes:
 - Phase 14 validation on 2026-07-03 rebuilt the editable PyO3 package with
   `maturin develop -j 30 --profile dev-fast --uv` using `sccache` plus the
   `wild` linker wrapper. The build completed in `2:17.09` wall time with Cargo
-  reporting `1m43s`.
+  reporting `1m43s`. A later incremental rebuild after the native writer
+  lifecycle batch policy completed in `28.18s` wall time with Cargo reporting
+  `14.99s`.
 
 ### Exit criteria
 

@@ -52,6 +52,26 @@ def native_schedule_policy() -> _core.NativeSchedulePolicy:
     return _core.NativeSchedulePolicy()
 
 
+def native_output_writer_lifecycle_policy() -> _core.NativeOutputWriterLifecyclePolicy:
+    """Build the native writer lifecycle policy handle."""
+    return _core.NativeOutputWriterLifecyclePolicy()
+
+
+def all_writer_sessions_native(writer_sessions: tuple[typing.Any, ...]) -> bool:
+    """Return whether every writer session is a native writer session."""
+    return bool(writer_sessions) and all(
+        isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions
+    )
+
+
+def native_final_parquet_paths(final_parquet_path_values: list[str | None]) -> tuple[Path | None, ...]:
+    """Normalize native writer finish paths."""
+    return tuple(
+        None if final_parquet_path is None else Path(final_parquet_path)
+        for final_parquet_path in final_parquet_path_values
+    )
+
+
 def finish_writer_session_to_path(writer_session: typing.Any) -> Path | None:
     """Finish one writer session and normalize its optional final Parquet path."""
     final_parquet_path = typing.cast("str | None", writer_session.finish())
@@ -76,7 +96,14 @@ def finish_writer_sessions(
         writer_session_count=len(writer_sessions),
     )
     finish_plan = plan_writer_finish_execution(len(writer_sessions), writer_finish_thread_count)
-    if not finish_plan.uses_parallel_finish:
+    if all_writer_sessions_native(writer_sessions):
+        final_parquet_paths = native_final_parquet_paths(
+            native_output_writer_lifecycle_policy().finish_writer_sessions(
+                list(typing.cast("tuple[_core.OutputWriterSession, ...]", writer_sessions)),
+                finish_plan.thread_count,
+            )
+        )
+    elif not finish_plan.uses_parallel_finish:
         final_parquet_paths = tuple(finish_writer_session_to_path(writer_session) for writer_session in writer_sessions)
     else:
         with concurrent.futures.ThreadPoolExecutor(
@@ -110,7 +137,13 @@ def finish_writer_sessions_interrupted(
         writer_session_count=len(writer_sessions),
     )
     finish_plan = plan_writer_finish_execution(len(writer_sessions), writer_finish_thread_count)
-    if not finish_plan.uses_parallel_finish:
+    if all_writer_sessions_native(writer_sessions):
+        native_output_writer_lifecycle_policy().finish_writer_sessions_interrupted(
+            list(typing.cast("tuple[_core.OutputWriterSession, ...]", writer_sessions)),
+            shutdown_request.signal_name,
+            finish_plan.thread_count,
+        )
+    elif not finish_plan.uses_parallel_finish:
         for writer_session in writer_sessions:
             finish_writer_session_interrupted_by_signal(writer_session, shutdown_request.signal_name)
     else:
@@ -143,5 +176,11 @@ def abort_writer_session(writer_session: typing.Any) -> None:
 
 def abort_writer_sessions(writer_sessions: tuple[typing.Any, ...]) -> None:
     """Abort writer sessions."""
+    if all_writer_sessions_native(writer_sessions):
+        with contextlib.suppress(Exception):
+            native_output_writer_lifecycle_policy().abort_writer_sessions(
+                list(typing.cast("tuple[_core.OutputWriterSession, ...]", writer_sessions))
+            )
+        return
     for writer_session in writer_sessions:
         abort_writer_session(writer_session)
