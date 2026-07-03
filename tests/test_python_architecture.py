@@ -308,6 +308,54 @@ def test_runner_output_import_policy_allows_runner_output_adapter(tmp_path: Path
     assert violations == ()
 
 
+def test_runner_import_policy_rejects_run_event_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "execution.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events, telemetry",
+                "import g.engine.run_events",
+                "import g.engine.telemetry",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/runner/execution.py"), 1, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/runner/execution.py"), 1, "g.engine.telemetry", "g.engine.telemetry"),
+        (Path("g/runner/execution.py"), 2, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/runner/execution.py"), 3, "g.engine.telemetry", "g.engine.telemetry"),
+    ]
+
+
+def test_runner_import_policy_allows_runner_event_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "events.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events, telemetry",
+                "import g.engine.run_events",
+                "import g.engine.telemetry",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_pipeline_import_policy_rejects_output_adapter_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"

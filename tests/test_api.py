@@ -949,7 +949,7 @@ def test_finalize_execution_plan_records_native_metadata_diagnostic(monkeypatch:
             diagnostic_calls.append((association_mode, phenotype_count))
 
     monkeypatch.setattr(
-        runner_metadata.run_events,
+        runner_metadata.events,
         "native_runner_diagnostic_policy",
         FakeRunnerDiagnosticPolicy,
     )

@@ -12,8 +12,8 @@ from g.jax_runtime import models as jax_runtime_models
 from g.jax_runtime import resolution as jax_runtime_resolution
 
 if typing.TYPE_CHECKING:
-    from g.engine import telemetry
     from g.interface import config
+    from g.runner import events
 
 
 @dataclass(frozen=True)
@@ -155,7 +155,7 @@ def native_jax_runtime_diagnostic_policy() -> _core.NativeJaxRuntimeDiagnosticPo
 def record_jax_runtime_diagnostic_event(
     diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
     *,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: events.TelemetrySession | None,
 ) -> None:
     """Record one structured JAX runtime diagnostic event.
 
@@ -172,7 +172,7 @@ def record_jax_runtime_diagnostic_event(
 
 def configure_runtime_before_jax_import(
     compute_config: config.GComputeConfig,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: events.TelemetrySession | None,
 ) -> jax_runtime_models.JaxRuntimeSetupReport | None:
     """Configure JAX platform and runtime before compute modules are imported."""
     requested_policy = jax_runtime_resolution.resolve_jax_runtime_policy(compute_config)
@@ -199,7 +199,7 @@ def configure_runtime_before_jax_import(
 
 def build_logging_runtime_policy(
     diagnostics_config: config.GDiagnosticsConfig,
-    telemetry_paths: telemetry.TelemetryPaths | None,
+    telemetry_paths: events.TelemetryPaths | None,
 ) -> LoggingRuntimePolicy:
     """Build the process-global logging policy requested by a run."""
     telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
@@ -284,7 +284,7 @@ def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
 
 def build_runtime_policy(
     regenie_config: config.RegenieConfig,
-    telemetry_paths: telemetry.TelemetryPaths,
+    telemetry_paths: events.TelemetryPaths,
 ) -> RuntimePolicy:
     """Build the process-global runtime policy requested by a run."""
     logging_policy = build_logging_runtime_policy(regenie_config.g_diagnostics, telemetry_paths)
@@ -412,7 +412,7 @@ def configure_runtime(compute_config: config.GComputeConfig, trait_config: confi
 
 def initialize_logging(
     diagnostics_config: config.GDiagnosticsConfig,
-    telemetry_paths: telemetry.TelemetryPaths | None,
+    telemetry_paths: events.TelemetryPaths | None,
 ) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""
     logging_policy = build_logging_runtime_policy(diagnostics_config, telemetry_paths)

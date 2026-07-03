@@ -301,6 +301,13 @@ PYTHON_IMPORT_POLICIES = (
         allowed_paths=(Path("runner/outputs.py"),),
     ),
     PythonImportPolicy(
+        name="runner_run_event_adapter_isolation",
+        source_directory=Path("runner"),
+        forbidden_imports=("g.engine.run_events", "g.engine.telemetry"),
+        message="runner modules must route run-event and telemetry access through runner-local event helpers",
+        allowed_paths=(Path("runner/events.py"),),
+    ),
+    PythonImportPolicy(
         name="pipeline_output_adapter_isolation",
         source_directory=Path("engine/regenie2_pipeline"),
         forbidden_imports=("g.io",),
