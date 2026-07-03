@@ -2638,16 +2638,18 @@ Current guardrail notes:
 - REGENIE pipeline orchestration now routes manifest JAX runtime policy values
   through `g.engine.regenie2_pipeline.runtime_policy`; the Python architecture
   checker rejects direct `g.jax_runtime` imports from sibling pipeline modules.
-- REGENIE pipeline orchestration now routes association backend planning
-  through `g.engine.regenie2_pipeline.backend`; the Python architecture checker
-  rejects direct `g.engine.backend_planner` imports from sibling pipeline
-  modules.
+- REGENIE pipeline backend planning now lives in
+  `g.engine.regenie2_pipeline.backend` instead of the separate
+  `g.engine.backend_planner` shim; the Python architecture checker rejects
+  production imports of that obsolete module.
 - Preflight validation now routes preflight-warning diagnostic policy access
   through `g.engine.preflight_events`; the Python architecture checker rejects
   direct `g.engine.run_events` imports from `g.engine.preflight`.
 - The obsolete production warm-cache orchestration module was moved to test
   support; the Python architecture checker rejects production imports of
   `g.engine.warm_cache`.
+- Trusted BGEN cache validation now lives in the native-dispatch BGEN engine
+  helper instead of the separate `g.engine.trusted_validation` shim.
 
 ### Exit criteria
 
@@ -2914,7 +2916,8 @@ g.engine.regenie2_pipeline modules must not construct native schedule policy han
 g.engine.regenie2_pipeline modules must not import callback packages directly, except the pipeline callback helper.
 g.engine.regenie2_pipeline modules must not import compute packages directly, except the pipeline compute-config helper.
 g.engine.regenie2_pipeline modules must not import JAX runtime packages directly, except the pipeline runtime-policy helper.
-g.engine.regenie2_pipeline modules must not import backend planner helpers directly, except the pipeline backend helper.
+Production Python must not import the obsolete `g.engine.backend_planner` module.
+Production Python must not import the obsolete `g.engine.trusted_validation` module.
 g.engine.preflight must not import run-event packages directly, except the preflight event helper.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.

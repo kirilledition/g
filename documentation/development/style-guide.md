@@ -46,9 +46,9 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 * **Rule:** Relative imports are not allowed.
 * **Rule:** In production Python code under `src/g`, import first-party modules rather than first-party members.  
   * Good: `from g import api`; `api.ComputeConfig`  
-  * Good: `from g.io import source`; `source.split_sample_file_line()`  
+  * Good: `from g.io import output`; `output.OutputWriterSettings`
   * Bad: `from g.api import ComputeConfig`  
-  * Bad: `from g.io.source import split_sample_file_line`
+  * Bad: `from g.io.output import OutputWriterSettings`
 * **Rule:** Internal package initializers under `src/g/**/__init__.py` are package markers only. Do not define `__all__`, import/re-export submodules, assign aliases, or place helper functions there.
 * **Rule:** The top-level `src/g/__init__.py` may keep the lazy public entrypoint boundary required by the console script, but it must not define `__all__`.
 * Run `uv run python -m tooling.cli.debug tool.name=check_internal_init_exports` (or `just check-internal-init-exports`) before reviewing changes that touch package initializers.

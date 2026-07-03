@@ -427,11 +427,16 @@ PYTHON_IMPORT_POLICIES = (
         allowed_paths=(Path("engine/regenie2_pipeline/runtime_policy.py"),),
     ),
     PythonImportPolicy(
-        name="pipeline_backend_planner_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
+        name="obsolete_backend_planner_module_isolation",
+        source_directory=Path(),
         forbidden_imports=("g.engine.backend_planner",),
-        message="REGENIE pipeline modules must route backend planning access through pipeline helpers",
-        allowed_paths=(Path("engine/regenie2_pipeline/backend.py"),),
+        message="backend planning is owned by the pipeline backend helper, not a separate engine module",
+    ),
+    PythonImportPolicy(
+        name="obsolete_trusted_validation_module_isolation",
+        source_directory=Path(),
+        forbidden_imports=("g.engine.trusted_validation",),
+        message="trusted BGEN validation is owned by the native-dispatch BGEN engine helper",
     ),
     PythonImportPolicy(
         name="preflight_event_adapter_isolation",

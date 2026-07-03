@@ -5,7 +5,7 @@ import enum
 import pytest
 
 from g import _core, types
-from g.engine import backend_planner
+from g.engine.regenie2_pipeline import backend as backend_planner
 
 
 class ExpectedPacked8Delivery(enum.Enum):

@@ -5,10 +5,11 @@ from __future__ import annotations
 import typing
 
 from g import _core, types
-from g.engine import trusted_validation
 from g.engine.native_dispatch import events
 
 if typing.TYPE_CHECKING:
+    from pathlib import Path
+
     from g import execution_plan
 
 
@@ -46,11 +47,24 @@ def validate_trusted_bgen_run_engine(
         source_path=str(genotype_source_config.source_path),
         trusted_bgen_validation_mode=trusted_bgen_validation_mode.value,
     )
-    resolved_trusted_bgen_validator = trusted_bgen_validator or trusted_validation.validate_trusted_bgen_with_cache
+    resolved_trusted_bgen_validator = trusted_bgen_validator or validate_trusted_bgen_with_cache
     resolved_trusted_bgen_validator(
         engine=engine,
         bgen_path=genotype_source_config.source_path,
         validation_mode=trusted_bgen_validation_mode,
+    )
+
+
+def validate_trusted_bgen_with_cache(
+    *,
+    engine: _core.Regenie2RunEngine,
+    bgen_path: Path,
+    validation_mode: types.TrustedBgenValidationMode,
+) -> None:
+    """Validate or trust the no-missing diploid BGEN path according to mode."""
+    engine.validate_trusted_no_missing_diploid_with_default_cache(
+        str(bgen_path),
+        validation_mode.value,
     )
 
 

@@ -11953,7 +11953,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -12228,7 +12228,7 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -12421,7 +12421,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -12554,7 +12554,7 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -12622,7 +12622,7 @@ def test_binary_gpu_auto_uses_packed8_when_trusted_validation_succeeds() -> None
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -12696,7 +12696,7 @@ def test_binary_gpu_auto_falls_back_to_dosage_when_trusted_validation_fails() ->
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", IncompatibleTrustedRunEngine),
         patch("g.engine.native_dispatch.loaders._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -12768,7 +12768,7 @@ def test_binary_explicit_packed8_still_fails_when_trusted_validation_fails() -> 
     with (
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", IncompatibleTrustedRunEngine),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -13236,7 +13236,7 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
     with (
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -13537,7 +13537,7 @@ def test_grouped_per_phenotype_packed8_forces_trusted_delivery_and_manifests() -
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.MultiRegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -13723,7 +13723,7 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.MultiRegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -13853,7 +13853,7 @@ def test_grouped_per_phenotype_pipeline_keeps_multi_pass_when_union_not_cheaper(
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.loaders._core.MultiRegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(
@@ -13923,7 +13923,7 @@ def test_multi_binary_complete_case_packed8_preserves_kernel_config_and_manifest
     with (
         patch("g.engine.native_dispatch.engine._core.Regenie2RunEngine", FakeRunEngine),
         patch(
-            "g.engine.native_dispatch.engine.trusted_validation.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.engine.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch(

@@ -35,8 +35,8 @@ src/g/
   jax_runtime/                   JAX runtime policy, resolution, diagnostics, state, setup
   runtime_paths.py               default runtime cache path helpers
   engine/
-    backend_planner.py           association backend selection before dispatch
     regenie2_pipeline/           native-driven BGEN pipeline wrappers
+      backend.py                 association backend selection before dispatch
     callbacks/                   JAX callback workers and result materialization
     native_dispatch/             Rust bridge for engine/alignment/predictions
     telemetry.py                 JSONL run telemetry

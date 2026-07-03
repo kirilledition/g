@@ -1168,7 +1168,7 @@ def test_pipeline_import_policy_allows_pipeline_runtime_policy_adapter(tmp_path:
     assert violations == ()
 
 
-def test_pipeline_import_policy_rejects_backend_planner_imports(tmp_path: Path) -> None:
+def test_import_policy_rejects_obsolete_backend_planner_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"
     pipeline_directory.mkdir(parents=True)
@@ -1203,7 +1203,7 @@ def test_pipeline_import_policy_rejects_backend_planner_imports(tmp_path: Path) 
     ]
 
 
-def test_pipeline_import_policy_allows_pipeline_backend_adapter(tmp_path: Path) -> None:
+def test_import_policy_rejects_obsolete_backend_planner_from_adapter(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"
     pipeline_directory.mkdir(parents=True)
@@ -1219,7 +1219,58 @@ def test_pipeline_import_policy_allows_pipeline_backend_adapter(tmp_path: Path) 
 
     violations = check_python_architecture.collect_python_import_policy_violations(package_root)
 
-    assert violations == ()
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/regenie2_pipeline/backend.py"),
+            1,
+            "g.engine.backend_planner",
+            "g.engine.backend_planner",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/backend.py"),
+            2,
+            "g.engine.backend_planner",
+            "g.engine.backend_planner",
+        ),
+    ]
+
+
+def test_import_policy_rejects_obsolete_trusted_validation_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    native_dispatch_directory = package_root / "engine" / "native_dispatch"
+    native_dispatch_directory.mkdir(parents=True)
+    (native_dispatch_directory / "engine.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import trusted_validation",
+                "import g.engine.trusted_validation",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/native_dispatch/engine.py"),
+            1,
+            "g.engine.trusted_validation",
+            "g.engine.trusted_validation",
+        ),
+        (
+            Path("g/engine/native_dispatch/engine.py"),
+            2,
+            "g.engine.trusted_validation",
+            "g.engine.trusted_validation",
+        ),
+    ]
 
 
 def test_pipeline_call_policy_rejects_native_schedule_policy_construction(tmp_path: Path) -> None:
