@@ -961,6 +961,13 @@ PYTHON_CALL_POLICIES = (
         message="production JAX host materialization must stay isolated to callback diagnostic and writer adapters",
     ),
     PythonCallPolicy(
+        name="jax_runtime_path_expansion_isolation",
+        source_directory=Path("jax_runtime"),
+        forbidden_calls=("expanduser",),
+        allowed_paths=(),
+        message="production JAX runtime path expansion is owned by native runtime policy",
+    ),
+    PythonCallPolicy(
         name="compute_kernel_file_io_isolation",
         source_directory=Path("compute"),
         forbidden_calls=(

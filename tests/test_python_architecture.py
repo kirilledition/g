@@ -2525,6 +2525,28 @@ def test_jax_cache_resolution_policy_rejects_production_python_resolver_calls(tm
     ]
 
 
+def test_jax_runtime_path_policy_rejects_python_expanduser(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    jax_runtime_directory = package_root / "jax_runtime"
+    jax_runtime_directory.mkdir(parents=True)
+    (jax_runtime_directory / "resolution.py").write_text(
+        "\n".join(
+            (
+                "def resolve(policy):",
+                "    return policy.cache_directory.expanduser()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [(Path("g/jax_runtime/resolution.py"), 2, "policy.cache_directory.expanduser", "expanduser")]
+
+
 def test_jax_setup_session_policy_rejects_raw_session_construction(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     jax_runtime_directory = package_root / "jax_runtime"

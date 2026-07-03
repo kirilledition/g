@@ -79,7 +79,7 @@ pub fn build_jax_runtime_policy_payload(
 ) -> JaxRuntimePolicyPayload {
     JaxRuntimePolicyPayload {
         device: device.to_string(),
-        cache_directory: cache_directory.map(str::to_string),
+        cache_directory: cache_directory.map(runtime_paths::expand_current_user_path),
         matmul_precision: matmul_precision.map(str::to_string),
         persistent_cache,
         persistent_cache_min_entry_size_bytes,

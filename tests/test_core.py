@@ -2401,6 +2401,28 @@ def test_native_jax_runtime_policy_payload() -> None:
     assert not hasattr(_core, "build_jax_runtime_policy_payload")
 
 
+def test_native_jax_runtime_policy_payload_expands_current_user_cache_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home_directory = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home_directory))
+    runtime_state = _core.NativeRuntimeState()
+
+    jax_policy_payload = runtime_state.build_jax_runtime_policy_payload(
+        device="cpu",
+        cache_directory="~/g-jax-cache",
+        matmul_precision=None,
+        persistent_cache=True,
+        persistent_cache_min_entry_size_bytes=0,
+        persistent_cache_min_compile_time_seconds=0,
+        xla_autotune_cache=False,
+        transfer_guard=False,
+    )
+
+    assert jax_policy_payload["cache_directory"] == str(home_directory / "g-jax-cache")
+
+
 def test_native_jax_runtime_setup_session_owns_diagnostic_payloads() -> None:
     native_setup_session = build_native_jax_runtime_setup_session(
         requested_device="gpu",

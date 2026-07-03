@@ -2699,6 +2699,10 @@ Current guardrail notes:
   callbacks on production signatures. Tests patch the boundary-local loader
   helper directly, and the Python architecture checker rejects reintroduced
   loader-injection parameters under `g.engine`.
+- Native runtime policy now owns current-user `~` expansion for JAX cache
+  directories. The Python JAX runtime adapter passes path text through to the
+  native payload builder, and the Python architecture checker rejects
+  reintroduced `expanduser()` calls under `g.jax_runtime`.
 
 ### Exit criteria
 

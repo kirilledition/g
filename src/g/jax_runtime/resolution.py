@@ -21,9 +21,7 @@ def resolve_jax_runtime_policy(compute_config: _core.GComputeConfig) -> models.J
     """
     policy_payload = build_native_jax_runtime_policy_payload(
         device=compute_config.device.value,
-        cache_directory=(
-            None if compute_config.jax_cache_dir is None else str(compute_config.jax_cache_dir.expanduser())
-        ),
+        cache_directory=None if compute_config.jax_cache_dir is None else str(compute_config.jax_cache_dir),
         matmul_precision=None
         if compute_config.jax_matmul_precision is None
         else compute_config.jax_matmul_precision.value,
@@ -96,7 +94,7 @@ def jax_runtime_policy_to_native_payload(policy: models.JaxRuntimePolicy) -> dic
     """
     return build_native_jax_runtime_policy_payload(
         device=policy.device.value,
-        cache_directory=None if policy.cache_directory is None else str(policy.cache_directory.expanduser()),
+        cache_directory=None if policy.cache_directory is None else str(policy.cache_directory),
         matmul_precision=None if policy.matmul_precision is None else policy.matmul_precision.value,
         persistent_cache=policy.persistent_cache,
         persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
