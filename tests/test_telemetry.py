@@ -8,9 +8,10 @@ import unittest.mock
 import pytest
 
 from g import _core, types
-from g.engine import run_events, telemetry
+from g.engine import telemetry
 from g.interface import config
 from g.jax_runtime import models as jax_runtime_models
+from g.runner import events as run_events
 from g.runner import runtime as runner_runtime
 
 if typing.TYPE_CHECKING:

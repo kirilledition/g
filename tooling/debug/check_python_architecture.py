@@ -601,6 +601,7 @@ PYTHON_CALL_POLICIES = (
         name="native_event_policy_factory_isolation",
         source_directory=Path(),
         forbidden_calls=(
+            "_core.NativeRunEventPayloadPolicy",
             "_core.NativeRunEventTelemetryPolicy",
             "_core.NativeRunnerDiagnosticPolicy",
             "_core.NativeOutputPreflightDiagnosticPolicy",
@@ -620,7 +621,7 @@ PYTHON_CALL_POLICIES = (
         name="native_diagnostic_payload_adapter_isolation",
         source_directory=Path(),
         forbidden_calls=("_core.build_*_diagnostic_payload", "_core.build_*_diagnostic_payloads"),
-        allowed_paths=(Path("engine/run_events.py"), Path("engine/timing.py"), Path("jax_runtime/diagnostics.py")),
+        allowed_paths=(Path("runner/events.py"), Path("engine/timing.py"), Path("jax_runtime/diagnostics.py")),
         message=(
             "production Python must use native diagnostic recorders; payload builders are compatibility adapters only"
         ),

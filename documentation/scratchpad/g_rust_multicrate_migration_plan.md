@@ -2655,6 +2655,10 @@ Current guardrail notes:
   construct their native diagnostic/telemetry policy handles directly at their
   local boundaries; the Python architecture checker rejects direct native event
   policy construction outside those helpers.
+- Run-event payload dataclasses, native payload adaptation, and terminal
+  rendering now live in `g.runner.events`; the obsolete `g.engine.run_events`
+  production module was removed, and stale direct imports are caught by the
+  existing boundary checks and type validation.
 
 ### Exit criteria
 

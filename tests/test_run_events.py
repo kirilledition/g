@@ -4,7 +4,8 @@ import typing
 from pathlib import Path
 
 from g import _core, types
-from g.engine import run_events, shutdown
+from g.engine import shutdown
+from g.runner import events as run_events
 
 
 def test_run_completed_event_uses_native_artifact_tree_builder() -> None:

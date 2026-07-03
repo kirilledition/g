@@ -1367,6 +1367,7 @@ def test_event_policy_factory_rejects_direct_native_construction(tmp_path: Path)
             (
                 "from g import _core",
                 "def build_policies():",
+                "    _core.NativeRunEventPayloadPolicy()",
                 "    _core.NativeRunEventTelemetryPolicy()",
                 "    _core.NativeRunnerDiagnosticPolicy()",
                 "    _core.NativeOutputPreflightDiagnosticPolicy()",
@@ -1386,30 +1387,36 @@ def test_event_policy_factory_rejects_direct_native_construction(tmp_path: Path)
         (
             Path("g/runner/execution.py"),
             3,
-            "_core.NativeRunEventTelemetryPolicy",
-            "_core.NativeRunEventTelemetryPolicy",
+            "_core.NativeRunEventPayloadPolicy",
+            "_core.NativeRunEventPayloadPolicy",
         ),
         (
             Path("g/runner/execution.py"),
             4,
-            "_core.NativeRunnerDiagnosticPolicy",
-            "_core.NativeRunnerDiagnosticPolicy",
+            "_core.NativeRunEventTelemetryPolicy",
+            "_core.NativeRunEventTelemetryPolicy",
         ),
         (
             Path("g/runner/execution.py"),
             5,
-            "_core.NativeOutputPreflightDiagnosticPolicy",
-            "_core.NativeOutputPreflightDiagnosticPolicy",
+            "_core.NativeRunnerDiagnosticPolicy",
+            "_core.NativeRunnerDiagnosticPolicy",
         ),
         (
             Path("g/runner/execution.py"),
             6,
+            "_core.NativeOutputPreflightDiagnosticPolicy",
+            "_core.NativeOutputPreflightDiagnosticPolicy",
+        ),
+        (
+            Path("g/runner/execution.py"),
+            7,
             "_core.NativePipelineDiagnosticPolicy",
             "_core.NativePipelineDiagnosticPolicy",
         ),
         (
             Path("g/runner/execution.py"),
-            7,
+            8,
             "_core.NativeDispatchDiagnosticPolicy",
             "_core.NativeDispatchDiagnosticPolicy",
         ),
@@ -1429,6 +1436,7 @@ def test_event_policy_factory_allows_boundary_helpers(tmp_path: Path) -> None:
     native_dispatch_directory.mkdir(parents=True)
     callback_directory.mkdir(parents=True)
     for path, call_name in (
+        (runner_directory / "events.py", "_core.NativeRunEventPayloadPolicy()"),
         (runner_directory / "events.py", "_core.NativeRunEventTelemetryPolicy()"),
         (runner_directory / "events.py", "_core.NativeRunnerDiagnosticPolicy()"),
         (preflight_directory / "preflight.py", "_core.NativeOutputPreflightDiagnosticPolicy()"),
@@ -2071,9 +2079,7 @@ def test_run_request_policy_routes_native_compile_through_execution_plan(tmp_pat
 def test_diagnostic_payload_policy_rejects_direct_payload_builders(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"
-    run_events_directory = package_root / "engine"
     runner_directory.mkdir(parents=True)
-    run_events_directory.mkdir(parents=True)
     (runner_directory / "execution.py").write_text(
         "\n".join(
             (
@@ -2088,7 +2094,7 @@ def test_diagnostic_payload_policy_rejects_direct_payload_builders(tmp_path: Pat
         ),
         encoding="utf-8",
     )
-    (run_events_directory / "run_events.py").write_text(
+    (runner_directory / "events.py").write_text(
         "\n".join(
             (
                 "from g import _core",
