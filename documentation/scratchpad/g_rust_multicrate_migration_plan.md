@@ -2805,7 +2805,10 @@ Current guardrail notes:
   diagnostic native payload adapters now expose object-valued maps with
   explicit integer adaptation instead of generic `typing.Any` maps.
   Execution-plan run-request adapters and runner-output manifest/header payload
-  adapters use the same object-valued native payload boundary.
+  adapters use the same object-valued native payload boundary. The
+  sentinel-protected CLI legacy bridge now types its runner event module
+  contract explicitly, and pipeline phenotype-index selection preserves the
+  selected value type instead of erasing it through `typing.Any`.
 - Test-only runner runtime construction/description helpers were also removed;
   isolated tests build native runtime-state handles directly.
 - The test-only `execution_plan.build_kernel_config()` wrapper was removed;

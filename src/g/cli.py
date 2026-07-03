@@ -13,6 +13,26 @@ if typing.TYPE_CHECKING:
     from g.runner import events as runner_events
 
 
+class RunnerEventsModule(typing.Protocol):
+    """Subset of runner event helpers used by the CLI bridge."""
+
+    def build_run_failed_event(self, error: Exception) -> runner_events.RunFailedEvent:
+        """Build a failed-run event."""
+        ...
+
+    def render_run_interrupted_lines(self, interrupted_event: runner_events.RunInterruptedEvent) -> tuple[str, ...]:
+        """Render interrupted-run CLI lines."""
+        ...
+
+    def render_run_failed_lines(self, failed_event: runner_events.RunFailedEvent) -> tuple[str, ...]:
+        """Render failed-run CLI lines."""
+        ...
+
+    def render_run_completed_lines(self, completed_event: runner_events.RunCompletedEvent) -> tuple[str, ...]:
+        """Render completed-run CLI lines."""
+        ...
+
+
 NATIVE_CLI_OUTPUT_LOG_LIMIT = 4096
 NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE = "G_NATIVE_CLI_PYTHON_BRIDGE_SENTINEL"
 RUNTIME_FAILURE_EXIT_CODE = 1
@@ -46,6 +66,7 @@ def run_args_legacy(arguments: typing.Sequence[str]) -> int:
     from g.runner import lifecycle as runner_lifecycle
     from g.runner import runtime as runner_runtime
 
+    runner_events_module = typing.cast("RunnerEventsModule", runner_events)
     cli_lifecycle_state = g._core.NativeCliRunLifecycleState()
     run_telemetry_session = None
     exit_code = RUNTIME_FAILURE_EXIT_CODE
@@ -67,17 +88,17 @@ def run_args_legacy(arguments: typing.Sequence[str]) -> int:
                 )
         except runner_lifecycle.GracefulShutdownRequested as shutdown_request:
             interrupted_event = runner_events.build_run_interrupted_event(shutdown_request)
-            print_interrupted_lines(runner_events, interrupted_event)
-            log_interrupted_lines(runner_events, interrupted_event)
+            print_interrupted_lines(runner_events_module, interrupted_event)
+            log_interrupted_lines(runner_events_module, interrupted_event)
             exit_code = shutdown_request.exit_code
         else:
             completed_event = runner_events.build_run_completed_event(artifacts)
-            print_completed_lines(runner_events, completed_event)
-            log_completed_lines(runner_events, completed_event)
+            print_completed_lines(runner_events_module, completed_event)
+            log_completed_lines(runner_events_module, completed_event)
             exit_code = 0
     except Exception as error:  # noqa: BLE001
         exit_code = print_and_log_failed_event(
-            runner_events,
+            runner_events_module,
             error,
             cli_lifecycle_state=cli_lifecycle_state,
             telemetry_session=run_telemetry_session,
@@ -93,7 +114,7 @@ def run_args_legacy(arguments: typing.Sequence[str]) -> int:
                 )
                 if close_failure_plan.should_report_failure:
                     print_and_log_failed_event(
-                        runner_events,
+                        runner_events_module,
                         error,
                         cli_lifecycle_state=cli_lifecycle_state,
                         telemetry_session=None,
@@ -134,7 +155,7 @@ def native_cli_diagnostic_policy() -> g._core.NativeCliDiagnosticPolicy:
 
 
 def print_interrupted_lines(
-    run_events_module: typing.Any,
+    run_events_module: RunnerEventsModule,
     interrupted_event: runner_events.RunInterruptedEvent,
 ) -> None:
     """Print graceful interruption details."""
@@ -144,7 +165,7 @@ def print_interrupted_lines(
 
 
 def log_interrupted_lines(
-    run_events_module: typing.Any,
+    run_events_module: RunnerEventsModule,
     interrupted_event: runner_events.RunInterruptedEvent,
 ) -> None:
     """Emit graceful interruption diagnostics."""
@@ -155,11 +176,11 @@ def log_interrupted_lines(
 
 
 def print_and_log_failed_event(
-    run_events_module: typing.Any,
+    run_events_module: RunnerEventsModule,
     error: Exception,
     *,
     cli_lifecycle_state: g._core.NativeCliRunLifecycleState,
-    telemetry_session: typing.Any,
+    telemetry_session: object | None,
 ) -> int:
     """Print and log a concise runtime failure."""
     failed_event = run_events_module.build_run_failed_event(error)
@@ -172,14 +193,14 @@ def print_and_log_failed_event(
     return RUNTIME_FAILURE_EXIT_CODE
 
 
-def print_failed_lines(run_events_module: typing.Any, failed_event: runner_events.RunFailedEvent) -> None:
+def print_failed_lines(run_events_module: RunnerEventsModule, failed_event: runner_events.RunFailedEvent) -> None:
     """Print failure details."""
     failed_lines = run_events_module.render_run_failed_lines(failed_event)
     for line in failed_lines:
         print(line, file=sys.stderr)
 
 
-def log_failed_lines(run_events_module: typing.Any, failed_event: runner_events.RunFailedEvent) -> None:
+def log_failed_lines(run_events_module: RunnerEventsModule, failed_event: runner_events.RunFailedEvent) -> None:
     """Emit failure diagnostics."""
     failed_lines = run_events_module.render_run_failed_lines(failed_event)
     native_diagnostic_policy = native_cli_diagnostic_policy()
@@ -188,14 +209,18 @@ def log_failed_lines(run_events_module: typing.Any, failed_event: runner_events.
             native_diagnostic_policy.record_native_cli_failed_line_diagnostic_event(line=line)
 
 
-def print_completed_lines(run_events_module: typing.Any, completed_event: runner_events.RunCompletedEvent) -> None:
+def print_completed_lines(
+    run_events_module: RunnerEventsModule, completed_event: runner_events.RunCompletedEvent
+) -> None:
     """Print completion details."""
     completed_lines = run_events_module.render_run_completed_lines(completed_event)
     for line in completed_lines:
         print(line)
 
 
-def log_completed_lines(run_events_module: typing.Any, completed_event: runner_events.RunCompletedEvent) -> None:
+def log_completed_lines(
+    run_events_module: RunnerEventsModule, completed_event: runner_events.RunCompletedEvent
+) -> None:
     """Emit completion diagnostics."""
     completed_lines = run_events_module.render_run_completed_lines(completed_event)
     native_diagnostic_policy = native_cli_diagnostic_policy()

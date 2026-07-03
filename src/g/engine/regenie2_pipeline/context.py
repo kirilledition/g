@@ -261,10 +261,10 @@ def validate_phenotype_compute_groups(
         raise ValueError(message)
 
 
-def select_by_phenotype_indices(
-    values: tuple[typing.Any, ...],
+def select_by_phenotype_indices[PhenotypeIndexedValue](
+    values: tuple[PhenotypeIndexedValue, ...],
     phenotype_indices: tuple[int, ...],
-) -> tuple[typing.Any, ...]:
+) -> tuple[PhenotypeIndexedValue, ...]:
     """Select values in phenotype compute group order."""
     return tuple(values[phenotype_index] for phenotype_index in phenotype_indices)
 

@@ -138,20 +138,17 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             run_input=group_multi_run_input,
             prediction_source=grouped_run_input.prediction_source,
             compute_group=compute_group,
-            output_run_paths_by_phenotype=typing.cast(
-                "tuple[outputs.OutputRunPaths, ...]",
-                pipeline_context.select_by_phenotype_indices(
-                    output_run_paths_by_phenotype,
-                    compute_group.phenotype_indices,
-                ),
+            output_run_paths_by_phenotype=pipeline_context.select_by_phenotype_indices(
+                output_run_paths_by_phenotype,
+                compute_group.phenotype_indices,
             ),
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
-            existing_manifests=typing.cast(
-                "tuple[dict[str, object] | None, ...]",
-                pipeline_context.select_by_phenotype_indices(existing_manifests, compute_group.phenotype_indices),
+            existing_manifests=pipeline_context.select_by_phenotype_indices(
+                existing_manifests,
+                compute_group.phenotype_indices,
             ),
             resume=resume,
             resume_mode=resume_mode,
@@ -297,23 +294,17 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
             run_input=grouped_run_input.run_input,
             prediction_source=grouped_run_input.prediction_source,
             compute_group=grouped_run_input.compute_group,
-            output_run_paths_by_phenotype=typing.cast(
-                "tuple[outputs.OutputRunPaths, ...]",
-                pipeline_context.select_by_phenotype_indices(
-                    output_run_paths_by_phenotype,
-                    grouped_run_input.compute_group.phenotype_indices,
-                ),
+            output_run_paths_by_phenotype=pipeline_context.select_by_phenotype_indices(
+                output_run_paths_by_phenotype,
+                grouped_run_input.compute_group.phenotype_indices,
             ),
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
-            existing_manifests=typing.cast(
-                "tuple[dict[str, object] | None, ...]",
-                pipeline_context.select_by_phenotype_indices(
-                    existing_manifests,
-                    grouped_run_input.compute_group.phenotype_indices,
-                ),
+            existing_manifests=pipeline_context.select_by_phenotype_indices(
+                existing_manifests,
+                grouped_run_input.compute_group.phenotype_indices,
             ),
             resume=resume,
             resume_mode=resume_mode,

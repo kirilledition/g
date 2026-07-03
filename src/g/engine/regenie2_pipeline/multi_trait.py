@@ -365,20 +365,17 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         run_input=run_input,
         prediction_source=prediction_source,
         compute_group=resolved_compute_group,
-        output_run_paths_by_phenotype=typing.cast(
-            "tuple[outputs.OutputRunPaths, ...]",
-            pipeline_context.select_by_phenotype_indices(
-                output_run_paths_by_phenotype,
-                resolved_compute_group.phenotype_indices,
-            ),
+        output_run_paths_by_phenotype=pipeline_context.select_by_phenotype_indices(
+            output_run_paths_by_phenotype,
+            resolved_compute_group.phenotype_indices,
         ),
         staging_depth=staging_depth,
         native_callback_batch_size=native_callback_batch_size,
         result_in_flight_limit=result_in_flight_limit,
         dosage_buffer_limit=dosage_buffer_limit,
-        existing_manifests=typing.cast(
-            "tuple[dict[str, object] | None, ...]",
-            pipeline_context.select_by_phenotype_indices(existing_manifests, resolved_compute_group.phenotype_indices),
+        existing_manifests=pipeline_context.select_by_phenotype_indices(
+            existing_manifests,
+            resolved_compute_group.phenotype_indices,
         ),
         resume=resume,
         resume_mode=resume_mode,
