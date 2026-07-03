@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from g import _core, execution_plan, types
 from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.engine import backend_planner, telemetry, timing
-from g.io import output
+from g.engine.regenie2_pipeline import outputs
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -92,10 +92,10 @@ class Regenie2PipelineContext:
     correction_plan: types.BinaryCorrectionPlan
     binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None
-    writer_settings: output.OutputWriterSettings
+    writer_settings: outputs.OutputWriterSettings
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: telemetry.TelemetrySession | None
-    input_fingerprint_cache: output.ManifestFileFingerprintCache
+    input_fingerprint_cache: outputs.ManifestFileFingerprintCache
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...]
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
@@ -170,7 +170,7 @@ def build_regenie2_pipeline_context(
     correction_plan: types.BinaryCorrectionPlan,
     binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
-    writer_settings: output.OutputWriterSettings,
+    writer_settings: outputs.OutputWriterSettings,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
@@ -216,7 +216,7 @@ def build_regenie2_pipeline_context(
         writer_settings=writer_settings,
         stage_timing_recorder=resolved_stage_timing_recorder,
         telemetry_session=telemetry_session,
-        input_fingerprint_cache=output.ManifestFileFingerprintCache(),
+        input_fingerprint_cache=outputs.build_manifest_file_fingerprint_cache(),
         alignment_config=alignment_config,
         phenotype_compute_groups=phenotype_compute_groups,
         runtime_compatibility_token=runtime_compatibility_token,

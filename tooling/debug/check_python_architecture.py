@@ -300,6 +300,13 @@ PYTHON_IMPORT_POLICIES = (
         message="runner modules must route output adapter access through runner-local output helpers",
         allowed_paths=(Path("runner/outputs.py"),),
     ),
+    PythonImportPolicy(
+        name="pipeline_output_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.io",),
+        message="REGENIE pipeline modules must route output adapter access through pipeline output helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/outputs.py"),),
+    ),
 )
 
 PYTHON_CALL_POLICIES = (

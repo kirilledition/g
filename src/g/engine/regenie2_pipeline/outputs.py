@@ -16,6 +16,16 @@ from g.jax_runtime import models as jax_runtime_models
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
 
+type OutputRunPaths = output.OutputRunPaths
+type OutputWriterSettings = output.OutputWriterSettings
+type RunManifestHeaderInput = output.RunManifestHeaderInput
+type ManifestFileFingerprintCache = output.ManifestFileFingerprintCache
+type MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode
+
+SINGLE_PHENOTYPE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE
+PER_PHENOTYPE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.PER_PHENOTYPE
+COMPLETE_CASE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.COMPLETE_CASE
+
 
 @dataclass(frozen=True)
 class InitializedPipelineOutputRuns:
@@ -171,9 +181,9 @@ def build_pipeline_manifest_header(
     covariate_names: tuple[str, ...],
     sample_count: int,
     variant_count: int,
-    multi_phenotype_sample_mode: output.MultiPhenotypeSampleMode,
+    multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
     phenotype_compute_group: execution_plan.PhenotypeComputeGroup | None,
-) -> output.RunManifestHeaderInput:
+) -> RunManifestHeaderInput:
     """Build the current manifest header for one output run."""
     phenotype_compute_group_id = (
         None
@@ -235,9 +245,9 @@ def build_pipeline_manifest_header(
 
 def initialize_pipeline_output_runs(
     *,
-    output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
     existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
-    current_headers_by_trait: tuple[output.RunManifestHeaderInput, ...],
+    current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
@@ -266,9 +276,9 @@ def initialize_pipeline_output_runs(
 
 def validate_pipeline_resume_compatibility(
     *,
-    output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
     existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
-    current_headers_by_trait: tuple[output.RunManifestHeaderInput, ...],
+    current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
     resume_mode: types.ResumeMode,
 ) -> None:
     """Validate all resume manifests before any output run is mutated."""
@@ -284,9 +294,9 @@ def validate_pipeline_resume_compatibility(
 
 def build_pipeline_output_preparation_batch(
     *,
-    output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
     existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
-    current_headers_by_trait: tuple[output.RunManifestHeaderInput, ...],
+    current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
 ) -> _core.NativePipelineOutputPreparationBatch:
@@ -326,7 +336,7 @@ def notify_output_runs_initialized(
 def create_pipeline_writer_sessions(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    output_run_paths_by_trait: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
 ) -> tuple[typing.Any, ...]:
     """Create output writer sessions and record preparation timing."""
     writer_start_time = time.perf_counter()
@@ -352,3 +362,8 @@ def create_pipeline_writer_sessions(
     )
     timing.record_stage_duration(context.stage_timing_recorder, "output_writer_preparation", writer_start_time)
     return writer_sessions
+
+
+def build_manifest_file_fingerprint_cache() -> ManifestFileFingerprintCache:
+    """Build a run-scoped manifest fingerprint cache."""
+    return output.ManifestFileFingerprintCache()

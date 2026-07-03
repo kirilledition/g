@@ -15,7 +15,6 @@ from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
 from g.engine.regenie2_pipeline import gpu_format, outputs, telemetry_events
-from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -196,7 +195,7 @@ def run_single_trait_bgen_pipeline(
     context: pipeline_context.Regenie2PipelineContext,
     phenotype_name: str,
     covariate_names: tuple[str, ...] | None,
-    output_run_paths: output.OutputRunPaths,
+    output_run_paths: outputs.OutputRunPaths,
     existing_manifest: dict[str, typing.Any] | None,
     resume: bool,
     resume_mode: types.ResumeMode,
@@ -262,7 +261,7 @@ def run_single_trait_bgen_pipeline(
         covariate_names=tuple(run_input.native_aligned_sample_data.covariate_names),
         sample_count=int(run_input.sample_indices.shape[0]),
         variant_count=int(engine.variant_count),
-        multi_phenotype_sample_mode=output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+        multi_phenotype_sample_mode=outputs.SINGLE_PHENOTYPE_SAMPLE_MODE,
         phenotype_compute_group=resolved_compute_group,
     )
     initialized_outputs = outputs.initialize_pipeline_output_runs(
@@ -311,7 +310,7 @@ def run_regenie2_linear_bgen_pipeline(
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
-    output_run_paths: output.OutputRunPaths,
+    output_run_paths: outputs.OutputRunPaths,
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -319,7 +318,7 @@ def run_regenie2_linear_bgen_pipeline(
     existing_manifest: dict[str, typing.Any] | None,
     resume: bool,
     resume_mode: types.ResumeMode,
-    writer_settings: output.OutputWriterSettings,
+    writer_settings: outputs.OutputWriterSettings,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     bgen_decode_tile_variant_count: int,
@@ -403,7 +402,7 @@ def run_regenie2_binary_bgen_pipeline(
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
-    output_run_paths: output.OutputRunPaths,
+    output_run_paths: outputs.OutputRunPaths,
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -411,7 +410,7 @@ def run_regenie2_binary_bgen_pipeline(
     existing_manifest: dict[str, typing.Any] | None,
     resume: bool,
     resume_mode: types.ResumeMode,
-    writer_settings: output.OutputWriterSettings,
+    writer_settings: outputs.OutputWriterSettings,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     bgen_decode_tile_variant_count: int,

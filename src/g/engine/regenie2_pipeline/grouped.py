@@ -17,7 +17,6 @@ from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
 from g.engine.regenie2_pipeline import multi_group, outputs, telemetry_events
-from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -28,7 +27,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     context: pipeline_context.Regenie2PipelineContext,
     phenotype_names: tuple[str, ...],
     covariate_names: tuple[str, ...] | None,
-    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -135,7 +134,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             prediction_source=grouped_run_input.prediction_source,
             compute_group=compute_group,
             output_run_paths_by_phenotype=typing.cast(
-                "tuple[output.OutputRunPaths, ...]",
+                "tuple[outputs.OutputRunPaths, ...]",
                 pipeline_context.select_by_phenotype_indices(
                     output_run_paths_by_phenotype,
                     compute_group.phenotype_indices,
@@ -152,7 +151,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             resume=resume,
             resume_mode=resume_mode,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            output_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+            output_sample_mode=outputs.PER_PHENOTYPE_SAMPLE_MODE,
         )
         for phenotype_index, final_parquet_path in zip(
             compute_group.phenotype_indices,
@@ -168,7 +167,7 @@ def validate_grouped_per_phenotype_resume_compatibility(
     context: pipeline_context.Regenie2PipelineContext,
     engine: _core.Regenie2RunEngine,
     grouped_run_inputs: tuple[native_dispatch_models.NativeBgenGroupedRunInput, ...],
-    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
     existing_manifests: tuple[dict[str, typing.Any] | None, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
@@ -176,9 +175,9 @@ def validate_grouped_per_phenotype_resume_compatibility(
     """Validate all grouped per-phenotype manifests before initializing any group."""
     if not resume:
         return
-    selected_output_run_paths: list[output.OutputRunPaths] = []
+    selected_output_run_paths: list[outputs.OutputRunPaths] = []
     selected_existing_manifests: list[dict[str, typing.Any] | None] = []
-    selected_current_headers: list[output.RunManifestHeaderInput] = []
+    selected_current_headers: list[outputs.RunManifestHeaderInput] = []
     for grouped_run_input in grouped_run_inputs:
         compute_group = grouped_run_input.compute_group
         run_input = grouped_run_input.run_input
@@ -196,7 +195,7 @@ def validate_grouped_per_phenotype_resume_compatibility(
                     covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
                     sample_count=int(run_input.sample_indices.shape[0]),
                     variant_count=int(engine.variant_count),
-                    multi_phenotype_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+                    multi_phenotype_sample_mode=outputs.PER_PHENOTYPE_SAMPLE_MODE,
                     phenotype_compute_group=compute_group,
                 )
             )
@@ -264,7 +263,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     engine: _core.Regenie2RunEngine,
     grouped_run_inputs: tuple[native_dispatch_models.NativeBgenGroupedRunInput, ...],
     phenotype_names: tuple[str, ...],
-    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -296,7 +295,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
             prediction_source=grouped_run_input.prediction_source,
             compute_group=grouped_run_input.compute_group,
             output_run_paths_by_phenotype=typing.cast(
-                "tuple[output.OutputRunPaths, ...]",
+                "tuple[outputs.OutputRunPaths, ...]",
                 pipeline_context.select_by_phenotype_indices(
                     output_run_paths_by_phenotype,
                     grouped_run_input.compute_group.phenotype_indices,
@@ -316,7 +315,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
             resume=resume,
             resume_mode=resume_mode,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            output_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+            output_sample_mode=outputs.PER_PHENOTYPE_SAMPLE_MODE,
         )
         for grouped_run_input in grouped_run_inputs
     )

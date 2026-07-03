@@ -2556,6 +2556,11 @@ Current guardrail notes:
   prepared output-run state through a runner-local output helper instead of
   importing the output adapter directly; the Python architecture checker
   rejects `g.io` imports from runner modules except that helper.
+- REGENIE pipeline orchestration now routes output-run path types, writer
+  settings, manifest-header types, fingerprint cache construction, and
+  multi-phenotype output sample-mode values through
+  `g.engine.regenie2_pipeline.outputs`; the Python architecture checker rejects
+  `g.io` imports from sibling pipeline modules.
 
 ### Exit criteria
 
@@ -2804,6 +2809,7 @@ g.io must not import engine orchestration packages.
 Production Python must not import the obsolete `g.io.source` module.
 g.execution_plan must not import output adapter packages.
 g.runner modules must not import output adapter packages directly, except the runner output helper.
+g.engine.regenie2_pipeline modules must not import output adapter packages directly, except the pipeline output helper.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.

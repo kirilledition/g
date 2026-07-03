@@ -17,8 +17,6 @@ from g.engine.regenie2_pipeline import outputs, telemetry_events
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g.io import output
-
 
 def intersect_committed_chunk_identifier_sets(
     committed_chunk_identifier_sets: tuple[set[int], ...],
@@ -44,7 +42,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
     run_input: native_dispatch_models.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
     compute_group: execution_plan.PhenotypeComputeGroup,
-    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -53,7 +51,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
     resume: bool,
     resume_mode: types.ResumeMode,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
-    output_sample_mode: output.MultiPhenotypeSampleMode,
+    output_sample_mode: outputs.MultiPhenotypeSampleMode,
 ) -> pipeline_context.PreparedMultiPhenotypeGroupDelivery:
     """Prepare one compatible phenotype group for native BGEN delivery."""
     telemetry_events.log_prediction_source_loaded(
@@ -168,7 +166,7 @@ def run_prepared_multi_phenotype_bgen_group(
     run_input: native_dispatch_models.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
     compute_group: execution_plan.PhenotypeComputeGroup,
-    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -177,7 +175,7 @@ def run_prepared_multi_phenotype_bgen_group(
     resume: bool,
     resume_mode: types.ResumeMode,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
-    output_sample_mode: output.MultiPhenotypeSampleMode,
+    output_sample_mode: outputs.MultiPhenotypeSampleMode,
 ) -> tuple[Path | None, ...]:
     """Run one prepared compatible phenotype group through one BGEN pass."""
     prepared_delivery = prepare_multi_phenotype_bgen_group_delivery(
