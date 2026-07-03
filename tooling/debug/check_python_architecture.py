@@ -670,7 +670,7 @@ PYTHON_CALL_POLICIES = (
             "emit_binary_correction_summary_event",
             "emit_jax_runtime_diagnostic_event",
         ),
-        allowed_paths=(Path("engine/telemetry.py"),),
+        allowed_paths=(Path("runner/events.py"),),
         message="production Python telemetry event emission must go through typed native PyO3 dispatch helpers",
     ),
     PythonCallPolicy(
@@ -884,7 +884,7 @@ PYTHON_DEFINITION_POLICIES = (
     ),
     PythonDefinitionPolicy(
         name="telemetry_session_wrapper_definition_isolation",
-        source_directory=Path("engine/telemetry.py"),
+        source_directory=Path("runner/events.py"),
         forbidden_function_names=(
             "log_event",
             "log_run_completed",

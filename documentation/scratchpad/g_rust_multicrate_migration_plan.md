@@ -2567,9 +2567,9 @@ Current guardrail notes:
   rejects `g.io` imports from runner modules except that helper.
 - Runner execution, metadata, and runtime annotations now route run-event and
   telemetry access through a runner-local event helper instead of importing
-  engine run-event and telemetry packages directly; the Python architecture
-  checker rejects direct `g.engine.run_events` and `g.engine.telemetry` imports
-  from runner modules except that helper.
+  engine run-event and telemetry packages directly; the concrete telemetry
+  session/path adapter now lives in `g.runner.events`, and the obsolete
+  `g.engine.telemetry` production module was removed.
 - Runner execution now routes graceful-shutdown and final stage-timing access
   through runner-local lifecycle and timing helpers instead of importing engine
   shutdown and timing packages directly; the Python architecture checker

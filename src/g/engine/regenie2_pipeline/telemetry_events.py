@@ -5,13 +5,12 @@ from __future__ import annotations
 import typing
 
 from g import _core
-from g.engine import telemetry
 
 if typing.TYPE_CHECKING:
     from g import types
     from g.engine.regenie2_pipeline import context as pipeline_context
 
-type TelemetrySession = telemetry.TelemetrySession
+type TelemetrySession = object
 
 
 def native_pipeline_diagnostic_policy() -> _core.NativePipelineDiagnosticPolicy:

@@ -14,7 +14,6 @@ import pytest
 import g
 import g.cli as cli_module
 import g.engine.shutdown as shutdown_module
-import g.engine.telemetry as telemetry_module
 from g import _core, api, execution_plan, types
 from g.interface import config
 from g.io import output
@@ -22,6 +21,7 @@ from g.io.output import OutputRunPaths, PreparedOutputRun
 from g.jax_runtime import diagnostics as jax_runtime_diagnostics
 from g.jax_runtime import models as jax_runtime_models
 from g.jax_runtime import resolution as jax_runtime_resolution
+from g.runner import events as telemetry_module
 from g.runner import execution as runner_execution
 from g.runner import metadata as runner_metadata
 from g.runner import outputs as runner_outputs

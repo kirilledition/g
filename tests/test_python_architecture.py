@@ -2817,9 +2817,9 @@ def test_jax_host_materialization_policy_rejects_device_get_outside_adapters(tmp
 
 def test_telemetry_definition_policy_rejects_fallback_methods(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
-    telemetry_directory = package_root / "engine"
-    telemetry_directory.mkdir(parents=True)
-    (telemetry_directory / "telemetry.py").write_text(
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "events.py").write_text(
         "\n".join(
             (
                 "class TelemetrySession:",
@@ -2849,13 +2849,13 @@ def test_telemetry_definition_policy_rejects_fallback_methods(tmp_path: Path) ->
     )
 
     assert observed_violations == [
-        (Path("g/engine/telemetry.py"), 2, "log_run_failed"),
-        (Path("g/engine/telemetry.py"), 4, "close_with_event"),
-        (Path("g/engine/telemetry.py"), 6, "log_event"),
-        (Path("g/engine/telemetry.py"), 8, "log_run_started"),
-        (Path("g/engine/telemetry.py"), 10, "build_event_payload"),
-        (Path("g/engine/telemetry.py"), 12, "native_session_policy"),
-        (Path("g/engine/telemetry.py"), 14, "log_progress"),
+        (Path("g/runner/events.py"), 2, "log_run_failed"),
+        (Path("g/runner/events.py"), 4, "close_with_event"),
+        (Path("g/runner/events.py"), 6, "log_event"),
+        (Path("g/runner/events.py"), 8, "log_run_started"),
+        (Path("g/runner/events.py"), 10, "build_event_payload"),
+        (Path("g/runner/events.py"), 12, "native_session_policy"),
+        (Path("g/runner/events.py"), 14, "log_progress"),
     ]
 
 
