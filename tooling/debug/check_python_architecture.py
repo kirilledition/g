@@ -797,6 +797,17 @@ PYTHON_CALL_POLICIES = (
         message="production Python must consume typed host-planning handles instead of payload dictionaries",
     ),
     PythonCallPolicy(
+        name="preflight_payload_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_calls=(
+            "build_preflight_report_payload",
+            "validate_single_trait_preflight_shape_payload",
+            "validate_multi_trait_preflight_shape_payload",
+        ),
+        allowed_paths=(),
+        message="pipeline preflight must consume typed native preflight handles instead of payload dictionaries",
+    ),
+    PythonCallPolicy(
         name="pipeline_native_schedule_adapter_isolation",
         source_directory=Path("engine/regenie2_pipeline"),
         forbidden_calls=("_core.NativeSchedulePolicy",),

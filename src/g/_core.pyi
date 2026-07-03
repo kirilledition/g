@@ -3708,6 +3708,30 @@ class NativeHostPlanningPolicy:
     ) -> str: ...
     def build_phenotype_output_directory_name(self, phenotype_index: int, phenotype_name: str) -> str: ...
 
+class NativePreflightReport:
+    @property
+    def sample_count(self) -> int: ...
+    @property
+    def covariate_count(self) -> int: ...
+    @property
+    def chromosome_count(self) -> int: ...
+    @property
+    def warning_messages(self) -> list[str]: ...
+
+class NativeSingleTraitPreflightShape:
+    @property
+    def sample_count(self) -> int: ...
+    @property
+    def covariate_count(self) -> int: ...
+
+class NativeMultiTraitPreflightShape:
+    @property
+    def trait_count(self) -> int: ...
+    @property
+    def sample_count(self) -> int: ...
+    @property
+    def covariate_count(self) -> int: ...
+
 def plan_genotype_chunks(
     variant_count: int,
     chunk_size: int,
@@ -3768,6 +3792,13 @@ def run_native_cli_python_bridge(
 class NativePreflightValidator:
     def __init__(self) -> None: ...
     def resolve_preflight_variant_count(self, variant_count: int, variant_limit: int | None = None) -> int: ...
+    def build_preflight_report(
+        self,
+        sample_count: int,
+        covariate_count: int,
+        chromosome_count: int,
+        trusted_no_missing_diploid: bool,
+    ) -> NativePreflightReport: ...
     def build_preflight_report_payload(
         self,
         sample_count: int,
@@ -3775,6 +3806,13 @@ class NativePreflightValidator:
         chromosome_count: int,
         trusted_no_missing_diploid: bool,
     ) -> dict[str, object]: ...
+    def validate_single_trait_preflight_shape(
+        self,
+        phenotype_sample_count: int,
+        covariate_dimension_count: int,
+        covariate_sample_count: int,
+        covariate_count: int,
+    ) -> NativeSingleTraitPreflightShape: ...
     def validate_single_trait_preflight_shape_payload(
         self,
         phenotype_sample_count: int,
@@ -3782,6 +3820,15 @@ class NativePreflightValidator:
         covariate_sample_count: int,
         covariate_count: int,
     ) -> dict[str, object]: ...
+    def validate_multi_trait_preflight_shape(
+        self,
+        phenotype_dimension_count: int,
+        phenotype_trait_count: int,
+        phenotype_sample_count: int,
+        covariate_dimension_count: int,
+        covariate_sample_count: int,
+        covariate_count: int,
+    ) -> NativeMultiTraitPreflightShape: ...
     def validate_multi_trait_preflight_shape_payload(
         self,
         phenotype_dimension_count: int,

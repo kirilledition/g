@@ -2834,6 +2834,10 @@ Current guardrail notes:
   PyO3 handles for production callers. Legacy host-planning payload methods
   remain compatibility surface on the policy object, but the Python
   architecture checker rejects production calls to those dict payload methods.
+- Pipeline preflight shape validation and report construction now consume typed
+  native preflight handles instead of dict payloads. Legacy preflight payload
+  methods remain on the validator for compatibility tests, and production
+  preflight modules are guarded from calling them.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture
@@ -3183,6 +3187,8 @@ production and confines typed native run-request compilation to the
 `g.execution_plan` adapter.
 The host-planning rule rejects dict payload backend/group/correction planning
 methods in production so Python callers consume typed native handles.
+The preflight rule rejects dict payload shape/report methods in pipeline
+preflight so production code consumes typed native validation handles.
 
 ---
 

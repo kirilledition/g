@@ -2539,6 +2539,54 @@ def test_host_planning_policy_rejects_payload_methods(tmp_path: Path) -> None:
     ]
 
 
+def test_preflight_policy_rejects_payload_methods(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "preflight.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build():",
+                "    validator = _core.NativePreflightValidator()",
+                "    validator.build_preflight_report_payload(3, 2, 1, True)",
+                "    validator.validate_single_trait_preflight_shape_payload(3, 2, 3, 2)",
+                "    validator.validate_multi_trait_preflight_shape_payload(2, 2, 3, 2, 3, 2)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/regenie2_pipeline/preflight.py"),
+            4,
+            "preflight_payload_isolation",
+            "validator.build_preflight_report_payload",
+            "build_preflight_report_payload",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/preflight.py"),
+            5,
+            "preflight_payload_isolation",
+            "validator.validate_single_trait_preflight_shape_payload",
+            "validate_single_trait_preflight_shape_payload",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/preflight.py"),
+            6,
+            "preflight_payload_isolation",
+            "validator.validate_multi_trait_preflight_shape_payload",
+            "validate_multi_trait_preflight_shape_payload",
+        ),
+    ]
+
+
 def test_diagnostic_payload_policy_rejects_direct_payload_builders(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"

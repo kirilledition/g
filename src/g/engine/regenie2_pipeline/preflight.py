@@ -252,15 +252,15 @@ def resolve_single_trait_preflight_shape(
     covariate_matrix: np.ndarray,
 ) -> SingleTraitPreflightShape:
     """Validate single-trait shape policy through the native engine crate."""
-    payload = native_preflight_validator().validate_single_trait_preflight_shape_payload(
+    native_shape = native_preflight_validator().validate_single_trait_preflight_shape(
         shape_count(phenotype_vector.shape, 0),
         int(covariate_matrix.ndim),
         shape_count(covariate_matrix.shape, 0),
         shape_count(covariate_matrix.shape, 1),
     )
     return SingleTraitPreflightShape(
-        sample_count=typing.cast("int", payload["sample_count"]),
-        covariate_count=typing.cast("int", payload["covariate_count"]),
+        sample_count=native_shape.sample_count,
+        covariate_count=native_shape.covariate_count,
     )
 
 
@@ -269,7 +269,7 @@ def resolve_multi_trait_preflight_shape(
     covariate_matrix: np.ndarray,
 ) -> MultiTraitPreflightShape:
     """Validate multi-trait shape policy through the native engine crate."""
-    payload = native_preflight_validator().validate_multi_trait_preflight_shape_payload(
+    native_shape = native_preflight_validator().validate_multi_trait_preflight_shape(
         int(phenotype_matrix.ndim),
         shape_count(phenotype_matrix.shape, 0),
         shape_count(phenotype_matrix.shape, 1),
@@ -278,9 +278,9 @@ def resolve_multi_trait_preflight_shape(
         shape_count(covariate_matrix.shape, 1),
     )
     return MultiTraitPreflightShape(
-        trait_count=typing.cast("int", payload["trait_count"]),
-        sample_count=typing.cast("int", payload["sample_count"]),
-        covariate_count=typing.cast("int", payload["covariate_count"]),
+        trait_count=native_shape.trait_count,
+        sample_count=native_shape.sample_count,
+        covariate_count=native_shape.covariate_count,
     )
 
 
@@ -311,17 +311,17 @@ def build_preflight_report(
     trusted_no_missing_diploid: bool,
 ) -> PreflightReport:
     """Build the native-owned preflight report payload."""
-    payload = native_preflight_validator().build_preflight_report_payload(
+    native_report = native_preflight_validator().build_preflight_report(
         sample_count,
         covariate_count,
         chromosome_count,
         trusted_no_missing_diploid,
     )
     return PreflightReport(
-        sample_count=typing.cast("int", payload["sample_count"]),
-        covariate_count=typing.cast("int", payload["covariate_count"]),
-        chromosome_count=typing.cast("int", payload["chromosome_count"]),
-        warning_messages=typing.cast("tuple[str, ...]", payload["warning_messages"]),
+        sample_count=native_report.sample_count,
+        covariate_count=native_report.covariate_count,
+        chromosome_count=native_report.chromosome_count,
+        warning_messages=tuple(native_report.warning_messages),
     )
 
 

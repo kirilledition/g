@@ -1193,6 +1193,16 @@ def test_native_python_association_backend_requires_native_batch_result() -> Non
 def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None:
     native_preflight_validator = _core.NativePreflightValidator()
 
+    single_shape = native_preflight_validator.validate_single_trait_preflight_shape(
+        phenotype_sample_count=3,
+        covariate_dimension_count=2,
+        covariate_sample_count=3,
+        covariate_count=2,
+    )
+    assert isinstance(single_shape, _core.NativeSingleTraitPreflightShape)
+    assert single_shape.sample_count == 3
+    assert single_shape.covariate_count == 2
+
     single_payload = native_preflight_validator.validate_single_trait_preflight_shape_payload(
         phenotype_sample_count=3,
         covariate_dimension_count=2,
@@ -1200,6 +1210,19 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
         covariate_count=2,
     )
     assert single_payload == {"sample_count": 3, "covariate_count": 2}
+
+    multi_shape = native_preflight_validator.validate_multi_trait_preflight_shape(
+        phenotype_dimension_count=2,
+        phenotype_trait_count=2,
+        phenotype_sample_count=3,
+        covariate_dimension_count=2,
+        covariate_sample_count=3,
+        covariate_count=2,
+    )
+    assert isinstance(multi_shape, _core.NativeMultiTraitPreflightShape)
+    assert multi_shape.trait_count == 2
+    assert multi_shape.sample_count == 3
+    assert multi_shape.covariate_count == 2
 
     multi_payload = native_preflight_validator.validate_multi_trait_preflight_shape_payload(
         phenotype_dimension_count=2,
@@ -1210,6 +1233,21 @@ def test_native_preflight_shape_payloads_validate_deterministic_policy() -> None
         covariate_count=2,
     )
     assert multi_payload == {"trait_count": 2, "sample_count": 3, "covariate_count": 2}
+
+    report = native_preflight_validator.build_preflight_report(
+        sample_count=3,
+        covariate_count=2,
+        chromosome_count=1,
+        trusted_no_missing_diploid=True,
+    )
+    assert isinstance(report, _core.NativePreflightReport)
+    assert report.sample_count == 3
+    assert report.covariate_count == 2
+    assert report.chromosome_count == 1
+    assert report.warning_messages == [
+        "REGENIE step 2 is running with fewer than 10 residual degrees of freedom.",
+        "Trusted no-missing diploid BGEN path is enabled after compatibility validation.",
+    ]
 
     with pytest.raises(ValueError, match="Covariate matrix must be two-dimensional"):
         native_preflight_validator.validate_single_trait_preflight_shape_payload(
