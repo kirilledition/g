@@ -444,6 +444,104 @@ def test_pipeline_import_policy_allows_pipeline_timing_adapter(tmp_path: Path) -
     assert violations == ()
 
 
+def test_pipeline_import_policy_rejects_preflight_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "single_trait.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import preflight",
+                "import g.engine.preflight",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 1, "g.engine.preflight", "g.engine.preflight"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 2, "g.engine.preflight", "g.engine.preflight"),
+    ]
+
+
+def test_pipeline_import_policy_allows_pipeline_preflight_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "preflight.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import preflight",
+                "import g.engine.preflight",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
+def test_pipeline_import_policy_rejects_bgen_engine_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "outputs.py").write_text(
+        "\n".join(
+            (
+                "from g.engine.native_dispatch import engine",
+                "import g.engine.native_dispatch.engine",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/regenie2_pipeline/outputs.py"),
+            1,
+            "g.engine.native_dispatch.engine",
+            "g.engine.native_dispatch.engine",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/outputs.py"),
+            2,
+            "g.engine.native_dispatch.engine",
+            "g.engine.native_dispatch.engine",
+        ),
+    ]
+
+
+def test_pipeline_import_policy_allows_pipeline_bgen_engine_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "bgen_engine.py").write_text(
+        "\n".join(
+            (
+                "from g.engine.native_dispatch import engine",
+                "import g.engine.native_dispatch.engine",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_python_cli_shim_policy_rejects_public_python_process_ownership(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()

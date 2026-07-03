@@ -8,8 +8,7 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, types
-from g.engine.native_dispatch import engine as native_dispatch_engine
-from g.engine.regenie2_pipeline import telemetry_events, timing
+from g.engine.regenie2_pipeline import bgen_engine, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from g import execution_plan
@@ -195,13 +194,13 @@ def validate_auto_packed8_bgen_engine(
 ) -> _core.Regenie2RunEngine:
     """Open and validate the trusted BGEN engine required for packed8 delivery."""
     engine_start_time = time.perf_counter()
-    engine = native_dispatch_engine.open_bgen_run_engine(
+    engine = bgen_engine.open_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=True,
     )
-    native_dispatch_engine.validate_trusted_bgen_run_engine(
+    bgen_engine.validate_trusted_bgen_run_engine(
         engine=engine,
         genotype_source_config=genotype_source_config,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,

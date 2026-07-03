@@ -2570,6 +2570,14 @@ Current guardrail notes:
   exact-timing checks, and stage-duration recording through
   `g.engine.regenie2_pipeline.timing`; the Python architecture checker rejects
   direct `g.engine.timing` imports from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes single- and multi-trait preflight
+  validation entrypoints through `g.engine.regenie2_pipeline.preflight`; the
+  Python architecture checker rejects direct `g.engine.preflight` imports from
+  sibling pipeline modules.
+- REGENIE pipeline orchestration now routes BGEN engine open and trusted
+  validation helpers through `g.engine.regenie2_pipeline.bgen_engine`; the
+  Python architecture checker rejects direct `g.engine.native_dispatch.engine`
+  imports from sibling pipeline modules.
 
 ### Exit criteria
 
@@ -2821,6 +2829,8 @@ g.runner modules must not import output adapter packages directly, except the ru
 g.engine.regenie2_pipeline modules must not import output adapter packages directly, except the pipeline output helper.
 g.engine.regenie2_pipeline modules must not import run-event or telemetry packages directly, except the pipeline telemetry helper.
 g.engine.regenie2_pipeline modules must not import timing packages directly, except the pipeline timing helper.
+g.engine.regenie2_pipeline modules must not import preflight packages directly, except the pipeline preflight helper.
+g.engine.regenie2_pipeline modules must not import native-dispatch BGEN engine helpers directly, except the pipeline BGEN engine helper.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.

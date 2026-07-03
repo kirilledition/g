@@ -7,9 +7,8 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, execution_plan, types
-from g.engine.native_dispatch import engine as native_dispatch_engine
 from g.engine.native_dispatch import groups as native_dispatch_groups
-from g.engine.regenie2_pipeline import telemetry_events, timing
+from g.engine.regenie2_pipeline import bgen_engine, telemetry_events, timing
 from g.io import output
 from g.jax_runtime import models as jax_runtime_models
 
@@ -117,7 +116,7 @@ def open_pipeline_bgen_engine(
         variant_limit=context.variant_limit,
     )
     log_association_backend_selected(context=context, phenotype_name=phenotype_name, phenotype_count=phenotype_count)
-    engine = native_dispatch_engine.build_bgen_run_engine(
+    engine = bgen_engine.build_bgen_run_engine(
         genotype_source_config=context.genotype_source_config,
         chunk_size=context.chunk_size,
         variant_limit=context.variant_limit,

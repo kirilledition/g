@@ -2757,7 +2757,7 @@ def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
     engine = FakeRunEngine("study.bgen", chunk_size=32, trusted_no_missing_diploid=True)
 
     with (
-        patch("g.engine.regenie2_pipeline.outputs.native_dispatch_engine.build_bgen_run_engine", return_value=engine),
+        patch("g.engine.regenie2_pipeline.outputs.bgen_engine.build_bgen_run_engine", return_value=engine),
         patch(
             "g.engine.regenie2_pipeline.outputs.telemetry_events.native_pipeline_diagnostic_policy",
         ) as diagnostic_policy_factory_mock,

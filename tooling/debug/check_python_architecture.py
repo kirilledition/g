@@ -321,6 +321,20 @@ PYTHON_IMPORT_POLICIES = (
         message="REGENIE pipeline modules must route stage timing access through pipeline timing helpers",
         allowed_paths=(Path("engine/regenie2_pipeline/timing.py"),),
     ),
+    PythonImportPolicy(
+        name="pipeline_preflight_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.preflight",),
+        message="REGENIE pipeline modules must route preflight access through pipeline preflight helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/preflight.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_bgen_engine_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.native_dispatch.engine",),
+        message="REGENIE pipeline modules must route BGEN engine access through pipeline BGEN engine helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/bgen_engine.py"),),
+    ),
 )
 
 PYTHON_CALL_POLICIES = (
