@@ -34,6 +34,8 @@ def test_core_stub_config_boundaries_use_object_payloads() -> None:
     assert "def from_options(raw_options: typing.Mapping[str, object]) -> RegenieConfig: ..." in stub_text
     assert "def config_from_options(raw_options: typing.Mapping[str, object]) -> RegenieConfig: ..." in stub_text
     assert "def config_option_schema() -> list[dict[str, object]]: ..." in stub_text
+    assert "class NativeRunRequest:" in stub_text
+    assert "def compile_run_request(config: RegenieConfig) -> NativeRunRequest: ..." in stub_text
     assert "def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig: ..." not in stub_text
     assert (
         "def config_from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig: ..." not in stub_text

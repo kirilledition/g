@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import typing
-
 import pytest
 
 from g import execution_plan, types
@@ -25,9 +23,8 @@ def build_binary_correction_plan(**overrides: object) -> types.BinaryCorrectionP
         "out": "results/output",
     }
     raw_options.update(normalized_overrides)
-    run_request = execution_plan.compile_run_request_payload(config.RegenieConfig.from_options(raw_options))
-    correction_payload = typing.cast("dict[str, typing.Any]", run_request["correction"])
-    return execution_plan.adapt_binary_correction_plan(correction_payload)
+    run_request = execution_plan.compile_run_request(config.RegenieConfig.from_options(raw_options))
+    return execution_plan.adapt_binary_correction_plan(run_request.correction)
 
 
 def test_default_binary_config_normalizes_to_score_only() -> None:

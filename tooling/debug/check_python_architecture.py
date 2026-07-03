@@ -772,11 +772,18 @@ PYTHON_CALL_POLICIES = (
         message="production Python must not reconstruct canonical prepared-run plans",
     ),
     PythonCallPolicy(
-        name="native_run_request_adapter_isolation",
+        name="native_run_request_payload_isolation",
         source_directory=Path(),
         forbidden_calls=("_core.compile_run_request_json", "_core.compile_run_request_payload"),
+        allowed_paths=(),
+        message="production Python must not consume native run-request dict/JSON payloads",
+    ),
+    PythonCallPolicy(
+        name="native_run_request_adapter_isolation",
+        source_directory=Path(),
+        forbidden_calls=("_core.compile_run_request",),
         allowed_paths=(Path("execution_plan.py"),),
-        message="production Python must route native run-request compilation through the execution-plan adapter",
+        message="production Python must route typed native run-request compilation through the execution-plan adapter",
     ),
     PythonCallPolicy(
         name="pipeline_native_schedule_adapter_isolation",

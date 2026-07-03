@@ -82,6 +82,23 @@ def build_minimal_config() -> config.RegenieConfig:
     return config.RegenieConfig.from_options(build_minimal_options())
 
 
+def test_compile_run_request_returns_typed_native_handle() -> None:
+    regenie_config = build_minimal_config()
+
+    run_request = execution_plan.compile_run_request(regenie_config)
+    plan = execution_plan.build_regenie_execution_plan(regenie_config)
+
+    assert isinstance(run_request, _core.NativeRunRequest)
+    assert isinstance(run_request.input, _core.NativeRunRequestInput)
+    assert isinstance(run_request.compute, _core.NativeRunRequestCompute)
+    assert isinstance(run_request.correction, _core.NativeRunRequestCorrection)
+    assert run_request.input.bgen_path == "dataset.bgen"
+    assert run_request.input.covariate_names == ["age", "sex"]
+    assert run_request.output.output_format == types.OutputFormat.PARQUET.value
+    assert plan.genotype_source_config.source_path == Path("dataset.bgen")
+    assert plan.covariate_names == ("age", "sex")
+
+
 def test_shutdown_controller_uses_native_default_signals() -> None:
     shutdown_controller = shutdown_module.GracefulShutdownController(handled_signals=None)
 
@@ -129,9 +146,8 @@ def build_binary_correction_plan(**overrides: object) -> types.BinaryCorrectionP
     raw_options = build_minimal_options(**normalized_overrides)
     raw_options["qt"] = False
     raw_options["bt"] = True
-    run_request = execution_plan.compile_run_request_payload(config.RegenieConfig.from_options(raw_options))
-    correction_payload = typing.cast("dict[str, typing.Any]", run_request["correction"])
-    return execution_plan.adapt_binary_correction_plan(correction_payload)
+    run_request = execution_plan.compile_run_request(config.RegenieConfig.from_options(raw_options))
+    return execution_plan.adapt_binary_correction_plan(run_request.correction)
 
 
 def build_test_process_runtime_state(
@@ -1811,7 +1827,10 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
         output.OutputRunPaths(Path("run/one"), Path("run/one/chunks")),
         output.OutputRunPaths(Path("run/two"), Path("run/two/chunks")),
     )
-    existing_manifests = ({"phenotype_name": "one"}, {"phenotype_name": "two"})
+    existing_manifests: tuple[dict[str, object], dict[str, object]] = (
+        {"phenotype_name": "one"},
+        {"phenotype_name": "two"},
+    )
 
     with patch(
         "g.runner.outputs.prepare_output_run",

@@ -2825,6 +2825,11 @@ Current guardrail notes:
   `typing.Any`. The generated `_core.pyi` public config signatures now mirror
   that object-valued boundary for `from_options`, `config_from_options`, and
   `config_option_schema`.
+- Execution-plan construction now compiles configs through a typed
+  `NativeRunRequest` PyO3 handle and adapts typed nested native objects instead
+  of parsing the legacy run-request dict payload. The Python architecture
+  checker rejects `_core.compile_run_request_payload` in production and allows
+  `_core.compile_run_request` only inside `g.execution_plan`.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture
@@ -3169,6 +3174,9 @@ cannot return unnoticed just because no current production module imports it.
 The Rust association-backend effects rule rejects optional Python effect-method
 probes in the root PyO3 coordinator scaffold, keeping the effect boundary an
 explicit all-hooks contract when a Python effects object is supplied.
+The run-request rule rejects legacy dict/JSON run-request payload calls in
+production and confines typed native run-request compilation to the
+`g.execution_plan` adapter.
 
 ---
 

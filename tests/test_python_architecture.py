@@ -2437,6 +2437,7 @@ def test_run_request_policy_routes_native_compile_through_execution_plan(tmp_pat
                 "def build(config):",
                 "    _core.compile_run_request_json(config)",
                 "    _core.compile_run_request_payload(config)",
+                "    _core.compile_run_request(config)",
             )
         ),
         encoding="utf-8",
@@ -2446,6 +2447,7 @@ def test_run_request_policy_routes_native_compile_through_execution_plan(tmp_pat
             (
                 "from g import _core",
                 "def build(config):",
+                "    _core.compile_run_request(config)",
                 "    _core.compile_run_request_payload(config)",
             )
         ),
@@ -2455,11 +2457,37 @@ def test_run_request_policy_routes_native_compile_through_execution_plan(tmp_pat
     violations = check_python_architecture.collect_python_call_policy_violations(package_root)
 
     assert [
-        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
         for violation in violations
     ] == [
-        (Path("g/runner/execution.py"), 3, "_core.compile_run_request_json", "_core.compile_run_request_json"),
-        (Path("g/runner/execution.py"), 4, "_core.compile_run_request_payload", "_core.compile_run_request_payload"),
+        (
+            Path("g/execution_plan.py"),
+            4,
+            "native_run_request_payload_isolation",
+            "_core.compile_run_request_payload",
+            "_core.compile_run_request_payload",
+        ),
+        (
+            Path("g/runner/execution.py"),
+            3,
+            "native_run_request_payload_isolation",
+            "_core.compile_run_request_json",
+            "_core.compile_run_request_json",
+        ),
+        (
+            Path("g/runner/execution.py"),
+            4,
+            "native_run_request_payload_isolation",
+            "_core.compile_run_request_payload",
+            "_core.compile_run_request_payload",
+        ),
+        (
+            Path("g/runner/execution.py"),
+            5,
+            "native_run_request_adapter_isolation",
+            "_core.compile_run_request",
+            "_core.compile_run_request",
+        ),
     ]
 
 
