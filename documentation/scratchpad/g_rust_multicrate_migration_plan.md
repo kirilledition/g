@@ -2588,6 +2588,12 @@ Current guardrail notes:
   through `g.engine.regenie2_pipeline.delivery`; the Python architecture
   checker rejects direct `g.engine.native_dispatch.delivery` imports from
   sibling pipeline modules.
+- REGENIE pipeline orchestration now routes native schedule-policy access for
+  GPU genotype format planning, effective trusted-BGEN mode, grouped union
+  batch sizing, and committed-chunk intersection through
+  `g.engine.regenie2_pipeline.schedule`; the Python architecture checker
+  rejects direct `_core.NativeSchedulePolicy` construction from sibling
+  pipeline modules.
 
 ### Exit criteria
 
@@ -2843,6 +2849,7 @@ g.engine.regenie2_pipeline modules must not import preflight packages directly, 
 g.engine.regenie2_pipeline modules must not import native-dispatch BGEN engine helpers directly, except the pipeline BGEN engine helper.
 g.engine.regenie2_pipeline modules must not import native-dispatch input loaders, group helpers, or input models directly, except the pipeline input helper.
 g.engine.regenie2_pipeline modules must not import native-dispatch delivery helpers directly, except the pipeline delivery helper.
+g.engine.regenie2_pipeline modules must not construct native schedule policy handles directly, except the pipeline schedule helper.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.

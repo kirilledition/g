@@ -494,6 +494,13 @@ PYTHON_CALL_POLICIES = (
         message="production Python must route native run-request compilation through the execution-plan adapter",
     ),
     PythonCallPolicy(
+        name="pipeline_native_schedule_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_calls=("_core.NativeSchedulePolicy",),
+        allowed_paths=(Path("engine/regenie2_pipeline/schedule.py"),),
+        message="REGENIE pipeline modules must route native scheduling policy access through pipeline schedule helpers",
+    ),
+    PythonCallPolicy(
         name="native_diagnostic_payload_adapter_isolation",
         source_directory=Path(),
         forbidden_calls=("_core.build_*_diagnostic_payload", "_core.build_*_diagnostic_payloads"),

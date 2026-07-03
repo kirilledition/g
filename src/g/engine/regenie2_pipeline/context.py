@@ -5,14 +5,15 @@ from __future__ import annotations
 import typing
 from dataclasses import dataclass
 
-from g import _core, execution_plan, types
+from g import execution_plan, types
 from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.engine import backend_planner
-from g.engine.regenie2_pipeline import outputs, telemetry_events, timing
+from g.engine.regenie2_pipeline import outputs, schedule, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
+    from g import _core
     from g.compute.regenie2_binary import config as regenie2_binary_config
     from g.engine.callbacks import shared as callback_shared
     from g.engine.regenie2_pipeline import inputs
@@ -109,22 +110,15 @@ class Regenie2PipelineContext:
     @property
     def effective_trusted_no_missing_diploid(self) -> bool:
         """Return trusted BGEN mode after packed8 requirements are applied."""
-        return bool(
-            native_schedule_policy().resolve_effective_trusted_no_missing_diploid(
-                self.trusted_no_missing_diploid,
-                self.uses_packed8_genotypes,
-            )
+        return schedule.resolve_effective_trusted_no_missing_diploid(
+            trusted_no_missing_diploid=self.trusted_no_missing_diploid,
+            uses_packed8_genotypes=self.uses_packed8_genotypes,
         )
 
     @property
     def is_binary_trait(self) -> bool:
         """Return whether this context is for binary trait association."""
         return self.association_mode == types.AssociationMode.REGENIE2_BINARY
-
-
-def native_schedule_policy() -> _core.NativeSchedulePolicy:
-    """Build the native schedule policy handle."""
-    return _core.NativeSchedulePolicy()
 
 
 @dataclass(frozen=True)

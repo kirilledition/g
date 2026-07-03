@@ -678,6 +678,56 @@ def test_pipeline_import_policy_allows_pipeline_delivery_adapter(tmp_path: Path)
     assert violations == ()
 
 
+def test_pipeline_call_policy_rejects_native_schedule_policy_construction(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "grouped.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build_policy():",
+                "    return _core.NativeSchedulePolicy()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/regenie2_pipeline/grouped.py"),
+            3,
+            "_core.NativeSchedulePolicy",
+            "_core.NativeSchedulePolicy",
+        ),
+    ]
+
+
+def test_pipeline_call_policy_allows_pipeline_schedule_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "schedule.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build_policy():",
+                "    return _core.NativeSchedulePolicy()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_python_cli_shim_policy_rejects_public_python_process_ownership(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()

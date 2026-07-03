@@ -7,11 +7,11 @@ import time
 import typing
 from dataclasses import dataclass
 
-from g import _core, types
-from g.engine.regenie2_pipeline import bgen_engine, telemetry_events, timing
+from g import types
+from g.engine.regenie2_pipeline import bgen_engine, schedule, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
-    from g import execution_plan
+    from g import _core, execution_plan
 
 MANIFEST_GPU_GENOTYPE_FORMAT_FIELD = "gpu_genotype_format"
 MANIFEST_ASSOCIATION_BACKEND_FIELD = "association_backend"
@@ -81,7 +81,7 @@ def resolve_auto_to_dosage(
     resolution_reason: str,
 ) -> types.GpuGenotypeFormat:
     """Resolve non-profiled auto requests to dosage."""
-    native_resolution_plan = native_schedule_policy().plan_gpu_genotype_format_auto_to_dosage(
+    native_resolution_plan = schedule.plan_gpu_genotype_format_auto_to_dosage(
         requested_gpu_genotype_format=requested_gpu_genotype_format.value,
         resolution_reason=resolution_reason,
     )
@@ -116,7 +116,7 @@ def read_manifest_gpu_genotype_format(
 ) -> types.GpuGenotypeFormat | None:
     """Read a concrete GPU genotype format from an existing manifest."""
     manifest_fields = read_manifest_gpu_genotype_format_fields(existing_manifest)
-    native_gpu_genotype_format = native_schedule_policy().resolve_manifest_gpu_genotype_format(
+    native_gpu_genotype_format = schedule.resolve_manifest_gpu_genotype_format(
         resume=True,
         manifest_gpu_genotype_format=manifest_fields.manifest_gpu_genotype_format,
         association_backend_genotype_format=manifest_fields.association_backend_genotype_format,
@@ -232,7 +232,7 @@ def resolve_single_trait_binary_gpu_genotype_format(
             association_backend_genotype_format=None,
         )
     )
-    native_resolution_plan = native_schedule_policy().plan_single_trait_binary_gpu_genotype_format_resolution(
+    native_resolution_plan = schedule.plan_single_trait_binary_gpu_genotype_format_resolution(
         requested_gpu_genotype_format=requested_gpu_genotype_format.value,
         manifest_gpu_genotype_format=manifest_fields.manifest_gpu_genotype_format,
         association_backend_genotype_format=manifest_fields.association_backend_genotype_format,
@@ -259,12 +259,12 @@ def resolve_single_trait_binary_gpu_genotype_format(
             stage_timing_recorder=stage_timing_recorder,
         )
     except ValueError as error:
-        native_resolution_plan = native_schedule_policy().plan_auto_gpu_genotype_format_after_trusted_validation(
+        native_resolution_plan = schedule.plan_auto_gpu_genotype_format_after_trusted_validation(
             fallback_error=str(error),
         )
         prepared_engine = None
     else:
-        native_resolution_plan = native_schedule_policy().plan_auto_gpu_genotype_format_after_trusted_validation(
+        native_resolution_plan = schedule.plan_auto_gpu_genotype_format_after_trusted_validation(
             fallback_error=None,
         )
 
@@ -276,8 +276,3 @@ def resolve_single_trait_binary_gpu_genotype_format(
         native_resolution_plan=native_resolution_plan,
         prepared_engine=prepared_engine,
     )
-
-
-def native_schedule_policy() -> _core.NativeSchedulePolicy:
-    """Build the native schedule policy handle."""
-    return _core.NativeSchedulePolicy()

@@ -13482,7 +13482,7 @@ def test_grouped_union_delivery_uses_native_callback_batch_size_policy() -> None
 
     with (
         patch(
-            "g.engine.regenie2_pipeline.grouped.native_schedule_policy",
+            "g.engine.regenie2_pipeline.schedule.native_schedule_policy",
             return_value=FailingSchedulePolicy(),
         ) as mock_policy_factory,
         pytest.raises(ValueError, match="native grouped union policy"),

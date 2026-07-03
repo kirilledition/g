@@ -7,29 +7,21 @@ import typing
 
 import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
-from g import _core, execution_plan, types
+from g import execution_plan, types
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import delivery, inputs, outputs, preflight, telemetry_events, timing
+from g.engine.regenie2_pipeline import delivery, inputs, outputs, preflight, schedule, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
+
+    from g import _core
 
 
 def intersect_committed_chunk_identifier_sets(
     committed_chunk_identifier_sets: tuple[set[int], ...],
 ) -> set[int]:
     """Return chunk identifiers already committed by every output in a delivery."""
-    native_committed_chunk_identifier_sets = tuple(
-        tuple(committed_chunk_identifier_set) for committed_chunk_identifier_set in committed_chunk_identifier_sets
-    )
-    return set(
-        native_schedule_policy().intersect_committed_chunk_identifier_sets(native_committed_chunk_identifier_sets)
-    )
-
-
-def native_schedule_policy() -> _core.NativeSchedulePolicy:
-    """Build the native schedule policy handle."""
-    return _core.NativeSchedulePolicy()
+    return schedule.intersect_committed_chunk_identifier_sets(committed_chunk_identifier_sets)
 
 
 def prepare_multi_phenotype_bgen_group_delivery(
