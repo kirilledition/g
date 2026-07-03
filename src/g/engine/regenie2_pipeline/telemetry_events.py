@@ -4,11 +4,23 @@ from __future__ import annotations
 
 import typing
 
-from g.engine import run_events
+from g.engine import run_events, telemetry
 
 if typing.TYPE_CHECKING:
-    from g import types
+    from g import _core, types
     from g.engine.regenie2_pipeline import context as pipeline_context
+
+type TelemetrySession = telemetry.TelemetrySession
+
+
+def native_pipeline_diagnostic_policy() -> _core.NativePipelineDiagnosticPolicy:
+    """Build the native pipeline diagnostic policy handle."""
+    return run_events.native_pipeline_diagnostic_policy()
+
+
+def native_run_event_telemetry_policy() -> _core.NativeRunEventTelemetryPolicy:
+    """Build the native run-event telemetry policy handle."""
+    return run_events.native_run_event_telemetry_policy()
 
 
 def log_sample_alignment_completed(
@@ -21,7 +33,7 @@ def log_sample_alignment_completed(
     phenotype_group_count: int | None,
 ) -> None:
     """Emit sample-alignment telemetry with mode-specific fields."""
-    run_events.native_run_event_telemetry_policy().record_sample_alignment_completed_telemetry_event(
+    native_run_event_telemetry_policy().record_sample_alignment_completed_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         phenotype_name,
@@ -42,13 +54,13 @@ def log_multi_phenotype_sample_summary(
 ) -> None:
     """Emit a user-visible summary of multi-phenotype sample semantics."""
     sample_counts_differ = len(set(sample_counts)) > 1
-    run_events.native_pipeline_diagnostic_policy().record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+    native_pipeline_diagnostic_policy().record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
         phenotype_count=len(sample_counts),
         phenotype_group_count=phenotype_group_count,
         sample_counts_differ=sample_counts_differ,
         sample_mode=sample_mode.value,
     )
-    run_events.native_run_event_telemetry_policy().record_multi_phenotype_sample_summary_telemetry_event(
+    native_run_event_telemetry_policy().record_multi_phenotype_sample_summary_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         sample_mode.value,
@@ -65,7 +77,7 @@ def log_prediction_source_loaded(
     phenotype_count: int | None,
 ) -> None:
     """Emit prediction-source telemetry with mode-specific fields."""
-    run_events.native_run_event_telemetry_policy().record_prediction_source_loaded_telemetry_event(
+    native_run_event_telemetry_policy().record_prediction_source_loaded_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         phenotype_name,

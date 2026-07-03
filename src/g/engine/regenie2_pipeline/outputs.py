@@ -7,9 +7,10 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, execution_plan, types
-from g.engine import run_events, timing
+from g.engine import timing
 from g.engine.native_dispatch import engine as native_dispatch_engine
 from g.engine.native_dispatch import groups as native_dispatch_groups
+from g.engine.regenie2_pipeline import telemetry_events
 from g.io import output
 from g.jax_runtime import models as jax_runtime_models
 
@@ -69,7 +70,7 @@ def log_association_backend_selected(
     phenotype_count: int | None,
 ) -> None:
     """Emit telemetry for the concrete association backend selection."""
-    run_events.native_run_event_telemetry_policy().record_association_backend_selected_telemetry_event(
+    telemetry_events.native_run_event_telemetry_policy().record_association_backend_selected_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         context.backend_plan.backend_kind.value,
@@ -88,7 +89,7 @@ def log_bgen_engine_opened(
     phenotype_count: int | None,
 ) -> None:
     """Emit telemetry for an opened BGEN engine."""
-    run_events.native_run_event_telemetry_policy().record_bgen_engine_opened_telemetry_event(
+    telemetry_events.native_run_event_telemetry_policy().record_bgen_engine_opened_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         context.backend_plan.backend_kind.value,
@@ -108,7 +109,7 @@ def open_pipeline_bgen_engine(
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN engine and emit shared telemetry."""
     engine_start_time = time.perf_counter()
-    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
     native_pipeline_diagnostic_policy.record_pipeline_bgen_engine_open_started_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
@@ -151,7 +152,7 @@ def use_prepared_pipeline_bgen_engine(
     phenotype_count: int | None,
 ) -> _core.Regenie2RunEngine:
     """Reuse a prevalidated BGEN engine and emit shared telemetry."""
-    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
     native_pipeline_diagnostic_policy.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
@@ -262,7 +263,7 @@ def initialize_pipeline_output_runs(
     )
     native_initialization = native_preparation_batch.initialize(runtime_compatibility_token)
     if resume:
-        native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+        native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
         for output_index, committed_chunk_identifier_set in enumerate(
             native_initialization.committed_chunk_identifier_sets()
         ):
@@ -340,7 +341,7 @@ def create_pipeline_writer_sessions(
 ) -> tuple[typing.Any, ...]:
     """Create output writer sessions and record preparation timing."""
     writer_start_time = time.perf_counter()
-    run_events.native_pipeline_diagnostic_policy().record_pipeline_output_writer_sessions_create_started_diagnostic_event(
+    telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_output_writer_sessions_create_started_diagnostic_event(
         association_mode=context.association_mode.value,
         output_count=len(output_run_paths_by_trait),
     )

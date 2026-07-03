@@ -307,6 +307,13 @@ PYTHON_IMPORT_POLICIES = (
         message="REGENIE pipeline modules must route output adapter access through pipeline output helpers",
         allowed_paths=(Path("engine/regenie2_pipeline/outputs.py"),),
     ),
+    PythonImportPolicy(
+        name="pipeline_run_event_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.run_events", "g.engine.telemetry"),
+        message="REGENIE pipeline modules must route run-event and telemetry access through pipeline helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/telemetry_events.py"),),
+    ),
 )
 
 PYTHON_CALL_POLICIES = (

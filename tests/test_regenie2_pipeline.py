@@ -1144,7 +1144,7 @@ def test_log_auto_resolution_records_native_gpu_format_diagnostic(monkeypatch: p
             )
 
     monkeypatch.setattr(
-        pipeline_gpu_format.run_events,
+        pipeline_gpu_format.telemetry_events,
         "native_pipeline_diagnostic_policy",
         FakePipelineDiagnosticPolicy,
     )
@@ -2759,7 +2759,7 @@ def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
     with (
         patch("g.engine.regenie2_pipeline.outputs.native_dispatch_engine.build_bgen_run_engine", return_value=engine),
         patch(
-            "g.engine.regenie2_pipeline.outputs.run_events.native_pipeline_diagnostic_policy",
+            "g.engine.regenie2_pipeline.outputs.telemetry_events.native_pipeline_diagnostic_policy",
         ) as diagnostic_policy_factory_mock,
     ):
         opened_engine = open_test_pipeline_bgen_engine(
@@ -2830,7 +2830,7 @@ def test_use_prepared_pipeline_bgen_engine_records_native_diagnostics() -> None:
 
     with (
         patch(
-            "g.engine.regenie2_pipeline.outputs.run_events.native_pipeline_diagnostic_policy",
+            "g.engine.regenie2_pipeline.outputs.telemetry_events.native_pipeline_diagnostic_policy",
         ) as diagnostic_policy_factory_mock,
     ):
         prepared_engine = pipeline_outputs.use_prepared_pipeline_bgen_engine(

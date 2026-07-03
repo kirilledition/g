@@ -8,7 +8,7 @@ import typing
 import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 from g import _core, execution_plan, types
-from g.engine import preflight, run_events, timing
+from g.engine import preflight, timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
@@ -60,7 +60,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         phenotype_count=len(run_input.phenotype_names),
     )
     preflight_start_time = time.perf_counter()
-    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
     native_pipeline_diagnostic_policy.record_pipeline_multi_group_preflight_started_diagnostic_event(
         phenotype_count=len(run_input.phenotype_names),
         sample_count=int(run_input.sample_indices.shape[0]),
@@ -81,7 +81,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
         variant_limit=context.variant_limit,
     )
-    run_events.native_run_event_telemetry_policy().record_multi_phenotype_preflight_completed_telemetry_event(
+    telemetry_events.native_run_event_telemetry_policy().record_multi_phenotype_preflight_completed_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         len(run_input.phenotype_names),

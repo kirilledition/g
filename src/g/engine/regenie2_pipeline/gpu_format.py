@@ -8,12 +8,12 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, types
-from g.engine import run_events, timing
+from g.engine import timing
 from g.engine.native_dispatch import engine as native_dispatch_engine
+from g.engine.regenie2_pipeline import telemetry_events
 
 if typing.TYPE_CHECKING:
     from g import execution_plan
-    from g.engine import telemetry
 
 MANIFEST_GPU_GENOTYPE_FORMAT_FIELD = "gpu_genotype_format"
 MANIFEST_ASSOCIATION_BACKEND_FIELD = "association_backend"
@@ -54,20 +54,20 @@ class ManifestGpuGenotypeFormatFields:
 
 def log_auto_resolution(
     *,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
     resolved_gpu_genotype_format: types.GpuGenotypeFormat,
     resolution_reason: str,
     fallback_error: str | None,
 ) -> None:
     """Emit logging and telemetry for an auto GPU genotype format decision."""
-    run_events.native_pipeline_diagnostic_policy().record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
+    telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
         requested_gpu_genotype_format=requested_gpu_genotype_format.value,
         resolved_gpu_genotype_format=resolved_gpu_genotype_format.value,
         resolution_reason=resolution_reason,
         fallback_error=fallback_error,
     )
-    run_events.native_run_event_telemetry_policy().record_gpu_genotype_format_resolved_telemetry_event(
+    telemetry_events.native_run_event_telemetry_policy().record_gpu_genotype_format_resolved_telemetry_event(
         telemetry_session,
         requested_gpu_genotype_format.value,
         resolved_gpu_genotype_format.value,
@@ -79,7 +79,7 @@ def log_auto_resolution(
 def resolve_auto_to_dosage(
     *,
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     resolution_reason: str,
 ) -> types.GpuGenotypeFormat:
     """Resolve non-profiled auto requests to dosage."""
@@ -151,7 +151,7 @@ def concrete_gpu_genotype_format_from_native_plan(
 
 def log_native_auto_resolution(
     *,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     native_resolution_plan: _core.NativeGpuGenotypeFormatResolutionPlan,
 ) -> None:
     """Emit logging and telemetry for a resolved native auto decision."""
@@ -223,7 +223,7 @@ def resolve_single_trait_binary_gpu_genotype_format(
     variant_limit: int | None,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
 ) -> GpuGenotypeFormatResolution:
     """Resolve the single-trait binary GPU genotype format before output initialization."""
     manifest_fields = (

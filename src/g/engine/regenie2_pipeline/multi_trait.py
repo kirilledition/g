@@ -6,7 +6,7 @@ import time
 import typing
 
 from g import _core, execution_plan, types
-from g.engine import run_events, telemetry, timing
+from g.engine import timing
 from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
@@ -49,7 +49,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
     gpu_genotype_format: types.GpuGenotypeFormat,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
@@ -133,7 +133,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     gpu_genotype_format: types.GpuGenotypeFormat,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
@@ -214,7 +214,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     sample_mode: types.MultiPhenotypeSampleMode | None,
@@ -285,7 +285,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     if sample_mode != types.MultiPhenotypeSampleMode.COMPLETE_CASE:
         message = "Multi-phenotype sample mode must be per-phenotype or complete-case."
         raise ValueError(message)
-    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
     native_pipeline_diagnostic_policy.record_pipeline_multi_trait_started_diagnostic_event(
         association_mode=context.association_mode.value,
         phenotype_count=len(phenotype_names),

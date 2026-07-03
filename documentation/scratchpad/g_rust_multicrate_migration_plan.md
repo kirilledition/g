@@ -2561,6 +2561,11 @@ Current guardrail notes:
   multi-phenotype output sample-mode values through
   `g.engine.regenie2_pipeline.outputs`; the Python architecture checker rejects
   `g.io` imports from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes native pipeline diagnostic policy
+  access, run-event telemetry policy access, and telemetry-session annotations
+  through `g.engine.regenie2_pipeline.telemetry_events`; the Python architecture
+  checker rejects direct `g.engine.run_events` and `g.engine.telemetry` imports
+  from sibling pipeline modules.
 
 ### Exit criteria
 
@@ -2810,6 +2815,7 @@ Production Python must not import the obsolete `g.io.source` module.
 g.execution_plan must not import output adapter packages.
 g.runner modules must not import output adapter packages directly, except the runner output helper.
 g.engine.regenie2_pipeline modules must not import output adapter packages directly, except the pipeline output helper.
+g.engine.regenie2_pipeline modules must not import run-event or telemetry packages directly, except the pipeline telemetry helper.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.

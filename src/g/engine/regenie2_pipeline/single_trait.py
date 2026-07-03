@@ -8,7 +8,7 @@ import typing
 import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 from g import _core, execution_plan, types
-from g.engine import preflight, run_events, telemetry, timing
+from g.engine import preflight, timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
@@ -33,7 +33,7 @@ def load_single_trait_run_input(
 ) -> native_dispatch_models.NativeBgenRunInput:
     """Load one phenotype's aligned native inputs and emit telemetry."""
     alignment_start_time = time.perf_counter()
-    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
     native_pipeline_diagnostic_policy.record_pipeline_single_trait_input_load_started_diagnostic_event(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -81,7 +81,7 @@ def build_single_trait_prediction_source(
 ) -> typing.Any:
     """Load one phenotype's REGENIE prediction source and emit telemetry."""
     prediction_start_time = time.perf_counter()
-    run_events.native_pipeline_diagnostic_policy().record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
+    telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
@@ -111,7 +111,7 @@ def run_single_trait_preflight(
 ) -> None:
     """Run preflight validation for one phenotype and emit telemetry."""
     preflight_start_time = time.perf_counter()
-    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
     native_pipeline_diagnostic_policy.record_pipeline_single_trait_preflight_started_diagnostic_event(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -134,7 +134,7 @@ def run_single_trait_preflight(
         pipeline_label=pipeline_label,
         sample_count=preflight_report.sample_count,
     )
-    run_events.native_run_event_telemetry_policy().record_single_trait_preflight_completed_telemetry_event(
+    telemetry_events.native_run_event_telemetry_policy().record_single_trait_preflight_completed_telemetry_event(
         context.telemetry_session,
         context.association_mode.value,
         phenotype_name,
@@ -208,7 +208,7 @@ def run_single_trait_bgen_pipeline(
 ) -> Path | None:
     """Run a single-trait REGENIE step 2 BGEN pipeline lifecycle."""
     pipeline_label = "binary" if context.is_binary_trait else "linear"
-    run_events.native_pipeline_diagnostic_policy().record_pipeline_single_trait_started_diagnostic_event(
+    telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_single_trait_started_diagnostic_event(
         association_mode=context.association_mode.value,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -329,7 +329,7 @@ def run_regenie2_linear_bgen_pipeline(
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
     gpu_genotype_format: types.GpuGenotypeFormat,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
@@ -423,7 +423,7 @@ def run_regenie2_binary_bgen_pipeline(
     gpu_genotype_format: types.GpuGenotypeFormat,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,

@@ -7,8 +7,8 @@ from dataclasses import dataclass
 
 from g import _core, execution_plan, types
 from g.compute.regenie2_linear import config as regenie2_linear_config
-from g.engine import backend_planner, telemetry, timing
-from g.engine.regenie2_pipeline import outputs
+from g.engine import backend_planner, timing
+from g.engine.regenie2_pipeline import outputs, telemetry_events
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -94,7 +94,7 @@ class Regenie2PipelineContext:
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None
     writer_settings: outputs.OutputWriterSettings
     stage_timing_recorder: timing.StageTimingRecorder | None
-    telemetry_session: telemetry.TelemetrySession | None
+    telemetry_session: telemetry_events.TelemetrySession | None
     input_fingerprint_cache: outputs.ManifestFileFingerprintCache
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...]
@@ -172,7 +172,7 @@ def build_regenie2_pipeline_context(
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
     writer_settings: outputs.OutputWriterSettings,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry.TelemetrySession | None,
+    telemetry_session: telemetry_events.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...],
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,

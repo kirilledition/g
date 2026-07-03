@@ -11,7 +11,7 @@ import numpy.typing as npt
 import g.engine.callbacks.grouped as callback_grouped
 import g.engine.callbacks.shared as callback_shared
 from g import _core, types
-from g.engine import run_events, timing
+from g.engine import timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
@@ -38,7 +38,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
 ) -> tuple[Path | None, ...]:
     """Group independently aligned phenotypes and run one BGEN pass per compatible group."""
-    native_pipeline_diagnostic_policy = run_events.native_pipeline_diagnostic_policy()
+    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
     native_pipeline_diagnostic_policy.record_pipeline_grouped_per_phenotype_started_diagnostic_event(
         association_mode=context.association_mode.value,
         phenotype_count=len(phenotype_names),
@@ -282,7 +282,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         int(grouped_run_input.run_input.sample_indices.shape[0]) for grouped_run_input in grouped_run_inputs
     )
     union_sample_count = int(union_sample_indices.shape[0])
-    run_events.native_pipeline_diagnostic_policy().record_pipeline_grouped_union_delivery_selected_diagnostic_event(
+    telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_grouped_union_delivery_selected_diagnostic_event(
         grouped_sample_count=grouped_sample_count,
         phenotype_group_count=len(grouped_run_inputs),
         union_sample_count=union_sample_count,

@@ -352,6 +352,54 @@ def test_pipeline_import_policy_allows_pipeline_output_adapter(tmp_path: Path) -
     assert violations == ()
 
 
+def test_pipeline_import_policy_rejects_run_event_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "single_trait.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events, telemetry",
+                "import g.engine.run_events",
+                "import g.engine.telemetry",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 1, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 1, "g.engine.telemetry", "g.engine.telemetry"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 2, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 3, "g.engine.telemetry", "g.engine.telemetry"),
+    ]
+
+
+def test_pipeline_import_policy_allows_pipeline_telemetry_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "telemetry_events.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events, telemetry",
+                "import g.engine.run_events",
+                "import g.engine.telemetry",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_python_cli_shim_policy_rejects_public_python_process_ownership(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()
