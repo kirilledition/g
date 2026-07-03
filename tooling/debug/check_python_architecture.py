@@ -378,7 +378,7 @@ PYTHON_IMPORT_POLICIES = (
         source_directory=Path("engine/regenie2_pipeline"),
         forbidden_imports=("g.engine.preflight",),
         message="REGENIE pipeline modules must route preflight access through pipeline preflight helpers",
-        allowed_paths=(Path("engine/regenie2_pipeline/preflight.py"),),
+        allowed_paths=(),
     ),
     PythonImportPolicy(
         name="pipeline_bgen_engine_adapter_isolation",
@@ -442,13 +442,7 @@ PYTHON_IMPORT_POLICIES = (
         name="obsolete_preflight_events_module_isolation",
         source_directory=Path(),
         forbidden_imports=("g.engine.preflight_events",),
-        message="preflight diagnostic policy construction is owned by g.engine.preflight",
-    ),
-    PythonImportPolicy(
-        name="preflight_event_adapter_isolation",
-        source_directory=Path("engine/preflight.py"),
-        forbidden_imports=("g.engine.run_events",),
-        message="preflight validation must route diagnostic events through the preflight event helper",
+        message="preflight diagnostic policy construction is owned by the pipeline preflight helper",
     ),
 )
 
@@ -610,7 +604,7 @@ PYTHON_CALL_POLICIES = (
         ),
         allowed_paths=(
             Path("runner/events.py"),
-            Path("engine/preflight.py"),
+            Path("engine/regenie2_pipeline/preflight.py"),
             Path("engine/regenie2_pipeline/telemetry_events.py"),
             Path("engine/native_dispatch/events.py"),
             Path("engine/callbacks/events.py"),
@@ -715,7 +709,7 @@ PYTHON_CALL_POLICIES = (
     ),
     PythonCallPolicy(
         name="native_preflight_numeric_scan_isolation",
-        source_directory=Path("engine/preflight.py"),
+        source_directory=Path("engine/regenie2_pipeline/preflight.py"),
         forbidden_calls=(
             "np.isfinite",
             "numpy.isfinite",
@@ -729,7 +723,7 @@ PYTHON_CALL_POLICIES = (
     ),
     PythonCallPolicy(
         name="native_preflight_required_chromosome_isolation",
-        source_directory=Path("engine/preflight.py"),
+        source_directory=Path("engine/regenie2_pipeline/preflight.py"),
         forbidden_calls=("getattr",),
         allowed_paths=(),
         message="production preflight must call the typed native required-chromosome API directly",

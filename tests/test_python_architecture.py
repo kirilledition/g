@@ -705,8 +705,9 @@ def test_pipeline_import_policy_allows_pipeline_preflight_adapter(tmp_path: Path
     (pipeline_directory / "preflight.py").write_text(
         "\n".join(
             (
-                "from g.engine import preflight",
-                "import g.engine.preflight",
+                "from g import _core",
+                "def build_policy():",
+                "    return _core.NativeOutputPreflightDiagnosticPolicy()",
             )
         ),
         encoding="utf-8",
@@ -719,9 +720,9 @@ def test_pipeline_import_policy_allows_pipeline_preflight_adapter(tmp_path: Path
 
 def test_preflight_import_policy_rejects_run_event_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
-    engine_directory = package_root / "engine"
-    engine_directory.mkdir(parents=True)
-    (engine_directory / "preflight.py").write_text(
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "preflight.py").write_text(
         "\n".join(
             (
                 "from g.engine import run_events",
@@ -737,8 +738,8 @@ def test_preflight_import_policy_rejects_run_event_imports(tmp_path: Path) -> No
         (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
         for violation in violations
     ] == [
-        (Path("g/engine/preflight.py"), 1, "g.engine.run_events", "g.engine.run_events"),
-        (Path("g/engine/preflight.py"), 2, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/regenie2_pipeline/preflight.py"), 1, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/regenie2_pipeline/preflight.py"), 2, "g.engine.run_events", "g.engine.run_events"),
     ]
 
 
@@ -1275,9 +1276,9 @@ def test_import_policy_rejects_obsolete_trusted_validation_imports(tmp_path: Pat
 
 def test_import_policy_rejects_obsolete_preflight_events_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
-    engine_directory = package_root / "engine"
-    engine_directory.mkdir(parents=True)
-    (engine_directory / "preflight.py").write_text(
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "preflight.py").write_text(
         "\n".join(
             (
                 "from g.engine import preflight_events",
@@ -1294,13 +1295,13 @@ def test_import_policy_rejects_obsolete_preflight_events_imports(tmp_path: Path)
         for violation in violations
     ] == [
         (
-            Path("g/engine/preflight.py"),
+            Path("g/engine/regenie2_pipeline/preflight.py"),
             1,
             "g.engine.preflight_events",
             "g.engine.preflight_events",
         ),
         (
-            Path("g/engine/preflight.py"),
+            Path("g/engine/regenie2_pipeline/preflight.py"),
             2,
             "g.engine.preflight_events",
             "g.engine.preflight_events",
@@ -1439,7 +1440,7 @@ def test_event_policy_factory_allows_boundary_helpers(tmp_path: Path) -> None:
         (runner_directory / "events.py", "_core.NativeRunEventPayloadPolicy()"),
         (runner_directory / "events.py", "_core.NativeRunEventTelemetryPolicy()"),
         (runner_directory / "events.py", "_core.NativeRunnerDiagnosticPolicy()"),
-        (preflight_directory / "preflight.py", "_core.NativeOutputPreflightDiagnosticPolicy()"),
+        (pipeline_directory / "preflight.py", "_core.NativeOutputPreflightDiagnosticPolicy()"),
         (pipeline_directory / "telemetry_events.py", "_core.NativePipelineDiagnosticPolicy()"),
         (pipeline_directory / "telemetry_events.py", "_core.NativeRunEventTelemetryPolicy()"),
         (native_dispatch_directory / "events.py", "_core.NativeDispatchDiagnosticPolicy()"),
@@ -2369,8 +2370,9 @@ def test_jax_setup_side_effect_policy_rejects_direct_jax_calls(tmp_path: Path) -
 def test_preflight_numeric_scan_policy_rejects_old_numpy_reductions(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     engine_directory = package_root / "engine"
-    engine_directory.mkdir(parents=True)
-    (engine_directory / "preflight.py").write_text(
+    pipeline_directory = engine_directory / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "preflight.py").write_text(
         "\n".join(
             (
                 "import numpy as np",
@@ -2401,17 +2403,17 @@ def test_preflight_numeric_scan_policy_rejects_old_numpy_reductions(tmp_path: Pa
     )
 
     assert observed_violations == [
-        (Path("g/engine/preflight.py"), 3, "np.isfinite", "np.isfinite"),
-        (Path("g/engine/preflight.py"), 4, "np.unique", "np.unique"),
-        (Path("g/engine/preflight.py"), 5, "np.count_nonzero", "np.count_nonzero"),
+        (Path("g/engine/regenie2_pipeline/preflight.py"), 3, "np.isfinite", "np.isfinite"),
+        (Path("g/engine/regenie2_pipeline/preflight.py"), 4, "np.unique", "np.unique"),
+        (Path("g/engine/regenie2_pipeline/preflight.py"), 5, "np.count_nonzero", "np.count_nonzero"),
     ]
 
 
 def test_preflight_required_chromosome_policy_rejects_engine_probe(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
-    engine_directory = package_root / "engine"
-    engine_directory.mkdir(parents=True)
-    (engine_directory / "preflight.py").write_text(
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "preflight.py").write_text(
         "\n".join(
             (
                 "def collect(engine):",
@@ -2428,15 +2430,15 @@ def test_preflight_required_chromosome_policy_rejects_engine_probe(tmp_path: Pat
         (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
         for violation in violations
     ] == [
-        (Path("g/engine/preflight.py"), 2, "getattr", "getattr"),
+        (Path("g/engine/regenie2_pipeline/preflight.py"), 2, "getattr", "getattr"),
     ]
 
 
 def test_covariate_rank_scan_policy_rejects_matrix_rank_in_production_python(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
-    engine_directory = package_root / "engine"
-    engine_directory.mkdir(parents=True)
-    (engine_directory / "preflight.py").write_text(
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "preflight.py").write_text(
         "\n".join(
             (
                 "import numpy as np",
@@ -2454,8 +2456,8 @@ def test_covariate_rank_scan_policy_rejects_matrix_rank_in_production_python(tmp
         (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
         for violation in violations
     ] == [
-        (Path("g/engine/preflight.py"), 3, "np.linalg.matrix_rank", "np.linalg.matrix_rank"),
-        (Path("g/engine/preflight.py"), 4, "matrix_rank", "matrix_rank"),
+        (Path("g/engine/regenie2_pipeline/preflight.py"), 3, "np.linalg.matrix_rank", "np.linalg.matrix_rank"),
+        (Path("g/engine/regenie2_pipeline/preflight.py"), 4, "matrix_rank", "matrix_rank"),
     ]
 
 
