@@ -21,7 +21,7 @@ if typing.TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
-    from g.engine import telemetry
+    from g.engine.callbacks import events
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
 NativeBgenRunInputProtocol = shared.NativeBgenRunInputProtocol
@@ -68,7 +68,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         dosage_buffer_limit: int | None,
         score_dtype: types.FloatingPointDtype,
         stage_timing_recorder: timing.StageTimingRecorder | None,
-        telemetry_session: telemetry.TelemetrySession | None,
+        telemetry_session: events.TelemetrySession | None,
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
         """Initialize the callback state."""
@@ -453,7 +453,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         dosage_buffer_limit: int | None,
         score_dtype: types.FloatingPointDtype,
         stage_timing_recorder: timing.StageTimingRecorder | None,
-        telemetry_session: telemetry.TelemetrySession | None,
+        telemetry_session: events.TelemetrySession | None,
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
         """Initialize the callback state."""

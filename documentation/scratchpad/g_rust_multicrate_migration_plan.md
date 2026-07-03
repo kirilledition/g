@@ -2585,6 +2585,10 @@ Current guardrail notes:
   helpers now route stage-timing access through a callback-local timing helper;
   the Python architecture checker rejects direct `g.engine.timing` imports from
   callback modules except that helper.
+- Callback runtime annotations and callback diagnostics now route run-event and
+  telemetry access through a callback-local event helper; the Python
+  architecture checker rejects direct `g.engine.run_events` and
+  `g.engine.telemetry` imports from callback modules except that helper.
 - REGENIE pipeline orchestration now routes output-run path types, writer
   settings, manifest-header types, fingerprint cache construction, and
   multi-phenotype output sample-mode values through
@@ -2891,6 +2895,7 @@ g.runner modules must not import run-event or telemetry packages directly, excep
 g.runner modules must not import shutdown or timing packages directly, except the runner lifecycle and timing helpers.
 g.engine.native_dispatch modules must not import run-event, shutdown, or timing packages directly, except the native-dispatch event, lifecycle, and timing helpers.
 g.engine.callbacks modules must not import timing packages directly, except the callback timing helper.
+g.engine.callbacks modules must not import run-event or telemetry packages directly, except the callback event helper.
 g.engine.regenie2_pipeline modules must not import output adapter packages directly, except the pipeline output helper.
 g.engine.regenie2_pipeline modules must not import run-event or telemetry packages directly, except the pipeline telemetry helper.
 g.engine.regenie2_pipeline modules must not import timing packages directly, except the pipeline timing helper.

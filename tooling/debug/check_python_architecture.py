@@ -340,6 +340,13 @@ PYTHON_IMPORT_POLICIES = (
         allowed_paths=(Path("engine/callbacks/timing.py"),),
     ),
     PythonImportPolicy(
+        name="callback_event_telemetry_adapter_isolation",
+        source_directory=Path("engine/callbacks"),
+        forbidden_imports=("g.engine.run_events", "g.engine.telemetry"),
+        message="callback modules must route event and telemetry access through callback event helpers",
+        allowed_paths=(Path("engine/callbacks/events.py"),),
+    ),
+    PythonImportPolicy(
         name="pipeline_output_adapter_isolation",
         source_directory=Path("engine/regenie2_pipeline"),
         forbidden_imports=("g.io",),

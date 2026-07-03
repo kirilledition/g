@@ -23,7 +23,7 @@ if typing.TYPE_CHECKING:
     import jax
 
     from g.compute.regenie2_binary import api as regenie2_binary
-    from g.engine import telemetry
+    from g.engine.callbacks import events
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
 PreprocessedDosageChunkWorkItem = shared.PreprocessedDosageChunkWorkItem
@@ -156,7 +156,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         result_in_flight_limit: int | None,
         dosage_buffer_limit: int | None,
         stage_timing_recorder: timing.StageTimingRecorder | None,
-        telemetry_session: telemetry.TelemetrySession | None,
+        telemetry_session: events.TelemetrySession | None,
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
         """Initialize shared native callback state."""

@@ -982,6 +982,54 @@ def test_callback_import_policy_allows_callback_timing_adapter(tmp_path: Path) -
     assert violations == ()
 
 
+def test_callback_import_policy_rejects_event_and_telemetry_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "diagnostics.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events, telemetry",
+                "import g.engine.run_events",
+                "import g.engine.telemetry",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/engine/callbacks/diagnostics.py"), 1, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/callbacks/diagnostics.py"), 1, "g.engine.telemetry", "g.engine.telemetry"),
+        (Path("g/engine/callbacks/diagnostics.py"), 2, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/callbacks/diagnostics.py"), 3, "g.engine.telemetry", "g.engine.telemetry"),
+    ]
+
+
+def test_callback_import_policy_allows_callback_event_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "events.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events, telemetry",
+                "import g.engine.run_events",
+                "import g.engine.telemetry",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_pipeline_import_policy_rejects_compute_config_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"

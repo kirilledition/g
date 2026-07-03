@@ -11318,7 +11318,7 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence() -> No
     try:
         with (
             patch(
-                "g.engine.callbacks.diagnostics.run_events.native_pipeline_diagnostic_policy",
+                "g.engine.callbacks.diagnostics.events.native_pipeline_diagnostic_policy",
             ) as diagnostic_policy_factory_mock,
             patch.object(
                 callback_diagnostics.np,
@@ -11452,7 +11452,7 @@ def test_multi_binary_callback_records_native_null_logistic_count_and_timing() -
         with (
             patch.object(callback_diagnostics.jax, "device_get", recording_device_get),
             patch(
-                "g.engine.callbacks.diagnostics.run_events.native_pipeline_diagnostic_policy",
+                "g.engine.callbacks.diagnostics.events.native_pipeline_diagnostic_policy",
             ),
             patch(
                 "g.compute.regenie2_binary.api.prepare_regenie2_multi_binary_chromosome_state",
