@@ -2706,6 +2706,11 @@ Current guardrail notes:
 - The obsolete Python `g.runtime_paths` wrapper was removed; callers use the
   native runtime-state boundary for default runtime cache paths, and the Python
   architecture checker rejects reintroduced `runtime_paths.py`.
+- The Python-visible prepared-run-plan JSON compatibility method was removed
+  from the output lifecycle PyO3 policy and from the runner output adapter.
+  Prepared-plan conversion coverage now lives in the Rust `g-plan`/`g-output`
+  tests, and the Rust/Python architecture checkers reject reintroduced JSON
+  helper access from production Python.
 
 ### Exit criteria
 

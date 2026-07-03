@@ -343,6 +343,10 @@ def test_unused_raw_payload_builders_are_not_exported() -> None:
         _core.NativeManifestFileFingerprintCache,
         "build_prediction_loco_file_fingerprints_json",
     )
+    assert not hasattr(
+        _core.NativeOutputLifecyclePolicy,
+        "build_prepared_run_plan_json_from_current_header",
+    )
     native_pipeline_output_preparation_batch_type = typing.cast(
         "typing.Any",
         _core.NativePipelineOutputPreparationBatch,

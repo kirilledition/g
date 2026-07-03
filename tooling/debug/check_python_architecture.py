@@ -664,6 +664,7 @@ PYTHON_CALL_POLICIES = (
             "_core.build_prepared_run_plan_json",
             "_core.build_prepared_run_plan_json_from_current_header",
             "_core.build_prepared_run_plan_json_from_current_header_json",
+            "build_prepared_run_plan_json_from_current_header",
             "build_current_run_manifest_header_json_from_input_json",
             "build_current_run_manifest_header_payload_from_input",
             "build_file_fingerprint_payload",

@@ -2048,6 +2048,7 @@ def test_output_manifest_helper_policy_rejects_direct_native_helpers(tmp_path: P
                 "    _core.build_prepared_run_manifest_header_json_from_current_header_json('{}')",
                 "    _core.build_prepared_run_plan_json_from_current_header_json('{}')",
                 "    _core.build_prepared_run_plan_json_from_current_header({})",
+                "    policy.build_prepared_run_plan_json_from_current_header({})",
                 "    _core.build_manifest_file_fingerprint_payload('input.bgen', True)",
             )
         ),
@@ -2119,6 +2120,12 @@ def test_output_manifest_helper_policy_rejects_direct_native_helpers(tmp_path: P
         (
             Path("g/runner/metadata.py"),
             14,
+            "policy.build_prepared_run_plan_json_from_current_header",
+            "build_prepared_run_plan_json_from_current_header",
+        ),
+        (
+            Path("g/runner/metadata.py"),
+            15,
             "_core.build_manifest_file_fingerprint_payload",
             "_core.build_manifest_file_fingerprint_payload",
         ),

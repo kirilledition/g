@@ -748,6 +748,9 @@ def test_root_pyo3_removed_export_policy_rejects_class_method_exports(tmp_path: 
                 "    fn build_prediction_loco_file_fingerprints_json(&self) {}",
                 "    fn build_current_run_manifest_header_json_from_input_json(&self) {}",
                 "}",
+                "impl NativeOutputLifecyclePolicy {",
+                "    fn build_prepared_run_plan_json_from_current_header(&self) {}",
+                "}",
             )
         ),
         encoding="utf-8",
@@ -772,6 +775,12 @@ def test_root_pyo3_removed_export_policy_rejects_class_method_exports(tmp_path: 
             source_path=Path("src/python/output.rs"),
             export_name="build_current_run_manifest_header_json_from_input_json",
             line_number=7,
+            message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
+        ),
+        check_rust_architecture.RootPyO3ExportViolation(
+            source_path=Path("src/python/output.rs"),
+            export_name="build_prepared_run_plan_json_from_current_header",
+            line_number=10,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
     )

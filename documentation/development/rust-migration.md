@@ -300,8 +300,9 @@ Standalone manifest file-fingerprint payload construction also routes through
 that cache handle instead of a detached root PyO3 function.
 Standalone file-content hashing and raw prepared-plan/prepared-header JSON
 construction helpers have also been removed from the root PyO3 surface;
-production output code keeps only the current-header based prepared-plan
-adapters.
+production output code uses value-based output preparation adapters, while
+current-header prepared-plan conversion is covered inside the Rust `g-output`
+and `g-plan` tests.
 Current-run manifest header construction also routes through that native cache
 handle; Python now passes the scalar header policy to the handle, adapts the
 native prepared-header mapping, and no longer builds the production

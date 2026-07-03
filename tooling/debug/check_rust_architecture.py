@@ -266,6 +266,7 @@ DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
 )
 DISALLOWED_ROOT_PYO3_CLASS_MEMBER_NAMES = frozenset(
     (
+        "build_prepared_run_plan_json_from_current_header",
         "build_current_run_manifest_header_json_from_input_json",
         "build_prediction_loco_file_fingerprints_json",
         "existing_manifest_json",

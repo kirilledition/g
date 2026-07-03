@@ -410,11 +410,6 @@ def build_current_run_manifest_header(
     return native_mapping_payload(prepared_header)
 
 
-def build_native_prepared_run_plan_json(current_header: RunManifestHeaderInput) -> str:
-    """Build the native prepared-run contract from the transitional header."""
-    return native_output_lifecycle_policy().build_prepared_run_plan_json_from_current_header(current_header)
-
-
 def validate_manifest_compatibility(
     manifest: dict[str, typing.Any],
     current_header: RunManifestHeaderInput,

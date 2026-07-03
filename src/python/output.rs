@@ -13,7 +13,6 @@ use g_output::{
     OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
     build_current_run_manifest_header_json_with_cache as build_native_current_run_manifest_header_json_with_cache,
     build_manifest_json_sha256 as build_native_manifest_json_sha256,
-    build_prepared_run_plan_json_from_current_header_json as build_native_prepared_run_plan_json_from_current_header_json,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
     initialize_output_run as initialize_native_output_run, load_run_manifest_json as load_native_run_manifest_json,
     prepare_output_run as prepare_native_output_run,
@@ -154,10 +153,6 @@ impl NativeOutputLifecyclePolicy {
     #[allow(clippy::needless_pass_by_value)]
     fn write_run_manifest(&self, py: Python<'_>, run_directory: String, manifest: &Bound<'_, PyAny>) -> PyResult<()> {
         write_run_manifest(py, run_directory, manifest)
-    }
-
-    fn build_prepared_run_plan_json_from_current_header(&self, current_header: &Bound<'_, PyAny>) -> PyResult<String> {
-        build_prepared_run_plan_json_from_current_header(current_header)
     }
 
     fn build_manifest_json_sha256_from_value(&self, value: &Bound<'_, PyAny>) -> PyResult<String> {
@@ -735,12 +730,6 @@ pub(crate) fn write_run_manifest(py: Python<'_>, run_directory: String, manifest
     let manifest_json = json_bridge::json_text_from_py_any(manifest)?;
     py.detach(|| write_native_run_manifest_json(Path::new(&run_directory), &manifest_json))
         .map_err(|error| output_writer_error_to_py(error, "write_run_manifest"))
-}
-
-pub(crate) fn build_prepared_run_plan_json_from_current_header(current_header: &Bound<'_, PyAny>) -> PyResult<String> {
-    let current_header_json = json_bridge::json_text_from_py_any(current_header)?;
-    build_native_prepared_run_plan_json_from_current_header_json(&current_header_json)
-        .map_err(|error| output_writer_error_to_py(error, "build_prepared_run_plan_json_from_current_header"))
 }
 
 pub(crate) fn build_manifest_json_sha256_from_value(value: &Bound<'_, PyAny>) -> PyResult<String> {
