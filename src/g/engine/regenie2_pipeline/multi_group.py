@@ -8,11 +8,11 @@ import typing
 import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 from g import _core, execution_plan, types
-from g.engine import preflight, timing
+from g.engine import preflight
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import outputs, telemetry_events
+from g.engine.regenie2_pipeline import outputs, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path

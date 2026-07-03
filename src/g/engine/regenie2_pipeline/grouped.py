@@ -11,12 +11,11 @@ import numpy.typing as npt
 import g.engine.callbacks.grouped as callback_grouped
 import g.engine.callbacks.shared as callback_shared
 from g import _core, types
-from g.engine import timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import multi_group, outputs, telemetry_events
+from g.engine.regenie2_pipeline import multi_group, outputs, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path

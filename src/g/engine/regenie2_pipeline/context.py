@@ -7,8 +7,8 @@ from dataclasses import dataclass
 
 from g import _core, execution_plan, types
 from g.compute.regenie2_linear import config as regenie2_linear_config
-from g.engine import backend_planner, timing
-from g.engine.regenie2_pipeline import outputs, telemetry_events
+from g.engine import backend_planner
+from g.engine.regenie2_pipeline import outputs, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path

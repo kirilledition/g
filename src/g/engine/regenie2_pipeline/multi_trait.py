@@ -6,12 +6,11 @@ import time
 import typing
 
 from g import _core, execution_plan, types
-from g.engine import timing
 from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import gpu_format, grouped, multi_group, outputs, telemetry_events
+from g.engine.regenie2_pipeline import gpu_format, grouped, multi_group, outputs, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path

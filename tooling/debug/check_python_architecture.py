@@ -314,6 +314,13 @@ PYTHON_IMPORT_POLICIES = (
         message="REGENIE pipeline modules must route run-event and telemetry access through pipeline helpers",
         allowed_paths=(Path("engine/regenie2_pipeline/telemetry_events.py"),),
     ),
+    PythonImportPolicy(
+        name="pipeline_timing_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.timing",),
+        message="REGENIE pipeline modules must route stage timing access through pipeline timing helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/timing.py"),),
+    ),
 )
 
 PYTHON_CALL_POLICIES = (

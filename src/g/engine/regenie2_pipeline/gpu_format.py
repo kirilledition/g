@@ -8,9 +8,8 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, types
-from g.engine import timing
 from g.engine.native_dispatch import engine as native_dispatch_engine
-from g.engine.regenie2_pipeline import telemetry_events
+from g.engine.regenie2_pipeline import telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from g import execution_plan
