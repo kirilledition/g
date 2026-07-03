@@ -2360,6 +2360,60 @@ def test_runner_runtime_policy_rejects_runtime_payload_methods(tmp_path: Path) -
     ]
 
 
+def test_jax_runtime_setup_policy_rejects_payload_methods(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    jax_runtime_directory = package_root / "jax_runtime"
+    jax_runtime_directory.mkdir(parents=True)
+    (jax_runtime_directory / "setup.py").write_text(
+        "\n".join(
+            (
+                "def build(native_session, payload):",
+                "    native_session.setup_payload()",
+                "    native_session.complete_validation_payload('succeeded', None)",
+                "    native_session.diagnostic_event_payloads()",
+                "    jax_runtime_setup_report_from_native_payload(payload)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/jax_runtime/setup.py"),
+            2,
+            "jax_runtime_setup_payload_isolation",
+            "native_session.setup_payload",
+            "setup_payload",
+        ),
+        (
+            Path("g/jax_runtime/setup.py"),
+            3,
+            "jax_runtime_setup_payload_isolation",
+            "native_session.complete_validation_payload",
+            "complete_validation_payload",
+        ),
+        (
+            Path("g/jax_runtime/setup.py"),
+            4,
+            "jax_runtime_setup_payload_isolation",
+            "native_session.diagnostic_event_payloads",
+            "diagnostic_event_payloads",
+        ),
+        (
+            Path("g/jax_runtime/setup.py"),
+            5,
+            "jax_runtime_setup_payload_isolation",
+            "jax_runtime_setup_report_from_native_payload",
+            "jax_runtime_setup_report_from_native_payload",
+        ),
+    ]
+
+
 def test_run_metadata_policy_rejects_direct_native_metadata_helpers(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"

@@ -54,11 +54,11 @@ def build_nvidia_driver_probe_paths(
 
 def validate_gpu_with_probe_paths(
     probe_paths: NvidiaDriverProbePathsFixture,
-) -> typing.Callable[[_core.NativeJaxRuntimeSetupSession], dict[str, object]]:
+) -> typing.Callable[[_core.NativeJaxRuntimeSetupSession], _core.NativeJaxRuntimeSetupReport]:
     """Build a deterministic validation function for standalone GPU tests."""
 
-    def validate(native_setup_session: _core.NativeJaxRuntimeSetupSession) -> dict[str, object]:
-        return native_setup_session.validate_gpu_if_configured(
+    def validate(native_setup_session: _core.NativeJaxRuntimeSetupSession) -> _core.NativeJaxRuntimeSetupReport:
+        return native_setup_session.validate_gpu_if_configured_report(
             str(probe_paths.control_device_path),
             str(probe_paths.uvm_device_path),
             str(probe_paths.driver_directory_path),
@@ -254,8 +254,10 @@ def test_configure_before_backend_init_validates_gpu_after_runtime(tmp_path: Pat
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
 
-    def validate_gpu_setup(native_setup_session: typing.Any) -> dict[str, object]:
-        return native_setup_session.validate_gpu_if_configured(
+    def validate_gpu_setup(
+        native_setup_session: _core.NativeJaxRuntimeSetupSession,
+    ) -> _core.NativeJaxRuntimeSetupReport:
+        return native_setup_session.validate_gpu_if_configured_report(
             str(control_device_path),
             str(tmp_path / "missing-nvidia-uvm"),
             str(tmp_path / "missing-driver"),
@@ -343,8 +345,10 @@ def test_configure_before_backend_init_emits_gpu_validation_failure_before_raise
     control_device_path = tmp_path / "nvidiactl"
     control_device_path.touch()
 
-    def validate_gpu_setup(native_setup_session: typing.Any) -> dict[str, object]:
-        return native_setup_session.validate_gpu_if_configured(
+    def validate_gpu_setup(
+        native_setup_session: _core.NativeJaxRuntimeSetupSession,
+    ) -> _core.NativeJaxRuntimeSetupReport:
+        return native_setup_session.validate_gpu_if_configured_report(
             str(control_device_path),
             str(tmp_path / "missing-nvidia-uvm"),
             str(tmp_path / "missing-driver"),

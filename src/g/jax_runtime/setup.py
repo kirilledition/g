@@ -25,7 +25,7 @@ def configure_before_backend_init(
         RuntimeError: If GPU execution was requested but validation fails.
 
     """
-    setup_report = resolution.jax_runtime_setup_report_from_native_payload(native_setup_session.setup_payload())
+    setup_report = resolution.jax_runtime_setup_report_from_native_report(native_setup_session.setup())
     native_setup_session.create_cache_directory_if_configured()
     apply_jax_runtime_config_updates(native_setup_session)
     if not native_setup_session.should_validate_gpu:
@@ -34,13 +34,13 @@ def configure_before_backend_init(
                 diagnostic_sink(diagnostic_event)
         return setup_report
     try:
-        validated_payload = validate_gpu_if_configured_with_default_probe_paths(native_setup_session)
+        native_validated_report = validate_gpu_if_configured_with_default_probe_paths(native_setup_session)
     except RuntimeError:
         if diagnostic_sink is not None:
             for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(native_setup_session):
                 diagnostic_sink(diagnostic_event)
         raise
-    validated_report = resolution.jax_runtime_setup_report_from_native_payload(validated_payload)
+    validated_report = resolution.jax_runtime_setup_report_from_native_report(native_validated_report)
     if diagnostic_sink is not None:
         for diagnostic_event in diagnostics.diagnostic_events_from_native_setup_session(native_setup_session):
             diagnostic_sink(diagnostic_event)
@@ -54,9 +54,9 @@ def apply_jax_runtime_config_updates(native_setup_session: _core.NativeJaxRuntim
 
 def validate_gpu_if_configured_with_default_probe_paths(
     native_setup_session: _core.NativeJaxRuntimeSetupSession,
-) -> dict[str, object]:
+) -> _core.NativeJaxRuntimeSetupReport:
     """Validate GPU setup using native-owned default probe paths."""
-    return native_setup_session.validate_gpu_if_configured_with_default_probe_paths()
+    return native_setup_session.validate_gpu_if_configured_with_default_probe_paths_report()
 
 
 def require_gpu_device() -> None:
@@ -80,8 +80,8 @@ def validate_gpu_device() -> models.JaxGpuValidationReport:
 
     """
     native_validation_session = _build_gpu_validation_setup_session()
-    validated_payload = validate_gpu_if_configured_with_default_probe_paths(native_validation_session)
-    validated_report = resolution.jax_runtime_setup_report_from_native_payload(validated_payload)
+    native_report = validate_gpu_if_configured_with_default_probe_paths(native_validation_session)
+    validated_report = resolution.jax_runtime_setup_report_from_native_report(native_report)
     return models.JaxGpuValidationReport(
         status=validated_report.gpu_validation_status,
         message="" if validated_report.gpu_validation_message is None else validated_report.gpu_validation_message,

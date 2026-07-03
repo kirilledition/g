@@ -45,7 +45,7 @@ def resolve_jax_runtime_setup(policy: models.JaxRuntimePolicy) -> models.JaxRunt
 
     """
     setup_session = build_native_jax_runtime_setup_session(policy)
-    return jax_runtime_setup_report_from_native_payload(setup_session.setup_payload())
+    return jax_runtime_setup_report_from_native_report(setup_session.setup())
 
 
 def build_native_jax_runtime_setup_session(policy: models.JaxRuntimePolicy) -> _core.NativeJaxRuntimeSetupSession:
@@ -241,4 +241,32 @@ def jax_runtime_setup_report_from_native_payload(payload: object) -> models.JaxR
         transfer_guard_enabled=typing.cast("bool", setup_payload["transfer_guard_enabled"]),
         gpu_validation_status=models.GpuValidationStatus(typing.cast("str", setup_payload["gpu_validation_status"])),
         gpu_validation_message=typing.cast("str | None", setup_payload["gpu_validation_message"]),
+    )
+
+
+def jax_runtime_setup_report_from_native_report(
+    native_report: _core.NativeJaxRuntimeSetupReport,
+) -> models.JaxRuntimeSetupReport:
+    """Adapt a typed native JAX runtime setup report.
+
+    Args:
+        native_report: Native setup report handle.
+
+    Returns:
+        JAX runtime setup report.
+
+    """
+    return models.JaxRuntimeSetupReport(
+        requested_device=types.Device(native_report.requested_device),
+        platform_name=native_report.platform_name,
+        cache_directory=Path(native_report.cache_directory),
+        matmul_precision=types.JaxMatmulPrecision(native_report.matmul_precision),
+        persistent_cache_enabled=native_report.persistent_cache_enabled,
+        persistent_cache_min_entry_size_bytes=native_report.persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds=native_report.persistent_cache_min_compile_time_seconds,
+        xla_auxiliary_cache_mode=models.XlaAuxiliaryCacheMode(native_report.xla_auxiliary_cache_mode),
+        xla_auxiliary_cache_reason=native_report.xla_auxiliary_cache_reason,
+        transfer_guard_enabled=native_report.transfer_guard_enabled,
+        gpu_validation_status=models.GpuValidationStatus(native_report.gpu_validation_status),
+        gpu_validation_message=native_report.gpu_validation_message,
     )

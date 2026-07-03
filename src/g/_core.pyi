@@ -2883,6 +2883,33 @@ class NativeRayonThreadPoolConfigurationPlan:
 class NativeJaxRuntimeSetupLifecyclePlan:
     should_configure: bool
 
+class NativeJaxRuntimeSetupReport:
+    requested_device: str
+    platform_name: str
+    cache_directory: str
+    matmul_precision: str
+    persistent_cache_enabled: bool
+    persistent_cache_min_entry_size_bytes: int
+    persistent_cache_min_compile_time_seconds: int
+    xla_auxiliary_cache_mode: str
+    xla_auxiliary_cache_reason: str
+    transfer_guard_enabled: bool
+    gpu_validation_status: str
+    gpu_validation_message: str | None
+    def setup_payload(self) -> dict[str, object]: ...
+
+class NativeJaxRuntimeDiagnosticField:
+    name: str
+    value: object
+    def diagnostic_field_payload(self) -> dict[str, object]: ...
+
+class NativeJaxRuntimeDiagnosticEvent:
+    event_name: str
+    level: str
+    message: str
+    fields: list[NativeJaxRuntimeDiagnosticField]
+    def diagnostic_event_payload(self) -> dict[str, object]: ...
+
 class NativeJaxRuntimeDiagnosticRecordPlan:
     logging_level_name: str
     should_emit_telemetry: bool
@@ -2902,13 +2929,20 @@ class NativeJaxRuntimeSetupSession:
     @property
     def should_validate_gpu(self) -> bool: ...
     def setup_payload(self) -> dict[str, object]: ...
+    def setup(self) -> NativeJaxRuntimeSetupReport: ...
     def apply_config_updates(self) -> int: ...
     def complete_validation_payload(
         self,
         gpu_validation_status: str,
         gpu_validation_message: str | None,
     ) -> dict[str, object]: ...
+    def complete_validation(
+        self,
+        gpu_validation_status: str,
+        gpu_validation_message: str | None,
+    ) -> NativeJaxRuntimeSetupReport: ...
     def diagnostic_event_payloads(self) -> tuple[dict[str, object], ...]: ...
+    def diagnostic_events(self) -> list[NativeJaxRuntimeDiagnosticEvent]: ...
     def create_cache_directory_if_configured(self) -> bool: ...
     def validate_gpu_if_configured(
         self,
@@ -2916,7 +2950,14 @@ class NativeJaxRuntimeSetupSession:
         uvm_device_path: str,
         driver_directory_path: str,
     ) -> dict[str, object]: ...
+    def validate_gpu_if_configured_report(
+        self,
+        control_device_path: str,
+        uvm_device_path: str,
+        driver_directory_path: str,
+    ) -> NativeJaxRuntimeSetupReport: ...
     def validate_gpu_if_configured_with_default_probe_paths(self) -> dict[str, object]: ...
+    def validate_gpu_if_configured_with_default_probe_paths_report(self) -> NativeJaxRuntimeSetupReport: ...
     def nvidia_driver_files_are_visible(
         self,
         control_device_path: str,

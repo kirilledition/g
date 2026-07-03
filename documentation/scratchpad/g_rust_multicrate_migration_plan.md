@@ -2867,6 +2867,10 @@ Current guardrail notes:
   logging/JAX policy and runtime-state snapshot handles instead of legacy dict
   payload getters. Legacy payload helpers remain for compatibility tests, while
   `g.runner.runtime` is guarded from calling them.
+- JAX runtime setup and diagnostic adapters now consume typed native setup
+  report, diagnostic-event, and diagnostic-field handles instead of setup and
+  event payload methods. Legacy payload helpers remain for compatibility tests,
+  while `g.jax_runtime` is guarded from calling them.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture

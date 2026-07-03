@@ -767,6 +767,18 @@ PYTHON_CALL_POLICIES = (
         message="runner runtime policy/state paths must consume typed native policy handles",
     ),
     PythonCallPolicy(
+        name="jax_runtime_setup_payload_isolation",
+        source_directory=Path("jax_runtime"),
+        forbidden_calls=(
+            "setup_payload",
+            "complete_validation_payload",
+            "diagnostic_event_payloads",
+            "jax_runtime_setup_report_from_native_payload",
+        ),
+        allowed_paths=(),
+        message="JAX runtime setup paths must consume typed native setup and diagnostic handles",
+    ),
+    PythonCallPolicy(
         name="native_run_start_metadata_side_effect_isolation",
         source_directory=Path("runner"),
         forbidden_calls=("write_toml",),
