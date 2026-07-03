@@ -67,7 +67,7 @@ class PreparedOutputRun:
     """Prepared output run state for chunk persistence."""
 
     output_run_paths: OutputRunPaths
-    existing_manifest: dict[str, typing.Any] | None
+    existing_manifest: dict[str, object] | None
 
 
 @dataclass(frozen=True)
@@ -133,7 +133,7 @@ class PredictionLocoFileFingerprint:
     content_sha256: str
 
 
-RunManifestHeaderInput = dict[str, typing.Any]
+RunManifestHeaderInput = dict[str, object]
 
 
 def native_output_lifecycle_policy() -> _core.NativeOutputLifecyclePolicy:
@@ -158,12 +158,12 @@ def manifest_file_fingerprint_from_native_payload(payload: object) -> ManifestFi
     )
 
 
-def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
+def native_mapping_payload(payload: object) -> dict[str, object]:
     """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
+    return dict(typing.cast("typing.Mapping[str, object]", payload))
 
 
-def native_json_payload(payload: object) -> typing.Any:
+def native_json_payload(payload: object) -> object:
     """Normalize native JSON payload containers to mutable Python containers."""
     if isinstance(payload, dict):
         mapping_payload = typing.cast("dict[object, object]", payload)
@@ -177,11 +177,11 @@ def native_json_payload(payload: object) -> typing.Any:
     return payload
 
 
-def require_native_mapping_payload(payload: object, message: str) -> dict[str, typing.Any]:
+def require_native_mapping_payload(payload: object, message: str) -> dict[str, object]:
     """Adapt a native mapping payload and reject non-object JSON payloads."""
     if not isinstance(payload, dict):
         raise ValueError(message)
-    return typing.cast("dict[str, typing.Any]", native_json_payload(payload))
+    return typing.cast("dict[str, object]", native_json_payload(payload))
 
 
 def build_prediction_loco_file_fingerprints(
@@ -239,7 +239,7 @@ def build_current_run_manifest_header(
     binary_correction_plan: types.BinaryCorrectionPlan,
     trusted_no_missing_diploid: bool,
     sample_key_mode: types.SampleKeyMode,
-    binary_kernel_config: typing.Any | None,
+    binary_kernel_config: object | None,
     bgen_decode_tile_variant_count: int,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     jax_device: types.Device,
@@ -262,7 +262,7 @@ def build_current_run_manifest_header(
     arrow_compression: types.ArrowCompression,
     parquet_compression: types.ParquetCompression,
     output_statistic_dtype: types.FloatingPointDtype,
-) -> dict[str, typing.Any]:
+) -> dict[str, object]:
     """Build immutable run manifest fields from the current execution plan."""
     prediction_loco_files = build_prediction_loco_file_fingerprints(
         prediction_list_path=prediction_list_path,
@@ -328,7 +328,7 @@ def native_pipeline_output_preparation_policy() -> _core.NativePipelineOutputPre
 def build_native_pipeline_output_preparation_batch(
     *,
     output_run_paths_by_trait: tuple[OutputRunPaths, ...],
-    existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
+    existing_manifests_by_trait: tuple[dict[str, object] | None, ...],
     current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
@@ -422,7 +422,7 @@ class PreparedPhenotypeRunPlan:
 
     phenotype_name: str
     output_run_paths: OutputRunPaths
-    existing_manifest: dict[str, typing.Any] | None
+    existing_manifest: dict[str, object] | None
     effective_config_path: Path
 
 

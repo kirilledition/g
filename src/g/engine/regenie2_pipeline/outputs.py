@@ -244,7 +244,7 @@ def build_pipeline_manifest_header(
 def initialize_pipeline_output_runs(
     *,
     output_run_paths_by_trait: tuple[OutputRunPaths, ...],
-    existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
+    existing_manifests_by_trait: tuple[dict[str, object] | None, ...],
     current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
@@ -275,7 +275,7 @@ def initialize_pipeline_output_runs(
 def validate_pipeline_resume_compatibility(
     *,
     output_run_paths_by_trait: tuple[OutputRunPaths, ...],
-    existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
+    existing_manifests_by_trait: tuple[dict[str, object] | None, ...],
     current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
     resume_mode: types.ResumeMode,
 ) -> None:
@@ -293,7 +293,7 @@ def validate_pipeline_resume_compatibility(
 def build_pipeline_output_preparation_batch(
     *,
     output_run_paths_by_trait: tuple[OutputRunPaths, ...],
-    existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
+    existing_manifests_by_trait: tuple[dict[str, object] | None, ...],
     current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
     resume: bool,
     resume_mode: types.ResumeMode,

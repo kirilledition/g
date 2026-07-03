@@ -94,7 +94,7 @@ def resolve_auto_to_dosage(
 
 
 def read_manifest_gpu_genotype_format_fields(
-    existing_manifest: collections.abc.Mapping[str, typing.Any],
+    existing_manifest: collections.abc.Mapping[str, object],
 ) -> ManifestGpuGenotypeFormatFields:
     """Read manifest GPU genotype-format fields for native policy planning."""
     raw_gpu_genotype_format = existing_manifest.get(MANIFEST_GPU_GENOTYPE_FORMAT_FIELD)
@@ -113,7 +113,7 @@ def read_manifest_gpu_genotype_format_fields(
 
 
 def read_manifest_gpu_genotype_format(
-    existing_manifest: collections.abc.Mapping[str, typing.Any],
+    existing_manifest: collections.abc.Mapping[str, object],
 ) -> types.GpuGenotypeFormat | None:
     """Read a concrete GPU genotype format from an existing manifest."""
     manifest_fields = read_manifest_gpu_genotype_format_fields(existing_manifest)
@@ -129,7 +129,7 @@ def read_manifest_gpu_genotype_format(
 
 def resolve_manifest_gpu_genotype_format(
     *,
-    existing_manifest: dict[str, typing.Any] | None,
+    existing_manifest: dict[str, object] | None,
     resume: bool,
 ) -> types.GpuGenotypeFormat | None:
     """Return the manifest's concrete GPU genotype format when resume can reuse it."""
@@ -214,7 +214,7 @@ def validate_auto_packed8_bgen_engine(
 def resolve_single_trait_binary_gpu_genotype_format(
     *,
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
-    existing_manifest: dict[str, typing.Any] | None,
+    existing_manifest: dict[str, object] | None,
     resume: bool,
     jax_device: types.Device,
     genotype_source_config: execution_plan.GenotypeSourceConfig,

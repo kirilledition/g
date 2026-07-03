@@ -287,16 +287,16 @@ def build_regenie_execution_plan(
     )
 
 
-def compile_run_request_payload(regenie_config: config.RegenieConfig) -> dict[str, typing.Any]:
+def compile_run_request_payload(regenie_config: config.RegenieConfig) -> dict[str, object]:
     """Compile a resolved config into the native requested-run payload."""
     payload = _core.compile_run_request_payload(regenie_config)
     if not isinstance(payload, dict):
         message = "Native run request payload must be a JSON object."
         raise TypeError(message)
-    return typing.cast("dict[str, typing.Any]", payload)
+    return payload
 
 
-def build_output_plan_from_run_request(run_request: dict[str, typing.Any]) -> OutputPlan:
+def build_output_plan_from_run_request(run_request: dict[str, object]) -> OutputPlan:
     """Adapt the native output writer plan into the existing Python dataclass."""
     output_request = require_mapping(run_request, "output")
     return OutputPlan(
@@ -321,7 +321,7 @@ def build_output_plan_from_run_request(run_request: dict[str, typing.Any]) -> Ou
 
 def build_kernel_config_from_run_request(
     regenie_config: config.RegenieConfig,
-    run_request: dict[str, typing.Any],
+    run_request: dict[str, object],
 ) -> KernelConfig:
     """Adapt native requested-run compute fields into the existing kernel config."""
     compute_request = require_mapping(run_request, "compute")
@@ -364,7 +364,7 @@ def build_kernel_config_from_run_request(
     )
 
 
-def adapt_binary_correction_plan(correction_payload: dict[str, typing.Any]) -> types.BinaryCorrectionPlan:
+def adapt_binary_correction_plan(correction_payload: dict[str, object]) -> types.BinaryCorrectionPlan:
     """Adapt native correction payload to the existing Python correction plan."""
     return types.BinaryCorrectionPlan(
         method=types.BinaryFallbackMethod(typing.cast("str", correction_payload["method"])),
@@ -419,27 +419,27 @@ def adapt_phenotype_compute_group_payload(group_payload: dict[str, object]) -> P
     )
 
 
-def require_mapping(payload: dict[str, typing.Any], key: str) -> dict[str, typing.Any]:
+def require_mapping(payload: dict[str, object], key: str) -> dict[str, object]:
     """Return a nested mapping from a native JSON payload."""
     value = payload[key]
     if not isinstance(value, dict):
         message = f"Native run request field {key!r} must be an object."
         raise TypeError(message)
-    return typing.cast("dict[str, typing.Any]", value)
+    return typing.cast("dict[str, object]", value)
 
 
-def require_mapping_sequence(payload: dict[str, typing.Any], key: str) -> tuple[dict[str, typing.Any], ...]:
+def require_mapping_sequence(payload: dict[str, object], key: str) -> tuple[dict[str, object], ...]:
     """Return a tuple of nested mappings from a native JSON payload."""
     value = payload[key]
     if not isinstance(value, list | tuple):
         message = f"Native run request field {key!r} must be a sequence."
         raise TypeError(message)
-    mappings: list[dict[str, typing.Any]] = []
+    mappings: list[dict[str, object]] = []
     for item in value:
         if not isinstance(item, dict):
             message = f"Native run request field {key!r} must contain only objects."
             raise TypeError(message)
-        mappings.append(typing.cast("dict[str, typing.Any]", item))
+        mappings.append(typing.cast("dict[str, object]", item))
     return tuple(mappings)
 
 

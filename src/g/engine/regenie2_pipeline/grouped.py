@@ -37,7 +37,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
-    existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None,
+    existing_manifests_by_phenotype: tuple[dict[str, object] | None, ...] | None,
     resume: bool,
     resume_mode: types.ResumeMode,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
@@ -150,7 +150,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             existing_manifests=typing.cast(
-                "tuple[dict[str, typing.Any] | None, ...]",
+                "tuple[dict[str, object] | None, ...]",
                 pipeline_context.select_by_phenotype_indices(existing_manifests, compute_group.phenotype_indices),
             ),
             resume=resume,
@@ -173,7 +173,7 @@ def validate_grouped_per_phenotype_resume_compatibility(
     engine: _core.Regenie2RunEngine,
     grouped_run_inputs: tuple[inputs.NativeBgenGroupedRunInput, ...],
     output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...],
-    existing_manifests: tuple[dict[str, typing.Any] | None, ...],
+    existing_manifests: tuple[dict[str, object] | None, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
 ) -> None:
@@ -181,7 +181,7 @@ def validate_grouped_per_phenotype_resume_compatibility(
     if not resume:
         return
     selected_output_run_paths: list[outputs.OutputRunPaths] = []
-    selected_existing_manifests: list[dict[str, typing.Any] | None] = []
+    selected_existing_manifests: list[dict[str, object] | None] = []
     selected_current_headers: list[outputs.RunManifestHeaderInput] = []
     for grouped_run_input in grouped_run_inputs:
         compute_group = grouped_run_input.compute_group
@@ -273,7 +273,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
-    existing_manifests: tuple[dict[str, typing.Any] | None, ...],
+    existing_manifests: tuple[dict[str, object] | None, ...],
     resume: bool,
     resume_mode: types.ResumeMode,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
@@ -309,7 +309,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             existing_manifests=typing.cast(
-                "tuple[dict[str, typing.Any] | None, ...]",
+                "tuple[dict[str, object] | None, ...]",
                 pipeline_context.select_by_phenotype_indices(
                     existing_manifests,
                     grouped_run_input.compute_group.phenotype_indices,

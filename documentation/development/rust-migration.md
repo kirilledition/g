@@ -429,7 +429,9 @@ owned writer session through an explicit protocol instead of a dynamic cast.
 Runner dispatch requests now carry the concrete compute-config alignment
 settings instead of an untyped object. Runner, lifecycle, event, and JAX
 diagnostic native payload adapters now expose object-valued maps with explicit
-integer adaptation instead of generic `typing.Any` maps.
+integer adaptation instead of generic `typing.Any` maps. Execution-plan
+run-request adapters and runner-output manifest/header payload adapters use the
+same object-valued native payload boundary.
 Test-only runner runtime construction/description helpers were also removed;
 isolated tests build native runtime-state handles directly.
 The test-only `execution_plan.build_kernel_config()` wrapper was removed; tests
