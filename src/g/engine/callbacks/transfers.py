@@ -13,7 +13,7 @@ import numpy.typing as npt
 import g.engine.callbacks.diagnostics as diagnostics
 import g.engine.callbacks.shared as shared
 from g import _core, types
-from g.engine import timing
+from g.engine.callbacks import timing
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
 HostOrDeviceFloatArray = shared.HostOrDeviceFloatArray

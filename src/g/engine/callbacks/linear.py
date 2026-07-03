@@ -15,11 +15,13 @@ import g.engine.callbacks.writers as writers
 from g import _core, types
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import config as regenie2_linear_config
-from g.engine import telemetry, timing
+from g.engine.callbacks import timing
 
 if typing.TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
+
+    from g.engine import telemetry
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
 NativeBgenRunInputProtocol = shared.NativeBgenRunInputProtocol

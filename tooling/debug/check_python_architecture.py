@@ -333,6 +333,13 @@ PYTHON_IMPORT_POLICIES = (
         ),
     ),
     PythonImportPolicy(
+        name="callback_timing_adapter_isolation",
+        source_directory=Path("engine/callbacks"),
+        forbidden_imports=("g.engine.timing",),
+        message="callback modules must route stage timing access through callback timing helpers",
+        allowed_paths=(Path("engine/callbacks/timing.py"),),
+    ),
+    PythonImportPolicy(
         name="pipeline_output_adapter_isolation",
         source_directory=Path("engine/regenie2_pipeline"),
         forbidden_imports=("g.io",),

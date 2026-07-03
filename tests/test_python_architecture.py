@@ -938,6 +938,50 @@ def test_pipeline_import_policy_allows_pipeline_callback_adapter(tmp_path: Path)
     assert violations == ()
 
 
+def test_callback_import_policy_rejects_timing_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "runtime.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import timing",
+                "import g.engine.timing",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/engine/callbacks/runtime.py"), 1, "g.engine.timing", "g.engine.timing"),
+        (Path("g/engine/callbacks/runtime.py"), 2, "g.engine.timing", "g.engine.timing"),
+    ]
+
+
+def test_callback_import_policy_allows_callback_timing_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "timing.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import timing",
+                "import g.engine.timing",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_pipeline_import_policy_rejects_compute_config_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"
