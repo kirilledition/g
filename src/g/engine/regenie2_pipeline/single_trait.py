@@ -8,6 +8,7 @@ import typing
 from g import _core, execution_plan, types
 from g.engine.regenie2_pipeline import (
     callbacks,
+    compute_config,
     delivery,
     gpu_format,
     inputs,
@@ -20,9 +21,6 @@ from g.engine.regenie2_pipeline import context as pipeline_context
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
-
-    from g.compute.regenie2_binary import config as regenie2_binary_config
-    from g.compute.regenie2_linear import config as regenie2_linear_config
 
 
 def load_single_trait_run_input(
@@ -282,7 +280,7 @@ def run_regenie2_linear_bgen_pipeline(
     jax_matmul_precision: types.JaxMatmulPrecision | None,
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
+    linear_numerical_config: compute_config.LinearNumericalConfig | None,
     gpu_genotype_format: types.GpuGenotypeFormat,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry_events.TelemetrySession | None,
@@ -375,7 +373,7 @@ def run_regenie2_binary_bgen_pipeline(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     correction_plan: types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: compute_config.BinaryKernelConfig,
     gpu_genotype_format: types.GpuGenotypeFormat,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
@@ -385,7 +383,7 @@ def run_regenie2_binary_bgen_pipeline(
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
-    resolved_kernel_config = pipeline_context.require_binary_kernel_config(kernel_config)
+    resolved_kernel_config = compute_config.require_binary_kernel_config(kernel_config)
     gpu_genotype_format_resolution = gpu_format.resolve_single_trait_binary_gpu_genotype_format(
         requested_gpu_genotype_format=gpu_genotype_format,
         existing_manifest=existing_manifest,

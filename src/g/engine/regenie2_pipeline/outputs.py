@@ -7,9 +7,8 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, execution_plan, types
-from g.engine.regenie2_pipeline import bgen_engine, inputs, telemetry_events, timing
+from g.engine.regenie2_pipeline import bgen_engine, inputs, runtime_policy, telemetry_events, timing
 from g.io import output
-from g.jax_runtime import models as jax_runtime_models
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
@@ -213,7 +212,7 @@ def build_pipeline_manifest_header(
         bgen_decode_tile_variant_count=context.bgen_decode_tile_variant_count,
         trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
         jax_device=context.jax_device,
-        jax_enable_x64=jax_runtime_models.JAX_ENABLE_X64,
+        jax_enable_x64=runtime_policy.JAX_ENABLE_X64,
         jax_matmul_precision=context.jax_matmul_precision,
         requested_gpu_genotype_format=context.requested_gpu_genotype_format,
         gpu_genotype_format=context.gpu_genotype_format,

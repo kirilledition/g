@@ -6,14 +6,20 @@ import time
 import typing
 
 from g import _core, execution_plan, types
+from g.engine.regenie2_pipeline import (
+    compute_config,
+    gpu_format,
+    grouped,
+    inputs,
+    multi_group,
+    outputs,
+    telemetry_events,
+    timing,
+)
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import gpu_format, grouped, inputs, multi_group, outputs, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
-
-    from g.compute.regenie2_binary import config as regenie2_binary_config
-    from g.compute.regenie2_linear import config as regenie2_linear_config
 
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(
@@ -42,7 +48,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     jax_matmul_precision: types.JaxMatmulPrecision | None,
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
+    linear_numerical_config: compute_config.LinearNumericalConfig | None,
     gpu_genotype_format: types.GpuGenotypeFormat,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry_events.TelemetrySession | None,
@@ -125,7 +131,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     correction_plan: types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: compute_config.BinaryKernelConfig,
     gpu_genotype_format: types.GpuGenotypeFormat,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
@@ -137,7 +143,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> tuple[Path | None, ...]:
     """Run the complete-case native BGEN pipeline once for multiple binary phenotypes."""
-    resolved_kernel_config = pipeline_context.require_binary_kernel_config(kernel_config)
+    resolved_kernel_config = compute_config.require_binary_kernel_config(kernel_config)
     return run_regenie2_multi_phenotype_bgen_pipeline(
         genotype_source_config=genotype_source_config,
         phenotype_path=phenotype_path,
@@ -207,7 +213,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     firth_dtype: types.FloatingPointDtype,
     gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
+    kernel_config: compute_config.BinaryKernelConfig | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry_events.TelemetrySession | None,
@@ -216,7 +222,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     sample_mode: types.MultiPhenotypeSampleMode | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
     association_mode: types.AssociationMode,
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
+    linear_numerical_config: compute_config.LinearNumericalConfig | None,
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
 ) -> tuple[Path | None, ...]:
     """Shared implementation for multi-phenotype BGEN pipelines."""
@@ -231,7 +237,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_compute_groups=phenotype_compute_groups,
     )
     resolved_kernel_config = (
-        pipeline_context.require_binary_kernel_config(kernel_config)
+        compute_config.require_binary_kernel_config(kernel_config)
         if association_mode == types.AssociationMode.REGENIE2_BINARY
         else None
     )

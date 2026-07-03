@@ -360,6 +360,20 @@ PYTHON_IMPORT_POLICIES = (
         message="REGENIE pipeline modules must route callback access through pipeline callback helpers",
         allowed_paths=(Path("engine/regenie2_pipeline/callbacks.py"),),
     ),
+    PythonImportPolicy(
+        name="pipeline_compute_config_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.compute",),
+        message="REGENIE pipeline modules must route compute configuration access through pipeline helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/compute_config.py"),),
+    ),
+    PythonImportPolicy(
+        name="pipeline_jax_runtime_policy_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.jax_runtime",),
+        message="REGENIE pipeline modules must route JAX runtime policy access through pipeline helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/runtime_policy.py"),),
+    ),
 )
 
 PYTHON_CALL_POLICIES = (

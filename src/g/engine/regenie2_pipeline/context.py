@@ -6,33 +6,14 @@ import typing
 from dataclasses import dataclass
 
 from g import execution_plan, types
-from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.engine import backend_planner
-from g.engine.regenie2_pipeline import outputs, schedule, telemetry_events, timing
+from g.engine.regenie2_pipeline import compute_config, outputs, schedule, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g import _core
-    from g.compute.regenie2_binary import config as regenie2_binary_config
     from g.engine.regenie2_pipeline import callbacks, inputs
-
-
-def require_binary_kernel_config(
-    kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
-) -> regenie2_binary_config.BinaryKernelConfig:
-    """Return the binary kernel config or fail at an internal boundary."""
-    if kernel_config is None:
-        message = "Binary kernel config is required for binary association."
-        raise ValueError(message)
-    return kernel_config
-
-
-def require_linear_numerical_config(
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
-) -> regenie2_linear_config.LinearNumericalConfig:
-    """Return linear numerical settings, using package defaults for direct pipeline calls."""
-    return linear_numerical_config or regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG
 
 
 @dataclass(frozen=True)
@@ -90,8 +71,8 @@ class Regenie2PipelineContext:
     gpu_genotype_format: types.GpuGenotypeFormat
     backend_plan: backend_planner.AssociationBackendPlan
     correction_plan: types.BinaryCorrectionPlan
-    binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None
+    binary_kernel_config: compute_config.BinaryKernelConfig | None
+    linear_numerical_config: compute_config.LinearNumericalConfig | None
     writer_settings: outputs.OutputWriterSettings
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: telemetry_events.TelemetrySession | None
@@ -161,8 +142,8 @@ def build_regenie2_pipeline_context(
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
     gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
-    binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
+    binary_kernel_config: compute_config.BinaryKernelConfig | None,
+    linear_numerical_config: compute_config.LinearNumericalConfig | None,
     writer_settings: outputs.OutputWriterSettings,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry_events.TelemetrySession | None,

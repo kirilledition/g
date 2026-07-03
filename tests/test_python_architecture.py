@@ -734,6 +734,94 @@ def test_pipeline_import_policy_allows_pipeline_callback_adapter(tmp_path: Path)
     assert violations == ()
 
 
+def test_pipeline_import_policy_rejects_compute_config_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "context.py").write_text(
+        "\n".join(
+            (
+                "from g.compute.regenie2_binary import config as binary_config",
+                "import g.compute.regenie2_linear.config",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/engine/regenie2_pipeline/context.py"), 1, "g.compute.regenie2_binary.config", "g.compute"),
+        (Path("g/engine/regenie2_pipeline/context.py"), 2, "g.compute.regenie2_linear.config", "g.compute"),
+    ]
+
+
+def test_pipeline_import_policy_allows_pipeline_compute_config_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "compute_config.py").write_text(
+        "\n".join(
+            (
+                "from g.compute.regenie2_binary import config as binary_config",
+                "import g.compute.regenie2_linear.config",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
+def test_pipeline_import_policy_rejects_jax_runtime_policy_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "outputs.py").write_text(
+        "\n".join(
+            (
+                "from g.jax_runtime import models",
+                "import g.jax_runtime.setup",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/engine/regenie2_pipeline/outputs.py"), 1, "g.jax_runtime.models", "g.jax_runtime"),
+        (Path("g/engine/regenie2_pipeline/outputs.py"), 2, "g.jax_runtime.setup", "g.jax_runtime"),
+    ]
+
+
+def test_pipeline_import_policy_allows_pipeline_runtime_policy_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "runtime_policy.py").write_text(
+        "\n".join(
+            (
+                "from g.jax_runtime import models",
+                "import g.jax_runtime.setup",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_pipeline_call_policy_rejects_native_schedule_policy_construction(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"

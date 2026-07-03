@@ -9,8 +9,8 @@ import g.engine.callbacks.grouped as callback_grouped
 import g.engine.callbacks.linear as callback_linear
 import g.engine.callbacks.shared as callback_shared
 from g import types
+from g.engine.regenie2_pipeline import compute_config, inputs
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import inputs
 
 if typing.TYPE_CHECKING:
     import numpy as np
@@ -39,7 +39,7 @@ def build_single_trait_callback(
             prediction_source=prediction_source,
             writer_session=writer_session,
             correction_plan=context.correction_plan,
-            kernel_config=pipeline_context.require_binary_kernel_config(context.binary_kernel_config),
+            kernel_config=compute_config.require_binary_kernel_config(context.binary_kernel_config),
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
@@ -59,7 +59,7 @@ def build_single_trait_callback(
         result_in_flight_limit=result_in_flight_limit,
         dosage_buffer_limit=dosage_buffer_limit,
         score_dtype=context.score_dtype,
-        linear_numerical_config=pipeline_context.require_linear_numerical_config(context.linear_numerical_config),
+        linear_numerical_config=compute_config.require_linear_numerical_config(context.linear_numerical_config),
         stage_timing_recorder=context.stage_timing_recorder,
         telemetry_session=context.telemetry_session,
         output_statistic_dtype=context.writer_settings.output_statistic_dtype,
@@ -87,7 +87,7 @@ def build_multi_phenotype_group_callback(
             writer_sessions=writer_sessions,
             committed_chunk_identifier_sets=committed_chunk_identifier_sets,
             correction_plan=context.correction_plan,
-            kernel_config=pipeline_context.require_binary_kernel_config(context.binary_kernel_config),
+            kernel_config=compute_config.require_binary_kernel_config(context.binary_kernel_config),
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
@@ -108,7 +108,7 @@ def build_multi_phenotype_group_callback(
         result_in_flight_limit=result_in_flight_limit,
         dosage_buffer_limit=dosage_buffer_limit,
         score_dtype=context.score_dtype,
-        linear_numerical_config=pipeline_context.require_linear_numerical_config(context.linear_numerical_config),
+        linear_numerical_config=compute_config.require_linear_numerical_config(context.linear_numerical_config),
         stage_timing_recorder=context.stage_timing_recorder,
         telemetry_session=context.telemetry_session,
         output_statistic_dtype=context.writer_settings.output_statistic_dtype,
