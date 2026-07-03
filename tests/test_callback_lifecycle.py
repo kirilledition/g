@@ -679,7 +679,7 @@ def test_binary_correction_summary_skips_materialization_without_telemetry(
         dense_correction_count=jnp.asarray(1, dtype=jnp.int32),
     )
     monkeypatch.setattr(
-        callback_runtime,
+        callback_diagnostics,
         "binary_chunk_diagnostics_to_summary_counts",
         fail_binary_chunk_diagnostics_to_summary_counts,
     )

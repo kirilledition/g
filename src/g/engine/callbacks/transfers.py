@@ -26,8 +26,15 @@ PublicStatisticArray = npt.NDArray[np.float32] | npt.NDArray[np.float64]
 class TransferMetadataArrayProtocol(typing.Protocol):
     """Array contract required for transfer metadata summaries."""
 
-    shape: typing.Any
-    dtype: typing.Any
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Return array dimensions."""
+        ...
+
+    @property
+    def dtype(self) -> object:
+        """Return array dtype descriptor."""
+        ...
 
 
 class ChunkStatsComputeArraysProtocol(typing.Protocol):
@@ -101,7 +108,7 @@ def put_genotype_matrix_on_device(
 
 
 def put_chunk_array_on_device(
-    array: jax.Array | npt.NDArray[typing.Any],
+    array: jax.Array | npt.NDArray[np.generic],
     stage_timing_recorder: timing.StageTimingRecorder | None,
     chunk_metadata: CallbackChunkMetadataProtocol,
     *,
@@ -258,6 +265,13 @@ def cast_statistic_array_for_native_writer_float32(array: object) -> npt.NDArray
 def cast_statistic_array_for_native_writer_float64(array: object) -> npt.NDArray[np.float64]:
     """Cast computed statistics to the float64 native writer schema dtype."""
     return typing.cast("npt.NDArray[np.float64]", np.asarray(array, dtype=np.float64))
+
+
+def cast_extra_code_array_for_native_writer(array: object | None) -> npt.NDArray[np.int32] | None:
+    """Adapt optional diagnostic code arrays for the native writer."""
+    if array is None:
+        return None
+    return typing.cast("npt.NDArray[np.int32]", array)
 
 
 def get_chunk_stats_compute_arrays(

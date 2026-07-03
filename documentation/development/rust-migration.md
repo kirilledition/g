@@ -434,7 +434,9 @@ run-request adapters and runner-output manifest/header payload adapters use the
 same object-valued native payload boundary. The sentinel-protected CLI legacy
 bridge now types its runner event module contract explicitly, and pipeline
 phenotype-index selection preserves the selected value type instead of erasing
-it through `typing.Any`.
+it through `typing.Any`. Callback transfer metadata now uses read-only array
+shape/dtype protocols, and callback writer materialization uses typed
+extra-code and compact-trait selection adapters instead of `typing.Any` casts.
 Test-only runner runtime construction/description helpers were also removed;
 isolated tests build native runtime-state handles directly.
 The test-only `execution_plan.build_kernel_config()` wrapper was removed; tests

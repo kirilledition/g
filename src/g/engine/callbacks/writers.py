@@ -26,6 +26,14 @@ class Regenie2ChunkWriterProtocol(typing.Protocol):
 type Regenie2ChunkWriterSession = _core.OutputWriterSession | Regenie2ChunkWriterProtocol
 
 
+class TraitIndexedArrayProtocol(typing.Protocol):
+    """Array-like contract for selecting one compact trait row."""
+
+    def __getitem__(self, trait_index: int) -> object:
+        """Return one compact trait row."""
+        ...
+
+
 @dataclass(frozen=True)
 class MaterializedRegenie2NativeChunk:
     """Host-materialized single-trait REGENIE result arrays."""
@@ -58,6 +66,11 @@ def native_schedule_policy() -> _core.NativeSchedulePolicy:
 def native_output_chunk_write_policy() -> _core.NativeOutputChunkWritePolicy:
     """Build the native output chunk-write policy handle."""
     return _core.NativeOutputChunkWritePolicy()
+
+
+def select_compact_trait_value(array: object, compact_trait_index: int) -> object:
+    """Return one compact trait row from a materialized multi-trait array."""
+    return typing.cast("TraitIndexedArrayProtocol", array)[compact_trait_index]
 
 
 def plan_single_trait_output_write(
@@ -195,7 +208,6 @@ def write_materialized_regenie2_native_chunk_with_optional_timing(
     )
     if write_plan.uses_float64_native_writer:
         native_writer_session = typing.cast("_core.OutputWriterSession", writer_session)
-        native_extra_code = typing.cast("typing.Any", materialized_chunk.extra_code)
         native_writer_session.write_regenie2_native_chunk_f64(
             metadata=metadata,
             chunk_stats=chunk_stats,
@@ -203,7 +215,7 @@ def write_materialized_regenie2_native_chunk_with_optional_timing(
             standard_error=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.standard_error),
             chi_squared=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.chi_squared),
             log10_p_value=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.log10_p_value),
-            extra_code=native_extra_code,
+            extra_code=transfers.cast_extra_code_array_for_native_writer(materialized_chunk.extra_code),
         )
     else:
         chunk_writer_session = typing.cast("Regenie2ChunkWriterProtocol", writer_session)
@@ -451,7 +463,7 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
     )
     if write_plan.use_native_multi_writer:
         native_writer_sessions = typing.cast("tuple[_core.OutputWriterSession, ...]", active_writer_sessions)
-        native_extra_code = typing.cast("typing.Any", materialized_chunk.extra_code)
+        native_extra_code = transfers.cast_extra_code_array_for_native_writer(materialized_chunk.extra_code)
         beta = materialized_chunk.beta
         standard_error = materialized_chunk.standard_error
         chi_squared = materialized_chunk.chi_squared
@@ -500,27 +512,26 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
         per_trait_write_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
         extra_code_slice = None
         if materialized_chunk.extra_code is not None:
-            extra_code = typing.cast("typing.Any", materialized_chunk.extra_code)
-            extra_code_slice = extra_code[compact_trait_index]
-        beta = typing.cast("typing.Any", materialized_chunk.beta)
-        standard_error = typing.cast("typing.Any", materialized_chunk.standard_error)
-        chi_squared = typing.cast("typing.Any", materialized_chunk.chi_squared)
-        log10_p_value = typing.cast("typing.Any", materialized_chunk.log10_p_value)
+            extra_code_slice = select_compact_trait_value(materialized_chunk.extra_code, compact_trait_index)
+        beta = select_compact_trait_value(materialized_chunk.beta, compact_trait_index)
+        standard_error = select_compact_trait_value(materialized_chunk.standard_error, compact_trait_index)
+        chi_squared = select_compact_trait_value(materialized_chunk.chi_squared, compact_trait_index)
+        log10_p_value = select_compact_trait_value(materialized_chunk.log10_p_value, compact_trait_index)
         chunk_writer_session = typing.cast("Regenie2ChunkWriterProtocol", writer_session)
         chunk_writer_session.write_regenie2_native_chunk(
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=transfers.cast_statistic_array_for_native_writer(beta[compact_trait_index], output_statistic_dtype),
+            beta=transfers.cast_statistic_array_for_native_writer(beta, output_statistic_dtype),
             standard_error=transfers.cast_statistic_array_for_native_writer(
-                standard_error[compact_trait_index],
+                standard_error,
                 output_statistic_dtype,
             ),
             chi_squared=transfers.cast_statistic_array_for_native_writer(
-                chi_squared[compact_trait_index],
+                chi_squared,
                 output_statistic_dtype,
             ),
             log10_p_value=transfers.cast_statistic_array_for_native_writer(
-                log10_p_value[compact_trait_index],
+                log10_p_value,
                 output_statistic_dtype,
             ),
             extra_code=extra_code_slice,
