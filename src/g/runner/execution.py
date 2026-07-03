@@ -78,6 +78,14 @@ class CommonEngineDispatchRequest:
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
 
 
+def require_binary_kernel_config(kernel_config: object | None) -> object:
+    """Return the binary kernel config required by binary runner dispatch."""
+    if kernel_config is None:
+        message = "Binary kernel config is required for binary association."
+        raise ValueError(message)
+    return kernel_config
+
+
 def regenie(
     regenie_config: config.RegenieConfig,
     *,
@@ -365,7 +373,7 @@ def dispatch_one_phenotype_engine_pipeline(
             score_dtype=common_request.score_dtype,
             firth_dtype=common_request.firth_dtype,
             correction_plan=plan.binary_correction_plan,
-            kernel_config=plan.kernel_config.binary_kernel_config,
+            kernel_config=require_binary_kernel_config(plan.kernel_config.binary_kernel_config),
             null_logistic_nonconvergence_policy=(
                 plan.kernel_config.alignment_config.null_logistic_nonconvergence_policy
             ),
@@ -483,7 +491,7 @@ def dispatch_multi_phenotype_engine_pipeline(
             score_dtype=common_request.score_dtype,
             firth_dtype=common_request.firth_dtype,
             correction_plan=plan.binary_correction_plan,
-            kernel_config=plan.kernel_config.binary_kernel_config,
+            kernel_config=require_binary_kernel_config(plan.kernel_config.binary_kernel_config),
             null_logistic_nonconvergence_policy=(
                 plan.kernel_config.alignment_config.null_logistic_nonconvergence_policy
             ),

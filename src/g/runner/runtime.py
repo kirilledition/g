@@ -12,8 +12,145 @@ from g.jax_runtime import models as jax_runtime_models
 from g.jax_runtime import resolution as jax_runtime_resolution
 
 if typing.TYPE_CHECKING:
+    from g import execution_plan
     from g.interface import config
-    from g.runner import events
+    from g.runner import events, timing
+
+
+class SingleTraitPipelineKwargs(typing.TypedDict):
+    """Shared late-import kwargs for one single-trait pipeline dispatch."""
+
+    genotype_source_config: execution_plan.GenotypeSourceConfig
+    phenotype_path: Path
+    phenotype_name: str
+    prediction_list_path: Path
+    covariate_path: Path | None
+    covariate_names: tuple[str, ...] | None
+    chunk_size: int
+    variant_limit: int | None
+    output_run_paths: object
+    staging_depth: int
+    native_callback_batch_size: int
+    result_in_flight_limit: int | None
+    dosage_buffer_limit: int | None
+    existing_manifest: dict[str, object] | None
+    resume: bool
+    resume_mode: types.ResumeMode
+    writer_settings: object
+    trusted_no_missing_diploid: bool
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode
+    bgen_decode_tile_variant_count: int
+    jax_device: types.Device
+    jax_matmul_precision: types.JaxMatmulPrecision | None
+    score_dtype: types.FloatingPointDtype
+    firth_dtype: types.FloatingPointDtype
+    gpu_genotype_format: types.GpuGenotypeFormat
+    stage_timing_recorder: timing.StageTimingRecorder | None
+    telemetry_session: events.TelemetrySession | None
+    alignment_config: object | None
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
+
+
+class LinearSingleTraitPipelineKwargs(SingleTraitPipelineKwargs):
+    """Late-import kwargs for the linear single-trait pipeline."""
+
+    linear_numerical_config: object | None
+
+
+class BinarySingleTraitPipelineKwargs(SingleTraitPipelineKwargs):
+    """Late-import kwargs for the binary single-trait pipeline."""
+
+    correction_plan: types.BinaryCorrectionPlan
+    kernel_config: object
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy
+
+
+class MultiPhenotypePipelineKwargs(typing.TypedDict):
+    """Shared late-import kwargs for multi-phenotype pipeline dispatch."""
+
+    genotype_source_config: execution_plan.GenotypeSourceConfig
+    phenotype_path: Path
+    phenotype_names: tuple[str, ...]
+    prediction_list_path: Path
+    covariate_path: Path | None
+    covariate_names: tuple[str, ...] | None
+    chunk_size: int
+    variant_limit: int | None
+    output_run_paths_by_phenotype: tuple[object, ...]
+    staging_depth: int
+    native_callback_batch_size: int
+    result_in_flight_limit: int | None
+    dosage_buffer_limit: int | None
+    existing_manifests_by_phenotype: tuple[dict[str, object] | None, ...] | None
+    resume: bool
+    resume_mode: types.ResumeMode
+    writer_settings: object
+    trusted_no_missing_diploid: bool
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode
+    bgen_decode_tile_variant_count: int
+    jax_device: types.Device
+    jax_matmul_precision: types.JaxMatmulPrecision | None
+    score_dtype: types.FloatingPointDtype
+    firth_dtype: types.FloatingPointDtype
+    gpu_genotype_format: types.GpuGenotypeFormat
+    stage_timing_recorder: timing.StageTimingRecorder | None
+    telemetry_session: events.TelemetrySession | None
+    alignment_config: object | None
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
+    sample_mode: types.MultiPhenotypeSampleMode | None
+    phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None
+    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
+
+
+class LinearMultiPhenotypePipelineKwargs(MultiPhenotypePipelineKwargs):
+    """Late-import kwargs for the linear multi-phenotype pipeline."""
+
+    linear_numerical_config: object | None
+
+
+class BinaryMultiPhenotypePipelineKwargs(MultiPhenotypePipelineKwargs):
+    """Late-import kwargs for the binary multi-phenotype pipeline."""
+
+    correction_plan: types.BinaryCorrectionPlan
+    kernel_config: object
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy
+
+
+class SingleTraitPipelineModule(typing.Protocol):
+    """Single-trait pipeline entrypoints loaded after runtime setup."""
+
+    def run_regenie2_linear_bgen_pipeline(
+        self,
+        **kwargs: typing.Unpack[LinearSingleTraitPipelineKwargs],
+    ) -> Path | None:
+        """Run the linear single-trait pipeline."""
+        ...
+
+    def run_regenie2_binary_bgen_pipeline(
+        self,
+        **kwargs: typing.Unpack[BinarySingleTraitPipelineKwargs],
+    ) -> Path | None:
+        """Run the binary single-trait pipeline."""
+        ...
+
+
+class MultiPhenotypePipelineModule(typing.Protocol):
+    """Multi-phenotype pipeline entrypoints loaded after runtime setup."""
+
+    def run_regenie2_multi_phenotype_linear_bgen_pipeline(
+        self,
+        **kwargs: typing.Unpack[LinearMultiPhenotypePipelineKwargs],
+    ) -> tuple[Path | None, ...]:
+        """Run the linear multi-phenotype pipeline."""
+        ...
+
+    def run_regenie2_multi_phenotype_binary_bgen_pipeline(
+        self,
+        **kwargs: typing.Unpack[BinaryMultiPhenotypePipelineKwargs],
+    ) -> tuple[Path | None, ...]:
+        """Run the binary multi-phenotype pipeline."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -337,27 +474,43 @@ def describe_runtime_state() -> RuntimeState:
     )
 
 
-def run_regenie2_linear_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
+def run_regenie2_linear_bgen_pipeline(**kwargs: typing.Unpack[LinearSingleTraitPipelineKwargs]) -> Path | None:
     """Run the linear native pipeline after JAX runtime setup."""
-    single_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.single_trait")
+    single_trait_pipeline_module = typing.cast(
+        "SingleTraitPipelineModule",
+        importlib.import_module("g.engine.regenie2_pipeline.single_trait"),
+    )
     return single_trait_pipeline_module.run_regenie2_linear_bgen_pipeline(**kwargs)
 
 
-def run_regenie2_binary_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
+def run_regenie2_binary_bgen_pipeline(**kwargs: typing.Unpack[BinarySingleTraitPipelineKwargs]) -> Path | None:
     """Run the binary native pipeline after JAX runtime setup."""
-    single_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.single_trait")
+    single_trait_pipeline_module = typing.cast(
+        "SingleTraitPipelineModule",
+        importlib.import_module("g.engine.regenie2_pipeline.single_trait"),
+    )
     return single_trait_pipeline_module.run_regenie2_binary_bgen_pipeline(**kwargs)
 
 
-def run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
+def run_regenie2_multi_phenotype_linear_bgen_pipeline(
+    **kwargs: typing.Unpack[LinearMultiPhenotypePipelineKwargs],
+) -> tuple[Path | None, ...]:
     """Run the multi-phenotype linear native pipeline after JAX runtime setup."""
-    multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
+    multi_trait_pipeline_module = typing.cast(
+        "MultiPhenotypePipelineModule",
+        importlib.import_module("g.engine.regenie2_pipeline.multi_trait"),
+    )
     return multi_trait_pipeline_module.run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs)
 
 
-def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
+def run_regenie2_multi_phenotype_binary_bgen_pipeline(
+    **kwargs: typing.Unpack[BinaryMultiPhenotypePipelineKwargs],
+) -> tuple[Path | None, ...]:
     """Run the multi-phenotype binary native pipeline after JAX runtime setup."""
-    multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
+    multi_trait_pipeline_module = typing.cast(
+        "MultiPhenotypePipelineModule",
+        importlib.import_module("g.engine.regenie2_pipeline.multi_trait"),
+    )
     return multi_trait_pipeline_module.run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs)
 
 
