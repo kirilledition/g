@@ -78,7 +78,9 @@ class CommonEngineDispatchRequest:
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
 
 
-def require_binary_kernel_config(kernel_config: object | None) -> object:
+def require_binary_kernel_config(
+    kernel_config: execution_plan.BinaryKernelConfig | None,
+) -> execution_plan.BinaryKernelConfig:
     """Return the binary kernel config required by binary runner dispatch."""
     if kernel_config is None:
         message = "Binary kernel config is required for binary association."

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-import g
+from g import _core
 
 
 @dataclass(frozen=True)
@@ -62,9 +62,9 @@ def emit_preflight_warnings(
         )
 
 
-def native_output_preflight_diagnostic_policy() -> g._core.NativeOutputPreflightDiagnosticPolicy:
+def native_output_preflight_diagnostic_policy() -> _core.NativeOutputPreflightDiagnosticPolicy:
     """Build the native output/preflight diagnostic policy handle."""
-    return g._core.NativeOutputPreflightDiagnosticPolicy()
+    return _core.NativeOutputPreflightDiagnosticPolicy()
 
 
 @dataclass(frozen=True)
@@ -252,14 +252,11 @@ def resolve_single_trait_preflight_shape(
     covariate_matrix: np.ndarray,
 ) -> SingleTraitPreflightShape:
     """Validate single-trait shape policy through the native engine crate."""
-    payload = typing.cast(
-        "dict[str, object]",
-        native_preflight_validator().validate_single_trait_preflight_shape_payload(
-            shape_count(phenotype_vector.shape, 0),
-            int(covariate_matrix.ndim),
-            shape_count(covariate_matrix.shape, 0),
-            shape_count(covariate_matrix.shape, 1),
-        ),
+    payload = native_preflight_validator().validate_single_trait_preflight_shape_payload(
+        shape_count(phenotype_vector.shape, 0),
+        int(covariate_matrix.ndim),
+        shape_count(covariate_matrix.shape, 0),
+        shape_count(covariate_matrix.shape, 1),
     )
     return SingleTraitPreflightShape(
         sample_count=typing.cast("int", payload["sample_count"]),
@@ -272,16 +269,13 @@ def resolve_multi_trait_preflight_shape(
     covariate_matrix: np.ndarray,
 ) -> MultiTraitPreflightShape:
     """Validate multi-trait shape policy through the native engine crate."""
-    payload = typing.cast(
-        "dict[str, object]",
-        native_preflight_validator().validate_multi_trait_preflight_shape_payload(
-            int(phenotype_matrix.ndim),
-            shape_count(phenotype_matrix.shape, 0),
-            shape_count(phenotype_matrix.shape, 1),
-            int(covariate_matrix.ndim),
-            shape_count(covariate_matrix.shape, 0),
-            shape_count(covariate_matrix.shape, 1),
-        ),
+    payload = native_preflight_validator().validate_multi_trait_preflight_shape_payload(
+        int(phenotype_matrix.ndim),
+        shape_count(phenotype_matrix.shape, 0),
+        shape_count(phenotype_matrix.shape, 1),
+        int(covariate_matrix.ndim),
+        shape_count(covariate_matrix.shape, 0),
+        shape_count(covariate_matrix.shape, 1),
     )
     return MultiTraitPreflightShape(
         trait_count=typing.cast("int", payload["trait_count"]),
@@ -317,14 +311,11 @@ def build_preflight_report(
     trusted_no_missing_diploid: bool,
 ) -> PreflightReport:
     """Build the native-owned preflight report payload."""
-    payload = typing.cast(
-        "dict[str, object]",
-        native_preflight_validator().build_preflight_report_payload(
-            sample_count,
-            covariate_count,
-            chromosome_count,
-            trusted_no_missing_diploid,
-        ),
+    payload = native_preflight_validator().build_preflight_report_payload(
+        sample_count,
+        covariate_count,
+        chromosome_count,
+        trusted_no_missing_diploid,
     )
     return PreflightReport(
         sample_count=typing.cast("int", payload["sample_count"]),
@@ -334,6 +325,6 @@ def build_preflight_report(
     )
 
 
-def native_preflight_validator() -> g._core.NativePreflightValidator:
+def native_preflight_validator() -> _core.NativePreflightValidator:
     """Build the native preflight validator handle."""
-    return g._core.NativePreflightValidator()
+    return _core.NativePreflightValidator()

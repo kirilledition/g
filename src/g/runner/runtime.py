@@ -14,7 +14,7 @@ from g.jax_runtime import resolution as jax_runtime_resolution
 if typing.TYPE_CHECKING:
     from g import execution_plan
     from g.interface import config
-    from g.runner import events, timing
+    from g.runner import events, outputs, timing
 
 
 class SingleTraitPipelineKwargs(typing.TypedDict):
@@ -28,7 +28,7 @@ class SingleTraitPipelineKwargs(typing.TypedDict):
     covariate_names: tuple[str, ...] | None
     chunk_size: int
     variant_limit: int | None
-    output_run_paths: object
+    output_run_paths: outputs.OutputRunPaths
     staging_depth: int
     native_callback_batch_size: int
     result_in_flight_limit: int | None
@@ -36,7 +36,7 @@ class SingleTraitPipelineKwargs(typing.TypedDict):
     existing_manifest: dict[str, object] | None
     resume: bool
     resume_mode: types.ResumeMode
-    writer_settings: object
+    writer_settings: outputs.OutputWriterSettings
     trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     bgen_decode_tile_variant_count: int
@@ -47,7 +47,7 @@ class SingleTraitPipelineKwargs(typing.TypedDict):
     gpu_genotype_format: types.GpuGenotypeFormat
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: events.TelemetrySession | None
-    alignment_config: object | None
+    alignment_config: config.GComputeConfig | None
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
 
@@ -55,14 +55,14 @@ class SingleTraitPipelineKwargs(typing.TypedDict):
 class LinearSingleTraitPipelineKwargs(SingleTraitPipelineKwargs):
     """Late-import kwargs for the linear single-trait pipeline."""
 
-    linear_numerical_config: object | None
+    linear_numerical_config: execution_plan.LinearNumericalConfig | None
 
 
 class BinarySingleTraitPipelineKwargs(SingleTraitPipelineKwargs):
     """Late-import kwargs for the binary single-trait pipeline."""
 
     correction_plan: types.BinaryCorrectionPlan
-    kernel_config: object
+    kernel_config: execution_plan.BinaryKernelConfig
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy
 
 
@@ -77,7 +77,7 @@ class MultiPhenotypePipelineKwargs(typing.TypedDict):
     covariate_names: tuple[str, ...] | None
     chunk_size: int
     variant_limit: int | None
-    output_run_paths_by_phenotype: tuple[object, ...]
+    output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...]
     staging_depth: int
     native_callback_batch_size: int
     result_in_flight_limit: int | None
@@ -85,7 +85,7 @@ class MultiPhenotypePipelineKwargs(typing.TypedDict):
     existing_manifests_by_phenotype: tuple[dict[str, object] | None, ...] | None
     resume: bool
     resume_mode: types.ResumeMode
-    writer_settings: object
+    writer_settings: outputs.OutputWriterSettings
     trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     bgen_decode_tile_variant_count: int
@@ -96,7 +96,7 @@ class MultiPhenotypePipelineKwargs(typing.TypedDict):
     gpu_genotype_format: types.GpuGenotypeFormat
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: events.TelemetrySession | None
-    alignment_config: object | None
+    alignment_config: config.GComputeConfig | None
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
     sample_mode: types.MultiPhenotypeSampleMode | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None
@@ -106,14 +106,14 @@ class MultiPhenotypePipelineKwargs(typing.TypedDict):
 class LinearMultiPhenotypePipelineKwargs(MultiPhenotypePipelineKwargs):
     """Late-import kwargs for the linear multi-phenotype pipeline."""
 
-    linear_numerical_config: object | None
+    linear_numerical_config: execution_plan.LinearNumericalConfig | None
 
 
 class BinaryMultiPhenotypePipelineKwargs(MultiPhenotypePipelineKwargs):
     """Late-import kwargs for the binary multi-phenotype pipeline."""
 
     correction_plan: types.BinaryCorrectionPlan
-    kernel_config: object
+    kernel_config: execution_plan.BinaryKernelConfig
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy
 
 

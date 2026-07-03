@@ -13,6 +13,9 @@ from g.compute.regenie2_linear import config as regenie2_linear_config
 if typing.TYPE_CHECKING:
     from g.interface import config
 
+type BinaryKernelConfig = regenie2_binary_config.BinaryKernelConfig
+type LinearNumericalConfig = regenie2_linear_config.LinearNumericalConfig
+
 
 @dataclass(frozen=True)
 class GenotypeSourceConfig:
@@ -72,8 +75,8 @@ class KernelConfig:
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     alignment_config: config.GComputeConfig
     multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode
-    binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None
-    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None
+    binary_kernel_config: BinaryKernelConfig | None
+    linear_numerical_config: LinearNumericalConfig | None
 
 
 @dataclass(frozen=True)
@@ -208,7 +211,7 @@ class RegenieExecutionPlan:
     stage_timings_json: Path | None
 
 
-def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie2_binary_config.BinaryKernelConfig:
+def build_binary_kernel_config(compute_config: config.GComputeConfig) -> BinaryKernelConfig:
     """Build immutable binary JAX kernel settings from public compute config."""
     return regenie2_binary_config.BinaryKernelConfig(
         numerical=regenie2_binary_config.BinaryNumericalConfig(

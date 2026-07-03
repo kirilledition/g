@@ -229,6 +229,35 @@ def test_python_cli_shim_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_cli_shim_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
 
+def test_runner_runtime_pipeline_kwargs_keep_typed_contracts() -> None:
+    source = (PRODUCTION_PACKAGE_ROOT / "runner" / "runtime.py").read_text(encoding="utf-8")
+
+    forbidden_annotations = (
+        "output_run_paths: object",
+        "output_run_paths_by_phenotype: tuple[object, ...]",
+        "writer_settings: object",
+        "alignment_config: object | None",
+        "linear_numerical_config: object | None",
+        "kernel_config: object",
+    )
+
+    for forbidden_annotation in forbidden_annotations:
+        assert forbidden_annotation not in source
+
+    assert "outputs.OutputRunPaths" in source
+    assert "outputs.OutputWriterSettings" in source
+    assert "config.GComputeConfig" in source
+    assert "execution_plan.LinearNumericalConfig" in source
+    assert "execution_plan.BinaryKernelConfig" in source
+
+
+def test_public_package_lazy_exports_are_explicit() -> None:
+    source = (PRODUCTION_PACKAGE_ROOT / "__init__.py").read_text(encoding="utf-8")
+
+    assert "typing.Any" not in source
+    assert "getattr(" not in source
+
+
 def test_public_api_import_policy_rejects_backend_bypass_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()
