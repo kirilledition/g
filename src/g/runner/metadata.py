@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import typing
+from dataclasses import dataclass
 
 from g import _core, execution_plan, types
 from g.engine import run_events, telemetry
 from g.interface import config
+from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -14,15 +16,75 @@ if typing.TYPE_CHECKING:
 RunArtifacts = run_events.RunArtifacts
 
 
+@dataclass(frozen=True)
+class PreparedPhenotypeRunPlan:
+    """Prepared output state for one phenotype run.
+
+    Attributes:
+        phenotype_name: Phenotype column name.
+        output_run_paths: Chunked output paths for the phenotype.
+        existing_manifest: Existing manifest loaded for resume, if present.
+        effective_config_path: Path where the effective TOML config is written.
+
+    """
+
+    phenotype_name: str
+    output_run_paths: output.OutputRunPaths
+    existing_manifest: dict[str, typing.Any] | None
+    effective_config_path: Path
+
+
+def prepare_execution_plan_outputs(
+    *,
+    plan: execution_plan.RegenieExecutionPlan,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
+) -> tuple[PreparedPhenotypeRunPlan, ...]:
+    """Prepare output paths and resume state for a requested execution plan."""
+    return tuple(
+        prepare_phenotype_run_plan(
+            phenotype_run_plan=phenotype_run_plan,
+            association_mode=plan.association_mode,
+            output_plan=plan.output_plan,
+            runtime_compatibility_token=runtime_compatibility_token,
+        )
+        for phenotype_run_plan in plan.phenotype_run_plans
+    )
+
+
+def prepare_phenotype_run_plan(
+    *,
+    phenotype_run_plan: execution_plan.PhenotypeRunPlan,
+    association_mode: types.AssociationMode,
+    output_plan: execution_plan.OutputPlan,
+    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
+) -> PreparedPhenotypeRunPlan:
+    """Prepare output paths and resume manifest state for one phenotype."""
+    prepared_output_run = output.prepare_output_run(
+        output_root=output_plan.output_run_root / phenotype_run_plan.output_directory_name,
+        association_mode=association_mode,
+        output_format=output_plan.writer_settings.output_format,
+        resume=output_plan.resume,
+        resume_mode=output_plan.resume_mode,
+        runtime_compatibility_token=runtime_compatibility_token,
+    )
+    return PreparedPhenotypeRunPlan(
+        phenotype_name=phenotype_run_plan.phenotype_name,
+        output_run_paths=prepared_output_run.output_run_paths,
+        existing_manifest=prepared_output_run.existing_manifest,
+        effective_config_path=prepared_output_run.output_run_paths.run_directory / "effective_config.toml",
+    )
+
+
 def build_output_initialized_metadata_callback(
     *,
     regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
+    phenotype_run_plans: tuple[PreparedPhenotypeRunPlan, ...],
     telemetry_session: telemetry.TelemetrySession | None,
 ) -> typing.Callable[[tuple[str, ...]], None]:
     """Build an idempotent writer for metadata after output compatibility passes."""
     phenotype_run_plans_by_name = {
-        phenotype_run_plan.phenotype_name: phenotype_run_plan for phenotype_run_plan in plan.phenotype_run_plans
+        phenotype_run_plan.phenotype_name: phenotype_run_plan for phenotype_run_plan in phenotype_run_plans
     }
     written_phenotype_names: set[str] = set()
 
@@ -62,7 +124,7 @@ def write_run_start_metadata(
     *,
     regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
-    phenotype_run_plan: execution_plan.PhenotypeRunPlan,
+    phenotype_run_plan: PreparedPhenotypeRunPlan,
     telemetry_session: telemetry.TelemetrySession | None,
 ) -> None:
     """Write run metadata before native engine execution starts."""
@@ -84,6 +146,7 @@ def finalize_execution_plan(
     *,
     regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
+    phenotype_run_plans: tuple[PreparedPhenotypeRunPlan, ...],
     final_output_paths: tuple[Path | None, ...],
 ) -> RunArtifacts:
     """Build user-facing artifacts after native execution."""
@@ -92,18 +155,14 @@ def finalize_execution_plan(
     artifacts = run_events.run_artifacts_from_native_payload(
         native_metadata_builder.build_execution_run_artifacts_payload(
             plan.association_mode.value,
-            len(plan.phenotype_run_plans),
+            len(phenotype_run_plans),
             plan.output_plan.writer_settings.output_format.value,
+            tuple(str(phenotype_run_plan.output_run_paths.run_directory) for phenotype_run_plan in phenotype_run_plans),
             tuple(
-                str(phenotype_run_plan.output_run_paths.run_directory)
-                for phenotype_run_plan in plan.phenotype_run_plans
+                str(phenotype_run_plan.output_run_paths.chunks_directory) for phenotype_run_plan in phenotype_run_plans
             ),
-            tuple(
-                str(phenotype_run_plan.output_run_paths.chunks_directory)
-                for phenotype_run_plan in plan.phenotype_run_plans
-            ),
-            tuple(str(phenotype_run_plan.effective_config_path) for phenotype_run_plan in plan.phenotype_run_plans),
-            tuple(phenotype_run_plan.phenotype_name for phenotype_run_plan in plan.phenotype_run_plans),
+            tuple(str(phenotype_run_plan.effective_config_path) for phenotype_run_plan in phenotype_run_plans),
+            tuple(phenotype_run_plan.phenotype_name for phenotype_run_plan in phenotype_run_plans),
             tuple(
                 None if final_output_path is None else str(final_output_path)
                 for final_output_path in final_output_paths
@@ -112,7 +171,7 @@ def finalize_execution_plan(
     )
     run_events.native_runner_diagnostic_policy().record_runner_metadata_artifacts_finalized_diagnostic_event(
         association_mode=plan.association_mode.value,
-        phenotype_count=len(plan.phenotype_run_plans),
+        phenotype_count=len(phenotype_run_plans),
     )
     return artifacts
 
@@ -120,7 +179,7 @@ def finalize_execution_plan(
 def extend_run_manifest(
     *,
     plan: execution_plan.RegenieExecutionPlan,
-    phenotype_run_plan: execution_plan.PhenotypeRunPlan,
+    phenotype_run_plan: PreparedPhenotypeRunPlan,
 ) -> None:
     """Add command and runtime metadata to a run manifest."""
     native_metadata_builder = _core.NativeRunMetadataBuilder()

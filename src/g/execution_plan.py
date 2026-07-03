@@ -9,7 +9,6 @@ from pathlib import Path
 from g import _core, types
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import config as regenie2_linear_config
-from g.io import output
 
 if typing.TYPE_CHECKING:
     from g.interface import config
@@ -78,6 +77,32 @@ class KernelConfig:
 
 
 @dataclass(frozen=True)
+class OutputWriterPlan:
+    """Output writer and finalization settings for a run.
+
+    Attributes:
+        finalize_parquet: Whether chunk output should be finalized to one Parquet file.
+        writer_thread_count: Number of writer worker threads.
+        writer_queue_depth: Maximum queued chunk writes.
+        chunks_per_arrow_file: Number of chunks per Arrow output file.
+        arrow_compression: Arrow IPC compression codec.
+        parquet_compression: Parquet finalization compression codec.
+        output_format: Chunk output format.
+        output_statistic_dtype: Persisted dtype for public statistic columns.
+
+    """
+
+    finalize_parquet: bool
+    writer_thread_count: int
+    writer_queue_depth: int
+    chunks_per_arrow_file: int
+    arrow_compression: types.ArrowCompression
+    parquet_compression: types.ParquetCompression
+    output_format: types.OutputFormat
+    output_statistic_dtype: types.FloatingPointDtype
+
+
+@dataclass(frozen=True)
 class OutputPlan:
     """Output materialization and writer settings.
 
@@ -94,25 +119,21 @@ class OutputPlan:
     output_run_root: Path
     resume: bool
     resume_mode: types.ResumeMode
-    writer_settings: output.OutputWriterSettings
+    writer_settings: OutputWriterPlan
 
 
 @dataclass(frozen=True)
 class PhenotypeRunPlan:
-    """Prepared run state for one phenotype.
+    """Requested output plan state for one phenotype.
 
     Attributes:
         phenotype_name: Phenotype column name.
-        output_run_paths: Chunked output paths for the phenotype.
-        existing_manifest: Existing manifest loaded for resume, if present.
-        effective_config_path: Path where the effective TOML config is written.
+        output_directory_name: Native planned output directory name under the output run root.
 
     """
 
     phenotype_name: str
-    output_run_paths: output.OutputRunPaths
-    existing_manifest: dict[str, typing.Any] | None
-    effective_config_path: Path
+    output_directory_name: str
 
 
 @dataclass(frozen=True)
@@ -250,8 +271,6 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
 
 def build_regenie_execution_plan(
     regenie_config: config.RegenieConfig,
-    *,
-    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> RegenieExecutionPlan:
     """Build a complete execution plan from a validated public config."""
     run_request = compile_run_request_payload(regenie_config)
@@ -260,12 +279,7 @@ def build_regenie_execution_plan(
     output_plan = build_output_plan_from_run_request(run_request)
     kernel_config = build_kernel_config_from_run_request(regenie_config, run_request)
     phenotype_run_plans = tuple(
-        build_phenotype_run_plan_from_request(
-            phenotype_run_request=phenotype_run_request,
-            association_mode=association_mode,
-            output_plan=output_plan,
-            runtime_compatibility_token=runtime_compatibility_token,
-        )
+        adapt_phenotype_run_plan_payload(phenotype_run_request)
         for phenotype_run_request in require_mapping_sequence(run_request, "phenotype_runs")
     )
     return RegenieExecutionPlan(
@@ -307,7 +321,7 @@ def build_output_plan_from_run_request(run_request: dict[str, typing.Any]) -> Ou
         output_run_root=Path(typing.cast("str", output_request["output_run_root"])),
         resume=typing.cast("bool", output_request["resume"]),
         resume_mode=types.ResumeMode(typing.cast("str", output_request["resume_mode"])),
-        writer_settings=output.OutputWriterSettings(
+        writer_settings=OutputWriterPlan(
             finalize_parquet=typing.cast("bool", output_request["finalize_parquet"]),
             writer_thread_count=typing.cast("int", output_request["writer_thread_count"]),
             writer_queue_depth=typing.cast("int", output_request["writer_queue_depth"]),
@@ -364,30 +378,6 @@ def build_kernel_config_from_run_request(
             if trait_type == types.RegenieTraitType.QUANTITATIVE
             else None
         ),
-    )
-
-
-def build_phenotype_run_plan_from_request(
-    *,
-    phenotype_run_request: dict[str, typing.Any],
-    association_mode: types.AssociationMode,
-    output_plan: OutputPlan,
-    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
-) -> PhenotypeRunPlan:
-    """Prepare output paths from one native phenotype run request."""
-    prepared_output_run = output.prepare_output_run(
-        output_root=output_plan.output_run_root / typing.cast("str", phenotype_run_request["output_directory_name"]),
-        association_mode=association_mode,
-        output_format=output_plan.writer_settings.output_format,
-        resume=output_plan.resume,
-        resume_mode=output_plan.resume_mode,
-        runtime_compatibility_token=runtime_compatibility_token,
-    )
-    return PhenotypeRunPlan(
-        phenotype_name=typing.cast("str", phenotype_run_request["phenotype_name"]),
-        output_run_paths=prepared_output_run.output_run_paths,
-        existing_manifest=prepared_output_run.existing_manifest,
-        effective_config_path=prepared_output_run.output_run_paths.run_directory / "effective_config.toml",
     )
 
 
@@ -455,36 +445,12 @@ def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
     )
 
 
-def build_phenotype_run_plan(
-    *,
-    phenotype_index: int,
-    phenotype_name: str,
-    association_mode: types.AssociationMode,
-    output_plan: OutputPlan,
-    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
-) -> PhenotypeRunPlan:
-    """Prepare output paths and resume manifest state for one phenotype."""
-    output_directory_name = build_phenotype_output_directory_name(phenotype_index, phenotype_name)
-    prepared_output_run = output.prepare_output_run(
-        output_root=output_plan.output_run_root / output_directory_name,
-        association_mode=association_mode,
-        output_format=output_plan.writer_settings.output_format,
-        resume=output_plan.resume,
-        resume_mode=output_plan.resume_mode,
-        runtime_compatibility_token=runtime_compatibility_token,
-    )
+def adapt_phenotype_run_plan_payload(phenotype_run_payload: dict[str, object]) -> PhenotypeRunPlan:
+    """Adapt a native phenotype-run payload to the Python execution-plan shape."""
     return PhenotypeRunPlan(
-        phenotype_name=phenotype_name,
-        output_run_paths=prepared_output_run.output_run_paths,
-        existing_manifest=prepared_output_run.existing_manifest,
-        effective_config_path=prepared_output_run.output_run_paths.run_directory / "effective_config.toml",
+        phenotype_name=typing.cast("str", phenotype_run_payload["phenotype_name"]),
+        output_directory_name=typing.cast("str", phenotype_run_payload["output_directory_name"]),
     )
-
-
-def build_phenotype_output_directory_name(phenotype_index: int, phenotype_name: str) -> str:
-    """Build a deterministic safe directory name for one phenotype output."""
-    native_host_planning_policy = _core.NativeHostPlanningPolicy()
-    return native_host_planning_policy.build_phenotype_output_directory_name(phenotype_index, phenotype_name)
 
 
 def adapt_phenotype_compute_group_payload(group_payload: dict[str, object]) -> PhenotypeComputeGroup:

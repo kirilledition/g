@@ -280,6 +280,12 @@ PYTHON_IMPORT_POLICIES = (
         message="BGEN source configuration is part of the execution-plan contract, not the output package",
     ),
     PythonImportPolicy(
+        name="execution_plan_output_adapter_isolation",
+        source_directory=Path("execution_plan.py"),
+        forbidden_imports=("g.io",),
+        message="execution-plan construction must not import output adapters or prepare output lifecycle state",
+    ),
+    PythonImportPolicy(
         name="runner_jax_import_boundary",
         source_directory=Path("runner"),
         forbidden_imports=("g.engine.regenie2_pipeline", "g.engine.callbacks", "g.compute", "jax", "jaxlib"),

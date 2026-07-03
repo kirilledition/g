@@ -215,6 +215,30 @@ def test_obsolete_io_source_import_policy_rejects_source_module_imports(tmp_path
     ]
 
 
+def test_execution_plan_import_policy_rejects_output_adapter_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    package_root.mkdir()
+    (package_root / "execution_plan.py").write_text(
+        "\n".join(
+            (
+                "from g.io import output",
+                "import g.io.output",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/execution_plan.py"), 1, "g.io.output", "g.io"),
+        (Path("g/execution_plan.py"), 2, "g.io.output", "g.io"),
+    ]
+
+
 def test_python_cli_shim_policy_rejects_public_python_process_ownership(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()
