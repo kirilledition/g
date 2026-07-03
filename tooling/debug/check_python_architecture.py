@@ -729,6 +729,13 @@ PYTHON_CALL_POLICIES = (
         message="production Python must route native run-metadata helpers through the runner metadata adapter",
     ),
     PythonCallPolicy(
+        name="native_run_start_metadata_side_effect_isolation",
+        source_directory=Path("runner"),
+        forbidden_calls=("write_toml",),
+        allowed_paths=(),
+        message="runner metadata must write effective TOML through the native run-metadata builder",
+    ),
+    PythonCallPolicy(
         name="callback_worker_queue_isolation",
         source_directory=Path("engine/callbacks"),
         forbidden_calls=(

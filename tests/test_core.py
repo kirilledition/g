@@ -15,6 +15,7 @@ from g import _core
 TEST_DATA_DIRECTORY = Path(__file__).parent / "data" / "bgen"
 HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
 TRUSTED_PACKED8_BGEN_PATH = Path(__file__).parents[1] / "reference" / "regenie-patched" / "example" / "example.bgen"
+CORE_STUB_PATH = Path(__file__).parents[1] / "src" / "g" / "_core.pyi"
 
 
 def run_logging_subprocess(script: str) -> subprocess.CompletedProcess[str]:
@@ -24,6 +25,20 @@ def run_logging_subprocess(script: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def test_core_stub_config_boundaries_use_object_payloads() -> None:
+    """Guard the public config stub against reintroducing erased option maps."""
+    stub_text = CORE_STUB_PATH.read_text(encoding="utf-8")
+
+    assert "def from_options(raw_options: typing.Mapping[str, object]) -> RegenieConfig: ..." in stub_text
+    assert "def config_from_options(raw_options: typing.Mapping[str, object]) -> RegenieConfig: ..." in stub_text
+    assert "def config_option_schema() -> list[dict[str, object]]: ..." in stub_text
+    assert "def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig: ..." not in stub_text
+    assert (
+        "def config_from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig: ..." not in stub_text
+    )
+    assert "def config_option_schema() -> list[dict[str, typing.Any]]: ..." not in stub_text
 
 
 def build_native_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:

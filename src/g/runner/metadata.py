@@ -5,12 +5,12 @@ from __future__ import annotations
 import typing
 
 from g import _core, execution_plan, types
-from g.interface import config
 from g.runner import events
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
+    from g.interface import config
     from g.runner import outputs
 
 RunArtifacts = events.RunArtifacts
@@ -69,10 +69,26 @@ def write_run_start_metadata(
     telemetry_session: events.TelemetrySession | None,
 ) -> None:
     """Write run metadata before native engine execution starts."""
-    config.write_toml(regenie_config, phenotype_run_plan.effective_config_path)
-    extend_run_manifest(
-        plan=plan,
-        phenotype_run_plan=phenotype_run_plan,
+    native_metadata_builder = _core.NativeRunMetadataBuilder()
+    native_metadata_builder.write_run_start_metadata(
+        regenie_config,
+        str(phenotype_run_plan.output_run_paths.run_directory),
+        phenotype_run_plan.phenotype_name,
+        str(phenotype_run_plan.effective_config_path),
+        plan.output_plan.writer_settings.output_format.value,
+        plan.kernel_config.device.value,
+        plan.kernel_config.staging_depth,
+        plan.kernel_config.native_callback_batch_size,
+        plan.kernel_config.thread_count,
+        plan.output_plan.writer_settings.writer_thread_count,
+        plan.output_plan.writer_settings.writer_queue_depth,
+        plan.output_plan.writer_settings.chunks_per_arrow_file,
+        plan.output_plan.writer_settings.arrow_compression.value,
+        plan.output_plan.writer_settings.parquet_compression.value,
+        plan.output_plan.writer_settings.output_statistic_dtype.value,
+        plan.kernel_config.bgen_decode_tile_variant_count,
+        plan.kernel_config.trusted_no_missing_diploid,
+        plan.kernel_config.trusted_bgen_validation_mode.value,
     )
     events.native_run_event_telemetry_policy().record_effective_config_written_telemetry_event(
         telemetry_session,

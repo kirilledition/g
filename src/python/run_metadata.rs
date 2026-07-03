@@ -6,6 +6,8 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple};
 
+use super::config::RegenieConfig;
+use g_interface as interface;
 use g_output::OutputWriterError;
 use g_runtime::run_metadata as native_run_metadata;
 
@@ -74,31 +76,75 @@ impl NativeRunMetadataBuilder {
         trusted_no_missing_diploid: bool,
         trusted_bgen_validation_mode: String,
     ) -> PyResult<()> {
-        let extension =
-            native_run_metadata::build_run_manifest_extension(native_run_metadata::RunManifestExtensionInput {
-                phenotype_name,
-                effective_config,
-                output_format,
-                device,
-                staging_depth,
-                native_callback_batch_size,
-                threads,
-                writer_threads,
-                writer_queue_depth,
-                chunks_per_arrow_file,
-                arrow_compression,
-                parquet_compression,
-                output_statistic_dtype,
-                bgen_decode_tile_variant_count,
-                trusted_no_missing_diploid,
-                trusted_bgen_validation_mode,
-            });
-        let command =
-            serde_json::to_value(&extension.command).map_err(|error| PyValueError::new_err(error.to_string()))?;
-        let runtime =
-            serde_json::to_value(&extension.runtime).map_err(|error| PyValueError::new_err(error.to_string()))?;
-        py.detach(|| g_output::extend_run_manifest_metadata(Path::new(&run_directory), command, runtime))
-            .map_err(output_writer_error_to_py)
+        extend_manifest_metadata(
+            py,
+            run_directory,
+            phenotype_name,
+            effective_config,
+            output_format,
+            device,
+            staging_depth,
+            native_callback_batch_size,
+            threads,
+            writer_threads,
+            writer_queue_depth,
+            chunks_per_arrow_file,
+            arrow_compression,
+            parquet_compression,
+            output_statistic_dtype,
+            bgen_decode_tile_variant_count,
+            trusted_no_missing_diploid,
+            trusted_bgen_validation_mode,
+        )
+    }
+
+    #[allow(clippy::unused_self)]
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn write_run_start_metadata(
+        &self,
+        py: Python<'_>,
+        config: &RegenieConfig,
+        run_directory: String,
+        phenotype_name: String,
+        effective_config: String,
+        output_format: String,
+        device: String,
+        staging_depth: i64,
+        native_callback_batch_size: i64,
+        threads: Option<i64>,
+        writer_threads: i64,
+        writer_queue_depth: i64,
+        chunks_per_arrow_file: i64,
+        arrow_compression: String,
+        parquet_compression: String,
+        output_statistic_dtype: String,
+        bgen_decode_tile_variant_count: i64,
+        trusted_no_missing_diploid: bool,
+        trusted_bgen_validation_mode: String,
+    ) -> PyResult<()> {
+        interface::write_toml(config.data(), Path::new(&effective_config))
+            .map_err(|error| config_error_to_py("write_run_start_metadata", &error))?;
+        extend_manifest_metadata(
+            py,
+            run_directory,
+            phenotype_name,
+            effective_config,
+            output_format,
+            device,
+            staging_depth,
+            native_callback_batch_size,
+            threads,
+            writer_threads,
+            writer_queue_depth,
+            chunks_per_arrow_file,
+            arrow_compression,
+            parquet_compression,
+            output_statistic_dtype,
+            bgen_decode_tile_variant_count,
+            trusted_no_missing_diploid,
+            trusted_bgen_validation_mode,
+        )
     }
 }
 
@@ -146,6 +192,64 @@ fn set_optional_i64(py: Python<'_>, payload: &Bound<'_, PyDict>, key: &str, valu
 
 fn run_metadata_error_to_py(error: &native_run_metadata::RunMetadataError) -> PyErr {
     PyValueError::new_err(error.to_string())
+}
+
+#[expect(clippy::too_many_arguments, reason = "PyO3 adapter mirrors run manifest extension fields.")]
+#[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python strings into owned values.")]
+fn extend_manifest_metadata(
+    py: Python<'_>,
+    run_directory: String,
+    phenotype_name: String,
+    effective_config: String,
+    output_format: String,
+    device: String,
+    staging_depth: i64,
+    native_callback_batch_size: i64,
+    threads: Option<i64>,
+    writer_threads: i64,
+    writer_queue_depth: i64,
+    chunks_per_arrow_file: i64,
+    arrow_compression: String,
+    parquet_compression: String,
+    output_statistic_dtype: String,
+    bgen_decode_tile_variant_count: i64,
+    trusted_no_missing_diploid: bool,
+    trusted_bgen_validation_mode: String,
+) -> PyResult<()> {
+    let extension = native_run_metadata::build_run_manifest_extension(native_run_metadata::RunManifestExtensionInput {
+        phenotype_name,
+        effective_config,
+        output_format,
+        device,
+        staging_depth,
+        native_callback_batch_size,
+        threads,
+        writer_threads,
+        writer_queue_depth,
+        chunks_per_arrow_file,
+        arrow_compression,
+        parquet_compression,
+        output_statistic_dtype,
+        bgen_decode_tile_variant_count,
+        trusted_no_missing_diploid,
+        trusted_bgen_validation_mode,
+    });
+    let command = serde_json::to_value(&extension.command).map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let runtime = serde_json::to_value(&extension.runtime).map_err(|error| PyValueError::new_err(error.to_string()))?;
+    py.detach(|| g_output::extend_run_manifest_metadata(Path::new(&run_directory), command, runtime))
+        .map_err(output_writer_error_to_py)
+}
+
+fn config_error_to_py(operation: &str, error: &interface::ConfigError) -> PyErr {
+    let error_message = error.to_string();
+    tracing::warn!(
+        target: "g.python.run_metadata",
+        g_event = "native_config_error",
+        operation = operation,
+        error_message = %error_message,
+        "Converting Rust config error to Python."
+    );
+    PyValueError::new_err(error_message)
 }
 
 fn output_writer_error_to_py(error: OutputWriterError) -> PyErr {

@@ -442,7 +442,10 @@ attach the compatibility constructor without an `Any` cast. Runner late-import
 pipeline dispatch wrappers now use typed keyword contracts, with binary dispatch
 making the required binary kernel-config invariant explicit before crossing the
 runtime boundary. JAX dtype helper contracts now use `jax.typing.DTypeLike`
-instead of generic `typing.Any`.
+instead of generic `typing.Any`. The generated `_core.pyi` public config
+signatures now mirror the object-valued config boundary, and run-start metadata
+now enters a single native builder call that writes effective TOML and extends
+the run manifest.
 Test-only runner runtime construction/description helpers were also removed;
 isolated tests build native runtime-state handles directly.
 The test-only `execution_plan.build_kernel_config()` wrapper was removed; tests

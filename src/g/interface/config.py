@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import g._core
 
 if typing.TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 InputConfig = g._core.InputConfig
@@ -34,13 +35,37 @@ class FlatOptionTarget:
     option_name: str
 
 
+def require_config_schema_string(option_metadata: Mapping[str, object], field_name: str) -> str:
+    """Return a required string field from native config option metadata."""
+    field_value = option_metadata[field_name]
+    if not isinstance(field_value, str):
+        message = f"Native config option metadata field '{field_name}' must be a string."
+        raise TypeError(message)
+    return field_value
+
+
+def require_config_schema_string_list(option_metadata: Mapping[str, object], field_name: str) -> tuple[str, ...]:
+    """Return a required string-list field from native config option metadata."""
+    field_value = option_metadata[field_name]
+    if not isinstance(field_value, list):
+        message = f"Native config option metadata field '{field_name}' must be a list."
+        raise TypeError(message)
+    string_values: list[str] = []
+    for item_value in field_value:
+        if not isinstance(item_value, str):
+            message = f"Native config option metadata field '{field_name}' must contain only strings."
+            raise TypeError(message)
+        string_values.append(item_value)
+    return tuple(string_values)
+
+
 def build_flat_option_sections() -> dict[str, FlatOptionTarget]:
     """Build Python flat-option targets from Rust-owned metadata."""
     flat_option_sections: dict[str, FlatOptionTarget] = {}
     for option_metadata in g._core.config_option_schema():
-        section_name = option_metadata["section"]
-        toml_name = option_metadata["toml_name"]
-        for python_name in option_metadata["flat_python_names"]:
+        section_name = require_config_schema_string(option_metadata, "section")
+        toml_name = require_config_schema_string(option_metadata, "toml_name")
+        for python_name in require_config_schema_string_list(option_metadata, "flat_python_names"):
             flat_option_sections[python_name] = FlatOptionTarget(section_name=section_name, option_name=toml_name)
     return flat_option_sections
 
@@ -49,9 +74,9 @@ def build_boolean_python_options() -> frozenset[str]:
     """Build boolean Python flat-option names from Rust-owned metadata."""
     boolean_option_names: set[str] = set()
     for option_metadata in g._core.config_option_schema():
-        if option_metadata["value_kind"] != "boolean":
+        if require_config_schema_string(option_metadata, "value_kind") != "boolean":
             continue
-        boolean_option_names.update(option_metadata["flat_python_names"])
+        boolean_option_names.update(require_config_schema_string_list(option_metadata, "flat_python_names"))
     return frozenset(boolean_option_names)
 
 

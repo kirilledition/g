@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import typing
 from pathlib import Path
 
 from g import _core, types
+from g.interface import config as interface_config
 from g.runner import events as run_events
 from g.runner import lifecycle as shutdown
 
@@ -151,6 +153,53 @@ def test_execution_run_artifacts_uses_native_artifact_tree_builder() -> None:
     assert artifacts.phenotype_artifacts[1].phenotype_count == 2
     assert not hasattr(_core, "build_execution_run_artifacts_payload")
     assert not hasattr(_core, "extend_run_manifest_metadata")
+
+
+def test_run_start_metadata_uses_native_effective_config_and_manifest_writer(tmp_path: Path) -> None:
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    effective_config_path = run_directory / "effective_config.toml"
+    regenie_config = interface_config.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "sample": "dataset.sample",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "height",
+            "pred": "predictions.list",
+            "out": str(tmp_path / "output"),
+        }
+    )
+    trusted_no_missing_diploid = False
+
+    _core.NativeRunMetadataBuilder().write_run_start_metadata(
+        regenie_config,
+        str(run_directory),
+        "height",
+        str(effective_config_path),
+        "parquet",
+        "cpu",
+        2,
+        16,
+        None,
+        4,
+        8,
+        16,
+        "zstd",
+        "none",
+        "float32",
+        512,
+        trusted_no_missing_diploid,
+        "full",
+    )
+
+    manifest_payload = json.loads((run_directory / "run_manifest.json").read_text(encoding="utf-8"))
+    assert "default-config-hash" in effective_config_path.read_text(encoding="utf-8")
+    assert manifest_payload["command"]["effective_config"] == str(effective_config_path)
+    assert manifest_payload["command"]["phenotype"] == "height"
+    assert manifest_payload["runtime"]["device"] == "cpu"
+    assert manifest_payload["runtime"]["writer_threads"] == 4
 
 
 def test_execution_run_artifacts_single_phenotype_has_no_wrapper() -> None:

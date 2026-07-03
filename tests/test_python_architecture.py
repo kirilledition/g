@@ -2204,6 +2204,34 @@ def test_run_metadata_policy_rejects_direct_native_metadata_helpers(tmp_path: Pa
     ]
 
 
+def test_runner_metadata_policy_rejects_direct_effective_config_writes(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "metadata.py").write_text(
+        "\n".join(
+            (
+                "from g.interface import config",
+                "import g.interface.config as interface_config",
+                "def write_metadata(regenie_config, path):",
+                "    config.write_toml(regenie_config, path)",
+                "    interface_config.write_toml(regenie_config, path)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (Path("g/runner/metadata.py"), 4, "config.write_toml", "write_toml"),
+        (Path("g/runner/metadata.py"), 5, "interface_config.write_toml", "write_toml"),
+    ]
+
+
 def test_callback_worker_queue_policy_rejects_python_queue_and_thread_primitives(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     callback_directory = package_root / "engine" / "callbacks"

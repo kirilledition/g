@@ -2817,7 +2817,13 @@ Current guardrail notes:
   dispatch wrappers now use typed keyword contracts, with binary dispatch
   making the required binary kernel-config invariant explicit before crossing
   the runtime boundary. JAX dtype helper contracts now use
-  `jax.typing.DTypeLike` instead of generic `typing.Any`.
+  `jax.typing.DTypeLike` instead of generic `typing.Any`. The generated
+  `_core.pyi` public config signatures now mirror that object-valued boundary
+  for `from_options`, `config_from_options`, and `config_option_schema`.
+- Run-start metadata now enters a single native run-metadata builder call that
+  writes the effective TOML and extends the run manifest. Runner Python no
+  longer calls the config TOML writer directly, and the Python architecture
+  checker rejects direct `write_toml` calls from runner metadata paths.
 - Test-only runner runtime construction/description helpers were also removed;
   isolated tests build native runtime-state handles directly.
 - The test-only `execution_plan.build_kernel_config()` wrapper was removed;

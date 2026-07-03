@@ -456,8 +456,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest={"committed_chunks": []}),
         ) as mock_prepare_output_run,
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=complete_pipeline) as mock_pipeline,
-        patch("g.runner.metadata.extend_run_manifest") as mock_extend_run_manifest,
-        patch("g.interface.config.write_toml") as mock_write_toml,
+        patch("g.runner.metadata.write_run_start_metadata") as mock_write_run_start_metadata,
         patch("g.runner.lifecycle.install_graceful_shutdown_handlers") as mock_install_shutdown_handlers,
     ):
         artifacts = api.regenie(build_minimal_config())
@@ -481,8 +480,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert writer_settings.output_statistic_dtype == types.FloatingPointDtype.FLOAT32
     assert writer_settings.finalize_parquet is False
     mock_install_shutdown_handlers.assert_not_called()
-    mock_extend_run_manifest.assert_called_once()
-    mock_write_toml.assert_called_once()
+    mock_write_run_start_metadata.assert_called_once()
 
 
 def test_regenie_completion_event_includes_user_visible_artifacts(tmp_path: Path) -> None:
@@ -643,15 +641,10 @@ def test_regenie_does_not_write_run_start_metadata_before_output_initialization_
     )
     call_order: list[str] = []
 
-    def record_write_toml(*args: object, **kwargs: object) -> None:
+    def record_run_start_metadata(*args: object, **kwargs: object) -> None:
         del args
         del kwargs
-        call_order.append("effective_config")
-
-    def record_extend_run_manifest(*args: object, **kwargs: object) -> None:
-        del args
-        del kwargs
-        call_order.append("manifest")
+        call_order.append("metadata")
 
     def fail_pipeline(**kwargs: object) -> Path:
         del kwargs
@@ -669,8 +662,7 @@ def test_regenie_does_not_write_run_start_metadata_before_output_initialization_
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=fail_pipeline),
-        patch("g.runner.metadata.extend_run_manifest", side_effect=record_extend_run_manifest),
-        patch("g.interface.config.write_toml", side_effect=record_write_toml),
+        patch("g.runner.metadata.write_run_start_metadata", side_effect=record_run_start_metadata),
         pytest.raises(RuntimeError, match="pipeline failed"),
     ):
         api.regenie(build_minimal_config())
@@ -685,15 +677,10 @@ def test_regenie_writes_run_start_metadata_after_output_initialization() -> None
     )
     call_order: list[str] = []
 
-    def record_write_toml(*args: object, **kwargs: object) -> None:
+    def record_run_start_metadata(*args: object, **kwargs: object) -> None:
         del args
         del kwargs
-        call_order.append("effective_config")
-
-    def record_extend_run_manifest(*args: object, **kwargs: object) -> None:
-        del args
-        del kwargs
-        call_order.append("manifest")
+        call_order.append("metadata")
 
     def fail_after_output_initialization(**keyword_arguments: object) -> Path:
         call_order.append("pipeline")
@@ -712,13 +699,12 @@ def test_regenie_writes_run_start_metadata_after_output_initialization() -> None
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=fail_after_output_initialization),
-        patch("g.runner.metadata.extend_run_manifest", side_effect=record_extend_run_manifest),
-        patch("g.interface.config.write_toml", side_effect=record_write_toml),
+        patch("g.runner.metadata.write_run_start_metadata", side_effect=record_run_start_metadata),
         pytest.raises(RuntimeError, match="pipeline failed after initialization"),
     ):
         api.regenie(build_minimal_config())
 
-    assert call_order == ["pipeline", "effective_config", "manifest", "after_initialization"]
+    assert call_order == ["pipeline", "metadata", "after_initialization"]
 
 
 def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
