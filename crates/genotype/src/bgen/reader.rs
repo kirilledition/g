@@ -359,6 +359,24 @@ impl BgenReaderCore {
         Ok(variant_metadata_columns)
     }
 
+    pub fn variant_offset(&self, variant_index: usize) -> Result<usize, BgenError> {
+        self.variant_records.get(variant_index).map(|variant_record| variant_record.variant_offset).ok_or_else(|| {
+            BgenError::Range(format!(
+                "BGEN variant index {variant_index} is outside the indexed variant count {}.",
+                self.variant_count,
+            ))
+        })
+    }
+
+    pub fn variant_index_for_offset(&self, variant_offset: u64) -> Result<usize, BgenError> {
+        let variant_offset = usize::try_from(variant_offset).map_err(|_| {
+            BgenError::Range(format!("BGEN variant offset {variant_offset} does not fit in native usize."))
+        })?;
+        self.variant_records
+            .binary_search_by_key(&variant_offset, |variant_record| variant_record.variant_offset)
+            .map_err(|_| BgenError::Range(format!("BGEN variant offset {variant_offset} was not indexed.")))
+    }
+
     pub fn read_dosage_f32(
         &self,
         sample_indices: &[i64],
@@ -505,6 +523,75 @@ impl BgenReaderCore {
             trusted_decode_enabled,
         )?;
         stats_buffers.into_chunk_stats(has_missing_values, read_shape.selected_sample_count)
+    }
+
+    pub fn read_variant_major_dosage_f32_into_address_by_indices_prepared(
+        &self,
+        variant_indices: &[usize],
+        output_pointer_address: usize,
+        output_value_count: usize,
+    ) -> Result<(), BgenError> {
+        let sample_selection = self.prepared_sample_selection_arc()?;
+        let read_shape = VariantMajorReadShape {
+            selected_variant_count: variant_indices.len(),
+            selected_sample_count: sample_selection.selected_sample_count,
+        };
+        validate_variant_major_dosage_output_value_count(read_shape, output_value_count)?;
+        if output_value_count > 0 && output_pointer_address == 0 {
+            return Err(BgenError::Range(
+                "Variant-major BGEN dosage output pointer is null for a non-empty read.".to_string(),
+            ));
+        }
+        if read_shape.selected_variant_count == 0 || read_shape.selected_sample_count == 0 {
+            return Ok(());
+        }
+
+        let mut requested_variant_start = 0_usize;
+        while requested_variant_start < variant_indices.len() {
+            let reader_variant_start = variant_indices[requested_variant_start];
+            validate_variant_bounds(reader_variant_start, reader_variant_start + 1, self.variant_count)?;
+            let mut requested_variant_stop = requested_variant_start + 1;
+            while requested_variant_stop < variant_indices.len()
+                && variant_indices[requested_variant_stop]
+                    == reader_variant_start + requested_variant_stop - requested_variant_start
+            {
+                requested_variant_stop += 1;
+            }
+
+            let span_variant_count = requested_variant_stop - requested_variant_start;
+            let output_offset = requested_variant_start
+                .checked_mul(read_shape.selected_sample_count)
+                .ok_or_else(|| BgenError::Range("Integer overflow while offsetting BGEN output buffer.".to_string()))?;
+            let span_output_pointer_address =
+                unsafe { (output_pointer_address as *mut f32).add(output_offset) as usize };
+            self.read_variant_major_dosage_f32_into_address_with_selection(
+                sample_selection.as_ref(),
+                reader_variant_start,
+                reader_variant_start + span_variant_count,
+                span_output_pointer_address,
+                span_variant_count * read_shape.selected_sample_count,
+            )?;
+            requested_variant_start = requested_variant_stop;
+        }
+
+        Ok(())
+    }
+
+    pub fn read_variant_major_dosage_f32_into_address_by_offsets_prepared(
+        &self,
+        variant_offsets: &[u64],
+        output_pointer_address: usize,
+        output_value_count: usize,
+    ) -> Result<(), BgenError> {
+        let mut variant_indices = Vec::with_capacity(variant_offsets.len());
+        for variant_offset in variant_offsets {
+            variant_indices.push(self.variant_index_for_offset(*variant_offset)?);
+        }
+        self.read_variant_major_dosage_f32_into_address_by_indices_prepared(
+            &variant_indices,
+            output_pointer_address,
+            output_value_count,
+        )
     }
 
     pub fn read_preprocessed_variant_major_packed8_probability_pairs_into_address_prepared(
@@ -737,6 +824,37 @@ impl BgenReaderCore {
                 Ok::<VariantMajorDecodeAccumulator, BgenError>(left.merge_accumulator(&right))
             })?;
         request.plan.profiling.merge_thread_local_snapshot(&decode_accumulator.profile_snapshot);
+        Ok(())
+    }
+
+    fn read_variant_major_dosage_f32_into_address_with_selection(
+        &self,
+        sample_selection: &SampleSelection,
+        variant_start: usize,
+        variant_stop: usize,
+        output_pointer_address: usize,
+        output_value_count: usize,
+    ) -> Result<(), BgenError> {
+        validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
+        let read_shape = VariantMajorReadShape::from_selection(sample_selection, variant_start, variant_stop);
+        validate_variant_major_dosage_output_value_count(read_shape, output_value_count)?;
+        if read_shape.selected_variant_count == 0 || read_shape.selected_sample_count == 0 {
+            return Ok(());
+        }
+        let decode_request = VariantMajorDecodeRequest {
+            sample_selection,
+            variant_start,
+            output_pointer_address,
+            shape: read_shape,
+            plan: build_variant_major_decode_plan(&self.profiling, read_shape.selected_sample_count),
+        };
+        let trusted_decode_enabled = self.trusted_no_missing_diploid_decode_enabled();
+        let mut stats_buffers = VariantMajorStatsBuffers::new(read_shape.selected_variant_count);
+        self.decode_preprocessed_variant_major_dosage_tiles(
+            decode_request,
+            &mut stats_buffers,
+            trusted_decode_enabled,
+        )?;
         Ok(())
     }
 

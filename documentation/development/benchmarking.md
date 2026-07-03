@@ -41,6 +41,15 @@ Every benchmark result should record:
 
 Do not report a speedup without naming the baseline command.
 
+For patched REGENIE comparisons, name whether the binary was built with the
+Rust-backed BGEN reader (`GWAS_ENGINE_REGENIE_USE_G_BGEN_READER=1`) and whether
+the benchmark required that path (`GWAS_ENGINE_REGENIE_REQUIRE_G_BGEN_READER=1`).
+The current patched path is limited to ordinary BGEN Step 2 score chunks without
+set/mask, interaction, correlation-matrix, alternate test-type, or `--minINFO`
+workflows. It exposes dosages to REGENIE but does not yet expose
+probability-level INFO numerators, so use it for reader/runtime evidence rather
+than a drop-in upstream compatibility claim.
+
 For competitor comparisons, state the semantic and input-format boundary in the
 artifact. For example, the TorchGWAS chr22 benchmark is a single-trait
 quantitative workflow/runtime comparison: `g` runs REGENIE Step 2 with LOCO

@@ -137,6 +137,18 @@ endif
 # pass on version number to software
 RGFLAGS      += -DVERSION_NUMBER=\"$(RG_VERSION)\"
 
+ifeq ($(USE_G_BGEN_READER),1)
+  ifeq ($(strip $(G_BGEN_READER_INCLUDE)),)
+    $(error G_BGEN_READER_INCLUDE must point to the g_bgen_capi.h include directory when USE_G_BGEN_READER=1)
+  endif
+  ifeq ($(strip $(G_BGEN_READER_LIB)),)
+    $(error G_BGEN_READER_LIB must point to libg_bgen_capi.a when USE_G_BGEN_READER=1)
+  endif
+  RGFLAGS += -DUSE_G_BGEN_READER
+  INC += -I${G_BGEN_READER_INCLUDE}
+  LIBS += ${G_BGEN_READER_LIB} -lpthread
+endif
+
 
 OBJECTS       = $(patsubst %.cpp,%.o,$(wildcard ./src/*.cpp))
 

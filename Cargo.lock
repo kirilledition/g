@@ -739,6 +739,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "g-bgen-capi"
+version = "0.1.0"
+dependencies = [
+ "g-genotype",
+]
+
+[[package]]
 name = "g-engine"
 version = "0.1.0"
 dependencies = [

@@ -38,6 +38,7 @@
 #endif
 
 #include "pgenlibr.h"
+#include "g_bgen_reader.hpp"
 
 struct annoinfo {
   uint64 regionid = 0ULL;
@@ -98,6 +99,11 @@ struct geno_block {
   uint32_t ns, nv;
   BgenParser bgen;
   PgenReader pgr;
+#ifdef USE_G_BGEN_READER
+  GBgenReader g_bgen_reader;
+  bool g_bgen_reader_available = false;
+  bool g_bgen_reader_chunk_ready = false;
+#endif
   Eigen::MatrixXd Gmat;
   Eigen::MatrixXd snp_afs;
   std::vector<data_thread> thread_data;
@@ -182,6 +188,10 @@ void readChunkFromBedFileToG(const int&,const int&,const uint32_t&,std::vector<s
 void readChunkFromPGENFileToG(const int&,const uint32_t&,std::vector<snp> const&,struct param const*,struct geno_block*,struct filter const*,const Eigen::Ref<const MatrixXb>&,mstream&);
 
 void readChunkFromBGENFileToG(std::vector<uint64> const&,const int&,std::vector<snp> const&,struct param const*,Eigen::Ref<Eigen::MatrixXd>,BgenParser&,struct filter const*,const Eigen::Ref<const MatrixXb>&,const Eigen::Ref<const Eigen::MatrixXd>&,std::vector<variant_block>&,mstream&);
+#ifdef USE_G_BGEN_READER
+bool prepare_g_bgen_reader(struct geno_block*,struct in_files const*,struct filter const*,mstream&);
+bool readChunkFromGBgenReader(std::vector<uint64> const&,const int&,std::vector<snp> const&,struct param const*,struct geno_block*,struct filter const*,const Eigen::Ref<const MatrixXb>&,const Eigen::Ref<const Eigen::MatrixXd>&,std::vector<variant_block>&,mstream&);
+#endif
 void readChunkFromBGEN(std::istream*,std::vector<uint32_t>&,std::vector<uint32_t>&,std::vector<std::vector<uchar>>&,std::vector<uint64>&);
 uint64 get_step2_bgen_loading_nanoseconds();
 void parseSNP(const int&,const int&,std::vector<uchar>*,const uint32_t&,const uint32_t&,struct param const*,struct filter const*,const Eigen::Ref<const MatrixXb>&,const Eigen::Ref<const Eigen::MatrixXd>&,const snp*,struct geno_block*,variant_block*,mstream&);

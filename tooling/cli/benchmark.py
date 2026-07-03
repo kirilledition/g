@@ -49,6 +49,10 @@ def build_comparison_arguments(config: omegaconf.DictConfig) -> regenie_comparis
         only_binary_step2=tooling_hydra_arguments.boolean_value(tool_values["only_binary_step2"]),
         output_dir=tooling_hydra_arguments.path_or_none(tool_values["output_dir"])
         or Path("data/benchmarks/regenie_comparison"),
+        include_patched_regenie=tooling_hydra_arguments.boolean_value(
+            tool_values.get("include_patched_regenie", False)
+        ),
+        patched_regenie_executable=tooling_hydra_arguments.path_or_none(tool_values.get("patched_regenie_executable")),
     )
 
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -98,6 +99,8 @@ class ComparisonArguments:
     only_quantitative_step2: bool
     only_binary_step2: bool
     output_dir: Path
+    include_patched_regenie: bool
+    patched_regenie_executable: Path | None
 
 
 def build_arguments_from_config(config: omegaconf.DictConfig) -> ComparisonArguments:
@@ -112,6 +115,10 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> ComparisonArgum
         only_binary_step2=tooling_hydra_arguments.boolean_value(tool_values["only_binary_step2"]),
         output_dir=tooling_hydra_arguments.path_or_none(tool_values["output_dir"])
         or Path("data/benchmarks/regenie_comparison"),
+        include_patched_regenie=tooling_hydra_arguments.boolean_value(
+            tool_values.get("include_patched_regenie", False)
+        ),
+        patched_regenie_executable=tooling_hydra_arguments.path_or_none(tool_values.get("patched_regenie_executable")),
     )
 
 
@@ -120,14 +127,20 @@ def run_command_with_logs(
     command_arguments: list[str],
     stdout_log_path: Path,
     stderr_log_path: Path,
+    environment_overrides: dict[str, str] | None = None,
 ) -> tuple[bool, float, str | None]:
     """Run one command and persist logs."""
+    command_environment = None
+    if environment_overrides is not None:
+        command_environment = os.environ.copy()
+        command_environment.update(environment_overrides)
     start_time = time.perf_counter()
     completed_process = subprocess.run(
         command_arguments,
         check=False,
         capture_output=True,
         text=True,
+        env=command_environment,
     )
     duration_seconds = time.perf_counter() - start_time
     stdout_log_path.write_text(completed_process.stdout)
@@ -264,6 +277,64 @@ def build_regenie_program_specs(
     ]
 
 
+def replace_command_option_value(command_arguments: list[str], option_name: str, option_value: Path) -> list[str]:
+    """Return a command with one option value replaced."""
+    option_index = command_arguments.index(option_name)
+    replaced_arguments = list(command_arguments)
+    replaced_arguments[option_index + 1] = str(option_value)
+    return replaced_arguments
+
+
+def build_patched_regenie_step2_program_specs(
+    patched_regenie_executable: str,
+    baseline_paths: baseline_benchmark.BaselinePaths,
+    output_dir: Path,
+    *,
+    only_quantitative_step2: bool = False,
+    only_binary_step2: bool = False,
+) -> list[tuple[str, str, int, list[str], Path]]:
+    """Build patched REGENIE Step 2 comparison specs."""
+    command_specs: list[tuple[str, str, int, list[str], Path]] = []
+    for program_name, trait_type, step, command_arguments, default_output_prefix in build_regenie_program_specs(
+        patched_regenie_executable,
+        baseline_paths,
+        only_quantitative_step2=only_quantitative_step2,
+        only_binary_step2=only_binary_step2,
+    ):
+        del program_name, default_output_prefix
+        if step != 2:
+            continue
+        if trait_type == "quantitative":
+            patched_program_name = "regenie_g_bgen_step2_quantitative"
+            output_prefix = output_dir / "regenie_g_bgen_step2_qt"
+        else:
+            patched_program_name = "regenie_g_bgen_step2_binary"
+            output_prefix = output_dir / "regenie_g_bgen_step2_binary"
+        command_specs.append(
+            (
+                patched_program_name,
+                trait_type,
+                step,
+                replace_command_option_value(command_arguments, "--out", output_prefix),
+                output_prefix,
+            )
+        )
+    return command_specs
+
+
+def resolve_patched_regenie_executable(configured_executable: Path | None) -> str:
+    """Resolve the optional patched REGENIE executable."""
+    if configured_executable is None:
+        return baseline_benchmark.resolve_required_executable("PATCHED_REGENIE_BIN", "regenie-patched")
+    executable_string = str(configured_executable)
+    if configured_executable.exists() or shutil.which(executable_string) is not None:
+        return executable_string
+    raise RuntimeError(
+        f"Configured patched REGENIE executable '{executable_string}' is not available. "
+        "Set tool.patched_regenie_executable or PATCHED_REGENIE_BIN."
+    )
+
+
 def build_g_step2_command(
     *,
     uv_executable: str,
@@ -331,6 +402,9 @@ def run_regenie_program(
     command_arguments: list[str],
     output_prefix: Path,
     log_directory: Path,
+    implementation: str = "regenie",
+    device: str = "external_cpu",
+    environment_overrides: dict[str, str] | None = None,
 ) -> ComparisonProgramResult:
     """Run one original regenie program and collect metadata."""
     stdout_log_path = log_directory / f"{program_name}.stdout.log"
@@ -339,6 +413,7 @@ def run_regenie_program(
         command_arguments=command_arguments,
         stdout_log_path=stdout_log_path,
         stderr_log_path=stderr_log_path,
+        environment_overrides=environment_overrides,
     )
     output_paths: list[str] = []
     output_row_count: int | None = None
@@ -361,10 +436,10 @@ def run_regenie_program(
     status = "success" if success else "failed"
     return ComparisonProgramResult(
         program_name=program_name,
-        implementation="regenie",
+        implementation=implementation,
         trait_type=trait_type,
         step=step,
-        device="external_cpu",
+        device=device,
         status=status,
         wall_time_seconds=duration_seconds,
         variants_per_second=variants_per_second,
@@ -709,6 +784,23 @@ def result_output_path(result: ComparisonProgramResult) -> Path | None:
     return Path(result.output_paths[0])
 
 
+def build_runtime_comparison(
+    reference_result: ComparisonProgramResult | None,
+    observed_result: ComparisonProgramResult | None,
+) -> dict[str, float] | None:
+    """Build one runtime ratio when both runs succeeded."""
+    if reference_result is None or observed_result is None:
+        return None
+    if reference_result.status != "success" or observed_result.status != "success":
+        return None
+    if reference_result.wall_time_seconds is None or observed_result.wall_time_seconds is None:
+        return None
+    return {
+        "speedup_ratio": reference_result.wall_time_seconds / observed_result.wall_time_seconds,
+        "absolute_delta_seconds": observed_result.wall_time_seconds - reference_result.wall_time_seconds,
+    }
+
+
 def write_text_summary(
     *,
     report_path: Path,
@@ -728,11 +820,23 @@ def write_text_summary(
             f"rows={result.output_row_count}, device={result.device}",
         )
     regenie_qt = extract_program(results, "regenie_step2_quantitative")
+    patched_regenie_qt = extract_program(results, "regenie_g_bgen_step2_quantitative")
     g_cpu = extract_program(results, "g_regenie2_quantitative_step2_cpu")
     g_gpu = extract_program(results, "g_regenie2_quantitative_step2_gpu")
     lines.append("")
     lines.append("Direct Runtime Comparisons (Quantitative Step 2)")
     if regenie_qt is not None and regenie_qt.status == "success" and regenie_qt.wall_time_seconds is not None:
+        if (
+            patched_regenie_qt is not None
+            and patched_regenie_qt.status == "success"
+            and patched_regenie_qt.wall_time_seconds is not None
+        ):
+            patched_speedup = regenie_qt.wall_time_seconds / patched_regenie_qt.wall_time_seconds
+            patched_delta = patched_regenie_qt.wall_time_seconds - regenie_qt.wall_time_seconds
+            lines.append(
+                f"regenie vs patched REGENIE g-bgen reader: "
+                f"speedup={patched_speedup:.4f}x, delta_seconds={patched_delta:.4f}",
+            )
         if g_cpu is not None and g_cpu.status == "success" and g_cpu.wall_time_seconds is not None:
             cpu_speedup = regenie_qt.wall_time_seconds / g_cpu.wall_time_seconds
             cpu_delta = g_cpu.wall_time_seconds - regenie_qt.wall_time_seconds
@@ -829,6 +933,35 @@ def run_tool(arguments: ComparisonArguments) -> None:
                 device="cpu",
             )
         )
+
+    if arguments.include_patched_regenie:
+        patched_regenie_executable = resolve_patched_regenie_executable(arguments.patched_regenie_executable)
+        for (
+            program_name,
+            trait_type,
+            step,
+            command_arguments,
+            output_prefix,
+        ) in build_patched_regenie_step2_program_specs(
+            patched_regenie_executable,
+            baseline_paths,
+            arguments.output_dir,
+            only_quantitative_step2=arguments.only_quantitative_step2,
+            only_binary_step2=arguments.only_binary_step2,
+        ):
+            results.append(
+                run_regenie_program(
+                    program_name=program_name,
+                    trait_type=trait_type,
+                    step=step,
+                    command_arguments=command_arguments,
+                    output_prefix=output_prefix,
+                    log_directory=log_directory,
+                    implementation="regenie_g_bgen_reader",
+                    device="external_cpu",
+                    environment_overrides={"GWAS_ENGINE_REGENIE_REQUIRE_G_BGEN_READER": "1"},
+                )
+            )
 
     active_trait_type = "binary" if arguments.only_binary_step2 else "quantitative"
     active_trait_label = "binary" if active_trait_type == "binary" else "quantitative"
@@ -965,6 +1098,8 @@ def run_tool(arguments: ComparisonArguments) -> None:
 
     regenie_quantitative_result = extract_program(results, "regenie_step2_quantitative")
     regenie_binary_result = extract_program(results, "regenie_step2_binary")
+    patched_regenie_quantitative_result = extract_program(results, "regenie_g_bgen_step2_quantitative")
+    patched_regenie_binary_result = extract_program(results, "regenie_g_bgen_step2_binary")
     g_cpu_result = extract_program(results, "g_regenie2_quantitative_step2_cpu")
     g_gpu_result = extract_program(results, "g_regenie2_quantitative_step2_gpu")
     g_binary_cpu_result = extract_program(results, "g_regenie2_binary_step2_cpu")
@@ -1029,27 +1164,30 @@ def run_tool(arguments: ComparisonArguments) -> None:
             },
         },
     }
-    if (
-        regenie_quantitative_result is not None
-        and regenie_quantitative_result.status == "success"
-        and regenie_quantitative_result.wall_time_seconds is not None
-    ):
+    if regenie_quantitative_result is not None:
         comparison_runtime: dict[str, typing.Any] = {}
-        if g_cpu_result is not None and g_cpu_result.status == "success" and g_cpu_result.wall_time_seconds is not None:
-            comparison_runtime["regenie_vs_g_cpu"] = {
-                "speedup_ratio": regenie_quantitative_result.wall_time_seconds / g_cpu_result.wall_time_seconds,
-                "absolute_delta_seconds": (
-                    g_cpu_result.wall_time_seconds - regenie_quantitative_result.wall_time_seconds
-                ),
-            }
-        if g_gpu_result is not None and g_gpu_result.status == "success" and g_gpu_result.wall_time_seconds is not None:
-            comparison_runtime["regenie_vs_g_gpu"] = {
-                "speedup_ratio": regenie_quantitative_result.wall_time_seconds / g_gpu_result.wall_time_seconds,
-                "absolute_delta_seconds": (
-                    g_gpu_result.wall_time_seconds - regenie_quantitative_result.wall_time_seconds
-                ),
-            }
+        runtime_comparison = build_runtime_comparison(regenie_quantitative_result, patched_regenie_quantitative_result)
+        if runtime_comparison is not None:
+            comparison_runtime["regenie_vs_patched_g_bgen_reader"] = runtime_comparison
+        runtime_comparison = build_runtime_comparison(regenie_quantitative_result, g_cpu_result)
+        if runtime_comparison is not None:
+            comparison_runtime["regenie_vs_g_cpu"] = runtime_comparison
+        runtime_comparison = build_runtime_comparison(regenie_quantitative_result, g_gpu_result)
+        if runtime_comparison is not None:
+            comparison_runtime["regenie_vs_g_gpu"] = runtime_comparison
         report_data["comparisons"]["quantitative_step2"]["runtime"] = comparison_runtime
+    if regenie_binary_result is not None:
+        comparison_runtime = {}
+        runtime_comparison = build_runtime_comparison(regenie_binary_result, patched_regenie_binary_result)
+        if runtime_comparison is not None:
+            comparison_runtime["regenie_vs_patched_g_bgen_reader"] = runtime_comparison
+        runtime_comparison = build_runtime_comparison(regenie_binary_result, g_binary_cpu_result)
+        if runtime_comparison is not None:
+            comparison_runtime["regenie_vs_g_cpu"] = runtime_comparison
+        runtime_comparison = build_runtime_comparison(regenie_binary_result, g_binary_gpu_result)
+        if runtime_comparison is not None:
+            comparison_runtime["regenie_vs_g_gpu"] = runtime_comparison
+        report_data["comparisons"]["binary_step2"]["runtime"] = comparison_runtime
 
     json_report_path = arguments.output_dir / "benchmark_report.json"
     json_report_path.write_text(f"{json.dumps(report_data, indent=2)}\n")

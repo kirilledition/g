@@ -26,6 +26,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 
 #include "Regenie.hpp"
 #include "Files.hpp"
@@ -2149,6 +2151,172 @@ void readChunkFromBGENFileToG(vector<uint64> const& indices, const int& chrom, v
   }
 
 }
+
+#ifdef USE_G_BGEN_READER
+
+bool g_bgen_reader_required(void) {
+  char const* required_value = std::getenv("GWAS_ENGINE_REGENIE_REQUIRE_G_BGEN_READER");
+  if(required_value == nullptr) return false;
+  string const setting(required_value);
+  return (setting == "1") || (setting == "true") || (setting == "TRUE") || (setting == "yes") || (setting == "YES");
+}
+
+void handle_g_bgen_reader_unavailable(string const& message, mstream& sout) {
+  if(g_bgen_reader_required()) throw message;
+  sout << "WARNING: " << message << endl;
+}
+
+bool prepare_g_bgen_reader(struct geno_block* gblock, struct in_files const* files, struct filter const* filters, mstream& sout) {
+  if((gblock == nullptr) || (files == nullptr) || (filters == nullptr)) return false;
+  if(gblock->g_bgen_reader_available) return true;
+
+  if(!gblock->g_bgen_reader.open(files->bgen_file, false)) {
+    handle_g_bgen_reader_unavailable("Rust BGEN reader disabled: " + gblock->g_bgen_reader.last_error(), sout);
+    return false;
+  }
+
+  vector<int64_t> selected_sample_indices;
+  selected_sample_indices.reserve(filters->ind_ignore.size());
+  for(int sample_index = 0; sample_index < filters->ind_ignore.size(); sample_index++) {
+    if(!filters->ind_ignore(sample_index)) selected_sample_indices.push_back(sample_index);
+  }
+
+  if(!gblock->g_bgen_reader.prepare_samples(selected_sample_indices)) {
+    handle_g_bgen_reader_unavailable("Rust BGEN reader disabled: " + gblock->g_bgen_reader.last_error(), sout);
+    return false;
+  }
+
+  gblock->g_bgen_reader_available = true;
+  sout << left << std::setw(20) << " * g bgen reader" << ": [enabled for supported Step 2 chunks]" << endl;
+  return true;
+}
+
+bool g_bgen_reader_supports_step2_chunk(struct param const* params) {
+  if(params == nullptr) return false;
+  if(params->file_type != "bgen") return false;
+  if(params->build_mask || params->w_interaction || params->getCorMat) return false;
+  if(params->test_type != 0) return false;
+  if(params->setMinINFO) return false;
+  return true;
+}
+
+bool readChunkFromGBgenReader(vector<uint64> const& indices, const int& chrom, vector<snp> const& snpinfo, struct param const* params, struct geno_block* gblock, struct filter const* filters, const Ref<const MatrixXb>& masked_indivs, const Ref<const MatrixXd>& phenotypes_raw, vector<variant_block> &all_snps_info, mstream& sout) {
+
+  if((gblock == nullptr) || !gblock->g_bgen_reader_available)
+    return false;
+  if(!g_bgen_reader_supports_step2_chunk(params)) {
+    handle_g_bgen_reader_unavailable("Rust BGEN reader is required but current Step 2 options are unsupported.", sout);
+    return false;
+  }
+
+  Step2BgenLoadingTimer step2_bgen_loading_timer;
+  regenie_profile::ScopedStage profile_stage("g_bgen_decode_impute_filter");
+
+  size_t const bs = indices.size();
+  if(bs == 0) {
+    gblock->g_bgen_reader_chunk_ready = true;
+    return true;
+  }
+
+  vector<uint64_t> variant_offsets(bs);
+  for(size_t snp = 0; snp < bs; snp++) variant_offsets[snp] = snpinfo[indices[snp]].offset;
+
+  vector<float> dosage_values(bs * params->n_samples);
+  if(!gblock->g_bgen_reader.read_variant_major_dosage_by_offsets(variant_offsets, dosage_values)) {
+    handle_g_bgen_reader_unavailable(
+        "Rust BGEN reader chunk failed; falling back to stock reader: " + gblock->g_bgen_reader.last_error(),
+        sout);
+    gblock->g_bgen_reader_chunk_ready = false;
+    return false;
+  }
+
+  regenie_profile::increment_counter("g_bgen_decoded_variants", bs);
+
+#if defined(_OPENMP)
+  setNbThreads(1);
+#pragma omp parallel for schedule(dynamic)
+#endif
+  for(size_t snp = 0; snp < bs; snp++) {
+    variant_block* snp_data = &(all_snps_info[snp]);
+    struct snp const* snp_info = &(snpinfo[indices[snp]]);
+    MapArXd Geno (gblock->Gmat.col(snp).data(), params->n_samples, 1);
+
+    prep_snp_stats(snp_data, params);
+
+    int ncarriers = 0, nmales = 0;
+    double total = 0, mac = 0, info_num = 0;
+    bool non_par = in_non_par(chrom, snp_info->physpos, params);
+
+    for(int index = 0; index < params->n_samples; index++) {
+      float const raw_dosage = dosage_values[(snp * params->n_samples) + index];
+      double ds = std::isnan(raw_dosage) ? -3.0 : static_cast<double>(raw_dosage);
+      if((ds != -3.0) && !params->ref_first) ds = 2.0 - ds;
+      Geno(index) = ds;
+
+      if((ds != -3.0) && filters->ind_in_analysis(index)) {
+        int lval = 0;
+        double mval = ds;
+        if(params->test_mode && non_par) {
+          lval = (params->sex(index) == 1);
+          mval = ds * 0.5 * (2 - lval);
+        }
+
+        if(params->build_mask && params->singleton_carriers && (ds >= 0.5)) ncarriers++;
+
+        if(params->test_mode && non_par && params->skip_dosage_comp && lval) {
+          Geno(index) /= 2.0;
+          ds = Geno(index);
+          if(params->af_cc && masked_indivs.row(index).any())
+            snp_data->ns_case_adj += masked_indivs.row(index).array().cast<int>() * phenotypes_raw.row(index).array().cast<int>();
+        }
+
+        total += ds;
+        mac += mval;
+        nmales += lval;
+        snp_data->ns1++;
+
+        if(filters->has_missing(index)) update_trait_counts(index, ds, mval, lval, info_num, snp_data, masked_indivs);
+
+        if(params->af_cc)
+          update_af_cc(index, ds, snp_data, masked_indivs, phenotypes_raw);
+        if(!params->split_by_pheno) {
+          if(ds >= 1.5) snp_data->n_aa++;
+          else if(ds < 0.5) snp_data->n_rr++;
+          else if(non_par && lval && !(params->test_mode && params->skip_dosage_comp)) {
+            if(ds < 1) snp_data->n_rr++;
+            else snp_data->n_aa++;
+          }
+        }
+      }
+    }
+
+    if(params->test_mode) {
+      compute_mac(!non_par, mac, total, nmales, ncarriers, snp_info->MAC_fail_if_checked, snp_info->apply_diff_MAC_filter, snp_data, params);
+      if(snp_data->ignored) continue;
+    }
+
+    if(non_par && params->skip_dosage_comp)
+      snp_data->ns1_adj = nmales;
+    compute_aaf_info(total, info_num, non_par, snp_data, params);
+
+    if(params->htp_out)
+      compute_genocounts(params->trait_mode==1 || params->trait_mode==3, non_par, mac, Geno, snp_data->genocounts, params->sex, filters->case_control_indices);
+
+    flip_geno(total, Geno, snp_data, params);
+
+    if(!params->build_mask)
+      mean_impute_g(total, Geno, filters->ind_in_analysis);
+  }
+
+#if defined(_OPENMP)
+  setNbThreads(params->threads);
+#endif
+
+  gblock->g_bgen_reader_chunk_ready = true;
+  return true;
+}
+
+#endif
 
 // for step 2 (read in raw data)
 void readChunkFromBGEN(std::istream* bfile, vector<uint32_t>& insize, vector<uint32_t>& outsize, vector<vector<uchar>>& snp_data_blocks, vector<uint64>& indices){

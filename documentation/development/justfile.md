@@ -132,6 +132,28 @@ just legacy-profile-regenie-comparison-cpu
 just legacy-profile-regenie-comparison-gpu
 ```
 
+Build the patched REGENIE reference binary with the optional Rust-backed BGEN
+reader through the existing patched-REGENIE recipe:
+
+```bash
+GWAS_ENGINE_REGENIE_BGEN_PATH=/path/to/bgen \
+GWAS_ENGINE_REGENIE_USE_G_BGEN_READER=1 \
+just slurm-cpu-build-patched-regenie
+```
+
+The recipe builds `g-bgen-capi` and passes `USE_G_BGEN_READER=1`,
+`G_BGEN_READER_INCLUDE`, and `G_BGEN_READER_LIB` into the patched REGENIE
+Makefile. Benchmark the patched binary with:
+
+```bash
+PATCHED_REGENIE_BIN=.tools/regenie-patched/native/regenie \
+just legacy-regenie-comparison-cpu tool.include_patched_regenie=true
+```
+
+The benchmark sets `GWAS_ENGINE_REGENIE_REQUIRE_G_BGEN_READER=1` for patched
+runs so initialization or unsupported-option fallbacks fail instead of being
+reported as Rust-reader measurements.
+
 Use the TorchGWAS chr22 competitor benchmark through SLURM for real GPU
 evidence:
 

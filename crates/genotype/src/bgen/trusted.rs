@@ -623,6 +623,7 @@ mod tests {
 
     fn variant_record(offset: usize, length: usize, identifier: &str) -> VariantRecord {
         VariantRecord {
+            variant_offset: 0,
             probability_payload_offset: offset,
             probability_payload_length: length,
             declared_uncompressed_block_length: length,

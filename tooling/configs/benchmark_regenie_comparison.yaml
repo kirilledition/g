@@ -13,6 +13,8 @@ tool:
   only_quantitative_step2: false
   only_binary_step2: false
   output_dir: data/benchmarks/regenie_comparison
+  include_patched_regenie: false
+  patched_regenie_executable: null
 
 hydra:
   job:

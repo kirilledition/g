@@ -93,6 +93,23 @@ data-build-patched-regenie:
     esac
     mkdir -p "${output_root}"
     output_path="${output_root}/regenie"
+    g_bgen_reader_make_arguments=()
+    if [[ "${GWAS_ENGINE_REGENIE_USE_G_BGEN_READER:-0}" == "1" ]]; then
+      g_bgen_reader_profile="${GWAS_ENGINE_REGENIE_G_BGEN_PROFILE:-perf}"
+      gwas_engine_configure_rust_build_environment
+      gwas_engine_log_rust_build_environment
+      cargo build -p g-bgen-capi --profile "${g_bgen_reader_profile}"
+      g_bgen_reader_library="${PWD}/target/${g_bgen_reader_profile}/libg_bgen_capi.a"
+      if [[ ! -f "${g_bgen_reader_library}" ]]; then
+        echo "Rust BGEN C API archive not found: ${g_bgen_reader_library}" >&2
+        exit 1
+      fi
+      g_bgen_reader_make_arguments+=(
+        USE_G_BGEN_READER=1
+        G_BGEN_READER_INCLUDE="${PWD}/crates/bgen-capi/include"
+        G_BGEN_READER_LIB="${g_bgen_reader_library}"
+      )
+    fi
     job_count="${GWAS_ENGINE_REGENIE_BUILD_JOBS:-${SLURM_CPUS_ON_NODE:-${SLURM_CPUS_PER_TASK:-$(nproc)}}}"
     job_count="${job_count%%(*}"
     if [[ ! "${job_count}" =~ ^[1-9][0-9]*$ ]]; then
@@ -121,7 +138,8 @@ data-build-patched-regenie:
       STATIC="${STATIC:-0}" \
       MKLROOT="${MKLROOT:-}" \
       OPENBLAS_ROOT="${OPENBLAS_ROOT:-}" \
-      HTSLIB_PATH="${HTSLIB_PATH:-}"
+      HTSLIB_PATH="${HTSLIB_PATH:-}" \
+      "${g_bgen_reader_make_arguments[@]}"
     test -x "${output_path}"
     echo "Built patched REGENIE native binary at ${output_path}"
 
@@ -538,12 +556,12 @@ legacy-baselines-full: data-prepare
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_baselines tool.include_hail=true
 
 # Compare original regenie vs g quantitative step2 on CPU
-legacy-regenie-comparison-cpu: data-prepare dev-install-perf
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_regenie_comparison
+legacy-regenie-comparison-cpu *overrides: data-prepare dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_regenie_comparison {{ overrides }}
 
 # Compare original regenie vs g quantitative step2 with GPU enabled
-legacy-regenie-comparison-gpu: data-prepare dev-install-perf
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_regenie_comparison machine=landau_gpu tool.cpu_only=false tool.include_gpu=true
+legacy-regenie-comparison-gpu *overrides: data-prepare dev-install-perf
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_regenie_comparison machine=landau_gpu tool.cpu_only=false tool.include_gpu=true {{ overrides }}
 
 # Profile historical regenie comparison on CPU
 legacy-profile-regenie-comparison-cpu: data-prepare dev-install-perf

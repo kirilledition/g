@@ -2,6 +2,7 @@ use crate::common::VariantMetadataColumns;
 
 #[derive(Debug)]
 pub(super) struct VariantRecord {
+    pub(super) variant_offset: usize,
     pub(super) probability_payload_offset: usize,
     pub(super) probability_payload_length: usize,
     pub(super) declared_uncompressed_block_length: usize,

@@ -602,6 +602,13 @@ Useful overrides:
   trials when `regenie` is available.
 - `tool.regenie_executable=/path/to/regenie`: use a specific original or
   patched REGENIE binary instead of `REGENIE_BIN`/`regenie`.
+- `tool.include_patched_regenie=true`: add patched REGENIE Step 2 runs to the
+  `regenie_comparison` benchmark. The runner resolves
+  `tool.patched_regenie_executable` or `PATCHED_REGENIE_BIN`, writes patched
+  outputs under the benchmark output directory, and sets
+  `GWAS_ENGINE_REGENIE_REQUIRE_G_BGEN_READER=1` so fallback paths fail.
+- `tool.patched_regenie_executable=/path/to/regenie`: use an explicit patched
+  REGENIE binary for the optional Rust-backed BGEN reader comparison.
 - <code>tool.regenie_baseline_trait_types=[quantitative,binary]</code>: choose which
   REGENIE traits get paired baseline trials. The default is the faster
   quantitative pair.

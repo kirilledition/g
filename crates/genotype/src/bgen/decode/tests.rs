@@ -15,6 +15,7 @@ fn test_variant_record_at(
     resolved_variant_identifier: &str,
 ) -> VariantRecord {
     VariantRecord {
+        variant_offset: 0,
         probability_payload_offset,
         probability_payload_length,
         declared_uncompressed_block_length: probability_payload_length,

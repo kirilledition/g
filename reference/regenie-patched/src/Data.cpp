@@ -166,7 +166,12 @@ void Data::file_read_initialization() {
 
   if(params.file_type == "bed") read_bed_bim_fam(&files, &params, &in_filters, snpinfo, chr_map, sout);
   else if(params.file_type == "pgen") read_pgen_pvar_psam(&files, &params, &in_filters, &Gblock, snpinfo, chr_map, sout);
-  else prep_bgen(&files, &params, &in_filters, snpinfo, chr_map, Gblock.bgen, sout);
+  else {
+    prep_bgen(&files, &params, &in_filters, snpinfo, chr_map, Gblock.bgen, sout);
+#ifdef USE_G_BGEN_READER
+    prepare_g_bgen_reader(&Gblock, &files, &in_filters, sout);
+#endif
+  }
 
   params.nvs_stored = snpinfo.size();
   //if(params.getCorMat) params.block_size = params.n_variants;
@@ -2540,8 +2545,13 @@ void Data::compute_tests_mt(int const& chrom, vector<uint64> indices,vector< vec
       thread_num = omp_get_thread_num();
       #endif
 
+      bool parse_genotype_block = !params.build_mask && (((params.file_type == "bgen") && params.streamBGEN) || params.file_type == "bed");
+#ifdef USE_G_BGEN_READER
+      if((params.file_type == "bgen") && Gblock.g_bgen_reader_chunk_ready) parse_genotype_block = false;
+#endif
+
       // to store variant information
-      if( !params.build_mask && (((params.file_type == "bgen") && params.streamBGEN) || params.file_type == "bed") )
+      if( parse_genotype_block )
         parseSNP(isnp, chrom, &(snp_data_blocks[isnp]), insize[isnp], outsize[isnp], &params, &in_filters, pheno_data.masked_indivs, pheno_data.phenotypes_raw, &snpinfo[snp_index], &Gblock, block_info, sout);
 
       // to store variant information
@@ -2620,7 +2630,11 @@ void Data::compute_tests_st(int const& chrom, vector<uint64> indices,vector< vec
     // to store variant information
     variant_block* block_info = &(all_snps_info[isnp]);
 
-    if( !params.build_mask )
+    bool parse_genotype_block = !params.build_mask;
+#ifdef USE_G_BGEN_READER
+    if((params.file_type == "bgen") && Gblock.g_bgen_reader_chunk_ready) parse_genotype_block = false;
+#endif
+    if( parse_genotype_block )
       parseSNP(isnp, chrom, &(snp_data_blocks[isnp]), insize[isnp], outsize[isnp], &params, &in_filters, pheno_data.masked_indivs, pheno_data.phenotypes_raw, &snpinfo[snp_index], &Gblock, block_info, sout);
 
     if(params.w_interaction) {
@@ -2997,6 +3011,12 @@ void Data::readChunk(vector<uint64>& indices, int const& chrom, vector< vector <
 
 
   int const n_snps = indices.size();
+#ifdef USE_G_BGEN_READER
+  Gblock.g_bgen_reader_chunk_ready = false;
+  if((params.file_type == "bgen") &&
+     readChunkFromGBgenReader(indices, chrom, snpinfo, &params, &Gblock, &in_filters, pheno_data.masked_indivs, pheno_data.phenotypes_raw, all_snps_info, sout))
+    return;
+#endif
 
   if((params.file_type == "bgen") && params.streamBGEN){
     snp_data_blocks.resize( n_snps );

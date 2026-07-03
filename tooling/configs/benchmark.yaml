@@ -15,6 +15,8 @@ tool:
   only_quantitative_step2: false
   only_binary_step2: false
   output_dir: null
+  include_patched_regenie: false
+  patched_regenie_executable: null
   sample_interval_seconds: 0.1
   g_variant_limit: ${workload.variant_limit}
   g_chunk_size: ${workload.chunk_size}

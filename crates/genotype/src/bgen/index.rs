@@ -54,6 +54,7 @@ pub(super) fn parse_variant_records(
     let mut variant_records = Vec::with_capacity(variant_count);
 
     for variant_index in 0..variant_count {
+        let variant_offset = cursor;
         let variant_identifier_length = usize::from(read_u16_at(mmap, cursor)?);
         cursor += VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES;
         let variant_identifier =
@@ -118,6 +119,7 @@ pub(super) fn parse_variant_records(
                 mmap,
                 compression_type,
                 &VariantRecord {
+                    variant_offset,
                     probability_payload_offset,
                     probability_payload_length,
                     declared_uncompressed_block_length,
@@ -141,6 +143,7 @@ pub(super) fn parse_variant_records(
         let resolved_variant_identifier = if rsid.is_empty() { variant_identifier } else { rsid.clone() };
 
         variant_records.push(VariantRecord {
+            variant_offset,
             probability_payload_offset,
             probability_payload_length,
             declared_uncompressed_block_length,

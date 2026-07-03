@@ -1020,6 +1020,26 @@ def test_regenie_command_builders_can_focus_quantitative_step2() -> None:
     assert "--qt" in command_specs[0][3]
 
 
+def test_patched_regenie_command_builders_are_step2_only() -> None:
+    baseline_paths = baseline_benchmark.build_baseline_paths()
+    command_specs = comparison_benchmark.build_patched_regenie_step2_program_specs(
+        "regenie-patched",
+        baseline_paths,
+        Path("data/benchmarks/regenie_comparison"),
+    )
+
+    assert [command_spec[0] for command_spec in command_specs] == [
+        "regenie_g_bgen_step2_binary",
+        "regenie_g_bgen_step2_quantitative",
+    ]
+    for _, _, step, command_arguments, output_prefix in command_specs:
+        assert step == 2
+        assert command_arguments[0] == "regenie-patched"
+        assert command_arguments[command_arguments.index("--step") + 1] == "2"
+        assert command_arguments[command_arguments.index("--out") + 1] == str(output_prefix)
+        assert "data/benchmarks/regenie_comparison" in str(output_prefix)
+
+
 def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
     baseline_paths = baseline_benchmark.build_baseline_paths()
     cpu_command = comparison_benchmark.build_g_step2_command(
@@ -1158,6 +1178,22 @@ def test_text_summary_includes_required_sections(tmp_path: Path) -> None:
             prediction_list_present=None,
         ),
         comparison_benchmark.ComparisonProgramResult(
+            program_name="regenie_g_bgen_step2_quantitative",
+            implementation="regenie_g_bgen_reader",
+            trait_type="quantitative",
+            step=2,
+            device="external_cpu",
+            status="success",
+            wall_time_seconds=12.5,
+            variants_per_second=160.0,
+            peak_memory_megabytes=None,
+            stdout_log_path=None,
+            stderr_log_path=None,
+            output_paths=[],
+            output_row_count=1000,
+            prediction_list_present=None,
+        ),
+        comparison_benchmark.ComparisonProgramResult(
             program_name="g_regenie2_quantitative_step2_cpu",
             implementation="g",
             trait_type="quantitative",
@@ -1210,6 +1246,8 @@ def test_text_summary_includes_required_sections(tmp_path: Path) -> None:
     )
     summary = report_path.read_text()
     assert "regenie_step2_quantitative" in summary
+    assert "regenie_g_bgen_step2_quantitative" in summary
+    assert "regenie vs patched REGENIE g-bgen reader" in summary
     assert "g_regenie2_quantitative_step2_cpu" in summary
     assert "Direct Runtime Comparisons" in summary
     assert "Numeric Agreement" in summary
