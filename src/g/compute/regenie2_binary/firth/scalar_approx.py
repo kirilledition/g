@@ -6,6 +6,7 @@ import typing
 
 import jax
 import jax.numpy as jnp
+import jax.typing as jax_typing
 
 from g import types
 from g.compute.common import pvalue
@@ -55,7 +56,7 @@ def residualize_and_scale_genotypes_for_approximate_firth(
 
 def build_scalar_approximate_firth_solver_parameters(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    scalar_dtype: typing.Any,
+    scalar_dtype: jax_typing.DTypeLike,
 ) -> regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters:
     """Build explicit scalar approximate-Firth policy operands."""
     pseudo_maximum_iterations = min(

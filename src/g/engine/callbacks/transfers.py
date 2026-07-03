@@ -7,6 +7,7 @@ import typing
 
 import jax
 import jax.numpy as jnp
+import jax.typing as jax_typing
 import numpy as np
 import numpy.typing as npt
 
@@ -203,7 +204,7 @@ def record_stage_duration_with_optional_chunk(
     )
 
 
-def resolve_public_statistic_jax_dtype(output_statistic_dtype: types.FloatingPointDtype) -> typing.Any:
+def resolve_public_statistic_jax_dtype(output_statistic_dtype: types.FloatingPointDtype) -> jax_typing.DTypeLike:
     """Resolve the configured public statistic dtype for JAX materialization."""
     if output_statistic_dtype == types.FloatingPointDtype.FLOAT32:
         return jnp.float32

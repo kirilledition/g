@@ -441,7 +441,8 @@ Public config `from_options` adapters now accept object-valued option maps and
 attach the compatibility constructor without an `Any` cast. Runner late-import
 pipeline dispatch wrappers now use typed keyword contracts, with binary dispatch
 making the required binary kernel-config invariant explicit before crossing the
-runtime boundary.
+runtime boundary. JAX dtype helper contracts now use `jax.typing.DTypeLike`
+instead of generic `typing.Any`.
 Test-only runner runtime construction/description helpers were also removed;
 isolated tests build native runtime-state handles directly.
 The test-only `execution_plan.build_kernel_config()` wrapper was removed; tests
