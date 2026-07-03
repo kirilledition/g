@@ -8,11 +8,18 @@ import typing
 import numpy as np
 import numpy.typing as npt
 
-import g.engine.callbacks.grouped as callback_grouped
-import g.engine.callbacks.shared as callback_shared
 from g import types
+from g.engine.regenie2_pipeline import (
+    callbacks,
+    delivery,
+    inputs,
+    multi_group,
+    outputs,
+    schedule,
+    telemetry_events,
+    timing,
+)
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import delivery, inputs, multi_group, outputs, schedule, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -316,7 +323,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         for grouped_run_input in grouped_run_inputs
     )
     group_fanouts = tuple(
-        callback_shared.MultiPhenotypeGroupFanout(
+        callbacks.build_multi_phenotype_group_fanout(
             callback=prepared_delivery.callback,
             sample_position_array=build_group_sample_position_array(
                 union_sample_indices=union_sample_indices,
@@ -343,7 +350,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
             committed_chunk_identifier_sets
         ),
         writer_sessions=writer_sessions,
-        callback=callback_grouped.GroupedMultiPhenotypeFanoutCallback(group_fanouts),
+        callback=callbacks.build_grouped_multi_phenotype_fanout_callback(group_fanouts),
         stage_timing_recorder=context.stage_timing_recorder,
         writer_finish_thread_count=1,
         variant_major_packed8_probability_pairs=False,

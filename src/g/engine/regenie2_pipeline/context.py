@@ -15,8 +15,7 @@ if typing.TYPE_CHECKING:
 
     from g import _core
     from g.compute.regenie2_binary import config as regenie2_binary_config
-    from g.engine.callbacks import shared as callback_shared
-    from g.engine.regenie2_pipeline import inputs
+    from g.engine.regenie2_pipeline import callbacks, inputs
 
 
 def require_binary_kernel_config(
@@ -138,7 +137,7 @@ class PreparedMultiPhenotypeGroupDelivery:
     compute_group: execution_plan.PhenotypeComputeGroup
     phenotype_indices: tuple[int, ...]
     run_input: inputs.NativeBgenMultiRunInput
-    callback: callback_shared.MultiPhenotypeGroupCallbackProtocol
+    callback: callbacks.MultiPhenotypeGroupCallbackProtocol
     writer_sessions: tuple[typing.Any, ...]
     committed_chunk_identifier_sets: tuple[set[int], ...]
 

@@ -5,16 +5,22 @@ from __future__ import annotations
 import time
 import typing
 
-import g.engine.callbacks.binary as callback_binary
-import g.engine.callbacks.linear as callback_linear
-from g import execution_plan, types
+from g.engine.regenie2_pipeline import (
+    callbacks,
+    delivery,
+    inputs,
+    outputs,
+    preflight,
+    schedule,
+    telemetry_events,
+    timing,
+)
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import delivery, inputs, outputs, preflight, schedule, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g import _core
+    from g import _core, execution_plan, types
 
 
 def intersect_committed_chunk_identifier_sets(
@@ -103,41 +109,18 @@ def prepare_multi_phenotype_bgen_group_delivery(
         output_run_paths_by_trait=output_run_paths_by_phenotype,
     )
     writer_session_tuple = writer_sessions
-    if context.is_binary_trait:
-        binary_kernel_config = pipeline_context.require_binary_kernel_config(context.binary_kernel_config)
-        callback = callback_binary.MultiBinaryRegenie2PipelineCallback(
-            run_input=run_input,
-            prediction_source=prediction_source,
-            writer_sessions=writer_session_tuple,
-            committed_chunk_identifier_sets=committed_chunk_identifier_sets,
-            correction_plan=context.correction_plan,
-            kernel_config=binary_kernel_config,
-            null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            staging_depth=staging_depth,
-            native_callback_batch_size=native_callback_batch_size,
-            result_in_flight_limit=result_in_flight_limit,
-            dosage_buffer_limit=dosage_buffer_limit,
-            score_dtype=context.score_dtype,
-            stage_timing_recorder=context.stage_timing_recorder,
-            telemetry_session=context.telemetry_session,
-            output_statistic_dtype=context.writer_settings.output_statistic_dtype,
-        )
-    else:
-        callback = callback_linear.MultiLinearRegenie2PipelineCallback(
-            run_input=run_input,
-            prediction_source=prediction_source,
-            writer_sessions=writer_session_tuple,
-            committed_chunk_identifier_sets=committed_chunk_identifier_sets,
-            staging_depth=staging_depth,
-            native_callback_batch_size=native_callback_batch_size,
-            result_in_flight_limit=result_in_flight_limit,
-            dosage_buffer_limit=dosage_buffer_limit,
-            score_dtype=context.score_dtype,
-            linear_numerical_config=pipeline_context.require_linear_numerical_config(context.linear_numerical_config),
-            stage_timing_recorder=context.stage_timing_recorder,
-            telemetry_session=context.telemetry_session,
-            output_statistic_dtype=context.writer_settings.output_statistic_dtype,
-        )
+    callback = callbacks.build_multi_phenotype_group_callback(
+        context=context,
+        run_input=run_input,
+        prediction_source=prediction_source,
+        writer_sessions=writer_session_tuple,
+        committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+        staging_depth=staging_depth,
+        native_callback_batch_size=native_callback_batch_size,
+        result_in_flight_limit=result_in_flight_limit,
+        dosage_buffer_limit=dosage_buffer_limit,
+        null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+    )
     return pipeline_context.PreparedMultiPhenotypeGroupDelivery(
         compute_group=compute_group,
         phenotype_indices=compute_group.phenotype_indices,

@@ -678,6 +678,62 @@ def test_pipeline_import_policy_allows_pipeline_delivery_adapter(tmp_path: Path)
     assert violations == ()
 
 
+def test_pipeline_import_policy_rejects_callback_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "single_trait.py").write_text(
+        "\n".join(
+            (
+                "from g.engine.callbacks import binary, grouped, linear, shared",
+                "import g.engine.callbacks.binary",
+                "import g.engine.callbacks.grouped",
+                "import g.engine.callbacks.linear",
+                "import g.engine.callbacks.shared",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 1, "g.engine.callbacks.binary", "g.engine.callbacks"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 1, "g.engine.callbacks.grouped", "g.engine.callbacks"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 1, "g.engine.callbacks.linear", "g.engine.callbacks"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 1, "g.engine.callbacks.shared", "g.engine.callbacks"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 2, "g.engine.callbacks.binary", "g.engine.callbacks"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 3, "g.engine.callbacks.grouped", "g.engine.callbacks"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 4, "g.engine.callbacks.linear", "g.engine.callbacks"),
+        (Path("g/engine/regenie2_pipeline/single_trait.py"), 5, "g.engine.callbacks.shared", "g.engine.callbacks"),
+    ]
+
+
+def test_pipeline_import_policy_allows_pipeline_callback_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "callbacks.py").write_text(
+        "\n".join(
+            (
+                "from g.engine.callbacks import binary, grouped, linear, shared",
+                "import g.engine.callbacks.binary",
+                "import g.engine.callbacks.grouped",
+                "import g.engine.callbacks.linear",
+                "import g.engine.callbacks.shared",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_pipeline_call_policy_rejects_native_schedule_policy_construction(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"
