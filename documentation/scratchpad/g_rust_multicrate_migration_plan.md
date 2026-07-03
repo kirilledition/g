@@ -2882,6 +2882,9 @@ Current guardrail notes:
   instead of fetching summary dictionaries in production Python. Legacy summary
   payload getters remain for compatibility tests, while a production call guard
   rejects their use in callback runtime.
+- Unused Python timing snapshot payload adapters were removed; stage timing
+  snapshots now enter the runner timing adapter through typed native snapshot,
+  chunk, queue-backpressure, and transfer-metadata handles only.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture

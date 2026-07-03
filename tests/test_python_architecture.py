@@ -2468,6 +2468,12 @@ def test_run_metadata_policy_rejects_direct_native_metadata_helpers(tmp_path: Pa
             "g._core.extend_run_manifest_metadata",
             "_core.extend_run_manifest_metadata",
         ),
+        (
+            Path("g/runner/metadata.py"),
+            4,
+            "_core.build_execution_run_artifacts_payload",
+            "build_execution_run_artifacts_payload",
+        ),
     ]
 
 
@@ -3852,6 +3858,14 @@ def test_definition_policy_rejects_removed_orchestration_helpers(tmp_path: Path)
                 "    pass",
                 "def build_binary_chunk_summary():",
                 "    pass",
+                "def adapt_stage_timing_snapshot_payload():",
+                "    pass",
+                "def adapt_chunk_stage_timing_payload():",
+                "    pass",
+                "def adapt_queue_backpressure_payload():",
+                "    pass",
+                "def adapt_transfer_metadata_payload():",
+                "    pass",
             )
         ),
         encoding="utf-8",
@@ -3939,6 +3953,8 @@ def test_definition_policy_rejects_removed_orchestration_helpers(tmp_path: Path)
                 "def run_interrupted_event_from_native_payload():",
                 "    pass",
                 "def run_failed_event_from_native_payload():",
+                "    pass",
+                "def optional_path_from_native_payload():",
                 "    pass",
                 "def native_mapping_payload():",
                 "    pass",
@@ -4096,7 +4112,8 @@ def test_definition_policy_rejects_removed_orchestration_helpers(tmp_path: Path)
         (Path("g/runner/events.py"), 7, "run_artifact_payload_from_native_payload"),
         (Path("g/runner/events.py"), 9, "run_interrupted_event_from_native_payload"),
         (Path("g/runner/events.py"), 11, "run_failed_event_from_native_payload"),
-        (Path("g/runner/events.py"), 13, "native_mapping_payload"),
+        (Path("g/runner/events.py"), 13, "optional_path_from_native_payload"),
+        (Path("g/runner/events.py"), 15, "native_mapping_payload"),
         (Path("g/runner/lifecycle.py"), 1, "shutdown_signal_from_native_payload"),
         (Path("g/runner/lifecycle.py"), 3, "native_int_payload"),
         (Path("g/runner/lifecycle.py"), 5, "native_mapping_payload"),
@@ -4130,6 +4147,10 @@ def test_definition_policy_rejects_removed_orchestration_helpers(tmp_path: Path)
         (Path("g/runner/timing.py"), 13, "serialize_transfer_metadata"),
         (Path("g/runner/timing.py"), 15, "build_chunk_stage_summary"),
         (Path("g/runner/timing.py"), 17, "build_binary_chunk_summary"),
+        (Path("g/runner/timing.py"), 19, "adapt_stage_timing_snapshot_payload"),
+        (Path("g/runner/timing.py"), 21, "adapt_chunk_stage_timing_payload"),
+        (Path("g/runner/timing.py"), 23, "adapt_queue_backpressure_payload"),
+        (Path("g/runner/timing.py"), 25, "adapt_transfer_metadata_payload"),
     ]
 
 

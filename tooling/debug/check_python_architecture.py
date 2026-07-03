@@ -1254,6 +1254,10 @@ PYTHON_DEFINITION_POLICIES = (
             "serialize_transfer_metadata",
             "build_chunk_stage_summary",
             "build_binary_chunk_summary",
+            "adapt_stage_timing_snapshot_payload",
+            "adapt_chunk_stage_timing_payload",
+            "adapt_queue_backpressure_payload",
+            "adapt_transfer_metadata_payload",
         ),
         allowed_paths=(),
         message="production timing output must not reintroduce detached Python summary helpers",
@@ -1321,6 +1325,7 @@ PYTHON_DEFINITION_POLICIES = (
             "run_artifact_payload_from_native_payload",
             "run_interrupted_event_from_native_payload",
             "run_failed_event_from_native_payload",
+            "optional_path_from_native_payload",
             "native_mapping_payload",
         ),
         allowed_paths=(),
@@ -1666,6 +1671,7 @@ def collect_python_call_policy_violations(
 ) -> tuple[PythonCallViolation, ...]:
     """Collect Python call-boundary violations under a production package root."""
     violations: list[PythonCallViolation] = []
+    observed_call_sites: set[tuple[Path, int, int, str]] = set()
     for policy in policies:
         source_directory = package_root / policy.source_directory
         if not source_directory.exists():
@@ -1679,7 +1685,17 @@ def collect_python_call_policy_violations(
             for statement in ast.walk(tree):
                 if not isinstance(statement, ast.Call):
                     continue
-                violations.extend(collect_call_violations_for_statement(relative_path, policy, statement))
+                for violation in collect_call_violations_for_statement(relative_path, policy, statement):
+                    call_site = (
+                        violation.path,
+                        violation.line_number,
+                        violation.column_offset,
+                        violation.call_name,
+                    )
+                    if call_site in observed_call_sites:
+                        continue
+                    observed_call_sites.add(call_site)
+                    violations.append(violation)
     return tuple(violations)
 
 

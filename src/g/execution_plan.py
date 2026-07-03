@@ -354,7 +354,7 @@ def build_kernel_config_from_run_request(
 
 
 def adapt_binary_correction_plan(correction_request: _core.NativeRunRequestCorrection) -> types.BinaryCorrectionPlan:
-    """Adapt native correction payload to the existing Python correction plan."""
+    """Adapt native correction settings to the existing Python correction plan."""
     return types.BinaryCorrectionPlan(
         method=types.BinaryFallbackMethod(correction_request.method),
         p_threshold=correction_request.p_threshold,

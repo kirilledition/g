@@ -270,10 +270,10 @@ def native_telemetry_close_policy() -> _core.NativeTelemetryClosePolicy:
 def telemetry_paths_from_native_paths(native_paths: _core.NativeTelemetryPaths) -> TelemetryPaths:
     """Adapt native telemetry path metadata to the public Python dataclass."""
     return TelemetryPaths(
-        log_dir=optional_path_from_native_payload(native_paths.log_dir),
-        stream_file=optional_path_from_native_payload(native_paths.stream_file),
-        profile_summary_json=optional_path_from_native_payload(native_paths.profile_summary_json),
-        stage_timings_json=optional_path_from_native_payload(native_paths.stage_timings_json),
+        log_dir=optional_path_from_native_string(native_paths.log_dir),
+        stream_file=optional_path_from_native_string(native_paths.stream_file),
+        profile_summary_json=optional_path_from_native_string(native_paths.profile_summary_json),
+        stage_timings_json=optional_path_from_native_string(native_paths.stage_timings_json),
     )
 
 
@@ -356,11 +356,11 @@ def run_artifacts_from_native_artifacts(native_artifacts: _core.NativeRunArtifac
     """Adapt native run artifact metadata to the public Python dataclass."""
     association_mode_payload = native_artifacts.association_mode
     return RunArtifacts(
-        output_run_directory=optional_path_from_native_payload(native_artifacts.output_run_directory),
-        final_dataset=optional_path_from_native_payload(native_artifacts.final_dataset),
-        final_parquet=optional_path_from_native_payload(native_artifacts.final_parquet),
-        final_regenie=optional_path_from_native_payload(native_artifacts.final_regenie),
-        effective_config=optional_path_from_native_payload(native_artifacts.effective_config),
+        output_run_directory=optional_path_from_native_string(native_artifacts.output_run_directory),
+        final_dataset=optional_path_from_native_string(native_artifacts.final_dataset),
+        final_parquet=optional_path_from_native_string(native_artifacts.final_parquet),
+        final_regenie=optional_path_from_native_string(native_artifacts.final_regenie),
+        effective_config=optional_path_from_native_string(native_artifacts.effective_config),
         phenotype_artifacts=tuple(
             run_artifacts_from_native_artifacts(phenotype_artifacts)
             for phenotype_artifacts in native_artifacts.phenotype_artifacts
@@ -389,11 +389,11 @@ def run_artifact_payload_from_native_artifact(native_artifact: _core.NativeRunAr
     """Adapt one native completed-run artifact."""
     return RunArtifactPayload(
         phenotype_name=native_artifact.phenotype_name,
-        output_run_directory=optional_path_from_native_payload(native_artifact.output_run_directory),
-        final_dataset=optional_path_from_native_payload(native_artifact.final_dataset),
-        final_parquet=optional_path_from_native_payload(native_artifact.final_parquet),
-        final_regenie=optional_path_from_native_payload(native_artifact.final_regenie),
-        effective_config=optional_path_from_native_payload(native_artifact.effective_config),
+        output_run_directory=optional_path_from_native_string(native_artifact.output_run_directory),
+        final_dataset=optional_path_from_native_string(native_artifact.final_dataset),
+        final_parquet=optional_path_from_native_string(native_artifact.final_parquet),
+        final_regenie=optional_path_from_native_string(native_artifact.final_regenie),
+        effective_config=optional_path_from_native_string(native_artifact.effective_config),
     )
 
 
@@ -415,8 +415,8 @@ def run_failed_event_from_native_event(native_event: _core.NativeRunFailedEvent)
     )
 
 
-def optional_path_from_native_payload(path_payload: object) -> Path | None:
+def optional_path_from_native_string(path_value: object) -> Path | None:
     """Adapt an optional native path string."""
-    if path_payload is None:
+    if path_value is None:
         return None
-    return Path(typing.cast("str", path_payload))
+    return Path(typing.cast("str", path_value))

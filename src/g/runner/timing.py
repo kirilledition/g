@@ -511,54 +511,6 @@ def adapt_stage_timing_snapshot(native_snapshot: _core.NativeStageTimingSnapshot
     )
 
 
-def adapt_stage_timing_snapshot_payload(snapshot_payload: dict[str, object]) -> StageTimingSnapshot:
-    """Adapt a native timing snapshot payload to the public Python shape."""
-    return StageTimingSnapshot(
-        stage_totals_seconds=dict(typing.cast("typing.Mapping[str, float]", snapshot_payload["stage_totals_seconds"])),
-        stage_counts=dict(typing.cast("typing.Mapping[str, int]", snapshot_payload["stage_counts"])),
-        chunk_stage_timings=tuple(
-            adapt_chunk_stage_timing_payload(chunk_stage_timing_payload)
-            for chunk_stage_timing_payload in typing.cast(
-                "typing.Sequence[dict[str, object]]",
-                snapshot_payload["chunk_stage_timings"],
-            )
-        ),
-        native_bgen_profile=dict(typing.cast("typing.Mapping[str, int]", snapshot_payload["native_bgen_profile"])),
-        binary_chunk_diagnostics=tuple(
-            binary_chunk_diagnostics_snapshot_from_mapping(
-                typing.cast("typing.Mapping[str, int | float]", binary_diagnostic_payload)
-            )
-            for binary_diagnostic_payload in typing.cast(
-                "typing.Sequence[dict[str, object]]",
-                snapshot_payload["binary_chunk_diagnostics"],
-            )
-        ),
-        null_logistic_diagnostics=tuple(
-            null_logistic_diagnostics_snapshot_from_mapping(
-                typing.cast("typing.Mapping[str, int | str]", null_logistic_diagnostic_payload)
-            )
-            for null_logistic_diagnostic_payload in typing.cast(
-                "typing.Sequence[dict[str, object]]",
-                snapshot_payload["null_logistic_diagnostics"],
-            )
-        ),
-        queue_backpressure=tuple(
-            adapt_queue_backpressure_payload(queue_backpressure_payload)
-            for queue_backpressure_payload in typing.cast(
-                "typing.Sequence[dict[str, object]]",
-                snapshot_payload["queue_backpressure"],
-            )
-        ),
-        transfer_metadata=tuple(
-            adapt_transfer_metadata_payload(transfer_metadata_payload)
-            for transfer_metadata_payload in typing.cast(
-                "typing.Sequence[dict[str, object]]",
-                snapshot_payload["transfer_metadata"],
-            )
-        ),
-    )
-
-
 def adapt_chunk_stage_timing(native_timing: _core.NativeChunkStageTimingSnapshot) -> ChunkStageTimingSnapshot:
     """Adapt one native chunk-stage timing handle."""
     return ChunkStageTimingSnapshot(
@@ -569,19 +521,6 @@ def adapt_chunk_stage_timing(native_timing: _core.NativeChunkStageTimingSnapshot
         variant_count=native_timing.variant_count,
         stage_name=native_timing.stage_name,
         duration_seconds=native_timing.duration_seconds,
-    )
-
-
-def adapt_chunk_stage_timing_payload(chunk_stage_timing_payload: dict[str, object]) -> ChunkStageTimingSnapshot:
-    """Adapt one native chunk-stage timing payload."""
-    return ChunkStageTimingSnapshot(
-        chunk_identifier=typing.cast("int", chunk_stage_timing_payload["chunk_identifier"]),
-        chromosome=typing.cast("str", chunk_stage_timing_payload["chromosome"]),
-        variant_start_index=typing.cast("int", chunk_stage_timing_payload["variant_start_index"]),
-        variant_stop_index=typing.cast("int", chunk_stage_timing_payload["variant_stop_index"]),
-        variant_count=typing.cast("int", chunk_stage_timing_payload["variant_count"]),
-        stage_name=typing.cast("str", chunk_stage_timing_payload["stage_name"]),
-        duration_seconds=typing.cast("float", chunk_stage_timing_payload["duration_seconds"]),
     )
 
 
@@ -600,19 +539,6 @@ def adapt_queue_backpressure(
     )
 
 
-def adapt_queue_backpressure_payload(queue_backpressure_payload: dict[str, object]) -> QueueBackpressureSnapshot:
-    """Adapt one native queue/backpressure payload."""
-    return QueueBackpressureSnapshot(
-        queue_name=typing.cast("str", queue_backpressure_payload["queue_name"]),
-        operation_name=typing.cast("str", queue_backpressure_payload["operation_name"]),
-        observation_count=typing.cast("int", queue_backpressure_payload["observation_count"]),
-        max_depth=typing.cast("int", queue_backpressure_payload["max_depth"]),
-        max_capacity=typing.cast("int", queue_backpressure_payload["max_capacity"]),
-        total_elapsed_seconds=typing.cast("float", queue_backpressure_payload["total_elapsed_seconds"]),
-        total_blocked_seconds=typing.cast("float", queue_backpressure_payload["total_blocked_seconds"]),
-    )
-
-
 def adapt_transfer_metadata(native_transfer_metadata: _core.NativeTransferMetadataSnapshot) -> TransferMetadataSnapshot:
     """Adapt one native transfer metadata handle."""
     return TransferMetadataSnapshot(
@@ -624,20 +550,6 @@ def adapt_transfer_metadata(native_transfer_metadata: _core.NativeTransferMetada
         total_bytes=native_transfer_metadata.total_bytes,
         max_bytes=native_transfer_metadata.max_bytes,
         total_elements=native_transfer_metadata.total_elements,
-    )
-
-
-def adapt_transfer_metadata_payload(transfer_metadata_payload: dict[str, object]) -> TransferMetadataSnapshot:
-    """Adapt one native transfer metadata payload."""
-    return TransferMetadataSnapshot(
-        transfer_name=typing.cast("str", transfer_metadata_payload["transfer_name"]),
-        array_role=typing.cast("str", transfer_metadata_payload["array_role"]),
-        dtype_name=typing.cast("str", transfer_metadata_payload["dtype_name"]),
-        ndim=typing.cast("int", transfer_metadata_payload["ndim"]),
-        observation_count=typing.cast("int", transfer_metadata_payload["observation_count"]),
-        total_bytes=typing.cast("int", transfer_metadata_payload["total_bytes"]),
-        max_bytes=typing.cast("int", transfer_metadata_payload["max_bytes"]),
-        total_elements=typing.cast("int", transfer_metadata_payload["total_elements"]),
     )
 
 
