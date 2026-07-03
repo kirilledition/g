@@ -322,6 +322,17 @@ PYTHON_IMPORT_POLICIES = (
         allowed_paths=(Path("runner/lifecycle.py"), Path("runner/timing.py")),
     ),
     PythonImportPolicy(
+        name="native_dispatch_event_lifecycle_timing_adapter_isolation",
+        source_directory=Path("engine/native_dispatch"),
+        forbidden_imports=("g.engine.run_events", "g.engine.shutdown", "g.engine.timing"),
+        message="native-dispatch modules must route event, shutdown, and timing access through native-dispatch helpers",
+        allowed_paths=(
+            Path("engine/native_dispatch/events.py"),
+            Path("engine/native_dispatch/lifecycle.py"),
+            Path("engine/native_dispatch/timing.py"),
+        ),
+    ),
+    PythonImportPolicy(
         name="pipeline_output_adapter_isolation",
         source_directory=Path("engine/regenie2_pipeline"),
         forbidden_imports=("g.io",),

@@ -1374,7 +1374,7 @@ def test_finish_writer_sessions_records_native_lifecycle_diagnostic(monkeypatch:
             )
 
     monkeypatch.setattr(
-        native_dispatch_writers.run_events,
+        native_dispatch_writers.events,
         "native_dispatch_diagnostic_policy",
         FakeDispatchDiagnosticPolicy,
     )
@@ -1667,7 +1667,7 @@ def test_run_bgen_engine_with_writer_sessions_records_native_delivery_diagnostic
             pass
 
     monkeypatch.setattr(
-        native_dispatch_delivery.run_events,
+        native_dispatch_delivery.events,
         "native_dispatch_diagnostic_policy",
         FakeDispatchDiagnosticPolicy,
     )
@@ -14106,7 +14106,7 @@ def test_build_bgen_run_engine_records_native_engine_diagnostics(monkeypatch: py
         )
 
     monkeypatch.setattr(
-        native_dispatch_engine.run_events,
+        native_dispatch_engine.events,
         "native_dispatch_diagnostic_policy",
         FakeDispatchDiagnosticPolicy,
     )

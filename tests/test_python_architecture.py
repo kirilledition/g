@@ -444,6 +444,74 @@ def test_runner_import_policy_allows_runner_lifecycle_timing_adapters(tmp_path: 
     assert violations == ()
 
 
+def test_native_dispatch_import_policy_rejects_event_lifecycle_timing_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    native_dispatch_directory = package_root / "engine" / "native_dispatch"
+    native_dispatch_directory.mkdir(parents=True)
+    (native_dispatch_directory / "delivery.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events, shutdown, timing",
+                "import g.engine.run_events",
+                "import g.engine.shutdown",
+                "import g.engine.timing",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/engine/native_dispatch/delivery.py"), 1, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/native_dispatch/delivery.py"), 1, "g.engine.shutdown", "g.engine.shutdown"),
+        (Path("g/engine/native_dispatch/delivery.py"), 1, "g.engine.timing", "g.engine.timing"),
+        (Path("g/engine/native_dispatch/delivery.py"), 2, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/engine/native_dispatch/delivery.py"), 3, "g.engine.shutdown", "g.engine.shutdown"),
+        (Path("g/engine/native_dispatch/delivery.py"), 4, "g.engine.timing", "g.engine.timing"),
+    ]
+
+
+def test_native_dispatch_import_policy_allows_event_lifecycle_timing_adapters(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    native_dispatch_directory = package_root / "engine" / "native_dispatch"
+    native_dispatch_directory.mkdir(parents=True)
+    (native_dispatch_directory / "events.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events",
+                "import g.engine.run_events",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (native_dispatch_directory / "lifecycle.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import shutdown",
+                "import g.engine.shutdown",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (native_dispatch_directory / "timing.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import timing",
+                "import g.engine.timing",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_pipeline_import_policy_rejects_output_adapter_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"
