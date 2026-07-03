@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import re
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,9 +14,6 @@ if typing.TYPE_CHECKING:
     from g import execution_plan
 
 OUTPUT_COMPRESSION_CODEC = "zstd"
-CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
-PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.parquet$")
-REGENIE_PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.regenie$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
 RUN_MANIFEST_SCHEMA_VERSION = 9
 OUTPUT_SCHEMA_VERSION = 2
@@ -173,17 +169,6 @@ def resolve_output_run_paths(
         run_directory=Path(native_run_paths.run_directory),
         chunks_directory=Path(native_run_paths.chunks_directory),
     )
-
-
-def build_chunk_file_name(chunk_identifier: int) -> str:
-    """Build a deterministic chunk file name from a chunk identifier."""
-    return f"chunk_{chunk_identifier:09d}.arrow"
-
-
-def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
-    """Scan a chunks directory and return identifiers of completed chunks."""
-    chunk_identifiers = native_output_lifecycle_policy().scan_committed_chunk_identifiers(str(chunks_directory))
-    return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
 def load_run_manifest(output_run_paths: OutputRunPaths) -> dict[str, typing.Any] | None:
@@ -564,36 +549,6 @@ def create_output_writer_session(
         output_statistic_dtype=output_statistic_dtype.value,
         collect_stage_timings=collect_stage_timings,
     )
-
-
-def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
-    """Return all persisted chunk files in deterministic filename order."""
-    if not chunks_directory.exists():
-        return ()
-    return tuple(
-        sorted(
-            child_path
-            for child_path in chunks_directory.iterdir()
-            if CHUNK_FILENAME_PATTERN.match(child_path.name) is not None
-            or PART_FILENAME_PATTERN.match(child_path.name) is not None
-            or REGENIE_PART_FILENAME_PATTERN.match(child_path.name) is not None
-        )
-    )
-
-
-def finalize_chunks_to_parquet(
-    output_run_paths: OutputRunPaths,
-    association_mode: types.AssociationMode,
-    output_format: types.OutputFormat,
-) -> Path:
-    """Compact committed chunk files into one compressed Parquet file in Rust."""
-    final_parquet_path = native_output_lifecycle_policy().finalize_output_run_chunks(
-        str(output_run_paths.run_directory),
-        str(output_run_paths.chunks_directory),
-        str(association_mode),
-        output_format.value,
-    )
-    return Path(final_parquet_path)
 
 
 @dataclass(frozen=True)

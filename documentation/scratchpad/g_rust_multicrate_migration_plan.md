@@ -2711,6 +2711,11 @@ Current guardrail notes:
   Prepared-plan conversion coverage now lives in the Rust `g-plan`/`g-output`
   tests, and the Rust/Python architecture checkers reject reintroduced JSON
   helper access from production Python.
+- Test-only chunk filename, output-part path scanning, committed-chunk scan,
+  and explicit chunk-finalization wrappers were moved out of the runner output
+  adapter. Production output code no longer carries Python regex/filesystem
+  policy for discovering chunk artifacts or test-only lifecycle shortcuts;
+  native output lifecycle methods remain the production boundary.
 
 ### Exit criteria
 

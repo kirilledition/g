@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import typing
 from pathlib import Path
 
@@ -73,6 +74,29 @@ STEP2_SCHEMA_COLUMN_NAMES = tuple(column_name for column_name, _ in build_step2_
 TEST_DATA_DIRECTORY = Path(__file__).resolve().parent / "data" / "bgen"
 HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
 DEFAULT_TEST_INPUT_PATH: typing.Final[object] = object()
+CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
+PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.parquet$")
+REGENIE_PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.regenie$")
+
+
+def build_chunk_file_name(chunk_identifier: int) -> str:
+    """Build a deterministic chunk file name from a chunk identifier."""
+    return f"chunk_{chunk_identifier:09d}.arrow"
+
+
+def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
+    """Return persisted chunk files in deterministic filename order."""
+    if not chunks_directory.exists():
+        return ()
+    return tuple(
+        sorted(
+            child_path
+            for child_path in chunks_directory.iterdir()
+            if CHUNK_FILENAME_PATTERN.match(child_path.name) is not None
+            or PART_FILENAME_PATTERN.match(child_path.name) is not None
+            or REGENIE_PART_FILENAME_PATTERN.match(child_path.name) is not None
+        )
+    )
 
 
 def build_test_runtime_compatibility_token() -> _core.NativeRuntimeCompatibilityToken:
@@ -173,11 +197,13 @@ def finalize_test_chunks_to_parquet(
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
 ) -> Path:
     """Finalize chunks with the test fixture's default output format."""
-    return output.finalize_chunks_to_parquet(
-        output_run_paths,
-        association_mode,
-        output_format,
+    final_parquet_path = output.native_output_lifecycle_policy().finalize_output_run_chunks(
+        str(output_run_paths.run_directory),
+        str(output_run_paths.chunks_directory),
+        association_mode.value,
+        output_format.value,
     )
+    return Path(final_parquet_path)
 
 
 class NativeChunkWritingCallback:
@@ -799,13 +825,13 @@ def test_output_manifest_helpers_cover_empty_paths_and_invalid_json(tmp_path: Pa
     input_path = tmp_path / "input.txt"
     input_path.write_text("input", encoding="utf-8")
 
-    assert output.build_chunk_file_name(7) == "chunk_000000007.arrow"
+    assert build_chunk_file_name(7) == "chunk_000000007.arrow"
     assert output.build_file_fingerprint(None, include_content_hash=False) is None
     input_fingerprint = output.build_file_fingerprint(input_path, include_content_hash=True)
     assert input_fingerprint is not None
     assert input_fingerprint.content_sha256 == hashlib.sha256(input_path.read_bytes()).hexdigest()
     assert output.normalize_execution_plan_value(Path("relative/path")) == "relative/path"
-    assert output.iter_sorted_chunk_file_paths(output_run_paths.chunks_directory) == ()
+    assert iter_sorted_chunk_file_paths(output_run_paths.chunks_directory) == ()
     with pytest.raises(ValueError, match="must contain a JSON object"):
         output.load_run_manifest(output_run_paths)
 
@@ -977,7 +1003,9 @@ def test_scan_committed_chunk_identifiers_reads_arrow_metadata(tmp_path: Path) -
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
     write_native_chunks(output_run_paths, AssociationMode.REGENIE2_LINEAR)
 
-    assert output.scan_committed_chunk_identifiers(tmp_path) == frozenset({0, 2})
+    chunk_identifiers = output.native_output_lifecycle_policy().scan_committed_chunk_identifiers(str(tmp_path))
+
+    assert frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers) == frozenset({0, 2})
 
 
 def test_prepare_output_run_rejects_non_empty_directory_without_resume(tmp_path: Path) -> None:
@@ -996,9 +1024,9 @@ def test_native_writer_uses_shared_schema_and_null_placeholders(tmp_path: Path) 
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
     write_native_chunks(output_run_paths, AssociationMode.REGENIE2_LINEAR)
 
-    frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
+    frame = pl.read_ipc(iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
-    chunk_schema = pyarrow.ipc.open_file(output.iter_sorted_chunk_file_paths(tmp_path)[0]).schema
+    chunk_schema = pyarrow.ipc.open_file(iter_sorted_chunk_file_paths(tmp_path)[0]).schema
     assert_step2_output_schema_contract(chunk_schema)
     assert b"g.output.chunk_commits" in (chunk_schema.metadata or {})
     assert frame.get_column("TEST").to_list() == ["ADD", "ADD", "ADD", "ADD"]
@@ -1016,7 +1044,7 @@ def test_native_writer_writes_parquet_dataset_parts_with_footer_metadata(tmp_pat
         output_format=types.OutputFormat.PARQUET,
     )
 
-    part_paths = output.iter_sorted_chunk_file_paths(tmp_path)
+    part_paths = iter_sorted_chunk_file_paths(tmp_path)
     assert [part_path.name for part_path in part_paths] == ["part_000000000_000000002.parquet"]
     assert not (tmp_path / "final.parquet").exists()
     frame = pl.read_parquet(part_paths[0])
@@ -1066,7 +1094,7 @@ def test_native_writer_writes_regenie_text_parts_and_final_output(tmp_path: Path
         output_format=types.OutputFormat.REGENIE,
     )
 
-    part_paths = output.iter_sorted_chunk_file_paths(prepared_output_run.output_run_paths.chunks_directory)
+    part_paths = iter_sorted_chunk_file_paths(prepared_output_run.output_run_paths.chunks_directory)
     assert [part_path.name for part_path in part_paths] == ["part_000000000_000000002.regenie"]
     part_lines = part_paths[0].read_text(encoding="utf-8").splitlines()
     assert part_lines[0].split("\t") == EXPECTED_FINAL_COLUMNS
@@ -1180,7 +1208,7 @@ def test_native_binary_writer_maps_successful_correction_extra_code_to_null(tmp_
         output_run_paths, AssociationMode.REGENIE2_BINARY, extra_code_value=types.BinaryExtraCode.FIRTH.value
     )
 
-    frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
+    frame = pl.read_ipc(iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
     assert frame.get_column("EXTRA").to_list() == [None, None, None, None]
     assert frame.get_column("CORRECTION_METHOD").to_list() == [
@@ -1198,7 +1226,7 @@ def test_native_binary_writer_maps_test_fail_extra_code_to_label(tmp_path: Path)
         output_run_paths, AssociationMode.REGENIE2_BINARY, extra_code_value=types.BinaryExtraCode.TEST_FAIL.value
     )
 
-    frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
+    frame = pl.read_ipc(iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
     assert frame.get_column("EXTRA").to_list() == ["TEST_FAIL", "TEST_FAIL", "TEST_FAIL", "TEST_FAIL"]
     assert frame.get_column("CORRECTION_METHOD").to_list() == [
@@ -1255,7 +1283,7 @@ def test_public_native_writer_copies_numpy_arrays_before_enqueue(tmp_path: Path)
             writer_session.abort()
         raise
 
-    frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
+    frame = pl.read_ipc(iter_sorted_chunk_file_paths(tmp_path)[0])
     np.testing.assert_allclose(frame.get_column("BETA").to_numpy(), np.full(row_count, 0.125, dtype=np.float32))
     np.testing.assert_allclose(frame.get_column("SE").to_numpy(), np.full(row_count, 0.025, dtype=np.float32))
     np.testing.assert_allclose(frame.get_column("CHISQ").to_numpy(), np.full(row_count, 8.0, dtype=np.float32))
@@ -1306,7 +1334,7 @@ def test_public_native_writer_preserves_float64_output_statistics(tmp_path: Path
             writer_session.abort()
         raise
 
-    chunk_path = output.iter_sorted_chunk_file_paths(tmp_path)[0]
+    chunk_path = iter_sorted_chunk_file_paths(tmp_path)[0]
     assert_step2_output_schema_contract(pyarrow.ipc.open_file(chunk_path).schema, pa.float64())
     frame = pl.read_ipc(chunk_path)
     observed_beta = frame.get_column("BETA").to_numpy()
@@ -1389,8 +1417,8 @@ def test_public_multi_native_writer_copies_numpy_rows_before_enqueue(tmp_path: P
                 writer_session.abort()
         raise
 
-    first_frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(writer_run_paths[0].chunks_directory)[0])
-    second_frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(writer_run_paths[1].chunks_directory)[0])
+    first_frame = pl.read_ipc(iter_sorted_chunk_file_paths(writer_run_paths[0].chunks_directory)[0])
+    second_frame = pl.read_ipc(iter_sorted_chunk_file_paths(writer_run_paths[1].chunks_directory)[0])
     np.testing.assert_allclose(first_frame.get_column("BETA").to_numpy(), np.full(row_count, 0.25, dtype=np.float32))
     np.testing.assert_allclose(second_frame.get_column("BETA").to_numpy(), np.full(row_count, 0.5, dtype=np.float32))
     np.testing.assert_allclose(first_frame.get_column("SE").to_numpy(), np.full(row_count, 0.05, dtype=np.float32))
@@ -1464,8 +1492,8 @@ def test_public_multi_native_writer_preserves_float64_output_statistics(tmp_path
                 writer_session.abort()
         raise
 
-    first_chunk_path = output.iter_sorted_chunk_file_paths(writer_run_paths[0].chunks_directory)[0]
-    second_chunk_path = output.iter_sorted_chunk_file_paths(writer_run_paths[1].chunks_directory)[0]
+    first_chunk_path = iter_sorted_chunk_file_paths(writer_run_paths[0].chunks_directory)[0]
+    second_chunk_path = iter_sorted_chunk_file_paths(writer_run_paths[1].chunks_directory)[0]
     assert_step2_output_schema_contract(pyarrow.ipc.open_file(first_chunk_path).schema, pa.float64())
     assert_step2_output_schema_contract(pyarrow.ipc.open_file(second_chunk_path).schema, pa.float64())
     first_beta = pl.read_ipc(first_chunk_path).get_column("BETA").to_numpy()
@@ -2020,10 +2048,10 @@ def test_chunk_arrow_schema_is_shared_between_linear_and_binary(tmp_path: Path) 
     )
 
     linear_schema = pyarrow.ipc.open_file(
-        output.iter_sorted_chunk_file_paths(linear_run_paths.chunks_directory)[0],
+        iter_sorted_chunk_file_paths(linear_run_paths.chunks_directory)[0],
     ).schema
     binary_schema = pyarrow.ipc.open_file(
-        output.iter_sorted_chunk_file_paths(binary_run_paths.chunks_directory)[0],
+        iter_sorted_chunk_file_paths(binary_run_paths.chunks_directory)[0],
     ).schema
     assert linear_schema == binary_schema
     assert linear_schema.names == EXPECTED_CHUNK_COLUMNS
@@ -2081,7 +2109,7 @@ def test_regenie2_step2_output_schema_contract(
         output_statistic_dtype=output_statistic_dtype,
     )
 
-    for chunk_path in output.iter_sorted_chunk_file_paths(output_run_paths.chunks_directory):
+    for chunk_path in iter_sorted_chunk_file_paths(output_run_paths.chunks_directory):
         if output_format == types.OutputFormat.ARROW:
             chunk_schema = pyarrow.ipc.open_file(chunk_path).schema
         else:
