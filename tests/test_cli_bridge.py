@@ -250,14 +250,14 @@ def test_run_args_bridges_completion_events(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Ensure successful completion lines are logged and printed."""
-    from g.engine import run_events, shutdown
-    from g.engine import telemetry as telemetry_module
+    from g.runner import events as runner_events
     from g.runner import execution as runner_execution
+    from g.runner import lifecycle as runner_lifecycle
     from g.runner import runtime as runner_runtime
 
     run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
     telemetry_session = FakeTelemetrySession()
-    run_artifacts = run_events.RunArtifacts(
+    run_artifacts = runner_events.RunArtifacts(
         output_run_directory=Path("output.run"),
         final_dataset=Path("output.run/parts"),
         final_parquet=None,
@@ -274,14 +274,14 @@ def test_run_args_bridges_completion_events(
     diagnostic_policy_mock = unittest.mock.Mock()
     with (
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
-        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_events, "build_telemetry_session", return_value=telemetry_session),
         unittest.mock.patch.object(
             runner_runtime, "build_runtime_policy", return_value=runtime_policy
         ) as build_runtime_policy_mock,
         unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy") as runtime_preflight_mock,
         unittest.mock.patch.object(runner_runtime, "initialize_logging") as initialize_logging_mock,
         unittest.mock.patch.object(
-            shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
+            runner_lifecycle, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts) as regenie_mock,
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
@@ -312,29 +312,29 @@ def test_run_args_bridges_interruption_events(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Ensure graceful interruption is logged and printed as structured completion lines."""
-    from g.engine import shutdown
-    from g.engine import telemetry as telemetry_module
+    from g.runner import events as runner_events
     from g.runner import execution as runner_execution
+    from g.runner import lifecycle as runner_lifecycle
     from g.runner import runtime as runner_runtime
 
     run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
     telemetry_session = FakeTelemetrySession()
-    shutdown_request = shutdown.GracefulShutdownRequested(
-        shutdown.ShutdownSignal(number=2, name="SIGINT", exit_code=130)
+    shutdown_request = runner_lifecycle.GracefulShutdownRequested(
+        runner_lifecycle.ShutdownSignal(number=2, name="SIGINT", exit_code=130)
     )
     outcome = python_types.SimpleNamespace(stdout="", stderr="", exit_code=0, config=run_config)
     runtime_policy = python_types.SimpleNamespace()
     diagnostic_policy_mock = unittest.mock.Mock()
     with (
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
-        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_events, "build_telemetry_session", return_value=telemetry_session),
         unittest.mock.patch.object(
             runner_runtime, "build_runtime_policy", return_value=runtime_policy
         ) as build_runtime_policy_mock,
         unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy") as runtime_preflight_mock,
         unittest.mock.patch.object(runner_runtime, "initialize_logging") as initialize_logging_mock,
         unittest.mock.patch.object(
-            shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
+            runner_lifecycle, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=shutdown_request) as regenie_mock,
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
@@ -365,7 +365,7 @@ def test_run_args_reports_runtime_initialization_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Ensure runtime initialization failures are rendered without tracebacks."""
-    from g.engine import telemetry as telemetry_module
+    from g.runner import events as runner_events
     from g.runner import execution as runner_execution
     from g.runner import runtime as runner_runtime
 
@@ -377,7 +377,7 @@ def test_run_args_reports_runtime_initialization_failure(
     diagnostic_policy_mock = unittest.mock.Mock()
     with (
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
-        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_events, "build_telemetry_session", return_value=telemetry_session),
         unittest.mock.patch.object(
             runner_runtime, "build_runtime_policy", return_value=runtime_policy
         ) as build_runtime_policy_mock,
@@ -411,7 +411,7 @@ def test_run_args_suppresses_run_failed_telemetry_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Ensure telemetry logging failures do not mask runtime failures."""
-    from g.engine import telemetry as telemetry_module
+    from g.runner import events as runner_events
     from g.runner import execution as runner_execution
     from g.runner import runtime as runner_runtime
 
@@ -423,7 +423,7 @@ def test_run_args_suppresses_run_failed_telemetry_failure(
     diagnostic_policy_mock = unittest.mock.Mock()
     with (
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
-        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_events, "build_telemetry_session", return_value=telemetry_session),
         unittest.mock.patch.object(runner_runtime, "build_runtime_policy", return_value=runtime_policy),
         unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy"),
         unittest.mock.patch.object(runner_runtime, "initialize_logging", side_effect=RuntimeError("logging failed")),
@@ -452,9 +452,9 @@ def test_run_args_reports_runner_failure_without_traceback(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Ensure runner failures return a concise CLI error instead of raising."""
-    from g.engine import shutdown
-    from g.engine import telemetry as telemetry_module
+    from g.runner import events as runner_events
     from g.runner import execution as runner_execution
+    from g.runner import lifecycle as runner_lifecycle
     from g.runner import runtime as runner_runtime
 
     run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
@@ -464,12 +464,12 @@ def test_run_args_reports_runner_failure_without_traceback(
     diagnostic_policy_mock = unittest.mock.Mock()
     with (
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
-        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_events, "build_telemetry_session", return_value=telemetry_session),
         unittest.mock.patch.object(runner_runtime, "build_runtime_policy", return_value=runtime_policy),
         unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy"),
         unittest.mock.patch.object(runner_runtime, "initialize_logging"),
         unittest.mock.patch.object(
-            shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
+            runner_lifecycle, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=RuntimeError("pipeline failed")),
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
@@ -494,14 +494,14 @@ def test_run_args_reports_telemetry_close_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Ensure telemetry close failures are rendered without tracebacks."""
-    from g.engine import run_events, shutdown
-    from g.engine import telemetry as telemetry_module
+    from g.runner import events as runner_events
     from g.runner import execution as runner_execution
+    from g.runner import lifecycle as runner_lifecycle
     from g.runner import runtime as runner_runtime
 
     run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
     telemetry_session = FakeTelemetrySession(close_error=RuntimeError("telemetry close failed"))
-    run_artifacts = run_events.RunArtifacts(
+    run_artifacts = runner_events.RunArtifacts(
         output_run_directory=Path("output.run"),
         final_dataset=None,
         final_parquet=None,
@@ -518,12 +518,12 @@ def test_run_args_reports_telemetry_close_failure(
     diagnostic_policy_mock = unittest.mock.Mock()
     with (
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
-        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_events, "build_telemetry_session", return_value=telemetry_session),
         unittest.mock.patch.object(runner_runtime, "build_runtime_policy", return_value=runtime_policy),
         unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy"),
         unittest.mock.patch.object(runner_runtime, "initialize_logging"),
         unittest.mock.patch.object(
-            shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
+            runner_lifecycle, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", return_value=run_artifacts),
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),
@@ -553,9 +553,9 @@ def test_run_args_preserves_runner_failure_when_telemetry_close_fails(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Ensure close failures do not replace an existing runner failure."""
-    from g.engine import shutdown
-    from g.engine import telemetry as telemetry_module
+    from g.runner import events as runner_events
     from g.runner import execution as runner_execution
+    from g.runner import lifecycle as runner_lifecycle
     from g.runner import runtime as runner_runtime
 
     run_config = python_types.SimpleNamespace(g_diagnostics=python_types.SimpleNamespace())
@@ -565,12 +565,12 @@ def test_run_args_preserves_runner_failure_when_telemetry_close_fails(
     diagnostic_policy_mock = unittest.mock.Mock()
     with (
         unittest.mock.patch("g.cli.g._core.dispatch_cli", return_value=outcome),
-        unittest.mock.patch.object(telemetry_module, "build_telemetry_session", return_value=telemetry_session),
+        unittest.mock.patch.object(runner_events, "build_telemetry_session", return_value=telemetry_session),
         unittest.mock.patch.object(runner_runtime, "build_runtime_policy", return_value=runtime_policy),
         unittest.mock.patch.object(runner_runtime, "require_compatible_runtime_policy"),
         unittest.mock.patch.object(runner_runtime, "initialize_logging"),
         unittest.mock.patch.object(
-            shutdown, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
+            runner_lifecycle, "install_graceful_shutdown_handlers", return_value=contextlib.nullcontext()
         ),
         unittest.mock.patch.object(runner_execution, "regenie", side_effect=RuntimeError("pipeline failed")),
         unittest.mock.patch("g.cli.native_cli_diagnostic_policy", return_value=diagnostic_policy_mock),

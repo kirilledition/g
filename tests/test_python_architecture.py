@@ -60,6 +60,36 @@ def test_public_api_import_policy_rejects_backend_bypass_imports(tmp_path: Path)
     ]
 
 
+def test_cli_import_policy_rejects_engine_event_lifecycle_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    package_root.mkdir()
+    (package_root / "cli.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import run_events, shutdown, telemetry",
+                "import g.engine.run_events",
+                "import g.engine.shutdown",
+                "import g.engine.telemetry",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/cli.py"), 1, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/cli.py"), 1, "g.engine.shutdown", "g.engine.shutdown"),
+        (Path("g/cli.py"), 1, "g.engine.telemetry", "g.engine.telemetry"),
+        (Path("g/cli.py"), 2, "g.engine.run_events", "g.engine.run_events"),
+        (Path("g/cli.py"), 3, "g.engine.shutdown", "g.engine.shutdown"),
+        (Path("g/cli.py"), 4, "g.engine.telemetry", "g.engine.telemetry"),
+    ]
+
+
 def test_interface_config_import_policy_rejects_host_runtime_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     interface_directory = package_root / "interface"

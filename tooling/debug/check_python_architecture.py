@@ -288,6 +288,12 @@ PYTHON_IMPORT_POLICIES = (
         message="execution-plan construction must not import output adapters or prepare output lifecycle state",
     ),
     PythonImportPolicy(
+        name="cli_runner_event_adapter_isolation",
+        source_directory=Path("cli.py"),
+        forbidden_imports=("g.engine.run_events", "g.engine.shutdown", "g.engine.telemetry"),
+        message="legacy CLI bridge must route event, shutdown, and telemetry access through runner helpers",
+    ),
+    PythonImportPolicy(
         name="runner_jax_import_boundary",
         source_directory=Path("runner"),
         forbidden_imports=("g.engine.regenie2_pipeline", "g.engine.callbacks", "g.compute", "jax", "jaxlib"),

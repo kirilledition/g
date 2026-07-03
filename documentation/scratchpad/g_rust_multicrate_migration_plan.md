@@ -2528,6 +2528,11 @@ Current guardrail notes:
   public `g.cli.run_args` must call the coarse native PyO3 CLI runner, must not
   call `dispatch_cli` directly, and the legacy Python backend must remain behind
   the shared sentinel used by the native bridge.
+- The sentinel-protected legacy CLI bridge now routes run-event rendering,
+  telemetry session open/close, and graceful-shutdown handling through runner
+  event/lifecycle helpers; the Python architecture checker rejects direct
+  `g.engine.run_events`, `g.engine.shutdown`, and `g.engine.telemetry` imports
+  from `g.cli`.
 - The `g.compute` import-boundary guard now rejects imports of native bindings,
   public API wrappers, host orchestration, execution-plan, runner, JAX runtime
   setup, CLI/config, output, and file-parser packages. This keeps Python/JAX
@@ -2866,6 +2871,7 @@ g.io must not import JAX runtime setup packages.
 g.io must not import engine orchestration packages.
 Production Python must not import the obsolete `g.io.source` module.
 g.execution_plan must not import output adapter packages.
+g.cli must not import engine run-event, shutdown, or telemetry packages directly.
 g.runner modules must not import output adapter packages directly, except the runner output helper.
 g.runner modules must not import run-event or telemetry packages directly, except the runner event helper.
 g.runner modules must not import shutdown or timing packages directly, except the runner lifecycle and timing helpers.

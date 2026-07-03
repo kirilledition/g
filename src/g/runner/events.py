@@ -10,15 +10,17 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g import _core, types
+    from g.engine.run_events import RunArtifacts, RunCompletedEvent, RunFailedEvent, RunInterruptedEvent
+    from g.engine.telemetry import TelemetryPaths, TelemetrySession
     from g.interface import config
     from g.runner import lifecycle
-
-type RunArtifacts = run_events.RunArtifacts
-type RunCompletedEvent = run_events.RunCompletedEvent
-type RunFailedEvent = run_events.RunFailedEvent
-type RunInterruptedEvent = run_events.RunInterruptedEvent
-type TelemetryPaths = telemetry.TelemetryPaths
-type TelemetrySession = telemetry.TelemetrySession
+else:
+    RunArtifacts = run_events.RunArtifacts
+    RunCompletedEvent = run_events.RunCompletedEvent
+    RunFailedEvent = run_events.RunFailedEvent
+    RunInterruptedEvent = run_events.RunInterruptedEvent
+    TelemetryPaths = telemetry.TelemetryPaths
+    TelemetrySession = telemetry.TelemetrySession
 
 
 def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySession:
@@ -75,6 +77,21 @@ def attach_run_metadata(
 def build_run_completed_event(artifacts: RunArtifacts) -> RunCompletedEvent:
     """Build a structured completion event from run artifacts."""
     return run_events.build_run_completed_event(artifacts)
+
+
+def render_run_interrupted_lines(interrupted_event: RunInterruptedEvent) -> tuple[str, ...]:
+    """Render graceful interruption lines for CLI output."""
+    return run_events.render_run_interrupted_lines(interrupted_event)
+
+
+def render_run_failed_lines(failed_event: RunFailedEvent) -> tuple[str, ...]:
+    """Render run failure lines for CLI output."""
+    return run_events.render_run_failed_lines(failed_event)
+
+
+def render_run_completed_lines(completed_event: RunCompletedEvent) -> tuple[str, ...]:
+    """Render run completion lines for CLI output."""
+    return run_events.render_run_completed_lines(completed_event)
 
 
 def run_artifacts_from_native_payload(payload: object) -> RunArtifacts:
