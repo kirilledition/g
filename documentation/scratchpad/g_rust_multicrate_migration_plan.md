@@ -2796,7 +2796,10 @@ Current guardrail notes:
   instead of a generic object. Pipeline preflight, callback construction, and
   callback writer materialization helpers now use explicit prediction-source
   and chunk-writer protocols instead of untyped orchestration objects; callback
-  chromosome-state helpers use the shared chunk-metadata protocol.
+  transfer, runtime timing, and chromosome-state helpers use the shared
+  chunk-metadata protocol. Callback diagnostics now use generic object payloads
+  for JAX synchronization inputs, and single-result write dispatch resolves the
+  owned writer session through an explicit protocol instead of a dynamic cast.
 - Test-only runner runtime construction/description helpers were also removed;
   isolated tests build native runtime-state handles directly.
 - The test-only `execution_plan.build_kernel_config()` wrapper was removed;

@@ -19,6 +19,7 @@ HostGenotypeBuffer = shared.HostGenotypeBuffer
 HostOrDeviceFloatArray = shared.HostOrDeviceFloatArray
 LinearChunkStatsArrays = shared.LinearChunkStatsArrays
 BinaryChunkStatsArrays = shared.BinaryChunkStatsArrays
+CallbackChunkMetadataProtocol = shared.CallbackChunkMetadataProtocol
 PublicStatisticArray = npt.NDArray[np.float32] | npt.NDArray[np.float64]
 
 
@@ -73,7 +74,7 @@ def record_transfer_metadata_for_array(
 def put_genotype_matrix_on_device(
     genotype_matrix: jax.Array | HostGenotypeBuffer,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    chunk_metadata: typing.Any | None,
+    chunk_metadata: CallbackChunkMetadataProtocol | None,
     *,
     array_role: str,
 ) -> jax.Array:
@@ -102,7 +103,7 @@ def put_genotype_matrix_on_device(
 def put_chunk_array_on_device(
     array: jax.Array | npt.NDArray[typing.Any],
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    chunk_metadata: typing.Any,
+    chunk_metadata: CallbackChunkMetadataProtocol,
     *,
     array_role: str,
 ) -> jax.Array:
@@ -133,7 +134,7 @@ def block_compute_result_for_timing(
     result_ready_value: jax.Array,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     start_time: float,
-    chunk_metadata: typing.Any | None,
+    chunk_metadata: CallbackChunkMetadataProtocol | None,
 ) -> None:
     """Synchronize chunk compute only when detailed stage timings are enabled."""
     if stage_timing_recorder is None:
@@ -148,7 +149,7 @@ def block_compute_result_for_timing(
     )
 
 
-def build_chunk_timing_identity(metadata: typing.Any) -> timing.ChunkTimingIdentity:
+def build_chunk_timing_identity(metadata: CallbackChunkMetadataProtocol) -> timing.ChunkTimingIdentity:
     """Build per-chunk timing identity fields from native metadata."""
     native_identity = build_native_callback_chunk_identity(metadata)
     return timing.ChunkTimingIdentity(
@@ -160,7 +161,7 @@ def build_chunk_timing_identity(metadata: typing.Any) -> timing.ChunkTimingIdent
     )
 
 
-def build_native_callback_chunk_identity(metadata: typing.Any) -> _core.NativeCallbackChunkIdentity:
+def build_native_callback_chunk_identity(metadata: CallbackChunkMetadataProtocol) -> _core.NativeCallbackChunkIdentity:
     """Build the native callback chunk identity from metadata attributes."""
     return native_callback_progress_policy().build_callback_chunk_identity(
         chromosome=shared.get_metadata_chromosome(metadata),
@@ -179,7 +180,7 @@ def record_stage_duration_with_optional_chunk(
     stage_timing_recorder: timing.StageTimingRecorder | None,
     stage_name: str,
     start_time: float,
-    chunk_metadata: typing.Any | None,
+    chunk_metadata: CallbackChunkMetadataProtocol | None,
 ) -> None:
     """Record a stage duration globally and optionally against one chunk."""
     if stage_timing_recorder is None:

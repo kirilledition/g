@@ -18,6 +18,25 @@ type HostGenotypeBuffer = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
 type HostOrDeviceFloatArray = jax.Array | npt.NDArray[np.float32]
 
 
+class CallbackChunkMetadataProtocol(typing.Protocol):
+    """Chunk metadata contract required by callback timing and chromosome state."""
+
+    @property
+    def chromosome_label(self) -> str:
+        """Return the chromosome label for this chunk."""
+        ...
+
+    @property
+    def variant_start_index(self) -> int:
+        """Return the inclusive start variant index for this chunk."""
+        ...
+
+    @property
+    def variant_stop_index(self) -> int:
+        """Return the exclusive stop variant index for this chunk."""
+        ...
+
+
 class MultiPhenotypeGroupCallbackProtocol(typing.Protocol):
     """Callback contract required by grouped union-sample fanout delivery."""
 
@@ -48,7 +67,7 @@ class MultiPhenotypeGroupCallbackProtocol(typing.Protocol):
 
     def compute_preprocessed_variant_major_dosage_chunk(
         self,
-        metadata: typing.Any,
+        metadata: _core.VariantMetadata,
         genotype_matrix_by_variant: npt.NDArray[np.float32],
         chunk_stats: _core.ChunkStats,
     ) -> None:
@@ -117,7 +136,7 @@ class NativeBgenWorkerShutdownError(RuntimeError):
 class PreprocessedDosageChunkWorkItem:
     """One native-preprocessed dosage chunk staged for asynchronous JAX compute."""
 
-    metadata: typing.Any
+    metadata: _core.VariantMetadata
     genotype_matrix: npt.NDArray[np.float32]
     chunk_stats: _core.ChunkStats
 
@@ -126,7 +145,7 @@ class PreprocessedDosageChunkWorkItem:
 class PreprocessedVariantMajorDosageChunkWorkItem:
     """One native-preprocessed variant-major dosage chunk staged for JAX compute."""
 
-    metadata: typing.Any
+    metadata: _core.VariantMetadata
     genotype_matrix_by_variant: npt.NDArray[np.float32]
     chunk_stats: _core.ChunkStats
 
@@ -142,7 +161,7 @@ class PreprocessedVariantMajorDosageChunkBatchWorkItem:
 class PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem:
     """One variant-major packed8 probability-pair chunk staged for JAX compute."""
 
-    metadata: typing.Any
+    metadata: _core.VariantMetadata
     packed_probability_pairs_by_variant: npt.NDArray[np.uint8]
     chunk_stats: _core.ChunkStats
 
@@ -224,12 +243,6 @@ class MultiRegeniePredictionSourceProtocol(typing.Protocol):
     def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]:
         """Return trait-major aligned LOCO predictions for one chromosome."""
         ...
-
-
-class CallbackChunkMetadataProtocol(typing.Protocol):
-    """Chunk metadata contract required by callback timing and chromosome state."""
-
-    chromosome_label: str
 
 
 def get_metadata_chromosome(metadata: CallbackChunkMetadataProtocol) -> str:

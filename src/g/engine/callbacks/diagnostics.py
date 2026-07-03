@@ -16,7 +16,7 @@ if typing.TYPE_CHECKING:
     import collections.abc
 
 
-def block_until_ready(value: typing.Any) -> None:
+def block_until_ready(value: object) -> None:
     """Synchronize a JAX value or pytree."""
     jax.block_until_ready(value)
 
@@ -24,7 +24,7 @@ def block_until_ready(value: typing.Any) -> None:
 def enforce_null_logistic_nonconvergence_policy(
     *,
     chromosome: str,
-    null_logistic_converged: typing.Any,
+    null_logistic_converged: object,
     policy: types.NullLogisticNonconvergencePolicy,
     phenotype_names: tuple[str, ...] | None,
 ) -> _core.NativeNullLogisticNonconvergencePlan:
@@ -41,17 +41,17 @@ def enforce_null_logistic_nonconvergence_policy(
 def record_null_logistic_chromosome_diagnostics(
     *,
     chromosome: str,
-    null_logistic_converged: typing.Any,
-    null_logistic_iteration_count: typing.Any,
-    null_firth_iteration_count: typing.Any | None,
-    null_firth_convergence_reason_code: typing.Any | None,
+    null_logistic_converged: object,
+    null_logistic_iteration_count: object,
+    null_firth_iteration_count: object | None,
+    null_firth_convergence_reason_code: object | None,
     policy: types.NullLogisticNonconvergencePolicy,
     phenotype_names: tuple[str, ...] | None,
     correction_method: types.BinaryFallbackMethod,
     stage_timing_recorder: timing.StageTimingRecorder | None,
 ) -> int:
     """Apply null-logistic policy and record native timing diagnostics."""
-    host_value_requests: dict[str, typing.Any] = {"converged": null_logistic_converged}
+    host_value_requests: dict[str, object] = {"converged": null_logistic_converged}
     if stage_timing_recorder is not None:
         host_value_requests["iteration_count"] = null_logistic_iteration_count
         if phenotype_names is None:

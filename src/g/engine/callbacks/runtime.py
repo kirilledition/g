@@ -26,6 +26,7 @@ if typing.TYPE_CHECKING:
     from g.runner import events
 
 HostGenotypeBuffer = shared.HostGenotypeBuffer
+CallbackChunkMetadataProtocol = shared.CallbackChunkMetadataProtocol
 PreprocessedDosageChunkWorkItem = shared.PreprocessedDosageChunkWorkItem
 PreprocessedVariantMajorDosageChunkBatchWorkItem = shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
 PreprocessedVariantMajorDosageChunkWorkItem = shared.PreprocessedVariantMajorDosageChunkWorkItem
@@ -43,6 +44,12 @@ Regenie2ResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem
 Regenie2MultiResultWriteWorkItem = shared.Regenie2MultiResultWriteWorkItem
 type QueuedResultWriteWorkItem = Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None
 NativeBgenWorkerShutdownError = shared.NativeBgenWorkerShutdownError
+
+
+class SingleResultWriterOwnerProtocol(typing.Protocol):
+    """Callback instance contract for single-result writer ownership."""
+
+    writer_session: writers.Regenie2ChunkWriterSession
 
 
 def native_callback_progress_policy() -> _core.NativeCallbackProgressPolicy:
@@ -344,7 +351,12 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record a nested callback stage using this runner's timing recorder."""
         timing.record_stage_duration(self.stage_timing_recorder, stage_name, start_time)
 
-    def record_chunk_stage_duration(self, metadata: typing.Any, stage_name: str, start_time: float) -> None:
+    def record_chunk_stage_duration(
+        self,
+        metadata: CallbackChunkMetadataProtocol,
+        stage_name: str,
+        start_time: float,
+    ) -> None:
         """Record a nested callback stage for a specific native chunk."""
         transfers.record_stage_duration_with_optional_chunk(
             stage_timing_recorder=self.stage_timing_recorder,
@@ -355,7 +367,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def record_chunk_stage_elapsed_duration(
         self,
-        metadata: typing.Any,
+        metadata: CallbackChunkMetadataProtocol,
         stage_name: str,
         elapsed_seconds: float,
     ) -> None:
@@ -384,7 +396,10 @@ class NativeBgenCallbackRunner(abc.ABC):
             work_item,
             elapsed_seconds,
         )
-        chunk_metadata_items = attribution.metadata_items
+        chunk_metadata_items = tuple(
+            typing.cast("CallbackChunkMetadataProtocol", chunk_metadata)
+            for chunk_metadata in attribution.metadata_items
+        )
         stage_duration_plan = attribution.stage_duration_plan
         if stage_duration_plan.chunk_count != len(chunk_metadata_items):
             message = "Native dosage work stage duration plan disagrees with the work item chunk count."
@@ -808,7 +823,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def plan_variant_major_dosage_batch_handoff_for_sequences(
         self,
-        metadata_batch: collections.abc.Sequence[typing.Any],
+        metadata_batch: collections.abc.Sequence[_core.VariantMetadata],
         genotype_matrix_by_variant_batch: collections.abc.Sequence[npt.NDArray[np.float32]],
         chunk_stats_batch: collections.abc.Sequence[_core.ChunkStats],
     ) -> _core.NativeVariantMajorDosageBatchHandoffPlan:
@@ -821,7 +836,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def compute_preprocessed_dosage_chunk(
         self,
-        metadata: typing.Any,
+        metadata: _core.VariantMetadata,
         genotype_matrix: npt.NDArray[np.float32],
         chunk_stats: _core.ChunkStats,
     ) -> None:
@@ -839,7 +854,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def compute_preprocessed_variant_major_dosage_chunk(
         self,
-        metadata: typing.Any,
+        metadata: _core.VariantMetadata,
         genotype_matrix_by_variant: npt.NDArray[np.float32],
         chunk_stats: _core.ChunkStats,
     ) -> None:
@@ -857,7 +872,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def compute_preprocessed_variant_major_dosage_chunk_batch(
         self,
-        metadata_batch: collections.abc.Sequence[typing.Any],
+        metadata_batch: collections.abc.Sequence[_core.VariantMetadata],
         genotype_matrix_by_variant_batch: collections.abc.Sequence[npt.NDArray[np.float32]],
         chunk_stats_batch: collections.abc.Sequence[_core.ChunkStats],
     ) -> None:
@@ -889,7 +904,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def compute_preprocessed_variant_major_packed8_probability_pair_chunk(
         self,
-        metadata: typing.Any,
+        metadata: _core.VariantMetadata,
         packed_probability_pairs_by_variant: npt.NDArray[np.uint8],
         chunk_stats: _core.ChunkStats,
     ) -> None:
@@ -1091,7 +1106,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         message = "Native dosage work item get result omitted a dispatch plan."
         raise RuntimeError(message)
 
-    def record_progress(self, metadata: typing.Any) -> None:
+    def record_progress(self, metadata: CallbackChunkMetadataProtocol) -> None:
         """Record throttled progress after one chunk is processed."""
         progress_update = self.callback_runtime_resources.record_progress_for_metadata(metadata)
         native_callback_progress_policy().emit_callback_progress_update_telemetry(
@@ -1271,8 +1286,9 @@ class NativeBgenCallbackRunner(abc.ABC):
                 output_statistic_dtype=self.output_statistic_dtype,
             )
             host_dosage_buffer_released = self.release_result_work_item_host_buffer(work_item)
+            writer_owner = typing.cast("SingleResultWriterOwnerProtocol", self)
             writers.write_materialized_regenie2_native_chunk_with_optional_timing(
-                writer_session=typing.cast("typing.Any", self).writer_session,
+                writer_session=writer_owner.writer_session,
                 metadata=work_item.metadata,
                 chunk_stats=work_item.chunk_stats,
                 materialized_chunk=materialized_chunk,
