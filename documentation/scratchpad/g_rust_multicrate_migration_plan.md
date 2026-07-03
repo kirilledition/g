@@ -2811,7 +2811,9 @@ Current guardrail notes:
   selected value type instead of erasing it through `typing.Any`. Callback
   transfer metadata now uses read-only array shape/dtype protocols, and
   callback writer materialization uses typed extra-code and compact-trait
-  selection adapters instead of `typing.Any` casts.
+  selection adapters instead of `typing.Any` casts. Public config
+  `from_options` adapters now accept object-valued option maps and attach the
+  compatibility constructor without an `Any` cast.
 - Test-only runner runtime construction/description helpers were also removed;
   isolated tests build native runtime-state handles directly.
 - The test-only `execution_plan.build_kernel_config()` wrapper was removed;

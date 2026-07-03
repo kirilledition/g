@@ -25,7 +25,7 @@ class RegenieApi:
             initialize_logging_on_entry=True,
         )
 
-    def from_options(self, raw_options: typing.Mapping[str, typing.Any]) -> RunArtifacts:
+    def from_options(self, raw_options: typing.Mapping[str, object]) -> RunArtifacts:
         """Build a config from Python options and run without installing CLI signal handlers."""
         return runner_execution.regenie(
             config.RegenieConfig.from_options(raw_options),

@@ -61,12 +61,12 @@ BOOLEAN_PYTHON_OPTIONS: frozenset[str] = build_boolean_python_options()
 NATIVE_CONFIG_SECTION_NAMES = frozenset(("input", "trait", "binary", "compute", "output", "diagnostics", "metadata"))
 
 
-def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
+def from_options(raw_options: typing.Mapping[str, object]) -> RegenieConfig:
     """Build a normalized config from Python option dictionaries."""
     return g._core.config_from_options(raw_options)
 
 
-typing.cast("typing.Any", RegenieConfig).from_options = staticmethod(from_options)
+setattr(RegenieConfig, "from_options", staticmethod(from_options))
 
 
 @functools.cache
