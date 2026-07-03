@@ -153,7 +153,7 @@ def resolve_native_single_phenotype_compute_group(
     run_input: models.NativeBgenRunInput,
     prediction_list_path: Path,
     alignment_config: models.SampleAlignmentConfigProtocol | None,
-) -> typing.Any:
+) -> _core.NativeResolvedPhenotypeComputeGroup:
     """Resolve a single-phenotype compute group through native code."""
     return _core.resolve_single_phenotype_compute_group(
         run_input.native_aligned_sample_data,
@@ -170,7 +170,7 @@ def resolve_native_per_phenotype_compute_group(
     run_input: models.NativeBgenMultiRunInput,
     prediction_list_path: Path | None,
     alignment_config: models.SampleAlignmentConfigProtocol | None,
-) -> typing.Any:
+) -> _core.NativeResolvedPhenotypeComputeGroup:
     """Resolve a grouped per-phenotype compute group through native code."""
     return _core.resolve_per_phenotype_compute_group(
         run_input.native_multi_aligned_sample_data,
@@ -187,7 +187,7 @@ def resolve_native_complete_case_compute_group(
     prediction_list_path: Path,
     planned_compute_group: execution_plan.PhenotypeComputeGroup,
     alignment_config: models.SampleAlignmentConfigProtocol | None,
-) -> typing.Any:
+) -> _core.NativeResolvedPhenotypeComputeGroup:
     """Resolve a complete-case compute group through native code."""
     return _core.resolve_complete_case_compute_group(
         run_input.native_multi_aligned_sample_data,
@@ -198,7 +198,9 @@ def resolve_native_complete_case_compute_group(
     )
 
 
-def adapt_native_phenotype_compute_group(native_compute_group: typing.Any) -> execution_plan.PhenotypeComputeGroup:
+def adapt_native_phenotype_compute_group(
+    native_compute_group: _core.NativeResolvedPhenotypeComputeGroup,
+) -> execution_plan.PhenotypeComputeGroup:
     """Convert a native resolved compute-group DTO to the public Python dataclass."""
     return execution_plan.PhenotypeComputeGroup(
         group_mode=types.PhenotypeComputeGroupMode(native_compute_group.group_mode),

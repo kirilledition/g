@@ -15,6 +15,25 @@ if typing.TYPE_CHECKING:
     from g.engine.native_dispatch import models
 
 
+class WriterSessionProtocol(typing.Protocol):
+    """Writer session lifecycle contract accepted by native dispatch cleanup."""
+
+    def finish(self) -> str | None:
+        """Finish the writer and return the final Parquet path when available."""
+        ...
+
+    def finish_interrupted(self, signal_name: str) -> None:
+        """Flush the writer after an interrupted run."""
+        ...
+
+    def abort(self) -> None:
+        """Abort the writer after delivery failure."""
+        ...
+
+
+type WriterSession = _core.OutputWriterSession | WriterSessionProtocol
+
+
 def finish_callback_drain(
     *,
     callback: models.BgenDeliveryCallbackProtocol,
@@ -57,7 +76,7 @@ def native_output_writer_lifecycle_policy() -> _core.NativeOutputWriterLifecycle
     return _core.NativeOutputWriterLifecyclePolicy()
 
 
-def all_writer_sessions_native(writer_sessions: tuple[typing.Any, ...]) -> bool:
+def all_writer_sessions_native(writer_sessions: tuple[WriterSession, ...]) -> bool:
     """Return whether every writer session is a native writer session."""
     return bool(writer_sessions) and all(
         isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions
@@ -72,20 +91,20 @@ def native_final_parquet_paths(final_parquet_path_values: list[str | None]) -> t
     )
 
 
-def finish_writer_session_to_path(writer_session: typing.Any) -> Path | None:
+def finish_writer_session_to_path(writer_session: WriterSession) -> Path | None:
     """Finish one writer session and normalize its optional final Parquet path."""
-    final_parquet_path = typing.cast("str | None", writer_session.finish())
+    final_parquet_path = writer_session.finish()
     return None if final_parquet_path is None else Path(final_parquet_path)
 
 
-def finish_writer_session_interrupted_by_signal(writer_session: typing.Any, signal_name: str) -> None:
+def finish_writer_session_interrupted_by_signal(writer_session: WriterSession, signal_name: str) -> None:
     """Flush one interrupted writer session."""
     writer_session.finish_interrupted(signal_name)
 
 
 def finish_writer_sessions(
     *,
-    writer_sessions: tuple[typing.Any, ...],
+    writer_sessions: tuple[WriterSession, ...],
     stage_timing_recorder: timing.StageTimingRecorder | None,
     writer_finish_thread_count: int,
 ) -> tuple[Path | None, ...]:
@@ -122,7 +141,7 @@ def finish_writer_sessions(
 
 def finish_writer_sessions_interrupted(
     *,
-    writer_sessions: tuple[typing.Any, ...],
+    writer_sessions: tuple[WriterSession, ...],
     shutdown_request: lifecycle.GracefulShutdownRequested,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     writer_finish_thread_count: int,
@@ -168,13 +187,13 @@ def abort_callback(callback: models.BgenDeliveryCallbackProtocol) -> None:
         callback.abort()
 
 
-def abort_writer_session(writer_session: typing.Any) -> None:
+def abort_writer_session(writer_session: WriterSession) -> None:
     """Abort one writer session."""
     with contextlib.suppress(Exception):
         writer_session.abort()
 
 
-def abort_writer_sessions(writer_sessions: tuple[typing.Any, ...]) -> None:
+def abort_writer_sessions(writer_sessions: tuple[WriterSession, ...]) -> None:
     """Abort writer sessions."""
     if all_writer_sessions_native(writer_sessions):
         with contextlib.suppress(Exception):

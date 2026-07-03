@@ -26,6 +26,14 @@ class MultiRegeniePredictionSourceProtocol(typing.Protocol):
         ...
 
 
+class RegeniePredictionSourceProtocol(typing.Protocol):
+    """Prediction source interface used by single-trait native run inputs."""
+
+    def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]:
+        """Return aligned LOCO predictions for one chromosome."""
+        ...
+
+
 class BgenDeliveryRunInputProtocol(typing.Protocol):
     """Sample selection input accepted by native BGEN chunk delivery."""
 

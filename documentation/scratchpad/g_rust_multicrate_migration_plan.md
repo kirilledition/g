@@ -2789,7 +2789,14 @@ Current guardrail notes:
   per-object path only for fake writer sessions used by tests. The Rust
   architecture checker rejects reintroducing the root PyO3 writer lifecycle
   helper definitions, and production pipeline annotations now carry native
-  writer-session types instead of generic `typing.Any` sessions.
+  writer-session types instead of generic `typing.Any` sessions. The
+  native-dispatch delivery and writer cleanup adapters also use an explicit
+  writer-session protocol for their remaining fake-session test seam, and
+  native compute-group resolver helpers now carry the typed resolved-group DTO
+  instead of a generic object. Pipeline preflight, callback construction, and
+  callback writer materialization helpers now use explicit prediction-source
+  and chunk-writer protocols instead of untyped orchestration objects; callback
+  chromosome-state helpers use the shared chunk-metadata protocol.
 - Test-only runner runtime construction/description helpers were also removed;
   isolated tests build native runtime-state handles directly.
 - The test-only `execution_plan.build_kernel_config()` wrapper was removed;

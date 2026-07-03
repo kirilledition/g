@@ -15,6 +15,17 @@ if typing.TYPE_CHECKING:
     from g.runner import timing
 
 
+class Regenie2ChunkWriterProtocol(typing.Protocol):
+    """Test writer contract for callback chunk-output helpers."""
+
+    def write_regenie2_native_chunk(self, **kwargs: object) -> None:
+        """Write one REGENIE result chunk."""
+        ...
+
+
+type Regenie2ChunkWriterSession = _core.OutputWriterSession | Regenie2ChunkWriterProtocol
+
+
 @dataclass(frozen=True)
 class MaterializedRegenie2NativeChunk:
     """Host-materialized single-trait REGENIE result arrays."""
@@ -30,7 +41,7 @@ class MaterializedRegenie2NativeChunk:
 class MaterializedRegenie2MultiNativeChunk:
     """Host-materialized multi-trait REGENIE result arrays and active writers."""
 
-    active_writer_sessions: tuple[typing.Any, ...]
+    active_writer_sessions: tuple[Regenie2ChunkWriterSession, ...]
     use_native_multi_writer: bool
     beta: object | None
     standard_error: object | None
@@ -169,7 +180,7 @@ def materialize_regenie2_native_chunk_with_optional_timing(
 
 def write_materialized_regenie2_native_chunk_with_optional_timing(
     *,
-    writer_session: typing.Any,
+    writer_session: Regenie2ChunkWriterSession,
     metadata: _core.VariantMetadata,
     chunk_stats: _core.ChunkStats,
     materialized_chunk: MaterializedRegenie2NativeChunk,
@@ -195,7 +206,8 @@ def write_materialized_regenie2_native_chunk_with_optional_timing(
             extra_code=native_extra_code,
         )
     else:
-        writer_session.write_regenie2_native_chunk(
+        chunk_writer_session = typing.cast("Regenie2ChunkWriterProtocol", writer_session)
+        chunk_writer_session.write_regenie2_native_chunk(
             metadata=metadata,
             chunk_stats=chunk_stats,
             beta=transfers.cast_statistic_array_for_native_writer(materialized_chunk.beta, output_statistic_dtype),
@@ -229,7 +241,7 @@ def write_materialized_regenie2_native_chunk_with_optional_timing(
 
 def write_regenie2_native_chunk_with_optional_timing(
     *,
-    writer_session: typing.Any,
+    writer_session: Regenie2ChunkWriterSession,
     metadata: _core.VariantMetadata,
     chunk_stats: _core.ChunkStats,
     beta: jax.Array,
@@ -268,7 +280,7 @@ def write_regenie2_native_chunk_with_optional_timing(
 
 def materialize_regenie2_multi_native_chunk_with_optional_timing(
     *,
-    writer_sessions: tuple[typing.Any, ...],
+    writer_sessions: tuple[Regenie2ChunkWriterSession, ...],
     committed_chunk_identifier_sets: tuple[set[int], ...],
     metadata: _core.VariantMetadata,
     beta: jax.Array,
@@ -494,7 +506,8 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
         standard_error = typing.cast("typing.Any", materialized_chunk.standard_error)
         chi_squared = typing.cast("typing.Any", materialized_chunk.chi_squared)
         log10_p_value = typing.cast("typing.Any", materialized_chunk.log10_p_value)
-        writer_session.write_regenie2_native_chunk(
+        chunk_writer_session = typing.cast("Regenie2ChunkWriterProtocol", writer_session)
+        chunk_writer_session.write_regenie2_native_chunk(
             metadata=metadata,
             chunk_stats=chunk_stats,
             beta=transfers.cast_statistic_array_for_native_writer(beta[compact_trait_index], output_statistic_dtype),
@@ -536,7 +549,7 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
 
 def write_regenie2_multi_native_chunk_with_optional_timing(
     *,
-    writer_sessions: tuple[typing.Any, ...],
+    writer_sessions: tuple[Regenie2ChunkWriterSession, ...],
     committed_chunk_identifier_sets: tuple[set[int], ...],
     metadata: _core.VariantMetadata,
     chunk_stats: _core.ChunkStats,

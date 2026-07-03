@@ -93,10 +93,46 @@ class BgenPreflightEngineProtocol(typing.Protocol):
         ...
 
 
+class SingleTraitPreflightRunInputProtocol(typing.Protocol):
+    """Single-trait input arrays required by preflight validation."""
+
+    @property
+    def phenotype_vector(self) -> object:
+        """Return the aligned phenotype vector."""
+        ...
+
+    @property
+    def covariate_matrix(self) -> object:
+        """Return the aligned covariate design matrix."""
+        ...
+
+
+class MultiTraitPreflightRunInputProtocol(typing.Protocol):
+    """Multi-trait input arrays required by preflight validation."""
+
+    @property
+    def phenotype_matrix(self) -> object:
+        """Return the aligned trait-major phenotype matrix."""
+        ...
+
+    @property
+    def covariate_matrix(self) -> object:
+        """Return the aligned covariate design matrix."""
+        ...
+
+
+class PreflightPredictionSourceProtocol(typing.Protocol):
+    """Prediction source contract required by preflight validation."""
+
+    def get_chromosome_predictions(self, chromosome: str) -> object:
+        """Return LOCO predictions for one chromosome."""
+        ...
+
+
 def run_regenie2_preflight(
     *,
-    run_input: typing.Any,
-    prediction_source: typing.Any,
+    run_input: SingleTraitPreflightRunInputProtocol,
+    prediction_source: PreflightPredictionSourceProtocol,
     engine: BgenPreflightEngineProtocol,
     variant_limit: int | None,
     is_binary_trait: bool,
@@ -145,8 +181,8 @@ def run_regenie2_preflight(
 
 def run_regenie2_multi_preflight(
     *,
-    run_input: typing.Any,
-    prediction_source: typing.Any,
+    run_input: MultiTraitPreflightRunInputProtocol,
+    prediction_source: PreflightPredictionSourceProtocol,
     engine: BgenPreflightEngineProtocol,
     variant_limit: int | None,
     is_binary_trait: bool,

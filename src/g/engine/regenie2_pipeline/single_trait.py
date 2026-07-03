@@ -76,7 +76,7 @@ def build_single_trait_prediction_source(
     run_input: inputs.NativeBgenRunInput,
     phenotype_name: str,
     pipeline_label: str,
-) -> typing.Any:
+) -> inputs.RegeniePredictionSourceProtocol:
     """Load one phenotype's REGENIE prediction source and emit telemetry."""
     prediction_start_time = time.perf_counter()
     telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
@@ -102,7 +102,7 @@ def run_single_trait_preflight(
     *,
     context: pipeline_context.Regenie2PipelineContext,
     run_input: inputs.NativeBgenRunInput,
-    prediction_source: typing.Any,
+    prediction_source: inputs.RegeniePredictionSourceProtocol,
     engine: _core.Regenie2RunEngine,
     phenotype_name: str,
     pipeline_label: str,

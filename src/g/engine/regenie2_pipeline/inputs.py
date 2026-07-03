@@ -22,6 +22,8 @@ type NativeBgenMultiRunInput = native_dispatch_models.NativeBgenMultiRunInput
 type NativeBgenGroupedRunInput = native_dispatch_models.NativeBgenGroupedRunInput
 type NativeBgenUnionRunInput = native_dispatch_models.NativeBgenUnionRunInput
 type SampleAlignmentConfigProtocol = native_dispatch_models.SampleAlignmentConfigProtocol
+type RegeniePredictionSourceProtocol = native_dispatch_models.RegeniePredictionSourceProtocol
+type MultiRegeniePredictionSourceProtocol = native_dispatch_models.MultiRegeniePredictionSourceProtocol
 
 
 def load_native_bgen_run_input(

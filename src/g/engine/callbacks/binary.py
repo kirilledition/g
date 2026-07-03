@@ -28,6 +28,7 @@ NativeBgenRunInputProtocol = shared.NativeBgenRunInputProtocol
 NativeBgenMultiRunInputProtocol = shared.NativeBgenMultiRunInputProtocol
 RegeniePredictionSourceProtocol = shared.RegeniePredictionSourceProtocol
 MultiRegeniePredictionSourceProtocol = shared.MultiRegeniePredictionSourceProtocol
+CallbackChunkMetadataProtocol = shared.CallbackChunkMetadataProtocol
 Regenie2ResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem
 Regenie2MultiResultWriteWorkItem = shared.Regenie2MultiResultWriteWorkItem
 NativeBgenCallbackRunner = runtime.NativeBgenCallbackRunner
@@ -40,7 +41,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self,
         run_input: NativeBgenRunInputProtocol,
         prediction_source: RegeniePredictionSourceProtocol,
-        writer_session: typing.Any,
+        writer_session: writers.Regenie2ChunkWriterSession,
         correction_plan: types.BinaryCorrectionPlan,
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
         null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
@@ -156,7 +157,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             )
         )
 
-    def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
+    def prepare_chromosome_state(self, variant_metadata: CallbackChunkMetadataProtocol) -> None:
         """Prepare cached binary chromosome state for the metadata chromosome."""
         chromosome = shared.get_metadata_chromosome(variant_metadata)
         if chromosome == self.current_chromosome:
@@ -189,7 +190,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_binary_result(
         self,
         *,
-        variant_metadata: typing.Any,
+        variant_metadata: CallbackChunkMetadataProtocol,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
         sparse_candidate_mask: jax.Array | None,
     ) -> regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult:
@@ -424,7 +425,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self,
         run_input: NativeBgenMultiRunInputProtocol,
         prediction_source: MultiRegeniePredictionSourceProtocol,
-        writer_sessions: tuple[typing.Any, ...],
+        writer_sessions: tuple[writers.Regenie2ChunkWriterSession, ...],
         committed_chunk_identifier_sets: tuple[set[int], ...],
         correction_plan: types.BinaryCorrectionPlan,
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
@@ -770,7 +771,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.release_result_in_flight_slot()
             raise
 
-    def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
+    def prepare_chromosome_state(self, variant_metadata: CallbackChunkMetadataProtocol) -> None:
         """Prepare cached multi-binary chromosome state for the metadata chromosome."""
         chromosome = shared.get_metadata_chromosome(variant_metadata)
         if chromosome == self.current_chromosome:

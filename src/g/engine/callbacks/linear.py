@@ -28,6 +28,7 @@ NativeBgenRunInputProtocol = shared.NativeBgenRunInputProtocol
 NativeBgenMultiRunInputProtocol = shared.NativeBgenMultiRunInputProtocol
 RegeniePredictionSourceProtocol = shared.RegeniePredictionSourceProtocol
 MultiRegeniePredictionSourceProtocol = shared.MultiRegeniePredictionSourceProtocol
+CallbackChunkMetadataProtocol = shared.CallbackChunkMetadataProtocol
 Regenie2ResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem
 Regenie2MultiResultWriteWorkItem = shared.Regenie2MultiResultWriteWorkItem
 NativeBgenCallbackRunner = runtime.NativeBgenCallbackRunner
@@ -40,7 +41,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self,
         run_input: NativeBgenRunInputProtocol,
         prediction_source: RegeniePredictionSourceProtocol,
-        writer_session: typing.Any,
+        writer_session: writers.Regenie2ChunkWriterSession,
         staging_depth: int,
         native_callback_batch_size: int,
         result_in_flight_limit: int | None,
@@ -247,7 +248,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_linear_variant_major_result(
         self,
         *,
-        variant_metadata: typing.Any,
+        variant_metadata: CallbackChunkMetadataProtocol,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
         chunk_stats: _core.ChunkStats,
     ) -> regenie2_linear.Regenie2LinearChunkResult:
@@ -302,7 +303,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         )
         return result
 
-    def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
+    def prepare_chromosome_state(self, variant_metadata: CallbackChunkMetadataProtocol) -> None:
         """Prepare cached linear chromosome state for the metadata chromosome."""
         chromosome = shared.get_metadata_chromosome(variant_metadata)
         if chromosome == self.current_chromosome:
@@ -321,7 +322,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_linear_result(
         self,
         *,
-        variant_metadata: typing.Any,
+        variant_metadata: CallbackChunkMetadataProtocol,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
     ) -> regenie2_linear.Regenie2LinearChunkResult:
         """Compute quantitative REGENIE step 2 statistics for one chunk."""
@@ -364,7 +365,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self,
         run_input: NativeBgenMultiRunInputProtocol,
         prediction_source: MultiRegeniePredictionSourceProtocol,
-        writer_sessions: tuple[typing.Any, ...],
+        writer_sessions: tuple[writers.Regenie2ChunkWriterSession, ...],
         committed_chunk_identifier_sets: tuple[set[int], ...],
         staging_depth: int,
         native_callback_batch_size: int,
@@ -636,7 +637,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.release_result_in_flight_slot()
             raise
 
-    def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
+    def prepare_chromosome_state(self, variant_metadata: CallbackChunkMetadataProtocol) -> None:
         """Prepare cached multi-linear chromosome state for the metadata chromosome."""
         chromosome = shared.get_metadata_chromosome(variant_metadata)
         if chromosome == self.current_chromosome:
