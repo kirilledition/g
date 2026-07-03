@@ -2642,14 +2642,19 @@ Current guardrail notes:
   `g.engine.regenie2_pipeline.backend` instead of the separate
   `g.engine.backend_planner` shim; the Python architecture checker rejects
   production imports of that obsolete module.
-- Preflight validation now routes preflight-warning diagnostic policy access
-  through `g.engine.preflight_events`; the Python architecture checker rejects
-  direct `g.engine.run_events` imports from `g.engine.preflight`.
+- Preflight validation now constructs its preflight-warning diagnostic policy
+  locally instead of routing through `g.engine.run_events` or the removed
+  `g.engine.preflight_events` shim; the Python architecture checker rejects
+  both preflight run-event imports and production imports of the obsolete shim.
 - The obsolete production warm-cache orchestration module was moved to test
   support; the Python architecture checker rejects production imports of
   `g.engine.warm_cache`.
 - Trusted BGEN cache validation now lives in the native-dispatch BGEN engine
   helper instead of the separate `g.engine.trusted_validation` shim.
+- Runner, pipeline, native-dispatch, callback, and preflight event helpers now
+  construct their native diagnostic/telemetry policy handles directly at their
+  local boundaries; the Python architecture checker rejects direct native event
+  policy construction outside those helpers.
 
 ### Exit criteria
 
@@ -2918,7 +2923,9 @@ g.engine.regenie2_pipeline modules must not import compute packages directly, ex
 g.engine.regenie2_pipeline modules must not import JAX runtime packages directly, except the pipeline runtime-policy helper.
 Production Python must not import the obsolete `g.engine.backend_planner` module.
 Production Python must not import the obsolete `g.engine.trusted_validation` module.
-g.engine.preflight must not import run-event packages directly, except the preflight event helper.
+Production Python must not import the obsolete `g.engine.preflight_events` module.
+g.engine.preflight must not import run-event packages directly.
+Production Python must route native event policy construction through boundary-local helpers.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.

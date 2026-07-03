@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import typing
 
-from g.engine import run_events, telemetry
+from g import _core
+from g.engine import telemetry
 
 if typing.TYPE_CHECKING:
-    from g import _core, types
+    from g import types
     from g.engine.regenie2_pipeline import context as pipeline_context
 
 type TelemetrySession = telemetry.TelemetrySession
@@ -15,12 +16,12 @@ type TelemetrySession = telemetry.TelemetrySession
 
 def native_pipeline_diagnostic_policy() -> _core.NativePipelineDiagnosticPolicy:
     """Build the native pipeline diagnostic policy handle."""
-    return run_events.native_pipeline_diagnostic_policy()
+    return _core.NativePipelineDiagnosticPolicy()
 
 
 def native_run_event_telemetry_policy() -> _core.NativeRunEventTelemetryPolicy:
     """Build the native run-event telemetry policy handle."""
-    return run_events.native_run_event_telemetry_policy()
+    return _core.NativeRunEventTelemetryPolicy()
 
 
 def log_sample_alignment_completed(

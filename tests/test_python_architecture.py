@@ -1273,6 +1273,41 @@ def test_import_policy_rejects_obsolete_trusted_validation_imports(tmp_path: Pat
     ]
 
 
+def test_import_policy_rejects_obsolete_preflight_events_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    engine_directory = package_root / "engine"
+    engine_directory.mkdir(parents=True)
+    (engine_directory / "preflight.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import preflight_events",
+                "import g.engine.preflight_events",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/preflight.py"),
+            1,
+            "g.engine.preflight_events",
+            "g.engine.preflight_events",
+        ),
+        (
+            Path("g/engine/preflight.py"),
+            2,
+            "g.engine.preflight_events",
+            "g.engine.preflight_events",
+        ),
+    ]
+
+
 def test_pipeline_call_policy_rejects_native_schedule_policy_construction(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"
@@ -1317,6 +1352,93 @@ def test_pipeline_call_policy_allows_pipeline_schedule_adapter(tmp_path: Path) -
         ),
         encoding="utf-8",
     )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert violations == ()
+
+
+def test_event_policy_factory_rejects_direct_native_construction(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "execution.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build_policies():",
+                "    _core.NativeRunEventTelemetryPolicy()",
+                "    _core.NativeRunnerDiagnosticPolicy()",
+                "    _core.NativeOutputPreflightDiagnosticPolicy()",
+                "    _core.NativePipelineDiagnosticPolicy()",
+                "    _core.NativeDispatchDiagnosticPolicy()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/execution.py"),
+            3,
+            "_core.NativeRunEventTelemetryPolicy",
+            "_core.NativeRunEventTelemetryPolicy",
+        ),
+        (
+            Path("g/runner/execution.py"),
+            4,
+            "_core.NativeRunnerDiagnosticPolicy",
+            "_core.NativeRunnerDiagnosticPolicy",
+        ),
+        (
+            Path("g/runner/execution.py"),
+            5,
+            "_core.NativeOutputPreflightDiagnosticPolicy",
+            "_core.NativeOutputPreflightDiagnosticPolicy",
+        ),
+        (
+            Path("g/runner/execution.py"),
+            6,
+            "_core.NativePipelineDiagnosticPolicy",
+            "_core.NativePipelineDiagnosticPolicy",
+        ),
+        (
+            Path("g/runner/execution.py"),
+            7,
+            "_core.NativeDispatchDiagnosticPolicy",
+            "_core.NativeDispatchDiagnosticPolicy",
+        ),
+    ]
+
+
+def test_event_policy_factory_allows_boundary_helpers(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    preflight_directory = package_root / "engine"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    native_dispatch_directory = package_root / "engine" / "native_dispatch"
+    callback_directory = package_root / "engine" / "callbacks"
+    runner_directory.mkdir(parents=True)
+    preflight_directory.mkdir(parents=True, exist_ok=True)
+    pipeline_directory.mkdir(parents=True)
+    native_dispatch_directory.mkdir(parents=True)
+    callback_directory.mkdir(parents=True)
+    for path, call_name in (
+        (runner_directory / "events.py", "_core.NativeRunEventTelemetryPolicy()"),
+        (runner_directory / "events.py", "_core.NativeRunnerDiagnosticPolicy()"),
+        (preflight_directory / "preflight.py", "_core.NativeOutputPreflightDiagnosticPolicy()"),
+        (pipeline_directory / "telemetry_events.py", "_core.NativePipelineDiagnosticPolicy()"),
+        (pipeline_directory / "telemetry_events.py", "_core.NativeRunEventTelemetryPolicy()"),
+        (native_dispatch_directory / "events.py", "_core.NativeDispatchDiagnosticPolicy()"),
+        (callback_directory / "events.py", "_core.NativePipelineDiagnosticPolicy()"),
+    ):
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"from g import _core\ndef build_policy():\n    return {call_name}\n")
 
     violations = check_python_architecture.collect_python_call_policy_violations(package_root)
 

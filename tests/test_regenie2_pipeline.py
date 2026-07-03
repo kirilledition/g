@@ -1065,7 +1065,7 @@ def test_log_multi_phenotype_sample_summary_records_native_diagnostic(monkeypatc
             )
 
     monkeypatch.setattr(
-        pipeline_telemetry_events.run_events,
+        pipeline_telemetry_events,
         "native_pipeline_diagnostic_policy",
         FakePipelineDiagnosticPolicy,
     )
@@ -11961,7 +11961,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             return_value=run_input,
         ),
         patch(
-            "g.engine.run_events.native_pipeline_diagnostic_policy",
+            "g.engine.regenie2_pipeline.telemetry_events.native_pipeline_diagnostic_policy",
         ) as diagnostic_policy_factory_mock,
         patch(
             "g.engine.regenie2_pipeline.outputs.output.create_output_writer_session",
@@ -12900,7 +12900,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             return_value=FakePredictionSource(),
         ),
         patch(
-            "g.engine.run_events.native_pipeline_diagnostic_policy",
+            "g.engine.regenie2_pipeline.telemetry_events.native_pipeline_diagnostic_policy",
         ) as diagnostic_policy_factory_mock,
         patch(
             "g.engine.regenie2_pipeline.multi_group.run_multi_preflight",
@@ -13368,7 +13368,7 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
             return_value=grouped_run_inputs,
         ) as mock_load_grouped_run_inputs,
         patch(
-            "g.engine.run_events.native_pipeline_diagnostic_policy",
+            "g.engine.regenie2_pipeline.telemetry_events.native_pipeline_diagnostic_policy",
         ) as diagnostic_policy_factory_mock,
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
         patch(
@@ -13731,7 +13731,7 @@ def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignm
             return_value=grouped_run_inputs,
         ),
         patch(
-            "g.engine.run_events.native_pipeline_diagnostic_policy",
+            "g.engine.regenie2_pipeline.telemetry_events.native_pipeline_diagnostic_policy",
         ) as diagnostic_policy_factory_mock,
         patch("g.engine.regenie2_pipeline.multi_group.run_multi_preflight") as mock_run_multi_preflight,
         patch(

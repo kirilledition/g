@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import typing
 
+from g import _core
 from g.engine import run_events, telemetry
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g import _core, types
+    from g import types
     from g.engine.run_events import RunArtifacts, RunCompletedEvent, RunFailedEvent, RunInterruptedEvent
     from g.engine.telemetry import TelemetryPaths, TelemetrySession
     from g.interface import config
@@ -40,12 +41,12 @@ def resolve_output_run_root(regenie_config: config.RegenieConfig) -> Path:
 
 def native_run_event_telemetry_policy() -> _core.NativeRunEventTelemetryPolicy:
     """Build the native run-event telemetry policy handle."""
-    return run_events.native_run_event_telemetry_policy()
+    return _core.NativeRunEventTelemetryPolicy()
 
 
 def native_runner_diagnostic_policy() -> _core.NativeRunnerDiagnosticPolicy:
     """Build the native runner diagnostic policy handle."""
-    return run_events.native_runner_diagnostic_policy()
+    return _core.NativeRunnerDiagnosticPolicy()
 
 
 def build_run_interrupted_event(shutdown_request: lifecycle.GracefulShutdownRequested) -> RunInterruptedEvent:

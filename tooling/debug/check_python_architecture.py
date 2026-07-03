@@ -439,6 +439,12 @@ PYTHON_IMPORT_POLICIES = (
         message="trusted BGEN validation is owned by the native-dispatch BGEN engine helper",
     ),
     PythonImportPolicy(
+        name="obsolete_preflight_events_module_isolation",
+        source_directory=Path(),
+        forbidden_imports=("g.engine.preflight_events",),
+        message="preflight diagnostic policy construction is owned by g.engine.preflight",
+    ),
+    PythonImportPolicy(
         name="preflight_event_adapter_isolation",
         source_directory=Path("engine/preflight.py"),
         forbidden_imports=("g.engine.run_events",),
@@ -590,6 +596,25 @@ PYTHON_CALL_POLICIES = (
         forbidden_calls=("_core.NativeSchedulePolicy",),
         allowed_paths=(Path("engine/regenie2_pipeline/schedule.py"),),
         message="REGENIE pipeline modules must route native scheduling policy access through pipeline schedule helpers",
+    ),
+    PythonCallPolicy(
+        name="native_event_policy_factory_isolation",
+        source_directory=Path(),
+        forbidden_calls=(
+            "_core.NativeRunEventTelemetryPolicy",
+            "_core.NativeRunnerDiagnosticPolicy",
+            "_core.NativeOutputPreflightDiagnosticPolicy",
+            "_core.NativePipelineDiagnosticPolicy",
+            "_core.NativeDispatchDiagnosticPolicy",
+        ),
+        allowed_paths=(
+            Path("runner/events.py"),
+            Path("engine/preflight.py"),
+            Path("engine/regenie2_pipeline/telemetry_events.py"),
+            Path("engine/native_dispatch/events.py"),
+            Path("engine/callbacks/events.py"),
+        ),
+        message="production Python must route native event policy construction through boundary-local helpers",
     ),
     PythonCallPolicy(
         name="native_diagnostic_payload_adapter_isolation",
