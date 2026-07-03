@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import typing
 import unittest.mock
@@ -12,6 +13,44 @@ from g.runner import timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
+
+
+def binary_chunk_diagnostics_snapshot_to_mapping(
+    diagnostics: timing.BinaryChunkDiagnosticsSnapshot,
+) -> dict[str, int | float]:
+    """Serialize one binary diagnostic snapshot for test assertions."""
+    return {
+        field_name: typing.cast("int | float", field_value)
+        for field_name, field_value in dataclasses.asdict(diagnostics).items()
+        if field_value is not None
+    }
+
+
+def null_logistic_diagnostics_snapshot_to_mapping(
+    diagnostics: timing.NullLogisticDiagnosticsSnapshot,
+) -> dict[str, int | str]:
+    """Serialize one null logistic diagnostic snapshot for test assertions."""
+    return {
+        field_name: typing.cast("int | str", field_value)
+        for field_name, field_value in dataclasses.asdict(diagnostics).items()
+        if field_value is not None
+    }
+
+
+def serialize_binary_chunk_diagnostics(
+    binary_chunk_diagnostics: tuple[timing.BinaryChunkDiagnosticsSnapshot, ...],
+) -> tuple[dict[str, int | float], ...]:
+    """Serialize binary diagnostic snapshots for test assertions."""
+    return tuple(binary_chunk_diagnostics_snapshot_to_mapping(diagnostics) for diagnostics in binary_chunk_diagnostics)
+
+
+def serialize_null_logistic_diagnostics(
+    null_logistic_diagnostics: tuple[timing.NullLogisticDiagnosticsSnapshot, ...],
+) -> tuple[dict[str, int | str], ...]:
+    """Serialize null logistic diagnostic snapshots for test assertions."""
+    return tuple(
+        null_logistic_diagnostics_snapshot_to_mapping(diagnostics) for diagnostics in null_logistic_diagnostics
+    )
 
 
 def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> None:
@@ -58,10 +97,8 @@ def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> 
         ),
     )
     assert snapshot.native_bgen_profile == {"variant_decode_count": 4}
-    assert timing.serialize_binary_chunk_diagnostics(snapshot.binary_chunk_diagnostics) == (
-        {"firth_candidate_count": 2},
-    )
-    assert timing.serialize_null_logistic_diagnostics(snapshot.null_logistic_diagnostics) == (
+    assert serialize_binary_chunk_diagnostics(snapshot.binary_chunk_diagnostics) == ({"firth_candidate_count": 2},)
+    assert serialize_null_logistic_diagnostics(snapshot.null_logistic_diagnostics) == (
         {"chromosome": "22", "iteration_count": 5},
     )
     assert snapshot.queue_backpressure == ()
@@ -87,7 +124,7 @@ def test_stage_timing_recorder_records_null_logistic_diagnostics_from_arrays() -
         correction_method="score_only",
     )
 
-    assert timing.serialize_null_logistic_diagnostics(recorder.snapshot().null_logistic_diagnostics) == (
+    assert serialize_null_logistic_diagnostics(recorder.snapshot().null_logistic_diagnostics) == (
         {
             "chromosome": "22",
             "converged": 1,

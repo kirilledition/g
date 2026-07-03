@@ -1480,8 +1480,10 @@ Remove Python as the chunk-level scheduler.
   remains a broader pre-push or handoff check.
 - Benchmark checkpoint: complete for callback overhead on CPU/GPU, binary-hot
   GPU smoke, a bounded output-stage GPU writer checkpoint, and the `g-engine`
-  fake-backend coordinator benchmark; the warmed coordinator rerun reported no
-  detected performance change with a median around 311 ns.
+  fake-backend coordinator benchmark; the July 3, 2026 targeted rerun
+  (`cargo bench -p g-engine --bench coordinator`) reported
+  `engine_single_batch_fake_backend` at 301.21 ns median after a 1m59s bench
+  build using sccache and the default linker.
 - Phase 10 callback-runner fallback removal is complete for this branch:
   production scheduling, queue/resource ownership, worker lifecycle,
   result-slot, and dosage-buffer paths no longer use manual Python fallback
@@ -2716,6 +2718,80 @@ Current guardrail notes:
   adapter. Production output code no longer carries Python regex/filesystem
   policy for discovering chunk artifacts or test-only lifecycle shortcuts;
   native output lifecycle methods remain the production boundary.
+- Detached Python timing summary helpers, a duplicate callback-batch-size
+  resolver, and single-writer finish wrappers were removed from the runner and
+  native-dispatch adapters. The Python architecture checker rejects
+  reintroduced definitions for those obsolete orchestration helpers.
+- Test-only strict-resume committed-chunk wrappers were removed from the runner
+  output adapter. Tests that need those low-level checks now call the native
+  output lifecycle policy directly, and the Python architecture checker rejects
+  reintroduced wrapper definitions.
+- Test-only run-manifest load/write wrappers were removed from the runner
+  output adapter. Tests that need direct manifest mutation now use test-local
+  helpers over the native output lifecycle policy, and the Python architecture
+  checker rejects reintroduced manifest I/O wrapper definitions.
+- Test-only output-run path resolution and single-run output initialization
+  wrappers were removed from the runner output adapter. Production output
+  initialization uses the native pipeline batch initializer, while unit tests
+  call the native lifecycle policy through test-local helpers.
+- The test-only execution-plan hash wrapper was moved out of the runner output
+  adapter; manifest mutation tests build that hash through a test-local helper
+  that calls the native output lifecycle policy directly.
+- The test-only manifest compatibility wrapper was removed from the runner
+  output adapter. Manifest compatibility tests now call the native output
+  lifecycle policy directly.
+- The test-only file-fingerprint shortcut was removed from the runner output
+  adapter. Production fingerprinting flows through the native run-scoped
+  fingerprint cache boundary.
+- The Python output adapter no longer carries a generic execution-plan value
+  normalizer for manifest hashing/header construction. The PyO3 JSON bridge
+  now converts dataclasses, enums, and paths before native manifest policy
+  serialization, and the Python architecture checker rejects reintroduced
+  normalizer definitions.
+- Test-only timing diagnostic serializer wrappers were moved out of the runner
+  timing adapter. Tests now serialize typed timing snapshots through local
+  dataclass mapping helpers.
+- The obsolete Python binary-correction normalization wrapper was removed from
+  execution-plan construction. Binary correction tests now assert the native
+  run-request payload and adapt that payload through the remaining typed
+  boundary.
+- Obsolete Python config option normalizers were removed from
+  `g.interface.config`; flat option normalization and TOML/config validation
+  stay in the native interface frontend. Unused Python `load_toml` and
+  pre-run `validate_config` wrappers were also removed.
+- The stale `g.jax_runtime.state` formatter module was removed. The Python
+  architecture checker rejects reintroduced copies of that support module.
+- Unused JAX GPU probe/report compatibility wrappers were removed from
+  `g.jax_runtime.setup`; standalone GPU validation still enters through
+  `require_gpu_device()` and native setup sessions.
+- Test-only callback work-item classifiers were moved out of
+  `g.engine.callbacks.runtime`; production dispatch classification stays in the
+  native callback resource planner.
+- Callback result processors no longer re-export writer materialization hooks.
+  Single-trait and multi-trait callback writes now call the callback writer
+  adapter directly, matching the writer ownership boundary.
+- Callback runtime no longer re-exports transfer timing or binary-diagnostic
+  helper hooks; runtime code calls the transfer and diagnostics adapters
+  explicitly.
+- The callback writer adapter no longer re-exports transfer helper functions;
+  result materialization and write timing call the transfer adapter explicitly.
+- Grouped callback fanout no longer re-exports shared fanout or projected
+  chunk-stat helpers; the fanout calls shared/transfer adapters explicitly.
+- The transfer adapter no longer re-exports the diagnostics blocking hook or
+  shared metadata helper; transfer code calls those owning adapters explicitly.
+- Single-trait and multi-trait callback implementations no longer re-export
+  transfer, diagnostics, shared metadata, or runtime chromosome-state helper
+  aliases; callback code calls the owning adapters explicitly, and the Python
+  architecture checker rejects reintroduced helper alias assignments.
+- Test-only runner runtime construction/description helpers were also removed;
+  isolated tests build native runtime-state handles directly.
+- The test-only `execution_plan.build_kernel_config()` wrapper was removed;
+  tests that need full kernel settings now read them from the native-compiled
+  execution plan.
+- Phase 14 validation on 2026-07-03 rebuilt the editable PyO3 package with
+  `maturin develop -j 30 --profile dev-fast --uv` using `sccache` plus the
+  `wild` linker wrapper. The build completed in `2:17.09` wall time with Cargo
+  reporting `1m43s`.
 
 ### Exit criteria
 

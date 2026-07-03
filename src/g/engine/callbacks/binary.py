@@ -31,24 +31,6 @@ MultiRegeniePredictionSourceProtocol = shared.MultiRegeniePredictionSourceProtoc
 Regenie2ResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem
 Regenie2MultiResultWriteWorkItem = shared.Regenie2MultiResultWriteWorkItem
 NativeBgenCallbackRunner = runtime.NativeBgenCallbackRunner
-require_current_chromosome_state = runtime.require_current_chromosome_state
-put_compute_array_on_device = transfers.put_compute_array_on_device
-put_genotype_matrix_on_device = transfers.put_genotype_matrix_on_device
-put_chunk_array_on_device = transfers.put_chunk_array_on_device
-get_binary_chunk_stats_arrays = transfers.get_binary_chunk_stats_arrays
-block_compute_result_for_timing = transfers.block_compute_result_for_timing
-write_regenie2_multi_native_chunk_with_optional_timing = writers.write_regenie2_multi_native_chunk_with_optional_timing
-materialize_regenie2_multi_native_chunk_with_optional_timing = (
-    writers.materialize_regenie2_multi_native_chunk_with_optional_timing
-)
-write_materialized_regenie2_multi_native_chunk_with_optional_timing = (
-    writers.write_materialized_regenie2_multi_native_chunk_with_optional_timing
-)
-block_until_ready = diagnostics.block_until_ready
-collect_binary_chunk_diagnostics_if_needed = diagnostics.collect_binary_chunk_diagnostics_if_needed
-record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
-record_null_logistic_chromosome_diagnostics = diagnostics.record_null_logistic_chromosome_diagnostics
-get_metadata_chromosome = shared.get_metadata_chromosome
 
 
 class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
@@ -79,8 +61,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.kernel_config = kernel_config
         self.null_logistic_nonconvergence_policy = null_logistic_nonconvergence_policy
         self.score_dtype = score_dtype
-        covariate_matrix = put_compute_array_on_device(run_input.covariate_matrix)
-        phenotype_vector = put_compute_array_on_device(run_input.phenotype_vector)
+        covariate_matrix = transfers.put_compute_array_on_device(run_input.covariate_matrix)
+        phenotype_vector = transfers.put_compute_array_on_device(run_input.phenotype_vector)
         self.regenie_state = regenie2_binary.prepare_regenie2_binary_state(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
@@ -112,14 +94,14 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix)
         self.acquire_result_in_flight_slot()
         try:
-            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+            binary_chunk_stats_arrays = transfers.get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
             )
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else put_chunk_array_on_device(
+                else transfers.put_chunk_array_on_device(
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
@@ -137,7 +119,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result=result,
                 host_dosage_buffer=host_dosage_buffer,
                 release_in_flight_slot=True,
-                binary_chunk_diagnostics=collect_binary_chunk_diagnostics_if_needed(
+                binary_chunk_diagnostics=diagnostics.collect_binary_chunk_diagnostics_if_needed(
                     stage_timing_recorder=self.stage_timing_recorder,
                     result=result,
                 ),
@@ -176,7 +158,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached binary chromosome state for the metadata chromosome."""
-        chromosome = get_metadata_chromosome(variant_metadata)
+        chromosome = shared.get_metadata_chromosome(variant_metadata)
         if chromosome == self.current_chromosome:
             return
         chromosome_start_time = time.perf_counter()
@@ -188,8 +170,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             kernel_config=self.kernel_config,
             score_dtype=self.score_dtype,
         )
-        block_until_ready(self.current_chromosome_state.score_residual)
-        null_logistic_failure_count = record_null_logistic_chromosome_diagnostics(
+        diagnostics.block_until_ready(self.current_chromosome_state.score_residual)
+        null_logistic_failure_count = diagnostics.record_null_logistic_chromosome_diagnostics(
             chromosome=chromosome,
             null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
             null_logistic_iteration_count=self.current_chromosome_state.null_logistic_iteration_count,
@@ -213,12 +195,12 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     ) -> regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult:
         """Compute binary REGENIE step 2 statistics for one chunk."""
         self.prepare_chromosome_state(variant_metadata)
-        chromosome_state = require_current_chromosome_state(
+        chromosome_state = runtime.require_current_chromosome_state(
             self.current_chromosome_state,
             chromosome=self.current_chromosome,
         )
 
-        genotype_device_array = put_genotype_matrix_on_device(
+        genotype_device_array = transfers.put_genotype_matrix_on_device(
             genotype_matrix,
             self.stage_timing_recorder,
             variant_metadata,
@@ -234,7 +216,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             score_dtype=self.score_dtype,
             stage_duration_recorder=self.get_stage_duration_recorder(),
         )
-        block_compute_result_for_timing(
+        transfers.block_compute_result_for_timing(
             result_ready_value=result.log10_p_value,
             stage_timing_recorder=self.stage_timing_recorder,
             start_time=compute_start_time,
@@ -254,28 +236,28 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            chromosome_state = require_current_chromosome_state(
+            chromosome_state = runtime.require_current_chromosome_state(
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )
 
-            genotype_device_array = put_genotype_matrix_on_device(
+            genotype_device_array = transfers.put_genotype_matrix_on_device(
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
                 array_role="genotype_matrix_by_variant",
             )
-            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+            binary_chunk_stats_arrays = transfers.get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
             )
-            dosage_sum = put_chunk_array_on_device(
+            dosage_sum = transfers.put_chunk_array_on_device(
                 binary_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
                 array_role="dosage_sum",
             )
-            observation_count = put_chunk_array_on_device(
+            observation_count = transfers.put_chunk_array_on_device(
                 binary_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
@@ -284,7 +266,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else put_chunk_array_on_device(
+                else transfers.put_chunk_array_on_device(
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
@@ -315,7 +297,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     dosage_sum=dosage_sum,
                     observation_count=observation_count,
                 )
-            block_compute_result_for_timing(
+            transfers.block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
@@ -325,7 +307,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 variant_metadata=variant_metadata,
                 chunk_stats=chunk_stats,
                 result=result,
-                binary_chunk_diagnostics=collect_binary_chunk_diagnostics_if_needed(
+                binary_chunk_diagnostics=diagnostics.collect_binary_chunk_diagnostics_if_needed(
                     stage_timing_recorder=self.stage_timing_recorder,
                     result=result,
                 ),
@@ -350,28 +332,28 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            chromosome_state = require_current_chromosome_state(
+            chromosome_state = runtime.require_current_chromosome_state(
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )
 
-            packed_device_array = put_genotype_matrix_on_device(
+            packed_device_array = transfers.put_genotype_matrix_on_device(
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
                 array_role="packed_probability_pairs",
             )
-            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+            binary_chunk_stats_arrays = transfers.get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
             )
-            dosage_sum = put_chunk_array_on_device(
+            dosage_sum = transfers.put_chunk_array_on_device(
                 binary_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
                 array_role="dosage_sum",
             )
-            observation_count = put_chunk_array_on_device(
+            observation_count = transfers.put_chunk_array_on_device(
                 binary_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
@@ -380,7 +362,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else put_chunk_array_on_device(
+                else transfers.put_chunk_array_on_device(
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
@@ -411,7 +393,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     dosage_sum=dosage_sum,
                     observation_count=observation_count,
                 )
-            block_compute_result_for_timing(
+            transfers.block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
@@ -421,7 +403,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 variant_metadata=variant_metadata,
                 chunk_stats=chunk_stats,
                 result=result,
-                binary_chunk_diagnostics=collect_binary_chunk_diagnostics_if_needed(
+                binary_chunk_diagnostics=diagnostics.collect_binary_chunk_diagnostics_if_needed(
                     stage_timing_recorder=self.stage_timing_recorder,
                     result=result,
                 ),
@@ -465,8 +447,8 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.kernel_config = kernel_config
         self.null_logistic_nonconvergence_policy = null_logistic_nonconvergence_policy
         self.score_dtype = score_dtype
-        covariate_matrix = put_compute_array_on_device(run_input.covariate_matrix)
-        phenotype_matrix = put_compute_array_on_device(run_input.phenotype_matrix)
+        covariate_matrix = transfers.put_compute_array_on_device(run_input.covariate_matrix)
+        phenotype_matrix = transfers.put_compute_array_on_device(run_input.phenotype_matrix)
         self.regenie_state = regenie2_binary.prepare_regenie2_multi_binary_state(
             covariate_matrix=covariate_matrix,
             phenotype_matrix=phenotype_matrix,
@@ -498,7 +480,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         """Materialize and write one multi-trait binary result work item."""
         host_dosage_buffer_released = False
         try:
-            materialized_chunk = materialize_regenie2_multi_native_chunk_with_optional_timing(
+            materialized_chunk = writers.materialize_regenie2_multi_native_chunk_with_optional_timing(
                 writer_sessions=self.writer_sessions,
                 committed_chunk_identifier_sets=self.committed_chunk_identifier_sets,
                 metadata=multi_work_item.metadata,
@@ -511,14 +493,14 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 output_statistic_dtype=self.output_statistic_dtype,
             )
             host_dosage_buffer_released = self.release_result_work_item_host_buffer(multi_work_item)
-            write_materialized_regenie2_multi_native_chunk_with_optional_timing(
+            writers.write_materialized_regenie2_multi_native_chunk_with_optional_timing(
                 metadata=multi_work_item.metadata,
                 chunk_stats=multi_work_item.chunk_stats,
                 materialized_chunk=materialized_chunk,
                 stage_timing_recorder=self.stage_timing_recorder,
                 output_statistic_dtype=self.output_statistic_dtype,
             )
-            record_binary_chunk_diagnostics_from_count(
+            diagnostics.record_binary_chunk_diagnostics_from_count(
                 stage_timing_recorder=self.stage_timing_recorder,
                 diagnostics=multi_work_item.binary_chunk_diagnostics,
             )
@@ -541,24 +523,24 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            chromosome_state = require_current_chromosome_state(
+            chromosome_state = runtime.require_current_chromosome_state(
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )
-            genotype_device_array = put_genotype_matrix_on_device(
+            genotype_device_array = transfers.put_genotype_matrix_on_device(
                 genotype_matrix,
                 self.stage_timing_recorder,
                 variant_metadata,
                 array_role="genotype_matrix",
             )
-            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+            binary_chunk_stats_arrays = transfers.get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
             )
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else put_chunk_array_on_device(
+                else transfers.put_chunk_array_on_device(
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
@@ -575,7 +557,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 score_dtype=self.score_dtype,
                 stage_duration_recorder=self.get_stage_duration_recorder(),
             )
-            block_compute_result_for_timing(
+            transfers.block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
@@ -587,7 +569,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result=result,
                 host_dosage_buffer=host_dosage_buffer,
                 release_in_flight_slot=True,
-                binary_chunk_diagnostics=collect_binary_chunk_diagnostics_if_needed(
+                binary_chunk_diagnostics=diagnostics.collect_binary_chunk_diagnostics_if_needed(
                     stage_timing_recorder=self.stage_timing_recorder,
                     result=result,
                 ),
@@ -610,27 +592,27 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            chromosome_state = require_current_chromosome_state(
+            chromosome_state = runtime.require_current_chromosome_state(
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )
-            genotype_device_array = put_genotype_matrix_on_device(
+            genotype_device_array = transfers.put_genotype_matrix_on_device(
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
                 array_role="genotype_matrix_by_variant",
             )
-            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+            binary_chunk_stats_arrays = transfers.get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
             )
-            dosage_sum = put_chunk_array_on_device(
+            dosage_sum = transfers.put_chunk_array_on_device(
                 binary_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
                 array_role="dosage_sum",
             )
-            observation_count = put_chunk_array_on_device(
+            observation_count = transfers.put_chunk_array_on_device(
                 binary_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
@@ -639,7 +621,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else put_chunk_array_on_device(
+                else transfers.put_chunk_array_on_device(
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
@@ -670,7 +652,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     dosage_sum=dosage_sum,
                     observation_count=observation_count,
                 )
-            block_compute_result_for_timing(
+            transfers.block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
@@ -682,7 +664,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result=result,
                 host_dosage_buffer=host_dosage_buffer,
                 release_in_flight_slot=True,
-                binary_chunk_diagnostics=collect_binary_chunk_diagnostics_if_needed(
+                binary_chunk_diagnostics=diagnostics.collect_binary_chunk_diagnostics_if_needed(
                     stage_timing_recorder=self.stage_timing_recorder,
                     result=result,
                 ),
@@ -705,27 +687,27 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            chromosome_state = require_current_chromosome_state(
+            chromosome_state = runtime.require_current_chromosome_state(
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )
-            packed_device_array = put_genotype_matrix_on_device(
+            packed_device_array = transfers.put_genotype_matrix_on_device(
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
                 variant_metadata,
                 array_role="packed_probability_pairs",
             )
-            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+            binary_chunk_stats_arrays = transfers.get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
             )
-            dosage_sum = put_chunk_array_on_device(
+            dosage_sum = transfers.put_chunk_array_on_device(
                 binary_chunk_stats_arrays.dosage_sum,
                 self.stage_timing_recorder,
                 variant_metadata,
                 array_role="dosage_sum",
             )
-            observation_count = put_chunk_array_on_device(
+            observation_count = transfers.put_chunk_array_on_device(
                 binary_chunk_stats_arrays.observation_count,
                 self.stage_timing_recorder,
                 variant_metadata,
@@ -734,7 +716,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else put_chunk_array_on_device(
+                else transfers.put_chunk_array_on_device(
                     typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
                     self.stage_timing_recorder,
                     variant_metadata,
@@ -765,7 +747,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     dosage_sum=dosage_sum,
                     observation_count=observation_count,
                 )
-            block_compute_result_for_timing(
+            transfers.block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
@@ -777,7 +759,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result=result,
                 host_dosage_buffer=host_packed_buffer,
                 release_in_flight_slot=True,
-                binary_chunk_diagnostics=collect_binary_chunk_diagnostics_if_needed(
+                binary_chunk_diagnostics=diagnostics.collect_binary_chunk_diagnostics_if_needed(
                     stage_timing_recorder=self.stage_timing_recorder,
                     result=result,
                 ),
@@ -790,7 +772,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached multi-binary chromosome state for the metadata chromosome."""
-        chromosome = get_metadata_chromosome(variant_metadata)
+        chromosome = shared.get_metadata_chromosome(variant_metadata)
         if chromosome == self.current_chromosome:
             return
         chromosome_start_time = time.perf_counter()
@@ -802,8 +784,8 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.kernel_config,
             self.score_dtype,
         )
-        block_until_ready(self.current_chromosome_state.score_residual)
-        null_logistic_failure_count = record_null_logistic_chromosome_diagnostics(
+        diagnostics.block_until_ready(self.current_chromosome_state.score_residual)
+        null_logistic_failure_count = diagnostics.record_null_logistic_chromosome_diagnostics(
             chromosome=chromosome,
             null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
             null_logistic_iteration_count=self.current_chromosome_state.null_logistic_iteration_count,

@@ -20,8 +20,6 @@ HostOrDeviceFloatArray = shared.HostOrDeviceFloatArray
 LinearChunkStatsArrays = shared.LinearChunkStatsArrays
 BinaryChunkStatsArrays = shared.BinaryChunkStatsArrays
 PublicStatisticArray = npt.NDArray[np.float32] | npt.NDArray[np.float64]
-block_until_ready = diagnostics.block_until_ready
-get_metadata_chromosome = shared.get_metadata_chromosome
 
 
 class TransferMetadataArrayProtocol(typing.Protocol):
@@ -85,7 +83,7 @@ def put_genotype_matrix_on_device(
     start_time = time.perf_counter()
     genotype_device_array = jax.device_put(genotype_matrix)
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        block_until_ready(genotype_device_array)
+        diagnostics.block_until_ready(genotype_device_array)
     record_stage_duration_with_optional_chunk(
         stage_timing_recorder=stage_timing_recorder,
         stage_name="host_to_device_transfer",
@@ -114,7 +112,7 @@ def put_chunk_array_on_device(
     start_time = time.perf_counter()
     device_array = jax.device_put(array)
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        block_until_ready(device_array)
+        diagnostics.block_until_ready(device_array)
     record_stage_duration_with_optional_chunk(
         stage_timing_recorder=stage_timing_recorder,
         stage_name="host_to_device_transfer",
@@ -141,7 +139,7 @@ def block_compute_result_for_timing(
     if stage_timing_recorder is None:
         return
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        block_until_ready(result_ready_value)
+        diagnostics.block_until_ready(result_ready_value)
     record_stage_duration_with_optional_chunk(
         stage_timing_recorder=stage_timing_recorder,
         stage_name="jax_compute",
@@ -165,7 +163,7 @@ def build_chunk_timing_identity(metadata: typing.Any) -> timing.ChunkTimingIdent
 def build_native_callback_chunk_identity(metadata: typing.Any) -> _core.NativeCallbackChunkIdentity:
     """Build the native callback chunk identity from metadata attributes."""
     return native_callback_progress_policy().build_callback_chunk_identity(
-        chromosome=get_metadata_chromosome(metadata),
+        chromosome=shared.get_metadata_chromosome(metadata),
         variant_start_index=int(metadata.variant_start_index),
         variant_stop_index=int(metadata.variant_stop_index),
     )

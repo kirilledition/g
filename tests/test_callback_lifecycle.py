@@ -9,6 +9,7 @@ import pytest
 
 from g import types
 from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
+from g.engine.callbacks import diagnostics as callback_diagnostics
 from g.engine.callbacks import runtime as callback_runtime
 from g.engine.callbacks import transfers as callback_transfers
 from g.engine.callbacks import writers as callback_writers
@@ -427,7 +428,7 @@ def test_default_transfer_path_does_not_block_for_timing(monkeypatch: pytest.Mon
         raise AssertionError(message)
 
     monkeypatch.setattr(callback_transfers, "time", FailingPerfCounterClock)
-    monkeypatch.setattr(callback_transfers, "block_until_ready", fail_block_until_ready)
+    monkeypatch.setattr(callback_diagnostics, "block_until_ready", fail_block_until_ready)
     source_array = np.asarray([[1.0, 2.0]], dtype=np.float32)
 
     device_array = callback_transfers.put_chunk_array_on_device(

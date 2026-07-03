@@ -61,6 +61,38 @@ type NonBatchPreprocessedDosageWorkItem = (
 )
 
 
+def classify_test_dosage_work_item(
+    work_item: callback_runtime.QueuedPreprocessedDosageWorkItem,
+) -> callback_runtime.DosageWorkItemKind:
+    """Classify a test dosage work item for manual scheduler probes."""
+    if work_item is None:
+        return callback_runtime.DosageWorkItemKind.STOP_SIGNAL
+    if isinstance(work_item, callback_shared.PreprocessedVariantMajorDosageChunkBatchWorkItem):
+        return callback_runtime.DosageWorkItemKind.VARIANT_MAJOR_DOSAGE_BATCH
+    if isinstance(work_item, callback_shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
+        return callback_runtime.DosageWorkItemKind.VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR
+    if isinstance(work_item, callback_shared.PreprocessedVariantMajorDosageChunkWorkItem):
+        return callback_runtime.DosageWorkItemKind.VARIANT_MAJOR_DOSAGE
+    if isinstance(work_item, callback_shared.PreprocessedDosageChunkWorkItem):
+        return callback_runtime.DosageWorkItemKind.SAMPLE_MAJOR_DOSAGE
+    message = f"Unsupported preprocessed dosage work item type: {type(work_item).__name__}"
+    raise TypeError(message)
+
+
+def classify_test_result_write_item(
+    work_item: callback_runtime.QueuedResultWriteWorkItem,
+) -> callback_runtime.ResultWriteItemKind:
+    """Classify a test result work item for manual scheduler probes."""
+    if work_item is None:
+        return callback_runtime.ResultWriteItemKind.STOP_SIGNAL
+    if isinstance(work_item, callback_shared.Regenie2MultiResultWriteWorkItem):
+        return callback_runtime.ResultWriteItemKind.MULTI_RESULT
+    if isinstance(work_item, callback_shared.Regenie2ResultWriteWorkItem):
+        return callback_runtime.ResultWriteItemKind.SINGLE_RESULT
+    message = f"Unsupported result write work item type: {type(work_item).__name__}"
+    raise TypeError(message)
+
+
 def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
     """Build the packaged-default kernel config for tests."""
     return execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
@@ -71,6 +103,44 @@ SCORE_ONLY_PLAN = types.BinaryCorrectionPlan(
     p_threshold=0.05,
     firth_se=False,
 )
+
+
+def serialize_binary_chunk_diagnostics(
+    binary_chunk_diagnostics: tuple[timing.BinaryChunkDiagnosticsSnapshot, ...],
+) -> tuple[dict[str, int | float], ...]:
+    """Serialize binary diagnostic snapshots for test assertions."""
+    return tuple(binary_chunk_diagnostics_snapshot_to_mapping(diagnostics) for diagnostics in binary_chunk_diagnostics)
+
+
+def serialize_null_logistic_diagnostics(
+    null_logistic_diagnostics: tuple[timing.NullLogisticDiagnosticsSnapshot, ...],
+) -> tuple[dict[str, int | str], ...]:
+    """Serialize null logistic diagnostic snapshots for test assertions."""
+    return tuple(
+        null_logistic_diagnostics_snapshot_to_mapping(diagnostics) for diagnostics in null_logistic_diagnostics
+    )
+
+
+def binary_chunk_diagnostics_snapshot_to_mapping(
+    diagnostics: timing.BinaryChunkDiagnosticsSnapshot,
+) -> dict[str, int | float]:
+    """Serialize one binary diagnostic snapshot for test assertions."""
+    return {
+        field_name: typing.cast("int | float", field_value)
+        for field_name, field_value in dataclasses.asdict(diagnostics).items()
+        if field_value is not None
+    }
+
+
+def null_logistic_diagnostics_snapshot_to_mapping(
+    diagnostics: timing.NullLogisticDiagnosticsSnapshot,
+) -> dict[str, int | str]:
+    """Serialize one null logistic diagnostic snapshot for test assertions."""
+    return {
+        field_name: typing.cast("int | str", field_value)
+        for field_name, field_value in dataclasses.asdict(diagnostics).items()
+        if field_value is not None
+    }
 
 
 def test_production_callback_runtime_has_no_manual_scheduler_fallbacks() -> None:
@@ -547,7 +617,10 @@ def build_default_pipeline_runtime_options() -> PipelineRuntimeOptions:
 
 def write_test_run_manifest(output_run_paths: output.OutputRunPaths, header: typing.Mapping[str, object]) -> bytes:
     """Write a minimal run manifest and return its bytes."""
-    output.write_run_manifest(output_run_paths, {**header, "committed_chunks": []})
+    output.native_output_lifecycle_policy().write_run_manifest(
+        str(output_run_paths.run_directory),
+        {**header, "committed_chunks": []},
+    )
     return output.get_run_manifest_path(output_run_paths).read_bytes()
 
 
@@ -2004,7 +2077,7 @@ def test_binary_chunk_diagnostics_are_detailed_only_for_exact_timing() -> None:
 
     mock_count.assert_called_once_with(result)
     assert aggregate_recorder.snapshot().binary_chunk_diagnostics == ()
-    assert timing.serialize_binary_chunk_diagnostics(exact_recorder.snapshot().binary_chunk_diagnostics) == (
+    assert serialize_binary_chunk_diagnostics(exact_recorder.snapshot().binary_chunk_diagnostics) == (
         {
             "score_only_count": 1,
             "score_test_candidate_count": 2,
@@ -2157,11 +2230,11 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
     assert callback.result_queue.put(None, timeout_seconds=0.0) is True
     with (
         patch(
-            "g.engine.callbacks.runtime.write_materialized_regenie2_native_chunk_with_optional_timing",
+            "g.engine.callbacks.writers.write_materialized_regenie2_native_chunk_with_optional_timing",
         ) as mock_write,
-        patch("g.engine.callbacks.runtime.record_binary_chunk_diagnostics_from_count") as mock_record,
+        patch("g.engine.callbacks.diagnostics.record_binary_chunk_diagnostics_from_count") as mock_record,
         patch(
-            "g.engine.callbacks.runtime.binary_chunk_diagnostics_to_summary_counts",
+            "g.engine.callbacks.diagnostics.binary_chunk_diagnostics_to_summary_counts",
             return_value=regenie2_binary.BinaryCorrectionSummaryCounts(
                 chunk_count=1,
                 score_only_count=1,
@@ -3462,7 +3535,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         else:
             dosage_work_item = typing.cast("NonBatchPreprocessedDosageWorkItem", work_item)
             chunk_metadata_items = (dosage_work_item.metadata,)
-        dosage_work_item_kind = callback_runtime.classify_dosage_work_item(
+        dosage_work_item_kind = classify_test_dosage_work_item(
             typing.cast("callback_runtime.PreprocessedDosageWorkItem", work_item)
         )
         stage_duration_plan = self.plan_dosage_work_item_stage_duration(
@@ -3584,7 +3657,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         if self.telemetry_session is None:
             self.record_processed_chunk_without_progress()
             return
-        progress_update = self.record_processed_chunk(callback_runtime.build_native_callback_chunk_identity(metadata))
+        progress_update = self.record_processed_chunk(callback_transfers.build_native_callback_chunk_identity(metadata))
         telemetry_plan = progress_update.telemetry_plan
         telemetry_session = typing.cast("typing.Any", self.telemetry_session)
         for progress_event in telemetry_plan.events:
@@ -3672,7 +3745,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         )
 
     def plan_dosage_work_item_dispatch(self, work_item: object) -> typing.Any:
-        dosage_work_item_kind = callback_runtime.classify_dosage_work_item(
+        dosage_work_item_kind = classify_test_dosage_work_item(
             typing.cast("callback_runtime.QueuedPreprocessedDosageWorkItem", work_item)
         )
         return self.callback_scheduler_state.plan_dosage_work_item_dispatch(
@@ -3721,7 +3794,7 @@ class ManualCallbackRunner(callback_runtime.NativeBgenCallbackRunner):
         )
 
     def plan_result_write_item_dispatch(self, work_item: object) -> typing.Any:
-        result_work_item_kind = callback_runtime.classify_result_write_item(
+        result_work_item_kind = classify_test_result_write_item(
             typing.cast("callback_runtime.QueuedResultWriteWorkItem", work_item)
         )
         return self.callback_scheduler_state.plan_result_write_item_dispatch(
@@ -4977,7 +5050,7 @@ def test_native_callback_runtime_resources_own_progress_state() -> None:
         result_in_flight_limit=1,
         dosage_buffer_limit=1,
     )
-    second_chunk_identity = callback_runtime.build_native_callback_chunk_identity(
+    second_chunk_identity = callback_transfers.build_native_callback_chunk_identity(
         build_native_metadata_for_chunk(chunk_identifier=2)
     )
 
@@ -10395,7 +10468,7 @@ def test_linear_callback_does_not_block_chunk_compute_without_timing() -> None:
             "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
-        patch("g.engine.callbacks.transfers.block_until_ready") as mock_block_until_ready,
+        patch("g.engine.callbacks.diagnostics.block_until_ready") as mock_block_until_ready,
     ):
         callback.compute_linear_result(
             variant_metadata=build_native_metadata(),
@@ -10433,7 +10506,7 @@ def test_linear_callback_records_aggregate_chunk_timing_without_blocking() -> No
             "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
-        patch("g.engine.callbacks.transfers.block_until_ready") as mock_block_until_ready,
+        patch("g.engine.callbacks.diagnostics.block_until_ready") as mock_block_until_ready,
     ):
         callback.compute_linear_result(
             variant_metadata=build_native_metadata(),
@@ -10474,7 +10547,7 @@ def test_linear_callback_blocks_chunk_compute_with_exact_timing() -> None:
             "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
-        patch("g.engine.callbacks.transfers.block_until_ready") as mock_block_until_ready,
+        patch("g.engine.callbacks.diagnostics.block_until_ready") as mock_block_until_ready,
     ):
         callback.compute_linear_result(
             variant_metadata=build_native_metadata(),
@@ -11393,7 +11466,7 @@ def test_binary_callback_records_null_logistic_timing_with_single_host_transfer(
         "firth_iteration_count",
         "firth_convergence_reason_code",
     }
-    assert timing.serialize_null_logistic_diagnostics(stage_timing_recorder.snapshot().null_logistic_diagnostics) == (
+    assert serialize_null_logistic_diagnostics(stage_timing_recorder.snapshot().null_logistic_diagnostics) == (
         {
             "chromosome": "22",
             "converged": 1,
@@ -11465,7 +11538,7 @@ def test_multi_binary_callback_records_native_null_logistic_count_and_timing() -
     assert callback.binary_correction_summary.null_model_failure_count == 1
     assert len(host_transfer_requests) == 1
     assert set(typing.cast("dict[str, object]", host_transfer_requests[0])) == {"converged", "iteration_count"}
-    assert timing.serialize_null_logistic_diagnostics(stage_timing_recorder.snapshot().null_logistic_diagnostics) == (
+    assert serialize_null_logistic_diagnostics(stage_timing_recorder.snapshot().null_logistic_diagnostics) == (
         {
             "chromosome": "22",
             "converged": 1,

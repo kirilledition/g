@@ -1050,35 +1050,6 @@ def test_duplicate_phenotype_names_are_rejected() -> None:
         config.RegenieConfig.from_options(raw_options)
 
 
-def test_config_helper_normalizers_cover_optional_and_trait_validation() -> None:
-    assert config.split_name_list(None) == ()
-    assert config.split_name_list(" age, sex ") == ("age", "sex")
-    assert config.optional_string(123) == "123"
-    assert config.optional_string(None) is None
-    with pytest.raises(ValueError, match="--qt and --bt are mutually exclusive"):
-        config.normalize_trait_type(qt=True, bt=True, trait_type=None)
-
-
-def test_flatten_toml_mapping_preserves_unknown_nested_sections() -> None:
-    flattened_options = config.flatten_toml_mapping(
-        {
-            "unknown": {"nested": "value"},
-            "g": {
-                "compute": {"device": "gpu"},
-                "output": {"format": "arrow"},
-                "diagnostics": {"log-file": "logs/g.jsonl"},
-                "scalar": True,
-            },
-        }
-    )
-
-    assert flattened_options["unknown.nested"] == "value"
-    assert flattened_options["g.compute.device"] == "gpu"
-    assert flattened_options["g.output.format"] == "arrow"
-    assert flattened_options["g.diagnostics.log-file"] == "logs/g.jsonl"
-    assert flattened_options["g.scalar"] is True
-
-
 def test_toml_serialization_emits_multi_column_and_binary_sections() -> None:
     regenie_config = config.RegenieConfig.from_options(
         {

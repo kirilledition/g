@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import pathlib
 import time
 import typing
@@ -131,38 +130,6 @@ class NullLogisticDiagnosticsSnapshot:
     firth_iteration_count: int | None
     firth_convergence_reason_code: int | None
     correction_method: str | None
-
-
-@dataclass(frozen=True)
-class QueueBackpressureKey:
-    """Dictionary key for one queue/backpressure aggregate.
-
-    Attributes:
-        queue_name: Queue or resource being observed.
-        operation_name: Operation that produced the observation.
-
-    """
-
-    queue_name: str
-    operation_name: str
-
-
-@dataclass(frozen=True)
-class TransferMetadataKey:
-    """Dictionary key for one host/device transfer aggregate.
-
-    Attributes:
-        transfer_name: Timed transfer stage name.
-        array_role: Logical role for the transferred array.
-        dtype_name: Data type name for the transferred array.
-        ndim: Number of array dimensions.
-
-    """
-
-    transfer_name: str
-    array_role: str
-    dtype_name: str
-    ndim: int
 
 
 @dataclass(frozen=True)
@@ -336,28 +303,6 @@ def null_logistic_diagnostics_snapshot_from_mapping(
         firth_convergence_reason_code=optional_integer_diagnostic(diagnostics, "firth_convergence_reason_code"),
         correction_method=optional_string_diagnostic(diagnostics, "correction_method"),
     )
-
-
-def binary_chunk_diagnostics_snapshot_to_mapping(
-    diagnostics: BinaryChunkDiagnosticsSnapshot,
-) -> dict[str, int | float]:
-    """Serialize a binary diagnostic snapshot to JSON-ready counters."""
-    return {
-        field_name: typing.cast("int | float", field_value)
-        for field_name, field_value in dataclasses.asdict(diagnostics).items()
-        if field_value is not None
-    }
-
-
-def null_logistic_diagnostics_snapshot_to_mapping(
-    diagnostics: NullLogisticDiagnosticsSnapshot,
-) -> dict[str, int | str]:
-    """Serialize a null logistic diagnostic snapshot to JSON-ready counters."""
-    return {
-        field_name: typing.cast("int | str", field_value)
-        for field_name, field_value in dataclasses.asdict(diagnostics).items()
-        if field_value is not None
-    }
 
 
 class StageTimingRecorder:
@@ -699,125 +644,6 @@ def write_final_timing_outputs(
         profile_summary_path=profile_summary_path,
         run_id=run_id,
     )
-
-
-def serialize_chunk_stage_timings(
-    chunk_stage_timings: tuple[ChunkStageTimingSnapshot, ...],
-) -> tuple[dict[str, int | float | str], ...]:
-    """Serialize chunk timing observations to JSON-compatible dictionaries."""
-    return tuple(
-        {
-            "chunk_identifier": chunk_stage_timing.chunk_identifier,
-            "chromosome": chunk_stage_timing.chromosome,
-            "variant_start_index": chunk_stage_timing.variant_start_index,
-            "variant_stop_index": chunk_stage_timing.variant_stop_index,
-            "variant_count": chunk_stage_timing.variant_count,
-            "stage_name": chunk_stage_timing.stage_name,
-            "duration_seconds": chunk_stage_timing.duration_seconds,
-        }
-        for chunk_stage_timing in chunk_stage_timings
-    )
-
-
-def serialize_binary_chunk_diagnostics(
-    binary_chunk_diagnostics: tuple[BinaryChunkDiagnosticsSnapshot, ...],
-) -> tuple[dict[str, int | float], ...]:
-    """Serialize binary diagnostic snapshots to JSON-compatible dictionaries."""
-    return tuple(binary_chunk_diagnostics_snapshot_to_mapping(diagnostics) for diagnostics in binary_chunk_diagnostics)
-
-
-def serialize_null_logistic_diagnostics(
-    null_logistic_diagnostics: tuple[NullLogisticDiagnosticsSnapshot, ...],
-) -> tuple[dict[str, int | str], ...]:
-    """Serialize null logistic diagnostic snapshots to JSON-compatible dictionaries."""
-    return tuple(
-        null_logistic_diagnostics_snapshot_to_mapping(diagnostics) for diagnostics in null_logistic_diagnostics
-    )
-
-
-def serialize_queue_backpressure(
-    queue_backpressure: tuple[QueueBackpressureSnapshot, ...],
-) -> tuple[dict[str, int | float | str], ...]:
-    """Serialize queue/backpressure observations to JSON-compatible dictionaries."""
-    return tuple(
-        {
-            "queue_name": queue_snapshot.queue_name,
-            "operation_name": queue_snapshot.operation_name,
-            "observation_count": queue_snapshot.observation_count,
-            "max_depth": queue_snapshot.max_depth,
-            "max_capacity": queue_snapshot.max_capacity,
-            "total_elapsed_seconds": queue_snapshot.total_elapsed_seconds,
-            "total_blocked_seconds": queue_snapshot.total_blocked_seconds,
-        }
-        for queue_snapshot in queue_backpressure
-    )
-
-
-def serialize_transfer_metadata(
-    transfer_metadata: tuple[TransferMetadataSnapshot, ...],
-) -> tuple[dict[str, int | str], ...]:
-    """Serialize transfer metadata observations to JSON-compatible dictionaries."""
-    return tuple(
-        {
-            "transfer_name": transfer_snapshot.transfer_name,
-            "array_role": transfer_snapshot.array_role,
-            "dtype_name": transfer_snapshot.dtype_name,
-            "ndim": transfer_snapshot.ndim,
-            "observation_count": transfer_snapshot.observation_count,
-            "total_bytes": transfer_snapshot.total_bytes,
-            "max_bytes": transfer_snapshot.max_bytes,
-            "total_elements": transfer_snapshot.total_elements,
-        }
-        for transfer_snapshot in transfer_metadata
-    )
-
-
-def build_chunk_stage_summary(
-    chunk_stage_timings: tuple[ChunkStageTimingSnapshot, ...],
-) -> dict[str, dict[str, float | int]]:
-    """Summarize per-chunk timing observations by stage."""
-    summary: dict[str, dict[str, float | int]] = {}
-    for chunk_stage_timing in chunk_stage_timings:
-        stage_summary = summary.setdefault(
-            chunk_stage_timing.stage_name,
-            {
-                "total_seconds": 0.0,
-                "count": 0,
-            },
-        )
-        stage_summary["total_seconds"] = float(stage_summary["total_seconds"]) + chunk_stage_timing.duration_seconds
-        stage_summary["count"] = int(stage_summary["count"]) + 1
-    return summary
-
-
-def build_binary_chunk_summary(
-    binary_chunk_diagnostics: tuple[BinaryChunkDiagnosticsSnapshot, ...],
-) -> dict[str, int | float]:
-    """Build aggregate binary chunk diagnostic counters."""
-    if not binary_chunk_diagnostics:
-        return {"chunk_count": 0}
-    summary: dict[str, int | float] = {"chunk_count": len(binary_chunk_diagnostics)}
-    diagnostics_mappings = serialize_binary_chunk_diagnostics(binary_chunk_diagnostics)
-    sum_keys = (
-        "score_only_count",
-        "score_test_candidate_count",
-        "firth_candidate_count",
-        "firth_converged_count",
-        "firth_failed_count",
-        "firth_numerical_failure_count",
-        "firth_max_iteration_failure_count",
-        "firth_invalid_statistic_failure_count",
-        "firth_step_halving_failure_count",
-    )
-    for key in sum_keys:
-        summary[f"{key}_total"] = sum(float(diagnostics.get(key, 0.0)) for diagnostics in diagnostics_mappings)
-    summary["firth_iteration_min"] = min(
-        float(diagnostics.get("firth_iteration_min", 0.0)) for diagnostics in diagnostics_mappings
-    )
-    summary["firth_iteration_max"] = max(
-        float(diagnostics.get("firth_iteration_max", 0.0)) for diagnostics in diagnostics_mappings
-    )
-    return summary
 
 
 def record_stage_duration(

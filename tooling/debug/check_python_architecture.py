@@ -189,6 +189,48 @@ class PythonDefinitionViolation:
 
 
 @dataclasses.dataclass(frozen=True)
+class PythonAliasPolicy:
+    """A top-level alias-assignment boundary policy.
+
+    Attributes:
+        name: Stable policy name for diagnostics.
+        source_directory: Package directory, relative to the production package root.
+        forbidden_alias_names: Top-level assignment names rejected under the source directory.
+        allowed_paths: Source paths, relative to the production package root, excluded from this policy.
+        message: Human-readable policy description.
+
+    """
+
+    name: str
+    source_directory: Path
+    forbidden_alias_names: tuple[str, ...]
+    allowed_paths: tuple[Path, ...]
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class PythonAliasViolation:
+    """A top-level alias assignment that crosses an ownership boundary.
+
+    Attributes:
+        path: Source file containing the violation.
+        line_number: One-based source line number containing the assignment.
+        column_offset: Zero-based source column containing the assignment.
+        policy_name: Alias policy that rejected the assignment.
+        alias_name: Assignment target name observed in source.
+        message: Human-readable policy description.
+
+    """
+
+    path: Path
+    line_number: int
+    column_offset: int
+    policy_name: str
+    alias_name: str
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
 class PythonParameterPolicy:
     """A Python function-parameter boundary policy.
 
@@ -284,6 +326,7 @@ PYTHON_FORBIDDEN_PATH_POLICIES = (
             Path("io/__init__.py"),
             Path("io/output.py"),
             Path("io/source.py"),
+            Path("jax_runtime/state.py"),
             Path("runtime_paths.py"),
             Path("engine/backend_planner.py"),
             Path("engine/preflight.py"),
@@ -1066,6 +1109,156 @@ PYTHON_DEFINITION_POLICIES = (
         allowed_paths=(),
         message="production native dispatch must not define Python compute-group fingerprint fallbacks",
     ),
+    PythonDefinitionPolicy(
+        name="timing_summary_helper_definition_isolation",
+        source_directory=Path("runner/timing.py"),
+        forbidden_function_names=(
+            "serialize_chunk_stage_timings",
+            "serialize_binary_chunk_diagnostics",
+            "serialize_null_logistic_diagnostics",
+            "binary_chunk_diagnostics_snapshot_to_mapping",
+            "null_logistic_diagnostics_snapshot_to_mapping",
+            "serialize_queue_backpressure",
+            "serialize_transfer_metadata",
+            "build_chunk_stage_summary",
+            "build_binary_chunk_summary",
+        ),
+        allowed_paths=(),
+        message="production timing output must not reintroduce detached Python summary helpers",
+    ),
+    PythonDefinitionPolicy(
+        name="native_dispatch_delivery_helper_definition_isolation",
+        source_directory=Path("engine/native_dispatch/delivery.py"),
+        forbidden_function_names=("resolve_native_callback_batch_size",),
+        allowed_paths=(),
+        message="production native dispatch delivery must use the typed invocation plan instead of detached helpers",
+    ),
+    PythonDefinitionPolicy(
+        name="native_dispatch_writer_helper_definition_isolation",
+        source_directory=Path("engine/native_dispatch/writers.py"),
+        forbidden_function_names=("finish_writer_session", "finish_writer_session_interrupted"),
+        allowed_paths=(),
+        message="production native dispatch writer cleanup must use batch lifecycle helpers",
+    ),
+    PythonDefinitionPolicy(
+        name="callback_runtime_classifier_definition_isolation",
+        source_directory=Path("engine/callbacks/runtime.py"),
+        forbidden_function_names=("classify_result_write_item", "classify_dosage_work_item"),
+        allowed_paths=(),
+        message="production callback dispatch classification must stay in native callback resources",
+    ),
+    PythonDefinitionPolicy(
+        name="runner_runtime_test_helper_definition_isolation",
+        source_directory=Path("runner/runtime.py"),
+        forbidden_function_names=("build_process_runtime_state", "describe_logging_runtime_policy"),
+        allowed_paths=(),
+        message="production runner runtime must use native process-runtime handles directly",
+    ),
+    PythonDefinitionPolicy(
+        name="output_strict_resume_helper_definition_isolation",
+        source_directory=Path("runner/outputs.py"),
+        forbidden_function_names=(
+            "build_execution_plan_hash",
+            "validate_manifest_compatibility",
+            "read_manifest_committed_chunk_identifiers",
+            "validate_strict_manifest_chunks",
+            "repair_strict_manifest_chunk_commits",
+        ),
+        allowed_paths=(),
+        message="production output strict-resume checks must stay in the native lifecycle policy",
+    ),
+    PythonDefinitionPolicy(
+        name="output_manifest_io_helper_definition_isolation",
+        source_directory=Path("runner/outputs.py"),
+        forbidden_function_names=("load_run_manifest", "write_run_manifest"),
+        allowed_paths=(),
+        message="production output manifest load/write helpers must stay in the native lifecycle policy",
+    ),
+    PythonDefinitionPolicy(
+        name="output_manifest_normalizer_definition_isolation",
+        source_directory=Path("runner/outputs.py"),
+        forbidden_function_names=("normalize_execution_plan_value",),
+        allowed_paths=(),
+        message="production output manifest value normalization must stay in the native PyO3 JSON bridge",
+    ),
+    PythonDefinitionPolicy(
+        name="output_single_run_lifecycle_helper_definition_isolation",
+        source_directory=Path("runner/outputs.py"),
+        forbidden_function_names=("resolve_output_run_paths", "initialize_output_run"),
+        allowed_paths=(),
+        message="production output lifecycle must use native policy handles and pipeline batch initialization",
+    ),
+    PythonDefinitionPolicy(
+        name="execution_plan_correction_helper_definition_isolation",
+        source_directory=Path("execution_plan.py"),
+        forbidden_function_names=("normalize_binary_correction_config", "build_kernel_config"),
+        allowed_paths=(),
+        message="execution-plan normalization must stay in the native run-request planner",
+    ),
+    PythonDefinitionPolicy(
+        name="interface_config_python_normalizer_definition_isolation",
+        source_directory=Path("interface/config.py"),
+        forbidden_function_names=(
+            "normalize_python_options",
+            "normalize_python_option_value",
+            "flatten_unknown_option_name",
+            "split_name_list",
+            "optional_string",
+            "normalize_trait_type",
+            "flatten_toml_mapping",
+            "flatten_mapping_section",
+            "load_toml",
+            "validate_config",
+        ),
+        allowed_paths=(),
+        message="config option normalization must stay in the native interface frontend",
+    ),
+    PythonDefinitionPolicy(
+        name="jax_runtime_setup_probe_helper_definition_isolation",
+        source_directory=Path("jax_runtime/setup.py"),
+        forbidden_function_names=(
+            "default_nvidia_driver_probe_paths",
+            "nvidia_driver_is_visible",
+            "complete_jax_runtime_setup_validation_report",
+            "jax_gpu_validation_report_from_native_payload",
+        ),
+        allowed_paths=(),
+        message="JAX GPU validation helper state must stay in native setup sessions",
+    ),
+)
+
+PYTHON_ALIAS_POLICIES = (
+    PythonAliasPolicy(
+        name="callback_helper_reexport_alias_isolation",
+        source_directory=Path("engine/callbacks"),
+        forbidden_alias_names=(
+            "MultiPhenotypeGroupFanout",
+            "binary_chunk_diagnostics_to_summary_counts",
+            "block_compute_result_for_timing",
+            "block_until_ready",
+            "build_native_callback_chunk_identity",
+            "build_projected_variant_major_dosage_chunk_stats",
+            "cast_statistic_array_for_native_writer",
+            "cast_statistic_array_for_native_writer_float32",
+            "cast_statistic_array_for_native_writer_float64",
+            "collect_binary_chunk_diagnostics_if_needed",
+            "get_binary_chunk_stats_arrays",
+            "get_linear_chunk_stats_arrays",
+            "get_metadata_chromosome",
+            "narrow_public_statistic_array_on_device",
+            "put_chunk_array_on_device",
+            "put_compute_array_on_device",
+            "put_genotype_matrix_on_device",
+            "record_binary_chunk_diagnostics_from_count",
+            "record_null_logistic_chromosome_diagnostics",
+            "record_stage_duration_with_optional_chunk",
+            "record_transfer_metadata_for_array",
+            "require_current_chromosome_state",
+            "select_active_trait_rows_on_device",
+        ),
+        allowed_paths=(),
+        message="callback adapters must call owning helper modules instead of re-exporting helper aliases",
+    ),
 )
 
 PYTHON_PARAMETER_POLICIES = (
@@ -1305,6 +1498,38 @@ def collect_definition_violations_for_statement(
     )
 
 
+def assignment_target_names(statement: ast.Assign | ast.AnnAssign) -> tuple[ast.Name, ...]:
+    """Return simple name targets from one top-level assignment statement."""
+    if isinstance(statement, ast.Assign):
+        return tuple(target for target in statement.targets if isinstance(target, ast.Name))
+    if isinstance(statement.target, ast.Name):
+        return (statement.target,)
+    return ()
+
+
+def collect_alias_violations_for_statement(
+    relative_path: Path,
+    policy: PythonAliasPolicy,
+    statement: ast.Assign | ast.AnnAssign,
+) -> tuple[PythonAliasViolation, ...]:
+    """Collect alias-policy violations from one top-level assignment statement."""
+    violations: list[PythonAliasViolation] = []
+    for target in assignment_target_names(statement):
+        if target.id not in policy.forbidden_alias_names:
+            continue
+        violations.append(
+            PythonAliasViolation(
+                path=relative_path,
+                line_number=target.lineno,
+                column_offset=target.col_offset,
+                policy_name=policy.name,
+                alias_name=target.id,
+                message=policy.message,
+            )
+        )
+    return tuple(violations)
+
+
 def collect_parameter_violations_for_statement(
     relative_path: Path,
     policy: PythonParameterPolicy,
@@ -1358,6 +1583,29 @@ def collect_python_definition_policy_violations(
                 if not isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
                 violations.extend(collect_definition_violations_for_statement(relative_path, policy, statement))
+    return tuple(violations)
+
+
+def collect_python_alias_policy_violations(
+    package_root: Path,
+    policies: tuple[PythonAliasPolicy, ...] = PYTHON_ALIAS_POLICIES,
+) -> tuple[PythonAliasViolation, ...]:
+    """Collect Python top-level alias-boundary violations under a production package root."""
+    violations: list[PythonAliasViolation] = []
+    for policy in policies:
+        source_directory = package_root / policy.source_directory
+        if not source_directory.exists():
+            continue
+        for path in python_source_paths_for_policy(source_directory):
+            relative_path = path.relative_to(package_root.parent)
+            package_relative_path = path.relative_to(package_root)
+            if package_relative_path in policy.allowed_paths:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for statement in tree.body:
+                if not isinstance(statement, ast.Assign | ast.AnnAssign):
+                    continue
+                violations.extend(collect_alias_violations_for_statement(relative_path, policy, statement))
     return tuple(violations)
 
 
@@ -1617,6 +1865,12 @@ def render_definition_violation(violation: PythonDefinitionViolation) -> str:
     return f"{location}: {violation.policy_name} rejects definition `{violation.function_name}`: {violation.message}"
 
 
+def render_alias_violation(violation: PythonAliasViolation) -> str:
+    """Render an alias-policy violation for command-line output."""
+    location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
+    return f"{location}: {violation.policy_name} rejects alias `{violation.alias_name}`: {violation.message}"
+
+
 def render_parameter_violation(violation: PythonParameterViolation) -> str:
     """Render a parameter-policy violation for command-line output."""
     location = f"{violation.path}:{violation.line_number}:{violation.column_offset + 1}"
@@ -1635,6 +1889,7 @@ def run_tool(package_root: Path) -> int:
     import_violations = collect_python_import_policy_violations(package_root)
     call_violations = collect_python_call_policy_violations(package_root)
     definition_violations = collect_python_definition_policy_violations(package_root)
+    alias_violations = collect_python_alias_policy_violations(package_root)
     parameter_violations = collect_python_parameter_policy_violations(package_root)
     cli_shim_violations = collect_python_cli_shim_violations(package_root)
     if (
@@ -1642,6 +1897,7 @@ def run_tool(package_root: Path) -> int:
         or import_violations
         or call_violations
         or definition_violations
+        or alias_violations
         or parameter_violations
         or cli_shim_violations
     ):
@@ -1654,6 +1910,8 @@ def run_tool(package_root: Path) -> int:
             print(f"  {render_call_violation(violation)}")
         for violation in definition_violations:
             print(f"  {render_definition_violation(violation)}")
+        for violation in alias_violations:
+            print(f"  {render_alias_violation(violation)}")
         for violation in parameter_violations:
             print(f"  {render_parameter_violation(violation)}")
         for violation in cli_shim_violations:

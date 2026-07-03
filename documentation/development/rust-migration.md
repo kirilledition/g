@@ -344,11 +344,89 @@ native-dispatch writer adapter keeps the direct Python method fallback only for
 fake and transitional test writer sessions, and the Python architecture checker
 rejects direct calls to those native writer lifecycle helpers outside that
 adapter.
+Detached Python timing summary helpers, the duplicate callback-batch-size
+resolver, and single-writer finish wrappers have also been removed; native
+policy handles and batch lifecycle helpers remain the production boundary, and
+the Python architecture checker rejects those helper definitions if they are
+reintroduced.
+Test-only strict-resume committed-chunk wrappers have also been removed from
+the runner output adapter. Low-level committed-chunk validation coverage calls
+the native output lifecycle policy directly, and the Python architecture
+checker rejects reintroduced wrapper definitions.
+Test-only run-manifest load/write wrappers have also been removed from the
+runner output adapter. Direct manifest mutation coverage uses test-local
+helpers over the native output lifecycle policy, and the Python architecture
+checker rejects reintroduced manifest I/O wrapper definitions.
+Test-only output-run path resolution and single-run output initialization
+wrappers have also been removed from the runner output adapter. Production
+output initialization uses the native pipeline batch initializer, while unit
+tests call the native lifecycle policy through test-local helpers.
+The test-only execution-plan hash wrapper has also moved out of the runner
+output adapter; manifest mutation tests use a test-local helper over the native
+output lifecycle policy.
+The test-only manifest compatibility wrapper has also been removed from the
+runner output adapter; manifest compatibility tests call the native output
+lifecycle policy directly.
+The test-only file-fingerprint shortcut has also been removed from the runner
+output adapter. Production fingerprinting flows through the native run-scoped
+fingerprint cache boundary.
+The Python output adapter no longer carries a generic execution-plan value
+normalizer for manifest hashing/header construction. The PyO3 JSON bridge now
+converts dataclasses, enums, and paths before native manifest policy
+serialization, and the Python architecture checker rejects reintroduced
+normalizer definitions.
+Test-only timing diagnostic serializer wrappers have also moved out of the
+runner timing adapter; tests serialize typed timing snapshots through local
+dataclass mapping helpers.
+The obsolete Python binary-correction normalization wrapper has also been
+removed from execution-plan construction; tests now assert the native
+run-request payload before adapting it through the typed Python boundary.
+Obsolete Python config option normalizers have also been removed from
+`g.interface.config`; flat option normalization and TOML/config validation stay
+in the native interface frontend. Unused Python `load_toml` and pre-run
+`validate_config` wrappers were also removed.
+The stale `g.jax_runtime.state` formatter module has also been removed, with a
+forbidden-path guard preventing the support module from returning.
+Unused JAX GPU probe/report compatibility wrappers have also been removed from
+`g.jax_runtime.setup`; standalone GPU validation still enters through
+`require_gpu_device()` and native setup sessions.
+Test-only callback work-item classifiers were also moved out of
+`g.engine.callbacks.runtime`; production dispatch classification stays in the
+native callback resource planner.
+Callback result processors no longer re-export writer materialization hooks.
+Single-trait and multi-trait callback writes call the callback writer adapter
+directly, matching the writer ownership boundary.
+Callback runtime no longer re-exports transfer timing or binary-diagnostic
+helper hooks; runtime code calls the transfer and diagnostics adapters
+explicitly.
+The callback writer adapter no longer re-exports transfer helper functions;
+result materialization and write timing call the transfer adapter explicitly.
+Grouped callback fanout no longer re-exports shared fanout or projected
+chunk-stat helpers; the fanout calls shared/transfer adapters explicitly.
+The transfer adapter no longer re-exports the diagnostics blocking hook or
+shared metadata helper; transfer code calls those owning adapters explicitly.
+Single-trait and multi-trait callback implementations no longer re-export
+transfer, diagnostics, shared metadata, or runtime chromosome-state helper
+aliases; callback code calls the owning adapters explicitly, and the Python
+architecture checker rejects reintroduced helper alias assignments.
+Test-only runner runtime construction/description helpers were also removed;
+isolated tests build native runtime-state handles directly.
+The test-only `execution_plan.build_kernel_config()` wrapper was removed; tests
+that need full kernel settings now read them from the native-compiled execution
+plan.
+Phase 14 validation on July 3, 2026 rebuilt the editable PyO3 package with
+`maturin develop -j 30 --profile dev-fast --uv` using `sccache` plus the `wild`
+linker wrapper. The build completed in `2:17.09` wall time with Cargo reporting
+`1m43s`.
 
 Phase 10 callback-runner fallback removal is complete on this branch:
 production scheduling, queue/resource ownership, worker lifecycle, result-slot,
 and dosage-buffer paths no longer use manual Python fallback ownership.
 Remaining Python side effects are tracked as Phase 11/12 adapter work.
+The July 3, 2026 targeted coordinator benchmark checkpoint
+(`cargo bench -p g-engine --bench coordinator`) reported
+`engine_single_batch_fake_backend` at 301.21 ns median after a 1m59s bench build
+using sccache and the default linker.
 Native BGEN delivery cleanup no longer carries a Python timing snapshot writer
 callback; final timing snapshots and profile summaries are written once through
 the runner's native final-timing boundary after dispatch.

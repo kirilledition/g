@@ -2,7 +2,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyTuple};
+use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyTuple, PyType};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 
 pub(crate) fn json_value_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<JsonValue> {
@@ -20,6 +20,12 @@ pub(crate) fn json_value_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<JsonV
     }
     if let Ok(tuple) = value.cast::<PyTuple>() {
         return json_array_from_py_iter(tuple.as_any()).map(JsonValue::Array);
+    }
+    if let Some(dataclass_mapping) = dataclass_as_dict(value)? {
+        return json_value_from_py_any(dataclass_mapping.bind(value.py()));
+    }
+    if let Some(enum_value) = enum_payload_value(value)? {
+        return json_value_from_py_any(enum_value.bind(value.py()));
     }
     if value.is_instance_of::<PyInt>() {
         if let Ok(signed_integer) = value.extract::<i64>() {
@@ -49,6 +55,29 @@ pub(crate) fn json_value_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<JsonV
 pub(crate) fn json_text_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<String> {
     let json_value = json_value_from_py_any(value)?;
     serde_json::to_string(&json_value).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+fn dataclass_as_dict(value: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
+    if value.cast::<PyType>().is_ok() {
+        return Ok(None);
+    }
+    let py = value.py();
+    let dataclasses = py.import("dataclasses")?;
+    let is_dataclass = dataclasses.call_method1("is_dataclass", (value,))?.extract::<bool>()?;
+    if !is_dataclass {
+        return Ok(None);
+    }
+    Ok(Some(dataclasses.call_method1("asdict", (value,))?.unbind()))
+}
+
+fn enum_payload_value(value: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
+    let py = value.py();
+    let enum_module = py.import("enum")?;
+    let enum_type = enum_module.getattr("Enum")?;
+    if !value.is_instance(&enum_type)? {
+        return Ok(None);
+    }
+    Ok(Some(value.getattr("value")?.unbind()))
 }
 
 pub(crate) fn json_text_to_py_object(py: Python<'_>, json_text: &str, payload_name: &str) -> PyResult<Py<PyAny>> {

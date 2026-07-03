@@ -1,1 +1,1 @@
-"""Internal JAX runtime policy, resolution, diagnostics, and state APIs."""
+"""Internal JAX runtime policy, resolution, diagnostics, and setup APIs."""

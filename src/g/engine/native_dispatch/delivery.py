@@ -69,20 +69,6 @@ def plan_bgen_delivery_cleanup(
     return native_schedule_policy().plan_bgen_delivery_cleanup(cleanup_outcome.value, callback_finished)
 
 
-def resolve_native_callback_batch_size(
-    callback: models.BgenDeliveryBatchSizeProtocol,
-    *,
-    variant_major_packed8_probability_pairs: bool,
-) -> int:
-    """Return the validated native callback batch size for one callback object."""
-    return int(
-        native_schedule_policy().resolve_delivery_callback_batch_size(
-            callback.native_callback_batch_size,
-            variant_major_packed8_probability_pairs,
-        )
-    )
-
-
 def plan_bgen_delivery_invocation(
     callback: models.BgenDeliveryBatchSizeProtocol,
     run_input: models.BgenDeliveryRunInputProtocol,

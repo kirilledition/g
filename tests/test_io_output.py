@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import dataclasses
 import hashlib
 import json
 import os
@@ -84,6 +85,39 @@ def build_chunk_file_name(chunk_identifier: int) -> str:
     return f"chunk_{chunk_identifier:09d}.arrow"
 
 
+def build_test_execution_plan_hash(execution_plan: typing.Any) -> str:
+    """Build an execution-plan hash for manifest mutation tests."""
+    return output.native_output_lifecycle_policy().build_manifest_json_sha256_from_value(execution_plan)
+
+
+def load_test_run_manifest(output_run_paths: output.OutputRunPaths) -> dict[str, typing.Any] | None:
+    """Load a run manifest through the native policy for tests."""
+    manifest_payload = output.native_output_lifecycle_policy().load_run_manifest_payload(
+        str(output_run_paths.run_directory)
+    )
+    if manifest_payload is None:
+        return None
+    return output.require_native_mapping_payload(
+        manifest_payload,
+        f"Run manifest '{output.get_run_manifest_path(output_run_paths)}' must contain a JSON object.",
+    )
+
+
+def write_test_run_manifest(
+    output_run_paths: output.OutputRunPaths,
+    manifest: dict[str, typing.Any],
+) -> None:
+    """Write a run manifest through the native policy for tests."""
+    output.native_output_lifecycle_policy().write_run_manifest(str(output_run_paths.run_directory), manifest)
+
+
+@dataclasses.dataclass(frozen=True)
+class InitializedTestOutputRun:
+    """Test-local initialized output state."""
+
+    committed_chunk_identifiers: frozenset[int]
+
+
 def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
     """Return persisted chunk files in deterministic filename order."""
     if not chunks_directory.exists():
@@ -135,10 +169,14 @@ def resolve_test_output_run_paths(
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
 ) -> output.OutputRunPaths:
     """Resolve output paths with the test fixture's default output format."""
-    return output.resolve_output_run_paths(
-        output_root,
-        association_mode,
-        output_format,
+    native_output_run_paths = output.native_output_lifecycle_policy().resolve_output_run_paths(
+        str(output_root),
+        association_mode.value,
+        output_format.value,
+    )
+    return output.OutputRunPaths(
+        run_directory=Path(native_output_run_paths.run_directory),
+        chunks_directory=Path(native_output_run_paths.chunks_directory),
     )
 
 
@@ -151,12 +189,12 @@ def prepare_test_output_run(
     resume_mode: types.ResumeMode = types.ResumeMode.FAST,
 ) -> output.PreparedOutputRun:
     """Prepare output paths with explicit production arguments."""
+    del resume_mode
     return output.prepare_output_run(
         output_root=output_root,
         association_mode=association_mode,
         output_format=output_format,
         resume=resume,
-        resume_mode=resume_mode,
         runtime_compatibility_token=build_test_runtime_compatibility_token(),
     )
 
@@ -309,7 +347,7 @@ def write_native_chunks(
     output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> None:
     if output_format == types.OutputFormat.REGENIE and not output.get_run_manifest_path(output_run_paths).exists():
-        output.write_run_manifest(output_run_paths, {"committed_chunks": []})
+        write_test_run_manifest(output_run_paths, {"committed_chunks": []})
     writer_session = create_test_output_writer_session(
         output_run_paths,
         association_mode,
@@ -581,7 +619,7 @@ def test_fast_resume_rejects_control_file_content_change_with_preserved_metadata
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    write_test_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
 
     replace_file_text_preserving_size_and_mtime(tmp_path / file_name, replacement_text)
     current_header = build_test_header(tmp_path, write_input_files=False)
@@ -608,7 +646,7 @@ def test_fast_resume_rejects_loco_file_content_change_with_preserved_metadata(tm
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    write_test_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
 
     replace_file_text_preserving_size_and_mtime(tmp_path / "trait.loco", "FID_IID F1_I1\n22 0.2\n")
     current_header = build_test_header(tmp_path, write_input_files=False)
@@ -629,24 +667,11 @@ def test_fast_resume_rejects_loco_file_content_change_with_preserved_metadata(tm
         initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
 
-def test_prediction_loco_fingerprints_use_native_payload(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_prediction_loco_fingerprints_use_native_payload(tmp_path: Path) -> None:
     loco_path = tmp_path / "shared.loco"
     loco_path.write_text("FID_IID F1_I1\n22 0.1\n", encoding="utf-8")
     prediction_list_path = tmp_path / "predictions.list"
     prediction_list_path.write_text("first shared.loco\nsecond shared.loco\n", encoding="utf-8")
-
-    def fail_python_file_fingerprint(
-        path: Path | None,
-        *,
-        include_content_hash: bool,
-    ) -> output.ManifestFileFingerprint | None:
-        del path, include_content_hash
-        raise AssertionError("LOCO fingerprints should be built by the native output helper")
-
-    monkeypatch.setattr(output, "build_file_fingerprint", fail_python_file_fingerprint)
 
     loco_files = output.build_prediction_loco_file_fingerprints(
         prediction_list_path=prediction_list_path,
@@ -686,22 +711,9 @@ def test_prediction_loco_fingerprints_reuse_run_scoped_native_cache(tmp_path: Pa
     assert uncached_loco_files[0].content_sha256 == expected_mutated_hash
 
 
-def test_manifest_file_fingerprint_cache_uses_native_payload(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_manifest_file_fingerprint_cache_uses_native_payload(tmp_path: Path) -> None:
     input_path = tmp_path / "control.txt"
     input_path.write_text("control", encoding="utf-8")
-
-    def fail_python_file_fingerprint(
-        path: Path | None,
-        *,
-        include_content_hash: bool,
-    ) -> output.ManifestFileFingerprint | None:
-        del path, include_content_hash
-        raise AssertionError("Cached control-file fingerprints should be built by the native output cache")
-
-    monkeypatch.setattr(output, "build_file_fingerprint", fail_python_file_fingerprint)
 
     fingerprint_cache = output.ManifestFileFingerprintCache()
     first_fingerprint = fingerprint_cache.build_file_fingerprint(input_path, include_content_hash=True)
@@ -778,14 +790,38 @@ def initialize_test_output_run(
     *,
     resume: bool = False,
     resume_mode: types.ResumeMode = types.ResumeMode.FAST,
-) -> output.InitializedOutputRun:
-    return output.initialize_output_run(
+) -> InitializedTestOutputRun:
+    return initialize_test_output_run_from_values(
         output_run_paths=prepared_output_run.output_run_paths,
         existing_manifest=prepared_output_run.existing_manifest,
         current_header=current_header,
         resume=resume,
         resume_mode=resume_mode,
-        runtime_compatibility_token=build_test_runtime_compatibility_token(),
+    )
+
+
+def initialize_test_output_run_from_values(
+    *,
+    output_run_paths: output.OutputRunPaths,
+    existing_manifest: dict[str, typing.Any] | None,
+    current_header: dict[str, typing.Any],
+    resume: bool,
+    resume_mode: types.ResumeMode,
+) -> InitializedTestOutputRun:
+    """Initialize one output run through the native policy for tests."""
+    native_initialized_output_run = output.native_output_lifecycle_policy().initialize_output_run_from_values(
+        str(output_run_paths.run_directory),
+        str(output_run_paths.chunks_directory),
+        existing_manifest,
+        current_header,
+        resume,
+        resume_mode.value,
+        build_test_runtime_compatibility_token(),
+    )
+    return InitializedTestOutputRun(
+        committed_chunk_identifiers=frozenset(
+            int(chunk_identifier) for chunk_identifier in native_initialized_output_run.committed_chunk_identifiers
+        ),
     )
 
 
@@ -826,23 +862,38 @@ def test_output_manifest_helpers_cover_empty_paths_and_invalid_json(tmp_path: Pa
     input_path.write_text("input", encoding="utf-8")
 
     assert build_chunk_file_name(7) == "chunk_000000007.arrow"
-    assert output.build_file_fingerprint(None, include_content_hash=False) is None
-    input_fingerprint = output.build_file_fingerprint(input_path, include_content_hash=True)
+    fingerprint_cache = output.ManifestFileFingerprintCache()
+    assert fingerprint_cache.build_file_fingerprint(None, include_content_hash=False) is None
+    input_fingerprint = fingerprint_cache.build_file_fingerprint(input_path, include_content_hash=True)
     assert input_fingerprint is not None
     assert input_fingerprint.content_sha256 == hashlib.sha256(input_path.read_bytes()).hexdigest()
-    assert output.normalize_execution_plan_value(Path("relative/path")) == "relative/path"
+    native_output_lifecycle_policy = output.native_output_lifecycle_policy()
+    assert native_output_lifecycle_policy.build_manifest_json_sha256_from_value(
+        {"path": Path("relative/path"), "mode": AssociationMode.REGENIE2_LINEAR}
+    ) == native_output_lifecycle_policy.build_manifest_json_sha256_from_value(
+        {"path": "relative/path", "mode": "regenie2_linear"}
+    )
     assert iter_sorted_chunk_file_paths(output_run_paths.chunks_directory) == ()
     with pytest.raises(ValueError, match="must contain a JSON object"):
-        output.load_run_manifest(output_run_paths)
+        load_test_run_manifest(output_run_paths)
 
 
 def test_native_manifest_compatibility_reports_missing_and_nested_differences() -> None:
     with pytest.raises(ValueError, match=r"root\.a"):
-        output.validate_manifest_compatibility({"root": {"a": 1}}, {"root": {"b": 1}})
+        output.native_output_lifecycle_policy().validate_run_manifest_compatibility_from_values(
+            {"root": {"a": 1}},
+            {"root": {"b": 1}},
+        )
     with pytest.raises(ValueError, match=r"root\[0\]\.a"):
-        output.validate_manifest_compatibility({"root": [{"a": 1}]}, {"root": [{"a": 2}]})
+        output.native_output_lifecycle_policy().validate_run_manifest_compatibility_from_values(
+            {"root": [{"a": 1}]},
+            {"root": [{"a": 2}]},
+        )
     with pytest.raises(ValueError, match="root"):
-        output.validate_manifest_compatibility({"root": [1, 2]}, {"root": [1]})
+        output.native_output_lifecycle_policy().validate_run_manifest_compatibility_from_values(
+            {"root": [1, 2]},
+            {"root": [1]},
+        )
 
 
 def test_resume_rejects_older_manifest_schema_after_prediction_input_schema_bump(tmp_path: Path) -> None:
@@ -854,7 +905,10 @@ def test_resume_rejects_older_manifest_schema_after_prediction_input_schema_bump
     older_manifest["execution_plan"].pop("prediction_inputs")
 
     with pytest.raises(ValueError, match="manifest_schema_version"):
-        output.validate_manifest_compatibility(older_manifest, current_header)
+        output.native_output_lifecycle_policy().validate_run_manifest_compatibility_from_values(
+            older_manifest,
+            current_header,
+        )
 
 
 @pytest.mark.parametrize(
@@ -870,54 +924,19 @@ def test_read_manifest_committed_chunk_identifiers_rejects_invalid_shapes(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        output.read_manifest_committed_chunk_identifiers(manifest)
-
-
-def test_strict_manifest_core_wrappers_normalize_and_validate_payloads(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeNativeOutputLifecyclePolicy:
-        def validate_strict_manifest_chunks_from_value(
-            self,
-            chunks_directory: str,
-            manifest: dict[str, object],
-        ) -> list[int]:
-            del chunks_directory, manifest
-            return [0, 2]
-
-        def repair_strict_manifest_chunk_commits_from_value(
-            self,
-            chunks_directory: str,
-            manifest: dict[str, object],
-        ) -> dict[str, str]:
-            del chunks_directory, manifest
-            return {"bad": "shape"}
-
-    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
-    output_run_paths.chunks_directory.mkdir()
-    monkeypatch.setattr(
-        output,
-        "native_output_lifecycle_policy",
-        FakeNativeOutputLifecyclePolicy,
-    )
-
-    assert output.validate_strict_manifest_chunks(output_run_paths, {"committed_chunks": []}) == frozenset({0, 2})
-    with pytest.raises(ValueError, match="repaired committed chunks must be a list"):
-        output.repair_strict_manifest_chunk_commits(output_run_paths, {"committed_chunks": []})
+        output.native_output_lifecycle_policy().read_manifest_committed_chunk_identifiers_from_value(manifest)
 
 
 def test_initialize_output_run_uses_existing_manifest_when_current_manifest_is_missing(tmp_path: Path) -> None:
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
     output_run_paths.chunks_directory.mkdir()
     existing_manifest = {"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION, "committed_chunks": []}
-    initialized_output_run = output.initialize_output_run(
+    initialized_output_run = initialize_test_output_run_from_values(
         output_run_paths=output_run_paths,
         existing_manifest=existing_manifest,
         current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
         resume=False,
         resume_mode=types.ResumeMode.FAST,
-        runtime_compatibility_token=build_test_runtime_compatibility_token(),
     )
 
     written_manifest = json.loads(output.get_run_manifest_path(output_run_paths).read_text(encoding="utf-8"))
@@ -928,7 +947,6 @@ def test_initialize_output_run_uses_existing_manifest_when_current_manifest_is_m
 
 def test_initialize_output_run_uses_prepared_manifest_without_reload(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
     output_run_paths.chunks_directory.mkdir()
@@ -937,21 +955,14 @@ def test_initialize_output_run_uses_prepared_manifest_without_reload(
         "committed_chunks": [],
         "command": {"interface": "g regenie"},
     }
+    output.get_run_manifest_path(output_run_paths).write_text("[]", encoding="utf-8")
 
-    def fail_manifest_reload(output_run_paths: output.OutputRunPaths) -> dict[str, typing.Any] | None:
-        del output_run_paths
-        message = "initialize_output_run reloaded the prepared manifest"
-        raise AssertionError(message)
-
-    monkeypatch.setattr(output, "load_run_manifest", fail_manifest_reload)
-
-    initialized_output_run = output.initialize_output_run(
+    initialized_output_run = initialize_test_output_run_from_values(
         output_run_paths=output_run_paths,
         existing_manifest=existing_manifest,
         current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
         resume=False,
         resume_mode=types.ResumeMode.FAST,
-        runtime_compatibility_token=build_test_runtime_compatibility_token(),
     )
 
     written_manifest = json.loads(output.get_run_manifest_path(output_run_paths).read_text(encoding="utf-8"))
@@ -965,13 +976,12 @@ def test_initialize_output_run_rejects_existing_manifest_with_invalid_commits(tm
     output_run_paths.chunks_directory.mkdir()
 
     with pytest.raises(ValueError, match="committed_chunks field must be a list"):
-        output.initialize_output_run(
+        initialize_test_output_run_from_values(
             output_run_paths=output_run_paths,
             existing_manifest={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION, "committed_chunks": "bad"},
             current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
             resume=False,
             resume_mode=types.ResumeMode.FAST,
-            runtime_compatibility_token=build_test_runtime_compatibility_token(),
         )
 
 
@@ -980,13 +990,12 @@ def test_initialize_output_run_rejects_resume_without_manifest(tmp_path: Path) -
     output_run_paths.chunks_directory.mkdir()
 
     with pytest.raises(ValueError, match=r"Resume requires run_manifest\.json"):
-        output.initialize_output_run(
+        initialize_test_output_run_from_values(
             output_run_paths=output_run_paths,
             existing_manifest=None,
             current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
             resume=True,
             resume_mode=types.ResumeMode.FAST,
-            runtime_compatibility_token=build_test_runtime_compatibility_token(),
         )
 
 
@@ -1115,7 +1124,7 @@ def test_native_writer_writes_regenie_text_parts_and_final_output(tmp_path: Path
     sidecar = json.loads(part_paths[0].with_suffix(".regenie.json").read_text(encoding="utf-8"))
     assert [chunk["output_format"] for chunk in sidecar] == ["regenie", "regenie"]
 
-    manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    manifest = load_test_run_manifest(prepared_output_run.output_run_paths)
     assert manifest is not None
     assert manifest["finalized"] is True
     assert manifest["final_output_format"] == "regenie"
@@ -1524,7 +1533,7 @@ def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_
     initialized_output_run = initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
     assert initialized_output_run.committed_chunk_identifiers == frozenset({0, 2})
-    manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    manifest = load_test_run_manifest(prepared_output_run.output_run_paths)
     assert manifest is not None
     assert [chunk["chunk_identifier"] for chunk in manifest["committed_chunks"]] == [0, 2]
 
@@ -1536,7 +1545,7 @@ def test_initialize_output_run_preserves_preinitialized_metadata(tmp_path: Path)
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(
+    write_test_run_manifest(
         prepared_output_run.output_run_paths,
         {
             "command": {
@@ -1548,7 +1557,7 @@ def test_initialize_output_run_preserves_preinitialized_metadata(tmp_path: Path)
 
     initialize_test_output_run(prepared_output_run, current_header)
 
-    manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    manifest = load_test_run_manifest(prepared_output_run.output_run_paths)
     assert manifest is not None
     assert manifest["command"]["effective_config"].endswith("effective_config.toml")
     assert manifest["runtime"] == {"device": "cpu"}
@@ -1596,10 +1605,10 @@ def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Pa
     )
     initialize_test_output_run(prepared_output_run, current_header)
     write_native_chunks(prepared_output_run.output_run_paths, AssociationMode.REGENIE2_LINEAR)
-    manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    manifest = load_test_run_manifest(prepared_output_run.output_run_paths)
     assert manifest is not None
     manifest["committed_chunks"] = []
-    output.write_run_manifest(prepared_output_run.output_run_paths, manifest)
+    write_test_run_manifest(prepared_output_run.output_run_paths, manifest)
 
     resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
@@ -1616,7 +1625,7 @@ def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Pa
     )
 
     assert initialized_output_run.committed_chunk_identifiers == frozenset({0, 2})
-    repaired_manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    repaired_manifest = load_test_run_manifest(prepared_output_run.output_run_paths)
     assert repaired_manifest is not None
     assert repaired_manifest["committed_chunks"] == [
         {
@@ -1658,7 +1667,7 @@ def test_fast_resume_trusts_only_manifest_committed_chunks(tmp_path: Path) -> No
     initialized_output_run = initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
     assert initialized_output_run.committed_chunk_identifiers == frozenset()
-    manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    manifest = load_test_run_manifest(prepared_output_run.output_run_paths)
     assert manifest is not None
     assert manifest["resume_policy"] == output.RESUME_POLICY
     assert manifest["committed_chunks"] == []
@@ -1671,7 +1680,7 @@ def test_initialize_output_run_rejects_incompatible_manifest_even_in_fast_mode(t
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(
+    write_test_run_manifest(
         prepared_output_run.output_run_paths,
         {**current_header, "association_mode": AssociationMode.REGENIE2_BINARY.value, "committed_chunks": []},
     )
@@ -1746,7 +1755,7 @@ def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConf
             "binary_correction_plan",
             {"method": "firth_approximate", "p_threshold": 0.01, "firth_se": False},
         ),
-        ("binary_kernel_config", output.normalize_execution_plan_value(build_test_binary_kernel_config())),
+        ("binary_kernel_config", build_test_binary_kernel_config()),
         ("trusted_no_missing_diploid", True),
         ("trusted_bgen_validation_mode", "assume_validated"),
         ("sample_key_mode", "fid_iid"),
@@ -1797,7 +1806,7 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(
+    write_test_run_manifest(
         prepared_output_run.output_run_paths,
         {**manifest_header, "committed_chunks": []},
     )
@@ -1823,7 +1832,7 @@ def test_initialize_output_run_rejects_output_statistic_dtype_resume(tmp_path: P
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    write_test_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
     resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output-statistic-dtype",
         association_mode=AssociationMode.REGENIE2_LINEAR,
@@ -1848,13 +1857,13 @@ def test_initialize_output_run_rejects_per_phenotype_complete_case_resume(tmp_pa
     manifest_header["execution_plan"]["multi_phenotype_sample_mode"] = "complete-case"
     manifest_header["execution_plan"]["phenotype_compute_group_id"] = "complete-case-group"
     manifest_header["execution_plan"]["sample_set_fingerprint"] = "complete-case-samples"
-    manifest_header["execution_plan_hash"] = output.build_execution_plan_hash(manifest_header["execution_plan"])
+    manifest_header["execution_plan_hash"] = build_test_execution_plan_hash(manifest_header["execution_plan"])
     prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / "output-sample-mode",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    write_test_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
     resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output-sample-mode",
         association_mode=AssociationMode.REGENIE2_LINEAR,
@@ -1876,7 +1885,7 @@ def test_initialize_output_run_rejects_per_phenotype_complete_case_resume(tmp_pa
             "binary_correction_plan",
             {"method": "firth_approximate", "p_threshold": 0.01, "firth_se": False},
         ),
-        ("binary_kernel_config", output.normalize_execution_plan_value(build_test_binary_kernel_config())),
+        ("binary_kernel_config", build_test_binary_kernel_config()),
         ("sample_key_mode", "fid_iid"),
         ("output_schema_version", 1),
         (
@@ -1909,13 +1918,13 @@ def test_initialize_output_run_rejects_execution_plan_hash_mismatch(
     current_header = build_test_header(tmp_path)
     manifest_header = copy.deepcopy(current_header)
     manifest_header["execution_plan"][nested_field_name] = replacement_value
-    manifest_header["execution_plan_hash"] = output.build_execution_plan_hash(manifest_header["execution_plan"])
+    manifest_header["execution_plan_hash"] = build_test_execution_plan_hash(manifest_header["execution_plan"])
     prepared_output_run = prepare_test_output_run(
         output_root=tmp_path / f"output-execution-plan-{nested_field_name}",
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    write_test_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
     resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / f"output-execution-plan-{nested_field_name}",
         association_mode=AssociationMode.REGENIE2_LINEAR,
@@ -1935,7 +1944,7 @@ def test_initialize_output_run_rejects_execution_plan_hash_only_mismatch(tmp_pat
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    write_test_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
     resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output-execution-plan-hash",
         association_mode=AssociationMode.REGENIE2_LINEAR,
@@ -1955,7 +1964,7 @@ def test_initialize_output_run_rejects_old_schema_manifest(tmp_path: Path) -> No
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    write_test_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
     resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
@@ -1975,7 +1984,7 @@ def test_initialize_output_run_rejects_missing_manifest_header_field(tmp_path: P
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    write_test_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
     resumed_output_run = prepare_test_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
@@ -1995,7 +2004,7 @@ def test_initialize_output_run_incompatible_resume_preserves_manifest_bytes(tmp_
         association_mode=AssociationMode.REGENIE2_LINEAR,
         resume=False,
     )
-    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    write_test_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
     manifest_path = output.get_run_manifest_path(prepared_output_run.output_run_paths)
     original_manifest_bytes = manifest_path.read_bytes()
     resumed_output_run = prepare_test_output_run(

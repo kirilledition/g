@@ -32,21 +32,6 @@ def start_callback(callback: models.BgenDeliveryCallbackProtocol) -> None:
     callback.start()
 
 
-def finish_writer_session(
-    *,
-    writer_session: typing.Any,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
-) -> str | None:
-    """Finish the writer session and optionally finalize Parquet output."""
-    writer_finish_start_time = time.perf_counter()
-    events.native_dispatch_diagnostic_policy().record_native_dispatch_writer_session_finish_started_diagnostic_event()
-    final_parquet_path = finish_writer_session_to_path(writer_session)
-    timing.record_stage_duration(
-        stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
-    )
-    return None if final_parquet_path is None else str(final_parquet_path)
-
-
 def resolve_writer_finish_thread_count(writer_session_count: int, requested_thread_count: int) -> int:
     """Return the bounded number of threads used to finish writer sessions."""
     return int(
@@ -106,23 +91,6 @@ def finish_writer_sessions(
         stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
     )
     return final_parquet_paths
-
-
-def finish_writer_session_interrupted(
-    *,
-    writer_session: typing.Any,
-    shutdown_request: lifecycle.GracefulShutdownRequested,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
-) -> None:
-    """Flush writer output for an interrupted run without final Parquet."""
-    writer_finish_start_time = time.perf_counter()
-    events.native_dispatch_diagnostic_policy().record_native_dispatch_writer_session_interrupted_flush_started_diagnostic_event(
-        signal_exit_code=shutdown_request.exit_code,
-        signal_name=shutdown_request.signal_name,
-        signal_number=shutdown_request.shutdown_signal.number,
-    )
-    finish_writer_session_interrupted_by_signal(writer_session, shutdown_request.signal_name)
-    timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
 
 
 def finish_writer_sessions_interrupted(

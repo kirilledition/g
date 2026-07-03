@@ -18,6 +18,10 @@ def test_python_forbidden_path_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_forbidden_path_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
 
+def test_python_alias_policy_allows_current_production_tree() -> None:
+    assert check_python_architecture.collect_python_alias_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
+
+
 def test_forbidden_path_policy_rejects_obsolete_python_orchestration_files(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     for source_path in (
@@ -123,6 +127,7 @@ def test_forbidden_path_policy_rejects_obsolete_support_files(tmp_path: Path) ->
     package_root = tmp_path / "g"
     for source_path in (
         Path("runtime_paths.py"),
+        Path("jax_runtime/state.py"),
         Path("io/source.py"),
         Path("engine/backend_planner.py"),
         Path("engine/preflight.py"),
@@ -145,6 +150,12 @@ def test_forbidden_path_policy_rejects_obsolete_support_files(tmp_path: Path) ->
             1,
             "obsolete_python_orchestration_module_path_isolation",
             Path("io/source.py"),
+        ),
+        (
+            Path("g/jax_runtime/state.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("jax_runtime/state.py"),
         ),
         (
             Path("g/runtime_paths.py"),
@@ -208,6 +219,10 @@ def test_python_call_policy_allows_current_production_tree() -> None:
 
 def test_python_parameter_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_parameter_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
+
+
+def test_python_definition_policy_allows_current_production_tree() -> None:
+    assert check_python_architecture.collect_python_definition_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
 
 def test_python_cli_shim_policy_allows_current_production_tree() -> None:
@@ -3154,6 +3169,298 @@ def test_telemetry_definition_policy_rejects_fallback_methods(tmp_path: Path) ->
         (Path("g/runner/events.py"), 10, "build_event_payload"),
         (Path("g/runner/events.py"), 12, "native_session_policy"),
         (Path("g/runner/events.py"), 14, "log_progress"),
+    ]
+
+
+def test_definition_policy_rejects_removed_orchestration_helpers(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    interface_directory = package_root / "interface"
+    jax_runtime_directory = package_root / "jax_runtime"
+    callback_directory = package_root / "engine" / "callbacks"
+    native_dispatch_directory = package_root / "engine" / "native_dispatch"
+    runner_directory.mkdir(parents=True)
+    interface_directory.mkdir(parents=True)
+    jax_runtime_directory.mkdir(parents=True)
+    callback_directory.mkdir(parents=True)
+    native_dispatch_directory.mkdir(parents=True)
+    (runner_directory / "timing.py").write_text(
+        "\n".join(
+            (
+                "def serialize_chunk_stage_timings():",
+                "    pass",
+                "def serialize_binary_chunk_diagnostics():",
+                "    pass",
+                "def serialize_null_logistic_diagnostics():",
+                "    pass",
+                "def binary_chunk_diagnostics_snapshot_to_mapping():",
+                "    pass",
+                "def null_logistic_diagnostics_snapshot_to_mapping():",
+                "    pass",
+                "def serialize_queue_backpressure():",
+                "    pass",
+                "def serialize_transfer_metadata():",
+                "    pass",
+                "def build_chunk_stage_summary():",
+                "    pass",
+                "def build_binary_chunk_summary():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (runner_directory / "outputs.py").write_text(
+        "\n".join(
+            (
+                "def build_execution_plan_hash():",
+                "    pass",
+                "def validate_manifest_compatibility():",
+                "    pass",
+                "def read_manifest_committed_chunk_identifiers():",
+                "    pass",
+                "def validate_strict_manifest_chunks():",
+                "    pass",
+                "def repair_strict_manifest_chunk_commits():",
+                "    pass",
+                "def load_run_manifest():",
+                "    pass",
+                "def write_run_manifest():",
+                "    pass",
+                "def resolve_output_run_paths():",
+                "    pass",
+                "def initialize_output_run():",
+                "    pass",
+                "def normalize_execution_plan_value():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (runner_directory / "runtime.py").write_text(
+        "\n".join(
+            (
+                "def build_process_runtime_state():",
+                "    pass",
+                "def describe_logging_runtime_policy():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (native_dispatch_directory / "delivery.py").write_text(
+        "\n".join(
+            (
+                "def resolve_native_callback_batch_size():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (native_dispatch_directory / "writers.py").write_text(
+        "\n".join(
+            (
+                "def finish_writer_session():",
+                "    pass",
+                "def finish_writer_session_interrupted():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (callback_directory / "runtime.py").write_text(
+        "\n".join(
+            (
+                "def classify_result_write_item():",
+                "    pass",
+                "def classify_dosage_work_item():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (package_root / "execution_plan.py").write_text(
+        "\n".join(
+            (
+                "def normalize_binary_correction_config():",
+                "    pass",
+                "def build_kernel_config():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (interface_directory / "config.py").write_text(
+        "\n".join(
+            (
+                "def normalize_python_options():",
+                "    pass",
+                "def normalize_python_option_value():",
+                "    pass",
+                "def flatten_unknown_option_name():",
+                "    pass",
+                "def split_name_list():",
+                "    pass",
+                "def optional_string():",
+                "    pass",
+                "def normalize_trait_type():",
+                "    pass",
+                "def flatten_toml_mapping():",
+                "    pass",
+                "def flatten_mapping_section():",
+                "    pass",
+                "def load_toml():",
+                "    pass",
+                "def validate_config():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (jax_runtime_directory / "setup.py").write_text(
+        "\n".join(
+            (
+                "def default_nvidia_driver_probe_paths():",
+                "    pass",
+                "def nvidia_driver_is_visible():",
+                "    pass",
+                "def complete_jax_runtime_setup_validation_report():",
+                "    pass",
+                "def jax_gpu_validation_report_from_native_payload():",
+                "    pass",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_definition_policy_violations(package_root)
+
+    observed_violations = sorted(
+        (violation.path, violation.line_number, violation.function_name) for violation in violations
+    )
+    assert observed_violations == [
+        (Path("g/engine/callbacks/runtime.py"), 1, "classify_result_write_item"),
+        (Path("g/engine/callbacks/runtime.py"), 3, "classify_dosage_work_item"),
+        (Path("g/engine/native_dispatch/delivery.py"), 1, "resolve_native_callback_batch_size"),
+        (Path("g/engine/native_dispatch/writers.py"), 1, "finish_writer_session"),
+        (Path("g/engine/native_dispatch/writers.py"), 3, "finish_writer_session_interrupted"),
+        (Path("g/execution_plan.py"), 1, "normalize_binary_correction_config"),
+        (Path("g/execution_plan.py"), 3, "build_kernel_config"),
+        (Path("g/interface/config.py"), 1, "normalize_python_options"),
+        (Path("g/interface/config.py"), 3, "normalize_python_option_value"),
+        (Path("g/interface/config.py"), 5, "flatten_unknown_option_name"),
+        (Path("g/interface/config.py"), 7, "split_name_list"),
+        (Path("g/interface/config.py"), 9, "optional_string"),
+        (Path("g/interface/config.py"), 11, "normalize_trait_type"),
+        (Path("g/interface/config.py"), 13, "flatten_toml_mapping"),
+        (Path("g/interface/config.py"), 15, "flatten_mapping_section"),
+        (Path("g/interface/config.py"), 17, "load_toml"),
+        (Path("g/interface/config.py"), 19, "validate_config"),
+        (Path("g/jax_runtime/setup.py"), 1, "default_nvidia_driver_probe_paths"),
+        (Path("g/jax_runtime/setup.py"), 3, "nvidia_driver_is_visible"),
+        (Path("g/jax_runtime/setup.py"), 5, "complete_jax_runtime_setup_validation_report"),
+        (Path("g/jax_runtime/setup.py"), 7, "jax_gpu_validation_report_from_native_payload"),
+        (Path("g/runner/outputs.py"), 1, "build_execution_plan_hash"),
+        (Path("g/runner/outputs.py"), 3, "validate_manifest_compatibility"),
+        (Path("g/runner/outputs.py"), 5, "read_manifest_committed_chunk_identifiers"),
+        (Path("g/runner/outputs.py"), 7, "validate_strict_manifest_chunks"),
+        (Path("g/runner/outputs.py"), 9, "repair_strict_manifest_chunk_commits"),
+        (Path("g/runner/outputs.py"), 11, "load_run_manifest"),
+        (Path("g/runner/outputs.py"), 13, "write_run_manifest"),
+        (Path("g/runner/outputs.py"), 15, "resolve_output_run_paths"),
+        (Path("g/runner/outputs.py"), 17, "initialize_output_run"),
+        (Path("g/runner/outputs.py"), 19, "normalize_execution_plan_value"),
+        (Path("g/runner/runtime.py"), 1, "build_process_runtime_state"),
+        (Path("g/runner/runtime.py"), 3, "describe_logging_runtime_policy"),
+        (Path("g/runner/timing.py"), 1, "serialize_chunk_stage_timings"),
+        (Path("g/runner/timing.py"), 3, "serialize_binary_chunk_diagnostics"),
+        (Path("g/runner/timing.py"), 5, "serialize_null_logistic_diagnostics"),
+        (Path("g/runner/timing.py"), 7, "binary_chunk_diagnostics_snapshot_to_mapping"),
+        (Path("g/runner/timing.py"), 9, "null_logistic_diagnostics_snapshot_to_mapping"),
+        (Path("g/runner/timing.py"), 11, "serialize_queue_backpressure"),
+        (Path("g/runner/timing.py"), 13, "serialize_transfer_metadata"),
+        (Path("g/runner/timing.py"), 15, "build_chunk_stage_summary"),
+        (Path("g/runner/timing.py"), 17, "build_binary_chunk_summary"),
+    ]
+
+
+def test_alias_policy_rejects_removed_callback_helper_reexports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    callback_directory = package_root / "engine" / "callbacks"
+    callback_directory.mkdir(parents=True)
+    (callback_directory / "runtime.py").write_text(
+        "\n".join(
+            (
+                "record_stage_duration_with_optional_chunk = transfers.record_stage_duration_with_optional_chunk",
+                "binary_chunk_diagnostics_to_summary_counts = diagnostics.binary_chunk_diagnostics_to_summary_counts",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (callback_directory / "writers.py").write_text(
+        "\n".join(
+            (
+                "cast_statistic_array_for_native_writer = transfers.cast_statistic_array_for_native_writer",
+                "select_active_trait_rows_on_device = transfers.select_active_trait_rows_on_device",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (callback_directory / "linear.py").write_text(
+        "\n".join(
+            (
+                "require_current_chromosome_state = runtime.require_current_chromosome_state",
+                "put_compute_array_on_device = transfers.put_compute_array_on_device",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (callback_directory / "binary.py").write_text(
+        "\n".join(
+            (
+                "collect_binary_chunk_diagnostics_if_needed = diagnostics.collect_binary_chunk_diagnostics_if_needed",
+                "record_null_logistic_chromosome_diagnostics = diagnostics.record_null_logistic_chromosome_diagnostics",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (callback_directory / "grouped.py").write_text(
+        "\n".join(
+            (
+                "MultiPhenotypeGroupFanout = shared.MultiPhenotypeGroupFanout",
+                "build_projected_variant_major_dosage_chunk_stats = "
+                "transfers.build_projected_variant_major_dosage_chunk_stats",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (callback_directory / "transfers.py").write_text(
+        "\n".join(
+            (
+                "block_until_ready = diagnostics.block_until_ready",
+                "get_metadata_chromosome = shared.get_metadata_chromosome",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_alias_policy_violations(package_root)
+
+    observed_violations = sorted(
+        (violation.path, violation.line_number, violation.alias_name) for violation in violations
+    )
+    assert observed_violations == [
+        (Path("g/engine/callbacks/binary.py"), 1, "collect_binary_chunk_diagnostics_if_needed"),
+        (Path("g/engine/callbacks/binary.py"), 2, "record_null_logistic_chromosome_diagnostics"),
+        (Path("g/engine/callbacks/grouped.py"), 1, "MultiPhenotypeGroupFanout"),
+        (Path("g/engine/callbacks/grouped.py"), 2, "build_projected_variant_major_dosage_chunk_stats"),
+        (Path("g/engine/callbacks/linear.py"), 1, "require_current_chromosome_state"),
+        (Path("g/engine/callbacks/linear.py"), 2, "put_compute_array_on_device"),
+        (Path("g/engine/callbacks/runtime.py"), 1, "record_stage_duration_with_optional_chunk"),
+        (Path("g/engine/callbacks/runtime.py"), 2, "binary_chunk_diagnostics_to_summary_counts"),
+        (Path("g/engine/callbacks/transfers.py"), 1, "block_until_ready"),
+        (Path("g/engine/callbacks/transfers.py"), 2, "get_metadata_chromosome"),
+        (Path("g/engine/callbacks/writers.py"), 1, "cast_statistic_array_for_native_writer"),
+        (Path("g/engine/callbacks/writers.py"), 2, "select_active_trait_rows_on_device"),
     ]
 
 

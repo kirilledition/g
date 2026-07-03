@@ -15,6 +15,15 @@ if typing.TYPE_CHECKING:
     import pytest
 
 
+@dataclasses.dataclass(frozen=True)
+class NvidiaDriverProbePathsFixture:
+    """Injectable NVIDIA driver probe paths for tests."""
+
+    control_device_path: Path
+    uvm_device_path: Path
+    driver_directory_path: Path
+
+
 def build_runtime_policy(**overrides: object) -> models.JaxRuntimePolicy:
     """Build explicit JAX runtime policy for tests."""
     policy = models.JaxRuntimePolicy(
@@ -34,9 +43,9 @@ def build_nvidia_driver_probe_paths(
     control_device_path: Path,
     uvm_device_path: Path,
     driver_directory_path: Path,
-) -> setup.NvidiaDriverProbePaths:
+) -> NvidiaDriverProbePathsFixture:
     """Build injectable NVIDIA driver probe paths for tests."""
-    return setup.NvidiaDriverProbePaths(
+    return NvidiaDriverProbePathsFixture(
         control_device_path=control_device_path,
         uvm_device_path=uvm_device_path,
         driver_directory_path=driver_directory_path,
@@ -44,7 +53,7 @@ def build_nvidia_driver_probe_paths(
 
 
 def validate_gpu_with_probe_paths(
-    probe_paths: setup.NvidiaDriverProbePaths,
+    probe_paths: NvidiaDriverProbePathsFixture,
 ) -> typing.Callable[[_core.NativeJaxRuntimeSetupSession], dict[str, object]]:
     """Build a deterministic validation function for standalone GPU tests."""
 
@@ -288,23 +297,6 @@ def test_configure_before_backend_init_uses_native_side_effect_plan(tmp_path: Pa
     jax_devices_mock.assert_not_called()
 
 
-def test_complete_jax_runtime_setup_validation_report_uses_native_payload(tmp_path: Path) -> None:
-    native_setup_session = resolution.build_native_jax_runtime_setup_session(
-        build_runtime_policy(device=types.Device.GPU, cache_directory=tmp_path / "jax-cache")
-    )
-
-    completed_report = setup.complete_jax_runtime_setup_validation_report(
-        native_setup_session,
-        validation_status=models.GpuValidationStatus.SUCCEEDED,
-        validation_message="gpu ready",
-    )
-
-    assert completed_report.requested_device == types.Device.GPU
-    assert completed_report.cache_directory == tmp_path / "jax-cache"
-    assert completed_report.gpu_validation_status == models.GpuValidationStatus.SUCCEEDED
-    assert completed_report.gpu_validation_message == "gpu ready"
-
-
 def test_configure_before_backend_init_emits_structured_diagnostics(tmp_path: Path) -> None:
     """Ensure setup choices are emitted as structured diagnostic events."""
     cache_directory = tmp_path / "jax-cache"
@@ -422,15 +414,6 @@ def test_require_gpu_device_accepts_gpu_platform(tmp_path: Path) -> None:
         patch("jax.devices", return_value=[FakeDevice()]),
     ):
         setup.require_gpu_device()
-
-
-def test_nvidia_driver_is_visible_uses_native_setup_session() -> None:
-    class FakeNativeSetupSession:
-        def nvidia_driver_files_are_visible_with_default_probe_paths(self) -> bool:
-            return True
-
-    with patch("g.jax_runtime.setup._build_gpu_validation_setup_session", return_value=FakeNativeSetupSession()):
-        assert setup.nvidia_driver_is_visible() is True
 
 
 def test_validate_gpu_device_returns_native_success_report(tmp_path: Path) -> None:

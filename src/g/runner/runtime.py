@@ -121,29 +121,6 @@ class RuntimeState:
     jax_policy: jax_runtime_models.JaxRuntimePolicy | None
 
 
-def build_process_runtime_state(
-    logging_policy: LoggingRuntimePolicy | None,
-    rayon_thread_count: int | None,
-    jax_policy: jax_runtime_models.JaxRuntimePolicy | None,
-) -> _core.NativeRuntimeState:
-    """Build a native process runtime state handle.
-
-    Args:
-        logging_policy: Optional configured logging policy to seed.
-        rayon_thread_count: Optional configured Rayon thread count to seed.
-        jax_policy: Optional configured JAX runtime policy to seed.
-
-    Returns:
-        Native process runtime state handle.
-
-    """
-    return _core.NativeRuntimeState().build_process_runtime_state_handle(
-        None if logging_policy is None else logging_runtime_policy_to_native_payload(logging_policy),
-        rayon_thread_count,
-        None if jax_policy is None else jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),
-    )
-
-
 PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.NativeRuntimeState.global_process_runtime_state()
 
 
@@ -294,24 +271,6 @@ def build_runtime_policy(
             logging_runtime_policy_to_native_payload(logging_policy),
             regenie_config.trait.threads,
             jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),
-        )
-    )
-
-
-def describe_logging_runtime_policy(policy: LoggingRuntimePolicy) -> str:
-    """Format a logging runtime policy for concise errors."""
-    return str(
-        PROCESS_RUNTIME_STATE.describe_logging_runtime_policy_value(
-            policy.log_filter,
-            None if policy.log_file is None else str(policy.log_file),
-            policy.log_stderr,
-            policy.log_queue_size,
-            policy.log_lossy,
-            policy.include_source_location,
-            policy.include_span_events,
-            None if policy.trace_file is None else str(policy.trace_file),
-            policy.trace_filter,
-            policy.trace_event_cap,
         )
     )
 

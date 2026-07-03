@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import typing
+
 import pytest
 
 from g import execution_plan, types
 from g.interface import config
 
 
-def build_binary_config(**overrides: object) -> config.BinaryConfig:
-    """Build native-backed binary config with test overrides."""
+def build_binary_correction_plan(**overrides: object) -> types.BinaryCorrectionPlan:
+    """Build the native-planned binary correction plan with test overrides."""
     normalized_overrides = dict(overrides)
     if "p_threshold" in normalized_overrides:
         normalized_overrides["pThresh"] = normalized_overrides.pop("p_threshold")
@@ -23,11 +25,13 @@ def build_binary_config(**overrides: object) -> config.BinaryConfig:
         "out": "results/output",
     }
     raw_options.update(normalized_overrides)
-    return config.RegenieConfig.from_options(raw_options).binary
+    run_request = execution_plan.compile_run_request_payload(config.RegenieConfig.from_options(raw_options))
+    correction_payload = typing.cast("dict[str, typing.Any]", run_request["correction"])
+    return execution_plan.adapt_binary_correction_plan(correction_payload)
 
 
 def test_default_binary_config_normalizes_to_score_only() -> None:
-    plan = execution_plan.normalize_binary_correction_config(build_binary_config())
+    plan = build_binary_correction_plan()
 
     assert plan.method == types.BinaryFallbackMethod.SCORE_ONLY
     assert plan.p_threshold == pytest.approx(0.05)
@@ -35,9 +39,7 @@ def test_default_binary_config_normalizes_to_score_only() -> None:
 
 
 def test_firth_approx_maps_to_approximate_firth_plan() -> None:
-    plan = execution_plan.normalize_binary_correction_config(
-        build_binary_config(firth=True, approx=True, p_threshold=0.01, firth_se=True)
-    )
+    plan = build_binary_correction_plan(firth=True, approx=True, p_threshold=0.01, firth_se=True)
 
     assert plan.method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
     assert plan.p_threshold == pytest.approx(0.01)
@@ -46,15 +48,15 @@ def test_firth_approx_maps_to_approximate_firth_plan() -> None:
 
 def test_approx_without_firth_raises() -> None:
     with pytest.raises(ValueError, match="--approx requires --firth"):
-        build_binary_config(firth=False, approx=True)
+        build_binary_correction_plan(firth=False, approx=True)
 
 
 @pytest.mark.parametrize("p_threshold", [0.0, 1.0, -0.01, 1.01])
 def test_invalid_p_threshold_values_raise(p_threshold: float) -> None:
     with pytest.raises(ValueError, match=r"pThresh|binary\.p_threshold"):
-        execution_plan.normalize_binary_correction_config(build_binary_config(p_threshold=p_threshold))
+        build_binary_correction_plan(p_threshold=p_threshold)
 
 
 def test_exact_firth_raises_until_parity_proven() -> None:
     with pytest.raises(ValueError, match="Exact --firth is not implemented"):
-        build_binary_config(firth=True, approx=False)
+        build_binary_correction_plan(firth=True, approx=False)

@@ -43,15 +43,6 @@ Regenie2ResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem
 Regenie2MultiResultWriteWorkItem = shared.Regenie2MultiResultWriteWorkItem
 type QueuedResultWriteWorkItem = Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None
 NativeBgenWorkerShutdownError = shared.NativeBgenWorkerShutdownError
-record_stage_duration_with_optional_chunk = transfers.record_stage_duration_with_optional_chunk
-build_native_callback_chunk_identity = transfers.build_native_callback_chunk_identity
-write_regenie2_native_chunk_with_optional_timing = writers.write_regenie2_native_chunk_with_optional_timing
-materialize_regenie2_native_chunk_with_optional_timing = writers.materialize_regenie2_native_chunk_with_optional_timing
-write_materialized_regenie2_native_chunk_with_optional_timing = (
-    writers.write_materialized_regenie2_native_chunk_with_optional_timing
-)
-record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
-binary_chunk_diagnostics_to_summary_counts = diagnostics.binary_chunk_diagnostics_to_summary_counts
 
 
 def native_callback_progress_policy() -> _core.NativeCallbackProgressPolicy:
@@ -93,38 +84,6 @@ class CallbackWorkerThreadHandle(typing.Protocol):
     def join(self, timeout: float | None) -> None: ...
 
     def is_alive(self) -> bool: ...
-
-
-def classify_result_write_item(
-    work_item: QueuedResultWriteWorkItem,
-) -> ResultWriteItemKind:
-    """Classify one result write item for native scheduler dispatch."""
-    if work_item is None:
-        return ResultWriteItemKind.STOP_SIGNAL
-    if isinstance(work_item, Regenie2MultiResultWriteWorkItem):
-        return ResultWriteItemKind.MULTI_RESULT
-    if isinstance(work_item, Regenie2ResultWriteWorkItem):
-        return ResultWriteItemKind.SINGLE_RESULT
-    message = f"Unsupported result write work item type: {type(work_item).__name__}"
-    raise TypeError(message)
-
-
-def classify_dosage_work_item(
-    work_item: QueuedPreprocessedDosageWorkItem,
-) -> DosageWorkItemKind:
-    """Classify one dosage work item for native scheduler dispatch."""
-    if work_item is None:
-        return DosageWorkItemKind.STOP_SIGNAL
-    if isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
-        return DosageWorkItemKind.VARIANT_MAJOR_DOSAGE_BATCH
-    if isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
-        return DosageWorkItemKind.VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR
-    if isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
-        return DosageWorkItemKind.VARIANT_MAJOR_DOSAGE
-    if isinstance(work_item, PreprocessedDosageChunkWorkItem):
-        return DosageWorkItemKind.SAMPLE_MAJOR_DOSAGE
-    message = f"Unsupported preprocessed dosage work item type: {type(work_item).__name__}"
-    raise TypeError(message)
 
 
 def require_current_chromosome_state[ChromosomeStateType](
@@ -387,7 +346,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def record_chunk_stage_duration(self, metadata: typing.Any, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage for a specific native chunk."""
-        record_stage_duration_with_optional_chunk(
+        transfers.record_stage_duration_with_optional_chunk(
             stage_timing_recorder=self.stage_timing_recorder,
             stage_name=stage_name,
             start_time=start_time,
@@ -1180,7 +1139,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         pending_diagnostics = tuple(self.binary_correction_pending_diagnostics)
         if not pending_diagnostics:
             return
-        diagnostics_counts = binary_chunk_diagnostics_to_summary_counts(pending_diagnostics)
+        diagnostics_counts = diagnostics.binary_chunk_diagnostics_to_summary_counts(pending_diagnostics)
         self.binary_correction_pending_diagnostics.clear()
         self.add_binary_correction_summary_counts(diagnostics_counts)
 
@@ -1301,7 +1260,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Materialize and write one computed result work item."""
         host_dosage_buffer_released = False
         try:
-            materialized_chunk = materialize_regenie2_native_chunk_with_optional_timing(
+            materialized_chunk = writers.materialize_regenie2_native_chunk_with_optional_timing(
                 metadata=work_item.metadata,
                 beta=work_item.beta,
                 standard_error=work_item.standard_error,
@@ -1312,7 +1271,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 output_statistic_dtype=self.output_statistic_dtype,
             )
             host_dosage_buffer_released = self.release_result_work_item_host_buffer(work_item)
-            write_materialized_regenie2_native_chunk_with_optional_timing(
+            writers.write_materialized_regenie2_native_chunk_with_optional_timing(
                 writer_session=typing.cast("typing.Any", self).writer_session,
                 metadata=work_item.metadata,
                 chunk_stats=work_item.chunk_stats,
@@ -1320,7 +1279,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 stage_timing_recorder=self.stage_timing_recorder,
                 output_statistic_dtype=self.output_statistic_dtype,
             )
-            record_binary_chunk_diagnostics_from_count(
+            diagnostics.record_binary_chunk_diagnostics_from_count(
                 stage_timing_recorder=self.stage_timing_recorder,
                 diagnostics=work_item.binary_chunk_diagnostics,
             )

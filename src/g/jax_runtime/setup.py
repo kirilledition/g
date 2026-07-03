@@ -3,27 +3,9 @@
 from __future__ import annotations
 
 import typing
-from dataclasses import dataclass
-from pathlib import Path
 
 from g import _core
 from g.jax_runtime import diagnostics, models, resolution
-
-
-@dataclass(frozen=True)
-class NvidiaDriverProbePaths:
-    """Linux NVIDIA driver paths used for native GPU visibility checks.
-
-    Attributes:
-        control_device_path: NVIDIA control device path.
-        uvm_device_path: NVIDIA unified-memory device path.
-        driver_directory_path: NVIDIA procfs driver directory path.
-
-    """
-
-    control_device_path: Path
-    uvm_device_path: Path
-    driver_directory_path: Path
 
 
 def configure_before_backend_init(
@@ -65,29 +47,6 @@ def configure_before_backend_init(
     return validated_report
 
 
-def default_nvidia_driver_probe_paths() -> NvidiaDriverProbePaths:
-    """Return native-owned default NVIDIA driver probe paths."""
-    paths_payload = typing.cast(
-        "typing.Mapping[str, str]",
-        _build_gpu_validation_setup_session().default_nvidia_driver_probe_paths_payload(),
-    )
-    return NvidiaDriverProbePaths(
-        control_device_path=Path(paths_payload["control_device_path"]),
-        uvm_device_path=Path(paths_payload["uvm_device_path"]),
-        driver_directory_path=Path(paths_payload["driver_directory_path"]),
-    )
-
-
-def nvidia_driver_is_visible() -> bool:
-    """Return whether the process can see a Linux NVIDIA driver/device mount.
-
-    Returns:
-        Whether NVIDIA driver files are visible.
-
-    """
-    return _build_gpu_validation_setup_session().nvidia_driver_files_are_visible_with_default_probe_paths()
-
-
 def apply_jax_runtime_config_updates(native_setup_session: _core.NativeJaxRuntimeSetupSession) -> None:
     """Apply native-ordered JAX runtime config updates."""
     native_setup_session.apply_config_updates()
@@ -98,30 +57,6 @@ def validate_gpu_if_configured_with_default_probe_paths(
 ) -> dict[str, object]:
     """Validate GPU setup using native-owned default probe paths."""
     return native_setup_session.validate_gpu_if_configured_with_default_probe_paths()
-
-
-def complete_jax_runtime_setup_validation_report(
-    native_setup_session: _core.NativeJaxRuntimeSetupSession,
-    *,
-    validation_status: models.GpuValidationStatus,
-    validation_message: str | None,
-) -> models.JaxRuntimeSetupReport:
-    """Complete a setup report after the JAX GPU validation side effect.
-
-    Args:
-        native_setup_session: Native setup session before GPU validation has completed.
-        validation_status: Final GPU validation status.
-        validation_message: Optional validation detail.
-
-    Returns:
-        Completed setup report.
-
-    """
-    completed_payload = native_setup_session.complete_validation_payload(
-        validation_status.value,
-        validation_message,
-    )
-    return resolution.jax_runtime_setup_report_from_native_payload(completed_payload)
 
 
 def require_gpu_device() -> None:
@@ -166,13 +101,4 @@ def _build_gpu_validation_setup_session() -> _core.NativeJaxRuntimeSetupSession:
             xla_autotune_cache=False,
             transfer_guard=False,
         )
-    )
-
-
-def jax_gpu_validation_report_from_native_payload(payload: object) -> models.JaxGpuValidationReport:
-    """Adapt a native JAX GPU validation payload."""
-    validation_payload = dict(typing.cast("typing.Mapping[str, object]", payload))
-    return models.JaxGpuValidationReport(
-        status=models.GpuValidationStatus(str(validation_payload["status"])),
-        message=str(validation_payload["message"]),
     )

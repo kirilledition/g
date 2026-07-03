@@ -40,6 +40,27 @@ def complete_mock_output_initialization(
     output_initialized_callback(phenotype_names)
 
 
+def load_test_run_manifest(output_run_paths: output.OutputRunPaths) -> dict[str, typing.Any] | None:
+    """Load a run manifest through the native policy for tests."""
+    manifest_payload = output.native_output_lifecycle_policy().load_run_manifest_payload(
+        str(output_run_paths.run_directory)
+    )
+    if manifest_payload is None:
+        return None
+    return output.require_native_mapping_payload(
+        manifest_payload,
+        f"Run manifest '{output.get_run_manifest_path(output_run_paths)}' must contain a JSON object.",
+    )
+
+
+def write_test_run_manifest(
+    output_run_paths: output.OutputRunPaths,
+    manifest: dict[str, typing.Any],
+) -> None:
+    """Write a run manifest through the native policy for tests."""
+    output.native_output_lifecycle_policy().write_run_manifest(str(output_run_paths.run_directory), manifest)
+
+
 def build_minimal_options(**overrides: object) -> dict[str, object]:
     raw_options: dict[str, object] = {
         "step": 2,
@@ -100,15 +121,17 @@ def build_trait_config(**overrides: object) -> config.TraitConfig:
     return config.RegenieConfig.from_options(build_minimal_options(**overrides)).trait
 
 
-def build_binary_config(**overrides: object) -> config.BinaryConfig:
-    """Build packaged binary config with test overrides."""
+def build_binary_correction_plan(**overrides: object) -> types.BinaryCorrectionPlan:
+    """Build the native-planned binary correction plan with test overrides."""
     normalized_overrides = dict(overrides)
     if "p_threshold" in normalized_overrides:
         normalized_overrides["pThresh"] = normalized_overrides.pop("p_threshold")
     raw_options = build_minimal_options(**normalized_overrides)
     raw_options["qt"] = False
     raw_options["bt"] = True
-    return config.RegenieConfig.from_options(raw_options).binary
+    run_request = execution_plan.compile_run_request_payload(config.RegenieConfig.from_options(raw_options))
+    correction_payload = typing.cast("dict[str, typing.Any]", run_request["correction"])
+    return execution_plan.adapt_binary_correction_plan(correction_payload)
 
 
 def build_test_process_runtime_state(
@@ -117,7 +140,11 @@ def build_test_process_runtime_state(
     jax_policy: jax_runtime_models.JaxRuntimePolicy | None = None,
 ) -> object:
     """Build a native process runtime state handle for isolated tests."""
-    return runner_runtime.build_process_runtime_state(logging_policy, rayon_thread_count, jax_policy)
+    return _core.NativeRuntimeState().build_process_runtime_state_handle(
+        None if logging_policy is None else runner_runtime.logging_runtime_policy_to_native_payload(logging_policy),
+        rayon_thread_count,
+        None if jax_policy is None else jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),
+    )
 
 
 def build_test_runtime_compatibility_token(
@@ -395,7 +422,7 @@ def test_quantitative_kernel_config_maps_linear_numerical_options() -> None:
             linear_relative_variance_tolerance=4.0e-6,
         )
     )
-    kernel_config = execution_plan.build_kernel_config(regenie_config)
+    kernel_config = execution_plan.build_regenie_execution_plan(regenie_config).kernel_config
     linear_numerical_config = kernel_config.linear_numerical_config
 
     assert linear_numerical_config is not None
@@ -404,9 +431,7 @@ def test_quantitative_kernel_config_maps_linear_numerical_options() -> None:
 
 
 def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
-    plan = execution_plan.normalize_binary_correction_config(
-        build_binary_config(firth=True, approx=True, p_threshold=0.01)
-    )
+    plan = build_binary_correction_plan(firth=True, approx=True, p_threshold=0.01)
 
     assert plan.method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
     assert plan.p_threshold == pytest.approx(0.01)
@@ -1317,7 +1342,7 @@ def test_describe_runtime_state_reports_process_global_state() -> None:
         jax_policy=runtime_policy.jax_policy,
     )
     assert runtime_state.logging_policy is not None
-    assert "log-filter=g=debug" in runner_runtime.describe_logging_runtime_policy(runtime_state.logging_policy)
+    assert runtime_state.logging_policy.log_filter == "g=debug"
 
 
 def test_regenie_rejects_incompatible_logging_policy_before_output_prepare(tmp_path: Path) -> None:
@@ -1504,7 +1529,7 @@ def test_quantitative_kernel_config_does_not_import_binary_runtime() -> None:
     previous_modules = {module_name: sys.modules.pop(module_name, None) for module_name in binary_runtime_module_names}
 
     try:
-        kernel_config = execution_plan.build_kernel_config(regenie_config)
+        kernel_config = execution_plan.build_regenie_execution_plan(regenie_config).kernel_config
         imported_modules = [module_name for module_name in binary_runtime_module_names if module_name in sys.modules]
     finally:
         for module_name, previous_module in previous_modules.items():
@@ -1836,7 +1861,7 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
 def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
     run_paths = output.OutputRunPaths(tmp_path, tmp_path / "chunks")
     run_paths.chunks_directory.mkdir()
-    output.write_run_manifest(
+    write_test_run_manifest(
         run_paths,
         {
             "schema_version": output.RUN_MANIFEST_SCHEMA_VERSION,
@@ -1858,13 +1883,9 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
             runtime_compatibility_token=runtime_compatibility_token,
         )
 
-    with (
-        patch("g.runner.outputs.load_run_manifest", side_effect=AssertionError("metadata extension must stay native")),
-        patch("g.runner.outputs.write_run_manifest", side_effect=AssertionError("metadata extension must stay native")),
-    ):
-        runner_metadata.extend_run_manifest(plan=plan, phenotype_run_plan=phenotype_run_plans[0])
+    runner_metadata.extend_run_manifest(plan=plan, phenotype_run_plan=phenotype_run_plans[0])
 
-    manifest = output.load_run_manifest(run_paths)
+    manifest = load_test_run_manifest(run_paths)
     assert manifest is not None
     assert manifest["command"]["interface"] == "g regenie"
     assert manifest["command"]["phenotype"] == "trait"
