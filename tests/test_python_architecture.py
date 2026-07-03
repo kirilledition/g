@@ -122,6 +122,7 @@ def test_forbidden_path_policy_rejects_obsolete_python_orchestration_files(tmp_p
 def test_forbidden_path_policy_rejects_obsolete_support_files(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     for source_path in (
+        Path("runtime_paths.py"),
         Path("io/source.py"),
         Path("engine/backend_planner.py"),
         Path("engine/preflight.py"),
@@ -144,6 +145,12 @@ def test_forbidden_path_policy_rejects_obsolete_support_files(tmp_path: Path) ->
             1,
             "obsolete_python_orchestration_module_path_isolation",
             Path("io/source.py"),
+        ),
+        (
+            Path("g/runtime_paths.py"),
+            1,
+            "obsolete_python_orchestration_module_path_isolation",
+            Path("runtime_paths.py"),
         ),
         (
             Path("g/engine/backend_planner.py"),
@@ -1895,6 +1902,9 @@ def test_output_writer_lifecycle_policy_rejects_direct_native_writer_cleanup_cal
                 "    _core.finish_output_writer_session(session)",
                 "    _core.finish_output_writer_session_interrupted(session, 'SIGINT')",
                 "    g._core.abort_output_writer_session(session)",
+                "    writer_session.finish()",
+                "    writer_session.finish_interrupted('SIGINT')",
+                "    writer_session.abort()",
             )
         ),
         encoding="utf-8",
@@ -1907,6 +1917,9 @@ def test_output_writer_lifecycle_policy_rejects_direct_native_writer_cleanup_cal
                 "    _core.finish_output_writer_session(session)",
                 "    _core.finish_output_writer_session_interrupted(session, 'SIGINT')",
                 "    _core.abort_output_writer_session(session)",
+                "    writer_session.finish()",
+                "    writer_session.finish_interrupted('SIGINT')",
+                "    writer_session.abort()",
             )
         ),
         encoding="utf-8",
@@ -1935,6 +1948,24 @@ def test_output_writer_lifecycle_policy_rejects_direct_native_writer_cleanup_cal
             6,
             "g._core.abort_output_writer_session",
             "_core.abort_output_writer_session",
+        ),
+        (
+            Path("g/runner/cleanup.py"),
+            7,
+            "writer_session.finish",
+            "writer_session.finish",
+        ),
+        (
+            Path("g/runner/cleanup.py"),
+            8,
+            "writer_session.finish_interrupted",
+            "writer_session.finish_interrupted",
+        ),
+        (
+            Path("g/runner/cleanup.py"),
+            9,
+            "writer_session.abort",
+            "writer_session.abort",
         ),
     ]
 

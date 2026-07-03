@@ -284,6 +284,7 @@ PYTHON_FORBIDDEN_PATH_POLICIES = (
             Path("io/__init__.py"),
             Path("io/output.py"),
             Path("io/source.py"),
+            Path("runtime_paths.py"),
             Path("engine/backend_planner.py"),
             Path("engine/preflight.py"),
             Path("engine/preflight_events.py"),
@@ -621,6 +622,17 @@ PYTHON_CALL_POLICIES = (
         ),
         allowed_paths=(Path("engine/native_dispatch/writers.py"),),
         message="production Python must route native writer lifecycle calls through the native-dispatch adapter",
+    ),
+    PythonCallPolicy(
+        name="direct_output_writer_lifecycle_adapter_isolation",
+        source_directory=Path(),
+        forbidden_calls=(
+            "writer_session.finish",
+            "writer_session.finish_interrupted",
+            "writer_session.abort",
+        ),
+        allowed_paths=(Path("engine/native_dispatch/writers.py"),),
+        message="production Python must route writer-session lifecycle calls through the native-dispatch adapter",
     ),
     PythonCallPolicy(
         name="native_output_chunk_write_adapter_isolation",

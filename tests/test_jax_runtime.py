@@ -7,7 +7,7 @@ import typing
 from pathlib import Path
 from unittest.mock import patch
 
-from g import _core, runtime_paths, types
+from g import _core, types
 from g.interface import config
 from g.jax_runtime import diagnostics, models, resolution, setup
 
@@ -125,7 +125,7 @@ def test_default_local_cache_directory_uses_native_policy(
     monkeypatch.delenv("USER", raising=False)
     monkeypatch.delenv("LOGNAME", raising=False)
 
-    cache_directory = runtime_paths.default_local_cache_directory("g-jax-cache")
+    cache_directory = Path(_core.NativeRuntimeState().default_local_cache_directory_value("g-jax-cache"))
 
     assert cache_directory == tmp_path / "unknown" / "g-jax-cache"
     assert not hasattr(_core, "default_local_cache_directory_value")

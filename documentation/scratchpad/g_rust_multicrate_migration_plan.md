@@ -1461,11 +1461,11 @@ Remove Python as the chunk-level scheduler.
   handles; remaining manual scheduler fixtures define their own test-only
   accessors outside the production runner.
 - Real native output writer finish, interrupted flush, and abort lifecycle calls
-  now route through root PyO3 helper functions before entering `g-output`. The
-  native-dispatch writer adapter keeps the direct method fallback only for fake
-  and transitional test writer sessions, and the Python architecture checker
-  rejects direct calls to those native writer lifecycle helpers outside that
-  adapter.
+  stay behind the native-dispatch writer adapter before entering `g-output`.
+  The adapter is the only production Python path allowed to call the PyO3 writer
+  lifecycle methods directly, and the Python architecture checker rejects both
+  stale top-level helper calls and direct `writer_session` lifecycle calls
+  outside that adapter.
 
 ### Phase 10 punch list
 
@@ -2703,6 +2703,9 @@ Current guardrail notes:
   directories. The Python JAX runtime adapter passes path text through to the
   native payload builder, and the Python architecture checker rejects
   reintroduced `expanduser()` calls under `g.jax_runtime`.
+- The obsolete Python `g.runtime_paths` wrapper was removed; callers use the
+  native runtime-state boundary for default runtime cache paths, and the Python
+  architecture checker rejects reintroduced `runtime_paths.py`.
 
 ### Exit criteria
 
