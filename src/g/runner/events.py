@@ -10,8 +10,8 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g import _core, types
-    from g.engine import shutdown
     from g.interface import config
+    from g.runner import lifecycle
 
 type RunArtifacts = run_events.RunArtifacts
 type RunCompletedEvent = run_events.RunCompletedEvent
@@ -46,7 +46,7 @@ def native_runner_diagnostic_policy() -> _core.NativeRunnerDiagnosticPolicy:
     return run_events.native_runner_diagnostic_policy()
 
 
-def build_run_interrupted_event(shutdown_request: shutdown.GracefulShutdownRequested) -> RunInterruptedEvent:
+def build_run_interrupted_event(shutdown_request: lifecycle.GracefulShutdownRequested) -> RunInterruptedEvent:
     """Build a structured interruption event from a graceful shutdown request."""
     return run_events.build_run_interrupted_event(shutdown_request)
 

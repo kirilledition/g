@@ -308,6 +308,13 @@ PYTHON_IMPORT_POLICIES = (
         allowed_paths=(Path("runner/events.py"),),
     ),
     PythonImportPolicy(
+        name="runner_lifecycle_timing_adapter_isolation",
+        source_directory=Path("runner"),
+        forbidden_imports=("g.engine.shutdown", "g.engine.timing"),
+        message="runner modules must route shutdown and timing access through runner-local helpers",
+        allowed_paths=(Path("runner/lifecycle.py"), Path("runner/timing.py")),
+    ),
+    PythonImportPolicy(
         name="pipeline_output_adapter_isolation",
         source_directory=Path("engine/regenie2_pipeline"),
         forbidden_imports=("g.io",),

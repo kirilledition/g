@@ -7,9 +7,8 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, execution_plan, types
-from g.engine import shutdown, timing
 from g.interface import config
-from g.runner import events, metadata, outputs, runtime
+from g.runner import events, lifecycle, metadata, outputs, runtime, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -116,7 +115,7 @@ def regenie(
             telemetry_session=active_telemetry_session,
             runtime_compatibility_token=run_runtime.runtime_compatibility_token,
         )
-    except shutdown.GracefulShutdownRequested as shutdown_request:
+    except lifecycle.GracefulShutdownRequested as shutdown_request:
         interrupted_event = events.build_run_interrupted_event(shutdown_request)
         native_run_event_telemetry_policy.record_runner_run_interrupted_telemetry_event(
             active_telemetry_session, interrupted_event

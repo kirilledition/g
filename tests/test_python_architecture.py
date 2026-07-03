@@ -356,6 +356,62 @@ def test_runner_import_policy_allows_runner_event_adapter(tmp_path: Path) -> Non
     assert violations == ()
 
 
+def test_runner_import_policy_rejects_lifecycle_timing_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "execution.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import shutdown, timing",
+                "import g.engine.shutdown",
+                "import g.engine.timing",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/runner/execution.py"), 1, "g.engine.shutdown", "g.engine.shutdown"),
+        (Path("g/runner/execution.py"), 1, "g.engine.timing", "g.engine.timing"),
+        (Path("g/runner/execution.py"), 2, "g.engine.shutdown", "g.engine.shutdown"),
+        (Path("g/runner/execution.py"), 3, "g.engine.timing", "g.engine.timing"),
+    ]
+
+
+def test_runner_import_policy_allows_runner_lifecycle_timing_adapters(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "lifecycle.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import shutdown",
+                "import g.engine.shutdown",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (runner_directory / "timing.py").write_text(
+        "\n".join(
+            (
+                "from g.engine import timing",
+                "import g.engine.timing",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_pipeline_import_policy_rejects_output_adapter_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"

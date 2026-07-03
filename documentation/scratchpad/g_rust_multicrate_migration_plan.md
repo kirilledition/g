@@ -2561,6 +2561,11 @@ Current guardrail notes:
   engine run-event and telemetry packages directly; the Python architecture
   checker rejects direct `g.engine.run_events` and `g.engine.telemetry` imports
   from runner modules except that helper.
+- Runner execution now routes graceful-shutdown and final stage-timing access
+  through runner-local lifecycle and timing helpers instead of importing engine
+  shutdown and timing packages directly; the Python architecture checker
+  rejects direct `g.engine.shutdown` and `g.engine.timing` imports from runner
+  modules except those helpers.
 - REGENIE pipeline orchestration now routes output-run path types, writer
   settings, manifest-header types, fingerprint cache construction, and
   multi-phenotype output sample-mode values through
@@ -2863,6 +2868,7 @@ Production Python must not import the obsolete `g.io.source` module.
 g.execution_plan must not import output adapter packages.
 g.runner modules must not import output adapter packages directly, except the runner output helper.
 g.runner modules must not import run-event or telemetry packages directly, except the runner event helper.
+g.runner modules must not import shutdown or timing packages directly, except the runner lifecycle and timing helpers.
 g.engine.regenie2_pipeline modules must not import output adapter packages directly, except the pipeline output helper.
 g.engine.regenie2_pipeline modules must not import run-event or telemetry packages directly, except the pipeline telemetry helper.
 g.engine.regenie2_pipeline modules must not import timing packages directly, except the pipeline timing helper.
