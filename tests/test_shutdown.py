@@ -27,6 +27,21 @@ def test_shutdown_controller_uses_native_metadata_for_supported_linux_signals() 
         )
 
 
+def test_native_shutdown_controller_returns_typed_signal() -> None:
+    signal_number = int(signal.SIGTERM)
+    native_controller = _core.NativeShutdownController([signal_number])
+
+    native_signal = native_controller.request_shutdown_signal_or_raise_second_signal(signal_number)
+    requested_signal = native_controller.requested_signal()
+
+    assert isinstance(native_signal, _core.NativeShutdownSignal)
+    assert native_signal.number == signal_number
+    assert native_signal.name == "SIGTERM"
+    assert native_signal.exit_code == 128 + signal_number
+    assert requested_signal is not None
+    assert requested_signal.name == native_signal.name
+
+
 def test_shutdown_controller_rejects_unknown_signal() -> None:
     with pytest.raises(ValueError, match="0 is not a valid Signals"):
         _core.NativeShutdownController([0])

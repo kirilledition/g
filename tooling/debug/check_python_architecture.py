@@ -745,6 +745,19 @@ PYTHON_CALL_POLICIES = (
         message="runner metadata must write effective TOML through the native run-metadata builder",
     ),
     PythonCallPolicy(
+        name="runner_shutdown_payload_isolation",
+        source_directory=Path("runner"),
+        forbidden_calls=(
+            "requested_signal_payload",
+            "request_shutdown_payload",
+            "request_shutdown_signal_or_raise_second_signal_payload",
+            "handler_install_plan_payload",
+            "handler_restore_plan_payload",
+        ),
+        allowed_paths=(),
+        message="runner lifecycle must consume typed native shutdown handles instead of payload dictionaries",
+    ),
+    PythonCallPolicy(
         name="callback_worker_queue_isolation",
         source_directory=Path("engine/callbacks"),
         forbidden_calls=(

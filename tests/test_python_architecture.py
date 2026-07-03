@@ -2587,6 +2587,70 @@ def test_preflight_policy_rejects_payload_methods(tmp_path: Path) -> None:
     ]
 
 
+def test_runner_shutdown_policy_rejects_payload_methods(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "lifecycle.py").write_text(
+        "\n".join(
+            (
+                "from g import _core",
+                "def build():",
+                "    controller = _core.NativeShutdownController()",
+                "    controller.requested_signal_payload()",
+                "    controller.request_shutdown_payload(2)",
+                "    controller.request_shutdown_signal_or_raise_second_signal_payload(2)",
+                "    controller.handler_install_plan_payload()",
+                "    controller.handler_restore_plan_payload()",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/lifecycle.py"),
+            4,
+            "runner_shutdown_payload_isolation",
+            "controller.requested_signal_payload",
+            "requested_signal_payload",
+        ),
+        (
+            Path("g/runner/lifecycle.py"),
+            5,
+            "runner_shutdown_payload_isolation",
+            "controller.request_shutdown_payload",
+            "request_shutdown_payload",
+        ),
+        (
+            Path("g/runner/lifecycle.py"),
+            6,
+            "runner_shutdown_payload_isolation",
+            "controller.request_shutdown_signal_or_raise_second_signal_payload",
+            "request_shutdown_signal_or_raise_second_signal_payload",
+        ),
+        (
+            Path("g/runner/lifecycle.py"),
+            7,
+            "runner_shutdown_payload_isolation",
+            "controller.handler_install_plan_payload",
+            "handler_install_plan_payload",
+        ),
+        (
+            Path("g/runner/lifecycle.py"),
+            8,
+            "runner_shutdown_payload_isolation",
+            "controller.handler_restore_plan_payload",
+            "handler_restore_plan_payload",
+        ),
+    ]
+
+
 def test_diagnostic_payload_policy_rejects_direct_payload_builders(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"

@@ -64,10 +64,10 @@ class GracefulShutdownController:
     @property
     def requested_signal(self) -> ShutdownSignal | None:
         """Return the shutdown signal currently recorded by the native handle."""
-        signal_payload = self.native_controller.requested_signal_payload()
-        if signal_payload is None:
+        native_signal = self.native_controller.requested_signal()
+        if native_signal is None:
             return None
-        return shutdown_signal_from_native_payload(signal_payload)
+        return shutdown_signal_from_native_signal(native_signal)
 
     def __enter__(self) -> GracefulShutdownController:
         """Install signal handlers and return this controller."""
@@ -87,14 +87,23 @@ class GracefulShutdownController:
     def handle_signal(self, signal_number: int, frame: python_types.FrameType | None) -> None:
         """Request graceful shutdown on first signal and fast abort on the second."""
         del frame
-        shutdown_signal = shutdown_signal_from_native_payload(
-            self.native_controller.request_shutdown_signal_or_raise_second_signal_payload(signal_number)
+        shutdown_signal = shutdown_signal_from_native_signal(
+            self.native_controller.request_shutdown_signal_or_raise_second_signal(signal_number)
         )
         raise GracefulShutdownRequested(shutdown_signal)
 
     def restore_previous_handlers(self) -> None:
         """Restore signal handlers captured when the controller was installed."""
         self.native_controller.restore_python_signal_handlers()
+
+
+def shutdown_signal_from_native_signal(native_signal: _core.NativeShutdownSignal) -> ShutdownSignal:
+    """Adapt native shutdown signal metadata to the public Python dataclass."""
+    return ShutdownSignal(
+        number=native_signal.number,
+        name=native_signal.name,
+        exit_code=native_signal.exit_code,
+    )
 
 
 def shutdown_signal_from_native_payload(payload: object) -> ShutdownSignal:

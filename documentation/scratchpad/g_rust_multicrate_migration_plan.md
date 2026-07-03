@@ -2838,6 +2838,10 @@ Current guardrail notes:
   native preflight handles instead of dict payloads. Legacy preflight payload
   methods remain on the validator for compatibility tests, and production
   preflight modules are guarded from calling them.
+- Runner shutdown lifecycle now consumes typed native shutdown signal handles
+  for requested-signal and first-signal handling. Legacy shutdown payload
+  methods remain on the controller for compatibility tests, while runner
+  modules are guarded from calling those payload methods.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture
@@ -3189,6 +3193,8 @@ The host-planning rule rejects dict payload backend/group/correction planning
 methods in production so Python callers consume typed native handles.
 The preflight rule rejects dict payload shape/report methods in pipeline
 preflight so production code consumes typed native validation handles.
+The runner-shutdown rule rejects payload signal/handler methods under
+`g.runner`, keeping lifecycle code on typed native shutdown handles.
 
 ---
 

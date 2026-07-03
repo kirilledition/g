@@ -13,6 +13,12 @@ pub(crate) struct NativeShutdownController {
     session: Mutex<native_shutdown::ShutdownHandlerSession<Py<PyAny>>>,
 }
 
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeShutdownSignal {
+    data: native_shutdown::ShutdownSignalPayload,
+}
+
 #[pymethods]
 impl NativeShutdownController {
     #[new]
@@ -44,6 +50,11 @@ impl NativeShutdownController {
         session.requested_signal().map(|payload| shutdown_signal_payload_to_dict(py, payload)).transpose()
     }
 
+    fn requested_signal(&self) -> PyResult<Option<NativeShutdownSignal>> {
+        let session = self.lock_session()?;
+        Ok(session.requested_signal().cloned().map(|data| NativeShutdownSignal { data }))
+    }
+
     fn request_shutdown_payload<'py>(&self, py: Python<'py>, signal_number: i32) -> PyResult<Bound<'py, PyDict>> {
         let decision = self.lock_session()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
         shutdown_request_decision_payload_to_dict(py, &decision)
@@ -60,6 +71,19 @@ impl NativeShutdownController {
             return raise_second_signal_exception_from_plan(signal_number);
         }
         shutdown_signal_payload_to_dict(py, &decision.signal)
+    }
+
+    fn request_shutdown_signal_or_raise_second_signal(
+        &self,
+        py: Python<'_>,
+        signal_number: i32,
+    ) -> PyResult<NativeShutdownSignal> {
+        let decision = self.lock_session()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
+        if decision.action == native_shutdown::ShutdownRequestAction::Force {
+            self.restore_python_signal_handlers(py)?;
+            return raise_second_signal_exception_from_plan(signal_number);
+        }
+        Ok(NativeShutdownSignal { data: decision.signal })
     }
 
     fn handler_install_plan_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -128,6 +152,24 @@ impl NativeShutdownController {
     }
 }
 
+#[pymethods]
+impl NativeShutdownSignal {
+    #[getter]
+    fn number(&self) -> i32 {
+        self.data.number
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        self.data.name.as_str()
+    }
+
+    #[getter]
+    fn exit_code(&self) -> i32 {
+        self.data.exit_code
+    }
+}
+
 impl NativeShutdownController {
     fn lock_session(&self) -> PyResult<MutexGuard<'_, native_shutdown::ShutdownHandlerSession<Py<PyAny>>>> {
         self.session.lock().map_err(|_| PyValueError::new_err("Shutdown handler session mutex was poisoned."))
@@ -136,6 +178,7 @@ impl NativeShutdownController {
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeShutdownController>()?;
+    module.add_class::<NativeShutdownSignal>()?;
     Ok(())
 }
 
