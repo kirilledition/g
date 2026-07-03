@@ -24,6 +24,7 @@ from g.jax_runtime import models as jax_runtime_models
 from g.jax_runtime import resolution as jax_runtime_resolution
 from g.runner import execution as runner_execution
 from g.runner import metadata as runner_metadata
+from g.runner import outputs as runner_outputs
 from g.runner import runtime as runner_runtime
 
 
@@ -133,9 +134,9 @@ def prepare_test_execution_plan_outputs(
     *,
     plan: execution_plan.RegenieExecutionPlan,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
-) -> tuple[runner_metadata.PreparedPhenotypeRunPlan, ...]:
+) -> tuple[runner_outputs.PreparedPhenotypeRunPlan, ...]:
     """Prepare output state for direct execution-plan tests."""
-    return runner_metadata.prepare_execution_plan_outputs(
+    return runner_outputs.prepare_execution_plan_outputs(
         plan=plan,
         runtime_compatibility_token=runtime_compatibility_token,
     )
@@ -295,7 +296,7 @@ def test_execution_plan_uses_safe_phenotype_output_directories() -> None:
     )
 
     with patch(
-        "g.runner.metadata.output.prepare_output_run", return_value=prepared_output_run
+        "g.runner.outputs.output.prepare_output_run", return_value=prepared_output_run
     ) as mock_prepare_output_run:
         runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
@@ -428,7 +429,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
         patch("g.runner.runtime.configure_runtime_before_jax_import") as mock_configure_runtime_before_jax_import,
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest={"committed_chunks": []}),
         ) as mock_prepare_output_run,
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=complete_pipeline) as mock_pipeline,
@@ -490,7 +491,7 @@ def test_regenie_completion_event_includes_user_visible_artifacts(tmp_path: Path
         patch("g.runner.runtime.configure_runtime"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", return_value=final_parquet),
@@ -588,7 +589,7 @@ def test_regenie_graceful_shutdown_event_preserves_signal_exit(tmp_path: Path) -
         patch("g.runner.runtime.configure_runtime"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=shutdown_request),
@@ -641,7 +642,7 @@ def test_regenie_does_not_write_run_start_metadata_before_output_initialization_
         patch("g.interface.config.validate_config_for_run"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=fail_pipeline),
@@ -684,7 +685,7 @@ def test_regenie_writes_run_start_metadata_after_output_initialization() -> None
         patch("g.interface.config.validate_config_for_run"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=fail_after_output_initialization),
@@ -735,7 +736,7 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
         patch("g.runner.runtime.initialize_logging", side_effect=record_logging_bootstrap),
         patch("g.runner.runtime.configure_runtime", side_effect=record_native_runtime_bootstrap),
         patch("g.runner.runtime.configure_runtime_before_jax_import", side_effect=record_jax_bootstrap),
-        patch("g.runner.metadata.output.prepare_output_run", side_effect=record_prepare_output_run),
+        patch("g.runner.outputs.output.prepare_output_run", side_effect=record_prepare_output_run),
         patch("g.runner.runtime.run_regenie2_linear_bgen_pipeline", side_effect=record_pipeline),
         patch("g.runner.metadata.extend_run_manifest"),
         patch("g.interface.config.validate_config_for_run"),
@@ -954,7 +955,7 @@ def test_finalize_execution_plan_records_native_metadata_diagnostic(monkeypatch:
     )
 
     output_run_paths = output.OutputRunPaths(Path("run/trait"), Path("run/trait/chunks"))
-    phenotype_run_plan = runner_metadata.PreparedPhenotypeRunPlan(
+    phenotype_run_plan = runner_outputs.PreparedPhenotypeRunPlan(
         phenotype_name="trait",
         output_run_paths=output_run_paths,
         existing_manifest=None,
@@ -1264,7 +1265,7 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, None)),
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch(
@@ -1338,7 +1339,7 @@ def test_regenie_rejects_incompatible_logging_policy_before_output_prepare(tmp_p
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
             build_test_process_runtime_state(configured_policy.logging_policy, None),
         ),
-        patch("g.runner.metadata.output.prepare_output_run") as prepare_output_run_mock,
+        patch("g.runner.outputs.output.prepare_output_run") as prepare_output_run_mock,
         patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
         pytest.raises(RuntimeError, match=r"Logging runtime policy is process-global.*fresh Python process"),
@@ -1354,7 +1355,7 @@ def test_regenie_rejects_incompatible_rayon_policy_before_output_prepare() -> No
 
     with (
         patch("g.runner.runtime.PROCESS_RUNTIME_STATE", build_test_process_runtime_state(None, 4)),
-        patch("g.runner.metadata.output.prepare_output_run") as prepare_output_run_mock,
+        patch("g.runner.outputs.output.prepare_output_run") as prepare_output_run_mock,
         patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
         pytest.raises(RuntimeError, match=r"Rayon --threads is process-global.*fresh Python process"),
@@ -1379,7 +1380,7 @@ def test_regenie_rejects_incompatible_jax_policy_before_output_prepare(tmp_path:
             "g.runner.runtime.PROCESS_RUNTIME_STATE",
             build_test_process_runtime_state(None, None, configured_jax_policy),
         ),
-        patch("g.runner.metadata.output.prepare_output_run") as prepare_output_run_mock,
+        patch("g.runner.outputs.output.prepare_output_run") as prepare_output_run_mock,
         patch("g.runner.runtime.initialize_logging") as initialize_logging_mock,
         patch("g.interface.config.validate_config_for_run"),
         pytest.raises(RuntimeError, match=r"JAX runtime is already configured.*fresh Python process"),
@@ -1445,7 +1446,7 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
         patch("g.runner.runtime.initialize_logging"),
         patch("g.runner.runtime.configure_runtime_before_jax_import"),
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.runner.runtime.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
@@ -1540,7 +1541,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
 
     with (
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=output.PreparedOutputRun(run_paths, None),
         ),
         patch("g.runner.runtime.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
@@ -1594,7 +1595,7 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
 
     with (
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             side_effect=(
                 output.PreparedOutputRun(run_paths[0], None),
                 output.PreparedOutputRun(run_paths[1], None),
@@ -1698,7 +1699,7 @@ def test_default_multi_phenotype_plan_dispatches_grouped_multi_phenotype_run() -
 
     with (
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             return_value=output.PreparedOutputRun(run_paths, None),
         ),
         patch("g.runner.runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
@@ -1751,7 +1752,7 @@ def test_multi_phenotype_plan_dispatch_forwards_packed8_genotype_format() -> Non
 
     with (
         patch(
-            "g.runner.metadata.output.prepare_output_run",
+            "g.runner.outputs.output.prepare_output_run",
             side_effect=(
                 output.PreparedOutputRun(run_paths[0], None),
                 output.PreparedOutputRun(run_paths[1], None),
@@ -1804,7 +1805,7 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
     existing_manifests = ({"phenotype_name": "one"}, {"phenotype_name": "two"})
 
     with patch(
-        "g.runner.metadata.output.prepare_output_run",
+        "g.runner.outputs.output.prepare_output_run",
         side_effect=(
             output.PreparedOutputRun(run_paths[0], existing_manifests[0]),
             output.PreparedOutputRun(run_paths[1], existing_manifests[1]),
@@ -1849,7 +1850,7 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
     regenie_config = build_minimal_config()
 
     with patch(
-        "g.runner.metadata.output.prepare_output_run",
+        "g.runner.outputs.output.prepare_output_run",
         return_value=output.PreparedOutputRun(run_paths, None),
     ):
         runtime_compatibility_token = build_test_runtime_compatibility_token(regenie_config)

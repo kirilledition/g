@@ -9,8 +9,7 @@ from dataclasses import dataclass
 from g import _core, execution_plan, types
 from g.engine import run_events, shutdown, telemetry, timing
 from g.interface import config
-from g.io import output
-from g.runner import metadata, runtime
+from g.runner import metadata, outputs, runtime
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -65,7 +64,7 @@ class CommonEngineDispatchRequest:
     dosage_buffer_limit: int | None
     resume: bool
     resume_mode: types.ResumeMode
-    writer_settings: output.OutputWriterSettings
+    writer_settings: outputs.OutputWriterSettings
     trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     bgen_decode_tile_variant_count: int
@@ -175,7 +174,7 @@ def run_validated_regenie_config(
         output_start_time = time.perf_counter()
         native_runner_diagnostic_policy.record_runner_execution_plan_build_started_diagnostic_event()
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
-        phenotype_run_plans = metadata.prepare_execution_plan_outputs(
+        phenotype_run_plans = outputs.prepare_execution_plan_outputs(
             plan=plan,
             runtime_compatibility_token=runtime_compatibility_token,
         )
@@ -238,7 +237,7 @@ def dispatch_execution_plan(
     *,
     regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
-    phenotype_run_plans: tuple[metadata.PreparedPhenotypeRunPlan, ...],
+    phenotype_run_plans: tuple[outputs.PreparedPhenotypeRunPlan, ...],
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
@@ -303,7 +302,7 @@ def build_common_engine_dispatch_request(
         dosage_buffer_limit=plan.kernel_config.dosage_buffer_limit,
         resume=plan.output_plan.resume,
         resume_mode=plan.output_plan.resume_mode,
-        writer_settings=output_writer_settings_from_plan(plan.output_plan.writer_settings),
+        writer_settings=outputs.output_writer_settings_from_plan(plan.output_plan.writer_settings),
         trusted_no_missing_diploid=plan.kernel_config.trusted_no_missing_diploid,
         trusted_bgen_validation_mode=plan.kernel_config.trusted_bgen_validation_mode,
         bgen_decode_tile_variant_count=plan.kernel_config.bgen_decode_tile_variant_count,
@@ -319,24 +318,10 @@ def build_common_engine_dispatch_request(
     )
 
 
-def output_writer_settings_from_plan(writer_plan: execution_plan.OutputWriterPlan) -> output.OutputWriterSettings:
-    """Adapt requested output writer settings to the output adapter dataclass."""
-    return output.OutputWriterSettings(
-        finalize_parquet=writer_plan.finalize_parquet,
-        writer_thread_count=writer_plan.writer_thread_count,
-        writer_queue_depth=writer_plan.writer_queue_depth,
-        chunks_per_arrow_file=writer_plan.chunks_per_arrow_file,
-        arrow_compression=writer_plan.arrow_compression,
-        parquet_compression=writer_plan.parquet_compression,
-        output_format=writer_plan.output_format,
-        output_statistic_dtype=writer_plan.output_statistic_dtype,
-    )
-
-
 def dispatch_one_phenotype_engine_pipeline(
     *,
     plan: execution_plan.RegenieExecutionPlan,
-    phenotype_run_plan: metadata.PreparedPhenotypeRunPlan,
+    phenotype_run_plan: outputs.PreparedPhenotypeRunPlan,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
@@ -447,7 +432,7 @@ def dispatch_one_phenotype_engine_pipeline(
 def dispatch_multi_phenotype_engine_pipeline(
     *,
     plan: execution_plan.RegenieExecutionPlan,
-    phenotype_run_plans: tuple[metadata.PreparedPhenotypeRunPlan, ...],
+    phenotype_run_plans: tuple[outputs.PreparedPhenotypeRunPlan, ...],
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,

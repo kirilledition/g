@@ -2552,6 +2552,10 @@ Current guardrail notes:
   writer policy only; runner metadata prepares output lifecycle state after
   plan construction, and the Python architecture checker rejects `g.io` imports
   from `g.execution_plan`.
+- Runner execution and metadata now route output-writer settings adaptation and
+  prepared output-run state through a runner-local output helper instead of
+  importing the output adapter directly; the Python architecture checker
+  rejects `g.io` imports from runner modules except that helper.
 
 ### Exit criteria
 
@@ -2799,6 +2803,7 @@ g.io must not import JAX runtime setup packages.
 g.io must not import engine orchestration packages.
 Production Python must not import the obsolete `g.io.source` module.
 g.execution_plan must not import output adapter packages.
+g.runner modules must not import output adapter packages directly, except the runner output helper.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.

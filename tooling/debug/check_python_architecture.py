@@ -29,6 +29,7 @@ class PythonImportPolicy:
         source_directory: Package directory, relative to the production package root.
         forbidden_imports: Absolute import prefixes rejected under the source directory.
         message: Human-readable policy description.
+        allowed_paths: Source paths, relative to the production package root, excluded from this policy.
 
     """
 
@@ -36,6 +37,7 @@ class PythonImportPolicy:
     source_directory: Path
     forbidden_imports: tuple[str, ...]
     message: str
+    allowed_paths: tuple[Path, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -290,6 +292,13 @@ PYTHON_IMPORT_POLICIES = (
         source_directory=Path("runner"),
         forbidden_imports=("g.engine.regenie2_pipeline", "g.engine.callbacks", "g.compute", "jax", "jaxlib"),
         message="runner modules must not import JAX-facing modules before runtime setup",
+    ),
+    PythonImportPolicy(
+        name="runner_output_adapter_isolation",
+        source_directory=Path("runner"),
+        forbidden_imports=("g.io",),
+        message="runner modules must route output adapter access through runner-local output helpers",
+        allowed_paths=(Path("runner/outputs.py"),),
     ),
 )
 
@@ -891,8 +900,11 @@ def collect_python_import_policy_violations(
         if not source_directory.exists():
             continue
         for path in python_source_paths_for_policy(source_directory):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             relative_path = path.relative_to(package_root.parent)
+            package_relative_path = path.relative_to(package_root)
+            if package_relative_path in policy.allowed_paths:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for statement in ast.walk(tree):
                 if not isinstance(statement, ast.Import | ast.ImportFrom):
                     continue

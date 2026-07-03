@@ -239,6 +239,75 @@ def test_execution_plan_import_policy_rejects_output_adapter_imports(tmp_path: P
     ]
 
 
+def test_runner_execution_import_policy_rejects_output_adapter_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "execution.py").write_text(
+        "\n".join(
+            (
+                "from g.io import output",
+                "import g.io.output",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/runner/execution.py"), 1, "g.io.output", "g.io"),
+        (Path("g/runner/execution.py"), 2, "g.io.output", "g.io"),
+    ]
+
+
+def test_runner_metadata_import_policy_rejects_output_adapter_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "metadata.py").write_text(
+        "\n".join(
+            (
+                "from g.io import output",
+                "import g.io.output",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/runner/metadata.py"), 1, "g.io.output", "g.io"),
+        (Path("g/runner/metadata.py"), 2, "g.io.output", "g.io"),
+    ]
+
+
+def test_runner_output_import_policy_allows_runner_output_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "outputs.py").write_text(
+        "\n".join(
+            (
+                "from g.io import output",
+                "import g.io.output",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_python_cli_shim_policy_rejects_public_python_process_ownership(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()
